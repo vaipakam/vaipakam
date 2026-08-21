@@ -291,6 +291,48 @@ that names the file, which is the trade worth making. A shell script has no way
 to make it a guarantee, and claiming otherwise would be the kind of overstated
 promise this document has already had to walk back once.
 
+### Four that were not the same fault at all
+
+The round after that one found five more, and the useful thing about them is
+that only one belonged to the class above. The rest were ordinary, unrelated
+defects that a great deal of attention on one subject had walked straight past.
+
+**A handler that could never run.** The recovery message for a failure *after*
+the dated file is published — the one carefully written to explain a half-done
+state — was defined further down the file than the first thing that calls it. A
+shell function does not exist until its definition has been read, so the first
+such failure ended with "command not found" and told the operator nothing at
+all. It had been written, reviewed, and tested, and it was unreachable.
+
+**A name this script made illegal.** Setting a note aside renames it with a
+prefix. A note name close to the filesystem's per-name limit is perfectly legal
+until that prefix is added, and the rename then fails — *after* publishing —
+so a first assembly always ended in the half-done state instead of finishing.
+The set-aside name is now bounded, with a fingerprint to keep it unique; the
+full name still appears on screen.
+
+**Another day's note aborting today's run.** Notes were copied and checked
+before the day was chosen, so a note belonging to tomorrow could stop today's
+assembly. That contradicts the promise made a few paragraphs above — that a run
+takes its own day's notes and leaves the others in place — and it made a mixed
+backlog unassemblable again, which is the exact thing choosing-not-refusing
+exists to prevent. Only the check that the *ordering* cannot survive, a newline
+in a name, still runs early; everything else waits until the day is settled.
+
+**A byte this shell cannot carry.** A record with a null byte between the name
+and the fingerprint is malformed, and the parser rejects it — but the shell
+drops that byte before the parser ever sees it, so the record arrives looking
+valid and names a different note, which is then deleted with its section
+nowhere in the file. Once again the bytes that were checked were not the bytes
+that were used. Such a record is now refused outright, since nothing this
+script writes can contain one.
+
+The fifth was the class: records were read from the live dated file while the
+fingerprint used to detect changes came from a separate read. A record present
+only for the moment of the reading, and gone before the check, left the
+fingerprint matching and the index holding evidence that had never persisted.
+Dated files are now copied first and read from the copy, exactly as notes are.
+
 ### Verified against the fault, not just the fix
 
 Every test covering a **behaviour that changed** was run against the older

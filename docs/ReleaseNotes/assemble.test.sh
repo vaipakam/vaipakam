@@ -1536,9 +1536,14 @@ git -C "$W" checkout -- docs/ReleaseNotes/unreleased/   # the interrupted state
 mkdir -p "$W/fakebin"
 cat > "$W/fakebin/grep" <<SHIM
 #!/bin/sh
+# Keyed on the dated-file WORKING COPY. The scan reads a copy now, so a
+# shim keyed on the dated file's own path never fires; and keying on the
+# marker pattern fires during FRAGMENT validation instead, which happens
+# before the dated file is copied — the edit then lands inside the copy and
+# the case tests the opposite of what it says. Both were tried.
 _dated=0
 for a in "\$@"; do
-  case "\$a" in *ReleaseNotes-2026-08-16.md) _dated=1 ;; esac
+  case "\$a" in */dated.*) _dated=1 ;; esac
 done
 /usr/bin/grep "\$@"; _rc=\$?
 if [ "\$_dated" = "1" ] && [ ! -f "$W/fired" ]; then
@@ -1566,9 +1571,14 @@ git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
 mkdir -p "$W/fakebin"
 cat > "$W/fakebin/grep" <<SHIM
 #!/bin/sh
+# Keyed on the dated-file WORKING COPY. The scan reads a copy now, so a
+# shim keyed on the dated file's own path never fires; and keying on the
+# marker pattern fires during FRAGMENT validation instead, which happens
+# before the dated file is copied — the edit then lands inside the copy and
+# the case tests the opposite of what it says. Both were tried.
 _dated=0
 for a in "\$@"; do
-  case "\$a" in *ReleaseNotes-2026-08-16.md) _dated=1 ;; esac
+  case "\$a" in */dated.*) _dated=1 ;; esac
 done
 /usr/bin/grep "\$@"; _rc=\$?
 if [ "\$_dated" = "1" ] && [ ! -f "$W/fired" ]; then
@@ -1709,6 +1719,128 @@ msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-
 check "the run stops"          "$?"                                     "1"
 check "no fragment consumed"   "$(pending "$W")"                        "2"
 check "it names the newcomer"  "$(says "$msg" '2026-08-14.md appeared')"  "1"
+
+echo "T59: another day's fragment does not abort this day's run"
+W="$ROOT/t59"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Copying and content-validating every PENDING fragment rather than every
+# SELECTED one let a fragment belonging to another day abort this one — the
+# exact failure the select-don't-refuse rule exists to prevent, arriving by a
+# different route (Codex #1863 r21). 0002-b belongs to 08-17 and carries a
+# forbidden marker record; the 08-16 run must hold it back, not die on it.
+printf '## bad day fragment\n<!-- assembled-fragment: x.md sha256=%s -->\n' \
+  ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff \
+  > "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+git -C "$W" add -A
+GIT_AUTHOR_DATE='2026-08-17T10:00:00Z' GIT_COMMITTER_DATE='2026-08-17T10:00:00Z' \
+  git -C "$W" commit -q -m 'bad 0002-b'
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run succeeds"        "$?"                                          "0"
+check "this day was produced" \
+  "$(count_in '^## 0001-a$' "$out/ReleaseNotes-2026-08-16.md")"               "1"
+check "the other day is held"   "$(pending "$W")"                             "1"
+
+echo "T60: the post-write handler exists before anything can call it"
+W="$ROOT/t60"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A shell function does not exist until its definition has EXECUTED. The
+# readback after the rename called the handler while it was still defined
+# further down, so the first post-publication failure died with exit 127 and
+# "command not found", telling the operator nothing about the dated file
+# already being written (Codex #1863 r21).
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sha256sum" <<SHIM
+#!/bin/sh
+if [ -f "$out/ReleaseNotes-2026-08-16.md" ]; then exit 3; fi
+exec /usr/bin/sha256sum "\$@"
+SHIM
+chmod +x "$W/fakebin/sha256sum"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+rc=$?
+check "it is not 127"            "$([ "$rc" = "127" ] && echo bad || echo ok)"  "ok"
+check "no command-not-found"     "$(says "$msg" 'command not found')"           "0"
+check "it states the contract"   "$(says "$msg" 'HAS ALREADY BEEN WRITTEN')"    "1"
+
+echo "T61: a near-NAME_MAX fragment name can still be set aside"
+W="$ROOT/t61"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Prefixing a legal 250-byte basename with ".assembled." makes an illegal
+# destination, and `mv` then fails AFTER the dated file is published — so every
+# first assembly entered the half-done recovery path instead of finishing
+# (Codex #1863 r21).
+# 5 + 240 + 3 = 248 bytes: legal on its own, illegal once ".assembled." is
+# prepended. Built as prefix + padding + suffix, not by repeating the whole
+# stem, which produced a name too long to even create.
+long="0003-$(printf 'x%.0s' $(seq 1 240)).md"
+[ "${#long}" -eq 248 ] || { echo "  FAIL — test bug: fixture name is ${#long} bytes"; FAILED=1; }
+printf '## long name\n' > "$W/docs/ReleaseNotes/unreleased/$long"
+mkdir -p "$W/fakebin"
+# Force the set-aside path: the fragment changes after it is read.
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/$long"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run completes"       "$?"                                      "0"
+check "no name-too-long"        "$(says "$msg" 'too long')"                "0"
+check "the newer bytes survive" \
+  "$(grep -rl 'changed after reading' "$W/docs/ReleaseNotes/unreleased" | wc -l | tr -d ' ')" "1"
+
+echo "T62: a marker record containing a NUL is refused, not silently reshaped"
+W="$ROOT/t62"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Bash cannot hold a NUL and drops it from a command substitution, so a
+# malformed record `name.md<NUL> sha256=...` — which the anchored pattern
+# rejects — arrives as a VALID record for `name.md` and authorises deleting it
+# (Codex #1863 r21).
+_h="$(fixture_hash "$W/docs/ReleaseNotes/unreleased/0001-a.md")"
+{ printf '# Release Notes — 2026-08-16\n\n'
+  printf '<!-- assembled-fragment: 0001-a.md'
+  printf '\000'
+  printf ' sha256=%s -->\n' "$_h"
+} > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                  "1"
+check "no fragment consumed"   "$(pending "$W")"                     "2"
+check "it names the cause"     "$(says "$msg" 'null byte')"           "1"
+
+echo "T63: a marker present only during the scan cannot authorise a deletion"
+W="$ROOT/t63"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Recording a digest and then grepping the LIVE file is two reads. A marker
+# injected only for the duration of the grep, then removed, left the digest
+# matching while the index held evidence that never persisted — and that
+# evidence deleted a fragment whose section was then in no file at all
+# (Codex #1863 r21). Parsing from the copy the digest describes closes it.
+_h="$(fixture_hash "$W/docs/ReleaseNotes/unreleased/0001-a.md")"
+printf '# Release Notes — 2026-08-16\n\n## something\n' > "$out/ReleaseNotes-2026-08-16.md"
+cp "$out/ReleaseNotes-2026-08-16.md" "$W/pristine.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/cp" <<SHIM
+#!/bin/sh
+# Inject the record, let the copy be taken, then restore — so the live file
+# ends identical to how it started and only the copy could ever have seen it.
+case "\$*" in
+  */ReleaseNotes-2026-08-16.md*)
+    printf '<!-- assembled-fragment: 0001-a.md sha256=%s -->\n' "$_h" \\
+      >> "$out/ReleaseNotes-2026-08-16.md"
+    /bin/cp "\$@"; _rc=\$?
+    /bin/cp "$W/pristine.md" "$out/ReleaseNotes-2026-08-16.md"
+    exit \$_rc
+    ;;
+esac
+exec /bin/cp "\$@"
+SHIM
+chmod +x "$W/fakebin/cp"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "0001-a is not destroyed" \
+  "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

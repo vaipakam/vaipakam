@@ -464,85 +464,20 @@ if [ "${#frags[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# One CHECKED basename per fragment, resolved once and reused (Codex
-# #1863 r13). Inline `$(basename "$f")` in the test below could fail
-# transiently, and its empty output would slip past the rejection while a
-# later successful call wrote the forbidden name into the marker — the
-# check and the use disagreeing about what the name even is. Resolving it
-# once removes that gap by construction, the same way FRAG_HASH does for
-# the digest.
-# Each fragment is copied ONCE, and every later read is of the copy
-# (Codex #1863 r19). The run otherwise reads a fragment four times — to
-# reject an embedded marker record, to hash it, to assemble it, to check
-# the last byte — and a fragment edited between any two of those reads
-# makes them disagree about what it said. The gate that refuses a
-# fragment carrying its own marker record was the one that mattered:
-# pass it, then gain such a line before the hash is taken, and the
-# injected record is hashed, assembled and trusted as though this script
-# had written it — which can have a DIFFERENT fragment deleted unread.
+
+# ── Names, checked before the ordering step ──────────────────────────────────
+# ONLY the newline guard runs this early, and only because the sort below
+# is newline-delimited: a name containing one becomes two entries there,
+# and the run then dies on truncated paths that do not exist (Codex #1863
+# r16). Everything else about a fragment — its shape, its contents, its
+# working copy — is checked after the day is chosen, so another day's
+# fragment cannot abort this day's run (Codex #1863 r21).
 #
-# Validating harder cannot fix that, because the flaw is not in the
-# validation; it is that the bytes validated and the bytes used were
-# read at two different moments. Copying first removes the gap by
-# construction, and no ordering of checks can.
-#
-# The ORIGINAL is still what gets re-hashed before deletion — that
-# comparison is the point, and it is what keeps a fragment edited during
-# the run from being thrown away.
-SNAP="$(mktemp -d "$DIR/.assemble-snap-$DATE.XXXXXX")"
-declare -A FRAG_SNAP=()
-_n=0
-declare -A FRAG_NAME=()
+# This pass is deliberately incapable of rejecting a fragment for
+# anything but a name the ORDERING cannot survive.
 for f in "${frags[@]}"; do
   run_checked 0 "naming $f" basename "$f"
-  FRAG_NAME["$f"]="$CAPTURED"
-  # Numbered, not named: a fragment basename can contain anything the
-  # filesystem allows, and the copy's path is this script's own business.
-  _n=$(( _n + 1 ))
-  # Through run_checked like every other command whose failure matters:
-  # without the copy, the checks below and the text actually folded in
-  # could describe different versions of the fragment, which is the whole
-  # point of taking one.
-  #
-  # Hashed either side of the copy, and the copy compared against both
-  # (Codex #1863 r20). `cp` is not atomic: rewritten while it reads, the
-  # copy can hold an old prefix and a new suffix — a version that never
-  # existed. Everything downstream then trusts that hybrid consistently,
-  # so nothing notices, and the re-hash at the end quarantines the
-  # coherent new source AFTER the invented one has been published.
-  #
-  # Three matching reads is evidence of a quiet moment, not proof of one:
-  # a writer could still have finished between two of them. It narrows a
-  # silent corruption into a loud refusal, which is the trade worth
-  # making, and it is not a guarantee — nothing available to a shell
-  # script is.
-  run_checked 0 "reading ${FRAG_NAME[$f]}" frag_hash "$f"
-  _before="$CAPTURED"
-  run_checked 0 "taking a working copy of ${FRAG_NAME[$f]}" \
-    cp "$f" "$SNAP/$_n"
-  run_checked 0 "re-reading ${FRAG_NAME[$f]}" frag_hash "$f"
-  _after="$CAPTURED"
-  run_checked 0 "checking the working copy of ${FRAG_NAME[$f]}" \
-    frag_hash "$SNAP/$_n"
-  if [ "$_before" != "$_after" ] || [ "$CAPTURED" != "$_before" ]; then
-    echo "Error: ${FRAG_NAME[$f]} changed while it was being read." >&2
-    echo "" >&2
-    echo "Refusing to assemble: the copy taken may hold part of one version" >&2
-    echo "and part of another — text that never existed as a fragment — and" >&2
-    echo "everything downstream would treat it as authoritative." >&2
-    echo "" >&2
-    echo "Nothing has been consumed. Re-run once whatever is writing it has" >&2
-    echo "finished." >&2
-    exit 1
-  fi
-  FRAG_SNAP["$f"]="$SNAP/$_n"
-  # A basename cannot be allowed to close the marker's HTML comment
-  # (#1863 r12). `note-->visible.md` produces
-  # `<!-- assembled-fragment: note-->visible.md sha256=… -->`, which ends
-  # at the name: the hash — and anything else the name carries — then
-  # renders as visible text in the published notes, breaking the one
-  # promise the marker makes. Refused rather than escaped, because these
-  # names are ours and a legible one never contains `-->`.
+  _nm="$CAPTURED"
   # A NEWLINE in a basename breaks the ordering step below, which is
   # newline-delimited: one path becomes two entries, the hashing pass
   # then fails on truncated paths that do not exist, and the run aborts
@@ -550,7 +485,7 @@ for f in "${frags[@]}"; do
   # unassemblable until somebody works out that the name is the problem
   # (Codex #1863 r16). Refused here, before the sort, with a message that
   # says which file and why.
-  if [[ "${FRAG_NAME[$f]}" == *$'\n'* ]]; then
+  if [[ "$_nm" == *$'\n'* ]]; then
     echo "Error: a fragment filename contains a newline." >&2
     echo "" >&2
     printf '  %q\n' "$f" >&2
@@ -559,40 +494,6 @@ for f in "${frags[@]}"; do
     echo "sort, so such a name would be split into two and the run would fail" >&2
     echo "later with a confusing error about a file that does not exist." >&2
     echo "Rename the fragment." >&2
-    exit 1
-  fi
-  case "${FRAG_NAME[$f]}" in
-    *'-->'* | *'<!--'*)
-      echo "Error: ${FRAG_NAME[$f]} contains an HTML comment delimiter." >&2
-      echo "Refusing to assemble: the provenance marker is an HTML comment," >&2
-      echo "so such a name would end it early and print the rest of the" >&2
-      echo "marker as visible text in the published notes." >&2
-      echo "Rename the fragment." >&2
-      exit 1
-      ;;
-  esac
-  # A fragment must not be able to WRITE THE INDEX (Codex #1863 r13).
-  # Anchoring the parser stopped a marker quoted mid-line from counting,
-  # but a fragment can put a complete, valid marker at the start of one —
-  # and once assembled it is indistinguishable from a record this script
-  # wrote. Naming a fragment from a LATER batch would make the next run
-  # delete that one unread, having never written its text anywhere.
-  # Content is untrusted input to the index, so it is refused at the door.
-  # A fragment DOCUMENTING this mechanism can still quote a marker
-  # indented or in a blockquote, which is what the anchor is for.
-  run_checked 0,1 "checking ${FRAG_NAME[$f]} for embedded marker records" \
-    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "${FRAG_SNAP[$f]}"
-  if [ -n "$CAPTURED" ]; then
-    echo "Error: ${FRAG_NAME[$f]} contains a line that is itself an assembly" >&2
-    echo "marker:" >&2
-    echo "" >&2
-    printf '  %s\n' "$CAPTURED" >&2
-    echo "" >&2
-    echo "Refusing to assemble: those records are what a later run trusts to" >&2
-    echo "decide a fragment is already folded in, so one supplied by a" >&2
-    echo "fragment could make a DIFFERENT fragment be deleted unread." >&2
-    echo "Indent it or quote it in a blockquote if you are documenting the" >&2
-    echo "format." >&2
     exit 1
   fi
 done
@@ -919,6 +820,132 @@ else
   frags=("${selected[@]}")
 fi
 
+# ── Working copies, taken AFTER the day is decided ───────────────────────────
+# Snapshotting and content-validating every PENDING fragment, rather than
+# every SELECTED one, made another day's fragment able to abort this day's
+# run (Codex #1863 r21) — which contradicts the promise a few lines above,
+# that a run "takes the fragments belonging to ITS day ... and leaves those
+# in place for their own run". A mixed backlog became unassemblable again by
+# a different route: the exact failure SELECT-don't-refuse exists to prevent.
+#
+# Nothing here needs to run earlier. Day selection reads paths and git, not
+# names, hashes or copies.
+
+# One CHECKED basename per fragment, resolved once and reused (Codex
+# #1863 r13). Inline `$(basename "$f")` in the test below could fail
+# transiently, and its empty output would slip past the rejection while a
+# later successful call wrote the forbidden name into the marker — the
+# check and the use disagreeing about what the name even is. Resolving it
+# once removes that gap by construction, the same way FRAG_HASH does for
+# the digest.
+# Each fragment is copied ONCE, and every later read is of the copy
+# (Codex #1863 r19). The run otherwise reads a fragment four times — to
+# reject an embedded marker record, to hash it, to assemble it, to check
+# the last byte — and a fragment edited between any two of those reads
+# makes them disagree about what it said. The gate that refuses a
+# fragment carrying its own marker record was the one that mattered:
+# pass it, then gain such a line before the hash is taken, and the
+# injected record is hashed, assembled and trusted as though this script
+# had written it — which can have a DIFFERENT fragment deleted unread.
+#
+# Validating harder cannot fix that, because the flaw is not in the
+# validation; it is that the bytes validated and the bytes used were
+# read at two different moments. Copying first removes the gap by
+# construction, and no ordering of checks can.
+#
+# The ORIGINAL is still what gets re-hashed before deletion — that
+# comparison is the point, and it is what keeps a fragment edited during
+# the run from being thrown away.
+SNAP="$(mktemp -d "$DIR/.assemble-snap-$DATE.XXXXXX")"
+declare -A FRAG_SNAP=()
+_n=0
+declare -A FRAG_NAME=()
+for f in "${frags[@]}"; do
+  run_checked 0 "naming $f" basename "$f"
+  FRAG_NAME["$f"]="$CAPTURED"
+  # Numbered, not named: a fragment basename can contain anything the
+  # filesystem allows, and the copy's path is this script's own business.
+  _n=$(( _n + 1 ))
+  # Through run_checked like every other command whose failure matters:
+  # without the copy, the checks below and the text actually folded in
+  # could describe different versions of the fragment, which is the whole
+  # point of taking one.
+  #
+  # Hashed either side of the copy, and the copy compared against both
+  # (Codex #1863 r20). `cp` is not atomic: rewritten while it reads, the
+  # copy can hold an old prefix and a new suffix — a version that never
+  # existed. Everything downstream then trusts that hybrid consistently,
+  # so nothing notices, and the re-hash at the end quarantines the
+  # coherent new source AFTER the invented one has been published.
+  #
+  # Three matching reads is evidence of a quiet moment, not proof of one:
+  # a writer could still have finished between two of them. It narrows a
+  # silent corruption into a loud refusal, which is the trade worth
+  # making, and it is not a guarantee — nothing available to a shell
+  # script is.
+  run_checked 0 "reading ${FRAG_NAME[$f]}" frag_hash "$f"
+  _before="$CAPTURED"
+  run_checked 0 "taking a working copy of ${FRAG_NAME[$f]}" \
+    cp "$f" "$SNAP/$_n"
+  run_checked 0 "re-reading ${FRAG_NAME[$f]}" frag_hash "$f"
+  _after="$CAPTURED"
+  run_checked 0 "checking the working copy of ${FRAG_NAME[$f]}" \
+    frag_hash "$SNAP/$_n"
+  if [ "$_before" != "$_after" ] || [ "$CAPTURED" != "$_before" ]; then
+    echo "Error: ${FRAG_NAME[$f]} changed while it was being read." >&2
+    echo "" >&2
+    echo "Refusing to assemble: the copy taken may hold part of one version" >&2
+    echo "and part of another — text that never existed as a fragment — and" >&2
+    echo "everything downstream would treat it as authoritative." >&2
+    echo "" >&2
+    echo "Nothing has been consumed. Re-run once whatever is writing it has" >&2
+    echo "finished." >&2
+    exit 1
+  fi
+  FRAG_SNAP["$f"]="$SNAP/$_n"
+  # A basename cannot be allowed to close the marker's HTML comment
+  # (#1863 r12). `note-->visible.md` produces
+  # `<!-- assembled-fragment: note-->visible.md sha256=… -->`, which ends
+  # at the name: the hash — and anything else the name carries — then
+  # renders as visible text in the published notes, breaking the one
+  # promise the marker makes. Refused rather than escaped, because these
+  # names are ours and a legible one never contains `-->`.
+  case "${FRAG_NAME[$f]}" in
+    *'-->'* | *'<!--'*)
+      echo "Error: ${FRAG_NAME[$f]} contains an HTML comment delimiter." >&2
+      echo "Refusing to assemble: the provenance marker is an HTML comment," >&2
+      echo "so such a name would end it early and print the rest of the" >&2
+      echo "marker as visible text in the published notes." >&2
+      echo "Rename the fragment." >&2
+      exit 1
+      ;;
+  esac
+  # A fragment must not be able to WRITE THE INDEX (Codex #1863 r13).
+  # Anchoring the parser stopped a marker quoted mid-line from counting,
+  # but a fragment can put a complete, valid marker at the start of one —
+  # and once assembled it is indistinguishable from a record this script
+  # wrote. Naming a fragment from a LATER batch would make the next run
+  # delete that one unread, having never written its text anywhere.
+  # Content is untrusted input to the index, so it is refused at the door.
+  # A fragment DOCUMENTING this mechanism can still quote a marker
+  # indented or in a blockquote, which is what the anchor is for.
+  run_checked 0,1 "checking ${FRAG_NAME[$f]} for embedded marker records" \
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "${FRAG_SNAP[$f]}"
+  if [ -n "$CAPTURED" ]; then
+    echo "Error: ${FRAG_NAME[$f]} contains a line that is itself an assembly" >&2
+    echo "marker:" >&2
+    echo "" >&2
+    printf '  %s\n' "$CAPTURED" >&2
+    echo "" >&2
+    echo "Refusing to assemble: those records are what a later run trusts to" >&2
+    echo "decide a fragment is already folded in, so one supplied by a" >&2
+    echo "fragment could make a DIFFERENT fragment be deleted unread." >&2
+    echo "Indent it or quote it in a blockquote if you are documenting the" >&2
+    echo "format." >&2
+    exit 1
+  fi
+done
+
 # ── Already-assembled fragments ──────────────────────────────────────────────
 # A fragment that is BOTH pending and already marked in $OUT is the
 # signature of a run interrupted between the rename and the deletes
@@ -1051,6 +1078,7 @@ assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen
 # remembered: a new read gets recorded by the same loop, and a new act
 # inherits the same call.
 declare -A SRC_ID=()
+_d_n=0
 
 assert_sources_unchanged() {  # assert_sources_unchanged <what-was-about-to-happen>
   local p now
@@ -1121,11 +1149,22 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     echo "cover every dated file, and this one cannot be read as one." >&2
     exit 1
   fi
-  # Recorded HERE, in the loop that reads it, so a file cannot end up in
-  # the index without ending up in the map (Codex #1863 r20). That is the
-  # whole point of putting it here rather than in a list somewhere else:
-  # the two cannot drift, because they are the same iteration.
-  if ! file_identity "$dated"; then
+  # A WORKING COPY, and the records are parsed from it — the same
+  # treatment the fragments get, and for the same reason (Codex #1863
+  # r21). Recording a digest and then grepping the live file is two
+  # reads: a marker present only for the duration of the grep, and
+  # removed before the check, leaves the digest matching while the index
+  # holds evidence that never persisted — and that evidence authorises
+  # deleting a fragment whose section is then in no file at all.
+  #
+  # Copy first, identify the COPY, parse the COPY. The later comparison
+  # asks whether the live file still equals the bytes actually parsed,
+  # which is the question that was being approximated before.
+  _d_n=$(( _d_n + 1 ))
+  run_checked 0 "taking a working copy of $(basename "$dated")" \
+    cp "$dated" "$SNAP/dated.$_d_n"
+  _d_copy="$SNAP/dated.$_d_n"
+  if ! file_identity "$_d_copy"; then
     echo "Error: $(basename "$dated") -- $IDENTITY_FAIL failed." >&2
     echo "Refusing to assemble: this run's decisions about what is already" >&2
     echo "filed come from these files, so it has to be able to tell whether" >&2
@@ -1133,6 +1172,53 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     exit 1
   fi
   SRC_ID["$dated"]="${IDENTITY%% *}"
+  # The copy must equal the live file, or the baseline describes bytes
+  # nobody will ever compare against and every later check passes
+  # vacuously. Same bracket the fragments use, same non-guarantee.
+  run_checked 0 "re-reading $(basename "$dated")" frag_hash "$dated"
+  if [ "$CAPTURED" != "${SRC_ID[$dated]}" ]; then
+    echo "Error: $(basename "$dated") changed while it was being read." >&2
+    echo "Refusing to assemble: the records this run would rely on may be" >&2
+    echo "from a version that no longer exists." >&2
+    exit 1
+  fi
+  # A record carrying a NUL is REFUSED, never parsed (Codex #1863 r21).
+  # Bash cannot hold a NUL in a variable and drops it from a command
+  # substitution, so a line like
+  # `<!-- assembled-fragment: note.md<NUL> sha256=... -->` — which the
+  # anchored pattern rejects as malformed — arrives as the valid record
+  # `note.md sha256=...` and authorises deleting `note.md`, whose section
+  # is nowhere in the file. The bytes that failed the check are not the
+  # bytes acted on, which is this whole change's subject in miniature.
+  #
+  # No marker this script writes can contain one: a NUL cannot appear in
+  # a filename and the hash is hex. Its presence means the file is not
+  # saying what it appears to say.
+  #
+  # Only MARKER-SHAPED lines are inspected. A fragment may legitimately
+  # carry NUL bytes in its prose — two cases in the suite do — and those
+  # reach the dated file, so testing the whole file would refuse ordinary
+  # input. Run BEFORE the scan below and with its own status variable, so
+  # it cannot disturb the CAPTURED the parse loop reads.
+  _mrec="$SNAP/markers.$_d_n"
+  _mrc=0
+  LC_ALL=C grep -a "^$MARKER_PREFIX" "$_d_copy" > "$_mrec" 2>/dev/null || _mrc=$?
+  if (( _mrc > 1 )); then
+    echo "Error: listing marker lines in $(basename "$dated") failed (exit $_mrc)." >&2
+    echo "Refusing to assemble: an incomplete index is worse than none." >&2
+    exit 1
+  fi
+  if ! LC_ALL=C tr -d '\000' < "$_mrec" | cmp -s - "$_mrec"; then
+    echo "Error: $(basename "$dated") holds a marker record containing a" >&2
+    echo "null byte." >&2
+    echo "" >&2
+    echo "Refusing to assemble: this shell cannot carry that byte, so the" >&2
+    echo "record would be read as a DIFFERENT and apparently valid one, and" >&2
+    echo "a fragment deleted on the strength of it." >&2
+    echo "" >&2
+    echo "Nothing has been consumed. Repair the file by hand." >&2
+    exit 1
+  fi
   # `grep` exit 1 is "no markers in this file", which is normal. Anything
   # ABOVE 1 is a read error, and `|| true` used to flatten the two
   # together — leaving a silently INCOMPLETE index, which is worse than
@@ -1161,7 +1247,20 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
   # there and the index cannot see it (Codex #1863 r13). These records are
   # bytes by construction; parse them as bytes.
   run_checked 0,1 "scanning $(basename "$dated") for assembly markers" \
-    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated"
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$_d_copy"
+  # A record carrying a NUL is REFUSED, never parsed (Codex #1863 r21).
+  # Bash cannot hold a NUL in a variable and drops it from a command
+  # substitution, so `<!-- assembled-fragment: note.md\0 sha256=… -->` —
+  # which the anchored pattern would reject as malformed — arrives here
+  # as the valid record `note.md sha256=…` and authorises deleting
+  # `note.md`, whose section is nowhere in the file. The bytes that
+  # failed the check are not the bytes that get acted on, which is this
+  # whole document's subject in miniature.
+  #
+  # No marker this script writes can contain one: a NUL cannot appear in
+  # a filename, and the hash is hex. So its presence means the file is
+  # not saying what it appears to say, and stopping is the only answer
+  # that neither duplicates nor deletes.
   while IFS= read -r line; do
     # `<!-- assembled-fragment: <basename> sha256=<hex> -->`, and ONLY
     # that shape. A line matching the prefix but not the full form is
@@ -1660,6 +1759,33 @@ for f in "${frags[@]}"; do
     "$MARKER_PREFIX" "${FRAG_NAME[$f]}" "${FRAG_HASH[$f]}" >> "$WORK"
 done
 
+# Defined BEFORE the rename, not after it (Codex #1863 r21). A shell
+# function does not exist until its definition has been executed, and
+# the readback below the rename called this one while it was still
+# further down the file — so the very first post-publication failure
+# died with `_abort_after_write: command not found` and exit 127,
+# telling the operator nothing about the dated file already being
+# written. A handler that only works after the second failure is not a
+# handler. Moved up so every caller is downstream of it.
+_cleared=()
+_abort_after_write() {
+  echo "" >&2
+  echo "Error: $1." >&2
+  echo "" >&2
+  echo "$(basename "$OUT") HAS ALREADY BEEN WRITTEN — this failure is in the" >&2
+  echo "clearing step that follows it, so the run is half done." >&2
+  if (( ${#_cleared[@]} > 0 )); then
+    echo "" >&2
+    echo "Already cleared (their content is in the dated file):" >&2
+    printf '  %s\n' "${_cleared[@]}" >&2
+  fi
+  echo "" >&2
+  echo "Everything still in $UNREL is either uncleared or set aside. Re-running" >&2
+  echo "is safe: the markers in the dated file are how the next run recognises" >&2
+  echo "what is already folded in." >&2
+  exit 1
+}
+
 # The atomic step. Until this line $OUT is untouched, so an interruption
 # at ANY point above leaves the previous release-notes file exactly as it
 # was and every fragment still pending — the state a plain re-run
@@ -1759,24 +1885,6 @@ WORK=""
 # would abort under `set -e` with the tool's own status and no word about
 # any of that — the same silence the whole PR has been closing, in the
 # one place where the file is already published.
-_cleared=()
-_abort_after_write() {
-  echo "" >&2
-  echo "Error: $1." >&2
-  echo "" >&2
-  echo "$(basename "$OUT") HAS ALREADY BEEN WRITTEN — this failure is in the" >&2
-  echo "clearing step that follows it, so the run is half done." >&2
-  if (( ${#_cleared[@]} > 0 )); then
-    echo "" >&2
-    echo "Already cleared (their content is in the dated file):" >&2
-    printf '  %s\n' "${_cleared[@]}" >&2
-  fi
-  echo "" >&2
-  echo "Everything still in $UNREL is either uncleared or set aside. Re-running" >&2
-  echo "is safe: the markers in the dated file are how the next run recognises" >&2
-  echo "what is already folded in." >&2
-  exit 1
-}
 
 _kept=()
 for f in "${frags[@]}"; do
@@ -1817,7 +1925,24 @@ for f in "${frags[@]}"; do
   if (( _pub_rc != 0 )) || [ "$_pub_now" != "$PUBLISHED_ID" ]; then
     _abort_after_write "$(basename "$OUT") is gone or altered since it was written"
   fi
-  _q="$UNREL/.assembled.${FRAG_NAME[$f]}"
+  # The quarantine name is BOUNDED, not the basename with a prefix glued
+  # on (Codex #1863 r21). NAME_MAX is 255 bytes per component on ext4, so
+  # a perfectly legal 250-byte fragment name becomes an illegal
+  # destination once `.assembled.` is added — and `mv` then fails AFTER
+  # the dated file is published, leaving every run to enter the half-done
+  # recovery path instead of finishing. The name a file is given must not
+  # be able to be invalid because of what this script prepends to it.
+  #
+  # Truncated to fit, with the fragment's hash making it unique — two
+  # long names sharing a prefix would otherwise collide, and colliding
+  # here means the "a set-aside file already exists" abort on a perfectly
+  # ordinary pool. The full name is printed, so nothing is lost to the
+  # operator; only the on-disk name is shortened.
+  _q_name=".assembled.${FRAG_NAME[$f]}"
+  if (( ${#_q_name} > 200 )); then
+    _q_name=".assembled.${FRAG_NAME[$f]:0:160}.${FRAG_HASH[$f]:0:16}"
+  fi
+  _q="$UNREL/$_q_name"
   if [ -e "$_q" ]; then
     _abort_after_write "a set-aside file already exists at $(basename "$_q")"
   fi

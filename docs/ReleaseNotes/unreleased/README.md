@@ -113,6 +113,13 @@ newer text is never the thing that gets thrown away. A fragment rewritten
 *during* its copy stops the run outright, since the copy could otherwise
 hold half of one version and half of another.
 
+**A fragment belonging to another day can never stop this day's run.**
+Fragments are copied and checked *after* the day is chosen, so anything
+wrong with tomorrow's fragment is tomorrow's problem — a mixed backlog
+stays assemblable, one day at a time. The single exception is a newline
+in a filename, which is refused early because the ordering step cannot
+survive it.
+
 **Any other dated file changing also stops the run**, not just the one
 being written. Which fragments count as already folded in is decided by
 reading all of them, so a marker appearing in another day's file — or a
