@@ -2602,13 +2602,75 @@ async function anchorAudit(page, card) {
         ? 'loan-sale-card'
         : null;
   const jumping = rows.filter((r) => r.hasJump);
+
+  // INVOKE THE BUTTON, do not infer from its title (Codex #1853 r25).
+  //
+  // Every earlier version of this asked whether the element a row's
+  // TITLE maps to exists. That is not the claim the drive advertises,
+  // and it is satisfied by the failure it exists to catch: with both
+  // anchors mounted — the normal case — Sell and List can scroll to
+  // each other's, a handler can be dropped, a binding can be swapped
+  // for a no-op, and every `present` check still passes. The audit
+  // established that two elements exist.
+  //
+  // Twenty-five rounds of review went into the verdicts AROUND this
+  // check while its central claim was never tested. That ordering is
+  // the lesson: hardening the interpretation of a result does nothing
+  // if the result was never produced.
+  //
+  // So the buttons are clicked and the navigation is MEASURED. The
+  // handler is `getElementById(target)?.scrollIntoView(...)`, so
+  // recording that call names the element actually reached — and an
+  // absent anchor records nothing at all, which is the dead-button
+  // case detected as an observation rather than as an inference.
+  //
+  // Watch-only, exactly as before: a jump handler scrolls and does not
+  // submit, sign or mutate anything. That is what makes clicking
+  // admissible in a drive that holds no key.
+  await page.evaluate(() => {
+    const w = /** @type {any} */ (window);
+    if (w.__vpkJumpRecorder) return;
+    w.__vpkJumpRecorder = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function patched(...args) {
+      w.__vpkJumpRecorder.push(this.id || '(element has no id)');
+      return original.apply(this, args);
+    };
+  });
+
+  const buttons = card.getByRole('button', { name: /Go to this option/i });
   const checks = [];
-  for (const r of jumping) {
-    const target = targetFor(r.title);
-    const present = target
-      ? await page.evaluate((id) => Boolean(document.getElementById(id)), target)
-      : null;
-    checks.push({ title: r.title.slice(0, 40), target, present });
+  for (let i = 0; i < jumping.length; i++) {
+    const target = targetFor(jumping[i].title);
+    await page.evaluate(() => {
+      /** @type {any} */ (window).__vpkJumpRecorder.length = 0;
+    });
+    let reached;
+    try {
+      await buttons.nth(i).click({ timeout: 5_000 });
+      // The handler is synchronous; one frame is enough for the call to
+      // have been recorded, and `smooth` behaviour does not delay it.
+      await page.waitForTimeout(150);
+      reached = await page.evaluate(
+        () => /** @type {any} */ (window).__vpkJumpRecorder[0] ?? null,
+      );
+    } catch {
+      // A button that cannot be clicked says nothing about the app —
+      // it is covered, disabled or gone. `undefined` separates that
+      // from `null`, which is a click that navigated NOWHERE.
+      reached = undefined;
+    }
+    checks.push({
+      title: jumping[i].title.slice(0, 40),
+      target,
+      reached,
+      // `present` keeps its name and its meaning for the reporter: did
+      // this button do what its row promises. It is now measured
+      // rather than assumed, and stays `null` for a row this drive
+      // cannot map, which is still the harness's gap and not the
+      // app's.
+      present: target === null ? null : reached === undefined ? null : reached === target,
+    });
   }
   return {
     advancedJumps: jumping.length,
@@ -2634,6 +2696,15 @@ async function anchorAudit(page, card) {
     // zero-jump outcome has always belonged.
     advancedAnchorsOk: checks.length > 0 && checks.every((c) => c.present === true),
     advancedUnmapped: checks.filter((c) => c.target === null).map((c) => c.title),
+    // A MAPPED button we could not CLICK is a third outcome, and
+    // without naming it the instrumentation would have opened a hole
+    // where the presence check had none: `present` is null there, so it
+    // is neither a dead anchor nor an unmapped row, and it would have
+    // passed between the reporter's two arms in silence. Covered,
+    // disabled or vanished — all "could not look", all BLOCKED.
+    advancedUnexercised: checks
+      .filter((c) => c.target !== null && c.reached === undefined)
+      .map((c) => c.title),
     advancedAnchors: checks,
   };
 }
@@ -2809,7 +2880,11 @@ for (const v of visited) {
                 // and on a run that exits 1 for a dead anchor beside it
                 // this line is where the mapping gap is still visible —
                 // the BLOCKED summary below is not reached.
-                .map((a) => (a.target ? `${a.target}=${a.present}` : `unmapped:"${a.title}"`))
+                .map((a) =>
+                  a.target
+                    ? `${a.target}${a.reached === a.target ? ' ok' : ` → ${a.reached ?? 'nowhere'}`}`
+                    : `unmapped:"${a.title}"`,
+                )
                 .join(', ')}]`
             : '') +
           (v.advancedWhy ? ` (${v.advancedWhy})` : '') +
@@ -2994,7 +3069,10 @@ if (failures) process.exit(1);
 // not execute (Codex #1853 r6). Ranked AFTER `failures` so a real
 // regression is still reported as one.
 const advBlocked = visited.filter(
-  (v) => v.advancedBlocked || (v.advancedUnmapped ?? []).length > 0,
+  (v) =>
+    v.advancedBlocked ||
+    (v.advancedUnmapped ?? []).length > 0 ||
+    (v.advancedUnexercised ?? []).length > 0,
 );
 if (advBlocked.length) {
   console.log(
@@ -3005,7 +3083,16 @@ if (advBlocked.length) {
     console.log(
       `  ${v.path}: ${
         v.advancedWhy ??
-        `jumping row(s) this drive cannot map to an anchor: ${v.advancedUnmapped.join(', ')}`
+        [
+          (v.advancedUnmapped ?? []).length
+            ? `jumping row(s) this drive cannot map to an anchor: ${v.advancedUnmapped.join(', ')}`
+            : null,
+          (v.advancedUnexercised ?? []).length
+            ? `jump button(s) that could not be clicked: ${v.advancedUnexercised.join(', ')}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('; ')
       }`,
     ),
   );
