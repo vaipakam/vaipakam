@@ -691,10 +691,25 @@ for (const id of ids) {
   // than swallowing them: unwrapped, such a rejection would reach the top
   // level and exit 1 as a product regression — the round-7 bug, reached
   // by a new route.
-  loan.authority = await discovery(
-    `reading the ${ROLE} authority for loan ${id}`,
-    () => (ROLE === 'lender' ? lenderAuthorityOf(loan) : borrowerAuthorityOf(loan)),
-  );
+  // CHEAP GATES FIRST for the lender run (Codex #1853 r4). `discovery()`
+  // ends the whole drive on a read failure, and `assetType`/`status` are
+  // already in hand from `getLoanDetails` — so resolving the authority
+  // for a loan the predicate will discard anyway lets an irrelevant
+  // `ownerOf` failure deny the review to every observable position.
+  // Same rule the sanctions read gained in r3, applied one line earlier:
+  // a read whose answer cannot change any verdict must not be able to
+  // end the run.
+  //
+  // The borrower branch keeps reading unconditionally: it uses the
+  // authority in its own skip-reason reporting for ineligible loans,
+  // and changing that is outside this PR.
+  loan.authority =
+    ROLE === 'lender' && !(lenderStatusOk(loan.status) && loan.assetType === ASSET_ERC20)
+      ? null
+      : await discovery(
+          `reading the ${ROLE} authority for loan ${id}`,
+          () => (ROLE === 'lender' ? lenderAuthorityOf(loan) : borrowerAuthorityOf(loan)),
+        );
   // Only worth the extra reads on loans that clear the cheap gates, and
   // ONLY for the borrower card: the offset lock and the grace deadline
   // are gates on the borrower chooser. The lender card is deliberately
@@ -779,7 +794,11 @@ if (dropped > 0) {
       : l.assetType !== ASSET_ERC20
         ? 'NFT rental'
         : l.authority === null
-          ? `${ROLE} token burned`
+          ? // For a lender run the authority is deliberately left unread
+            // when the cheap gates already fail, so `null` there means
+            // "not looked up", not "burned" — and the two earlier arms
+            // have already named the real reason.
+            `${ROLE} token burned`
           : l.authoritySanctioned
             ? 'holder sanctions-flagged (card correctly suppressed)'
             : l.offsetLocked
@@ -1330,6 +1349,15 @@ async function visit(path, { expectChooser = false } = {}) {
   const hooks = pageErrors.some((e) =>
     /Rendered (more|fewer) hooks|Rules of Hooks|change in the order of Hooks/i.test(e),
   );
+  const lenderCardText =
+    ROLE === 'lender'
+      ? await page
+          .locator('section.card')
+          .filter({ hasText: CHOOSER.title })
+          .first()
+          .innerText()
+          .catch(() => null)
+      : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const out = {
@@ -1349,7 +1377,12 @@ async function visit(path, { expectChooser = false } = {}) {
     // by index rather than by presence — all three strings can be on the
     // page in the wrong order, which is exactly the regression a
     // presence check would wave through.
-    ...(ROLE === 'lender' ? lenderShapeOf(text) : {}),
+    // The CARD's own text, not the page's (a bounded-block scrape ran
+    // past the card's end and reported the page footer as a row's
+    // reason). Falls back to the full body when the card is absent, so
+    // the `card=false` verdict is still computed from something.
+    ...(ROLE === 'lender' ? lenderShapeOf(lenderCardText ?? text) : {}),
+    ...(ROLE === 'lender' ? await lenderAdvancedOf(page) : {}),
     holdCard: holdCard > 0,
     freeHeld: freeHeld > 0,
     connected: !/Connect wallet/i.test(text.slice(0, 400)),
@@ -1385,7 +1418,15 @@ async function stillEligible(loan) {
         // destructuring below keeps one shape.
         ROLE === 'lender' ? Promise.resolve(false) : offsetLockedOn(loan.borrowerTokenId),
         ROLE === 'lender' ? lenderAuthorityOf(loan) : borrowerAuthorityOf(loan),
-        pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
+        // Chain time feeds the BORROWER grace check only, and the lender
+        // branch returns before reaching it — so on a lender run this is
+        // a read whose failure could reject the shared Promise.all and
+        // report BLOCKED while every read that actually decides the
+        // verdict succeeded (Codex #1853 r4). Third instance of the same
+        // rule in two rounds.
+        ROLE === 'lender'
+          ? Promise.resolve(0n)
+          : pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
         pub.readContract({
           address: DIAMOND,
           abi: DIAMOND_ABI_VIEM,
@@ -1477,13 +1518,135 @@ function lenderShapeOf(text) {
   // be observed. Double-counting one defect is exactly what the `null`
   // arm was introduced to prevent, and it had a hole in it.
   const allPresent = wait >= 0 && sellNow >= 0 && list >= 0;
+  // The sentence each sale row shows INSTEAD of being available, when it
+  // is unavailable. Purely informational and never a FAIL — an
+  // unavailable row is correct behaviour on most chains — but without it
+  // "no jumpable row" is a dead end for whoever reads the report, and
+  // WHICH reason is showing is the single most useful fact about a live
+  // deployment's sale surface. Sliced from the row's own text so a
+  // reworded string degrades to a shorter excerpt rather than to a lie.
+  //
+  // Taken from the END of the row's block, not its start: the card
+  // renders title → description → cost lines → unavailability sentence,
+  // so the first lines after a title are the description (which the
+  // first version of this captured and reported as if it were the
+  // reason). The block is bounded by the next row's title, or by the
+  // card's switch note / the end of the text.
+  const bounds = [sellNow, list, at(/These tools live in the Advanced view/i), text.length]
+    // (`text` here is the card's own innerText — see the call site.)
+    .filter((i) => i >= 0)
+    .sort((a, b) => a - b);
+  const reasonAfter = (i) => {
+    if (i < 0) return null;
+    const end = bounds.find((b) => b > i) ?? text.length;
+    const lines = text
+      .slice(i, end)
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    // Last line of the block. On an AVAILABLE row that is the cost line
+    // or the jump label, which is why this is reported only when no jump
+    // rendered — the caller decides, so this stays a plain observation
+    // rather than a guess about which line means what.
+    return lines.length > 1 ? lines[lines.length - 1].slice(0, 160) : null;
+  };
   return {
+    sellNowText: reasonAfter(sellNow),
+    listText: reasonAfter(list),
     lenderBlurb: /You don.t have to do anything with this position/i.test(text),
     waitRow: wait >= 0,
     sellNowRow: sellNow >= 0,
     listRow: list >= 0,
     waitFirst: allPresent ? wait < sellNow && wait < list : null,
   };
+}
+
+/**
+ * The Advanced half of the review, and it needs NO WALLET FILE.
+ *
+ * I first recorded this as owed pending `TESTNET_WALLETS_FILE`, which
+ * was wrong (Codex #1853 r4): the drive already runs a CONNECTED
+ * session through its watch-only provider, `onSwitchToAdvanced` only
+ * calls `setMode('advanced')`, and each row's jump handler only calls
+ * `scrollIntoView`. Nothing here signs or sends, so filing it as a
+ * signing-limited gap fenced off coverage the keyless driver could
+ * always have taken. Recording that because a wrongly-stated limit is
+ * more expensive than an unstated one — it stops anyone looking again.
+ *
+ * What it asserts, and deliberately no more:
+ *
+ *  - the switch control is offered in Basic mode;
+ *  - after clicking it, the card's jump buttons appear (they render only
+ *    when `isAdvanced`), and
+ *  - every jump target a button points at EXISTS in the document.
+ *
+ * That last one is the real check. `jump()` resolves its target with
+ * `getElementById(...)?.scrollIntoView()` — optional-chained — so a row
+ * offering a jump to an anchor that never mounted is silently inert:
+ * the lender clicks and nothing at all happens. The card's own
+ * prerequisite gate exists to prevent exactly that, and this is the
+ * observation that would catch it failing.
+ *
+ * Returns `advancedJumps: null` when the switch is not offered, which is
+ * a legitimate state (every sale row unavailable), not a failure.
+ */
+async function lenderAdvancedOf(page) {
+  const SWITCH = /Show these tools \(switches to Advanced view\)/i;
+  const sw = page.getByRole('button', { name: SWITCH });
+  const jumpsOf = () => page.getByRole('button', { name: /Go to this option/i });
+  try {
+    if ((await sw.count()) === 0) {
+      // NO SWITCH means one of two different things, and the first
+      // version of this probe reported them identically — the same
+      // conflation this whole PR keeps finding. The card renders the
+      // switch only when it is in Basic mode AND some row is jumpable,
+      // so its absence is either "already in Advanced" (jump buttons
+      // present, and their anchors are still worth checking) or "no row
+      // is jumpable" (nothing to check, and legitimately so).
+      const already = await jumpsOf().count();
+      if (already === 0) {
+        return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
+      }
+      const anchors = await page.evaluate(() => ({
+        earlyExit: Boolean(document.getElementById('early-exit-card')),
+        loanSale: Boolean(document.getElementById('loan-sale-card')),
+      }));
+      return {
+        advancedOffered: false,
+        advancedJumps: already,
+        advancedAnchorsOk: already <= Number(anchors.earlyExit) + Number(anchors.loanSale),
+        advancedAnchors: anchors,
+        advancedWhy: 'already in Advanced',
+      };
+    }
+    await sw.first().click({ timeout: 10_000 });
+    // The tools mount behind their own reads; give them the same settle
+    // the initial scrape gets.
+    await page.waitForTimeout(6_000);
+    const n = await jumpsOf().count();
+    if (n === 0) {
+      return { advancedOffered: true, advancedJumps: null, advancedWhy: 'no jump rendered after switch' };
+    }
+    // Both anchors the card can target. Checking BOTH ids rather than
+    // only the ones a jump points at keeps this honest about which
+    // surface was actually present.
+    const anchors = await page.evaluate(() => ({
+      earlyExit: Boolean(document.getElementById('early-exit-card')),
+      loanSale: Boolean(document.getElementById('loan-sale-card')),
+    }));
+    return {
+      advancedOffered: true,
+      advancedJumps: n,
+      // A jump per anchor is the most this card ever renders, and every
+      // rendered jump must have somewhere to land.
+      advancedAnchorsOk: n <= Number(anchors.earlyExit) + Number(anchors.loanSale),
+      advancedAnchors: anchors,
+    };
+  } catch (e) {
+    // A click or evaluate that failed is "could not look", not a
+    // product defect — reported so it is visible, never as a FAIL.
+    return { advancedOffered: true, advancedJumps: null, advancedWhy: String(e).slice(0, 120) };
+  }
 }
 
 // ---------------------------------------------------------------- drive
@@ -1549,6 +1712,15 @@ for (const v of visited) {
       // `null` = not enough rows rendered to have an order; the missing
       // row is already reported above and must not be double-counted.
       if (v.waitFirst === false) problems.push('wait row is NOT first on the lender card');
+      // Only when jumps actually rendered: `advancedAnchorsOk === false`
+      // means a jump button points at an anchor that is not in the
+      // document, so clicking it does nothing at all — `jump()`
+      // optional-chains the lookup, so the failure is silent by
+      // construction and invisible to a user as anything but a dead
+      // button.
+      if (v.advancedAnchorsOk === false) {
+        problems.push('a lender jump button has no anchor to land on');
+      }
     } else {
       if (!v.handover) problems.push('handover path MISSING from the chooser');
       if (!v.offset) problems.push('offset path MISSING from the chooser');
@@ -1562,7 +1734,11 @@ for (const v of visited) {
     console.log(
       ROLE === 'lender'
         ? `      card=${v.chooser} blurb=${v.lenderBlurb} wait=${v.waitRow}` +
-          ` sellNow=${v.sellNowRow} list=${v.listRow} waitFirst=${v.waitFirst}`
+          ` sellNow=${v.sellNowRow} list=${v.listRow} waitFirst=${v.waitFirst}` +
+          `\n      advanced: offered=${v.advancedOffered} jumps=${v.advancedJumps}` +
+          ` anchorsOk=${v.advancedAnchorsOk ?? '-'}` +
+          (v.advancedWhy ? ` (${v.advancedWhy})` : '') +
+          (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`)
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,
     );
