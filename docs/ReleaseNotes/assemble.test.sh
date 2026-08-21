@@ -771,20 +771,31 @@ check "its target is untouched"    "$(cat "$W/real-notes.md")"                  
 echo "T27: two overlapping assemblies cannot lose a fragment"
 W="$ROOT/t27"; build "$W"
 out="$W/docs/ReleaseNotes"
-# The lock is what makes the read/build/rename/delete sequence a transaction.
-# Held, a second run must refuse rather than build from a stale snapshot and
-# overwrite the first run's work (Codex #1863 r4).
-mkdir "$out/.assemble-2026-08-16.lock"
+unrel="$W/docs/ReleaseNotes/unreleased"
+# The lock makes read-pool/build/rename/delete one transaction. It covers the
+# PENDING POOL, not one dated file: two runs on different dates still share
+# unreleased/, and with --allow-mixed-dates or an untracked fragment both can
+# select the same one, both rename, and one deletes it after the other has
+# already written it into a second dated file (Codex #1863 r5).
+mkdir "$unrel/.assemble.lock"
 msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
-check "the second run refuses"     "$?"                                   "1"
-check "no fragment was consumed"   "$(pending "$W")"                      "2"
-check "it names the lock"          "$(says "$msg" '.assemble-2026-08-16.lock')" "1"
-check "and says how to clear it"   "$(says "$msg" 'rmdir')"               "1"
-rmdir "$out/.assemble-2026-08-16.lock"
+check "a held lock refuses the run" "$?"                            "1"
+check "no fragment was consumed"    "$(pending "$W")"               "2"
+check "it names the lock"           "$(says "$msg" '.assemble.lock')" "1"
+check "and says how to clear it"    "$(says "$msg" 'rmdir')"        "1"
+# A DIFFERENT date must also be refused while it is held — that is the whole
+# correction, since the earlier per-date lock let this through.
+bash "$out/assemble.sh" 2026-08-17 >/dev/null 2>&1
+check "another date is refused too" "$?"                            "1"
+check "still nothing consumed"      "$(pending "$W")"               "2"
+rmdir "$unrel/.assemble.lock"
 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
-check "it proceeds once released"  "$(pending "$W")"                      "1"
+check "it proceeds once released"   "$(pending "$W")"               "1"
 check "and leaves no lock behind" \
-  "$([ -e "$out/.assemble-2026-08-16.lock" ] && echo held || echo clear)" "clear"
+  "$([ -e "$unrel/.assemble.lock" ] && echo held || echo clear)"    "clear"
+# The lock must not be mistaken for a fragment by the pool scan.
+check "the lock is not folded in" \
+  "$(says "$(cat "$out/ReleaseNotes-2026-08-16.md")" 'assemble.lock')" "0"
 
 echo "T28: two fragments with IDENTICAL bytes in one assembly both stay recorded"
 W="$ROOT/t28"; build "$W"
@@ -806,6 +817,27 @@ bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "the re-run succeeds"        "$?"                                          "0"
 check "nothing is duplicated"      "$(sections "$out/ReleaseNotes-2026-08-16.md")" "2"
 check "both are cleared"           "$(pending "$W")"                             "0"
+
+echo "T29: a symlinked output is refused BEFORE marker recovery deletes anything"
+W="$ROOT/t29"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0001-a.md" "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Assemble a real file for one day, then point ANOTHER day's output at it and
+# re-create the same fragment. The symlink is followed by `-f`, so with the
+# guard placed next to the `mv` the marker scan indexes the link as today's
+# $OUT, deletes the fragment as "already assembled", and exits successfully at
+# "Nothing left" — never reaching the guard at all (Codex #1863 r5). A check
+# that protects a destructive step has to run before it.
+printf '## reused note\n' > "$W/docs/ReleaseNotes/unreleased/same.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+ln -s "$out/ReleaseNotes-2026-08-16.md" "$out/ReleaseNotes-2026-08-17.md"
+printf '## reused note\n' > "$W/docs/ReleaseNotes/unreleased/same.md"
+bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1
+check "the run fails"               "$?"              "1"
+check "the fragment is NOT deleted" "$(pending "$W")" "1"
+check "the link is untouched" \
+  "$([ -L "$out/ReleaseNotes-2026-08-17.md" ] && echo link || echo replaced)" "link"
+rm -f "$out/ReleaseNotes-2026-08-17.md"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

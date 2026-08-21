@@ -96,8 +96,15 @@ otherwise work from its own snapshot, and whichever finished second would
 overwrite what the first had added — losing a note from the assembled file *and*
 from the pending pile at once, with both runs reporting success. A second run now
 stops and says so, including how to clear the marker if the first one died
-mid-way. Different days do not block each other, since they touch different
-files.
+mid-way.
+
+That hold covers **all** assembly, not just the day being assembled. It first
+covered one day at a time, on the reasoning that two days write to two different
+files and so cannot collide — which missed that they draw from the same pile of
+pending notes. A note not yet tied to a particular day is eligible for whichever
+day is asked for, so two runs on different days can pick up the same one, and it
+then lands in one file while being deleted out from under the other. What two
+runs contend for is the pile, so that is what is held.
 
 ### Verified against the fault, not just the fix
 

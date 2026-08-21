@@ -152,6 +152,84 @@ fi
 
 OUT="$DIR/ReleaseNotes-$DATE.md"
 
+# ── The output path must be a plain file, checked FIRST ──────────────────────
+# Before the marker scan, before the lock, before anything reads or
+# deletes. These guards used to sit next to the `mv`, which is far too
+# late: marker recovery runs first and DELETES the fragments it
+# recognises, so a symlinked $OUT could consume a fragment and exit
+# "Nothing left to assemble" without ever reaching the guard (Codex #1863
+# r5). A check that protects a destructive step has to precede it.
+#
+# `mv SOURCE DIRECTORY` is a documented form: with a directory at $OUT
+# the temp file is moved INSIDE it, the rename "succeeds", every fragment
+# is deleted, and the run reports a dated file that does not exist
+# (#1863 r1). `mv -T` would cover that one but is GNU only.
+if [ -e "$OUT" ] && [ ! -f "$OUT" ]; then
+  echo "Error: $OUT exists and is not a regular file." >&2
+  echo "Refusing to assemble: the fragments would be consumed and the" >&2
+  echo "assembled notes would not be at that path." >&2
+  exit 1
+fi
+# A SYMLINK needs its own test because `-f` FOLLOWS it, so a link to a
+# regular file passes the check above (#1863 r4). `mv` then replaces the
+# LINK rather than writing through it: the intended target is left
+# untouched, the path silently stops being a symlink, and every fragment
+# is consumed on a successful-looking run. The old append-by-redirect
+# wrote through the link, so this is a regression the atomic rename
+# introduced rather than an inherited quirk.
+if [ -L "$OUT" ]; then
+  echo "Error: $OUT is a symbolic link." >&2
+  echo "Refusing to assemble: the rename would replace the link itself and" >&2
+  echo "leave its target unchanged, while consuming every fragment." >&2
+  echo "Assemble into the real path, or replace the link with a regular file." >&2
+  exit 1
+fi
+
+# ── One assembly at a time ───────────────────────────────────────────────────
+# Everything from here to the deletes is one transaction: read the
+# pending pool, read $OUT, build, rename, delete. Taken BEFORE the pool
+# is listed — a lock acquired after the snapshot guards nothing, since
+# the snapshot is the thing two runs disagree about. Two overlapping runs for the same
+# date each build from their own snapshot, and the slower rename wins —
+# so a fragment the faster run had already folded in and deleted is
+# absent from BOTH the output and `unreleased/`. Lost outright, with two
+# successful-looking runs (Codex #1863 r4).
+#
+# `mkdir` as the lock: creating a directory is atomic and fails if it
+# exists, on every filesystem worth caring about, with no dependency on
+# `flock` (absent on macOS).
+#
+# ONE lock for the whole pending pool, not one per dated file. The first
+# version was per-date, reasoning that two days touch two different
+# outputs and so cannot collide. That was wrong: the two runs share the
+# `unreleased/` POOL, not just their outputs (Codex #1863 r5).
+# `--allow-mixed-dates` selects every pending fragment whatever date is
+# asked for, and an untracked fragment is accepted for ANY date — so two
+# runs on different dates can select the SAME fragment, both build, both
+# rename, and one deletes it while the other has already written it into
+# a second dated file. The note ends up duplicated across two days.
+# What is contended is the pool, so that is what the lock has to name.
+#
+# A stale lock after a hard kill is reported with the command to clear
+# it, rather than being broken automatically on a timer: this guards a
+# transaction that deletes files, so "the other run is probably dead" is
+# not a judgement to make on the operator's behalf.
+LOCK="$UNREL/.assemble.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "Error: another assembly appears to be running." >&2
+  echo "" >&2
+  echo "  lock: $LOCK" >&2
+  echo "" >&2
+  echo "Two overlapping runs share the pending pool, so they can lose a" >&2
+  echo "fragment entirely or duplicate one across two dated files — even when" >&2
+  echo "they are assembling different days." >&2
+  echo "If no other run is active, the lock is stale from an interrupted run:" >&2
+  echo "  rmdir '$LOCK'" >&2
+  exit 1
+fi
+_release_lock() { rmdir "$LOCK" 2>/dev/null || true; }
+trap '_release_lock' EXIT
+
 # Collect pending fragments — every *.md except the README + template.
 shopt -s nullglob
 frags=()
@@ -488,39 +566,6 @@ else
   fi
   frags=("${selected[@]}")
 fi
-
-# ── One assembly at a time, per dated file ───────────────────────────────────
-# Everything from here to the deletes is one transaction: read $OUT, read
-# the fragments, build, rename, delete. Two overlapping runs for the same
-# date each build from their own snapshot, and the slower rename wins —
-# so a fragment the faster run had already folded in and deleted is
-# absent from BOTH the output and `unreleased/`. Lost outright, with two
-# successful-looking runs (Codex #1863 r4).
-#
-# `mkdir` as the lock: creating a directory is atomic and fails if it
-# exists, on every filesystem worth caring about, with no dependency on
-# `flock` (absent on macOS). The lock is named for the DATED FILE, not
-# globally — assembling two different days at once is harmless, since
-# they touch different outputs.
-#
-# A stale lock after a hard kill is reported with the command to clear
-# it, rather than being broken automatically on a timer: this guards a
-# transaction that deletes files, so "the other run is probably dead" is
-# not a judgement to make on the operator's behalf.
-LOCK="$DIR/.assemble-$DATE.lock"
-if ! mkdir "$LOCK" 2>/dev/null; then
-  echo "Error: another assembly for $DATE appears to be running." >&2
-  echo "" >&2
-  echo "  lock: $LOCK" >&2
-  echo "" >&2
-  echo "Two overlapping runs can lose a fragment entirely — each builds from" >&2
-  echo "its own snapshot and the slower one overwrites the other's work." >&2
-  echo "If no other run is active, the lock is stale from an interrupted run:" >&2
-  echo "  rmdir '$LOCK'" >&2
-  exit 1
-fi
-_release_lock() { rmdir "$LOCK" 2>/dev/null || true; }
-trap '_release_lock' EXIT
 
 # ── Already-assembled fragments ──────────────────────────────────────────────
 # A fragment that is BOTH pending and already marked in $OUT is the
@@ -871,32 +916,6 @@ done
 # handles. `mv` within one directory is a rename(2): $OUT is the old file
 # or the new one, never a half-written mixture, and never a header-only
 # stub that the next run would mistake for a real existing file.
-# Refuse a destination that is not a regular file BEFORE consuming
-# anything. `mv SOURCE DIRECTORY` is a documented form: if $OUT exists as
-# a directory, the temp file is moved INSIDE it, the rename "succeeds",
-# every fragment is then deleted, and the run reports a dated file that
-# does not exist (Codex #1863 r1). `mv -T` would also do it but is GNU
-# only; an explicit test is portable and says why.
-if [ -e "$OUT" ] && [ ! -f "$OUT" ]; then
-  echo "Error: $OUT exists and is not a regular file." >&2
-  echo "Refusing to assemble: the fragments would be consumed and the" >&2
-  echo "assembled notes would not be at that path." >&2
-  exit 1
-fi
-# A SYMLINK needs its own test, because `-f` follows it and so accepts a
-# link to a regular file (Codex #1863 r4). `mv` then replaces the LINK
-# rather than writing through it: the intended target is left untouched,
-# the path silently stops being a symlink, and every fragment is consumed
-# on the strength of a successful-looking run. The old append-by-redirect
-# wrote through the link, so this would be a regression rather than a
-# pre-existing quirk.
-if [ -L "$OUT" ]; then
-  echo "Error: $OUT is a symbolic link." >&2
-  echo "Refusing to assemble: the rename would replace the link itself and" >&2
-  echo "leave its target unchanged, while consuming every fragment." >&2
-  echo "Assemble into the real path, or replace the link with a regular file." >&2
-  exit 1
-fi
 mv "$WORK" "$OUT"
 # $WORK no longer exists, so drop only its cleanup — the lock must stay
 # held until the fragments below are deleted, which is the rest of the
