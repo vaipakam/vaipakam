@@ -72,3 +72,38 @@ export function jumpabilityMoved(before, after) {
   if (!before.flagged && after.flagged) return 'holder sanctions-flagged during the probe';
   return null;
 }
+
+/**
+ * Was this snapshot itself jumpable — could a sale row have been offered
+ * on the state it records?
+ *
+ * The companion to `jumpabilityMoved`, and it answers the question that
+ * one structurally cannot (Codex #1853 r14). `PositionDetails` refreshes
+ * the live status on a 30-second interval, so the Basic switch can stay
+ * rendered from an earlier Active read for up to that long after the
+ * chain has moved. If the transition happens BEFORE the pre-state
+ * snapshot, both reads record the new unjumpable state, nothing has
+ * "moved" between them, and a perfectly healthy stale render lands on
+ * the no-op-switch product FAIL.
+ *
+ * Ordering the snapshot earlier cannot close that — the page rendered
+ * before the drive looked at all, and no observation from outside the
+ * card can reach the state that produced the control. So the FAIL is
+ * conditioned on the pre-state having been jumpable in the first place.
+ * A switch offered over an already-unjumpable snapshot is reported as
+ * BLOCKED with the ambiguity named, not as a regression: a stale render
+ * and a genuine Basic-mode regression are indistinguishable from the
+ * DOM, and the test hook that would separate them is #1855.
+ *
+ * Strict on purpose, and the same five inputs `jumpabilitySnapshot`
+ * records — both sale entry points require exactly Active, refuse past
+ * maturity, refuse a locked position, need a live lender token, and are
+ * suppressed for a sanctions-flagged holder.
+ *
+ * @param {JumpabilitySnapshot|null} s
+ * @returns {boolean|null} null when there is no snapshot to judge
+ */
+export function snapshotJumpable(s) {
+  if (!s) return null;
+  return s.active && !s.matured && !s.locked && s.holder !== null && !s.flagged;
+}

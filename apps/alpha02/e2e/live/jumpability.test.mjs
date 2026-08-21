@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { jumpabilityMoved } from './jumpability.mjs';
+import { jumpabilityMoved, snapshotJumpable } from './jumpability.mjs';
 
 /**
  * Why this file exists, stated plainly because it is the finding:
@@ -134,5 +134,42 @@ describe('the function is not a Promise', () => {
     const out = jumpabilityMoved(OK, { ...OK });
     expect(out).not.toBeInstanceOf(Promise);
     expect(out).toBeNull();
+  });
+});
+
+describe('snapshotJumpable — could a sale row have been offered on this state?', () => {
+  it('says yes for a healthy in-term position', () => {
+    expect(snapshotJumpable(OK)).toBe(true);
+  });
+
+  // Each of the five is independently disqualifying, because each one
+  // independently closes both sale entry points.
+  for (const [name, state] of [
+    ['not Active', { active: false }],
+    ['past maturity', { matured: true }],
+    ['locked', { locked: true }],
+    ['burned', { holder: null }],
+    ['sanctions-flagged', { flagged: true }],
+  ]) {
+    it(`says no when the position is ${name}`, () => {
+      expect(snapshotJumpable({ ...OK, ...state })).toBe(false);
+    });
+  }
+
+  it('returns null rather than false when there is no snapshot', () => {
+    // Load-bearing: the caller conditions the FAIL on `=== false`, so a
+    // failed chain read must not read as "was already unjumpable" and
+    // silently convert a genuine no-op-switch regression into BLOCKED.
+    expect(snapshotJumpable(null)).toBeNull();
+    expect(snapshotJumpable(undefined)).toBeNull();
+  });
+
+  it('is a different question from jumpabilityMoved, on the same inputs', () => {
+    // An already-locked position never moved — and was never jumpable.
+    // Both answers are needed: the first says the card is not to blame
+    // for a race, the second says it is not to blame for a stale render.
+    const locked = { ...OK, locked: true };
+    expect(jumpabilityMoved(locked, { ...locked })).toBeNull();
+    expect(snapshotJumpable(locked)).toBe(false);
   });
 });

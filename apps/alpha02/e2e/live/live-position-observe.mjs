@@ -88,7 +88,7 @@ import {
   http,
   numberToHex,
 } from 'viem';
-import { jumpabilityMoved } from './jumpability.mjs';
+import { jumpabilityMoved, snapshotJumpable } from './jumpability.mjs';
 import { redactUrl } from './redact.mjs';
 import {
   EXECUTION_REVERTED,
@@ -1812,6 +1812,69 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
   // reads is the wrong thing to economise on here.
   const before = loan ? await jumpabilitySnapshot(loan) : null;
   const jumpsOf = () => card.getByRole('button', { name: /Go to this option/i });
+
+  /**
+   * The one verdict for "the card ended up with no jump button".
+   *
+   * Every route into that outcome routes through here (Codex #1853
+   * r14): the post-click settle, the anchor audit after a click, and the
+   * anchor audit on a page already in Advanced. Three call sites reached
+   * it before and only one revalidated — which is this PR's own recurring
+   * defect, a distinction drawn in one consumer of a question and not in
+   * its siblings.
+   *
+   * Three outcomes, in order of what they establish:
+   *
+   *   1. THE CHAIN MOVED under the probe → BLOCKED. The card withdrew
+   *      its rows for a real reason and is behaving correctly.
+   *   2. THE PRE-STATE WAS ALREADY UNJUMPABLE → BLOCKED, ambiguity
+   *      named. `PositionDetails` refreshes the live status only every
+   *      30 seconds, so the switch can still be rendered from an earlier
+   *      Active read after the chain has moved. Snapshotting earlier
+   *      cannot fix that — the page rendered before the drive looked at
+   *      all — so a stale render and a genuine Basic-mode regression are
+   *      indistinguishable from outside the card. Reporting either as
+   *      the other is a lie; #1855's test hook is what would separate
+   *      them.
+   *   3. THE PRE-STATE WAS JUMPABLE and nothing moved → FAIL. Only here
+   *      has the card genuinely contradicted itself.
+   */
+  const noJumpVerdict = async (offered = true) => {
+    const moved = loan ? jumpabilityMoved(before, await jumpabilitySnapshot(loan)) : null;
+    if (moved) {
+      return {
+        advancedOffered: offered,
+        advancedJumps: null,
+        advancedBlocked: true,
+        // A FLAG, not a phrase the reporter greps for (Codex #1853 r14
+        // adjacent). The suppression below used to test
+        // `/chain state moved/` against our own `advancedWhy`, so
+        // rewording this sentence would silently switch the suppression
+        // off and start reporting healthy races as product regressions —
+        // the copy-matching fragility this drive keeps being reviewed for,
+        // in the drive's own reporter.
+        advancedRaced: true,
+        advancedWhy: `chain state moved during the probe: ${moved}`,
+      };
+    }
+    if (snapshotJumpable(before) === false) {
+      return {
+        advancedOffered: offered,
+        advancedJumps: null,
+        advancedBlocked: true,
+        advancedWhy:
+          'no jump on a position that was already unjumpable when first read — ' +
+          'the page refreshes status every 30s, so a stale render and a regression ' +
+          'are indistinguishable from here (#1855)',
+      };
+    }
+    return {
+      advancedOffered: offered,
+      advancedJumps: 0,
+      advancedAnchorsOk: false,
+      advancedWhy: 'switch offered but no jump rendered after it settled',
+    };
+  };
   try {
     if ((await sw.count()) === 0) {
       // NO SWITCH means one of two different things, and the first
@@ -1857,7 +1920,9 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
         }
         // It appeared while we waited: fall through to the click path.
       } else {
-        return { advancedOffered: false, advancedWhy: 'already in Advanced', ...(await anchorAudit(page, card)) };
+        const audit = await anchorAudit(page, card);
+        if (audit.advancedJumps === 0) return await noJumpVerdict(false);
+        return { advancedOffered: false, advancedWhy: 'already in Advanced', ...audit };
       }
     }
     await sw.first().click({ timeout: 10_000 });
@@ -1886,43 +1951,17 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
           advancedWhy: 'a prerequisite read failed after the switch — sale tools unavailable',
         };
       }
-      // Settled with no jump — but CHECK WHETHER THE CHAIN MOVED first
-      // (Codex #1853 r8). `buildLenderExitRows` ranks a new
-      // unavailability reason (crossed maturity, FallbackPending, a sale
-      // lock taken by someone else) ABOVE the "still reading" sentence,
-      // so a loan whose state changed mid-probe replaces the loading
-      // copy and exits this poll with zero jumps — while the card is
-      // reacting perfectly correctly. Round 7's poll fixed the slow-RPC
-      // false FAIL and left this one, because both arrive as "settled,
-      // no jump" and only a chain read tells them apart.
-      // `jumpabilityMoved` used to be `async` while awaiting nothing,
-      // and this call site dropped the `await` (Codex #1853 r13):
-      // `moved` was then always a truthy Promise, so EVERY zero-jump
-      // case exited BLOCKED with "[object Promise]" as its reason and
-      // the no-op-switch FAIL below was UNREACHABLE. Three rounds spent
-      // getting that branch right, on a branch that could not fire.
-      //
-      // Not caught by any run on this PR, because the live chain has no
-      // jumpable lender row — so "re-ran live, 3/3 clean" never touched
-      // this path. Recording that: the verification I have been citing
-      // does not exercise the code I have been changing. The fix is the
-      // extraction to `jumpability.mjs`, where it is synchronous (so it
-      // cannot be mis-awaited) and covered by `jumpability.test.mjs`.
-      const moved = loan ? jumpabilityMoved(before, await jumpabilitySnapshot(loan)) : null;
-      if (moved) {
-        return {
-          advancedOffered: true,
-          advancedJumps: null,
-          advancedBlocked: true,
-          advancedWhy: `chain state moved during the probe: ${moved}`,
-        };
-      }
-      // Nothing moved, so the card really has contradicted itself: it
-      // offers the switch only when some row is jumpable.
-      return { advancedOffered: true, advancedJumps: 0, advancedAnchorsOk: false,
-               advancedWhy: 'switch offered but no jump rendered after it settled' };
+      return await noJumpVerdict();
     }
-    return { advancedOffered: true, ...(await anchorAudit(page, card)) };
+    // ZERO JUMPS HERE TOO (Codex #1853 r14). A jump counted by
+    // `waitForSaleRows` can be gone by the time `anchorAudit` scrapes the
+    // rows, and `[].every(...)` is `true` — so this used to return
+    // `advancedJumps: 0` with `advancedAnchorsOk: true` and no
+    // revalidation at all, skipping the very branch a zero belongs in.
+    // Both entries into the audit route a zero through the same verdict.
+    const audit = await anchorAudit(page, card);
+    if (audit.advancedJumps === 0) return await noJumpVerdict();
+    return { advancedOffered: true, ...audit };
   } catch (e) {
     // "Could not look" is exit 2, NOT a clean observation (Codex #1853
     // r6). Reporting it and returning was half right: it is correctly
@@ -1994,7 +2033,18 @@ async function anchorAudit(page, card) {
     // It is still not a product FAIL: the mapping gap is the harness's,
     // not the app's. It is BLOCKED — could not look — which is the same
     // verdict every other "we cannot interpret this" outcome takes.
-    advancedAnchorsOk: checks.every((c) => c.present === true),
+    //
+    // EMPTY IS NOT OK (Codex #1853 r14). `[].every(...)` is `true`, so a
+    // jump that vanished between `waitForSaleRows` counting it and this
+    // function scraping the rows — the loan matured, transferred, locked
+    // or left Active in that window — left `checks` empty and passed
+    // vacuously, recording `advancedJumps: 0` with no `advancedBlocked`
+    // and skipping the zero-jump revalidation entirely. Round 13
+    // replaced one vacuous pass (`target === null` counted as satisfied)
+    // with another, in the same expression. The caller now routes a zero
+    // count through the moved/no-op logic instead, which is where a
+    // zero-jump outcome has always belonged.
+    advancedAnchorsOk: checks.length > 0 && checks.every((c) => c.present === true),
     advancedUnmapped: checks.filter((c) => c.target === null).map((c) => c.title),
     advancedAnchors: checks,
   };
@@ -2059,7 +2109,7 @@ for (const v of visited) {
   // Note this is EVIDENCE-GATED, not a blanket suppression: it applies
   // only where `jumpabilityMoved` read the chain and found a specific
   // change. A page that merely looks odd still fails.
-  const racedMidProbe = v.advancedBlocked && /chain state moved/.test(v.advancedWhy ?? '');
+  const racedMidProbe = v.advancedBlocked === true && v.advancedRaced === true;
   if (detail && !v.nav && !racedMidProbe) {
     if (!v.chooser) problems.push(`${ROLE} chooser MISSING on an eligible loan`);
     else if (ROLE === 'lender') {
@@ -2084,7 +2134,16 @@ for (const v of visited) {
       // An unmapped row is the harness's gap, so it must not be filed
       // as the app's defect — it takes the BLOCKED path instead.
       if (v.advancedAnchorsOk === false && !(v.advancedUnmapped ?? []).length) {
-        problems.push('a lender jump button has no anchor to land on');
+        // Two different failures reach `advancedAnchorsOk === false`, and
+        // the anchor sentence is only true of one of them. The no-op
+        // switch has NO jump button at all, so reporting "a jump button
+        // has no anchor to land on" sent a reader looking for a button
+        // that was never rendered. Each now states its own finding.
+        problems.push(
+          v.advancedJumps === 0
+            ? (v.advancedWhy ?? 'the lender card offered the switch and rendered no jump')
+            : 'a lender jump button has no anchor to land on',
+        );
       }
     } else {
       if (!v.handover) problems.push('handover path MISSING from the chooser');
