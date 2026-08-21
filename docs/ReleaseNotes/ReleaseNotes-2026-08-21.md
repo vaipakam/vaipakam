@@ -686,10 +686,13 @@ corrected by someone reading what the mechanism does.
 
 **A separate correction, and the most consequential one here.** The Claim
 Center guidance told a borrower that an HF-liquidation or a default returns
-**nothing**. That is not something a page can promise either way: only enough
-value is taken to cover the liquidator, the lender and the treasury, and any
-remainder is recorded as the borrower's claim, waiting in their vault until they
-withdraw it. Whether a remainder exists depends on what the collateral actually
+**nothing**. That is not something a page can promise either way. Where the
+protocol prices the collateral and takes only what the waterfall needs — the
+liquidator, the lender, the treasury — any remainder is recorded as the
+borrower's claim, waiting in their vault until they withdraw it. Where it cannot
+price the collateral at all, that partial model does not apply: an illiquid
+default hands the entire basket to the lender and creates no borrower claim,
+which is a rule rather than an outcome. Whether a remainder exists depends on what the collateral actually
 realised — the liquidator's incentive and the realised slippage come out first —
 so an overcollateralised position often leaves one and is not guaranteed to. What
 the remainder consists of depends on how the position was closed: where the
