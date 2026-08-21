@@ -1395,7 +1395,7 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     /Rendered (more|fewer) hooks|Rules of Hooks|change in the order of Hooks/i.test(e),
   );
   const lenderCardText =
-    ROLE === 'lender'
+    ROLE === 'lender' && loan
       ? await page
           .locator('section.card')
           .filter({ hasText: CHOOSER.title })
@@ -1426,8 +1426,19 @@ async function visit(path, { expectChooser = false, loan = null } = {}) {
     // past the card's end and reported the page footer as a row's
     // reason). Falls back to the full body when the card is absent, so
     // the `card=false` verdict is still computed from something.
-    ...(ROLE === 'lender' ? lenderShapeOf(lenderCardText ?? text) : {}),
-    ...(ROLE === 'lender' ? await lenderAdvancedOf(page, loan) : {}),
+    ...(ROLE === 'lender' && loan ? lenderShapeOf(lenderCardText ?? text) : {}),
+    // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
+    // running it). The lender card exists only on `/positions/<id>`, and
+    // on the LIST route the card locator matches nothing — but a
+    // Playwright locator AUTO-WAITS before rejecting, so every poll took
+    // the full locator timeout, the stability loop never got a second
+    // sample inside its deadline, and the list route reported BLOCKED.
+    //
+    // `.catch(() => '')` looked like it made the read safe. It makes the
+    // FAILURE safe; it does nothing about the 30 seconds spent reaching
+    // it — which is the same "handled the error, ignored the cost"
+    // shape as the r3 rental read that could end the run.
+    ...(ROLE === 'lender' && loan ? await lenderAdvancedOf(page, loan) : {}),
     holdCard: holdCard > 0,
     freeHeld: freeHeld > 0,
     connected: !/Connect wallet/i.test(text.slice(0, 400)),
@@ -1676,7 +1687,19 @@ function lenderShapeOf(text) {
  */
 async function jumpabilityMoved(loan) {
   return discovery(`re-reading loan ${loan.id} jumpability`, async () => {
-    const [live, now, lock] = await Promise.all([
+    // HOLDER AND SANCTIONS TOO (Codex #1853 r11). Both unmount the card
+    // outright — a transferred lender NFT or a newly flagged holder —
+    // so they remove the jumps just as surely as a status change, and
+    // omitting them meant those races returned "nothing moved" and were
+    // reported as a product FAIL.
+    //
+    // They are the two conditions `stillEligible` checks and this did
+    // not, which is the mirror of round 9: there I reused a function too
+    // loose for this question, here I wrote one too narrow. The union is
+    // what "can this row still be jumped to" actually requires, and the
+    // two checks remain separate functions because they are asked at
+    // different moments about different things.
+    const [live, now, lock, holderNow, flaggedNow] = await Promise.all([
       pub.readContract({
         address: DIAMOND,
         abi: DIAMOND_ABI_VIEM,
@@ -1685,7 +1708,14 @@ async function jumpabilityMoved(loan) {
       }),
       pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
       positionLockOf(loan.lenderTokenId),
+      lenderAuthorityOf(loan),
+      sanctionedAuthorityUncached(observed),
     ]);
+    if (holderNow === null) return 'lender token burned during the probe';
+    if (holderNow.toLowerCase() !== observed.toLowerCase()) {
+      return 'position transferred during the probe';
+    }
+    if (flaggedNow) return 'holder sanctions-flagged during the probe';
     // Both sale entry points require exactly Active — FallbackPending is
     // enough to close them while the card stays mounted.
     if (Number(live.status) !== STATUS_ACTIVE) return 'loan left Active during the probe';
@@ -1732,29 +1762,47 @@ async function positionLockOf(tokenId) {
  * renders in Advanced from the start — and hits the identical loading
  * interval at first render, with neither switch nor jumps present.
  */
-async function waitForSaleRows(card, jumpsOf, page) {
-  const CHECKING = /still reading the details a sale needs/i;
-  // The card's OTHER prerequisite outcome, and a settled one (Codex
-  // #1853 r10). `saleToolsFailed` is an answered failure — a reverted
-  // read, say — not a transport outage, so no route or RPC verdict fires
-  // and the drive sees a card that has stopped checking with no jumps.
-  // Treated as "settled" that reads as `no jumpable row` on one path and
-  // a product FAIL on the other; it is neither. The anchor audit simply
-  // could not run.
-  const FAILED = /one of the details a sale needs couldn.t be loaded/i;
+async function waitForSaleRows(card, jumpsOf, page, swOf) {
+  // STABILITY, not an enumeration of loading sentences (Codex #1853 r11).
+  //
+  // Three rounds running I extended this by adding whichever transient
+  // copy the finding named: r7 the `saleTools` checking sentence, r10
+  // `saleToolsFailed`, and r11 pointed out that `saleLock === 'checking'`
+  // and `maturity === 'unknown'` ALSO remove the switch and every jump
+  // and match neither. Enumerating them is a losing game — the set is
+  // whatever `buildLenderExitRows` currently ranks above the rows, which
+  // is exactly the module this drive must not shadow — and every miss is
+  // a silent false PASS.
+  //
+  // So the wait no longer asks "is it still loading". It asks whether
+  // the card has STOPPED CHANGING, which is copy-independent and covers
+  // transient states nobody has enumerated yet:
+  //
+  //   - a jump appears        → settled, audit it
+  //   - the switch appears    → settled, click it
+  //   - text stable 3× 1s     → settled, whatever it says
+  //   - deadline              → give up, and say so
+  //
+  // The stability window costs a few seconds on a page that genuinely
+  // has no jumpable row. That is the right price: the alternative is
+  // being wrong about which of those it is.
   const deadline = Date.now() + 45_000;
+  let last = null;
+  let stable = 0;
   for (;;) {
     const jumps = await jumpsOf().count();
+    const switchThere = swOf ? (await swOf().count()) > 0 : false;
     const text = await card.innerText().catch(() => '');
-    const stillChecking = CHECKING.test(text);
-    const toolsFailed = FAILED.test(text);
-    if (jumps > 0 || toolsFailed || !stillChecking || Date.now() > deadline) {
-      return { jumps, stillChecking, toolsFailed };
+    if (jumps > 0 || switchThere) return { jumps, switchThere, settled: true, timedOut: false };
+    stable = text === last ? stable + 1 : 0;
+    last = text;
+    if (stable >= 3) return { jumps: 0, switchThere: false, settled: true, timedOut: false };
+    if (Date.now() > deadline) {
+      return { jumps: 0, switchThere: false, settled: false, timedOut: true };
     }
     await page.waitForTimeout(1_000);
   }
 }
-
 async function lenderAdvancedOf(page, loan) {
   const SWITCH = /Show these tools \(switches to Advanced view\)/i;
   // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
@@ -1785,22 +1833,14 @@ async function lenderAdvancedOf(page, loan) {
       // jumps. Round 7 fixed that wait for the post-click path only, so
       // page 2 onward could be labelled `no jumpable row` and exit 0
       // without ever auditing a row that became jumpable a second later.
-      const settled = await waitForSaleRows(card, jumpsOf, page);
+      const settled = await waitForSaleRows(card, jumpsOf, page, () => sw);
       if (settled.jumps === 0) {
-        if (settled.toolsFailed) {
+        if (settled.timedOut) {
           return {
             advancedOffered: false,
             advancedJumps: null,
             advancedBlocked: true,
-            advancedWhy: 'a prerequisite read failed — sale tools unavailable',
-          };
-        }
-        if (settled.stillChecking) {
-          return {
-            advancedOffered: false,
-            advancedJumps: null,
-            advancedBlocked: true,
-            advancedWhy: 'sale tools still checking at first render — never settled',
+            advancedWhy: 'card never stopped changing at first render — never settled',
           };
         }
         // RE-CHECK THE SWITCH (Codex #1853 r10). On a Basic page still
@@ -1814,10 +1854,10 @@ async function lenderAdvancedOf(page, loan) {
         // The absence of a switch is only meaningful once the reads it
         // depends on have settled, which is exactly what we just waited
         // for.
-        if ((await sw.count()) === 0) {
+        if (!settled.switchThere) {
           return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
         }
-        // It appeared: fall through to the click path below.
+        // It appeared while we waited: fall through to the click path.
       } else {
         return { advancedOffered: false, advancedWhy: 'already in Advanced', ...(await anchorAudit(page, card)) };
       }
@@ -1834,28 +1874,18 @@ async function lenderAdvancedOf(page, loan) {
     //
     // Poll for a settled state instead: either a jump exists, or the
     // sale rows have stopped saying "still reading".
-    const { jumps, stillChecking, toolsFailed } = await waitForSaleRows(card, jumpsOf, page);
+    const post = await waitForSaleRows(card, jumpsOf, page, null);
+    const jumps = post.jumps;
     if (jumps === 0) {
-      if (toolsFailed) {
-        // Answered failure, not a no-op switch: the card is correctly
-        // reporting that a prerequisite could not be loaded, so the
-        // anchor audit could not run and nothing was learned.
-        return {
-          advancedOffered: true,
-          advancedJumps: null,
-          advancedBlocked: true,
-          advancedWhy: 'a prerequisite read failed after the switch — sale tools unavailable',
-        };
-      }
-      if (stillChecking) {
-        // Never settled inside the deadline. Nothing was learned about
-        // the app — the read that decides is still outstanding — so this
+      if (post.timedOut) {
+        // Never stopped changing inside the deadline. Nothing was
+        // learned — whatever read decides is still outstanding — so this
         // is "could not look", the same verdict as a probe that threw.
         return {
           advancedOffered: true,
           advancedJumps: null,
           advancedBlocked: true,
-          advancedWhy: 'sale tools still checking after the switch — never settled',
+          advancedWhy: 'card never stopped changing after the switch — never settled',
         };
       }
       // Settled with no jump — but CHECK WHETHER THE CHAIN MOVED first
