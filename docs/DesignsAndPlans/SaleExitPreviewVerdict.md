@@ -77,6 +77,10 @@ between that copy and the real rule.
 | 8 | Listing fillability after expiry | the listing offer's `expiresAt` | `LoanSalePendingState` carries no expiry |
 | 8b | Listing refuses NFT collateral | `EarlyWithdrawalFacet:275-281` (`SaleOfferCollateralMustBeERC20`) | nothing — already client-answerable; listed because the BITMAP must carry it |
 | 8c | Both routes refuse a rental (non-ERC20 principal) | `EarlyWithdrawalDirectFacet:178-179`, `EarlyWithdrawalFacet:272-274` (`InvalidSaleOffer`) | nothing — client-answerable; missing from BOTH maps until review caught it |
+| 8d | **Diamond globally paused** | both entrypoints are `whenNotPaused` | a live `paused()` read |
+| 8e | **Offer-duration cap** | `OfferCreateFacet._createOfferSetup` (`OfferDurationExceedsCap`) vs live `cfgMaxOfferDurationDays` | the governance-tunable cap |
+| 8f | **Sanctioned party** | `_createLoanSaleOfferImpl` screens caller + holder; `sellLoanViaBuyOffer` screens caller | a screening read per party |
+| 8g | **Caller is not the holder** | `sellLoanViaBuyOffer` requires `caller == holder` | the authoritative holder |
 | 9 | Instant-sell candidates | the open-offer book | a full page walk in Basic; in Advanced, already walked and discarded |
 | 10 | Maturity tick resolution | — | not a read at all; a shared-clock change |
 
@@ -115,10 +119,24 @@ the client — and a preview built to be the authority would have reopened it at
 the source, with `checkedMask` reporting those bits checked and clear. A
 chain-side view has no excuse for it: the live status is right there.
 
-**So the tractable set is item 0, items 1–8, plus 8b and 8c: eleven refusals,
-answerable without consulting any third party.** That is the observation this proposal
-rests on — and note the criterion is *self-contained*, not *needs a new read*,
-since neither 8b nor 8c needs one.
+**8d through 8g came last, and share a property the earlier entries do not:
+none of them is raised by a sale facet.** The global pause sits on the modifier,
+the duration cap is raised by generic offer creation, and the two authorization
+checks screen a *party* rather than the loan. The method that built this table —
+walk both sale entry points and enumerate what they refuse — is exactly why they
+were missed, and it had already produced a table this document twice described
+as complete. Worth stating as a limit of the method rather than as four
+oversights: the next omission, if there is one, is likely to be another refusal
+that reaches these routes from somewhere else.
+
+8g is also the only entry that is not about the loan at all. It is here because
+the ABI takes a `lender` argument and must say what happens when that address is
+not the holder — see §4.1.
+
+**So the tractable set is item 0, items 1–8, plus 8b through 8g: fifteen
+refusals, answerable without consulting any third party.** That is the
+observation this proposal rests on — and note the criterion is *self-contained*,
+not *needs a new read*, since neither 8b nor 8c needs one.
 
 ## 3. What already exists
 
@@ -774,16 +792,18 @@ so the preview narrows the map-only gap rather than closing it. I am not going
 to pretend otherwise to keep the recommendation tidy.
 
 **Why I still lean this way — on a different invariant than I first gave.**
-(Counting note: eleven loan-level entries — item 0, items 1–8, plus 8b and 8c.)
+(Counting note: fifteen loan-level entries — item 0, items 1–8, plus 8b
+through 8g. The count has grown three times under review; §2 says why the
+method that built it kept missing entries.)
 
 My first attempt justified the split on *durability*: loan-level blockers are
 permanent, candidate matching is momentary. That is **false**, and worth
 striking rather than softening. Governance unpauses assets. Cooldowns expire
 by construction. Oracle and liquidity conditions recover. A held-for-lender
-balance gets resolved. Most of the eleven are as transient as the order book.
+balance gets resolved. Most of the fifteen are as transient as the order book.
 
 The distinction that actually holds is **self-contained vs relational**. Every
-one of the eleven is a property of *this loan and this holder* — answerable by
+one of the fifteen is a property of *this loan and this holder* — answerable by
 reading the position and the protocol's own configuration, with no third party
 involved. Candidate matching is irreducibly relational: it asks what OTHER
 participants are currently offering, so it cannot be answered by a per-loan
