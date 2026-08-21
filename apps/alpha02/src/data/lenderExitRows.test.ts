@@ -29,6 +29,7 @@ const base: LenderExitInput = {
   borrowerOffsetPending: false,
   instantSellCandidates: 'some',
   statusSettled: true,
+  maturitySettled: true,
 };
 
 const rowFor = (input: Partial<LenderExitInput>, key: string) =>
@@ -63,6 +64,7 @@ describe('wait row — ordering and framing', () => {
       borrowerOffsetPending: true,
       instantSellCandidates: 'none',
       statusSettled: false,
+      maturitySettled: false,
     };
     expect(buildLenderExitRows(hostile)[0].unavailable).toBeUndefined();
   });
@@ -1034,6 +1036,10 @@ describe('chooserReadiness — has the jumpability question settled?', () => {
     });
 
     it('does not gate a conclusive negative on the status read', () => {
+      // Past-due does not wait on `liveStatus`: that query carries a
+      // status enum, not a term, so it cannot change the maturity
+      // verdict. The maturity sources are a different question — see
+      // the block below.
       expect(chooserReadiness({ ...base, maturity: 'past', statusSettled: false })).toBe(
         'ready',
       );
@@ -1044,6 +1050,70 @@ describe('chooserReadiness — has the jumpability question settled?', () => {
       expect(
         chooserReadiness({ ...base, fallbackPending: true, statusSettled: false }),
       ).toBe('ready');
+    });
+  });
+
+  describe('a past-due verdict is provisional until its own reads land', () => {
+    // The retraction this closes (Codex #1858 r3). `maturity` is
+    // RECONCILED from two term reads and answers `'unknown'` when they
+    // disagree, so a `'past'` computed from the one that landed first
+    // is not yet an answer: an in-grace keeper extension moves the due
+    // date forward, the second read arrives with the longer term, and
+    // the verdict becomes `'unknown'`. Readiness had already published
+    // `ready`/`no` — a settled answer retracting with no chain
+    // transition behind it, which is precisely what an external check
+    // reads this attribute to avoid.
+    it('is pending when past maturity but a term read is still in flight', () => {
+      expect(
+        chooserReadiness({ ...base, maturity: 'past', maturitySettled: false }),
+      ).toBe('pending');
+    });
+
+    it('is pending on a current verdict that is equally provisional', () => {
+      // Not a past-due special case: a `'current'` from one source can
+      // become `'unknown'` on disagreement just as a `'past'` can, so
+      // the wait is on the RECONCILIATION, not on which side it landed.
+      expect(
+        chooserReadiness({ ...base, maturity: 'current', maturitySettled: false }),
+      ).toBe('pending');
+    });
+
+    it('becomes ready once the term reads have all answered', () => {
+      expect(chooserReadiness({ ...base, maturity: 'past', maturitySettled: true })).toBe(
+        'ready',
+      );
+    });
+
+    it('does NOT hold a fallback answer behind the term reads', () => {
+      // The asymmetry that makes this correct rather than merely
+      // cautious. `fallbackPending: true` is a positive observation
+      // from a status read; nothing a term read reports can reopen a
+      // sale route on a fallback-settling loan. Waiting here would
+      // restore the timeout on exactly the population the conclusive
+      // arm exists to spare — so the two arms are gated differently on
+      // purpose.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          maturity: 'past',
+          maturitySettled: false,
+        }),
+      ).toBe('ready');
+    });
+
+    it('holds even when a later input has already failed', () => {
+      // Same precedence as the status gate: the term reads could still
+      // make this a conclusive negative, which beats "settled but
+      // untrustworthy".
+      expect(
+        chooserReadiness({
+          ...base,
+          maturity: 'past',
+          maturitySettled: false,
+          saleTools: 'failed' as const,
+        }),
+      ).toBe('pending');
     });
   });
 

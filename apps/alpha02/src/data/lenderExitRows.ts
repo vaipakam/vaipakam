@@ -301,6 +301,26 @@ export interface LenderExitInput {
    *  candidates, so `true` is self-evidencing while `false` is
    *  ambiguous between "not fallback" and "nothing has answered". */
   statusSettled: boolean;
+  /** Have ALL the enabled MATURITY reads answered yet?
+   *
+   *  A separate fact from `statusSettled`, because `maturity` is
+   *  reconciled from a different set of queries than the status is
+   *  (Codex #1858 r3). Only `chooserReadiness` consults it; no row's
+   *  wording or availability depends on it.
+   *
+   *  It exists because `maturity: 'past'` is not self-evidencing
+   *  either. The page reconciles two term reads and answers `'unknown'`
+   *  when they DISAGREE — an in-grace keeper extension re-stamps the
+   *  due date forward — so a `'past'` derived from the one source that
+   *  has landed can become `'unknown'` when the second arrives with a
+   *  longer term. Without this, readiness publishes `ready` on a
+   *  conclusion that later retracts, with no chain transition behind
+   *  the change.
+   *
+   *  Same disabled-source rule as `statusSettled`: a query that will
+   *  never fetch counts as answered, so Basic mode — where the
+   *  advanced-only term read is disabled — is unaffected. */
+  maturitySettled: boolean;
 }
 
 export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
@@ -552,9 +572,28 @@ function conclusiveBlock(input: LenderExitInput): ConclusiveBlock | undefined {
  *  fallback population.
  *
  *  So this asks only the question readiness needs — is the answer
- *  already no — and takes no view on which reason a reader should see. */
+ *  already no — and takes no view on which reason a reader should see.
+ *
+ *  THE TWO ARMS ARE NOT EQUALLY CONCLUSIVE (Codex #1858 r3), and
+ *  rounds 1 and 2 both treated them as if they were.
+ *
+ *  `fallbackPending: true` is self-evidencing: a status read positively
+ *  reported FallbackPending, and no later read can un-report it in a
+ *  way that reopens a sale route. It stays conclusive while every other
+ *  query is still in flight — which is the point, since waiting would
+ *  preserve the timeout on exactly the population this arm exists for.
+ *
+ *  `maturity: 'past'` is a RECONCILIATION of two term reads, and the
+ *  page answers `'unknown'` when they disagree. So a `'past'` computed
+ *  from the only source that has landed is provisional: an in-grace
+ *  keeper extension moves the due date forward, and the second read
+ *  arriving with the longer term turns `'past'` into `'unknown'` and
+ *  readiness from `ready` back to `pending`. A value published as
+ *  settled must not retract without a chain transition behind it, so
+ *  this arm waits for the sources that produce it. */
 function conclusivelyUnjumpable(input: LenderExitInput): boolean {
-  return input.maturity === 'past' || input.fallbackPending;
+  if (input.fallbackPending) return true;
+  return input.maturity === 'past' && input.maturitySettled;
 }
 
 export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
@@ -570,7 +609,20 @@ export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
   // unjumpable, while `conclusiveBlock` would name the maturity arm and
   // send it back to `pending`.
   if (conclusivelyUnjumpable(input)) return 'ready';
-  if (input.maturity === 'unknown') return 'pending';
+  // Both arms of the same fact: the maturity verdict is not usable
+  // until the reads behind it have finished. `'unknown'` means a query
+  // enabled for exactly that case has not answered; `!maturitySettled`
+  // means one has not answered YET even though the other already
+  // produced a verdict, which is provisional in either direction — a
+  // `'current'` can become `'unknown'` on disagreement just as a
+  // `'past'` can.
+  //
+  // Written out rather than left to fall through to `statusSettled`
+  // below. It WOULD fall through — the maturity sources are a subset of
+  // the status sources — but that is a correctness argument living in
+  // two files, and this predicate exists because the last one of those
+  // was wrong (Codex #1858 r3).
+  if (input.maturity === 'unknown' || !input.maturitySettled) return 'pending';
   // The status read must have SETTLED before a non-fallback answer can
   // be trusted (Codex #1858 r1). `fallbackPending` is derived by the
   // page from `liveStatusCandidates.some(...)`, so `false` means either

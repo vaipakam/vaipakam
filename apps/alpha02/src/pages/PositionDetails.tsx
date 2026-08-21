@@ -1045,9 +1045,25 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  rendered depends on it, so a wrong answer here cannot change what a
    *  lender sees — only whether an external check believes the card has
    *  finished deciding. */
-  const statusSourcesSettled = [loanLive, liveStatus, bannerTerms].every(
-    (q) => q.isSuccess || q.isError || q.fetchStatus === 'idle',
-  );
+  const sourceSettled = (q: { isSuccess: boolean; isError: boolean; fetchStatus: string }) =>
+    q.isSuccess || q.isError || q.fetchStatus === 'idle';
+  const statusSourcesSettled = [loanLive, liveStatus, bannerTerms].every(sourceSettled);
+  /** The same question for the MATURITY verdict, over its own sources.
+   *
+   *  A SEPARATE LIST, not a reuse of the one above (Codex #1858 r3).
+   *  `maturity` below reconciles `bannerTerms` and `loanLive` only —
+   *  `liveStatus` carries a status enum, not a term — so asking the
+   *  status list here would make a past-due page wait on a query that
+   *  cannot change the answer. What the two share is the settled
+   *  PREDICATE; what differs is which queries the derivation reads, and
+   *  each list is written beside the derivation it belongs to.
+   *
+   *  Needed because `maturity` answers `'unknown'` on DISAGREEMENT. A
+   *  `'past'` from the source that landed first is provisional: an
+   *  in-grace keeper extension moves the due date forward, so the
+   *  second read arriving with a longer term flips the verdict and
+   *  would retract a readiness answer already published as settled. */
+  const maturitySourcesSettled = [loanLive, bannerTerms].every(sourceSettled);
 
   const liveStatusCandidates: (LoanStatus | undefined)[] = [
     loanLive.data && !loanLive.isError
@@ -3414,6 +3430,7 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // same self-unsettling verdict the prop was added to prevent,
           // reintroduced by measuring the wrong thing.
           statusSettled={statusSourcesSettled}
+          maturitySettled={maturitySourcesSettled}
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
           // if it errors. Collapsing that to `false` showed BOTH sale
