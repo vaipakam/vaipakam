@@ -74,9 +74,31 @@ the push as an activation you perform once, so a reader could follow every
 instruction on the page, act on that mirror months later, and be charged the
 full fee with nothing on the page to explain it — the same shape of failure as
 the five above, except that this one arrives *after* the reader has done
-everything right. Both cards now say the tier has a shelf life, and name the two
-things that renew it: pushing again, or any VPFI deposit or withdrawal on the
-canonical chain, which rebroadcasts it as a side effect.
+everything right. Both cards now say the tier has a shelf life.
+
+**And what renews it is narrower than the first attempt at this said.** That
+attempt named two renewals — pushing again, or a canonical-chain deposit or
+withdrawal — and both were wrong, in the direction that matters most: they told
+a reader they could restore something they cannot. A push is only sent when the
+tier, its rate, its projected expiry or the tier table itself has changed. An
+identical one is deliberately skipped, so the protocol's cross-chain budget is
+not spent re-sending a message the mirror already holds. For the reader this
+paragraph is about — a steady holding, no tier movement, sixty days — every
+action available hits that gate and sends nothing. Pressing the button again
+does nothing. A deposit or withdrawal that leaves the tier where it is does
+nothing. The window expires and the discount on that mirror is gone.
+
+So the pages say that instead: a mirror discount lasts sixty days from the push
+that established it, and today only a change that actually moves your tier
+brings it back. A truthful description of a bad situation rather than a fix —
+the underlying gap, a holder with no reason to move their tier having no way to
+keep a discount they qualify for, is tracked separately.
+
+Worth noting where the correct account already lived. The Advanced guide's own
+refresh paragraph states the deduplication rule explicitly, and why it exists,
+fifteen lines below the expiry bullet the first attempt drew on. The card was
+written from the review finding rather than from the guide that already
+documented the mechanism, which is exactly how it came to contradict it.
 
 **One correction runs the other way.** The pages had been saying that opting
 into the optional tariff counted as the fee-discount consent, so a borrower who
