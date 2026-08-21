@@ -1053,14 +1053,29 @@ out="$W/docs/ReleaseNotes"
 # all, and a regression in it would go unnoticed by every case that depends on
 # it. A DIRECTORY named like a fragment produces a genuine non-zero from the
 # first command that reads it, whoever is running.
+# A DIRECTORY named like a fragment no longer reaches run_checked — the
+# regular-file guard added for symlinks refuses it first, which is correct
+# and better placed. So that state is asserted against the new guard, and
+# run_checked's fatal path is driven by a failing checksum, which works
+# whoever is running.
 mkdir "$W/docs/ReleaseNotes/unreleased/0003-dir.md"
 msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "a directory is refused"     "$?"                                    "1"
+check "it says why"                "$(says "$msg" 'not a regular file')"    "1"
+rmdir "$W/docs/ReleaseNotes/unreleased/0003-dir.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sha256sum" <<'SHIM'
+#!/bin/sh
+exit 3
+SHIM
+chmod +x "$W/fakebin/sha256sum"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"              "$?"                             "1"
 check "no fragment was consumed"   "$(pending "$W")"                "2"
-check "it names what it was doing" "$(says "$msg" '0003-dir.md')"   "1"
+check "it names what it was doing" "$(says "$msg" '0001-a.md')"     "1"
 check "and says it refuses to continue" \
   "$(says "$msg" 'must not continue on the strength of')"           "1"
-rmdir "$W/docs/ReleaseNotes/unreleased/0003-dir.md"
+rm -f "$W/fakebin/sha256sum"
 
 echo "T34: a fragment ENDING in NUL still gets a findable marker"
 W="$ROOT/t34"; build "$W"
@@ -2489,6 +2504,104 @@ out="$W/docs/ReleaseNotes"
 # stat that lies for exactly one call.
 check "the group comes from OUT_ID" \
   "$(grep -c 'out_gid="\${OUT_ID##\*:}"' "$out/assemble.sh")"               "1"
+
+echo "T89: a heading containing a NUL still matches its duplicate"
+W="$ROOT/t89"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Routing the normalisation through run_checked fixed an unchecked-status fault
+# and introduced a NUL one in the same lines: bash drops NUL from a command
+# substitution, so the heading came back altered and the fixed-string search
+# looked for text the file does not contain (Codex #1863 r28).
+printf '## nul\000heading\nbody\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+printf '# Release Notes — 2026-08-16\n\n' > "$out/ReleaseNotes-2026-08-16.md"
+printf '## nul\000heading\n' >> "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the duplicate is caught"  "$?"                                      "1"
+check "no fragment consumed"     "$(pending "$W")"                         "1"
+check "nothing was appended" \
+  "$(LC_ALL=C grep -ac 'nul' "$out/ReleaseNotes-2026-08-16.md")"           "1"
+
+echo "T90: the quarantine probe creates an entry rather than truncating one"
+W="$ROOT/t90"; build "$W"
+out="$W/docs/ReleaseNotes"
+# `: >` TRUNCATES an existing file, which succeeds on a writable `.probe`
+# inside an otherwise unwritable directory — so the probe passed while the
+# operation it stands for would still fail (Codex #1863 r28).
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+: > "$W/docs/ReleaseNotes/unreleased/.assembled/.probe"
+chmod 0666 "$W/docs/ReleaseNotes/unreleased/.assembled/.probe"
+chmod 0555 "$W/docs/ReleaseNotes/unreleased/.assembled"
+if [ "$(id -u)" = "0" ]; then
+  check "skipped — root writes through mode bits (CI runs it)" "1" "1"
+else
+  msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  check "the run stops"         "$?"                                       "1"
+  check "nothing was published" \
+    "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)" "none"
+  check "it says why"           "$(says "$msg" 'cannot be created and removed')" "1"
+fi
+chmod 0755 "$W/docs/ReleaseNotes/unreleased/.assembled"
+
+echo "T91: a symlinked fragment is refused before anything is published"
+W="$ROOT/t91"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The copy follows a relative symlink fine, but moving the LINK into the
+# quarantine directory changes the base its target resolves against — so the
+# re-hash fails after the dated file is written, leaving it stranded and the
+# run half done (Codex #1863 r28).
+printf '## real body\n' > "$W/docs/ReleaseNotes/unreleased/body.txt"
+ln -s body.txt "$W/docs/ReleaseNotes/unreleased/0003-link.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"         "$?"                                        "1"
+check "nothing was published" \
+  "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
+check "it says why"           "$(says "$msg" 'not a regular file')"         "1"
+check "the link is untouched" \
+  "$([ -L "$W/docs/ReleaseNotes/unreleased/0003-link.md" ] && echo link || echo gone)" "link"
+rm -f "$W/docs/ReleaseNotes/unreleased/0003-link.md"
+
+echo "T92: a NUL in a marker-SHAPED line is refused at the fragment"
+W="$ROOT/t92"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The full-record pattern does not match a prefix-shaped line carrying a NUL,
+# so it was published verbatim — and every LATER run's broader prefix scan
+# then hit the NUL guard and refused. Assembly became permanently stuck on a
+# file this script had written itself (Codex #1863 r28).
+{ printf '## marker-ish\n'
+  printf '<!-- assembled-fragment: x.md'
+  printf '\000'
+  printf ' not-a-real-record -->\n'
+} > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"         "$?"                                        "1"
+check "no fragment consumed"  "$(pending "$W")"                           "2"
+check "nothing was published" \
+  "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
+check "it says why"           "$(says "$msg" 'marker-shaped line containing a null')" "1"
+
+echo "T93: the published file is rechecked after the hash, next to the delete"
+W="$ROOT/t93"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Hashing the quarantined fragment is the long step, and the published-file
+# check sat before it — so $OUT removed during that hash was never noticed and
+# the fragment went while the dated file held none of its text (Codex #1863
+# r28). The check has to be adjacent to the act.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sha256sum" <<SHIM
+#!/bin/sh
+/usr/bin/sha256sum "\$@"; _rc=\$?
+if [ -f "$out/ReleaseNotes-2026-08-16.md" ] && [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  rm -f "$out/ReleaseNotes-2026-08-16.md"
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/sha256sum"
+PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the fragment survives somewhere" \
+  "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

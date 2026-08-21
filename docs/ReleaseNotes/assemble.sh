@@ -231,13 +231,21 @@ _ensure_qdir() {
   # passed the check and the first set-aside then failed after the dated
   # file had been published. Existence was never the question; being able
   # to put a file there is.
-  if ! ( : > "$QDIR/.probe" ) 2>/dev/null; then
-    echo "Error: $QDIR is not writable." >&2
+  # A NEW entry, and its removal is required (Codex #1863 r28). `: >`
+  # TRUNCATES an existing file, which succeeds on a writable `.probe`
+  # inside an otherwise unwritable directory — so the probe passed while
+  # the thing it stands for, creating a directory entry, would still
+  # fail. Creating and removing an entry is the operation being tested,
+  # so that is the operation to perform.
+  _probe_f=""
+  if ! _probe_f="$(mktemp "$QDIR/.probe.XXXXXX" 2>/dev/null)" \
+     || ! rm "$_probe_f" 2>/dev/null; then
+    [ -n "$_probe_f" ] && rm -f "$_probe_f" 2>/dev/null
+    echo "Error: entries cannot be created and removed in $QDIR." >&2
     echo "Refusing to assemble: fragments set aside during the run are moved" >&2
     echo "there, so this would fail only after the dated file was written." >&2
     exit 1
   fi
-  rm -f "$QDIR/.probe" || :
   local a b
   a="$(stat -c '%d' "$UNREL" 2>/dev/null || stat -f '%d' "$UNREL" 2>/dev/null)" || a=""
   b="$(stat -c '%d' "$QDIR"  2>/dev/null || stat -f '%d' "$QDIR"  2>/dev/null)" || b=""
@@ -1048,6 +1056,21 @@ for f in "${frags[@]}"; do
   # silent corruption into a loud refusal, which is the trade worth
   # making, and it is not a guarantee — nothing available to a shell
   # script is.
+  # A fragment must be a REGULAR FILE, checked before anything is
+  # published (Codex #1863 r28). A relative symlink copies fine — the
+  # copy follows it — but moving the LINK into the quarantine directory
+  # changes the base its target resolves against, so the re-hash fails
+  # after the dated file is already written, leaving the link stranded
+  # and the run half done. Refused here, where refusing is free.
+  if [ -L "$f" ] || [ ! -f "$f" ]; then
+    echo "Error: ${FRAG_NAME[$f]} is not a regular file." >&2
+    echo "" >&2
+    echo "Refusing to assemble: setting a fragment aside moves it into a" >&2
+    echo "subdirectory, which changes what a relative link points at — and" >&2
+    echo "that failure would happen after the dated file was written." >&2
+    echo "Replace it with the file itself." >&2
+    exit 1
+  fi
   run_checked 0 "reading ${FRAG_NAME[$f]}" frag_hash "$f"
   _before="$CAPTURED"
   run_checked 0 "taking a working copy of ${FRAG_NAME[$f]}" \
@@ -1101,6 +1124,29 @@ for f in "${frags[@]}"; do
   # indented or in a blockquote, which is what the anchor is for.
   run_checked 0,1 "checking ${FRAG_NAME[$f]} for embedded marker records" \
     env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->${CR}?$" "${FRAG_SNAP[$f]}"
+  # A prefix-shaped line carrying a NUL is refused too (Codex #1863 r28).
+  # The full-record pattern above does not match it, so it was published
+  # verbatim — and every LATER run's broader prefix scan then found it,
+  # hit the NUL guard, and refused. Assembly became permanently stuck on
+  # a file this script had itself written. Rejecting the input costs one
+  # error message; creating a file the script will not read afterwards
+  # costs an operator a manual repair.
+  _pfx="$SNAP/pfx.$_n"
+  _pf_rc=0
+  LC_ALL=C grep -a "^$MARKER_PREFIX" "${FRAG_SNAP[$f]}" > "$_pfx" 2>/dev/null || _pf_rc=$?
+  if (( _pf_rc > 1 )); then
+    echo "Error: scanning ${FRAG_NAME[$f]} for marker-shaped lines failed." >&2
+    exit 1
+  fi
+  if ! LC_ALL=C tr -d '\000' < "$_pfx" | cmp -s - "$_pfx"; then
+    echo "Error: ${FRAG_NAME[$f]} has a marker-shaped line containing a null" >&2
+    echo "byte." >&2
+    echo "" >&2
+    echo "Refusing to assemble: it would be written into the dated file, and" >&2
+    echo "every later run would then refuse to read that file — leaving" >&2
+    echo "assembly stuck on something this script had produced itself." >&2
+    exit 1
+  fi
   if [ -n "$CAPTURED" ]; then
     echo "Error: ${FRAG_NAME[$f]} contains a line that is itself an assembly" >&2
     echo "marker:" >&2
@@ -1654,6 +1700,10 @@ if (( ${#already[@]} > 0 )); then
       _changed+=("${FRAG_NAME[$f]} -> .assembled/$_q_name")
       continue
     fi
+    # Same reason as the clearing loop below: the hash is the long step,
+    # so the evidence is re-checked adjacent to the delete rather than
+    # before it (Codex #1863 r28).
+    assert_sources_unchanged "removing ${FRAG_NAME[$f]}"
     rm "$_q"
   done
   if (( ${#_changed[@]} > 0 )); then
@@ -1768,9 +1818,22 @@ if [ -f "$OUT" ]; then
     # left the pattern file unnormalised and the comparison silently went
     # back to being decided by line endings — the duplicate appended and
     # the fragment deleted, on a run reporting success.
-    run_checked 0 "normalising the heading of ${FRAG_NAME[$f]}" \
-      env LC_ALL=C sed -e 's/\r$//' "$_head_file"
-    printf '%s\n' "$CAPTURED" > "$_head_file"
+    # FILE TO FILE, never through a variable (Codex #1863 r28). Routing it
+    # through `run_checked` fixed the unchecked-status fault and
+    # introduced a NUL one in the same lines: bash drops NUL from a
+    # command substitution, so a heading containing one came back altered
+    # and the fixed-string search then looked for text the file does not
+    # contain — missing the duplicate it exists to catch. The surrounding
+    # code is NUL-safe precisely because it never puts these bytes in a
+    # variable, and the fix had to keep that.
+    if ! env LC_ALL=C sed -e 's/\r$//' "$_head_file" > "$_head_file.n"; then
+      rm -f "$_head_file" "$_head_file.n"
+      echo "Error: could not normalise the heading of ${FRAG_NAME[$f]}." >&2
+      echo "Refusing to assemble: skipping that check silently is how a" >&2
+      echo "duplicated section gets through." >&2
+      exit 1
+    fi
+    mv "$_head_file.n" "$_head_file"
     _out_n="$SNAP/out.normalised"
     if ! env LC_ALL=C sed -e 's/\r$//' "$OUT_COPY" > "$_out_n"; then
       rm -f "$_head_file"
@@ -2269,6 +2332,17 @@ for f in "${frags[@]}"; do
   fi
   CAPTURED="$_rh"
   if [ "$CAPTURED" = "${FRAG_HASH[$f]}" ]; then
+    # Re-checked AFTER the hash and immediately before the delete (Codex
+    # #1863 r28). Hashing is the long step here, and the published-file
+    # check sat before it — so $OUT removed or altered during that hash
+    # was never noticed, and the fragment went while the dated file held
+    # none of its text. The check has to be adjacent to the act, not
+    # merely somewhere upstream of it.
+    _pub_rc=0
+    _pub_now="$(frag_hash "$OUT" 2>/dev/null)" || _pub_rc=$?
+    if (( _pub_rc != 0 )) || [ "$_pub_now" != "$PUBLISHED_ID" ]; then
+      _abort_after_write "$(basename "$OUT") is gone or altered since it was written"
+    fi
     rm "$_q" || _abort_after_write "could not remove ${FRAG_NAME[$f]}"
     _cleared+=("${FRAG_NAME[$f]}")
   else
