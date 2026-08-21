@@ -29,10 +29,11 @@ wallet-analytics checks from passing without having looked at what shipped.
 
 ## Lenders can now see what their options are — including doing nothing
 
-If you have lent on a loan — an NFT rental aside, where the page does not show
-it — the position page now opens with a card called "Your options as the
-lender", listing every way out of the position along with what each one
-costs.
+If you have lent on a loan, the position page now opens with a card called "Your
+options as the lender", listing every way out of the position along with what
+each one costs. Not every lender sees it: an NFT rental position does not show
+the card, and neither does a position whose connected wallet is one the protocol
+will not transact with.
 
 Until now, a lender in the simple view saw **nothing at all** about this. The
 sale tools existed, but they lived behind the Advanced view, so unless you had
@@ -678,7 +679,8 @@ use and was another internal detail to keep in sync.
 said a push is sent only when your tier changes. A push carries the tier's rate
 and the tier-table version too, and mirrors stop honouring a cached older
 version — so after a governance retune the button does work, and pressing it is
-the difference between your discount and no discount at all. The warning stays;
+the difference between your hold-tier discount and none of it (a Full tariff
+already paid keeps its own slice regardless). The warning stays;
 the case where the button may be worth pressing is now named — with the
 trade-off, since pushing after a retune writes the LOWER rate immediately while
 the old cache would otherwise stand until somebody else's message raises the
