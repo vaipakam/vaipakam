@@ -831,6 +831,16 @@ report.blockedWriteRequests = allBlockedRequests;
 report.navigationFailures = allNavFailures;
 report.routesAttempted = routesAttempted;
 report.backgroundNetwork = backgroundNetworkBySession;
+// BEFORE the write, not after (Codex #1859 r4 P2). The scan used to run
+// down with the console reporting, so the persisted report.json — the
+// artifact a reviewer opens after the run — never carried the `beacon`
+// section at all, and the terminal output was the only record. Worst
+// for a PERMITTED response that arrived between routes: it lives only
+// in `backgroundBeacon`, and `backgroundNetwork` records counts and
+// failures rather than successful-response URLs, so the evidence for a
+// failing verdict existed nowhere in the file. A finding that is not in
+// the report is a finding that did not survive the run.
+report.beacon = scanBeacon(report, backgroundBeacon);
 
 const reportName = PROBE_ONLY ? 'report-devtools.json' : 'report.json';
 fs.writeFileSync(path.join(OUT_DIR, reportName), JSON.stringify(report, null, 2));
@@ -864,10 +874,11 @@ console.log(
 // `permittedRequests` is fed by RESPONSES, not requests: a refused
 // request still fires a request event, so keying on that would accuse a
 // correctly-refused deployment of running the collector.
-const beacon = scanBeacon(report, backgroundBeacon);
+// Read back what was WRITTEN, rather than re-scanning: the console
+// verdict below and the persisted artifact must not be able to disagree.
+const beacon = report.beacon;
 const beaconRefusedRoutes = beacon.refusedRoutes;
 const beaconPermitted = beacon.permittedRequests;
-report.beacon = beacon;
 // Reported as ONE line each, not per route: this is a property of the
 // DEPLOYMENT, so an occurrence count would say more about the length of
 // the route list than about the defect.
