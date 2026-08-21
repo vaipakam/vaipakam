@@ -662,9 +662,18 @@ async function tokenOwnerOf(tokenId) {
 // Chain time, not the local clock — the grace comparison the app makes is
 // chain-anchored, and a skewed sandbox clock would misclassify loans near
 // the boundary.
-const chainNow = await discovery('reading chain time', () =>
-  pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
-);
+// Role-gated for the same reason the revalidation-time block read is
+// (Codex #1853 r5): `chainNow` feeds the borrower grace comparison only,
+// so on a lender run this is an unrelated read whose failure exits 2
+// before any candidate can be observed. Fifth site of one rule — I fixed
+// the revalidation copy in r4 and did not look for the other one, which
+// is the same not-checking-the-sibling shape this PR keeps producing.
+const chainNow =
+  ROLE === 'lender'
+    ? 0n
+    : await discovery('reading chain time', () =>
+        pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
+      );
 
 const loans = [];
 for (const id of ids) {
@@ -734,10 +743,20 @@ for (const id of ids) {
     loan.assetType === ASSET_ERC20 &&
     loan.authority
   ) {
-    loan.authoritySanctioned = await discovery(
-      `reading the sanctions status of ${loan.authority}`,
-      () => sanctionedAuthority(loan.authority),
-    );
+    // With an explicit OBSERVE_ADDRESS, another holder's sanctions
+    // status cannot change whether any of THEIR positions is observable
+    // (Codex #1853 r5) — and this read can end the run, so paying it for
+    // an irrelevant authority lets an unrelated address block a targeted
+    // one. Same rule as the ERC-20 and cheap-gate skips, applied to the
+    // narrowing that happens later.
+    const wanted = process.env.OBSERVE_ADDRESS;
+    loan.authoritySanctioned =
+      wanted && wanted.toLowerCase() !== loan.authority.toLowerCase()
+        ? false
+        : await discovery(
+            `reading the sanctions status of ${loan.authority}`,
+            () => sanctionedAuthority(loan.authority),
+          );
   }
   if (
     ROLE === 'borrower' &&
@@ -1592,61 +1611,93 @@ function lenderShapeOf(text) {
  */
 async function lenderAdvancedOf(page) {
   const SWITCH = /Show these tools \(switches to Advanced view\)/i;
-  const sw = page.getByRole('button', { name: SWITCH });
-  const jumpsOf = () => page.getByRole('button', { name: /Go to this option/i });
+  // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
+  // uses the IDENTICAL labels — `copy.earlyRepay.switchToAdvanced` and
+  // `.jump` are the same strings as the lender card's — so on a dual
+  // holder, who renders BOTH cards, a page-global query could click the
+  // borrower's switch and count the borrower's jump buttons as the
+  // lender's. That is the exact population I argued to KEEP in the pool
+  // one round earlier, so the probe would have mis-measured precisely
+  // the case I defended.
+  const card = page.locator('section.card').filter({ hasText: CHOOSER.title }).first();
+  const sw = card.getByRole('button', { name: SWITCH });
+  const jumpsOf = () => card.getByRole('button', { name: /Go to this option/i });
   try {
     if ((await sw.count()) === 0) {
       // NO SWITCH means one of two different things, and the first
-      // version of this probe reported them identically — the same
-      // conflation this whole PR keeps finding. The card renders the
-      // switch only when it is in Basic mode AND some row is jumpable,
-      // so its absence is either "already in Advanced" (jump buttons
-      // present, and their anchors are still worth checking) or "no row
-      // is jumpable" (nothing to check, and legitimately so).
-      const already = await jumpsOf().count();
-      if (already === 0) {
+      // version of this probe reported them identically. The card
+      // renders the switch only when it is in Basic mode AND some row
+      // is jumpable, so its absence is either "already in Advanced"
+      // (jumps present, anchors still worth checking) or "no row is
+      // jumpable" (nothing to check, and legitimately so).
+      if ((await jumpsOf().count()) === 0) {
         return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
       }
-      const anchors = await page.evaluate(() => ({
-        earlyExit: Boolean(document.getElementById('early-exit-card')),
-        loanSale: Boolean(document.getElementById('loan-sale-card')),
-      }));
-      return {
-        advancedOffered: false,
-        advancedJumps: already,
-        advancedAnchorsOk: already <= Number(anchors.earlyExit) + Number(anchors.loanSale),
-        advancedAnchors: anchors,
-        advancedWhy: 'already in Advanced',
-      };
+      return { advancedOffered: false, advancedWhy: 'already in Advanced', ...(await anchorAudit(page, card)) };
     }
     await sw.first().click({ timeout: 10_000 });
     // The tools mount behind their own reads; give them the same settle
     // the initial scrape gets.
     await page.waitForTimeout(6_000);
-    const n = await jumpsOf().count();
-    if (n === 0) {
-      return { advancedOffered: true, advancedJumps: null, advancedWhy: 'no jump rendered after switch' };
+    if ((await jumpsOf().count()) === 0) {
+      // A FAILURE, not an observation (Codex #1853 r5). The card offered
+      // the switch, which it does only when some row is jumpable, so
+      // after switching a jump must exist. Recording this as `null` let
+      // a no-op `onSwitchToAdvanced` — or tools that never mount — exit
+      // 0 while the Advanced assertion this PR claims never ran at all.
+      return { advancedOffered: true, advancedJumps: 0, advancedAnchorsOk: false,
+               advancedWhy: 'switch offered but no jump rendered after it' };
     }
-    // Both anchors the card can target. Checking BOTH ids rather than
-    // only the ones a jump points at keeps this honest about which
-    // surface was actually present.
-    const anchors = await page.evaluate(() => ({
-      earlyExit: Boolean(document.getElementById('early-exit-card')),
-      loanSale: Boolean(document.getElementById('loan-sale-card')),
-    }));
-    return {
-      advancedOffered: true,
-      advancedJumps: n,
-      // A jump per anchor is the most this card ever renders, and every
-      // rendered jump must have somewhere to land.
-      advancedAnchorsOk: n <= Number(anchors.earlyExit) + Number(anchors.loanSale),
-      advancedAnchors: anchors,
-    };
+    return { advancedOffered: true, ...(await anchorAudit(page, card)) };
   } catch (e) {
     // A click or evaluate that failed is "could not look", not a
     // product defect — reported so it is visible, never as a FAIL.
     return { advancedOffered: true, advancedJumps: null, advancedWhy: String(e).slice(0, 120) };
   }
+}
+
+/**
+ * EACH jump button matched to ITS OWN anchor (Codex #1853 r5).
+ *
+ * The first version compared a COUNT — `jumps <= earlyExitPresent +
+ * loanSalePresent` — which does not establish the invariant it claimed.
+ * One listing jump with only `early-exit-card` mounted gives `1 <= 1`
+ * and passes, while the button points at an anchor that is not there.
+ * An aggregate cannot express "this button's target exists"; only a
+ * per-button check can.
+ *
+ * The row a button belongs to is read from its own `.item-row` title,
+ * and mapped to the target `lenderExitRows` gives that row.
+ */
+async function anchorAudit(page, card) {
+  const rows = await card.locator('.item-row').evaluateAll((els) =>
+    els.map((el) => ({
+      title: el.querySelector('.row-title')?.textContent?.trim() ?? '',
+      hasJump: Boolean(el.querySelector('button')),
+    })),
+  );
+  const targetFor = (title) =>
+    /Sell your position now/i.test(title)
+      ? 'early-exit-card'
+      : /List your position for sale/i.test(title)
+        ? 'loan-sale-card'
+        : null;
+  const jumping = rows.filter((r) => r.hasJump);
+  const checks = [];
+  for (const r of jumping) {
+    const target = targetFor(r.title);
+    const present = target
+      ? await page.evaluate((id) => Boolean(document.getElementById(id)), target)
+      : null;
+    checks.push({ title: r.title.slice(0, 40), target, present });
+  }
+  return {
+    advancedJumps: jumping.length,
+    // `null` target = a jumping row this drive does not recognise, which
+    // is a mapping gap rather than a product defect; reported, not failed.
+    advancedAnchorsOk: checks.every((c) => c.target === null || c.present === true),
+    advancedAnchors: checks,
+  };
 }
 
 // ---------------------------------------------------------------- drive
@@ -1737,6 +1788,9 @@ for (const v of visited) {
           ` sellNow=${v.sellNowRow} list=${v.listRow} waitFirst=${v.waitFirst}` +
           `\n      advanced: offered=${v.advancedOffered} jumps=${v.advancedJumps}` +
           ` anchorsOk=${v.advancedAnchorsOk ?? '-'}` +
+          (Array.isArray(v.advancedAnchors) && v.advancedAnchors.length
+            ? ` [${v.advancedAnchors.map((a) => `${a.target}=${a.present}`).join(', ')}]`
+            : '') +
           (v.advancedWhy ? ` (${v.advancedWhy})` : '') +
           (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`)
         : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
