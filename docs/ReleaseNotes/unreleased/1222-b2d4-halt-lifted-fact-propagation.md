@@ -18,7 +18,7 @@ compensation — the second of which holds a funding record and waits anyway,
 precisely so its rewards are not retired for nothing before the compensation
 reaches them.
 
-**The documentation did not follow.** Nineteen separate places across nine files
+**The documentation did not follow.** Twenty-two separate places across ten files
 still told the reader the pause was in force and that the attempt to lift it had
 been withdrawn — including the functional specification, which is the reference
 for what the platform is *intended* to do and is therefore the document an audit
@@ -31,8 +31,8 @@ table still reporting the work as abandoned.
 **Corrected as a class, not as a list.** The statements were found by searching
 for the *claim* in every phrasing it takes, rather than by fixing the places
 someone had happened to notice, and the search was repeated after every pass —
-which is what found them: the first sweep located five, and seven further
-passes raised it to nineteen. The count rose at **every** pass, including the
+which is what found them: the first sweep located five, and nine further
+passes raised it to twenty-two. The count rose at **every** pass, including the
 last, so the honest statement is not that the class is closed but that the
 phrasings tried so far have run dry.
 
@@ -47,7 +47,7 @@ first version of this note said the only remaining wait was a day whose funding
 record had not landed. That was a new inaccuracy of exactly the kind the change
 set out to remove — a stamped day that was deliberately zeroed also waits, and
 saying otherwise would have understated when a reader should expect rewards to
-pause. Nineteen stale statements were corrected here; introducing a twentieth
+pause. Twenty-two stale statements were corrected here; introducing a twenty-third
 while doing it is the failure mode worth naming rather than quietly fixing.
 
 **The specification change is a recorded decision, not a transcription.** These

@@ -294,9 +294,12 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      *      manual-budget path, designed WITH the delivered-backing ledger —
      *      a manual send that bypassed the pendingRemitted reservation + ack
      *      would be exactly the unbacked-remit class that ledger exists to
-     *      prevent. Until d2 lands, a zeroed chain-day's compensation stays
-     *      the pre-mesh out-of-band governance posture
-     *      ({RewardAggregatorFacet.forceFinalizeDay}'s documented recovery).
+     *      prevent. That vehicle HAS landed —
+     *      {RewardCompensationDispatchFacet.remitManualBudget} — so a zeroed
+     *      chain-day's compensation no longer falls back to the pre-mesh
+     *      out-of-band governance posture
+     *      ({RewardAggregatorFacet.forceFinalizeDay}'s documented recovery),
+     *      which remains only as the historical predecessor.
      *      With the B2-d1 report in place, an armed day whose chains all
      *      deliver their interest reports never reaches this path — only a
      *      chain zeroed out of the denominator does.

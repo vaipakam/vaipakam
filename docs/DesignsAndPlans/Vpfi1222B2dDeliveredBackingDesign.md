@@ -113,8 +113,10 @@ that legitimately lights it up):
   remit-arrival credit is what gives a mirror's bucket real backing for the
   Base-funded recycled share, so that mirror claims cannot inflate
   `paidOutRecycled` → the derived `creditedCumulative` → phantom
-  availability. Until d5 lands, mirror armed-day claims stay HALTED, which
-  is what keeps that hazard unreachable today.
+  availability. Until d5 landed, mirror armed-day claims stayed HALTED, which
+  is what kept that hazard unreachable at the time. d5 shipped (#1432) and the
+  halt itself was lifted by #1434 P1-b, so the backing this entry describes is
+  now what holds the hazard closed.
 - **Keeper/indexer (P7)** rides d1 (send pass) + a small follow-up for the
   out-of-window reconcile rediscovery (indexer event handler + D1 table + keeper
   read), landing alongside d2.
