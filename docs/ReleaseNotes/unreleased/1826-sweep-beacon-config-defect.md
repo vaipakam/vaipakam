@@ -20,13 +20,21 @@ injection is on, how many pages are affected, that the refusal is correct while
 the injection is not, and where the fix belongs. Loud enough to act on, quiet
 enough not to drown the rest of the report.
 
-It deliberately does not fail the run. The remedy is a hosting setting rather
-than a change to any file in the project, so failing would block work that
-nobody reading the failure could unblock.
+It also fails the sweep, which was the harder half of the decision. The first
+version only warned, reasoning that the remedy is a hosting setting rather than
+a change to any file in the project, so a failure would block work nobody
+reading it could unblock. Review pushed back and was right. This sweep runs
+after a deployment, not before a merge, so it blocks nothing — and the person
+reading its verdict is the one who can change the hosting setting. Meanwhile
+the batch that collects these runs reads a clean exit as a pass, so warning
+only would have placed a confirmed privacy defect inside a green summary. Where
+the fix lives decides who does it, not whether a run that found the problem may
+call itself clean.
 
 ### A detail worth keeping
 
-The message is reported per affected page but counted as one finding, because
-it is a property of the deployment rather than of any particular page — every
-page sees it. Counting occurrences would have produced a number that says more
-about how many pages the sweep happened to visit than about the problem.
+The problem is a property of the deployment rather than of any particular page
+— every page sees it — so the report counts the affected pages and mentions the
+total once, instead of repeating itself for each one. Reporting per occurrence
+would have produced a number that says more about how many pages the sweep
+happened to visit than about the problem.

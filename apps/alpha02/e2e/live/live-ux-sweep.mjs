@@ -12,13 +12,18 @@
  * being rebuilt in a scratchpad each time.
  *
  * What a PASS from this drive promises (#1626, owner decision
- * 2026-08-09): the sweep stayed read-only, AND every route it was asked
- * to visit actually loaded. Console errors, slow responses, heavy
- * payloads and overflow probes stay evidence and do not fail the run —
- * they are judgements a reviewer makes from the artifacts. A route that
- * never loaded is not a judgement: the surface under review was never
+ * 2026-08-09; extended by #1826): the sweep stayed read-only, every
+ * route it was asked to visit actually loaded, AND the zone was not
+ * injecting the analytics beacon the site's CSP refuses. Console
+ * errors, slow responses, heavy payloads and overflow probes otherwise
+ * stay evidence and do not fail the run — they are judgements a
+ * reviewer makes from the artifacts. The other two are not judgements.
+ * A route that never loaded means the surface under review was never
  * shown, so a PASS row in the batch would claim coverage the run does
- * not have.
+ * not have. The injected beacon is a settled decision rather than a
+ * reviewer's call — the project has already ruled on what that
+ * configuration should be (#1816) — so leaving it to be re-judged from
+ * the artifacts every run is how it survives one.
  *
  * "Never loaded" is three shapes, not one, because only the first of
  * them looks like a failure at the time:
@@ -69,8 +74,11 @@
  * Read-only by design: the sweep connects the wallet (so authed
  * surfaces render their real state) but never signs, posts, or sends
  * a transaction. Known environment noise (the sandbox proxy's page-WS
- * resets, the CSP-blocked Cloudflare beacon) is tagged, not dropped —
- * the report distinguishes "expected here" from "real console error".
+ * resets) is tagged, not dropped — the report distinguishes "expected
+ * here" from "real console error". The CSP-refused Cloudflare beacon
+ * used to be listed here as noise too; it is not noise, it is a
+ * configuration defect, and it now fails the run (#1826 — see
+ * `classifyNoise` below).
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -290,9 +298,29 @@ async function devtoolsProbe(page) {
  *  reported ONCE at the end of the run, by name, instead of per route:
  *  loud enough to act on, quiet enough not to drown the sweep.
  *
- *  It does not fail the run. The fix is a zone setting, not a code
- *  change, so a red sweep would block work nobody in the repo can
- *  unblock.
+ *  It FAILS the run (exit 1), alongside the other findings. The first
+ *  version of this only warned, on the reasoning that a zone setting is
+ *  not a code change and a red sweep would block work nobody in the repo
+ *  can unblock (Codex #1859 r1 P2 rejected that, correctly). Two things
+ *  are wrong with it. This sweep is a post-deploy release drive, not a
+ *  merge gate — the person reading its verdict is the operator who can
+ *  flip the zone setting, so it blocks nothing and reaches exactly the
+ *  right hands. And `run-live-batch.mjs` maps exit 0 to `PASS`, so a
+ *  warning-only branch put a confirmed privacy defect inside a green
+ *  batch summary — the same "found something, reported success" shape
+ *  the finding-outranks-an-incomplete-sweep rule below exists to
+ *  prevent. Where the remedy lives decides WHO fixes it, not whether a
+ *  run that found it may call itself clean.
+ *
+ *  CALIBRATED, not assumed (2026-08-21, against the deployed
+ *  alpha02.vaipakam.com): a real browser load produced exactly one
+ *  console error, and it was this one — `classifyNoise` tags that
+ *  verbatim message `csp-beacon`, so a live run reaches the failing
+ *  branch below rather than merely being capable of it in principle. A
+ *  plain `curl` does NOT reproduce it: Cloudflare skips the injection
+ *  for non-browser fetches, so checking the HTML that way returns a
+ *  clean page and invites the wrong conclusion that the zone setting is
+ *  already off. Send a browser `User-Agent` if verifying by hand.
  *
  *  The beacon check extracts the first URL token from the message and
  *  compares its PARSED ORIGIN (never a substring/regex host match, so a
@@ -787,14 +815,15 @@ for (const pass of report.passes) {
   }
 }
 if (beaconRoutes.size > 0) {
-  console.warn(
+  console.error(
     `CONFIG DEFECT: Cloudflare Web Analytics auto-injection is ON for this zone — ` +
       `its beacon is injected at the edge and refused by the site's CSP on ` +
       `${beaconRoutes.size} route(s). The refusal is correct; the injection is not. ` +
       `That collector sits downstream of the consent pipeline and cannot be gated ` +
       `by it, so the fix is to turn the injection off at the zone, NOT to allow the ` +
-      `host in script-src (#1816). Not failing the run: the remedy is a zone ` +
-      `setting, not a code change.`,
+      `host in script-src (#1816). This FAILS the run: the remedy is an operator ` +
+      `action rather than a code change, which decides who fixes it, not whether ` +
+      `a sweep that found it may report success.`,
   );
 }
 for (const f of allNavFailures) {
@@ -823,7 +852,16 @@ if (allBlockedRequests.length > 0) {
 // kind of verdict for the same reason — the run observed something
 // wrong with the app, and it outranks a session that never started, so
 // it is checked BEFORE the exit-2 branch below.
-if (allBlockedRequests.length > 0 || allNavFailures.length > 0) {
+//
+// So does the injected-beacon defect (#1826). It is the one member of
+// this branch that is NOT a defect in the app — it is a defect in the
+// zone the app is served from — but the verdict vocabulary here is
+// about what the run OBSERVED, not about which repository holds the
+// fix: exit 1 is "this run found something", exit 2 is "this run
+// verified nothing". A confirmed defect is the former whoever owns the
+// remedy, and exit 2 would actively misdescribe it as an unswept
+// surface.
+if (allBlockedRequests.length > 0 || allNavFailures.length > 0 || beaconRoutes.size > 0) {
   if (allNavFailures.length > 0) {
     console.error(
       `NAVIGATION FAILURES: ${allNavFailures.length} of ${routesAttempted} route visit(s)` +

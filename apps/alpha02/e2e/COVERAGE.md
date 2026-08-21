@@ -206,9 +206,20 @@ because the fallback transport simply dropped to HTTP.
 
 Two claims that did NOT survive checking, recorded so they are not
 re-litigated. The production CSP is `script-src 'self'` with no
-third-party origin, and the live HTML carries no Cloudflare RUM injection
-at all — so there is no `POST /cdn-cgi/rum` beacon for the read-only gate
-to trip over, and an exemption for one would be a hole guarding nothing.
+third-party origin, so no `POST /cdn-cgi/rum` beacon ever reaches the
+read-only gate and an exemption for one would be a hole guarding nothing.
+
+That conclusion stands; the reason first given for it did not. This said
+the live HTML carried no Cloudflare RUM injection at all, which is false
+— the zone injects it, and #1826 confirmed it on alpha02 by fetching the
+page with a browser `User-Agent`. Cloudflare skips the injection for
+plain automated fetches, so the original check looked at a response that
+never had it. What actually keeps the RUM POST away is the CSP refusing
+`beacon.min.js`, so the script that would send it never runs. Same
+outcome, opposite mechanism: turning the injection off at the zone
+(#1816) removes the console error and leaves the gate exactly as safe,
+whereas allowing the host in `script-src` would start the POSTs the gate
+was told did not exist.
 
 Test the WIRING, not just the predicate. A correct verdict filed into
 the wrong bucket is the same defect in a different coat, so the step

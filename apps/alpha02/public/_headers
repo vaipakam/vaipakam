@@ -27,6 +27,23 @@
 #
 # frame-src allows the WalletConnect verify iframe the wallet-connect
 # handshake renders.
+#
+# `static.cloudflareinsights.com` is DELIBERATELY ABSENT (#1816), same
+# ruling as apps/www's file records. If the zone has Web Analytics
+# auto-injection on, Cloudflare inserts its RUM beacon into every HTML
+# page response and this CSP refuses it, which surfaces as a console
+# error on every page load. The fix is to turn the injection OFF at the
+# zone — NOT to add the host here. The beacon is injected at the edge,
+# downstream of the app, so the consent pipeline cannot gate it;
+# allowing it would run an analytics collector before the visitor has
+# consented to any, which the privacy spec forbids outright.
+#
+# Read that as a warning about a specific shortcut. `live-ux-sweep.mjs`
+# now FAILS on the refusal (#1826), and adding the host here is the one
+# edit that turns that failure green while making the underlying problem
+# worse — the console error stops because the collector starts. If a red
+# sweep sends you to this line, the change belongs in the Cloudflare
+# dashboard, not in this file.
 
 /*
   X-Content-Type-Options: nosniff
