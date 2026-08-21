@@ -394,12 +394,11 @@ défaut portant sur un collatéral que nous ne pouvons pas
 valoriser — tout le panier part et il ne reste rien, mais c'est
 une issue, pas une règle. Que le rabais de frais revienne dépend
 de la façon dont le prêt s'est terminé : sur un prêt encore soumis
-à la voie de frais VPFI retirée, un remboursement intégral, une
-clôture anticipée ou un refinancement règlent le rabais pondéré
-dans le temps sur le VPFI retenu au titre de la Loan Initiation
-Fee — qui peut être nul, tout partant alors au trésor, si ta remise
-est nulle au moment du règlement. Seuls un défaut ou une
-liquidation le font acquérir au trésor dans son intégralité. Réclamer consomme ton NFT de position
+à la voie de frais VPFI retirée, toute clôture régulière règle le rabais
+sur le VPFI retenu au titre de la Loan Initiation Fee — son montant
+est fixé par ta remise au moment du règlement, il peut donc être nul
+et entièrement perdu si tu ne détiens plus rien à cet instant. Seuls
+un défaut ou une liquidation le font perdre en totalité. Réclamer consomme ton NFT de position
 d'emprunteur. L'inverse n'est pas vrai : un NFT encore présent
 après une liquidation ne prouve pas que quelque chose t'attend.
 S'il ne restait rien, il n'y a rien à récupérer, la tentative est

@@ -319,7 +319,7 @@ collateral。如果发生 default 或 liquidation，也请查看一下。系统�
 claim，而不要从结束方式去推断。按折扣直接拿走是例外，而且是反方向的确定：它从不卖出，留给您的始终是 collateral。在无法定价的 collateral 上发生
 default 时，往往整个 basket 都会被取走、什么也不剩，但那是结果，不是规则。
 费用 rebate 会不会回来，取决于 loan 如何结束：即使仍在已停用 VPFI
-费用路径上的 loan，full repayment、preclose 或 refinance 会结算为
+费用路径上的 loan，任何正常关闭都会结算为
 Loan Initiation Fee 托管的 VPFI 的 rebate——金额取决于结算时刻您的
 折扣，若那时没有持仓则可能为零，全额被没收。只有
 default 或 liquidation 才会将其全部没收。claim 会 consume
@@ -506,7 +506,7 @@ default 会把您的全部 collateral 转给 lender，您没有后续 claim。
 - **Claim** — 一旦 loan settle，若已全额 repayment，则返还您的
   collateral；若 default，也可能还有 surplus：系统只取走偿还债务
   和了结它所需的那部分 collateral，您多存入的部分会记为您的 claim。
-  具体是什么取决于路径——参见 Claim Center 一节。已停用费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；全额 repayment、preclose 或 refinance 会结算按时间加权的 rebate（可能为零）。
+  具体是什么取决于路径——参见 Claim Center 一节。已停用费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；任何正常关闭都会结算 rebate（可能为零）。
 
 ---
 

@@ -366,7 +366,7 @@ default も、取引所に向かう前にその内部マッチを探します。
 default では、バスケット全体が失われ何も残らないことも多いですが、
 それは結果であってルールではありません。手数料の rebate が戻るかどうかは
 loan の終わり方によります。廃止された VPFI 手数料経路のままの loan
-でも、full repayment・preclose・refinance では Loan Initiation Fee
+でも、正常なクローズであれば（repayment、early close、refinance、または loan を決済する売却）Loan Initiation Fee
 のために保管されていた VPFI の rebate が精算されます。金額は決済時点の
 割引で決まるため、その時点で何も保有していなければゼロとなり、全額が
 treasury に入ります。
@@ -580,7 +580,7 @@ role-specific tabs で各 side の options を確認できます。今は
   超えて預けていた分はあなたの claim として記録されます。それが何かは経路によります —
   Claim Center の節を参照してください。廃止された手数料経路で
   保管されていた VPFI が没収されるのは default または
-  liquidation のときだけで、full repayment・preclose・refinance
+  liquidation のときだけで、正常なクローズ
   ではrebate が精算されます（ゼロのこともあります）。
 
 ---

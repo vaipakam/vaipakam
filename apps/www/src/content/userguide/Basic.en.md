@@ -367,7 +367,7 @@ never sells, so it always leaves you the collateral. Often — on a default over
 cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. Whether the fee rebate comes
 back depends on how the loan ended: on a loan still using the
-retired VPFI fee path, a full repayment, preclose or refinance
+retired VPFI fee path, any proper close
 settles the rebate on the VPFI held against the
 Loan Initiation Fee — sized by your discount at the moment it settles,
 so it can be zero, leaving the whole amount forfeited, if you hold
@@ -578,8 +578,7 @@ will be greyed out, with a small tooltip explaining why.
   the cost of closing it, so anything you put up beyond that is
   recorded as yours to claim. What that is depends on the path —
   see the Claim Center section. VPFI held under the retired fee
-  path is forfeited only on default or liquidation; a full
-  repayment, preclose or refinance settles the rebate,
+  path is forfeited only on default or liquidation; any proper close settles the rebate,
   which can be zero.
 
 ---
