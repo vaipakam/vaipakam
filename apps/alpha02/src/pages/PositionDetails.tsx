@@ -1214,7 +1214,18 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
       (st) => st !== undefined && st !== LoanStatus.Active,
     );
 
+  // `isError` disqualifies the snapshot here too (Codex r26 P2). This
+  // consumer predates the health-check rule and was missed when the
+  // rule was applied to `liveStatusCandidates`, then made REACHABLE by
+  // widening `bannerTerms` to lender viewers: a cached FallbackPending
+  // that the borrower has since cured, plus a failed refetch, left the
+  // urgent cure banner up for a dual holder while the healthy
+  // `liveStatus` read said Active.
+  //
+  // The banner is the most alarming thing this page renders, so a
+  // stale one is the worst place for the exception.
   const liveSaysFallbackPending =
+    !bannerTerms.isError &&
     bannerTerms.data?.live.status === LoanStatus.FallbackPending;
   // Past-due is decided by CHAIN-anchored time against (preferably
   // live) terms — not by view.state, whose daysRemaining derives from
@@ -3034,11 +3045,24 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // A read that succeeded ANYWHERE outranks a failure
           // elsewhere: the claim is about whether the schedule is
           // known, not about which query answered.
+          // A LOADING fallback is not a failed one (Codex r26 P2). The
+          // banner clause read `isError || data?.cadence === undefined`,
+          // and an in-flight query satisfies the second half — no data
+          // yet — so with `liveStatus` errored and `bannerTerms` still
+          // on the wire this reported "failed" and told the lender the
+          // schedule could not be read, recommending a reload, while a
+          // query that can answer was mid-request.
+          //
+          // The whole point of splitting failed from checking was that
+          // a persistent failure must not wear a transient's clothes.
+          // This had it the other way round.
           cadenceReadFailed={
             loanLive.data?.live.periodicInterestCadence === undefined &&
             liveStatus.data?.periodicInterestCadence === undefined &&
             (bannerTerms.isError ||
-              bannerTerms.data?.live.periodicInterestCadence === undefined) &&
+              (bannerTerms.data !== undefined &&
+                bannerTerms.data.live.periodicInterestCadence === undefined) ||
+              bannerTerms.fetchStatus === 'idle') &&
             (liveStatus.isError || (isAdvanced && loanLive.isError))
           }
           // Chain-anchored only, same rule as the borrower chooser's
@@ -3161,10 +3185,29 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // is too short (Codex r18 P2). Shares the tool's own
           // constant rather than mirroring it.
           listingWindowTooShort={(() => {
+            // BOTH healthy sources, not the first one that answers
+            // (Codex r26 P2). The neighbouring maturity branch already
+            // reconciles them and this one did not — a preference
+            // order, which is only sound when the sources cannot
+            // disagree. They can: an obligation transfer SHORTENS the
+            // loan, and these two queries refresh on different
+            // intervals, so one healthy snapshot can be inside the
+            // cutoff while the other is still pre-maturity.
+            //
+            // Where the maturity branch answers `'unknown'` on
+            // disagreement, this one fails CLOSED — either healthy
+            // source inside the cutoff blocks. The asymmetry is
+            // deliberate: `maturity` feeds copy that must not assert a
+            // due date it cannot establish, while this feeds an
+            // availability verdict, and a false block is a row that
+            // reads unavailable and clears on the next poll, against a
+            // false offer that is a form filled in for a transaction
+            // the tool's live preflight then rejects.
+            const verdicts: boolean[] = [];
             if (bannerTerms.data && !bannerTerms.isError) {
-              return (
+              verdicts.push(
                 termsEndSec > bannerNowSec &&
-                BigInt(termsEndSec - bannerNowSec) < MIN_SALE_LISTING_SECONDS
+                  BigInt(termsEndSec - bannerNowSec) < MIN_SALE_LISTING_SECONDS,
               );
             }
             if (loanLive.data && !loanLive.isError) {
@@ -3172,9 +3215,14 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
               // Advanced, not frozen — same clock as the maturity
               // branch above (Codex r22 P2).
               const now = loanLiveNowSec ?? loanLive.data.chainNow;
-              return end > now && BigInt(end - now) < MIN_SALE_LISTING_SECONDS;
+              verdicts.push(
+                end > now && BigInt(end - now) < MIN_SALE_LISTING_SECONDS,
+              );
             }
-            return false;
+            // No healthy source: an unread term must not claim the
+            // window is too short (Codex r18 P2). The maturity gate
+            // covers the unknown case on its own.
+            return verdicts.some(Boolean);
           })()}
           // Sync env read (`VITE_DISABLED_FLOWS`), no query behind it.
           listingFlowDisabled={flowDisabled('post-offer')}

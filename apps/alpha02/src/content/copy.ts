@@ -1974,10 +1974,24 @@ const copySource = {
       // seller's pending interaction-reward entry. The held balance can
       // dwarf the interest figure, so naming only the interest
       // component can induce a value-losing decision. The card cannot
-      // price these, so it NAMES them and sends the reader to the
-      // figures rather than implying they do not exist.
+      // price these, so it NAMES them rather than implying they do not
+      // exist.
+      //
+      // It no longer says "open the tool for the actual figures"
+      // (Codex r26 P2). Verified: neither `EarlyExitFlow` nor
+      // `LoanSaleFlow` reads or renders the held balance or the reward
+      // entry — both show only `sellerEconomics`' payout and current
+      // settlement cost. So the promise was unfulfillable, and worse
+      // than unfulfillable: the tool DOES show a cost figure, a
+      // narrower one, which then reads as the complete cost precisely
+      // because this card sent the lender there to find it.
+      //
+      // The line now scopes the pointer to the figure the tool really
+      // has, and says plainly that the other two are not quantified
+      // anywhere yet. Pricing them is follow-up work; claiming a
+      // destination that prices them was the defect.
       sellNowCost:
-        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Open the tool for the actual figures.',
+        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both, and the tool shows that figure. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
       // FOURTH loss, and only on a Full-stamped position (Codex r12
       // P2). `FeeEntitlement` is keyed by loanId, NOT by lender, and no
       // sale path resets it — only `repriceFeeEntitlementOnExtension`
@@ -2011,7 +2025,7 @@ const copySource = {
       listDesc:
         'Publish this position at your asking rate and wait for a buyer. The sale settles only when someone accepts.',
       listCost:
-        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Open the tool for the actual figures.',
+        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both, and the tool shows that figure. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
       // Cross-party disclosure: listing does not only lock the seller.
       // Codex r1 P2 ×2 — two corrections to what this used to claim.
       // (a) Partial repayment is NOT held: the borrower surface

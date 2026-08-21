@@ -51,10 +51,19 @@ reader somewhere that could not answer, and they only found out after the trip.
 it: selling early costs the larger of the interest built up so far or the
 buyer's rate top-up — never both — and on top of that, any balance already being
 held for you on the loan transfers to the buyer and your pending reward entry
-for the position is given up. The card cannot price those, so it names them and
-points you at the tool that shows the figures. A cost line that mentioned only
-the interest would read as complete while omitting an amount that can be larger
-than it.
+for the position is given up. A cost line that mentioned only the interest would
+read as complete while omitting an amount that can be larger than it.
+
+The row is careful about **which** of those you can actually see a number for.
+The interest-or-top-up figure is shown by the sale tool, and the row says so.
+The other two are not shown as amounts anywhere yet — not on this card, and not
+in either sale tool, which display only the payout and the settlement cost — so
+the row says that plainly and suggests checking your held balance and rewards
+before selling. An earlier version sent you to the tool "for the actual
+figures", which was worse than saying nothing: the tool does show a cost figure,
+a narrower one, and it would have read as the complete cost precisely because
+the card sent you there to find it. Putting numbers on those two is separate
+work; promising a page that already had them was the mistake.
 
 One position type pays a fourth thing, and the card now says so. If your
 position is on the Full fee plan — paid for in VPFI when the loan opened — that
