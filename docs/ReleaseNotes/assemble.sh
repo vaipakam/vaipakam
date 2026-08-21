@@ -503,8 +503,38 @@ for f in "${frags[@]}"; do
   # without the copy, the checks below and the text actually folded in
   # could describe different versions of the fragment, which is the whole
   # point of taking one.
+  #
+  # Hashed either side of the copy, and the copy compared against both
+  # (Codex #1863 r20). `cp` is not atomic: rewritten while it reads, the
+  # copy can hold an old prefix and a new suffix — a version that never
+  # existed. Everything downstream then trusts that hybrid consistently,
+  # so nothing notices, and the re-hash at the end quarantines the
+  # coherent new source AFTER the invented one has been published.
+  #
+  # Three matching reads is evidence of a quiet moment, not proof of one:
+  # a writer could still have finished between two of them. It narrows a
+  # silent corruption into a loud refusal, which is the trade worth
+  # making, and it is not a guarantee — nothing available to a shell
+  # script is.
+  run_checked 0 "reading ${FRAG_NAME[$f]}" frag_hash "$f"
+  _before="$CAPTURED"
   run_checked 0 "taking a working copy of ${FRAG_NAME[$f]}" \
     cp "$f" "$SNAP/$_n"
+  run_checked 0 "re-reading ${FRAG_NAME[$f]}" frag_hash "$f"
+  _after="$CAPTURED"
+  run_checked 0 "checking the working copy of ${FRAG_NAME[$f]}" \
+    frag_hash "$SNAP/$_n"
+  if [ "$_before" != "$_after" ] || [ "$CAPTURED" != "$_before" ]; then
+    echo "Error: ${FRAG_NAME[$f]} changed while it was being read." >&2
+    echo "" >&2
+    echo "Refusing to assemble: the copy taken may hold part of one version" >&2
+    echo "and part of another — text that never existed as a fragment — and" >&2
+    echo "everything downstream would treat it as authoritative." >&2
+    echo "" >&2
+    echo "Nothing has been consumed. Re-run once whatever is writing it has" >&2
+    echo "finished." >&2
+    exit 1
+  fi
   FRAG_SNAP["$f"]="$SNAP/$_n"
   # A basename cannot be allowed to close the marker's HTML comment
   # (#1863 r12). `note-->visible.md` produces
@@ -1008,6 +1038,74 @@ assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen
   exit 1
 }
 
+# ── Every file the index read, not just the one being written ────────────────
+# The rule above says "the evidence it rests on". Guarding only $OUT
+# enforced it for one file while the index draws on EVERY dated file: a
+# marker appearing in another one after the scan leaves this run still
+# believing a fragment is unfiled, so it appends the same section to a
+# second day and deletes the source (Codex #1863 r20).
+#
+# SRC_ID is filled by the scan below, one entry per dated file it read,
+# $OUT included. Anything irreversible checks the whole map. That is what
+# makes the invariant structural rather than a list of places somebody
+# remembered: a new read gets recorded by the same loop, and a new act
+# inherits the same call.
+declare -A SRC_ID=()
+
+assert_sources_unchanged() {  # assert_sources_unchanged <what-was-about-to-happen>
+  local p now
+  # The set itself, first. A dated file CREATED since the scan was never
+  # recorded, so comparing recorded entries alone cannot see it — and a
+  # new file is exactly where a competing run would have put a marker.
+  shopt -s nullglob
+  local seen=0
+  for p in "$DIR"/ReleaseNotes-*.md; do
+    if [ -z "${SRC_ID[$p]+set}" ]; then
+      echo "Error: $(basename "$p") appeared while this run was working." >&2
+      echo "" >&2
+      echo "It was not there when the records were read, so this run cannot" >&2
+      echo "know whether it already holds any of these sections." >&2
+      echo "" >&2
+      echo "Nothing has been consumed. Re-run to read it." >&2
+      exit 1
+    fi
+    seen=$(( seen + 1 ))
+  done
+  if (( seen != ${#SRC_ID[@]} )); then
+    echo "Error: a dated file this run had read is gone." >&2
+    echo "Nothing further will be consumed. Re-run once things have settled." >&2
+    exit 1
+  fi
+  for p in "${!SRC_ID[@]}"; do
+    if [ "$p" = "$OUT" ]; then continue; fi   # covered in full below
+    now=""
+    if [ -f "$p" ] && [ ! -L "$p" ]; then
+      if ! file_identity "$p"; then
+        echo "Error: $(basename "$p") -- $IDENTITY_FAIL failed." >&2
+        echo "Nothing further will be consumed." >&2
+        exit 1
+      fi
+      # CONTENT only for the other dated files. Their permissions are
+      # nobody's business here — this run neither replaces them nor
+      # carries their metadata anywhere, so refusing on a chmod to an
+      # unrelated file would be a false alarm with a destructive-sounding
+      # message. $OUT is different precisely because it IS replaced.
+      now="${IDENTITY%% *}"
+    fi
+    if [ "$now" != "${SRC_ID[$p]}" ]; then
+      echo "Error: $(basename "$p") changed while this run was working." >&2
+      echo "" >&2
+      echo "This run's decisions about what is already filed were read from" >&2
+      echo "it, so $1 could duplicate a section or delete one that is no" >&2
+      echo "longer recorded anywhere." >&2
+      echo "" >&2
+      echo "Nothing further will be consumed. Re-run once it has settled." >&2
+      exit 1
+    fi
+  done
+  assert_output_unchanged "$1"
+}
+
 declare -A marker_seen=()
 declare -A marker_where=()
 shopt -s nullglob
@@ -1023,6 +1121,18 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     echo "cover every dated file, and this one cannot be read as one." >&2
     exit 1
   fi
+  # Recorded HERE, in the loop that reads it, so a file cannot end up in
+  # the index without ending up in the map (Codex #1863 r20). That is the
+  # whole point of putting it here rather than in a list somewhere else:
+  # the two cannot drift, because they are the same iteration.
+  if ! file_identity "$dated"; then
+    echo "Error: $(basename "$dated") -- $IDENTITY_FAIL failed." >&2
+    echo "Refusing to assemble: this run's decisions about what is already" >&2
+    echo "filed come from these files, so it has to be able to tell whether" >&2
+    echo "one changed underneath it." >&2
+    exit 1
+  fi
+  SRC_ID["$dated"]="${IDENTITY%% *}"
   # `grep` exit 1 is "no markers in this file", which is normal. Anything
   # ABOVE 1 is a read error, and `|| true` used to flatten the two
   # together — leaving a silently INCOMPLETE index, which is worse than
@@ -1194,7 +1304,7 @@ if (( ${#already[@]} > 0 )); then
   # holds — and when EVERY fragment takes this path the run exits below
   # without ever reaching the check before the rename, so this is the
   # only place that can catch it.
-  assert_output_unchanged "removing the fragments already folded into it"
+  assert_sources_unchanged "removing the fragments already folded into it"
   echo "Already assembled into $(basename "$OUT") — removing without re-appending:"
   # Every entry here matched on name, bytes AND file — anything else is
   # routed to the ambiguous branch above and never reaches this loop — so
@@ -1214,6 +1324,12 @@ if (( ${#already[@]} > 0 )); then
   # few lines away.
   _changed=()
   for f in "${already[@]}"; do
+    # INSIDE the loop, once per removal (Codex #1863 r20). Checked once
+    # before it, the second deletion still ran on evidence gathered
+    # before the first — so an edit landing between them removed a
+    # fragment whose section was no longer anywhere. Each irreversible
+    # step revalidates for itself; a loop is N steps, not one.
+    assert_sources_unchanged "removing ${FRAG_NAME[$f]}"
     _rc=0
     _now="$(frag_hash "$f")" || _rc=$?
     if (( _rc != 0 )) || [ "$_now" != "${FRAG_HASH[$f]}" ]; then
@@ -1296,7 +1412,15 @@ if [ -f "$OUT" ]; then
     # halves stay as bytes on disk: extract, then match with `-f`.
     _head_file="$(mktemp)"
     _hrc=0
-    env LC_ALL=C grep -a -m1 '^#\{1,6\} ' "$f" > "$_head_file" 2>/dev/null || _hrc=$?
+    # The SNAPSHOT, like validation, hashing and assembly (Codex #1863
+    # r20). Reading the live fragment here made this the one check that
+    # judged a different version from the one being published: edit the
+    # heading after the copy, and the duplicate-heading heuristic looks
+    # for the new heading, does not find it, and publishes the old
+    # section a second time. Four of five reads had been repointed; this
+    # was the fifth, and missing it is exactly the drift copying was
+    # meant to end.
+    env LC_ALL=C grep -a -m1 '^#\{1,6\} ' "${FRAG_SNAP[$f]}" > "$_head_file" 2>/dev/null || _hrc=$?
     if (( _hrc > 1 )); then
       rm -f "$_head_file"
       echo "Error: reading ${FRAG_NAME[$f]} failed (exit $_hrc)." >&2
@@ -1577,7 +1701,7 @@ _persist "$WORK"
 # Nothing has been consumed yet, so refusing costs nothing: the temp file
 # goes with the trap, every fragment is still pending, and a re-run
 # builds on whatever landed.
-assert_output_unchanged "replacing it"
+assert_sources_unchanged "replacing it"
 
 # What remains between the last check and the rename is a handful of
 # syscalls, which is as narrow as this gets without holding a lock on
@@ -1585,6 +1709,20 @@ assert_output_unchanged "replacing it"
 # rather than minimised would be overstating it.
 
 mv "$WORK" "$OUT"
+
+# What was just published, recorded so the removals below can check it is
+# still there (Codex #1863 r20). Every check up to this point asked "is
+# $OUT still the file this run started from" — and after the rename that
+# question is retired: the answer is deliberately no. Without a new
+# baseline the fragments were then deleted on the strength of bytes
+# nothing had looked at since, so a dated file removed during the flush
+# below took the only other copy with it and the run still exited 0.
+_pub_rc=0
+PUBLISHED_ID="$(frag_hash "$OUT")" || _pub_rc=$?
+if (( _pub_rc != 0 )) || [[ ! "$PUBLISHED_ID" =~ ^[0-9a-f]{64}$ ]]; then
+  _abort_after_write "could not read $(basename "$OUT") back after writing it"
+fi
+
 # The directory entry too, for the same reason: the rename itself is
 # metadata, and the fragments about to be deleted are metadata in the
 # same filesystem.
@@ -1669,6 +1807,16 @@ for f in "${frags[@]}"; do
   # and reproducible, instead of a collision that only happens when a PID
   # is reused. A file already there is a fragment somebody has not looked
   # at yet, so it is reported rather than overwritten.
+  # The published file, re-checked before every removal. These fragments
+  # are the only other copy of what it holds, so "it is still there and
+  # still says what it said" is the precondition for deleting any of
+  # them — and it is checked per fragment, since the loop is N
+  # irreversible steps rather than one.
+  _pub_rc=0
+  _pub_now="$(frag_hash "$OUT" 2>/dev/null)" || _pub_rc=$?
+  if (( _pub_rc != 0 )) || [ "$_pub_now" != "$PUBLISHED_ID" ]; then
+    _abort_after_write "$(basename "$OUT") is gone or altered since it was written"
+  fi
   _q="$UNREL/.assembled.${FRAG_NAME[$f]}"
   if [ -e "$_q" ]; then
     _abort_after_write "a set-aside file already exists at $(basename "$_q")"

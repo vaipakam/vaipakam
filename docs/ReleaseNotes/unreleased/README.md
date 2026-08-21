@@ -109,7 +109,15 @@ fragment edited while assembly is in progress cannot make the different
 stages disagree about what it said, and what lands in the dated file is
 always the version read at the start. The edited one is then set aside
 rather than deleted (as `.assembled.<name>`) and named on screen, so the
-newer text is never the thing that gets thrown away.
+newer text is never the thing that gets thrown away. A fragment rewritten
+*during* its copy stops the run outright, since the copy could otherwise
+hold half of one version and half of another.
+
+**Any other dated file changing also stops the run**, not just the one
+being written. Which fragments count as already folded in is decided by
+reading all of them, so a marker appearing in another day's file — or a
+new dated file appearing at all — means those decisions were made on
+stale information. Re-run and it reads them again.
 
 **A hard kill can also leave a temp file behind** — a
 `.assemble-<date>.XXXXXX` in `docs/ReleaseNotes/`, which is a partly- or

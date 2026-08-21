@@ -248,6 +248,49 @@ counterparts get a few lines below. A note edited since the run read it was
 discarded while the dated file held only the older version. It is now kept and
 named, the same as the other path.
 
+### Stating a rule is not the same as enforcing it
+
+The round after the rule was written down found five more places it was not
+being kept — which is the useful kind of answer, because four of them were
+the rule applied to only one file.
+
+"The evidence it rests on" had been read as the dated file being written. But
+the run decides what is already filed by reading *every* dated file, so a
+record appearing in a different day's file after that reading leaves this run
+still believing a note is unfiled: it files it a second time and deletes the
+source. The same reasoning covers a dated file that appears from nowhere
+mid-run, which no comparison of previously-read files can notice.
+
+Every file the run reads is now recorded as it is read — in the same loop, so
+the record and the reading cannot drift apart — and everything irreversible
+checks the whole set, including whether the set itself has grown or shrunk.
+
+Two more were about *when* the checking happens rather than what it covers.
+A loop that removes several notes is several irreversible steps, not one, so
+checking once before it left the second removal running on evidence gathered
+before the first. And every check up to the moment the new file is put in place
+asks "is this still the file the run started from" — a question that is
+deliberately answered "no" afterwards. Without a fresh answer, the notes were
+removed on the strength of bytes nothing had looked at since, so a dated file
+disappearing during the final flush took the only other copy with it while the
+run reported success.
+
+### A note can change while it is being copied
+
+The fifth is a different animal, and worth separating from the others. Copying
+is not instantaneous: a note rewritten while the copy is being taken can yield
+a copy holding the beginning of one version and the end of another — text that
+never existed. Everything downstream then agrees with itself perfectly, because
+they all read that same invented copy, and it is published.
+
+Each note is now read either side of its copy and the copy compared with both.
+Three readings agreeing is evidence of a quiet moment rather than proof of one,
+and it is worth being precise about that: a writer could still have finished
+between two of them. What it does is turn a silent corruption into a refusal
+that names the file, which is the trade worth making. A shell script has no way
+to make it a guarantee, and claiming otherwise would be the kind of overstated
+promise this document has already had to walk back once.
+
 ### Verified against the fault, not just the fix
 
 Every test covering a **behaviour that changed** was run against the older

@@ -878,7 +878,10 @@ done
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run fails"              "$?"                          "1"
 check "the fragment is NOT deleted" "$(pending "$W")"            "2"
-check "it reports the command failure" "$(says "$msg" 'hashing 0001-a.md failed')" "1"
+# The first hash of a fragment is now the one taken either side of the working
+# copy, so a broken checksum is reported as "reading" rather than "hashing".
+# Same guard, same refusal, earlier point.
+check "it reports the command failure" "$(says "$msg" 'reading 0001-a.md failed')" "1"
 check "no empty-hash marker was written" \
   "$(count_in 'sha256= -->' "$out/ReleaseNotes-2026-08-16.md")" "0"
 
@@ -917,7 +920,7 @@ done
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "a plausible-but-failed hash is refused" "$?"                       "1"
 check "the fragment is NOT deleted"            "$(pending "$W")"          "2"
-check "it reports the command failure"  "$(says "$msg" 'hashing 0001-a.md failed')" "1"
+check "it reports the command failure"  "$(says "$msg" 'reading 0001-a.md failed')" "1"
 check "no false marker was written" \
   "$(count_in 'sha256=0000' "$out/ReleaseNotes-2026-08-16.md")" "0"
 
@@ -1341,7 +1344,10 @@ chmod +x "$W/fakebin/sed"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"           "$?"                                     "1"
 check "no fragment consumed"    "$(pending "$W")"                        "2"
-check "it names that branch"    "$(says "$msg" 'else created it')"       "1"
+# A dated file appearing mid-run is now caught by the set check across every
+# file the index read, which names it specifically, ahead of the generic
+# "created" branch.
+check "it names that branch"    "$(says "$msg" 'appeared while this run')"  "1"
 check "the other file survives" \
   "$(count_in '^## created by someone else$' "$out/ReleaseNotes-2026-08-16.md")" "1"
 
@@ -1579,6 +1585,130 @@ check "the edited one is kept" \
 check "and it says so"         "$(says "$msg" 'Kept (changed')"      "1"
 check "the untouched one goes" \
   "$([ -f "$W/docs/ReleaseNotes/unreleased/0002-b.md" ] && echo kept || echo gone)" "gone"
+
+echo "T54: the published file is rechecked before fragments are removed"
+W="$ROOT/t54"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Every check before the rename asks "is $OUT still what this run started
+# from"; after it, that question is retired on purpose. Without a NEW baseline
+# the fragments — the only other copy — were deleted on the strength of bytes
+# nothing had looked at since, so a dated file removed during the flush took
+# them both (Codex #1863 r20). The sync shim fires on the post-rename flush.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+if [ -f "$out/ReleaseNotes-2026-08-16.md" ]; then
+  rm -f "$out/ReleaseNotes-2026-08-16.md"
+fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run fails"            "$?"                                   "1"
+check "it says it is gone"       "$(says "$msg" 'gone or altered')"      "1"
+check "the fragments survive"    "$(pending "$W")"                       "2"
+
+echo "T55: each recovery deletion rechecks for itself, not once for the batch"
+W="$ROOT/t55"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Checked once before the loop, the SECOND deletion still ran on evidence
+# gathered before the first — so an edit landing between them removed a
+# fragment whose section was no longer anywhere (Codex #1863 r20). Both
+# fragments take the recovery path here, and the output is replaced after the
+# first removal.
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/rm" <<SHIM
+#!/bin/sh
+/bin/rm "\$@"; _rc=\$?
+if [ ! -f "$W/fired" ]; then
+  case "\$*" in
+    */unreleased/*)
+      : > "$W/fired"
+      printf '# Release Notes — 2026-08-16\n\n## replaced after the first\n' \\
+        > "$out/ReleaseNotes-2026-08-16.md"
+      ;;
+  esac
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/rm"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"           "$?"                                     "1"
+check "the second one survives" "$(pending "$W")"                        "1"
+check "it says what changed"    "$(says "$msg" 'changed while this run')"  "1"
+
+echo "T56: a fragment rewritten DURING the copy is refused, not published torn"
+W="$ROOT/t56"; build "$W"
+out="$W/docs/ReleaseNotes"
+# `cp` is not atomic. Rewritten while it reads, the copy can hold an old
+# prefix and a new suffix — a version that never existed — and everything
+# downstream trusts it consistently, so the invented text is published and
+# only the coherent source is quarantined afterwards (Codex #1863 r20).
+# Shimming `cp` reproduces the race deterministically: rewrite the source
+# between the two reads that bracket the copy.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/cp" <<SHIM
+#!/bin/sh
+/bin/cp "\$@"; _rc=\$?
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '## rewritten during the copy\n' \\
+    > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+fi
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/cp"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                        "1"
+check "no fragment consumed"   "$(pending "$W")"                           "2"
+check "it says what happened"  "$(says "$msg" 'changed while it was being read')" "1"
+check "nothing was published" \
+  "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
+
+echo "T57: a marker appearing in ANOTHER dated file mid-run stops the run"
+W="$ROOT/t57"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Only $OUT was revalidated, so a record added to a different day after the
+# scan left this run still believing the fragment was unfiled — appending the
+# same section to a second day and deleting the source (Codex #1863 r20).
+printf '# Release Notes — 2026-08-15\n\n## older day\n' > "$out/ReleaseNotes-2026-08-15.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '\n## 0001-a\n' >> "$out/ReleaseNotes-2026-08-15.md"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                    "1"
+check "no fragment consumed"   "$(pending "$W")"                       "2"
+check "it names the other day" "$(says "$msg" 'ReleaseNotes-2026-08-15.md changed')" "1"
+
+echo "T58: a NEW dated file appearing mid-run stops the run"
+W="$ROOT/t58"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A file created since the scan was never recorded, so comparing recorded
+# entries alone cannot see it — and a new file is exactly where a competing
+# writer would put a record.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '# Release Notes — 2026-08-14\n' > "$out/ReleaseNotes-2026-08-14.md"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                     "1"
+check "no fragment consumed"   "$(pending "$W")"                        "2"
+check "it names the newcomer"  "$(says "$msg" '2026-08-14.md appeared')"  "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
