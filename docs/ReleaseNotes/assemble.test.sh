@@ -732,10 +732,17 @@ rc=$?
 chmod 644 "$out/ReleaseNotes-2026-08-16.md"
 if [ "$(id -u)" = "0" ]; then
   # root reads through mode 000, so the case cannot be staged this way.
-  ok "skipped — running as root, chmod 000 does not deny reads"
+  ok "skipped — running as root, chmod 000 does not deny reads (CI runs it)"
 else
   check "the run stops"               "$rc"                        "1"
-  check "it says the index is incomplete" "$(says "$msg" 'incomplete')" "1"
+  # Asserted against what `run_checked` actually prints. The earlier
+  # wording ("incomplete") belonged to the bespoke message this scan had
+  # before it moved onto the shared helper — and because this case SKIPS
+  # under root, the stale assertion could not fail in the container it
+  # was edited in. CI, which runs unprivileged, is the only place the
+  # chmod-000 cases are exercised at all.
+  check "it names the scan that failed" \
+    "$(says "$msg" 'for assembly markers failed')" "1"
   check "no fragment was consumed"    "$(pending "$W")"            "2"
 fi
 
