@@ -13,11 +13,12 @@ ready to price **waits** rather than stopping the chain: a day short of funding
 waits for the funding, and the other waits end when whatever each is missing
 arrives. What remains are per-day waits. They still hold a chain up while they
 last — days are settled oldest-first, so a day that waits blocks every later one
-for everybody on that chain — and the difference from the blanket stop they
-replaced is not that they reach less far but that each one ends: when its own
-missing piece arrives, or, for a deliberately-zeroed day, at its deadline
-whether compensation comes or not. The old stop had no ending condition at
-all. A day waits until everything it needs is in place, and
+for everybody on that chain — and they are not all short: a day whose funding
+record never arrives waits indefinitely. What changed is that each wait is now
+attached to a specific missing input, which can be seen, chased and supplied,
+and that one case — a day deliberately recorded as zero and awaiting
+compensation — also carries a deadline after which it settles itself. The stop
+they replaced had neither: nothing to supply, and no ending. A day waits until everything it needs is in place, and
 the things it can be waiting for are given as examples rather than as a complete
 set — deliberately, because every earlier attempt to close that list was
 overtaken. A day can be waiting because its funding record has not landed,
