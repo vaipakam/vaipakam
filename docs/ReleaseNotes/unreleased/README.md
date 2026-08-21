@@ -65,6 +65,16 @@ git add -A docs/ReleaseNotes/
 git commit -m "docs: release notes <date>"
 ```
 
+**If a run is interrupted, just run it again.** The dated file is built
+in a temp file and renamed into place at the end, so it is either the old
+file or the complete new one — never a partial append. Each folded
+fragment also leaves an invisible HTML-comment marker
+(`<!-- assembled-fragment: … -->`) in the dated file, which is how a
+re-run tells a fragment already folded in from one still pending: it
+names those, removes them, and does not append them a second time. Leave
+the markers in place when editing the assembled notes; deleting one makes
+a re-run duplicate that fragment (#1788).
+
 ### The date is the fragment's UTC merge day
 
 A fragment belongs to the day its PR merged **in UTC** — the clock

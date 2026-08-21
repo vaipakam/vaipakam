@@ -404,6 +404,69 @@ check "guard names bash 4" \
   "$(grep -c 'requires Bash 4 or newer' "$W/docs/ReleaseNotes/assemble.sh")" "1"
 
 # ── Argument handling ────────────────────────────────────────────────────────
+# ── Crash safety: the two windows between writing and clearing (#1788) ───────
+# Assembly is two steps that cannot be made one — replace the dated file, then
+# remove the fragments it consumed. Both windows are simulated here by putting
+# the tree into the exact state an interruption leaves and running the script
+# again, which is the operator's actual recovery. Neither state used to be
+# survivable: the second one silently duplicated published prose.
+echo "T12: an interruption AFTER the write does not duplicate content"
+W="$ROOT/t12"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+# Exactly the interrupted state: the file was written, the fragment was not
+# removed. Restoring it is what a crash between the rename and the `rm` leaves.
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/0001-a.md
+check "the interrupted state has it pending again" "$(pending "$W")" "2"
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "re-run succeeds"                "$?"                                          "0"
+check "content is NOT duplicated"      "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "the fragment is cleared"        "$(pending "$W")"                             "1"
+check "and it says what it recognised" "$(says "$msg" 'Already assembled')"          "1"
+check "naming the fragment"            "$(says "$msg" '0001-a.md')"                  "1"
+
+echo "T12b: a re-run with nothing but already-assembled fragments still clears"
+W="$ROOT/t12b"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/0001-a.md
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "succeeds with nothing to append" "$?"                                          "0"
+check "still not duplicated"            "$(sections "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "the stale fragment is cleared"   "$(pending "$W")"                             "0"
+check "and says there is nothing left"  "$(says "$msg" 'Nothing left to assemble')"   "1"
+
+echo "T13: the dated file is replaced whole, never left half-written"
+W="$ROOT/t13"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+check "no temp file survives a good run" \
+  "$(find "$out" -maxdepth 1 -name '.assemble-*' | wc -l | tr -d ' ')" "0"
+# A marker exists for what was folded, and is invisible in rendered markdown —
+# it must be an HTML comment, not a visible line, since this file is published.
+check "a marker records the fragment" \
+  "$(grep -c '^<!-- assembled-fragment: 0001-a.md -->$' "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "the marker is an HTML comment" \
+  "$(grep -c '^<!--.*-->$' "$out/ReleaseNotes-2026-08-16.md")" "1"
+
+echo "T13b: prose that merely NAMES a fragment is not mistaken for a marker"
+W="$ROOT/t13b"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A fragment whose own text mentions another fragment's filename. Matching on a
+# substring rather than the whole marker line would drop 0002-b.md unassembled
+# while reporting success — a fragment silently lost, the inverse of T12.
+printf '## a\nSee 0002-b.md and <!-- assembled-fragment: 0002-b.md --> inline.\n' \
+  > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+git -C "$W" add -A
+GIT_AUTHOR_DATE='2026-08-16T23:00:00Z' GIT_COMMITTER_DATE='2026-08-16T23:00:00Z' \
+  git -C "$W" commit -q -m mention
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+bash "$out/assemble.sh" 2026-08-17 >/dev/null 2>&1
+check "the mentioned fragment still assembles" \
+  "$(sections "$out/ReleaseNotes-2026-08-17.md")" "1"
+check "nothing left pending"                    "$(pending "$W")" "0"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

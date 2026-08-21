@@ -21,6 +21,26 @@
 # The dated file is created with a header if absent, or appended to if
 # it already exists. Review the result, add an intro paragraph by hand,
 # then `git add -A docs/ReleaseNotes/` and commit.
+#
+# Crash safety (#1788). Two steps cannot be made one: replacing the dated
+# file, and removing the fragments it consumed. Both windows are closed,
+# by different means.
+#
+#   Interrupted BEFORE the dated file is replaced — the whole assembly is
+#   built in a temp file and renamed into place at the end, so the dated
+#   file is either the old one or the complete new one. Never a partial
+#   append, and never the header-only stub that the next run would take
+#   for a real existing file and append to. Just re-run.
+#
+#   Interrupted AFTER the rename, before the fragments are removed — the
+#   content is in place and the fragments are still pending, which used
+#   to make the next run append them a SECOND time: duplicated prose in a
+#   published document, silently, with nothing lost to hint at it. Each
+#   folded fragment now leaves an invisible marker in the dated file, so
+#   the next run recognises it, removes it, and does not re-append.
+#
+# Either way the recovery is the same: run the script again. It says
+# which fragments it found in that state rather than acting silently.
 
 set -euo pipefail
 
@@ -55,6 +75,14 @@ fi
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 UNREL="$DIR/unreleased"
+
+# Provenance marker written after each folded fragment (#1788). An HTML
+# comment: invisible in every rendered view of the notes, and the record
+# the next run reads to tell "already folded" from "still pending".
+# Anything appended after this prefix is a fragment BASENAME followed by
+# ` -->`; the reader below matches the whole line, so prose that merely
+# mentions a filename cannot be mistaken for a marker.
+MARKER_PREFIX='<!-- assembled-fragment: '
 
 DATE=""
 ALLOW_MIXED=0
@@ -420,12 +448,62 @@ else
   frags=("${selected[@]}")
 fi
 
-if [ ! -f "$OUT" ]; then
-  printf '# Release Notes — %s\n' "$DATE" > "$OUT"
+# ── Already-assembled fragments ──────────────────────────────────────────────
+# A fragment that is BOTH pending and already marked in $OUT is the
+# signature of a run interrupted between the rename and the deletes
+# (#1788, window 1). Its content is in place; what it needs is removing,
+# not appending. Re-appending is the silent failure this guards:
+# duplicated prose in a published document, with no error and nothing
+# lost to hint at it.
+#
+# Matched on the marker line this script writes, anchored to the whole
+# line, so a fragment merely NAMED in someone's prose cannot be mistaken
+# for one that was folded in. Basename identity, deliberately: content
+# identity would have to survive the link rewriting above, and the
+# rewrite is lossy in the direction that matters.
+already=()
+pending=()
+for f in "${frags[@]}"; do
+  if [ -f "$OUT" ] && grep -qxF "$MARKER_PREFIX$(basename "$f") -->" "$OUT"; then
+    already+=("$f")
+  else
+    pending+=("$f")
+  fi
+done
+
+if (( ${#already[@]} > 0 )); then
+  echo "Already assembled into $(basename "$OUT") — removing without re-appending:"
+  printf '  %s\n' "${already[@]##*/}"
+  echo "  (an earlier run was interrupted after writing the file but before"
+  echo "   clearing these; their content is already in place)"
+  echo ""
+  for f in "${already[@]}"; do
+    rm "$f"
+  done
+fi
+
+if (( ${#pending[@]} == 0 )); then
+  echo "Nothing left to assemble for $DATE."
+  exit 0
+fi
+frags=("${pending[@]}")
+
+# ── Write to a temp file, then rename ────────────────────────────────────────
+# Everything below builds $WORK; $OUT is replaced in one `mv` at the end.
+# `mktemp` in $DIR rather than /tmp so the rename is within a single
+# filesystem — across a mount boundary `mv` degrades to copy-then-unlink
+# and stops being atomic, which is the whole point of doing it this way.
+WORK="$(mktemp "$DIR/.assemble-$DATE.XXXXXX")"
+trap 'rm -f "$WORK"' EXIT
+
+if [ -f "$OUT" ]; then
+  cat "$OUT" > "$WORK"
+else
+  printf '# Release Notes — %s\n' "$DATE" > "$WORK"
 fi
 
 for f in "${frags[@]}"; do
-  printf '\n' >> "$OUT"
+  printf '\n' >> "$WORK"
   # Rewrite relative link paths from fragment-perspective
   # (docs/ReleaseNotes/unreleased/) to assembled-file-perspective
   # (docs/ReleaseNotes/) — one directory level shallower. Two
@@ -443,11 +521,32 @@ for f in "${frags[@]}"; do
   sed -E '
     s|\]\(\.\./\.\./|](\.\./|g
     s|\]\(\./|](\.\./|g
-  ' "$f" >> "$OUT"
+  ' "$f" >> "$WORK"
   # Ensure a trailing newline between fragments.
-  [ -z "$(tail -c1 "$f")" ] || printf '\n' >> "$OUT"
+  [ -z "$(tail -c1 "$f")" ] || printf '\n' >> "$WORK"
+  # Provenance marker — an HTML comment, so it is invisible in every
+  # rendered view and visible to the next run of this script. See the
+  # "Crash safety" note at the top: this is what makes a re-run after an
+  # interruption skip a fragment already folded in, instead of appending
+  # it a second time.
+  printf '%s%s -->\n' "$MARKER_PREFIX" "$(basename "$f")" >> "$WORK"
 done
 
+# The atomic step. Until this line $OUT is untouched, so an interruption
+# at ANY point above leaves the previous release-notes file exactly as it
+# was and every fragment still pending — the state a plain re-run
+# handles. `mv` within one directory is a rename(2): $OUT is the old file
+# or the new one, never a half-written mixture, and never a header-only
+# stub that the next run would mistake for a real existing file.
+mv "$WORK" "$OUT"
+trap - EXIT
+
+# Only now are the fragments consumed. An interruption between the rename
+# and these deletes leaves fragments pending whose content IS already in
+# $OUT — the one window a temp file cannot close, because the two files
+# cannot be renamed as a unit. The markers written above are what make
+# that state recoverable: the next run reads them, skips those fragments
+# rather than duplicating them, and deletes them.
 for f in "${frags[@]}"; do
   rm "$f"
 done
