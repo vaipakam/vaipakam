@@ -1356,7 +1356,7 @@ await discovery('installing the provider init script', () =>
  * the case where the answer is genuinely negative — where spending it is
  * exactly right, because that is the claim the drive would be making.
  */
-async function visit(path, { expectChooser = false } = {}) {
+async function visit(path, { expectChooser = false, loan = null } = {}) {
   const page = await ctx.newPage();
   // Before anything navigates: a socket opened during the first paint must
   // not be missed — see `wsRpcMethods`.
@@ -1427,7 +1427,7 @@ async function visit(path, { expectChooser = false } = {}) {
     // reason). Falls back to the full body when the card is absent, so
     // the `card=false` verdict is still computed from something.
     ...(ROLE === 'lender' ? lenderShapeOf(lenderCardText ?? text) : {}),
-    ...(ROLE === 'lender' ? await lenderAdvancedOf(page) : {}),
+    ...(ROLE === 'lender' ? await lenderAdvancedOf(page, loan) : {}),
     holdCard: holdCard > 0,
     freeHeld: freeHeld > 0,
     connected: !/Connect wallet/i.test(text.slice(0, 400)),
@@ -1503,9 +1503,21 @@ async function stillEligible(loan) {
   // either direction between discovery and the visit, and a flag that
   // landed in that window correctly suppresses the card.
   if (ROLE === 'lender') {
+    // UNCACHED, deliberately (Codex #1853 r8). The discovery cache is
+    // keyed per authority for the whole sweep, so calling the cached
+    // helper here returns the fulfilled promise from discovery and this
+    // "re-read" reads nothing. That defeats the exact justification I
+    // gave for the cache one round earlier — that freshness is enforced
+    // where it matters, immediately before the visit — so the cache made
+    // its own safety argument false.
+    //
+    // The failure it causes is the expensive direction: an authority
+    // flagged between discovery and the visit has its card correctly
+    // suppressed by the page, and the drive would wait out the chooser
+    // timeout and report a product FAIL.
     const flaggedNow = await discovery(
       `re-reading the sanctions status of ${observed}`,
-      () => sanctionedAuthority(authorityNow),
+      () => sanctionedAuthorityUncached(authorityNow),
     );
     return flaggedNow ? 'holder sanctions-flagged since discovery' : null;
   }
@@ -1635,7 +1647,7 @@ function lenderShapeOf(text) {
  * Returns `advancedJumps: null` when the switch is not offered, which is
  * a legitimate state (every sale row unavailable), not a failure.
  */
-async function lenderAdvancedOf(page) {
+async function lenderAdvancedOf(page, loan) {
   const SWITCH = /Show these tools \(switches to Advanced view\)/i;
   // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
   // uses the IDENTICAL labels — `copy.earlyRepay.switchToAdvanced` and
@@ -1695,9 +1707,26 @@ async function lenderAdvancedOf(page) {
           advancedWhy: 'sale tools still checking after the switch — never settled',
         };
       }
-      // Settled, and still no jump. THAT is a failure: the card offers
-      // the switch only when some row is jumpable, so it has contradicted
-      // itself — a no-op `onSwitchToAdvanced`, or tools that never mount.
+      // Settled with no jump — but CHECK WHETHER THE CHAIN MOVED first
+      // (Codex #1853 r8). `buildLenderExitRows` ranks a new
+      // unavailability reason (crossed maturity, FallbackPending, a sale
+      // lock taken by someone else) ABOVE the "still reading" sentence,
+      // so a loan whose state changed mid-probe replaces the loading
+      // copy and exits this poll with zero jumps — while the card is
+      // reacting perfectly correctly. Round 7's poll fixed the slow-RPC
+      // false FAIL and left this one, because both arrive as "settled,
+      // no jump" and only a chain read tells them apart.
+      const moved = loan ? await stillEligible(loan) : null;
+      if (moved) {
+        return {
+          advancedOffered: true,
+          advancedJumps: null,
+          advancedBlocked: true,
+          advancedWhy: `chain state moved during the probe: ${moved}`,
+        };
+      }
+      // Nothing moved, so the card really has contradicted itself: it
+      // offers the switch only when some row is jumpable.
       return { advancedOffered: true, advancedJumps: 0, advancedAnchorsOk: false,
                advancedWhy: 'switch offered but no jump rendered after it settled' };
     }
@@ -1788,7 +1817,7 @@ for (const l of mine) {
     racedOut.push(`${l.id} (${changed})`);
     continue;
   }
-  visited.push(await visit(`/positions/${l.id}`, { expectChooser: true }));
+  visited.push(await visit(`/positions/${l.id}`, { expectChooser: true, loan: l }));
   observedDetails += 1;
 }
 await browser.close();
