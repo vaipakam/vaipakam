@@ -436,10 +436,15 @@ the old promise stood: the discount is a direct reduction, no VPFI leaves the
 vault to pay the fee, and there is nothing to claim afterwards.
 
 **The old mechanism is scoped, not deleted.** Loans opened while it was live
-still settle exactly that way, and a rebate on one of them is claimable **when it
-closes properly** — repayment, early close, or refinance. If such a loan instead
-defaults or is liquidated, the held VPFI is forfeited and there is no rebate at
-all, which the pages now say wherever they describe those outcomes. Deleting the
+are still settled on that basis when they close properly — repayment, early
+close, or refinance — and what is settled is sized by the borrower's discount
+standing **at the moment of settlement**, not by an average over the loan's life,
+so a holder who has since dropped their balance receives correspondingly less. If
+such a loan instead ends in a default or a close-out liquidation, the held VPFI
+is forfeited and there is no rebate at all, which the pages now say wherever they
+describe those outcomes. A PARTIAL liquidation is not one of those endings: it
+leaves the loan open, forfeits nothing, and a later repayment settles the rebate
+as normal. Deleting the
 description outright would have stranded the people it still applies to.
 
 **One thing deliberately not over-corrected.** Where the optional per-party
@@ -474,17 +479,29 @@ full amount" route as a live choice.
 **A second class of correction, found while making the first.** Removing the
 rebate promise meant reading every passage that describes how the discount is
 earned — and those passages were incomplete in a way that costs a reader money.
-The pages now state, wherever they set expectations, the five conditions that
-actually govern it: the VPFI must sit in the vault on the canonical chain; it
-must have been held for a minimum period before it counts, and a mid-loan
-withdrawal reprices the whole average down to the lowest balance held; a tier
-earned on the canonical chain does not appear on another chain until it is
-pushed there; the fee-discount consent must be enabled **on the chain the loan
-settles on** — it is a per-chain setting, not one global switch — **and also on
-the canonical chain**, because the message that carries a tier outward is forced
-to zero while the canonical consent is off, so a reader who settles only on a
-mirror needs both; and the lender leg needs free VPFI on that same chain when the
-discount is applied, or it is simply not delivered.
+The pages that set expectations now state the conditions that actually govern
+it — not as a closed list, since assembling one is what kept going wrong: the
+VPFI must sit in the vault on the canonical chain; it must have been held for a
+minimum period before it counts; a tier earned on the canonical chain does not
+appear on another chain until it is pushed there; the fee-discount consent must
+be enabled **on the chain the loan settles on** — it is a per-chain setting, not
+one global switch — **and also on the canonical chain**, because the message that
+carries a tier outward is forced to zero while the canonical consent is off, so a
+reader who settles only on a mirror needs both; and for a borrower the lending
+asset must be liquid, or the full fee is charged whatever they hold.
+
+Two of those need scoping rather than stating flatly. A mid-loan withdrawal
+repricing what you earn applies to the lender's yield-fee discount and to loans
+still on the retired path — a borrower on the current model has their initiation
+fee resolved once, at acceptance, so a later withdrawal cannot reach it. And the
+lender needing free VPFI applies where the protocol has a VPFI price reference
+configured; without one the discount is delivered as a reduction of the fee in
+the loan's own asset and no balance is spent.
+
+**Not every surface was reached.** The Basic guide's own introduction to the
+discount still says a balance on any chain is enough and presents the consent as
+a one-time switch, so a reader who follows that section alone can still end up
+with no discount. That gap is real and is not closed here.
 
 **A sixth condition is that the push is not a one-time step.** A mirror stops
 honouring a pushed tier sixty days after the most recent push and falls back to
@@ -511,15 +528,18 @@ nothing. The window expires and the discount on that mirror is gone.
 change that moves your tier could bring the discount back, which would have sent
 a reader to shuffle VPFI they had no reason to shuffle — and crossing a tier
 boundary and climbing back costs them the discount for the whole minimum-history
-window, so the advice was not merely useless but expensive. There is a way back
-that touches nothing: switch the fee-discount consent off on the canonical chain
-and push, which sends tier 0 and therefore differs from what was last sent, then
-switch the consent on and push again, which sends the real tier and restarts the
-sixty days. The pages now spell that out, because it is not something a reader
-would ever guess.
+window, so the advice was not merely useless but expensive. A way back does exist that
+touches no balances, and it is deliberately NOT printed: it works by forcing two
+broadcasts whose payloads differ, and the contract names exactly that repetition
+as a way to drain the protocol-funded cross-chain budget — which, once
+exhausted, makes legitimate broadcasts fail for everyone. Harmless once and
+harmful at scale is not something to publish on a page read by everyone, so the
+pages say instead that there is no supported way to refresh a tier that has not
+changed.
 
-Twice in a row, then, this note named the wrong remedy — first one that does
-nothing, then one that costs the reader. The pattern in both is the same: a
+Three times in a row, then, this note named the wrong remedy — first one that
+does nothing, then one that costs the reader, then one that costs everyone
+else. The pattern in both is the same: a
 sentence written from what the mechanism seemed to imply rather than from what
 the mechanism does.
 
