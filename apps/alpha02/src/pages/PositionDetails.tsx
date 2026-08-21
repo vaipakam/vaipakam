@@ -267,6 +267,20 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
    *  NFT links and a dozen copy branches whose dual-holder behaviour is
    *  pre-existing and belongs to its own change. */
   const isLenderHolder =
+    // `isError` DISQUALIFIES the cached owner set, it does not merely
+    // rank below it (Codex r24 P2). TanStack retains `nftOwners.data`
+    // through a failed refetch, so after the lender NFT moved and the
+    // next poll failed, this still named the FORMER holder — and the
+    // chooser, the lender-only reads and the Advanced sale forms all
+    // stayed mounted for a wallet whose every submission the live
+    // ownership preflight can only reject.
+    //
+    // This is the fourth consumer of the same rule (`loanLive`, the
+    // fee entitlement and the sale lock came first), and the one place
+    // it decides whether a whole surface exists rather than what one
+    // row says. Fail-closed is cheap here: the surfaces reappear on the
+    // next successful poll.
+    !nftOwners.isError &&
     nftOwners.data?.lenderOwner !== undefined &&
     nftOwners.data.lenderOwner !== 'burned' &&
     address !== undefined &&
@@ -336,6 +350,19 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         // the card's central disclosure, silently dead in the mode it
         // was built to serve. Same call, same struct, no extra RPC.
         periodicInterestCadence: live.periodicInterestCadence,
+        // Third field lifted out of the SAME struct, for the third time
+        // and the same reason (Codex r24 P2). `readLoanLive` returns
+        // `lenderForfeitFrom === undefined` when the optional seller-
+        // window call fails softly — on an unrefreshed deployment, say
+        // — and neither sale tool can quote a price without it.
+        //
+        // The advanced-only `loanLive` already carried that verdict
+        // into the readiness chain. Basic mode read the identical
+        // struct and threw the field away, so a Basic-mode lender was
+        // shown both rows as available AND offered the Advanced switch,
+        // and only after taking it did the rows turn to "failed". The
+        // switch was an invitation to discover a dead end.
+        sellerWindowReadable: live.lenderForfeitFrom !== undefined,
       };
     },
   });
@@ -3192,11 +3219,23 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                     // waiting line would promise an answer that is not
                     // coming — the trap this card met three times.
                     //
-                    // Only asserted where the read exists. In Basic
-                    // `loanLive` is disabled, so its absence says
-                    // nothing about the quote.
-                    loanLive.data &&
-                      loanLive.data.live.lenderForfeitFrom === undefined
+                    // Asserted from EITHER read, so the verdict is
+                    // mode-independent (Codex r24 P2). `loanLive` is
+                    // advanced-only, but the always-on `liveStatus`
+                    // query calls the same `readLoanLive` and now keeps
+                    // the same verdict — so Basic mode reaches "failed"
+                    // without first sending the lender through the
+                    // Advanced switch to find out.
+                    //
+                    // `isError` disqualifies the `liveStatus` snapshot
+                    // for the same reason it disqualifies the others: a
+                    // stale cached `true` is not evidence the window
+                    // read works now.
+                    (loanLive.data &&
+                      loanLive.data.live.lenderForfeitFrom === undefined) ||
+                      (liveStatus.data &&
+                        !liveStatus.isError &&
+                        liveStatus.data.sellerWindowReadable === false)
                     ? 'failed'
                     : 'ready'
           }

@@ -201,13 +201,21 @@ page in both modes, strictly informational:
   protocol, both to protect the buyer's signed terms; their repayments,
   full or partial, stay open — an acceptance binds the CURRENT
   principal, so a paydown simply invalidates a pending buyer's
-  signature rather than needing to be prevented). As the protocol stands a listing never expires and
-  only the seller cancels it, so the disclosure must say plainly that
-  listing freezes those borrower affordances until the sale completes
-  or the seller cancels — and this design REQUIRES that gap be closed
-  before the surface ships (mandatory finite expiry + permissionless
-  teardown; see the Layer-3 checklist and open question 0), after
-  which the row states the chosen expiry as part of the disclosure.
+  signature rather than needing to be prevented). **That gap is now
+  closed on-chain, and the disclosure follows the as-built rules, not
+  the ones drafted against it**: `EarlyWithdrawalFacet._boundListingExpiry`
+  requires a FINITE expiry on every listing and clamps it to the loan's
+  maturity, so no listing outlives its loan's term. What expiry does
+  NOT do is release the borrower's held paths. Expiry stops FILLS; the
+  position lock persists until the seller cancels or anyone runs the
+  permissionless teardown. So the disclosure has to draw a line this
+  document originally had no reason to draw: the sale can stop being
+  takeable at a known time, and the freeze it imposed lasts past that
+  time. The row therefore states the chosen expiry AND says the freeze
+  lifts on completion, cancellation or teardown — never on expiry
+  alone. (The earlier text here said listings never expire and only the
+  seller cancels, and required both as future work. Both shipped, in
+  #1772 and #1823; that text is retired.)
 - Availability is honest and explanatory: the listing row states when
   the path is unavailable on the current network (the app already
   refuses to render a form whose final signature cannot succeed), for
@@ -220,12 +228,17 @@ page in both modes, strictly informational:
   refused at CREATION, so past maturity the sale rows flip to "the
   loan is past its due date — the borrower repays or the default
   process resolves it" instead of advertising an exit that cannot be
-  created. Note the asymmetry that the stale-listing prerequisite exists to close:
-  refusing creation does **not** retire a listing that already went
-  live before the due date, which stays takeable through the grace
-  window — so hiding the row is not the same as closing the sale, and
-  a live listing's own surface must keep telling the truth about it
-  past maturity rather than disappearing. The same rule holds while the
+  created. The asymmetry this originally warned about — a listing made
+  before the due date staying takeable through the grace window — is
+  **gone**: the creation-time clamp to maturity means no listing is
+  fillable past the due date. The surviving asymmetry is a narrower and
+  less obvious one, and it is why hiding the row still is not the same
+  as closing the sale: an expired listing's position LOCK outlives its
+  fillability, so past maturity the loan cannot be sold and yet is
+  still held. A live listing's own surface must therefore keep telling
+  the truth about it past maturity rather than disappearing — but the
+  truth to tell has changed from "a buyer can still take this" to
+  "nobody can take this, and it still needs clearing". The same rule holds while the
   BORROWER has a live linked exit on the loan (a preclose offset):
   the protocol refuses a sale listing until that offset completes or
   is cancelled, and the row says which pending flow must clear first
@@ -351,7 +364,8 @@ implementation PR:
   automatically is said plainly with its remedy.
 - **The borrower-side freeze is owned, not ignored**: because a live
   listing holds the borrower's partial-repay AND collateral-withdrawal
-  affordances indefinitely (no expiry; only the seller cancels), the
+  affordances until the listing is cleared — expiry alone does not
+  clear it; cancellation or the permissionless teardown does — the
   > **As-built note (PR #1505 + #1511):** the buyer-re-sign flow
   > anticipated below SHIPPED with the acceptance binding, so partial
   > repayment is simply open during a listing; the concrete on-chain
@@ -469,6 +483,16 @@ than a growing list of patches on generic-offer consumption.
    maturity while a listing is outstanding, the listing must be shortened,
    invalidated, or refused at completion rather than relying on the
    creation-time clamp.
+
+   > **As-built (#1772, #1823):** shipped.
+   > `EarlyWithdrawalFacet._boundListingExpiry` makes a finite expiry
+   > mandatory and clamps it to maturity, and
+   > `OfferCancelFacet.teardownStaleSaleListing` is the permissionless
+   > teardown. One residue the fix does not cover, and it is the reason
+   > the two must not be described as one thing: teardown is a separate
+   > act from expiry, so between an expiry and its teardown the position
+   > stays locked while no buyer can fill. `teardownStaleSaleListing`
+   > also excludes ACCEPTED offers, which is the gap filed as #1851.
 2. **The seller's completion cost is neither escrowed nor reserved.**
    Completion pulls the cost from the stored lender by transfer, while
    listing escrows nothing and secures no non-revocable allowance — so

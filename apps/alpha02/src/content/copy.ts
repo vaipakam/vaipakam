@@ -1956,6 +1956,14 @@ const copySource = {
       waitDescUnknown:
         'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest. We couldn’t read this loan’s interest schedule, so we can’t say here whether that reaches you during the term or only at the end. It doesn’t change what you’re owed. Reloading the page usually clears this. If they don’t repay, the normal default process applies and recovery can be less.',
       waitCost: 'Costs nothing — this is the default.',
+      // Waiting is only the cost-free default when nothing else can
+      // fire (Codex r24 P2). While a listing of yours stands, doing
+      // nothing does NOT select this row: a buyer can complete the sale
+      // at any moment, and the sale rows two lines below say what that
+      // costs. Two rows describing the same live listing must not
+      // disagree about whether it costs anything.
+      waitCostListed:
+        'Not the default while your listing stands — a buyer can complete it at any moment, with the costs named below. Cancel the listing first to make waiting the cost-free choice.',
 
       sellNow: 'Sell your position now',
       sellNowDesc:

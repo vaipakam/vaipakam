@@ -17,6 +17,16 @@ position is already the thing that pays you, so the option that costs nothing in
 forfeited interest is to leave it alone. The card says so before it says
 anything about selling.
 
+With one exception the card now states: **while a listing of yours is standing,
+waiting is not the free default.** Doing nothing does not keep the position —
+a buyer can complete your listing at any moment, at the costs the sale rows name
+two lines below. So the wait row says that, and says cancelling the listing is
+what makes waiting free again. It does not read as unavailable, because waiting
+is not refused — cancelling is the way back to it. Before this the card managed
+to say "a buyer can still complete this and here is what it takes from you" and
+"costs nothing — this is the default" about a single live listing, on one
+screen.
+
 That row is careful about two things. It never promises you will be repaid — it
 says what happens *if* the borrower repays, and what happens if they do not.
 And it describes **when** you get paid based on the loan's own schedule rather
@@ -114,5 +124,20 @@ borrower whose own offset exit is already pending — are **not** yet shown on t
 card: neither has a cheap client-side read today, so both still surface when you
 try rather than up front. Wiring them is tracked as follow-up work; the card is
 built to take them without restructuring.
+
+Two things about **when the card appears at all**, both of which err towards
+saying nothing rather than saying something wrong. It is shown to whoever holds
+the lender position, which is not always the person the page thinks of as "the
+lender" — someone holding both sides of a loan gets it too. And if the check of
+who holds the position **fails**, the card and the sale tools go away until the
+next successful check, rather than staying up for whoever held it last time we
+looked. A position can change hands between two page loads; a card that outlives
+the check offers exits to a wallet the protocol will refuse.
+
+Finally, the simple view no longer sends you to the advanced one to discover bad
+news. If the figure both sale tools need to price an exit cannot be read on this
+deployment, the simple view now says so directly — previously it showed both
+rows as available, offered the switch to the advanced view, and only then turned
+them to "couldn't be read". The switch was an invitation to find a dead end.
 
 The card is available in all nine translated languages.

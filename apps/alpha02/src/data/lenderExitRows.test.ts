@@ -392,6 +392,41 @@ describe('listed row — do not promise a cancel the pending card withholds (Cod
   });
 });
 
+describe('the wait row answers the live listing too (Codex r24 P2)', () => {
+  // The same `listingMayStand` the sale rows use for `costStillApplies`.
+  // It reached the rows that NAME the cost and not the row that denies
+  // there is one, so the card said "a buyer can still complete this,
+  // here is what it takes" and "costs nothing — this is the default"
+  // about one listing, on one screen.
+  it('stops calling waiting cost-free while a listing may still be filled', () => {
+    const row = rowFor({ saleLock: 'listed', listingMayStand: true }, 'wait');
+    expect(row.cost).toBe(o.waitCostListed);
+    // Not refused — cancelling is the way back to it, and greying the
+    // row out would suggest there is none.
+    expect(row.unavailable).toBeUndefined();
+  });
+
+  it('keeps the cost-free default when no listing stands', () => {
+    expect(rowFor({}, 'wait').cost).toBe(o.waitCost);
+  });
+
+  it('agrees with the sale rows on the same input', () => {
+    const rows = buildLenderExitRows({
+      ...base,
+      saleLock: 'listed',
+      listingMayStand: true,
+    });
+    const wait = rows.find((r) => r.key === 'wait')!;
+    for (const key of ['sell-now', 'list']) {
+      const sale = rows.find((r) => r.key === key)!;
+      // One live listing, one verdict: if the sale rows say the cost is
+      // still pending, the wait row must not say there is no cost.
+      expect(sale.costStillApplies).toBe(true);
+      expect(wait.cost).not.toBe(o.waitCost);
+    }
+  });
+});
+
 describe('cost survives a live listing (Codex r5 P1)', () => {
   // A listed position is a sale in FLIGHT, not a declined option: the
   // held-balance transfer and reward forfeiture are pending

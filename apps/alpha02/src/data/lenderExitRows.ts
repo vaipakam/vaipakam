@@ -375,7 +375,18 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
       key: 'wait',
       title: o.wait,
       desc: waitDesc,
-      cost: o.waitCost,
+      // The SAME `listingMayStand` input the two sale rows use for
+      // `costStillApplies` (Codex r24 P2). It was applied to the rows
+      // that name the cost and not to the row that denies there is one,
+      // so the card said "a buyer can still complete this and here is
+      // what it takes from you" and "costs nothing — this is the
+      // default" about one live listing, on the same screen.
+      //
+      // Not marked `unavailable`: waiting is not refused, it is simply
+      // no longer what inaction selects. Saying so is the honest shape;
+      // greying the row out would suggest the lender has no way back to
+      // it when cancelling is exactly that way.
+      cost: input.listingMayStand ? o.waitCostListed : o.waitCost,
     },
     {
       key: 'sell-now',

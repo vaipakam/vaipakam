@@ -1014,6 +1014,7 @@
         "waitDescChecking": "Nothing to do — we’re still reading this loan’s interest schedule, which decides whether you’re paid during the term or only at the end.",
         "waitDescUnknown": "Nothing to do — if the borrower repays, you claim the principal plus the agreed interest. We couldn’t read this loan’s interest schedule, so we can’t say here whether that reaches you during the term or only at the end. It doesn’t change what you’re owed. Reloading the page usually clears this. If they don’t repay, the normal default process applies and recovery can be less.",
         "waitCost": "Costs nothing — this is the default.",
+        "waitCostListed": "Not the default while your listing stands — a buyer can complete it at any moment, with the costs named below. Cancel the listing first to make waiting the cost-free choice.",
         "sellNow": "Sell your position now",
         "sellNowDesc": "Sell this position straight into a standing lending offer that matches it. You’re paid immediately from funds already locked by that lender, and the borrower’s rate and due date don’t change.",
         "sellNowCost": "Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Open the tool for the actual figures.",

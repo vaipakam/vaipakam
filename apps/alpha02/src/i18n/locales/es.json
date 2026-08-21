@@ -1014,6 +1014,7 @@
         "waitDescChecking": "Nada que hacer: todavía estamos leyendo el calendario de intereses de este préstamo, que determina si cobras durante el plazo o solo al final.",
         "waitDescUnknown": "Nada que hacer: si el prestatario paga, reclamas el principal más los intereses acordados. No hemos podido leer el calendario de intereses de este préstamo, así que aquí no podemos decir si eso te llega durante el plazo o solo al final. No cambia lo que se te debe. Recargar la página suele resolverlo. Si no paga, se aplica el proceso normal de impago y la recuperación puede ser menor.",
         "waitCost": "No cuesta nada: esta es la opción por defecto.",
+        "waitCostListed": "No es la opción por defecto mientras tu anuncio siga activo: un comprador puede completarlo en cualquier momento, con los costes indicados abajo. Cancela el anuncio para que esperar vuelva a ser la opción sin coste.",
         "sellNow": "Vender tu posición ahora",
         "sellNowDesc": "Vende esta posición directamente a una oferta de préstamo vigente que le encaje. Cobras de inmediato con fondos ya bloqueados por ese prestamista, y ni la tasa ni la fecha de vencimiento del prestatario cambian.",
         "sellNowCost": "Cuesta el MAYOR de los dos: los intereses acumulados hasta ahora o el complemento de tasa del comprador; nunca ambos. Además, cualquier saldo que ya se te esté reteniendo en este préstamo pasa al comprador, y pierdes tu entrada de recompensa pendiente para esta posición. Abre la herramienta para ver las cifras reales.",
