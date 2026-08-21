@@ -356,13 +356,14 @@ over instead, the collateral itself is what waits for you. More
 than one thing hands it over, whichever way the loan ended: a
 liquidator taking it directly at a discount, a close-out matched
 inside the protocol against an opposing position rather than
-sold, or a sale that could not go through — a failed swap hands
-the collateral over instead. An ordinary liquidation and a
-default both look for that internal match before going to an
-exchange, though a discounted seizure does not. So neither of those two always ends the same way — read the claim
-rather than guessing from how the loan closed. A discounted seizure is
-the exception, and it is predictable the other way: it never sells, so
-it always leaves you the collateral. Often — on a default over collateral we
+sold, or a sale that could not go through — though there you get the
+collateral only if the second attempt at claim time fails too; if it
+works, you are paid in the loan's own asset. An ordinary liquidation
+and a default both look for that internal match before going to an
+exchange, so neither of those two always ends the same way — read the
+claim rather than guessing from how the loan closed. A discounted
+seizure is the exception, and it is predictable the other way: it
+never sells, so it always leaves you the collateral. Often — on a default over collateral we
 cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. What never comes back is
 the fee rebate: on a loan still using the retired VPFI fee path

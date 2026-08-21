@@ -780,14 +780,15 @@ liquidó el préstamo:
   mismo, gravado en tu bóveda. Más de una cosa lo entrega, y ninguna depende de por cuál cierre hayas
   pasado: un liquidador que toma el colateral directamente con
   descuento, un cierre que se casa internamente contra una posición
-  opuesta en lugar de ir a un exchange, y un swap que no pudo
-  completarse — una venta fallida pasa a entregar el colateral. Tanto la
-  liquidación ordinaria como un default por tiempo intentan ese
-  casamiento interno ANTES de acudir a un exchange; la liquidación con
-  descuento no. Así que ninguna de esas dos vías acaba siempre igual — por eso lo
-  que hay que leer es la reclamación, no la vía. La vía con
-  descuento sí es previsible, pero al revés: ni vende ni casa
-  internamente, así que lo que te deja es siempre el colateral. Una liquidación
+  opuesta en lugar de ir a un exchange, y una venta que no pudo completarse — aunque ahí el colateral te
+  llega sólo si el reintento al reclamar también falla; si sale
+  bien, cobras en el activo del préstamo. Tanto la liquidación
+  ordinaria como un default por tiempo intentan ese casamiento
+  interno ANTES de acudir a un exchange, así que ninguna de esas dos
+  vías acaba siempre igual — por eso lo que hay que leer es la
+  reclamación, no la vía. La vía con descuento sí es previsible,
+  pero al revés: ni vende ni casa internamente, así que lo que te
+  deja es siempre el colateral. Una liquidación
   parcial no es un cierre en absoluto — el préstamo sigue abierto
   y no se crea ninguna reclamación. Consulta la reclamación en
   lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la

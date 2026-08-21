@@ -377,10 +377,11 @@ terminó el préstamo: si el colateral se vendió por un exchange,
 lo que sobra te llega en el activo del propio préstamo. Si en
 cambio se entregó, lo que te espera es el colateral mismo. Varias cosas lo entregan, termine como termine el préstamo: un
 liquidador que lo toma directamente con descuento, un cierre casado
-dentro del protocolo contra una posición opuesta en lugar de vendido, o
-una venta que no pudo hacerse — entonces se entrega el colateral. Una
-liquidación ordinaria y un default buscan ese casamiento interno antes
-de ir a un exchange; una toma con descuento no. Así que ninguno de esos dos acaba siempre igual: lee la reclamación en
+dentro del protocolo contra una posición opuesta en lugar de vendido, o una venta que no pudo hacerse — aunque ahí te llega el colateral
+sólo si el segundo intento al reclamar también falla; si prospera,
+cobras en el activo del propio préstamo. Una liquidación ordinaria y
+un default buscan ese casamiento interno antes de ir a un exchange,
+así que ninguno de esos dos acaba siempre igual: lee la reclamación en
 vez de deducirlo de cómo cerró. La toma con descuento es la excepción,
 y es previsible al revés: nunca vende, así que siempre te deja el
 colateral. A menudo —en un

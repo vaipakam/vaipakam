@@ -381,14 +381,15 @@ lui-même. S'il a été remis à la place, c'est le collatéral lui-même
 qui t'attend. Plusieurs choses le remettent, quelle que soit la manière dont le prêt
 s'est terminé : un liquidateur qui le prend directement avec une décote,
 une clôture appariée à l'intérieur du protocole contre une position
-opposée plutôt que vendue, ou une vente qui n'a pas pu se faire — le
-collatéral est alors remis. Une liquidation ordinaire comme un défaut
-cherchent cet appariement interne avant d'aller sur le marché ; une
-prise avec décote, non. Aucun de ces deux-là ne finit donc toujours pareil : lis la ré
-clamation plutôt que de le déduire de la façon dont le prêt s'est
-clos. La prise avec décote fait exception, et elle est prévisible dans
-l'autre sens : elle ne vend jamais, donc il te reste toujours le
-collatéral. Souvent — sur un
+opposée plutôt que vendue, ou une vente qui n'a pas pu se faire — mais là tu n'as le collatéral
+que si la seconde tentative au moment de la réclamation échoue aussi ;
+si elle aboutit, tu es payé dans l'actif du prêt. Une liquidation
+ordinaire comme un défaut cherchent cet appariement interne avant
+d'aller sur le marché, donc aucun de ces deux-là ne finit toujours
+pareil : lis la réclamation plutôt que de le déduire de la façon dont
+le prêt s'est clos. La prise avec décote fait exception, et elle est
+prévisible dans l'autre sens : elle ne vend jamais, donc il te reste
+toujours le collatéral. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
 valoriser — tout le panier part et il ne reste rien, mais c'est
 une issue, pas une règle. Ce qui ne revient jamais, c'est le
