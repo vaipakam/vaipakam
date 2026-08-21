@@ -2729,6 +2729,71 @@ PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >
 check "the appended bytes survive" \
   "$(grep -rl 'appended during validation' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
+echo "T99: a fragment that becomes a symlink mid-run is caught before publishing"
+W="$ROOT/t99"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# The type check was one moment near the start. A writer replacing the file
+# with a relative symlink to IDENTICAL bytes afterwards passes every hash, and
+# only the set-aside move — after publication — discovers the link resolves
+# somewhere else (Codex #1863 r32).
+printf '## 0001-a\n' > "$W/body.txt"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  cp "$W/body.txt" "$W/docs/ReleaseNotes/unreleased/body.txt"
+  rm -f "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+  ln -s body.txt "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"         "$?"                                        "1"
+check "nothing was published" \
+  "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
+check "it says what changed"  "$(says "$msg" 'no longer a regular file')"   "1"
+
+echo "T100: a stale write probe is not described as a set-aside fragment"
+W="$ROOT/t100"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The probe is an empty writability-test artefact that was never assembled, so
+# describing it as a fragment "folded in or changed" and offering it for
+# comparison invites restoring an empty file into the pool (Codex #1863 r32).
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+: > "$W/docs/ReleaseNotes/unreleased/.assembled/.probe.Zz9qL1"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "it is named"              "$(says "$msg" '.probe.Zz9qL1')"                 "1"
+check "and called what it is"    "$(says "$msg" 'writability-test files')"        "1"
+check "not offered for comparison" \
+  "$(says "$msg" 'Set aside by an earlier run')"                                  "0"
+
+echo "T101: a failure after recovery deletions still reports them"
+W="$ROOT/t101"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The recovery loop can delete a fragment before the run reaches the
+# replacement-mode checks. Those said "every fragment is still pending", which
+# was false and omitted the recover-from-git guidance (Codex #1863 r32).
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+printf '## 0003-new\n' > "$W/docs/ReleaseNotes/unreleased/0003-new.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/chmod" <<'SHIM'
+#!/bin/sh
+last=""
+for a in "$@"; do last="$a"; done
+/bin/chmod 0700 "$last" 2>/dev/null
+exit 0
+SHIM
+chmod +x "$W/fakebin/chmod"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                             "1"
+check "it does not claim nothing went" \
+  "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')"  "0"
+check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

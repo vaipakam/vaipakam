@@ -49,8 +49,16 @@
 # Either way the recovery is the same: run the script again. It says
 # which fragments it found in that state rather than acting silently.
 #
-# ONE exception, and it needs a manual step: a HARD kill (SIGKILL, or the
-# machine dying) leaves the lock directory behind, because no trap runs.
+# TWO exceptions need a manual step, both after a HARD kill (SIGKILL, or
+# the machine dying), where no trap runs.
+#
+# The first: a fragment moved into `unreleased/.assembled/` but not yet
+# removed leaves no pending copy for a re-run to pick up. It is reported
+# rather than acted on, because nothing distinguishes "already folded in"
+# from "a newer edit" — compare it against the dated file, then delete it
+# or move it back up a level.
+#
+# The second: the lock directory is left behind.
 # Later runs then stop with "another assembly appears to be running"
 # until it is removed. Deliberate — the lock guards a step that deletes
 # files, so a stale one is reported with its `rmdir` rather than cleared
@@ -608,10 +616,26 @@ done
 shopt -s nullglob
 _setaside=()
 shopt -s dotglob
+_stale_probe=()
 for q in "$QDIR"/*; do
+  case "$(basename "$q")" in
+    # The write probe is an empty artefact that was never assembled, so
+    # it must not be described as a fragment "folded in or changed" and
+    # offered for comparison — advice that makes no sense for it and
+    # invites restoring an empty file into the pool (Codex #1863 r32).
+    .probe.*) _stale_probe+=("$(basename "$q")"); continue ;;
+  esac
   _setaside+=("$(basename "$q")")
 done
 shopt -u dotglob
+if (( ${#_stale_probe[@]} > 0 )); then
+  echo "Left in $QDIR by an interrupted run:" >&2
+  printf '  %s\n' "${_stale_probe[@]}" >&2
+  echo "" >&2
+  echo "These are empty writability-test files, not fragments. Nothing was" >&2
+  echo "assembled from them and nothing depends on them; delete them." >&2
+  echo "" >&2
+fi
 if (( ${#_setaside[@]} > 0 )); then
   echo "Set aside by an earlier run, still in $QDIR:" >&2
   printf '  %s\n' "${_setaside[@]}" >&2
@@ -2197,6 +2221,16 @@ _abort_after_write() {
 # costs nothing. A precondition discoverable in advance belongs in
 # advance.
 for _f in "${frags[@]}"; do
+  # The type is re-checked here as well as at the snapshot (Codex #1863
+  # r32). The earlier check is one moment near the start; a writer
+  # replacing the file with a relative symlink to identical bytes
+  # afterwards passes every hash, and only the set-aside move — after
+  # publication — discovers that the link resolves somewhere else.
+  if [ -L "$_f" ] || [ ! -f "$_f" ]; then
+    echo "Error: ${FRAG_NAME[$_f]} is no longer a regular file." >&2
+    echo "It changed type while this run was working." >&2
+    _refuse_reporting_consumed
+  fi
   _dest="$QDIR/${FRAG_NAME[$_f]}"
   if [ -e "$_dest" ] || [ -L "$_dest" ]; then
     echo "Error: a set-aside file already occupies $_dest." >&2
@@ -2226,8 +2260,7 @@ chmod "$FINAL_MODE" "$WORK"
 # reporting success is not evidence the file now has the mode asked for.
 if ! read_mode "$WORK"; then
   echo "Error: could not read back the mode of the replacement." >&2
-  echo "Nothing has been consumed; every fragment is still pending." >&2
-  exit 1
+  _refuse_reporting_consumed
 fi
 if [ "$MODE_READ" != "$FINAL_MODE" ]; then
   echo "Error: the replacement could not be given mode $FINAL_MODE" >&2
@@ -2237,8 +2270,7 @@ if [ "$MODE_READ" != "$FINAL_MODE" ]; then
   echo "is dropped for a user outside the file's group, and chmod reports" >&2
   echo "success anyway. Replacing the file would silently drop it." >&2
   echo "" >&2
-  echo "Nothing has been consumed and no fragment has been touched." >&2
-  exit 1
+  _refuse_reporting_consumed
 fi
 
 # Push the replacement's bytes to disk BEFORE the fragments — the only
