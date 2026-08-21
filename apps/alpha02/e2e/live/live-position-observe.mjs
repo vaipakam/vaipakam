@@ -23,8 +23,14 @@
  *      defect (a `useCallback` below the page's early returns) that
  *      survived fourteen review rounds, typecheck, the production build
  *      and a green preview deploy because none of those can see it.
- *   2. The #1505 "Ways to repay or exit early" chooser renders on a real
- *      active loan, naming the handover and offset paths.
+ *   2. The chooser for the observed ROLE renders on a real loan — Active
+ *      for a borrower run, Active OR FallbackPending for a lender one,
+ *      since the lender card mounts on both so its fallback explanation
+ *      stays visible:
+ *      the #1505 "Ways to repay or exit early" card naming the handover
+ *      and offset paths, or — with OBSERVE_ROLE=lender — the #1839 "Your
+ *      options as the lender" card naming all three of its options with
+ *      the wait row FIRST, which is the one ordering claim it makes.
  *   3. Whether the #1511 listing-hold card is present, and if so which
  *      state it reports — informational, since a hold only exists while
  *      some lender actually has a sale listing standing.
@@ -36,6 +42,7 @@
  * Usage (no secrets needed):
  *
  *   node live-position-observe.mjs                  # auto-discovers a borrower
+ *   OBSERVE_ROLE=lender node live-position-observe.mjs   # the lender card
  *   OBSERVE_ADDRESS=0x… node live-position-observe.mjs
  *   SITE_URL=https://<preview>.workers.dev node live-position-observe.mjs
  *   LIVE_PROXY_SETUP=./my-egress-shim.mjs node live-position-observe.mjs
@@ -81,6 +88,13 @@ import {
   http,
   numberToHex,
 } from 'viem';
+import {
+  excursionExplains,
+  jumpabilityMoved,
+  missingSwitchVerdict,
+  snapshotCardEligible,
+  snapshotJumpable,
+} from './jumpability.mjs';
 import { redactUrl } from './redact.mjs';
 import {
   EXECUTION_REVERTED,
@@ -130,6 +144,31 @@ if (!Number.isInteger(MAX_POSITIONS) || MAX_POSITIONS < 1) {
   );
   process.exit(2);
 }
+
+/**
+ * WHICH chooser to observe. Both are awareness cards on the SAME page,
+ * gated on which side of the loan the connected wallet holds, so one
+ * harness covers both and the only differences are the eligibility
+ * predicate and the string asserted.
+ *
+ *   borrower  (default) — the #1505 "Ways to repay or exit early" card
+ *   lender              — the #1839 "Your options as the lender" card
+ *
+ * Defaulting to `borrower` keeps every existing invocation, including
+ * `run-live-batch.mjs`, doing exactly what it did before.
+ */
+const ROLE = process.env.OBSERVE_ROLE ?? 'borrower';
+if (ROLE !== 'borrower' && ROLE !== 'lender') {
+  console.error(
+    `\nBLOCKED: OBSERVE_ROLE must be "borrower" or "lender", got "${ROLE}".` +
+      ` An unrecognised role would assert nothing.`,
+  );
+  process.exit(2);
+}
+/** The card this run is here to see, and the copy that identifies it. */
+const CHOOSER = ROLE === 'lender'
+  ? { what: 'lender exit chooser (#1839)', title: /Your options as the lender/i }
+  : { what: 'repay/exit chooser (#1505)', title: /Ways to repay or exit early/i };
 
 // A mistyped OBSERVE_CHAIN_ID, or one this repo has no deployment for,
 // is a SETUP precondition — the same category as an absent wallet file
@@ -366,7 +405,86 @@ console.log(`fetched   ${ids.length} loan id(s) across ${Math.ceil(Number(active
 // is either would be a FALSE "chooser MISSING" rather than a finding
 // (#1529 review).
 const STATUS_ACTIVE = 0;
+/**
+ * LoanStatus.FallbackPending. The lender card mounts on it DELIBERATELY
+ * (`PositionDetails.tsx`: `row.status === 'active' || 'fallback_pending'`,
+ * and the live-status exclusion admits it too) — round 10 of #1839 added
+ * copy telling a lender that a fallback-settling loan blocks both sales
+ * and that waiting still applies, and a strict Active gate made that copy
+ * reachable only while the indexer lagged.
+ *
+ * So an Active-only drive races out a candidate whose card is rendering
+ * a state the card was specifically built to explain — and if those are
+ * the only lender positions on chain, reports BLOCKED on a working
+ * surface (Codex #1853 r1).
+ */
+const STATUS_FALLBACK_PENDING = 4;
 const ASSET_ERC20 = 0;
+/** The statuses the LENDER card mounts on; the borrower card takes Active only. */
+const lenderStatusOk = (st) => st === STATUS_ACTIVE || st === STATUS_FALLBACK_PENDING;
+
+/**
+ * The page's own sanctions gate, mirrored: `!(sanctions.ready &&
+ * sanctions.flagged)` suppresses the lender card entirely for a flagged
+ * wallet. That is CORRECT behaviour, so a flagged authority left in the
+ * pool buys a 45-second wait and then a fabricated "chooser MISSING"
+ * product regression (Codex #1853 r1).
+ *
+ * Does NOT fail open, and the first version did — mirroring
+ * `useSanctionsCheck`'s own `catch { return false }` (Codex #1853 r2).
+ * That mirroring was wrong, for a reason worth keeping: the app fails
+ * open on ITS OWN read over ITS OWN transport, where "I could not tell"
+ * correctly means "do not block the user". This drive reads over a
+ * DIFFERENT endpoint (`OBSERVE_RPC`), so its failure says nothing about
+ * what the page will see. If our read fails while the page's succeeds
+ * and reports the holder flagged, fail-open admits a candidate whose
+ * card is correctly suppressed — and the visit then burns the 45-second
+ * chooser timeout and files a product regression for an infrastructure
+ * discrepancy. Exactly the failure the sanctions check was added to
+ * prevent, re-entered through the error path.
+ *
+ * So the error propagates to `discovery()`, which is the harness's whole
+ * 1-vs-2 contract: an unanswered read is "could not look properly"
+ * (exit 2), never an eligibility verdict.
+ *
+ * On the retail deploy the oracle is commonly unset, in which case the
+ * contract ANSWERS false for every address — an answer, not a failure —
+ * and this costs one cheap read per candidate.
+ */
+/** One verdict per authority for the whole discovery pass. */
+const sanctionsCache = new Map();
+async function sanctionedAuthority(addr) {
+  // Cached per normalised address (Codex #1853 r7). Without it, an
+  // authority holding several eligible positions was read once PER LOAN
+  // — so a later duplicate call failing transiently could block a run
+  // whose answer was already in hand, and a mid-sweep oracle change
+  // could classify two loans of one holder inconsistently. Safe to
+  // cache for the sweep because `stillEligible` re-reads it immediately
+  // before each visit, which is where freshness actually matters.
+  //
+  // A REJECTION IS EVICTED rather than cached. Storing the promise is
+  // what makes the dedup work, but it also means a first-call failure
+  // would be replayed to every later loan of that holder — turning one
+  // transient blip into a permanent verdict for the run, which is a
+  // worse version of the problem this cache exists to fix. On rejection
+  // the entry is dropped so a later loan re-attempts; the rejection
+  // still propagates to `discovery()` for the caller that hit it.
+  const key = addr.toLowerCase();
+  if (!sanctionsCache.has(key)) {
+    const inflight = sanctionedAuthorityUncached(addr);
+    inflight.catch(() => sanctionsCache.delete(key));
+    sanctionsCache.set(key, inflight);
+  }
+  return sanctionsCache.get(key);
+}
+async function sanctionedAuthorityUncached(addr) {
+  return pub.readContract({
+    address: DIAMOND,
+    abi: DIAMOND_ABI_VIEM,
+    functionName: 'isSanctionedAddress',
+    args: [addr],
+  });
+}
 /** LibERC721.LockReason.PrecloseOffset — mirrors data/offsetPending.ts. */
 const LOCK_PRECLOSE_OFFSET = 1;
 
@@ -544,12 +662,29 @@ async function offsetLockedOn(borrowerTokenId) {
  * anyway. A transport failure is NOT that: see `isRevert`.
  */
 async function borrowerAuthorityOf(loan) {
+  return tokenOwnerOf(loan.borrowerTokenId);
+}
+
+/**
+ * The LENDER-side authority, resolved the same way and for the same
+ * reason: `PositionDetails` decides who sees the lender card from
+ * `ownerOf(lenderTokenId)`, never from `loan.lender`. Those diverge the
+ * moment a position is sold or transferred — which is precisely the
+ * population this card was built for — so keying a drive on `loan.lender`
+ * would observe the wrong wallet on exactly the interesting loans.
+ */
+async function lenderAuthorityOf(loan) {
+  return tokenOwnerOf(loan.lenderTokenId);
+}
+
+/** Shared: a revert means burned/never-minted; anything else is BLOCKED. */
+async function tokenOwnerOf(tokenId) {
   try {
     return await pub.readContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'ownerOf',
-      args: [loan.borrowerTokenId],
+      args: [tokenId],
     });
   } catch (err) {
     if (!isRevert(err)) throw err; // no answer — BLOCKED, not "burned"
@@ -560,9 +695,18 @@ async function borrowerAuthorityOf(loan) {
 // Chain time, not the local clock — the grace comparison the app makes is
 // chain-anchored, and a skewed sandbox clock would misclassify loans near
 // the boundary.
-const chainNow = await discovery('reading chain time', () =>
-  pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
-);
+// Role-gated for the same reason the revalidation-time block read is
+// (Codex #1853 r5): `chainNow` feeds the borrower grace comparison only,
+// so on a lender run this is an unrelated read whose failure exits 2
+// before any candidate can be observed. Fifth site of one rule — I fixed
+// the revalidation copy in r4 and did not look for the other one, which
+// is the same not-checking-the-sibling shape this PR keeps producing.
+const chainNow =
+  ROLE === 'lender'
+    ? 0n
+    : await discovery('reading chain time', () =>
+        pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
+      );
 
 const loans = [];
 for (const id of ids) {
@@ -581,6 +725,7 @@ for (const id of ids) {
     status: Number(d.status),
     assetType: Number(d.assetType),
     borrowerTokenId: d.borrowerTokenId,
+    lenderTokenId: d.lenderTokenId,
     startTime: d.startTime,
     durationDays: d.durationDays,
   };
@@ -588,11 +733,70 @@ for (const id of ids) {
   // than swallowing them: unwrapped, such a rejection would reach the top
   // level and exit 1 as a product regression — the round-7 bug, reached
   // by a new route.
-  loan.authority = await discovery(`reading the borrower authority for loan ${id}`, () =>
-    borrowerAuthorityOf(loan),
-  );
-  // Only worth the extra reads on loans that clear the cheap gates.
-  if (loan.status === STATUS_ACTIVE && loan.assetType === ASSET_ERC20 && loan.authority) {
+  // CHEAP GATES FIRST for the lender run (Codex #1853 r4). `discovery()`
+  // ends the whole drive on a read failure, and `assetType`/`status` are
+  // already in hand from `getLoanDetails` — so resolving the authority
+  // for a loan the predicate will discard anyway lets an irrelevant
+  // `ownerOf` failure deny the review to every observable position.
+  // Same rule the sanctions read gained in r3, applied one line earlier:
+  // a read whose answer cannot change any verdict must not be able to
+  // end the run.
+  //
+  // The borrower branch keeps reading unconditionally: it uses the
+  // authority in its own skip-reason reporting for ineligible loans,
+  // and changing that is outside this PR.
+  loan.authority =
+    ROLE === 'lender' && !(lenderStatusOk(loan.status) && loan.assetType === ASSET_ERC20)
+      ? null
+      : await discovery(
+          `reading the ${ROLE} authority for loan ${id}`,
+          () => (ROLE === 'lender' ? lenderAuthorityOf(loan) : borrowerAuthorityOf(loan)),
+        );
+  // Only worth the extra reads on loans that clear the cheap gates, and
+  // ONLY for the borrower card: the offset lock and the grace deadline
+  // are gates on the borrower chooser. The lender card is deliberately
+  // insensitive to both — a borrower's pending offset does not hide a
+  // lender's options (it explains one of them), and past maturity the
+  // lender card stays up saying the sale rows are closed, because
+  // waiting still applies. Reading them for a lender run would be two
+  // wasted RPCs per loan and, worse, would tempt a future edit to gate
+  // on them.
+  // Only for loans that clear the cheap gates, and only for the lender
+  // run — the borrower chooser has no sanctions gate.
+  // The ERC-20 gate belongs HERE, not only in the predicate below (Codex
+  // #1853 r3). `discovery()` terminates the whole drive on a read
+  // failure, so a transient failure on a read taken for a loan the
+  // predicate always discards — an NFT rental — reports BLOCKED and
+  // denies the review to every eligible ERC-20 position on the chain.
+  // A read whose answer cannot change any verdict must not be able to
+  // end the run.
+  if (
+    ROLE === 'lender' &&
+    lenderStatusOk(loan.status) &&
+    loan.assetType === ASSET_ERC20 &&
+    loan.authority
+  ) {
+    // With an explicit OBSERVE_ADDRESS, another holder's sanctions
+    // status cannot change whether any of THEIR positions is observable
+    // (Codex #1853 r5) — and this read can end the run, so paying it for
+    // an irrelevant authority lets an unrelated address block a targeted
+    // one. Same rule as the ERC-20 and cheap-gate skips, applied to the
+    // narrowing that happens later.
+    const wanted = process.env.OBSERVE_ADDRESS;
+    loan.authoritySanctioned =
+      wanted && wanted.toLowerCase() !== loan.authority.toLowerCase()
+        ? false
+        : await discovery(
+            `reading the sanctions status of ${loan.authority}`,
+            () => sanctionedAuthority(loan.authority),
+          );
+  }
+  if (
+    ROLE === 'borrower' &&
+    loan.status === STATUS_ACTIVE &&
+    loan.assetType === ASSET_ERC20 &&
+    loan.authority
+  ) {
     loan.offsetLocked = await discovery(`reading the offset lock for loan ${id}`, () =>
       offsetLockedOn(loan.borrowerTokenId),
     );
@@ -603,29 +807,55 @@ for (const id of ids) {
   loans.push(loan);
 }
 
-/** Exactly the predicate `PositionDetails` gates the chooser on. */
-const eligible = loans.filter(
-  (l) =>
-    l.status === STATUS_ACTIVE &&
-    l.assetType === ASSET_ERC20 &&
-    l.authority !== null &&
-    l.offsetLocked === false &&
-    l.graceOver === false,
+/**
+ * Exactly the predicate `PositionDetails` gates the chosen card on — and
+ * the two cards do NOT share one.
+ *
+ * The borrower chooser has four conditions (active, not a rental, no live
+ * preclose-offset lock, grace not verifiably over). The lender card has
+ * two: an active non-rental loan whose lender token resolves to the
+ * connected wallet. It deliberately survives states that hide the
+ * borrower's card, because its FIRST row is "wait", which stays true when
+ * every exit is shut — past maturity it keeps rendering and says the sale
+ * rows are closed rather than vanishing.
+ *
+ * Using the borrower's four gates for a lender run would silently narrow
+ * the candidate pool to loans where BOTH cards happen to render, and then
+ * report BLOCKED on a chain where the lender card is rendering perfectly
+ * well on loans it had discarded.
+ */
+const eligible = loans.filter((l) =>
+  ROLE === 'lender'
+    ? lenderStatusOk(l.status) &&
+      l.assetType === ASSET_ERC20 &&
+      l.authority !== null &&
+      l.authoritySanctioned === false
+    : l.status === STATUS_ACTIVE &&
+      l.assetType === ASSET_ERC20 &&
+      l.authority !== null &&
+      l.offsetLocked === false &&
+      l.graceOver === false,
 );
 const dropped = loans.length - eligible.length;
 if (dropped > 0) {
   // Never silently narrow the candidate set — say what was set aside, and
   // why, so a shrinking pool is legible rather than mysterious.
   const why = (l) =>
-    l.status !== STATUS_ACTIVE
+    (ROLE === 'lender' ? !lenderStatusOk(l.status) : l.status !== STATUS_ACTIVE)
       ? 'not active'
       : l.assetType !== ASSET_ERC20
         ? 'NFT rental'
         : l.authority === null
-          ? 'borrower token burned'
-          : l.offsetLocked
-            ? 'offset in progress'
-            : 'past grace';
+          ? // For a lender run the authority is deliberately left unread
+            // when the cheap gates already fail, so `null` there means
+            // "not looked up", not "burned" — and the two earlier arms
+            // have already named the real reason.
+            `${ROLE} token burned`
+          : l.authoritySanctioned
+            ? 'holder sanctions-flagged (card correctly suppressed)'
+            : l.offsetLocked
+              ? 'offset in progress'
+              : 'past grace';
   console.log(
     `skipping  ${dropped} loan(s) the chooser does not render for: ` +
       loans
@@ -635,8 +865,8 @@ if (dropped > 0) {
   );
 }
 
-// The observed address: whichever borrower-side authority holds the most
-// eligible loans, so one session covers as many position pages as
+// The observed address: whichever authority on the CHOSEN side holds the
+// most eligible loans, so one session covers as many position pages as
 // possible.
 let observed = process.env.OBSERVE_ADDRESS;
 if (!observed) {
@@ -647,22 +877,31 @@ if (!observed) {
   }
   const [best] = [...byAuthority.entries()].sort((a, b) => b[1].length - a[1].length);
   if (!best) {
-    console.log('\nBLOCKED: no chooser-eligible loans on chain — nothing verified.');
+    console.log(
+      `\nBLOCKED: no ${ROLE}-eligible loans on chain — nothing verified.`,
+    );
     process.exit(2);
   }
   observed = best[1][0].authority;
 }
 const mine = eligible.filter((l) => l.authority.toLowerCase() === observed.toLowerCase());
 console.log(
-  `observing ${observed} (watch-only, no key) — ${mine.length} eligible loan(s) as borrower`,
+  `observing ${observed} (watch-only, no key) — ${mine.length} eligible loan(s) as ${ROLE}`,
 );
+console.log(`asserting ${CHOOSER.what}`);
 for (const l of mine) {
-  const moved = l.authority.toLowerCase() !== l.borrower.toLowerCase();
-  console.log(`  loan ${l.id}${moved ? ` (position transferred from ${l.borrower})` : ''}`);
+  // Compared against the ORIGINATING party on the chosen side, so
+  // "transferred" means what it says for either card. Reported because a
+  // moved position is the population the lender card was built for, and a
+  // run that covered only never-transferred loans has not exercised the
+  // interesting half.
+  const origin = ROLE === 'lender' ? l.lender : l.borrower;
+  const moved = l.authority.toLowerCase() !== origin.toLowerCase();
+  console.log(`  loan ${l.id}${moved ? ` (position transferred from ${origin})` : ''}`);
 }
 if (mine.length === 0) {
   console.error(
-    `\nBLOCKED: ${observed} holds no chooser-eligible borrower position — nothing verified.`,
+    `\nBLOCKED: ${observed} holds no eligible ${ROLE} position — nothing verified.`,
   );
   process.exit(2);
 }
@@ -687,8 +926,24 @@ liveBrowser = browser;
 //
 // Codex reported `newContext`; the other three are the same shape and
 // were still bare.
+// `locale` is PINNED (Codex #1853 r3). Every copy assertion in this drive
+// — both chooser titles and all of `lenderShapeOf` — is English, while
+// alpha02 ships nine translated locales and detects from
+// `navigator.languages`. On a host whose Chromium defaults to one of
+// them, the app would correctly load that bundle and every string check
+// would miss, so the drive would wait out the 45-second chooser timeout
+// and file a product regression whose only cause is the harness's
+// assumption about its own machine.
+//
+// Pinning beats asserting locale-independent structure here: the card
+// has no test ids, and the thing worth checking IS the copy — that each
+// option is named, and in which order. A structural assertion would pass
+// on a card rendering the wrong sentences.
 const ctx = await discovery('creating the browser context', () =>
-  browser.newContext({ viewport: { width: 1280, height: 1000 } }),
+  browser.newContext({
+    viewport: { width: 1280, height: 1000 },
+    locale: 'en-US',
+  }),
 );
 
 /** Every refusal, with why — a too-narrow allowlist must be visible. */
@@ -1108,7 +1363,7 @@ await discovery('installing the provider init script', () =>
  * the case where the answer is genuinely negative — where spending it is
  * exactly right, because that is the claim the drive would be making.
  */
-async function visit(path, { expectChooser = false } = {}) {
+async function visit(path, { expectChooser = false, loan = null } = {}) {
   const page = await ctx.newPage();
   // Before anything navigates: a socket opened during the first paint must
   // not be missed — see `wsRpcMethods`.
@@ -1130,7 +1385,7 @@ async function visit(path, { expectChooser = false } = {}) {
       // the reporting below is what decides whether it is a failure.
       await page
         .locator('section.card')
-        .filter({ hasText: /Ways to repay or exit early/i })
+        .filter({ hasText: CHOOSER.title })
         .first()
         .waitFor({ state: 'visible', timeout: 45_000 })
         .catch(() => {});
@@ -1146,6 +1401,8 @@ async function visit(path, { expectChooser = false } = {}) {
   const hooks = pageErrors.some((e) =>
     /Rendered (more|fewer) hooks|Rules of Hooks|change in the order of Hooks/i.test(e),
   );
+  const lenderCardText =
+    ROLE === 'lender' && loan ? await readLenderCardText(page) : null;
   const holdCard = await page.getByTestId('sale-listing-hold-card').count();
   const freeHeld = await page.getByTestId('free-held-options').count();
   const out = {
@@ -1155,9 +1412,49 @@ async function visit(path, { expectChooser = false } = {}) {
     consoleErrors,
     hooks,
     text,
-    chooser: /Ways to repay or exit early/i.test(text),
+    chooser: CHOOSER.title.test(text),
     handover: /hand the loan to another borrower/i.test(text),
     offset: /exit by becoming a lender/i.test(text),
+    // Lender-card shape. `waitFirst` is the one ORDERING claim the card
+    // makes and the only one observable from rendered text: the wait row
+    // must precede both sale rows, because a lender's position already
+    // pays and the no-forfeiture option is meant to lead. It is checked
+    // by index rather than by presence — all three strings can be on the
+    // page in the wrong order, which is exactly the regression a
+    // presence check would wave through.
+    // The CARD's own text, not the page's (a bounded-block scrape ran
+    // past the card's end and reported the page footer as a row's
+    // reason). Falls back to the full body when the card is absent, so
+    // the `card=false` verdict is still computed from something.
+    ...(ROLE === 'lender' && loan ? lenderShapeOf(lenderCardText ?? text) : {}),
+    // WHAT THE SCRAPE ACTUALLY SAW (Codex #1853 r16). The
+    // suppression below needs to know whether the card was on the
+    // page AT THIS MOMENT — not whether a chain read taken later,
+    // inside `lenderAdvancedOf`, can explain an absence. Those are
+    // different facts, and round 15 used the second as proof of the
+    // first: a card that rendered here WITH A ROW MISSING, on a loan
+    // that then went terminal before the snapshot, had its genuine
+    // regression suppressed as a pre-render race.
+    cardAbsentAtScrape: ROLE === 'lender' && loan ? lenderCardText === null : false,
+    // DETAIL PAGES ONLY, gated on `loan` (self-inflicted, caught by
+    // running it). The lender card exists only on `/positions/<id>`, and
+    // on the LIST route the card locator matches nothing — but a
+    // Playwright locator AUTO-WAITS before rejecting, so every poll took
+    // the full locator timeout, the stability loop never got a second
+    // sample inside its deadline, and the list route reported BLOCKED.
+    //
+    // `.catch(() => '')` looked like it made the read safe. It makes the
+    // FAILURE safe; it does nothing about the 30 seconds spent reaching
+    // it — which is the same "handled the error, ignored the cost"
+    // shape as the r3 rental read that could end the run.
+    ...(ROLE === 'lender' && loan
+      ? await lenderAdvancedOf(page, loan, lenderCardText === null)
+      : {}),
+    // Spread AFTER the shape scrape on purpose: where the probe observed
+    // the card the scrape had missed, its later reading replaces the
+    // earlier absence (Codex #1853 r17). Order is the mechanism here, so
+    // moving this line above `lenderShapeOf` silently restores the bug.
+
     holdCard: holdCard > 0,
     freeHeld: freeHeld > 0,
     connected: !/Connect wallet/i.test(text.slice(0, 400)),
@@ -1188,9 +1485,20 @@ async function stillEligible(loan) {
     `re-reading loan ${loan.id} before visiting it`,
     () =>
       Promise.all([
-        offsetLockedOn(loan.borrowerTokenId),
-        borrowerAuthorityOf(loan),
-        pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
+        // Not read for a lender run — the lender card is not gated on the
+        // borrower's offset lock. Resolved to `false` so the shared
+        // destructuring below keeps one shape.
+        ROLE === 'lender' ? Promise.resolve(false) : offsetLockedOn(loan.borrowerTokenId),
+        ROLE === 'lender' ? lenderAuthorityOf(loan) : borrowerAuthorityOf(loan),
+        // Chain time feeds the BORROWER grace check only, and the lender
+        // branch returns before reaching it — so on a lender run this is
+        // a read whose failure could reject the shared Promise.all and
+        // report BLOCKED while every read that actually decides the
+        // verdict succeeded (Codex #1853 r4). Third instance of the same
+        // rule in two rounds.
+        ROLE === 'lender'
+          ? Promise.resolve(0n)
+          : pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
         pub.readContract({
           address: DIAMOND,
           abi: DIAMOND_ABI_VIEM,
@@ -1202,11 +1510,43 @@ async function stillEligible(loan) {
   // STATUS too, not just the volatile gates: a loan repaid, liquidated or
   // defaulted between discovery and the visit correctly loses its
   // chooser, and the minutes-old status would call that a regression.
-  if (Number(live.status) !== STATUS_ACTIVE) return 'no longer active';
+  if (
+    ROLE === 'lender'
+      ? !lenderStatusOk(Number(live.status))
+      : Number(live.status) !== STATUS_ACTIVE
+  ) {
+    return 'no longer active';
+  }
   if (lockedNow) return 'offset started since discovery';
-  if (authorityNow === null) return 'borrower token burned since discovery';
+  if (authorityNow === null) return `${ROLE} token burned since discovery`;
   if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
     return 'position transferred since discovery';
+  }
+  // The grace re-check below is a BORROWER gate. Applying it to a lender
+  // run would skip a page whose card is correctly still rendering — and,
+  // if it were the only candidate, report BLOCKED on a working surface.
+  //
+  // Sanctions IS re-read here, because unlike grace it can change in
+  // either direction between discovery and the visit, and a flag that
+  // landed in that window correctly suppresses the card.
+  if (ROLE === 'lender') {
+    // UNCACHED, deliberately (Codex #1853 r8). The discovery cache is
+    // keyed per authority for the whole sweep, so calling the cached
+    // helper here returns the fulfilled promise from discovery and this
+    // "re-read" reads nothing. That defeats the exact justification I
+    // gave for the cache one round earlier — that freshness is enforced
+    // where it matters, immediately before the visit — so the cache made
+    // its own safety argument false.
+    //
+    // The failure it causes is the expensive direction: an authority
+    // flagged between discovery and the visit has its card correctly
+    // suppressed by the page, and the drive would wait out the chooser
+    // timeout and report a product FAIL.
+    const flaggedNow = await discovery(
+      `re-reading the sanctions status of ${observed}`,
+      () => sanctionedAuthorityUncached(authorityNow),
+    );
+    return flaggedNow ? 'holder sanctions-flagged since discovery' : null;
   }
   // The LIVE term, not the discovered one. `extendLoanInPlace` rewrites
   // startTime and durationDays while the loan stays Active, so a stale
@@ -1223,6 +1563,1597 @@ async function stillEligible(loan) {
     return 'crossed its grace deadline since discovery';
   }
   return null;
+}
+
+/**
+ * The lender card's observable shape, scraped from rendered text.
+ *
+ * Three claims, and only the third needs explaining:
+ *
+ *  - `waitRow` / `sellNowRow` / `listRow` — the three options are named.
+ *  - `blurb` — the card's own framing line, which is what distinguishes
+ *    "the card rendered" from "the words happen to appear elsewhere on a
+ *    long page". The title alone is a weaker signal than it looks.
+ *  - `waitFirst` — the wait row PRECEDES both sale rows. This is the one
+ *    ordering claim the card makes, and the reason it exists: a lender's
+ *    position already pays them, so the option that forfeits no interest
+ *    leads, which is the inversion from the borrower chooser. Checked by
+ *    index because all three rows can be present in the wrong order — a
+ *    presence check passes on exactly the regression worth catching.
+ *
+ * `waitFirst` is reported as `null`, never `false`, when a row it needs
+ * is absent: with no sell-now row there is no order to be wrong about,
+ * and returning `false` would file a missing row twice — once honestly
+ * and once as a fabricated ordering defect.
+ */
+function lenderShapeOf(text) {
+  const at = (re) => {
+    const m = re.exec(text);
+    return m ? m.index : -1;
+  };
+  const wait = at(/Wait for the loan to run its course/i);
+  const sellNow = at(/Sell your position now/i);
+  const list = at(/List your position for sale/i);
+  // ALL THREE indices, not "wait plus whichever sale row happens to be
+  // there" (Codex #1853 r1). With one sale row missing, the earlier
+  // version still judged the order against the survivor — so if THAT row
+  // preceded the wait row, the report emitted the legitimate missing-row
+  // failure AND a second ordering failure, for an order that could not
+  // be observed. Double-counting one defect is exactly what the `null`
+  // arm was introduced to prevent, and it had a hole in it.
+  const allPresent = wait >= 0 && sellNow >= 0 && list >= 0;
+  // The sentence each sale row shows INSTEAD of being available, when it
+  // is unavailable. Purely informational and never a FAIL — an
+  // unavailable row is correct behaviour on most chains — but without it
+  // "no jumpable row" is a dead end for whoever reads the report, and
+  // WHICH reason is showing is the single most useful fact about a live
+  // deployment's sale surface. Sliced from the row's own text so a
+  // reworded string degrades to a shorter excerpt rather than to a lie.
+  //
+  // Taken from the END of the row's block, not its start: the card
+  // renders title → description → cost lines → unavailability sentence,
+  // so the first lines after a title are the description (which the
+  // first version of this captured and reported as if it were the
+  // reason). The block is bounded by the next row's title, or by the
+  // card's switch note / the end of the text.
+  const bounds = [sellNow, list, at(/These tools live in the Advanced view/i), text.length]
+    // (`text` here is the card's own innerText — see the call site.)
+    .filter((i) => i >= 0)
+    .sort((a, b) => a - b);
+  const reasonAfter = (i) => {
+    if (i < 0) return null;
+    const end = bounds.find((b) => b > i) ?? text.length;
+    const lines = text
+      .slice(i, end)
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    // Last line of the block. On an AVAILABLE row that is the cost line
+    // or the jump label, which is why this is reported only when no jump
+    // rendered — the caller decides, so this stays a plain observation
+    // rather than a guess about which line means what.
+    return lines.length > 1 ? lines[lines.length - 1].slice(0, 160) : null;
+  };
+  return {
+    sellNowText: reasonAfter(sellNow),
+    listText: reasonAfter(list),
+    lenderBlurb: /You don.t have to do anything with this position/i.test(text),
+    waitRow: wait >= 0,
+    sellNowRow: sellNow >= 0,
+    listRow: list >= 0,
+    waitFirst: allPresent ? wait < sellNow && wait < list : null,
+  };
+}
+
+/**
+ * The Advanced half of the review, and it needs NO WALLET FILE.
+ *
+ * I first recorded this as owed pending `TESTNET_WALLETS_FILE`, which
+ * was wrong (Codex #1853 r4): the drive already runs a CONNECTED
+ * session through its watch-only provider, `onSwitchToAdvanced` only
+ * calls `setMode('advanced')`, and each row's jump handler only calls
+ * `scrollIntoView`. Nothing here signs or sends, so filing it as a
+ * signing-limited gap fenced off coverage the keyless driver could
+ * always have taken. Recording that because a wrongly-stated limit is
+ * more expensive than an unstated one — it stops anyone looking again.
+ *
+ * What it asserts, and deliberately no more:
+ *
+ *  - the switch control is offered in Basic mode;
+ *  - after clicking it, the card's jump buttons appear (they render only
+ *    when `isAdvanced`), and
+ *  - every jump target a button points at EXISTS in the document.
+ *
+ * That last one is the real check. `jump()` resolves its target with
+ * `getElementById(...)?.scrollIntoView()` — optional-chained — so a row
+ * offering a jump to an anchor that never mounted is silently inert:
+ * the lender clicks and nothing at all happens. The card's own
+ * prerequisite gate exists to prevent exactly that, and this is the
+ * observation that would catch it failing.
+ *
+ * Returns `advancedJumps: null` when the switch is not offered, which is
+ * a legitimate state (every sale row unavailable), not a failure.
+ */
+/**
+ * Did the inputs that make a SALE ROW JUMPABLE move during the probe?
+ *
+ * NOT `stillEligible` (Codex #1853 r9). Round 8 reused that, and it
+ * detects none of the three changes it was called to detect: its lender
+ * branch accepts Active AND FallbackPending by design, skips chain time
+ * entirely, and never reads the lender token's lock. So the fix was a
+ * no-op for its stated purpose — a re-read that cannot observe the race
+ * it exists to observe.
+ *
+ * The two functions answer genuinely different questions, which is why
+ * one cannot serve for the other:
+ *
+ *   stillEligible  — may the CARD still mount? Deliberately loose:
+ *                    FallbackPending keeps it mounted, past maturity
+ *                    keeps it mounted, because the wait row stays true.
+ *   this           — can a SALE ROW still be jumped to? Strict: both
+ *                    sale entry points require exactly Active, refuse
+ *                    past maturity, and refuse a locked position.
+ *
+ * Deliberately a SUBSET, and says so: it covers the three races named in
+ * review, not every input `buildLenderExitRows` consults. A full model
+ * would be a shadow copy of that module living in a test harness, which
+ * is the defect class this whole PR chain is about. Anything it does not
+ * cover still reports as the no-op-switch FAIL, which is the honest
+ * failure for "we could not explain this".
+ */
+async function jumpabilitySnapshot(loan) {
+  return discovery(`reading loan ${loan.id} jumpability inputs`, async () => {
+    const [live, now, lock, holder, flagged] = await Promise.all([
+      pub.readContract({
+        address: DIAMOND,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'getLoanDetails',
+        args: [loan.id],
+      }),
+      pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
+      positionLockOf(loan.lenderTokenId),
+      lenderAuthorityOf(loan),
+      sanctionedAuthorityUncached(observed),
+    ]);
+    return {
+      active: Number(live.status) === STATUS_ACTIVE,
+      // Recorded SEPARATELY from `active` so the pure module can reason
+      // about the CARD's mount gate without importing chain constants
+      // (Codex #1853 r15). The card deliberately stays mounted on a
+      // fallback-settling loan — its wait row is still true — so "not
+      // Active" and "not mountable" are different questions and the
+      // suppression below turns on the second, not the first.
+      fallbackPending: Number(live.status) === STATUS_FALLBACK_PENDING,
+      // `>=`, matching the page and the contracts: AT the boundary
+      // second both jumps are correctly gone (Codex #1853 r10).
+      matured: now >= live.startTime + live.durationDays * 86_400n,
+      locked: lock !== 0,
+      holder: holder === null ? null : holder.toLowerCase(),
+      flagged: Boolean(flagged),
+    };
+  });
+}
+
+/**
+ * Raw lock reason on any position token; 0 = unlocked.
+ *
+ * A REVERT IS NOT A LOCK, and this read does not swallow one (Codex
+ * #1853 r18). The version this replaces returned a `-1` sentinel that
+ * `jumpabilitySnapshot` turned into `locked: true`, "the same direction
+ * `offsetLockedOn` takes" — and that reasoning was the bug, because the
+ * two calls are not the same kind of call.
+ *
+ *   `offsetLockedOn` is a candidate FILTER. Assuming a lock there drops
+ *   one loan from the pool; the cost is an observation not made, which
+ *   is loud and harmless.
+ *
+ *   This one is a VERDICT INPUT. Assuming a lock here makes
+ *   `snapshotJumpable` return false, which routes a genuine no-op switch
+ *   into the already-unjumpable BLOCKED arm and lets the drive exit 0
+ *   with the anchor audit never run. The cost is a suppressed finding,
+ *   which is silent.
+ *
+ * A revert proves only that the prerequisite could not be read — on a
+ * deployment missing the selector, every position reads as locked and
+ * the whole Advanced assertion quietly stops asserting. So it propagates
+ * to `discovery()` and reads BLOCKED, which is the honest verdict for
+ * "we could not look".
+ */
+async function positionLockOf(tokenId) {
+  return Number(
+    await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'positionLock',
+      args: [tokenId],
+    }),
+  );
+}
+
+/**
+ * Wait until the sale rows have SETTLED — a jump exists, or they have
+ * stopped saying "still reading". Shared by both entry paths into
+ * Advanced (Codex #1853 r7 for the post-click path, r9 for the
+ * already-Advanced one): `ModeContext` persists `alpha02.mode`, so once
+ * any page in this browser context switches, every later detail page
+ * renders in Advanced from the start — and hits the identical loading
+ * interval at first render, with neither switch nor jumps present.
+ */
+async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
+  // TEXT STABILITY IS NOT READINESS, and round 11's version of this was
+  // unsound (Codex #1853 r12). Pending copy is STATIC — "still reading
+  // the details a sale needs" does not change while the read is in
+  // flight — so three identical samples meant "the loading message has
+  // not changed", never "the read finished". A read slower than three
+  // seconds settled falsely, which is the same silent false PASS r11
+  // claimed to eliminate. I described that change as closing a class.
+  // It closed the enumeration and left the hole.
+  //
+  // There IS a positive readiness signal now (#1855 shipped), and it is
+  // polled below — `selfOf` reads the card's own
+  // `data-chooser-ready` / `data-chooser-jumpable`, so a card that has
+  // settled ends the wait immediately instead of paying the deadline.
+  // The arms below remain the fallback for a bundle that publishes
+  // nothing, which is why the deadline still exists at all:
+  //
+  //   - a jump appears                  → settled, audit it
+  //   - the switch appears              → settled, click it
+  //   - the explicit FAILED sentence    → definite non-ready, BLOCKED
+  //   - deadline with none of the above → no jumpable row
+  //
+  // The failed sentence stays copy-matched deliberately, and the
+  // asymmetry is the point: it is a DEFINITE answer ("this could not be
+  // loaded"), where the checking sentences are merely the absence of
+  // one. Matching on a definite answer degrades to a longer wait if the
+  // copy changes; matching on absence degrades to a false pass. Round 11
+  // dropped this arm entirely when it removed the enumeration, so a
+  // persistent failure became "settled".
+  //
+  // That cost — the full deadline on a page that genuinely has no
+  // jumpable row, which is most of a past-due chain — is what the
+  // readiness poll removes (Codex #1853 r29). Consuming the attributes
+  // only AFTER this function returned left the 45 seconds per position
+  // exactly where they were, so the hook #1855 added to delete the
+  // wait was being read too late to delete anything.
+  const FAILED = /one of the details a sale needs couldn.t be loaded/i;
+  // THE PENDING SENTENCE, and matching it here is sound where matching
+  // it for READINESS was not (Codex #1853 r19).
+  //
+  // Round 12's rule stands: a pending sentence is the ABSENCE of an
+  // answer, so concluding "settled" from its disappearance degrades to
+  // a false pass if the copy changes. This is the opposite direction.
+  // It is read only AT the deadline, and only to RAISE the verdict from
+  // "no jumpable row" to BLOCKED — so a reworded string degrades to the
+  // behaviour this file already had, never to a new false pass.
+  const PENDING = /still reading the details a sale needs/i;
+  const deadline = Date.now() + 45_000;
+  let lastVerdict = 'unknown';
+  for (;;) {
+    // INSIDE THE POLL (Codex #1853 r19). The probe's eager capture runs
+    // before this loop and the wrapper's runs after the probe returns,
+    // which leaves the whole polling window uncovered: a card that
+    // mounts here and is unmounted by an ownership or status refresh
+    // before the probe finishes was positively observed and then
+    // forgotten, and the run reported a missing chooser. A recorder
+    // advertised as sticky has to be offered every observation, not the
+    // two at the ends.
+    await late?.capture();
+    // A REVERSIBLE STATUS TRANSITION LEAVES NO TRACE EITHER (Codex
+    // #1853 r24). An Active loan can enter FallbackPending after the
+    // pre-state snapshot and cure back before the post-state read: the
+    // two chain samples agree, and the DOM check cannot help because
+    // FallbackPending deliberately KEEPS the card mounted while
+    // removing every jump. The probe then sees a switch, no jumps, and
+    // nothing moved — the no-op-switch product FAIL, on a page that
+    // behaved correctly throughout.
+    //
+    // Ownership round trips were caught by watching the DOM; this one
+    // is only visible on chain, so it is sampled here — sparsely, and
+    // the limit is stated rather than papered over: this observes the
+    // status at a few points inside the window, not continuously, so a
+    // transition that opens and closes between two samples is still
+    // invisible. #1855's readiness attribute is what removes the guess
+    // entirely.
+    await watch?.();
+    // THE CARD'S OWN ANSWER, ASKED FIRST (Codex #1853 r29, reordered
+    // r31). Every other arm here reasons from an absence and cannot
+    // conclude before the deadline; this one is a positive statement,
+    // so the moment it is recognised the wait is over — which is why
+    // the common past-due page no longer costs 45 seconds.
+    //
+    // Asked BEFORE the controls are counted, because a control being
+    // on screen is not evidence that it should be. A background
+    // refetch leaves the card publishing `pending` while its cached
+    // switch and jump buttons are still rendered, and the previous
+    // order returned on those without ever asking — so the audit
+    // clicked controls the in-flight read was about to withdraw and
+    // the run exited 0. Same shape as everything else on this PR: the
+    // strict treatment was on the zero-jump path and the successful
+    // path took the cached answer.
+    //
+    // Two non-answers, treated differently and deliberately.
+    // `unknown` is an older bundle publishing nothing, so the controls
+    // in front of us are the only evidence there is and we use them.
+    // `blocked-pending` is the card saying it is still deciding, so we
+    // keep waiting — and it is reported only if the clock runs out
+    // (r30: returning on it made a merely slow page report a failure).
+    // BRACKETED, because these are three separate round trips (Codex
+    // #1853 r33). The verdict and the two counts cannot be taken at the
+    // same instant, so a card that starts a background refetch between
+    // them yields a stale `ready` beside a current count — exactly the
+    // pending-readiness false pass this ordering exists to prevent,
+    // reconstructed out of two individually correct reads.
+    //
+    // Reading readiness again AFTER the counts and requiring the two to
+    // agree makes the whole observation one that held across the
+    // window, rather than three that were each true at a different
+    // moment. A disagreement is not an error: it is the card moving
+    // while we looked, so the loop simply goes round again with the
+    // later verdict.
+    //
+    // The alternative — one `evaluate` returning attributes and control
+    // counts together — is genuinely atomic but restates "which button
+    // is a jump" in a second place, and a duplicated selector is the
+    // defect class this file is named for. Agreement across a bracket
+    // costs one extra read and keeps the locators single-source.
+    const beforeVerdict = missingSwitchVerdict(await selfOf?.());
+    const jumps = await jumpsOf().count();
+    const switchThere = swOf ? (await swOf().count()) > 0 : false;
+    const afterVerdict = missingSwitchVerdict(await selfOf?.());
+    lastVerdict = afterVerdict;
+    if (beforeVerdict !== afterVerdict) {
+      // The deadline is checked HERE too. A bare `continue` would skip
+      // the one below, so a card oscillating between verdicts would
+      // loop past 45 seconds forever — the unbounded-wait class this
+      // file has already been bitten by, reintroduced through the exit
+      // rather than through an API.
+      if (Date.now() > deadline) {
+        return {
+          // REPORT THE SWITCH WE ACTUALLY SAW (Codex #1853 r37). Every
+          // return in this loop used to hardcode `false` here, which was
+          // inert while the value went unread — and stopped being inert
+          // last round, when `readinessBlock`'s consumption was hoisted
+          // out of the `!switchThere` branch. A card that oscillates
+          // while its switch is plainly rendered was then filed under
+          // the missing-switch route.
+          //
+          // `switchThere` is the count taken in THIS iteration, between
+          // the two verdict reads; it is the observation, not an
+          // assumption about it.
+          jumps: 0, switchThere, toolsFailed: false, timedOut: true,
+          settled: 'blocked-unstable',
+        };
+      }
+      await page.waitForTimeout(1_000);
+      continue;
+    }
+    // CONTROLS PRESENT AND SETTLED IS THE HEALTHY CASE, and it is
+    // checked before any verdict is applied to their absence (Codex
+    // #1853 r32). Round 31 moved the readiness read ahead of this
+    // count and let its verdict return first — which turned
+    // `ready`/`yes` into the missing-switch contradiction on a page
+    // that has no switch because it is ALREADY in Advanced, jump
+    // buttons rendered and working. `ModeContext` persists the mode,
+    // so every position after the first arrives that way: the default
+    // three-position run would have reported a product regression on
+    // pages 2 and 3 and never audited them.
+    //
+    // `ready`/`yes` is a contradiction only when there is nothing on
+    // screen to reach the row with. With jumps present it is the card
+    // agreeing with itself.
+    // ACCEPTED ONLY WHEN THE CARD AGREES (Codex #1853 r34). Excluding
+    // just `blocked-pending` let every other non-agreeing verdict
+    // through: a card reporting `ready`/`no` while a stale jump button
+    // is still rendered passed both bracket reads as `absent`, the
+    // audit ran on that button, and the review exited 0 on a card
+    // contradicting its own verdict. `blocked-failed` and
+    // `blocked-malformed` took the same route.
+    //
+    // Only two verdicts justify acting on what is rendered: `fail`,
+    // which is `ready`/`yes` — the card saying a row IS jumpable, so
+    // buttons are consistent with it — and `unknown`, a legacy bundle
+    // where the controls are the only evidence there is.
+    //
+    // (`fail` reads oddly here. `missingSwitchVerdict` names its
+    // outcomes for the missing-switch question, where `ready`/`yes`
+    // with nothing rendered is the contradiction. With controls
+    // present the same reading is agreement. Same fact, opposite
+    // meaning, decided by what else is on the page.)
+    const agrees = readinessAgreesWithControls(lastVerdict);
+    if ((jumps > 0 || switchThere) && agrees) {
+      return { jumps, switchThere, toolsFailed: false, timedOut: false };
+    }
+    // Rendered controls the card does not stand behind. `absent` is the
+    // stable disagreement — both bracket reads said no row is jumpable
+    // while a jump control was on screen — and gets its own reason
+    // rather than borrowing one that would misdescribe it.
+    // SETTLED disagreements only (Codex #1853 r35). Round 34's version
+    // returned on `blocked-pending` here too, so a card mid-refetch
+    // still showing its controls exited on the first poll and the
+    // caller announced a deadline that was never reached. That is
+    // round 30's defect verbatim, reintroduced through the branch
+    // added to fix a different one — pending is not a disagreement,
+    // it is the card not having answered yet.
+    if ((jumps > 0 || switchThere) && lastVerdict !== 'blocked-pending') {
+      return {
+        jumps: 0,
+        // KEPT, not zeroed. The r35 P3 was about `advancedOffered`
+        // being hardcoded on the post-click path; the same information
+        // is discarded here if this reports no switch when one was on
+        // screen. Applying the finding to its sibling rather than
+        // waiting to be told about it.
+        switchThere,
+        toolsFailed: false,
+        timedOut: false,
+        settled: lastVerdict === 'absent' ? 'blocked-contradiction' : lastVerdict,
+      };
+    }
+    // Nothing rendered (or the card says not to trust what is). Now the
+    // verdict about an ABSENCE is the right question to ask.
+    if (
+      jumps === 0 &&
+      !switchThere &&
+      lastVerdict !== 'unknown' &&
+      lastVerdict !== 'blocked-pending'
+    ) {
+      return {
+        jumps: 0, switchThere: false, toolsFailed: false, timedOut: false,
+        settled: lastVerdict,
+      };
+    }
+    // Same auto-wait trap as the recorder above (Codex #1853 r22):
+    // this ran every iteration, and on an absent card each one blocked
+    // for the default timeout instead of the 1s the loop intends.
+    const text = (await readLenderCardText(page, card)) ?? '';
+    if (FAILED.test(text)) {
+      return { jumps: 0, switchThere, toolsFailed: true, timedOut: false };
+    }
+    if (Date.now() > deadline) {
+      // A DEADLINE IS NOT AN ANSWER WHILE THE ROWS SAY THEY ARE STILL
+      // READING (Codex #1853 r19). `timedOut` was returned here and
+      // inspected by neither caller, so 45 seconds of a page whose
+      // prerequisite query is genuinely stuck — the driver's own chain
+      // reads succeeding the whole time — read as "no jumpable row" and
+      // exited 0 with no mode switch and no anchor audited.
+      //
+      // The distinction is what the rows themselves report at the
+      // moment the clock runs out. A settled unavailability reason is
+      // an answer, and "no jumpable row" is the honest verdict for it.
+      // The checking sentence is not an answer, and outlasting the
+      // deadline makes it a failure to observe, not an observation.
+      return {
+        jumps: 0,
+        switchThere,
+        toolsFailed: false,
+        timedOut: true,
+        stillPending: PENDING.test(text),
+        // Carried so the caller can say WHY the clock ran out when the
+        // card itself was still reporting `pending`.
+        settled: lastVerdict === 'blocked-pending' ? 'blocked-pending' : undefined,
+      };
+    }
+    await page.waitForTimeout(1_000);
+  }
+}
+
+/**
+ * The lender card, as ONE locator every consumer shares.
+ *
+ * Both the probe and the late rescrape need it, and a second copy of
+ * this filter is a second statement of "which card is the lender's" —
+ * the defect class this PR chain is about, in the file that keeps being
+ * reviewed for it.
+ */
+function lenderCardOf(page) {
+  return page.locator('section.card').filter({ hasText: CHOOSER.title }).first();
+}
+
+/**
+ * The card's OWN answer to the question this probe keeps guessing at.
+ *
+ * `LenderExitOptionsCard` publishes `data-chooser-ready` (has the
+ * jumpability question settled) and `data-chooser-jumpable` (what it
+ * settled to) — the whole point of #1855, and shipped in `5bd8077`.
+ * Until this read existed the drive inferred both from an ABSENCE:
+ * no switch on the page, so presumably no jumpable row. That inference
+ * cannot tell a still-loading card from a genuinely unjumpable one,
+ * and — the case that makes it a P1 rather than a slow path — it
+ * cannot tell either of them from a Basic-mode regression that drops
+ * the switch while the card itself says `ready` / `yes` (Codex #1853
+ * r28). That contradiction is a product defect the card is TELLING us
+ * about, and the drive was reporting it as an ordinary unavailable
+ * row and exiting 0.
+ *
+ * Returns `null` when the attributes are absent — an older bundle, or
+ * no card — so callers fall back to their previous behaviour rather
+ * than inventing a verdict from a missing element.
+ */
+async function chooserSelfVerdict(page) {
+  // ONE BOUNDED DOM READ, not two auto-waiting locator calls (Codex
+  // #1853 r30). `getAttribute` auto-waits for the element, and this
+  // context sets no default timeout — so a card unmounted between the
+  // `count()` and the read (an ownership or status refresh, which is
+  // precisely what the surrounding window watches for) blocked the
+  // poll indefinitely and sailed past the 45-second deadline it lives
+  // inside. Polling every tick turned a rare hang into a repeated
+  // exposure. The same auto-wait trap this file already fixed twice,
+  // on a third API.
+  //
+  // `evaluate` returns whatever is in the DOM at that instant and
+  // never waits for anything, so an absent card is `null` in one
+  // round trip rather than a stall.
+  return await page
+    .evaluate(() => {
+      const el = document.querySelector('[data-testid="lender-exit-card"]');
+      if (!el) return null;
+      const ready = el.getAttribute('data-chooser-ready');
+      const jumpable = el.getAttribute('data-chooser-jumpable');
+      return ready === null && jumpable === null ? null : { ready, jumpable };
+    })
+    .catch(() => null);
+}
+
+/**
+ * The card's text, or `null`, WITHOUT paying an auto-wait for absence.
+ *
+ * `innerText()` auto-waits: on a card that is not there it blocks for
+ * Playwright's default 30 seconds before the `.catch` runs. Round 22
+ * fixed that at the two sites the finding named and left the initial
+ * scrape — which runs after the separate 45s chooser wait and before
+ * the probe's own 45s window, so an absent-card visit could still pass
+ * two minutes (Codex #1853 r23).
+ *
+ * That is the NINTH time on this PR that a rule was applied to the
+ * sites a finding named rather than to every site it governs, and the
+ * eighth was the same rule one round earlier. So this is a function
+ * rather than a pattern: a `count()` guard somebody has to remember is
+ * a rule, and a rule is what keeps being forgotten.
+ *
+ * `count()` does not auto-wait, so absence is free; the bounded
+ * `timeout` covers a card that unmounts between the two calls.
+ */
+async function readLenderCardText(page, card) {
+  const target = card ?? lenderCardOf(page);
+  if ((await target.count()) === 0) return null;
+  return await target.innerText({ timeout: 2_000 }).catch(() => null);
+}
+
+/**
+ * The scrape can be too EARLY as well as too late (Codex #1853 r17).
+ *
+ * If the ownership, status or sanctions reads outrun the initial card
+ * scrape, the visit records `chooser: false` and an empty row shape —
+ * and then this probe goes on to observe the card, click its switch and
+ * audit its anchors successfully. The reporter was still reading the
+ * earlier cached absence, so a healthy late-rendering page was filed as
+ * `lender chooser MISSING` along with every row, on the same visit that
+ * had just interacted with that card.
+ *
+ * Every previous fix here treated the scrape as authoritative and the
+ * probe as the thing needing qualification. This is the same fact from
+ * the other end: a later positive observation is BETTER evidence than an
+ * earlier absence, because the card cannot un-render into having been
+ * there.
+ *
+ * MEMOIZED, AND MERGED AT ONE EXIT (Codex #1853 r18). Round 17 spread
+ * the rescrape into the two returns that carry an anchor audit and left
+ * every other settled return without it — so a card that mounted late
+ * and legitimately had no jumpable row (a past-maturity position, which
+ * is most of the live chain) kept the scrape's `chooser: false` and was
+ * filed as `lender chooser MISSING` by the very probe that had just read
+ * its text. Two consumers of one question, a distinction drawn in one
+ * and not its siblings, for the seventh time on this PR.
+ *
+ * Sticky because it must not be re-derived at the exit: a card observed
+ * mid-probe and unmounted by the time the probe returns is still a card
+ * that was there, and re-reading at the end would throw that evidence
+ * away — reintroducing the same bug in a narrower window.
+ */
+function lateScrapeRecorder(page, cardAbsentAtScrape) {
+  let seen = null;
+  return {
+    /** Record the card if it is on the page right now. Idempotent.
+     *
+     *  COUNT BEFORE TEXT, and it is not a micro-optimisation (Codex
+     *  #1853 r22). `innerText()` AUTO-WAITS — on an absent card it
+     *  blocks for Playwright's default 30s before the `.catch` runs.
+     *  This is called once before the probe, once per poll iteration
+     *  and once after, so on the page it exists for — the one where
+     *  the scrape saw no card — it could spend minutes and the 1s poll
+     *  cadence never happened. The 45s deadline the drive advertises
+     *  was being blown by the code that reports on it.
+     *
+     *  `count()` does not auto-wait, so absence costs nothing; the
+     *  bounded `timeout` covers a card that unmounts between the two
+     *  calls. */
+    async capture() {
+      if (!cardAbsentAtScrape || seen) return;
+      const text = await readLenderCardText(page);
+      if (text !== null) seen = { chooser: true, cardRescraped: true, ...lenderShapeOf(text) };
+    },
+    /** Did the recorder ever observe the card? Distinct from `value`,
+     *  which a caller spreads — this is the fact the vanish check needs
+     *  (Codex #1853 r22). */
+    get recorded() {
+      return seen !== null;
+    },
+    /** What was recorded, or nothing — never a fabricated absence. */
+    get value() {
+      return seen ?? {};
+    },
+  };
+}
+
+/**
+ * Watches for a REVERSIBLE status transition inside the probe window.
+ *
+ * The third axis on which a round trip hides (Codex #1853 r24).
+ * Ownership round trips are caught by the DOM — the card unmounts.
+ * A FallbackPending excursion is not: the card deliberately stays up
+ * to explain it, while `buildLenderExitRows` removes both jumps. So
+ * before and after agree, the card never disappears, and the honest
+ * behaviour reads as a no-op-switch FAIL.
+ *
+ * SPARSE ON PURPOSE, and the limit is stated rather than hidden: one
+ * chain read every `EVERY` poll ticks, so a transition that opens
+ * and closes between two samples is still invisible. That is a real
+ * gap and it is smaller than the one it replaces; #1855's readiness
+ * attribute removes the guess rather than narrowing it.
+ *
+ * Cheap by construction — a no-op when there is no loan to read, and
+ * it stops sampling once it has seen something, since one
+ * observation is all the verdict needs.
+ *
+ * HOISTED TO THE WRAPPER (Codex #1853 r27), for the same reason
+ * `before` was in r21: the excursion explains a zero-jump outcome on
+ * EVERY route, and while it lived inside the probe only the two
+ * returns that remembered to ask were covered.
+ */
+function statusWatcher(loan, before) {
+  const EVERY = 8;
+  let tick = 0;
+  let seen = null;
+  return {
+    async sample() {
+      if (!loan || seen) return;
+      // A TRANSITION, not a state (Codex #1853 r25). Without the
+      // baseline test the first sample of an ALREADY-unjumpable
+      // position records an "excursion" that never happened — and
+      // because the verdict consults this before its
+      // already-unjumpable arm, the run would report the wrong one
+      // of the two, which is the confidently-wrong diagnosis round
+      // 22 was about, reintroduced by round 24's fix.
+      if (snapshotJumpable(before, observed) !== true) return;
+      if (tick++ % EVERY !== 0) return;
+      const mid = await jumpabilitySnapshot(loan);
+      if (mid && snapshotJumpable(mid, observed) === false) {
+        // `jumpabilityMoved` is the authority on WHAT moved; the
+        // fallback only covers an input it does not model, and is
+        // reachable only because the baseline above was jumpable.
+        seen = jumpabilityMoved(before, mid) ?? 'the position stopped being sellable mid-probe';
+      }
+    },
+    get excursion() {
+      return seen;
+    },
+  };
+}
+
+/**
+ * The single merge point for the Advanced probe.
+ *
+ * The probe's own verdict wins on every key it sets; the late rescrape
+ * only fills in the card-shape keys the initial scrape missed, and the
+ * two sets do not overlap.
+ */
+async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
+  const late = lateScrapeRecorder(page, cardAbsentAtScrape);
+  // HOISTED OUT OF THE PROBE (Codex #1853 r21) so the wrapper can apply
+  // the stale-owner verdict to EVERY exit. Its ordering constraint is
+  // unchanged and in fact strengthened: it still predates the first
+  // observation of the switch, which is what r13 required.
+  const before = loan ? await jumpabilitySnapshot(loan) : null;
+  // ONE watcher across the whole probe, so an excursion seen before the
+  // click still explains a zero-jump result after it.
+  const watch = statusWatcher(loan, before);
+  const result = await lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before, watch);
+  // Last chance, for a card that mounted after the probe's own capture.
+  await late.capture();
+  // A SUCCESSFUL AUDIT OF SOMEBODY ELSE'S CARD IS STILL NOT A PASS
+  // (Codex #1853 r21). Round 20 put this test on the zero-jump routes,
+  // where the finding had surfaced — but a stale card keeps its switch
+  // AND its jump buttons until the page's 60-second ownership refresh,
+  // so the anchors resolve, the audit succeeds and the run exits 0
+  // having reviewed a position the observed wallet does not hold. That
+  // is the same defect the round-20 fix was about, on the one route
+  // where the outcome looks like success.
+  //
+  // Applied HERE rather than at the two audit returns, because "here"
+  // is every return there will ever be. `advancedBlocked` results are
+  // left alone: they already carry a reason, and overwriting it with
+  // this one would lose the more specific finding.
+  if (!result.advancedBlocked && snapshotCardEligible(before, observed) === false) {
+    // NAME THE FIELD THAT FAILED (Codex #1853 r22). `snapshotCardEligible`
+    // is false for three different reasons, and this sentence asserted
+    // the rarest of them: a terminal loan and a sanctions-flagged
+    // holder both land here with the token still held by the observed
+    // wallet, and the reader was sent to investigate an ownership
+    // transfer that never happened. A diagnosis is worth less than
+    // nothing when it is confidently wrong about where to look.
+    const why = !before
+      ? 'the pre-state could not be read'
+      : before.holder === null
+        ? 'the lender token was already burned'
+        : observed && before.holder !== String(observed).toLowerCase()
+          ? 'the observed wallet did not hold the position — the page can keep the ' +
+            'card mounted, switch and jumps included, for up to 60s after ownership moves'
+          : before.flagged
+            ? 'the holder was sanctions-flagged, which correctly suppresses the card'
+            : 'the loan was already terminal';
+    return {
+      ...late.value,
+      ...result,
+      advancedJumps: null,
+      advancedBlocked: true,
+      // A LATE CAPTURE DEFEATS THE SUPPRESSION (Codex #1853 r26).
+      // This flag exists to discard observations of a card that was
+      // correctly absent — but the sticky recorder may since have
+      // observed that card WITH A ROW MISSING, and `late.value`
+      // replaces the scrape's absence in the merged result. Suppressing
+      // on the original absence then throws away a positively observed
+      // shape failure, which is the direction round 16 established must
+      // never happen.
+      advancedPreRaced: cardAbsentAtScrape && !late.recorded,
+      advancedWhy: `the card was audited on a state it should not have rendered for: ${why}`,
+    };
+  }
+  // A SAMPLED EXCURSION EXPLAINS EVERY ZERO-JUMP EXIT (Codex #1853
+  // r27), and applying it here is what makes that true. Round 24 put
+  // the check on the two returns where the race had been seen, and the
+  // route that ends "no jumpable row" — the switch never appeared, the
+  // deadline passed — walked straight past it: the page can keep its
+  // cached unavailable rows after the loan has already cured, so both
+  // end-samples read Active, the card is still mounted, and the run
+  // exits clean having RECORDED the exact race the watcher exists to
+  // catch.
+  //
+  // BLOCKED, not FAIL. A transition inside the window means the
+  // observation is ambiguous rather than wrong, which is the same
+  // verdict the other excursion routes reach.
+  //
+  // The precedence and the which-results-qualify test live in
+  // `excursionExplains` so they are exercised rather than asserted —
+  // this driver's own r13 lesson, on a rule with the same history.
+  // A SUCCESSFUL AUDIT OF CONTROLS THAT SHOULD NOT EXIST IS NOT A PASS
+  // (Codex #1853 r31). The wrapper already applies `snapshotCardEligible`
+  // to every exit — but that test is deliberately LOOSE, because the
+  // card legitimately stays mounted past maturity, under a position
+  // lock, and on FallbackPending. In all three the card is entitled to
+  // be there and the JUMPS are not, so a page still showing cached
+  // buttons from an earlier render gets audited, passes, and exits 0.
+  //
+  // The strict `snapshotJumpable` test existed for exactly this and was
+  // applied only where there were no jumps to audit. That is the shape
+  // this PR keeps producing: rigour on the failing path, the cached
+  // answer taken on the successful one. Positive jumps are now held to
+  // the same pre-state as their absence.
+  //
+  // BLOCKED, not FAIL: the card rendering stale controls after a chain
+  // transition is a refresh-interval artefact, not a product defect —
+  // the same reading the zero-jump side gives it.
+  if (
+    !result.advancedBlocked &&
+    typeof result.advancedJumps === 'number' &&
+    result.advancedJumps > 0 &&
+    snapshotJumpable(before, observed) === false
+  ) {
+    return {
+      ...late.value,
+      ...result,
+      advancedJumps: null,
+      advancedBlocked: true,
+      advancedWhy:
+        'the anchors audited cleanly, but the chain says this position was ' +
+        'already unjumpable when first read — past maturity, locked, or ' +
+        'settling a fallback — so the buttons were a stale render and the ' +
+        'audit proved nothing about a live one',
+    };
+  }
+  if (excursionExplains(result, watch.excursion)) {
+    return {
+      ...late.value,
+      ...result,
+      advancedJumps: null,
+      advancedBlocked: true,
+      advancedRaced: true,
+      advancedWhy: `the position was briefly unsellable during the probe: ${watch.excursion}`,
+    };
+  }
+  return { ...late.value, ...result };
+}
+
+/**
+ * The BLOCKED result a readiness verdict implies, or null.
+ *
+ * One mapping, because there are two paths that end in "no jumps" —
+ * the switch never appeared, and the switch was clicked and revealed
+ * nothing — and only the first consumed the card's verdict (Codex
+ * #1853 r34). The post-click path called the no-op-switch judgement
+ * directly, so an unstable, failed or malformed readiness answer
+ * became a product FAIL there whenever the chain snapshots still
+ * looked jumpable.
+ *
+ * That is this PR's own recurring defect once more: a rule written at
+ * the site a finding pointed to and not at its sibling. It is a
+ * function now rather than a switch in one branch, so the next path
+ * that ends in zero jumps has to go through it.
+ *
+ * `unknown` and `absent` return null deliberately: the first is a
+ * legacy bundle with nothing to say, the second is the card settling
+ * on "no row is jumpable", which is the honest absence and not a
+ * block.
+ */
+function readinessAgreesWithControls(verdict) {
+  // The allowlist, in ONE place (Codex #1853 r35). Round 34 wrote it
+  // inside the poll and left the pre-switch branch on its own
+  // `blocked-pending`-only test, so a card offering a switch beside a
+  // stable `ready`/`no`, a failed read or an unreadable contract was
+  // still clicked. Same rule, two sites, one updated — the defect this
+  // PR is about, on the fix for that defect.
+  //
+  // `fail` is `ready`/`yes`: the card saying a row IS jumpable, which
+  // agrees with controls being on screen. `unknown` is a legacy bundle
+  // publishing nothing, where the controls are the only evidence there
+  // is. Nothing else licenses acting on a rendered control.
+  return verdict === 'fail' || verdict === 'unknown';
+}
+
+function readinessBlock(settled, offered = false) {
+  const why = {
+    'blocked-pending':
+      'the lender card had not settled its jumpability question by the ' +
+      'deadline (data-chooser-ready="pending")',
+    'blocked-unstable':
+      'the lender card kept changing its readiness answer for the whole 45s ' +
+      'window, so no reading of it and its controls was ever taken at one moment',
+    'blocked-failed':
+      'a read the lender card needs stopped without answering ' +
+      '(data-chooser-ready="failed"), so the absence of jumps is unexplained ' +
+      'rather than correct',
+    'blocked-malformed':
+      'the lender card published a readiness contract this drive cannot read ' +
+      '— a partial or unrecognised data-chooser-ready/jumpable pair — so its ' +
+      'controls cannot be judged either way',
+    'blocked-contradiction':
+      'the lender card rendered jump controls while its own verdict said no ' +
+      'row is jumpable; the two come from one computation in one render, so ' +
+      'they disagreeing means the controls cannot be trusted as live',
+  }[settled];
+  if (!why) return null;
+  return {
+    // Carried by the caller (Codex #1853 r35). The post-click path
+    // reaches here only after the switch was offered AND clicked, so
+    // hardcoding `false` filed those failures under the missing-switch
+    // route and hid which branch actually failed.
+    advancedOffered: offered,
+    advancedJumps: null,
+    advancedBlocked: true,
+    advancedWhy: why,
+  };
+}
+
+async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before, watch) {
+  const SWITCH = /Show these tools \(switches to Advanced view\)/i;
+  // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
+  // uses the IDENTICAL labels — `copy.earlyRepay.switchToAdvanced` and
+  // `.jump` are the same strings as the lender card's — so on a dual
+  // holder, who renders BOTH cards, a page-global query could click the
+  // borrower's switch and count the borrower's jump buttons as the
+  // lender's. That is the exact population I argued to KEEP in the pool
+  // one round earlier, so the probe would have mis-measured precisely
+  // the case I defended.
+  const card = lenderCardOf(page);
+  const sw = card.getByRole('button', { name: SWITCH });
+  // Snapshot BEFORE anything observes the switch (Codex #1853 r13).
+  // Round 12 took it after `sw.count()` had already decided, so a loan
+  // that went FallbackPending WHILE the snapshot was running recorded
+  // `active: false` in BOTH reads — no change, and the healthy race
+  // reported as a product FAIL. The pre-state has to predate the
+  // decisive observation, not merely the click.
+  //
+  // Paid on every detail page, including ones that never offer a
+  // switch. That is the cost of the ordering being load-bearing; five
+  // reads is the wrong thing to economise on here. Taken by the WRAPPER
+  // and passed in (Codex #1853 r21), so the stale-owner verdict can be
+  // applied to every exit rather than to the routes that surfaced it.
+
+  const jumpsOf = () => card.getByRole('button', { name: /Go to this option/i });
+  const cardPresent = async () => (await card.count()) > 0;
+  // EAGER, and before any branch decides anything (Codex #1853 r18).
+  // Taken here rather than per-return so no route can be the one that
+  // forgets: if the card is already on the page, its shape is banked now
+  // and every exit carries it.
+  await late.capture();
+
+
+  /**
+   * Did the card VANISH between being scraped and now?
+   *
+   * A reversible transition leaves no trace in a before/after: the
+   * position transfers away, the page's 60-second ownership poll
+   * unmounts the card, and it transfers back — two identical chain
+   * samples, and a card that demonstrably went missing between them.
+   * Only the DOM can see that round trip (Codex #1853 r17/r20).
+   *
+   * SCOPED TO THE UNEXPLAINED-OUTCOME ROUTES on purpose (Codex #1853
+   * r21). Its sibling test — "the pre-state says the card was never
+   * this wallet's" — moved to the wrapper, because that one must reach
+   * a SUCCESSFUL audit too. This one must not: an audit that completed
+   * against a rendered card produced real observations, and a card
+   * disappearing afterwards does not retract them.
+   *
+   * The two were briefly bundled together, which is how the difference
+   * became visible: one belongs on every exit, the other only where
+   * nothing was learned.
+   */
+  const vanishedCardVerdict = async (offered) => {
+    // EITHER OBSERVATION COUNTS (Codex #1853 r22). The condition was
+    // `!cardAbsentAtScrape`, which asks whether the INITIAL scrape saw
+    // the card — and on a slow-mounting page the initial scrape is
+    // exactly the one that missed it while the sticky recorder caught
+    // it a moment later and the probe went on to click its switch.
+    // With the check disabled on that route, a transfer away and back
+    // left two agreeing snapshots and no DOM evidence, and the healthy
+    // race was reported as a no-op-switch product FAIL.
+    //
+    // The question is "was this card ever observed", and the recorder
+    // is an observer. It was added to make a late card count; not
+    // consulting it here left it counting for the report and not for
+    // the reasoning.
+    const everObserved = !cardAbsentAtScrape || late.recorded;
+    if (everObserved && !(await cardPresent())) {
+      return {
+        advancedOffered: offered,
+        advancedJumps: null,
+        advancedBlocked: true,
+        advancedRaced: true,
+        advancedWhy:
+          'the lender card was scraped and then vanished during the probe — ' +
+          'a transition reversed inside the window, so no audit was possible',
+      };
+    }
+    return null;
+  };
+
+  /**
+   * The one verdict for "the card ended up with no jump button".
+   *
+   * Every route into that outcome routes through here (Codex #1853
+   * r14): the post-click settle, the anchor audit after a click, and the
+   * anchor audit on a page already in Advanced. Three call sites reached
+   * it before and only one revalidated — which is this PR's own recurring
+   * defect, a distinction drawn in one consumer of a question and not in
+   * its siblings.
+   *
+   * Three outcomes, in order of what they establish:
+   *
+   *   1. THE CHAIN MOVED under the probe → BLOCKED. The card withdrew
+   *      its rows for a real reason and is behaving correctly.
+   *   2. THE PRE-STATE WAS ALREADY UNJUMPABLE → BLOCKED, ambiguity
+   *      named. `PositionDetails` refreshes the live status only every
+   *      30 seconds, so the switch can still be rendered from an earlier
+   *      Active read after the chain has moved. Snapshotting earlier
+   *      cannot fix that — the page rendered before the drive looked at
+   *      all — so a stale render and a genuine Basic-mode regression are
+   *      indistinguishable from outside the card. Reporting either as
+   *      the other is a lie; #1855's test hook is what would separate
+   *      them.
+   *   3. THE PRE-STATE WAS JUMPABLE and nothing moved → FAIL. Only here
+   *      has the card genuinely contradicted itself.
+   */
+  const noJumpVerdict = async (offered = true) => {
+    const moved = loan ? jumpabilityMoved(before, await jumpabilitySnapshot(loan)) : null;
+    if (moved) {
+      return {
+        advancedOffered: offered,
+        advancedJumps: null,
+        advancedBlocked: true,
+        // A FLAG, not a phrase the reporter greps for (Codex #1853 r14
+        // adjacent). The suppression below used to test
+        // `/chain state moved/` against our own `advancedWhy`, so
+        // rewording this sentence would silently switch the suppression
+        // off and start reporting healthy races as product regressions —
+        // the copy-matching fragility this drive keeps being reviewed for,
+        // in the drive's own reporter.
+        advancedRaced: true,
+        advancedWhy: `chain state moved during the probe: ${moved}`,
+      };
+    }
+    // Ahead of the already-unjumpable arm: "this card was never yours"
+    // and "this card had nothing to offer" are different findings, and
+    // the first is the more decisive (Codex #1853 r20).
+    const stale = await vanishedCardVerdict(offered);
+    if (stale) return stale;
+    // The excursion arm that used to sit here has moved to the
+    // wrapper's single exit (Codex #1853 r27) — it applies to every
+    // return, including the ones that never reach this verdict.
+    if (snapshotJumpable(before, observed) === false) {
+      return {
+        advancedOffered: offered,
+        advancedJumps: null,
+        advancedBlocked: true,
+        advancedWhy:
+          'no jump on a position that was already unjumpable when first read — ' +
+          'the page refreshes status every 30s, so a stale render and a regression ' +
+          'are indistinguishable from here (#1855)',
+      };
+    }
+    return {
+      advancedOffered: offered,
+      advancedJumps: 0,
+      advancedAnchorsOk: false,
+      // The reason has to match which control was actually on the page
+      // (Codex #1853 r16). A later detail page inherits Advanced mode
+      // from `ModeContext`, so it reaches this verdict with NO switch
+      // ever rendered — and the reporter prints this string as the FAIL
+      // diagnosis, sending the reader to investigate a Basic-mode control
+      // that was never there. Same defect as the anchor sentence one
+      // round ago: one message serving two different findings.
+      advancedWhy: offered
+        ? 'switch offered but no jump rendered after it settled'
+        : 'already in Advanced, and no jump rendered after the rows settled',
+    };
+  };
+  try {
+    // A CACHED SWITCH IS NOT AN ACTIONABLE ONE (Codex #1853 r32). This
+    // branch decided whether to wait at all, so a Basic-mode card
+    // mid-refetch — publishing `pending` while its previous switch is
+    // still rendered — skipped the wait entirely and went straight to
+    // the click, and the reordered readiness check inside the wait
+    // never ran. Consulting the card here routes that page into the
+    // wait, where `pending` keeps polling until the read settles; if
+    // the switch is still there afterwards, the code below falls
+    // through to the click exactly as before.
+    const preSwitchVerdict = missingSwitchVerdict(await chooserSelfVerdict(page));
+    if ((await sw.count()) === 0 || !readinessAgreesWithControls(preSwitchVerdict)) {
+      // NO SWITCH means one of two different things, and the first
+      // version of this probe reported them identically. The card
+      // renders the switch only when it is in Basic mode AND some row
+      // is jumpable, so its absence is either "already in Advanced"
+      // (jumps present, anchors still worth checking) or "no row is
+      // jumpable" (nothing to check, and legitimately so).
+      //
+      // WAIT FIRST (Codex #1853 r9). `ModeContext` persists
+      // `alpha02.mode`, so once any page in this shared browser context
+      // switches to Advanced, every LATER detail page renders in
+      // Advanced from the start — and hits the same loading interval at
+      // first render, where a slow `loanLive` leaves neither switch nor
+      // jumps. Round 7 fixed that wait for the post-click path only, so
+      // page 2 onward could be labelled `no jumpable row` and exit 0
+      // without ever auditing a row that became jumpable a second later.
+      const settled = await waitForSaleRows(
+        card, jumpsOf, page, () => sw, late, () => watch.sample(),
+        () => chooserSelfVerdict(page),
+      );
+      if (settled.jumps === 0) {
+        // AN OBSERVATION OUTRANKS A LATER TRANSITION (Codex #1853
+        // r30). The card said `ready`/`yes` and rendered no switch —
+        // a contradiction that existed at the moment it was read, so
+        // nothing that happens afterwards can retract it. Consumed
+        // here, ahead of the disappearance and post-state checks,
+        // because those explain an ORDINARY absence and would
+        // otherwise convert a positively observed product failure into
+        // BLOCKED whenever the loan moved or the card unmounted right
+        // after the bad render.
+        //
+        // This is the same asymmetry this probe already applies to the
+        // card scrape: a transition detected during the probe cannot
+        // invalidate an observation the probe made before it. I wrote
+        // that rule and then ordered this verdict behind the checks it
+        // governs.
+        if (settled.settled === 'fail') {
+          return {
+            advancedOffered: false,
+            advancedJumps: 0,
+            advancedAnchorsOk: false,
+            advancedFailed: true,
+            advancedWhy:
+              'the lender card reports a settled jumpable row ' +
+              '(data-chooser-ready="ready", data-chooser-jumpable="yes") ' +
+              'and rendered no switch to reach it',
+          };
+        }
+        if (settled.toolsFailed) {
+          return {
+            // SAME CARRY AS `readinessBlock` (Codex #1853 r37). These
+            // two returns sit either side of the block consumption and
+            // describe the same kind of outcome — the drive stopped
+            // before the switch could be used — so hardcoding `false`
+            // here would keep filing them under "no switch was offered"
+            // for the exact cases the round-37 fix is about.
+            advancedOffered: settled.switchThere === true,
+            advancedJumps: null,
+            advancedBlocked: true,
+            advancedWhy: 'a prerequisite read failed — sale tools unavailable',
+          };
+        }
+        // CONSUMED ON BOTH PATHS (Codex #1853 r36). This sat inside the
+        // `!settled.switchThere` branch, so preserving `switchThere` on
+        // the disagreement return — last round's fix, made so the
+        // report could say a switch had been offered — routed those
+        // results straight past their only consumer and into the click.
+        // The allowlist added in round 35 was bypassed by the change
+        // made in round 35.
+        //
+        // A verdict that blocks does so whether or not a switch is on
+        // screen; the switch is what the verdict is ABOUT. Gating the
+        // consumption on it was always backwards, and only became
+        // reachable once the observation stopped being discarded.
+        const blocked = readinessBlock(settled.settled, settled.switchThere === true);
+        if (blocked) return blocked;
+        // STILL SAYING "READING" AT THE DEADLINE IS NOT AN ANSWER
+        // (Codex #1853 r19). `timedOut` was computed and then inspected
+        // by neither caller, so a page whose prerequisite query is
+        // genuinely stuck — while this driver's own chain reads keep
+        // succeeding — spent 45 seconds and reported `no jumpable row`.
+        // The rows had not settled; the clock had.
+        //
+        // A settled unavailability reason at the deadline still means
+        // "no jumpable row", which is why this turns on what the rows
+        // SAY rather than on the timeout alone.
+        if (settled.stillPending) {
+          return {
+            advancedOffered: settled.switchThere === true,
+            advancedJumps: null,
+            advancedBlocked: true,
+            advancedWhy:
+              'the sale rows were still reading their prerequisites when the ' +
+              '45s deadline expired — the page never settled, so nothing was observed',
+          };
+        }
+        // A full deadline with neither jump nor switch IS the conclusive
+        // "no jumpable row" — that is what the wait now means.
+        // RE-CHECK THE SWITCH (Codex #1853 r10). On a Basic page still
+        // loading at first render there is no switch AND no jumps, so we
+        // land here — but once `saleTools` becomes ready the switch
+        // APPEARS, while Basic mode still has zero jump buttons by
+        // design. Returning `no jumpable row` on the first look meant a
+        // healthy, genuinely jumpable page exited 0 without ever
+        // switching modes or auditing an anchor.
+        //
+        // The absence of a switch is only meaningful once the reads it
+        // depends on have settled, which is exactly what we just waited
+        // for.
+        if (!settled.switchThere) {
+          // NO SWITCH is the ordinary, correct outcome on a position
+          // with nothing to jump to — every past-due lender position on
+          // the live chain lands here — so it must NOT be routed through
+          // `noJumpVerdict`, which would BLOCK all of them.
+          //
+          // But it is also where a page that never mounted the CARD ends
+          // up (Codex #1853 r15). `stillEligible` is re-read immediately
+          // before the visit, and the loan can still go terminal, be
+          // transferred away, or have its holder flagged during
+          // navigation and the 45s wait — after which the card correctly
+          // never renders. The shape scrape upstream then sees no card
+          // and the reporter files `chooser MISSING` as a product
+          // regression, because nothing had marked the route as raced.
+          //
+          // Re-read the chain and ask the CARD's own mount question,
+          // which is much looser than jumpability: past maturity and
+          // FallbackPending both keep it mounted. Only a genuinely
+          // unmountable pre-state suppresses the shape assertions.
+          const cardGoneNow = !(await cardPresent());
+          if (cardGoneNow) {
+            const pre = snapshotCardEligible(before, observed);
+            // BOTH conditions, and the first is the one round 15 lacked
+            // (Codex #1853 r16). `cardAbsentAtScrape` is what the shape
+            // scrape actually saw; `pre` is a chain read taken later that
+            // can merely EXPLAIN an absence. Requiring both means a card
+            // that did render — with a row missing — keeps its finding no
+            // matter what the chain did afterwards, because the
+            // observation was real when it was made.
+            if (cardAbsentAtScrape && pre === false) {
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                // A DIFFERENT flag from `advancedRaced`, and the
+                // difference is which observations it may discard. This
+                // transition predates the shape scrape, so those
+                // observations are of a correctly-absent card and must
+                // be suppressed. `advancedRaced` marks a transition
+                // DURING the probe, which cannot have affected a scrape
+                // that already happened — see the reporter.
+                advancedPreRaced: true,
+                advancedWhy:
+                  'the lender card could not be mounted when the probe read the chain — ' +
+                  'the position went terminal, left this wallet, or its holder was flagged ' +
+                  'before the page rendered',
+              };
+            }
+            // THE WAIT IS ALSO A WINDOW (Codex #1853 r16). `before` can
+            // be perfectly jumpable and the card still unmount during the
+            // 45 seconds `waitForSaleRows` spends polling — the loan goes
+            // terminal, the position is sold, the holder is flagged. The
+            // pre-state test above cannot see that by construction, so
+            // the route returned `no jumpable row` and exited 0 with the
+            // Advanced audit never performed and nothing marking it.
+            //
+            // Re-read AFTER the wait and ask the same mount question of
+            // the post-state.
+            const postGone = loan ? await jumpabilitySnapshot(loan) : null;
+            if (snapshotCardEligible(postGone, observed) === false) {
+              const moved = jumpabilityMoved(before, postGone);
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                // NOT `advancedPreRaced`: this transition happened after
+                // the scrape, so whatever the scrape saw still stands and
+                // must not be suppressed. It only explains why no audit
+                // was possible.
+                advancedRaced: true,
+                advancedWhy:
+                  'the lender card unmounted while the probe waited' +
+                  (moved ? `: ${moved}` : ' — the position is no longer one this card renders for'),
+              };
+            }
+            // A REVERSIBLE TRANSITION LEAVES NO TRACE IN A BEFORE/AFTER
+            // (Codex #1853 r17). The position can transfer away, the
+            // page's 60s ownership poll can unmount the card, and the
+            // position can transfer back — leaving `before` and `post`
+            // identical and `snapshotCardEligible(post)` true, while the
+            // card demonstrably went missing in between. No comparison
+            // of two chain samples can see a round trip that closed
+            // between them; only the DOM observation can, and we have
+            // just made it.
+            //
+            // So a card that WAS scraped and is now gone is BLOCKED on
+            // that evidence alone, regardless of what the chain says.
+            if (!cardAbsentAtScrape) {
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                advancedRaced: true,
+                advancedWhy:
+                  'the lender card was scraped and then vanished during the wait — ' +
+                  'the chain reads either side agree, so a transition reversed inside ' +
+                  'the window and no audit was possible',
+              };
+            }
+          }
+          // STILL RE-READ WHEN THE CARD STAYED MOUNTED (Codex #1853 r17).
+          // The card deliberately survives FallbackPending, maturity and
+          // a position lock — `PositionDetails` keeps it up so the wait
+          // row can explain them — while `buildLenderExitRows` removes
+          // BOTH jumps for exactly those states. So a during-wait
+          // transition of that kind leaves the card present and the jumps
+          // gone, and gating this re-read on the card's absence skipped
+          // precisely the case where the card is designed to stay.
+          //
+          // Guarding on `cardPresent()` was a proxy for "did something
+          // change", and it was the wrong proxy: the card's presence is
+          // not what the sale rows depend on.
+          if (loan && snapshotJumpable(before, observed) === true) {
+            const post = await jumpabilitySnapshot(loan);
+            if (snapshotJumpable(post, observed) === false) {
+              const moved = jumpabilityMoved(before, post);
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                advancedRaced: true,
+                advancedWhy:
+                  'the position stopped being sellable while the probe waited' +
+                  (moved ? `: ${moved}` : ''),
+              };
+            }
+          }
+          // A STALE MOUNTED CARD IS NOT A CLEAN REVIEW (Codex #1853
+          // r20). Everything above turns on the card being GONE; a card
+          // the wallet no longer holds stays up for its refresh
+          // interval, and with a settled reason for having no jump —
+          // past maturity, which is most of this chain — the wait ends
+          // with it still present and this returned exit 0 on a review
+          // of somebody else's position.
+          const stale = await vanishedCardVerdict(false);
+          if (stale) return stale;
+          // ASK THE CARD instead of inferring from its silence (Codex
+          // #1853 r28). Everything above this line reasons about an
+          // ABSENCE — no switch, so presumably nothing to switch to —
+          // and #1855 shipped the attributes that end that guess.
+          // Reading them is the difference between "the review found
+          // nothing to do" and "the card says it has a jumpable row
+          // and is not offering the switch", which is a Basic-mode
+          // regression the drive was reporting as a clean run.
+          // The wait already asked, every tick — re-reading here would
+          // reach the same answer one poll later and would keep the
+          // deadline that reading it early exists to remove (Codex
+          // #1853 r29). `settled.settled` is absent only when the wait
+          // ended for another reason, and `missingSwitchVerdict`
+          // answers `unknown` for that, which is the pre-#1855 path.
+          return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
+        }
+        // It appeared while we waited: fall through to the click path.
+      } else {
+        const audit = await anchorAudit(page, card);
+        if (audit.advancedJumps === 0) return await noJumpVerdict(false);
+        return { advancedOffered: false, advancedWhy: 'already in Advanced', ...audit };
+      }
+    }
+    // THE PRE-CONDITION OF THE ASSERTION, finally checked (Codex #1853
+    // r25). The whole claim this branch makes is "the switch REVEALED
+    // the jumps" — and it never established the half that makes that a
+    // claim at all: that they were absent beforehand. A regression
+    // leaking the Advanced jump buttons into Basic while leaving the
+    // switch rendered produced a clean run, because the probe clicked,
+    // found buttons, audited their anchors and passed.
+    //
+    // A FAIL rather than BLOCKED: the switch is on the page, which
+    // means the card believes it is in Basic mode, and Basic mode
+    // showing the Advanced controls is a product defect observed
+    // directly rather than an ambiguity.
+    const jumpsBeforeSwitch = await jumpsOf().count();
+    if (jumpsBeforeSwitch > 0) {
+      return {
+        advancedOffered: true,
+        advancedJumps: jumpsBeforeSwitch,
+        advancedAnchorsOk: false,
+        // SAYS IT IS A FAILURE rather than hoping the reporter infers
+        // one (Codex #1853 r27). This record has a positive
+        // `advancedJumps` and no `advancedAnchors`, which matches
+        // neither of the reporter's two failure shapes — so round 25's
+        // guard detected the leak and then exited 0. See
+        // `advancedFailed` at the reporter for why this is a flag.
+        advancedFailed: true,
+        advancedWhy:
+          `the Basic-mode switch was offered alongside ${jumpsBeforeSwitch} jump ` +
+          'button(s) that should only exist in Advanced — the mode transition ' +
+          'this run asserts had already happened, or never applied',
+      };
+    }
+    await sw.first().click({ timeout: 10_000 });
+    // WAIT FOR READINESS, not a fixed sleep (Codex #1853 r7). Switching
+    // starts the Advanced-only `loanLive` read, and while it is in
+    // flight the card sets `saleTools` to CHECKING — which removes every
+    // jump button by design. So the six-second sleep the previous
+    // version used meant a healthy-but-slow RPC produced zero jumps and
+    // hit the FAIL branch round 5 had just introduced: my own fix
+    // created a path that reports a product regression for an RPC taking
+    // slightly longer than a hard-coded guess.
+    //
+    // Poll for a settled state instead: either a jump exists, or the
+    // sale rows have stopped saying "still reading".
+    // The sampler is passed here too (Codex #1853 r32): the post-click
+    // wait had none, so cached jump buttons on a still-`pending` card
+    // were audited and accepted — the same hole this round closed on
+    // the pre-switch side, in the branch that actually does the audit.
+    const post = await waitForSaleRows(
+      card, jumpsOf, page, null, late, () => watch.sample(),
+      () => chooserSelfVerdict(page),
+    );
+    const jumps = post.jumps;
+    if (jumps === 0) {
+      // THE SAME MAPPING THE OTHER ZERO-JUMP PATH USES (Codex #1853
+      // r34). This branch went straight to the no-op-switch judgement,
+      // so an unstable, failed or malformed readiness answer became a
+      // product FAIL here whenever the chain snapshots still looked
+      // jumpable — the verdict was computed, carried back, and thrown
+      // away at the one site that most needed it.
+      const blockedPost = readinessBlock(post.settled, true);
+      if (blockedPost) return blockedPost;
+      if (post.toolsFailed) {
+        // A definite non-ready answer, not a no-op switch: the card is
+        // correctly reporting that a prerequisite could not be loaded,
+        // so the anchor audit could not run and nothing was learned.
+        return {
+          advancedOffered: true,
+          advancedJumps: null,
+          advancedBlocked: true,
+          advancedWhy: 'a prerequisite read failed after the switch — sale tools unavailable',
+        };
+      }
+      // Same rule after the click, and stated in both arms rather than
+      // in the one the finding named — this file has produced seven
+      // findings of the form "fixed in one consumer, not its sibling".
+      if (post.stillPending) {
+        return {
+          advancedOffered: true,
+          advancedJumps: null,
+          advancedBlocked: true,
+          advancedWhy:
+            'the sale rows were still reading their prerequisites 45s after the ' +
+            'switch — the page never settled, so no anchor could be audited',
+        };
+      }
+      return await noJumpVerdict();
+    }
+    // ZERO JUMPS HERE TOO (Codex #1853 r14). A jump counted by
+    // `waitForSaleRows` can be gone by the time `anchorAudit` scrapes the
+    // rows, and `[].every(...)` is `true` — so this used to return
+    // `advancedJumps: 0` with `advancedAnchorsOk: true` and no
+    // revalidation at all, skipping the very branch a zero belongs in.
+    // Both entries into the audit route a zero through the same verdict.
+    const audit = await anchorAudit(page, card);
+    if (audit.advancedJumps === 0) return await noJumpVerdict();
+    return { advancedOffered: true, ...audit };
+  } catch (e) {
+    // "Could not look" is exit 2, NOT a clean observation (Codex #1853
+    // r6). Reporting it and returning was half right: it is correctly
+    // not a product FAIL — a switch that is disabled or covered, or an
+    // evaluate that throws, says nothing about the app — but the
+    // reporter only rejects `advancedAnchorsOk === false`, so the route
+    // stayed `ok` and the run could exit 0 with the Advanced assertion
+    // never completed.
+    //
+    // That is the SAME defect round 5 fixed for the offered-switch arm,
+    // in the other arm of the same function, twelve lines away. I fixed
+    // the branch the finding named and did not look at its sibling —
+    // for the sixth time on this PR, and this is the closest sibling
+    // yet.
+    //
+    // `advancedBlocked` is what the reporter turns into exit 2.
+    return {
+      advancedOffered: true,
+      advancedJumps: null,
+      advancedBlocked: true,
+      advancedWhy: String(e).slice(0, 120),
+    };
+  }
+}
+
+/**
+ * EACH jump button matched to ITS OWN anchor (Codex #1853 r5).
+ *
+ * The first version compared a COUNT — `jumps <= earlyExitPresent +
+ * loanSalePresent` — which does not establish the invariant it claimed.
+ * One listing jump with only `early-exit-card` mounted gives `1 <= 1`
+ * and passes, while the button points at an anchor that is not there.
+ * An aggregate cannot express "this button's target exists"; only a
+ * per-button check can.
+ *
+ * The row a button belongs to is read from its own `.item-row` title,
+ * and mapped to the target `lenderExitRows` gives that row.
+ */
+async function anchorAudit(page, card) {
+  const rows = await card.locator('.item-row').evaluateAll((els) =>
+    els.map((el) => ({
+      title: el.querySelector('.row-title')?.textContent?.trim() ?? '',
+      hasJump: Boolean(el.querySelector('button')),
+    })),
+  );
+  const targetFor = (title) =>
+    /Sell your position now/i.test(title)
+      ? 'early-exit-card'
+      : /List your position for sale/i.test(title)
+        ? 'loan-sale-card'
+        : null;
+  const jumping = rows.filter((r) => r.hasJump);
+
+  // INVOKE THE BUTTON, do not infer from its title (Codex #1853 r25).
+  //
+  // Every earlier version of this asked whether the element a row's
+  // TITLE maps to exists. That is not the claim the drive advertises,
+  // and it is satisfied by the failure it exists to catch: with both
+  // anchors mounted — the normal case — Sell and List can scroll to
+  // each other's, a handler can be dropped, a binding can be swapped
+  // for a no-op, and every `present` check still passes. The audit
+  // established that two elements exist.
+  //
+  // Twenty-five rounds of review went into the verdicts AROUND this
+  // check while its central claim was never tested. That ordering is
+  // the lesson: hardening the interpretation of a result does nothing
+  // if the result was never produced.
+  //
+  // So the buttons are clicked and the navigation is MEASURED. The
+  // handler is `getElementById(target)?.scrollIntoView(...)`, so
+  // recording that call names the element actually reached — and an
+  // absent anchor records nothing at all, which is the dead-button
+  // case detected as an observation rather than as an inference.
+  //
+  // Watch-only, exactly as before: a jump handler scrolls and does not
+  // submit, sign or mutate anything. That is what makes clicking
+  // admissible in a drive that holds no key.
+  await page.evaluate(() => {
+    const w = /** @type {any} */ (window);
+    if (w.__vpkJumpRecorder) return;
+    w.__vpkJumpRecorder = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function patched(...args) {
+      w.__vpkJumpRecorder.push(this.id || '(element has no id)');
+      return original.apply(this, args);
+    };
+  });
+
+  // ITERATE THE BUTTONS, not the rows (Codex #1853 r26). `hasJump` is
+  // a boolean, so `jumping` holds one entry per ROW — and the loop
+  // indexed `buttons` by that. With one button per row the two align
+  // and the audit is right; with two in a row, which is exactly the
+  // regression this check exists to catch, the second is never clicked
+  // and every later index is paired with the wrong row's expectation.
+  // A count taken from the wrong collection, in the function whose job
+  // is to exercise every rendered button.
+  //
+  // Each button's expectation now comes from its OWN enclosing row,
+  // read out of the DOM rather than matched by position.
+  const buttons = card.getByRole('button', { name: /Go to this option/i });
+  const buttonCount = await buttons.count();
+  const checks = [];
+  for (let i = 0; i < buttonCount; i++) {
+    const owningTitle = await buttons
+      .nth(i)
+      .evaluate((el) => el.closest('.item-row')?.querySelector('.row-title')?.textContent?.trim() ?? '')
+      .catch(() => '');
+    const target = targetFor(owningTitle);
+    await page.evaluate(() => {
+      /** @type {any} */ (window).__vpkJumpRecorder.length = 0;
+    });
+    let reached;
+    try {
+      await buttons.nth(i).click({ timeout: 5_000 });
+      // The handler is synchronous; one frame is enough for the call to
+      // have been recorded, and `smooth` behaviour does not delay it.
+      await page.waitForTimeout(150);
+      reached = await page.evaluate(
+        () => /** @type {any} */ (window).__vpkJumpRecorder[0] ?? null,
+      );
+    } catch {
+      // A button that cannot be clicked says nothing about the app —
+      // it is covered, disabled or gone. `undefined` separates that
+      // from `null`, which is a click that navigated NOWHERE.
+      reached = undefined;
+    }
+    checks.push({
+      title: owningTitle.slice(0, 40),
+      target,
+      reached,
+      // `present` keeps its name and its meaning for the reporter: did
+      // this button do what its row promises. It is now measured
+      // rather than assumed, and stays `null` for a row this drive
+      // cannot map, which is still the harness's gap and not the
+      // app's.
+      present: target === null ? null : reached === undefined ? null : reached === target,
+    });
+  }
+  return {
+    // COUNTED FROM THE BUTTONS for the same reason the loop iterates
+    // them: a row with two would have reported one (Codex #1853 r26).
+    advancedJumps: buttonCount,
+    // An unmapped jumping row is NOT a pass (Codex #1853 r13). Treating
+    // `target === null` as satisfied meant a new jumpable row, or either
+    // title reworded past these regexes, would exit 0 with
+    // `advancedAnchorsOk: true` having audited no anchor at all — the
+    // drive's advertised every-button check, silently asserting nothing.
+    //
+    // It is still not a product FAIL: the mapping gap is the harness's,
+    // not the app's. It is BLOCKED — could not look — which is the same
+    // verdict every other "we cannot interpret this" outcome takes.
+    //
+    // EMPTY IS NOT OK (Codex #1853 r14). `[].every(...)` is `true`, so a
+    // jump that vanished between `waitForSaleRows` counting it and this
+    // function scraping the rows — the loan matured, transferred, locked
+    // or left Active in that window — left `checks` empty and passed
+    // vacuously, recording `advancedJumps: 0` with no `advancedBlocked`
+    // and skipping the zero-jump revalidation entirely. Round 13
+    // replaced one vacuous pass (`target === null` counted as satisfied)
+    // with another, in the same expression. The caller now routes a zero
+    // count through the moved/no-op logic instead, which is where a
+    // zero-jump outcome has always belonged.
+    advancedAnchorsOk: checks.length > 0 && checks.every((c) => c.present === true),
+    advancedUnmapped: checks.filter((c) => c.target === null).map((c) => c.title),
+    // A MAPPED button we could not CLICK is a third outcome, and
+    // without naming it the instrumentation would have opened a hole
+    // where the presence check had none: `present` is null there, so it
+    // is neither a dead anchor nor an unmapped row, and it would have
+    // passed between the reporter's two arms in silence. Covered,
+    // disabled or vanished — all "could not look", all BLOCKED.
+    advancedUnexercised: checks
+      .filter((c) => c.target !== null && c.reached === undefined)
+      .map((c) => c.title),
+    advancedAnchors: checks,
+  };
 }
 
 // ---------------------------------------------------------------- drive
@@ -1242,7 +3173,7 @@ for (const l of mine) {
     racedOut.push(`${l.id} (${changed})`);
     continue;
   }
-  visited.push(await visit(`/positions/${l.id}`, { expectChooser: true }));
+  visited.push(await visit(`/positions/${l.id}`, { expectChooser: true, loan: l }));
   observedDetails += 1;
 }
 await browser.close();
@@ -1273,9 +3204,137 @@ for (const v of visited) {
   // AND both newly-exposed paths. Printing handover/offset without
   // failing on them let the drive pass while missing one of the two
   // #1505 surfaces it claims to validate (#1529 review).
-  if (detail && !v.nav) {
-    if (!v.chooser) problems.push('chooser MISSING on an eligible loan');
-    else {
+  // A page whose chain revalidation ESTABLISHED that the loan moved is a
+  // state race, and its card-shape assertions are meaningless (Codex
+  // #1853 r10): the same transition that removed the jumps unmounts the
+  // card, so `chooser=false` and every row check fails — and `if
+  // (failures) process.exit(1)` runs BEFORE the advancedBlocked branch,
+  // so the race I had just correctly detected was still reported as a
+  // product regression.
+  //
+  // Note this is EVIDENCE-GATED, not a blanket suppression: it applies
+  // only where `jumpabilityMoved` read the chain and found a specific
+  // change. A page that merely looks odd still fails.
+  // SUPPRESS ONLY WHAT THE RACE COULD HAVE INVALIDATED (Codex #1853 r15).
+  //
+  // Round 10 suppressed the card assertions on any detected race, and
+  // justified it as "the same transition that removed the jumps unmounts
+  // the card". That reasoning was wrong about its own mechanism, which
+  // is why the fix was too broad: `text`, `lenderCardText` and
+  // `lenderShapeOf(...)` are all evaluated EARLIER in the same object
+  // literal than `lenderAdvancedOf(...)`. A transition detected during
+  // the Advanced probe therefore cannot have affected a scrape that had
+  // already happened — so discarding those observations threw away
+  // genuine missing-row regressions that were positively observed
+  // before the chain moved.
+  //
+  // What round 10 was actually protecting against is the OTHER timing:
+  // a transition that landed before the page rendered, leaving the
+  // scrape looking at a card that was correctly never mounted. That case
+  // is now detected on its own terms and carries its own flag.
+  //
+  // So the two are split by WHEN the transition happened relative to the
+  // scrape:
+  //   advancedPreRaced — before it. The observations are of a correctly
+  //                      absent card; suppress them.
+  //   advancedRaced    — during the probe, after it. The observations
+  //                      stand; the race only excuses the zero-jump
+  //                      result, which is where it was detected.
+  // Three conditions, not two: the route was blocked, the chain
+  // explains it, AND the scrape itself saw no card. The third is what
+  // makes this sound (Codex #1853 r16) — without it, a card that DID
+  // render with a row missing loses its finding whenever the chain
+  // happens to move afterwards.
+  const preRaced =
+    v.advancedBlocked === true && v.advancedPreRaced === true && v.cardAbsentAtScrape === true;
+  if (detail && !v.nav && !preRaced) {
+    if (!v.chooser) problems.push(`${ROLE} chooser MISSING on an eligible loan`);
+    else if (ROLE === 'lender') {
+      // The card is an AWARENESS surface, so what makes it correct is
+      // that every option is NAMED — an unavailable row explains itself
+      // rather than vanishing, precisely because a missing row reads as
+      // "no such option". A row absent altogether is therefore a
+      // regression even on a loan where that exit is shut.
+      if (!v.lenderBlurb) problems.push('lender card title without its own blurb');
+      if (!v.waitRow) problems.push('wait row MISSING from the lender card');
+      if (!v.sellNowRow) problems.push('sell-now row MISSING from the lender card');
+      if (!v.listRow) problems.push('listing row MISSING from the lender card');
+      // `null` = not enough rows rendered to have an order; the missing
+      // row is already reported above and must not be double-counted.
+      if (v.waitFirst === false) problems.push('wait row is NOT first on the lender card');
+      // Only when jumps actually rendered: `advancedAnchorsOk === false`
+      // means a jump button points at an anchor that is not in the
+      // document, so clicking it does nothing at all — `jump()`
+      // optional-chains the lookup, so the failure is silent by
+      // construction and invisible to a user as anything but a dead
+      // button.
+      // An unmapped row is the harness's gap, so it must not be filed
+      // as the app's defect — it takes the BLOCKED path instead.
+      //
+      // PER CHECK, NOT PER RUN (Codex #1853 r18). Round 13 suppressed
+      // the whole anchor finding whenever ANY unmapped title existed,
+      // which is right about the unmapped row and wrong about its
+      // neighbours: one new or reworded jump row would hide a positively
+      // observed dead button sitting beside it, and the run would exit 2
+      // for the harness's mapping gap while a real product defect went
+      // unprinted. `anchorAudit` keeps each row's own mapping and
+      // presence verdict precisely so this does not have to be decided
+      // in aggregate.
+      //
+      // The two verdicts are independent and both are emitted: the dead
+      // anchor is a FAIL on evidence we have, the unmapped rows still
+      // block below on evidence we could not get.
+      // A PRODUCER THAT SAW A DEFECT SAYS SO (Codex #1853 r27). Every
+      // arm below infers failure from a PATTERN of fields — a dead
+      // entry in `advancedAnchors`, or `advancedJumps === 0` — which
+      // works only for the outcomes those patterns were written
+      // against. Round 25's Basic-mode-leak guard produced a record
+      // matching neither (positive jumps, no anchors) and the reporter
+      // let the run exit clean on a directly observed product defect.
+      //
+      // A FLAG, for the same reason `advancedRaced` is one: a rule the
+      // next return has to remember to match is a rule that keeps being
+      // forgotten. Anything that observes a defect sets this, and the
+      // reporter honours it without needing to recognise the shape.
+      if (v.advancedFailed) {
+        problems.push(v.advancedWhy ?? 'the lender Advanced audit reported a failure');
+      }
+      const deadAnchors = (v.advancedAnchors ?? []).filter(
+        (a) => a.target && a.present === false,
+      );
+      if (deadAnchors.length) {
+        // NAME WHERE IT WENT, not only where it should have (Codex
+        // #1853 r26). The audit now MEASURES navigation, so
+        // `present: false` covers two different defects: an anchor
+        // that is not there, and a button bound to the wrong one. The
+        // old sentence described only the first and printed only the
+        // expected id, which on a swapped binding — both anchors
+        // present — sends a reader looking for a missing element that
+        // exists.
+        problems.push(
+          'a lender jump button did not reach its own anchor: ' +
+            deadAnchors
+              .map((a) => `${a.target} → ${a.reached ?? 'nowhere'}`)
+              .join(', '),
+        );
+      } else if (
+        // NOT WHEN THE PRODUCER ALREADY SPOKE (Codex #1853 r29). The
+        // readiness FAIL sets `advancedFailed` AND matches this
+        // inferred shape, so one defect printed twice — and a reader
+        // counting problems would have counted two. The explicit
+        // verdict wins; this arm is the inference for records that
+        // carry no verdict of their own.
+        !v.advancedFailed &&
+        v.advancedJumps === 0 &&
+        v.advancedAnchorsOk === false
+      ) {
+        // The no-op switch has NO jump button at all, so the anchor
+        // sentence above is not true of it — reporting it that way sent a
+        // reader looking for a button that was never rendered. It states
+        // its own finding instead (Codex #1853 r16).
+        problems.push(v.advancedWhy ?? 'the lender card offered the switch and rendered no jump');
+      }
+    } else {
       if (!v.handover) problems.push('handover path MISSING from the chooser');
       if (!v.offset) problems.push('offset path MISSING from the chooser');
     }
@@ -1286,7 +3345,33 @@ for (const v of visited) {
   console.log(`${verdict.padEnd(5)} ${v.path.padEnd(16)} http=${v.http ?? '-'} connected=${v.connected ?? '-'}`);
   if (detail && !v.nav) {
     console.log(
-      `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
+      ROLE === 'lender'
+        ? // `(late)` marks a card the initial scrape missed and the probe
+          // then observed. Printed because the flag existed with nothing
+          // reading it, and a reader looking at `card=true` deserves to
+          // know which observation it came from — the whole point of the
+          // rescrape is that the two disagreed.
+          `      card=${v.chooser}${v.cardRescraped ? ' (late)' : ''} blurb=${v.lenderBlurb} wait=${v.waitRow}` +
+          ` sellNow=${v.sellNowRow} list=${v.listRow} waitFirst=${v.waitFirst}` +
+          `\n      advanced: offered=${v.advancedOffered} jumps=${v.advancedJumps}` +
+          ` anchorsOk=${v.advancedAnchorsOk ?? '-'}` +
+          (Array.isArray(v.advancedAnchors) && v.advancedAnchors.length
+            ? ` [${v.advancedAnchors
+                // An unmapped row printed as `null=null` told the reader
+                // nothing; its TITLE is the only useful fact about it,
+                // and on a run that exits 1 for a dead anchor beside it
+                // this line is where the mapping gap is still visible —
+                // the BLOCKED summary below is not reached.
+                .map((a) =>
+                  a.target
+                    ? `${a.target}${a.reached === a.target ? ' ok' : ` → ${a.reached ?? 'nowhere'}`}`
+                    : `unmapped:"${a.title}"`,
+                )
+                .join(', ')}]`
+            : '') +
+          (v.advancedWhy ? ` (${v.advancedWhy})` : '') +
+          (v.advancedJumps ? '' : `\n      sell-now row: ${v.sellNowText ?? '-'}\n      listing row: ${v.listText ?? '-'}`)
+        : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,
     );
   }
@@ -1357,11 +3442,23 @@ if (httpGaps.length) {
   );
 }
 
-const holds = visited.filter((v) => v.holdCard);
-console.log(
-  `\nlisting-hold card observed on ${holds.length} of ${visited.filter((v) => /\d$/.test(v.path)).length} position page(s)` +
-    (holds.length ? '' : ' — no lender sale listing standing right now, so the hold state is not reachable to observe'),
-);
+// BORROWER runs only (Codex #1853 r1). `SaleListingHoldCard` is gated on
+// `role === 'borrower'`, so on a lender run it can never render — and the
+// "no lender sale listing standing right now" gloss then draws a
+// conclusion about CHAIN STATE from a card that was never eligible to
+// appear. A lender with a live listing of their own would have been told
+// no listing existed, by a line whose whole purpose is to distinguish
+// "not observed" from "not there".
+//
+// Reporting nothing beats reporting a confident falsehood; the lender
+// side of listing state belongs to its own surface, not to this one.
+if (ROLE === 'borrower') {
+  const holds = visited.filter((v) => v.holdCard);
+  console.log(
+    `\nlisting-hold card observed on ${holds.length} of ${visited.filter((v) => /\d$/.test(v.path)).length} position page(s)` +
+      (holds.length ? '' : ' — no lender sale listing standing right now, so the hold state is not reachable to observe'),
+  );
+}
 
 console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
 
@@ -1447,6 +3544,42 @@ if (pageChainWrong.length) {
   process.exit(2);
 }
 if (failures) process.exit(1);
+// The Advanced probe could not be run to completion on some page: the
+// switch was there but unclickable, or the page evaluate threw. Not a
+// product FAIL — nothing was learned about the app either way — but not
+// a clean run either, because the assertion this drive advertises did
+// not execute (Codex #1853 r6). Ranked AFTER `failures` so a real
+// regression is still reported as one.
+const advBlocked = visited.filter(
+  (v) =>
+    v.advancedBlocked ||
+    (v.advancedUnmapped ?? []).length > 0 ||
+    (v.advancedUnexercised ?? []).length > 0,
+);
+if (advBlocked.length) {
+  console.log(
+    `\nBLOCKED: the Advanced probe could not complete on ${advBlocked.length}` +
+      ` page(s) — the jump-anchor assertion did not run.`,
+  );
+  advBlocked.forEach((v) =>
+    console.log(
+      `  ${v.path}: ${
+        v.advancedWhy ??
+        [
+          (v.advancedUnmapped ?? []).length
+            ? `jumping row(s) this drive cannot map to an anchor: ${v.advancedUnmapped.join(', ')}`
+            : null,
+          (v.advancedUnexercised ?? []).length
+            ? `jump button(s) that could not be clicked: ${v.advancedUnexercised.join(', ')}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join('; ')
+      }`,
+    ),
+  );
+  process.exit(2);
+}
 if (allowlistTooNarrow.length || httpGaps.length) process.exit(2);
 // Every candidate moved out from under us: the list route alone proves
 // nothing about the chooser, so this run verified nothing.
