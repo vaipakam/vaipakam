@@ -67,6 +67,17 @@ to zero while the canonical consent is off, so a reader who settles only on a
 mirror needs both; and the lender leg needs free VPFI on that same chain when the
 discount is applied, or it is simply not delivered.
 
+**A sixth condition is that the push is not a one-time step.** A mirror stops
+honouring a pushed tier sixty days after the most recent push and falls back to
+treating that wallet as tier 0 until a new one arrives. The cards had presented
+the push as an activation you perform once, so a reader could follow every
+instruction on the page, act on that mirror months later, and be charged the
+full fee with nothing on the page to explain it — the same shape of failure as
+the five above, except that this one arrives *after* the reader has done
+everything right. Both cards now say the tier has a shelf life, and name the two
+things that renew it: pushing again, or any VPFI deposit or withdrawal on the
+canonical chain, which rebroadcasts it as a side effect.
+
 **One correction runs the other way.** The pages had been saying that opting
 into the optional tariff counted as the fee-discount consent, so a borrower who
 paid the tariff need not enable the setting. It does not. The tariff authorises
@@ -75,6 +86,18 @@ the consent. A tiered borrower who paid the tariff with the consent left off
 would receive the tariff's slice alone and not their tier — having paid for the
 privilege. The specification had this right and stated it precisely; the public
 copy took its heading and dropped the qualifying clause underneath.
+
+Fixing that heading left a second, quieter inaccuracy standing one sentence
+earlier: the answer still said that without the consent *the full fee* is
+charged, and then explained two lines later that a borrower on the Full tariff
+receives its slice regardless. Both cannot be true, and it was the first that
+was wrong — a Full-tariff borrower on a liquid asset does get that reduction
+with no consent at all. The claim is now scoped to what actually fails, the
+hold-tier reduction, and still tells a reader with no tariff in play that they
+pay the full fee. Worth noting where the error came from: correcting a
+paragraph about the tariff introduced a contradiction with the sentence
+immediately above it, which had been accurate about the ordinary case and was
+never re-read against the new one.
 
 Each of these was already true and already enforced. None of them was on the
 page. Together they describe a reader who does everything the site tells them to
