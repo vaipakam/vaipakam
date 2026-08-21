@@ -69,8 +69,13 @@ pending() {  # pending <dir> -> count of pending fragments
   # purpose, and without this it would be counted as one more pending
   # fragment — an assertion about fragments quietly measuring something
   # else.
+  # NUL-delimited, not `| wc -l`. A filename containing a NEWLINE prints as
+  # two lines and would be counted twice — the same newline-delimited
+  # miscount T44 is about, in the helper that checks it. Counting the
+  # delimiters is exact whatever the names contain.
   find "$1/docs/ReleaseNotes/unreleased" -type f -name '*.md' \
-    ! -name README.md ! -name _TEMPLATE.md | wc -l | tr -d ' '
+    ! -name README.md ! -name _TEMPLATE.md -print0 \
+    | tr -d -c '\0' | wc -c | tr -d ' '
 }
 sections() {  # sections <file> -> count of `## ` headings, 0 if absent
   if [ -f "$1" ]; then grep -c '^## ' "$1" || true; else echo 0; fi
@@ -1271,6 +1276,20 @@ check "it is not deleted" \
 check "reported even with an empty pool" \
   "$(says "$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)" 'Set aside by an earlier run')" "1"
 rm -f "$W/docs/ReleaseNotes/unreleased/.assembled.0016-x.md"
+
+echo "T44: a fragment filename containing a newline is refused clearly"
+W="$ROOT/t44"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The ordering step is newline-delimited, so such a name becomes two entries
+# and the run later fails on truncated paths that do not exist — a checksum
+# error naming a file nobody wrote, with the pool stuck until someone works out
+# the name is the problem (Codex #1863 r16).
+printf '## newline name\n' > "$W/docs/ReleaseNotes/unreleased/$(printf 'two\nlines').md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                  "1"
+check "no fragment consumed"   "$(pending "$W")"                     "3"
+check "it says what is wrong"  "$(says "$msg" 'contains a newline')"  "1"
+rm -f "$W/docs/ReleaseNotes/unreleased/$(printf 'two\nlines').md"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

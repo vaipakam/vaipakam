@@ -363,6 +363,24 @@ for f in "${frags[@]}"; do
   # renders as visible text in the published notes, breaking the one
   # promise the marker makes. Refused rather than escaped, because these
   # names are ours and a legible one never contains `-->`.
+  # A NEWLINE in a basename breaks the ordering step below, which is
+  # newline-delimited: one path becomes two entries, the hashing pass
+  # then fails on truncated paths that do not exist, and the run aborts
+  # with a checksum error naming a file nobody wrote — leaving the pool
+  # unassemblable until somebody works out that the name is the problem
+  # (Codex #1863 r16). Refused here, before the sort, with a message that
+  # says which file and why.
+  if [[ "${FRAG_NAME[$f]}" == *$'\n'* ]]; then
+    echo "Error: a fragment filename contains a newline." >&2
+    echo "" >&2
+    printf '  %q\n' "$f" >&2
+    echo "" >&2
+    echo "Refusing to assemble: fragments are ordered by a newline-delimited" >&2
+    echo "sort, so such a name would be split into two and the run would fail" >&2
+    echo "later with a confusing error about a file that does not exist." >&2
+    echo "Rename the fragment." >&2
+    exit 1
+  fi
   case "${FRAG_NAME[$f]}" in
     *'-->'* | *'<!--'*)
       echo "Error: ${FRAG_NAME[$f]} contains an HTML comment delimiter." >&2
