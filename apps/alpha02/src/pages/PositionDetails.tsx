@@ -1034,6 +1034,21 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   // point the value is resolved, rather than at each reader.
   // Every healthy live answer, in rank order. Rank decides only when
   // they disagree about a NON-terminal status — see below.
+  /** Has every status query that WILL run finished running?
+   *
+   *  A query is settled when it has succeeded, errored, or is disabled
+   *  and therefore never going to fetch — TanStack leaves a disabled
+   *  query `isPending` with `fetchStatus: 'idle'`, which is why the
+   *  third arm is needed and why `isPending` alone cannot be used.
+   *
+   *  Read ONLY by the chooser's readiness attribute (#1855). Nothing
+   *  rendered depends on it, so a wrong answer here cannot change what a
+   *  lender sees — only whether an external check believes the card has
+   *  finished deciding. */
+  const statusSourcesSettled = [loanLive, liveStatus, bannerTerms].every(
+    (q) => q.isSuccess || q.isError || q.fetchStatus === 'idle',
+  );
+
   const liveStatusCandidates: (LoanStatus | undefined)[] = [
     loanLive.data && !loanLive.isError
       ? (loanLive.data.live.status as LoanStatus)
@@ -3389,7 +3404,16 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           // that prop is a `.some(...)`, so `false` means either "not
           // fallback" or "no read has answered". Only the readiness
           // attribute consults this; nothing rendered depends on it.
-          statusSettled={liveStatusCandidates.some((st) => st !== undefined)}
+          //
+          // EVERY enabled source, not any one of them (Codex #1858 r2).
+          // The first version asked whether some candidate was defined,
+          // which proves one query answered and says nothing about the
+          // others — so `bannerTerms` returning Active first published a
+          // settled `ready`/`yes`, and `liveStatus` could then arrive
+          // with FallbackPending and flip it to `ready`/`no`. That is the
+          // same self-unsettling verdict the prop was added to prevent,
+          // reintroduced by measuring the wrong thing.
+          statusSettled={statusSourcesSettled}
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
           // if it errors. Collapsing that to `false` showed BOTH sale

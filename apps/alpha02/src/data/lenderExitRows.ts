@@ -534,16 +534,43 @@ function conclusiveBlock(input: LenderExitInput): ConclusiveBlock | undefined {
   return undefined;
 }
 
+/** Is jumpability ALREADY decided as no, whatever else is outstanding?
+ *
+ *  Deliberately NOT `conclusiveBlock` (Codex #1858 r2). That function
+ *  orders the blocks by which COPY to show, and round 1's fix shared it
+ *  with readiness on the reasoning that one rule should not be written
+ *  twice. The rule was written twice — but they are two different rules,
+ *  and sharing the copy one imported its ordering into a question it
+ *  does not answer.
+ *
+ *  The orders genuinely differ. For copy, an unestablished due date
+ *  outranks a fallback status, because "we could not confirm the due
+ *  date" is the more informative sentence. For JUMPABILITY it does not
+ *  matter at all: a fallback-settling loan refuses both sale routes
+ *  whatever maturity later turns out to be, so the answer is no and
+ *  waiting on the terms read preserves the timeout on exactly the
+ *  fallback population.
+ *
+ *  So this asks only the question readiness needs — is the answer
+ *  already no — and takes no view on which reason a reader should see. */
+function conclusivelyUnjumpable(input: LenderExitInput): boolean {
+  return input.maturity === 'past' || input.fallbackPending;
+}
+
 export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
-  const head = conclusiveBlock(input);
   // A CONCLUSIVE NEGATIVE IS AN ANSWER (Codex #1858 r1). Past maturity
-  // and a fallback-settling loan shut BOTH sale rows outright, ahead of
-  // every narrower reason — so the question is already decided and no
-  // later read can change it. Reporting `pending` there kept a past-due
-  // page undecided behind a slow or failing secondary read, preserving
-  // the very timeout this predicate exists to remove.
-  if (head === 'past-due' || head === 'fallback') return 'ready';
-  if (head === 'maturity-unknown') return 'pending';
+  // and a fallback-settling loan shut BOTH sale rows outright, so the
+  // question is already decided and no later read can change it.
+  // Reporting `pending` there kept such a page undecided behind a slow
+  // or failing secondary read, preserving the very timeout this
+  // predicate exists to remove.
+  //
+  // Asked INDEPENDENTLY of the copy precedence (Codex #1858 r2): a
+  // fallback loan with an unestablished due date is conclusively
+  // unjumpable, while `conclusiveBlock` would name the maturity arm and
+  // send it back to `pending`.
+  if (conclusivelyUnjumpable(input)) return 'ready';
+  if (input.maturity === 'unknown') return 'pending';
   // The status read must have SETTLED before a non-fallback answer can
   // be trusted (Codex #1858 r1). `fallbackPending` is derived by the
   // page from `liveStatusCandidates.some(...)`, so `false` means either

@@ -1038,5 +1038,45 @@ describe('chooserReadiness — has the jumpability question settled?', () => {
         'ready',
       );
     });
+
+    it('does not gate a fallback negative on the status read either', () => {
+      // Same reasoning as past-due: fallback shuts both rows outright.
+      expect(
+        chooserReadiness({ ...base, fallbackPending: true, statusSettled: false }),
+      ).toBe('ready');
+    });
+  });
+
+  describe('jumpability conclusiveness is NOT the copy precedence', () => {
+    // Round 1 shared `conclusiveBlock` between the row copy and
+    // readiness, on the reasoning that one rule should not be written
+    // twice. They are two different rules (Codex #1858 r2): for COPY an
+    // unestablished due date outranks a fallback status, because it is
+    // the more informative sentence; for JUMPABILITY it does not matter
+    // at all, because fallback refuses both routes whatever maturity
+    // turns out to be.
+    it('is ready when fallback lands before the due date is established', () => {
+      // The exact combination the shared precedence got wrong: the copy
+      // arm names maturity-unknown, which sent this back to `pending`
+      // and preserved the timeout on the whole fallback population.
+      const input = { ...base, fallbackPending: true, maturity: 'unknown' as const };
+      expect(chooserReadiness(input)).toBe('ready');
+      expect(hasJumpableRow(buildLenderExitRows(input))).toBe(false);
+    });
+
+    it('still reports the maturity reason in the ROW, not the readiness', () => {
+      // The two answers coexist: readiness says "decided, and the answer
+      // is no", while the row still shows the more informative copy.
+      // Conflating them is what round 1 did.
+      const input = { ...base, fallbackPending: true, maturity: 'unknown' as const };
+      const sellNow = buildLenderExitRows(input).find((r) => r.key === 'sell-now');
+      expect(sellNow?.unavailable).toBe(copy.lenderExit.options.maturityUnknown);
+    });
+
+    it('is pending on an unestablished due date with NO fallback', () => {
+      // Without the fallback the maturity answer genuinely can still
+      // change the outcome, so waiting is right.
+      expect(chooserReadiness({ ...base, maturity: 'unknown' })).toBe('pending');
+    });
   });
 });
