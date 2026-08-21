@@ -77,11 +77,13 @@ nothing, because the terms shown on the page carry the rate, the duration and
 the due date and have never carried the interest schedule — so it sent the
 reader somewhere that could not answer, and they only found out after the trip.
 
-**Each sale row states its cost before you open anything**, and states all of
-it: selling early costs the larger of the interest built up so far or the
+**Each sale row states its cost before you open anything**, and states the whole
+of it: selling early costs the larger of the interest built up so far or the
 buyer's rate top-up — never both — and on top of that, any balance already being
 held for you on the loan transfers to the buyer and your pending reward entry
-for the position is given up. A cost line that mentioned only the interest would
+for the position is given up. On a position carrying a Full plan, the row names
+that loss too, since giving up the plan is a cost the other three lines would
+not have accounted for. A cost line that mentioned only the interest would
 read as complete while omitting an amount that can be larger than it.
 
 The row is careful about **which** of those you can actually see a number for.
@@ -115,7 +117,10 @@ though the rows themselves then read as unavailable. A live listing is not an
 option you declined — it is a sale in flight that a buyer can complete at any
 moment, so the held balance transferring and the reward entry being given up are
 pending consequences rather than hypothetical prices. Nothing else on the page
-states them, so the card keeps saying them while the listing stands.
+states them, so the card keeps saying them while the listing stands. That
+reasoning holds while the listing can still be filled; a listing that has passed
+its expiry but has not yet been cancelled keeps the lines visible although no
+buyer can complete it, which is a case the card does not yet distinguish.
 
 One limit on that, worth stating because it is the direction the card currently
 errs in: a listing that **expired without selling** still holds the position
@@ -381,9 +386,11 @@ wallet can rule that out.
 ## The lender's options card now says whether it has finished deciding
 
 The card that lists a lender's ways out of a position has always had to answer a
-question before it can render: is any of these options actually available right
-now? While it is working that out, the shortcut into the detailed tools is not
-shown — and when the answer turns out to be no, it is not shown either.
+question: is any of these options actually available right now? The card itself
+renders either way, rows and all, with the pending state showing in their
+wording. What is withheld while it works that out is the shortcut into the
+detailed tools — and when the answer turns out to be no, that shortcut is
+withheld too.
 
 From inside the app those two situations are obviously different. From outside —
 to anything checking that the card behaves correctly on a real position — they
@@ -418,7 +425,7 @@ per page of waiting for an answer that may already have arrived, and three
 separate classes of mistake in that review have traced back to guessing at an
 absence rather than reading a fact.
 
-## The public pages no longer promise borrowers a rebate that cannot arrive (#882)
+## The documentation and site copy stop promising borrowers a rebate that cannot arrive (#882)
 
 The whitepaper and the user guides told borrowers that their Loan Initiation Fee
 discount arrives as a **VPFI rebate paid when they claim** — that the full fee is
@@ -440,7 +447,9 @@ vault to pay the fee, and there is nothing to claim afterwards.
 are still settled on that basis when they close properly — repayment, early
 close, or refinance — and what is settled is sized by the borrower's discount
 standing **at the moment of settlement**, not by an average over the loan's life,
-so a holder who has since dropped their balance receives correspondingly less. If
+so a holder who has since dropped BELOW A TIER receives less — the figure steps
+between tiers rather than sliding with the balance, so a reduction that leaves
+the tier intact changes nothing. If
 such a loan instead ends in a default or a close-out liquidation, the held VPFI
 is forfeited and there is no rebate at all, which the pages now say wherever they
 describe those outcomes. A PARTIAL liquidation is not one of those endings: it
@@ -479,7 +488,12 @@ full amount" route as a live choice.
 
 **A second class of correction, found while making the first.** Removing the
 rebate promise meant reading every passage that describes how the discount is
-earned — and those passages were incomplete in a way that costs a reader money.
+earned. Some were incomplete in a way that costs a reader money; others were
+worse than incomplete. The Basic guide's introduction to the discount
+affirmatively told readers it does not matter which chain holds the balance, and
+that the consent is switched on once. Both are false, not merely partial, and a
+reader following them lands on no discount at all — which is why that section is
+called out below as still uncorrected rather than counted among the fixes.
 The pages that set expectations now state the conditions that actually govern
 it — not as a closed list, since assembling one is what kept going wrong: the
 VPFI must sit in the vault on the canonical chain; it must have been held for a
@@ -576,8 +590,10 @@ Chinese answer that had the same problem and was not mine.
 fourth place.** Each guide also carries a short list of what every action does,
 and the Claim entry in both said it. Correcting only the two places a reader
 pointed at would have left the same sentence standing in eighteen other files,
-so this time every claim entry in every edition of both guides was found first
-and then corrected together — twenty in all. The entries about collateral we
+so this time the claim entries in every edition of both guides were enumerated
+first and corrected together — twenty in all. That covered the sentence being
+chased; it did not make every claim entry correct in every respect, and later
+rounds found further errors in the same entries. The entries about collateral we
 cannot price were left exactly as they were, because there the whole basket
 really does go and they were never wrong.
 
@@ -602,7 +618,10 @@ named, and conclude the page is wrong about everything else too.
 It took two attempts to get right, and the first attempt is worth recording
 because it was confidently wrong in a new way. It said the collateral waits in
 your vault after a partial liquidation, and that the whole basket is sold on a
-time-based default. The second half was true. The first named the wrong route
+time-based default. The second half was true of the common case only — a
+time-based default that resolves through an internal match, or whose external
+swap fails, hands the collateral over instead of selling it, which the passage
+below covers. The first named the wrong route
 twice over: a partial liquidation is not a close-out at all — the loan stays
 open and no claim is created — and the ordinary liquidation, which is the common
 one, sells the collateral exactly as a default does and hands back the loan's
@@ -627,7 +646,8 @@ of handing it over are named as open examples rather than as a closed list —
 with no count attached, since the count is the thing that kept going stale.
 
 **And the position NFT is not proof that anything is waiting.** Where a
-liquidation left nothing over, the claim is recorded as already settled — and
+liquidation left nothing over, the claim is either recorded as already settled
+or, on an exactly-matched internal close, not recorded at all — and
 the NFT is not burned on that path, so it can sit there afterwards looking
 exactly like an unclaimed one. The pages had gone further than that and pointed
 at the surviving NFT as the reason to expect a surplus, which sends a borrower
@@ -648,7 +668,10 @@ said a push is sent only when your tier changes. A push carries the tier's rate
 and the tier-table version too, and mirrors stop honouring a cached older
 version — so after a governance retune the button does work, and pressing it is
 the difference between your discount and no discount at all. The warning stays;
-the case where the button is worth pressing is now named — and named
+the case where the button may be worth pressing is now named — with the
+trade-off, since pushing after a retune writes the LOWER rate immediately while
+the old cache would otherwise stand until somebody else's message raises the
+version — and named
 accurately, which took a second attempt. The first version said a mirror stops
 honouring the cached version after a retune and that you would otherwise be
 charged with no discount at all. It does not, and you would not: no
