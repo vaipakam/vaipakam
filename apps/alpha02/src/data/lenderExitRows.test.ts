@@ -1121,6 +1121,47 @@ describe('chooserReadiness — has the jumpability question settled?', () => {
     });
   });
 
+  describe('a standing listing is an answer on its own', () => {
+    // Both sale rows are shut by a confirmed listing with no reference
+    // to maturity or status — the listing row says `alreadyListed`, the
+    // direct-sale row says refused-while-listed — and only a chain
+    // action that clears the listing reopens either (Codex #1858 r5).
+    // Holding the verdict behind a slow or failed prerequisite
+    // preserved the timeout this attribute exists to remove, on a
+    // population that already had a definite answer.
+    it('is ready while a maturity read is still in flight', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'listed', maturitySettled: false }),
+      ).toBe('ready');
+    });
+
+    it('is ready even when a prerequisite read failed outright', () => {
+      expect(
+        chooserReadiness({
+          ...base,
+          saleLock: 'listed',
+          maturityReadFailed: true,
+          statusReadFailed: true,
+          saleTools: 'failed' as const,
+        }),
+      ).toBe('ready');
+    });
+
+    it('does NOT extend that to an unanswered lock read', () => {
+      // `'checking'` is the ambiguous case, not a conclusive one — the
+      // whole reason `SaleLockState` is a union rather than a boolean.
+      expect(chooserReadiness({ ...base, saleLock: 'checking' })).toBe('pending');
+    });
+
+    it('does NOT extend it to a lock read that can never run', () => {
+      // `'unknown'` makes no claim and leaves the rows available, so it
+      // is not a negative at all.
+      expect(
+        chooserReadiness({ ...base, saleLock: 'unknown', maturitySettled: false }),
+      ).toBe('pending');
+    });
+  });
+
   describe('settled and ANSWERED are not the same thing', () => {
     // Round 3 stopped readiness resting on a verdict whose reads were
     // still in flight. This is the same retraction reached by the other

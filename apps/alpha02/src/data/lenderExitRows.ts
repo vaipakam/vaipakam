@@ -610,6 +610,18 @@ function conclusiveBlock(input: LenderExitInput): ConclusiveBlock | undefined {
  *  this arm waits for the sources that produce it. */
 function conclusivelyUnjumpable(input: LenderExitInput): boolean {
   if (input.fallbackPending) return true;
+  // A CONFIRMED LISTING SHUTS BOTH ROWS OUTRIGHT (Codex #1858 r5), and
+  // it does so with no reference to maturity or status: the row builder
+  // marks the listing row `alreadyListed` and the direct-sale row
+  // refused-while-listed, for every value of the reads this predicate
+  // was waiting on. Only a chain action that clears the listing reopens
+  // either route, so holding the verdict behind a slow or failed
+  // prerequisite preserved exactly the timeout it exists to remove —
+  // on the population that already has a definite answer.
+  //
+  // `'checking'` is NOT this: an unanswered lock read is the ambiguous
+  // case and stays pending below.
+  if (input.saleLock === 'listed') return true;
   return input.maturity === 'past' && input.maturitySettled && !input.maturityReadFailed;
 }
 

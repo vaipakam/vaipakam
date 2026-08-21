@@ -3213,8 +3213,26 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   ? 'past'
                   : 'current'
                 : undefined;
+            // A DISABLED QUERY'S CACHE IS NOT A LIVE SOURCE (Codex
+            // #1858 r5). TanStack keeps `loanLive.data` after the query
+            // is disabled, so a lender who visits Advanced and returns
+            // to Basic leaves a frozen snapshot reconciling against the
+            // still-polling banner read. If the two then disagree —
+            // a keeper extension, an obligation transfer — `maturity`
+            // sticks on `'unknown'` forever, because the source that
+            // would resolve it cannot poll. Readiness reported `pending`
+            // indefinitely: the exact hang this attribute exists to
+            // remove, reintroduced by a cache.
+            //
+            // Applied to BOTH reconciling consumers, not the one the
+            // finding named — this branch and `listingWindowTooShort`
+            // below both weigh two sources against each other, and a
+            // rule stated in one of two siblings is this PR's whole
+            // subject. `resolvedLoanStatus` is deliberately untouched:
+            // it is a preference order over an ABSORBING value, where a
+            // cached terminal status stays true.
             const live =
-              loanLive.data && !loanLive.isError
+              loanLiveEnabled && loanLive.data && !loanLive.isError
                 ? // ADVANCED by local elapsed, exactly as the banner
                   // path does (Codex r20 P2). `chainNow` is frozen at
                   // the poll that fetched it, so on a 60-second cycle a
@@ -3272,7 +3290,8 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
                   BigInt(termsEndSec - bannerNowSec) < MIN_SALE_LISTING_SECONDS,
               );
             }
-            if (loanLive.data && !loanLive.isError) {
+            // Same disabled-cache rule as the maturity branch above.
+            if (loanLiveEnabled && loanLive.data && !loanLive.isError) {
               const end = loanEndTimeOf(loanLive.data.live);
               // Advanced, not frozen — same clock as the maturity
               // branch above (Codex r22 P2).
