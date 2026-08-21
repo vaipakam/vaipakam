@@ -350,18 +350,31 @@ collateral you locked at the start. On default or liquidation,
 check anyway. Only as much value is taken as the debt and
 the costs of closing it require, and anything beyond that is
 recorded as yours. What form it takes depends on how the loan
-ended: after an ordinary liquidation, or a default on tradable
-collateral, the basket is sold and what is left reaches you as the
-loan’s own asset. Only when a liquidator takes the collateral
-directly at a discount, instead of selling it, is what waits for
-you the collateral itself. Often — on a default over collateral we
+ended: if the collateral was sold out through an exchange, what
+is left reaches you as the loan’s own asset. If it was handed
+over instead, the collateral itself is what waits for you. More
+than one thing hands it over, whichever way the loan ended: a
+liquidator taking it directly at a discount, a close-out matched
+inside the protocol against an opposing position rather than
+sold, or a sale that could not go through — there you get the collateral unless the lender brings a quote that
+works when they claim, which pays you in the loan's own asset instead
+— and most claims bring none. An ordinary liquidation
+and a default both look for that internal match before going to an
+exchange, so neither of those two always ends the same way — read the
+claim rather than guessing from how the loan closed. A discounted
+seizure is the exception, and it is predictable the other way: it
+never sells, so it always leaves you the collateral. Often — on a default over collateral we
 cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. What never comes back is
 the fee rebate: on a loan still using the retired VPFI fee path
 the VPFI held against the Loan Initiation Fee is forfeited to
 treasury.
-The claim consumes your borrower position NFT — which is why the
-NFT is still there after a liquidation, waiting for you.
+Claiming consumes your borrower position NFT. The reverse does
+not follow: an NFT still sitting there after a liquidation is not
+evidence that anything is waiting. Where nothing was left over there is
+nothing to collect, the attempt is refused, and the NFT can be
+sitting there all the same. Read what the claim says rather than
+taking the NFT as a promise.
 
 ---
 

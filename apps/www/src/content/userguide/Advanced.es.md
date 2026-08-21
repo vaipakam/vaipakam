@@ -773,13 +773,22 @@ liquidó el préstamo:
 - **Liquidación por HF o default** — compruébalo igualmente,
   puede quedar un excedente. Sólo se toma el valor suficiente
   para cubrir al liquidador, al prestamista y al tesoro, y el resto
-  queda registrado como tu reclamación. Su FORMA depende de la vía por la que
-  se cerró el préstamo. Una liquidación por HF ordinaria y un
-  default por tiempo sobre colateral negociable venden ambos el
-  colateral y registran el residuo en el activo principal del
-  préstamo. Sólo un cierre en el que un liquidador toma el
-  colateral directamente con descuento, en vez de venderlo, deja
-  gravada en tu bóveda la parte no vendida. Una liquidación
+  queda registrado como tu reclamación. Su FORMA depende de una sola cosa: si el
+  colateral se VENDIÓ o se ENTREGÓ. Vendido —es decir, enrutado
+  hacia fuera por un exchange— y el residuo te llega en el activo
+  principal del préstamo. Entregado, y lo que queda es el colateral
+  mismo, gravado en tu bóveda. Más de una cosa lo entrega, y ninguna depende de por cuál cierre hayas
+  pasado: un liquidador que toma el colateral directamente con
+  descuento, un cierre que se casa internamente contra una posición
+  opuesta en lugar de ir a un exchange, y una venta que no pudo completarse — ahí el colateral te llega salvo que el prestamista aporte una
+  cotización que funcione al reclamar — entonces cobras en el activo
+  del préstamo; la mayoría de las reclamaciones no aportan ninguna. Tanto la liquidación
+  ordinaria como un default por tiempo intentan ese casamiento
+  interno ANTES de acudir a un exchange, así que ninguna de esas dos
+  vías acaba siempre igual — por eso lo que hay que leer es la
+  reclamación, no la vía. La vía con descuento sí es previsible,
+  pero al revés: ni vende ni casa internamente, así que lo que te
+  deja es siempre el colateral. Una liquidación
   parcial no es un cierre en absoluto — el préstamo sigue abierto
   y no se crea ninguna reclamación. Consulta la reclamación en
   lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la
@@ -791,7 +800,11 @@ liquidó el préstamo:
 
 El NFT de posición de prestatario se quema cuando reclamas, no
 cuando se resuelve el préstamo — así que un excedente dejado por
-una liquidación sigue ahí para recogerlo después.
+una liquidación sigue ahí para recogerlo después. Que el NFT siga
+existiendo no prueba por sí solo que haya excedente: si una
+liquidación no dejó nada, no hay nada que recoger, reclamar se
+rechaza y el NFT puede quedarse igualmente.
+Lee la reclamación, no el NFT.
 
 ---
 

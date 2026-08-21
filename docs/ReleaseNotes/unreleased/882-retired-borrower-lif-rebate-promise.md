@@ -167,8 +167,61 @@ a discount, rather than selling it, leaves the collateral itself waiting. So the
 correction pointed most borrowers at the wrong thing while sounding more precise
 than the sentence it replaced.
 
-Both guides now name all three routes and say which asset each returns, and
-still say to look at the claim rather than assume.
+It took several attempts, and each wrong one was wrong in a way the first had
+made likely: it enumerated ROUTES, so the route it had not heard of was simply
+absent. An ordinary liquidation does not always go to an exchange — where
+another position can absorb it, the protocol matches it internally and the
+borrower's residue is the collateral, not the loan's asset. Naming three routes
+left that one out. Naming four left out the failed swap, which also ends in the
+collateral being handed over. And a correction that removed the enumeration
+from one side of the sentence promptly grew a fresh one on the other.
+
+So the guides no longer enumerate routes at all. They state the one thing the
+answer actually turns on: whether the collateral was SOLD or HANDED OVER. Sold
+returns the loan's own asset, handed over returns the collateral, and the ways
+of handing it over are named as open examples rather than as a closed list —
+with no count attached, since the count is the thing that kept going stale.
+
+**And the position NFT is not proof that anything is waiting.** Where a
+liquidation left nothing over, the claim is recorded as already settled — and
+the NFT is not burned on that path, so it can sit there afterwards looking
+exactly like an unclaimed one. The pages had gone further than that and pointed
+at the surviving NFT as the reason to expect a surplus, which sends a borrower
+to sign a transaction that is refused. Both guides now say to read the claim
+and not the NFT.
+
+**A zero-surplus liquidation is not always recorded the same way.** The pages
+said the claim is filed as already settled. That is true of the ordinary and
+discounted routes and not of an exactly-matched internal one, which records no
+claim at all — so the refusal a borrower meets differs by route, while what
+they can do about it does not. The pages now say only what is true of all of
+them: there is nothing to collect, the attempt is refused, and the NFT can be
+sitting there regardless. Stating the mechanism bought nothing a reader could
+use and was another internal detail to keep in sync.
+
+**The renewal warning needed one exception.** After it was narrowed, the pages
+said a push is sent only when your tier changes. A push carries the tier's rate
+and the tier-table version too, and mirrors stop honouring a cached older
+version — so after a governance retune the button does work, and pressing it is
+the difference between your discount and no discount at all. The warning stays;
+the case where the button is worth pressing is now named — and named
+accurately, which took a second attempt. The first version said a mirror stops
+honouring the cached version after a retune and that you would otherwise be
+charged with no discount at all. It does not, and you would not: no
+cross-chain message carries the new version, so the mirror goes on applying
+the rate it already has until a per-user push arrives. This document says so
+itself, in a section 1,400 lines further down, which the correction
+contradicted. That second attempt was also wrong, in the
+opposite direction, and the third is the one to read. The version a mirror
+holds is mirror-WIDE, and its receiver raises it from ANY user's message — so
+the first push by anybody after a retune flips the version for everyone on
+that mirror, and every cache still carrying the old one reads as tier 0 from
+that moment until its own push arrives. The old-BPS grace is real, is
+per-mirror rather than per-user, and ends on a stranger's message. So the
+push is worth making promptly, whether or not the new rate suits you.
+
+The passage that misled me is in this same document, and it has been corrected
+too: it described the grace without saying what ends it.
 
 **And the renewal procedure has been withdrawn rather than qualified.** Two
 rounds ago these pages started describing how to refresh a lapsed mirror

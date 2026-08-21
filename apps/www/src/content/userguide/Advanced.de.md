@@ -774,13 +774,22 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 - **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
   ein Überschuss übrig sein. Es wird nur so viel Wert
   genommen, wie Liquidator, Lender und Treasury decken; der Rest
-  wird als dein Claim erfasst. Seine FORM hängt davon ab, wie der Loan
-  geschlossen wurde. Eine gewöhnliche HF-Liquidation und ein
-  zeitbasierter Default auf handelbares Collateral verkaufen beide
-  das Collateral und erfassen den Rest im Principal-Asset des
-  Loans. Nur ein Close-out, bei dem ein Liquidator das Collateral
-  mit Abschlag direkt übernimmt, statt es zu verkaufen, lässt den
-  nicht verkauften Teil verpfändet in deinem Vault. Eine
+  wird als dein Claim erfasst. Seine FORM hängt an einer Frage: wurde
+  das Collateral VERKAUFT oder ÜBERGEBEN? Verkauft — also über
+  eine Börse nach draußen geleitet — und der Rest erreicht dich
+  im Principal-Asset des Loans. Übergeben, und was bleibt, ist das
+  Collateral selbst, verpfändet in deinem Vault. Mehr als eines übergibt es, und keines davon hängt daran, über welchen
+  Close-out du gegangen bist: ein Liquidator, der das Collateral mit
+  Abschlag direkt übernimmt, ein Close-out, der intern gegen eine
+  gegenläufige Position gematcht statt an eine Börse geschickt wird, und ein Verkauf, der nicht zustande kam — dort bekommst du das Collateral, sofern der Lender beim Claim nicht
+  ein funktionierendes Quote mitbringt — dann wirst du im Asset des
+  Loans ausgezahlt; die meisten Claims bringen gar keins mit. Die
+  gewöhnliche Liquidation und ein zeitbasierter Default versuchen
+  dieses interne Matching, BEVOR sie zur Börse greifen, also endet
+  keiner dieser beiden Wege immer gleich — genau deshalb liest man
+  den Claim und nicht den Weg. Der Weg mit Abschlag ist dagegen
+  berechenbar, nur andersherum: er verkauft nicht und matcht nicht,
+  dir bleibt also immer das Collateral. Eine
   Teilliquidation ist überhaupt kein Close-out — der Loan bleibt
   offen und es entsteht kein Claim. Sieh in den Claim, statt zu
   raten. Bei
@@ -793,7 +802,11 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 
 Der Borrower-Position-NFT wird beim Claim verbrannt, nicht bei der
 Auflösung des Loans — ein von einer Liquidation übrig gelassener
-Überschuss ist also danach noch abholbar.
+Überschuss ist also danach noch abholbar. Dass der NFT noch da ist,
+belegt aber keinen Überschuss: blieb nach einer Liquidation nichts
+übrig, gibt es nichts abzuholen, der Claim wird abgelehnt, und der
+NFT kann trotzdem dableiben. Lies den Claim,
+nicht den NFT.
 
 ---
 

@@ -660,12 +660,16 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   Fee에서 나온 time-weighted VPFI rebate도 함께 받습니다.
 - **HF-liquidation 또는 default** — 그래도 확인해 보세요. surplus가 남아
   있을 수 있습니다. liquidator와 lender, treasury를 충당할
-  만큼의 가치만 가져가고 나머지는 내 claim으로 기록됩니다. 그 형태는 loan이 어떤 경로로
-  닫혔는지에 따라 다릅니다. 일반 HF liquidation과 거래 가능한
-  collateral에 대한 시간 기반 default는 둘 다 collateral을 팔아
-  잔여를 loan의 principal asset으로 기록합니다. 팔리지 않은 몫이
-  vault에 encumbered 상태로 남는 것은, liquidator가 collateral을
-  팔지 않고 할인된 값에 직접 가져가는 close-out일 때뿐입니다. 부분
+  만큼의 가치만 가져가고 나머지는 내 claim으로 기록됩니다. 그 형태는 한 가지로 갈립니다. collateral이
+  팔렸는가, 넘겨졌는가. 팔린 경우 — 즉 거래소를 거쳐 밖으로 나간
+  경우 — 잔여는 loan의 principal asset으로 도착합니다. 넘겨진
+  경우 남는 것은 collateral 그 자체이며, vault에 encumbered
+  상태로 있습니다. 넘기는 경로는 여럿이고, 모두 loan이 어떻게 끝났는지와는 무관합니다: liquidator가 할인된 값에 직접 가져가는
+  경우, close-out이 거래소로 가지 않고 내부에서 반대편 position과 매칭되는 경우, 그리고 매각 자체가 성사되지 못한 경우 — 그때는 collateral이 옵니다 — claim 시점에 lender가 통하는 견적을 가져오지 않는 한 그렇고, 가져오면
+  loan의 asset으로 지급됩니다. 대부분의 claim은 견적을 아예 가져오지 않습니다. 일반 liquidation도 시간 기반
+  default도 거래소로 가기 전에 그 내부 매칭을 먼저 시도하므로, 이 두 경로는 결과가 늘 같지는 않습니다 —
+  그래서 경로가 아니라 claim을 읽어야 합니다. 할인 경로는 오히려 예측 가능합니다. 다만 반대 방향으로: 팔지도
+  매칭하지도 않으므로 언제나 collateral이 남습니다. 부분
   liquidation은 애초에 close-out이 아닙니다 — loan은 열린 채로 남고
   claim도 만들어지지 않습니다. 어느 쪽인지 추측하지 말고 claim을
   확인하세요. 비유동 자산의
@@ -675,7 +679,10 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   **treasury로 몰수되며**, rebate는 정상 종료에서만 돌아옵니다.
 
 Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙니다 —
-따라서 liquidation이 남긴 surplus는 나중에도 받아 갈 수 있습니다.
+따라서 liquidation이 남긴 surplus는 나중에도 받아 갈 수 있습니다. 다만 NFT가
+남아 있다는 것 자체가 surplus의 증거는 아닙니다. liquidation이 아무것도
+남기지 않았다면 받아 갈 것이 없고, claim은 거절되며, NFT는 그대로 남을
+수 있습니다. NFT가 아니라 claim을 읽으세요.
 
 ---
 
