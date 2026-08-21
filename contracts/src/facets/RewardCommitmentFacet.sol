@@ -300,6 +300,13 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      *      out-of-band governance posture
      *      ({RewardAggregatorFacet.forceFinalizeDay}'s documented recovery),
      *      which remains only as the historical predecessor.
+     *
+     *      ORDERING IS LOAD-BEARING: send the manual compensation BEFORE
+     *      clearing `remitIneligible`. The flag is the vehicle's on-chain
+     *      evidence anchor — `_remitManualBudget` reverts
+     *      `RemitDayNotManualEligible` once it is unset — so clearing first
+     *      records the reconciliation and leaves nothing fundable for that
+     *      day.
      *      With the B2-d1 report in place, an armed day whose chains all
      *      deliver their interest reports never reaches this path — only a
      *      chain zeroed out of the denominator does.

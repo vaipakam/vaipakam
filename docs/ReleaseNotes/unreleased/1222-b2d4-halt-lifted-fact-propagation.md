@@ -10,13 +10,16 @@ made and withdrawn in review when two further problems came to light.
 **Both were subsequently solved, and the pause was lifted.** A chain now prices
 those days from its own record of what it was funded, and a day it cannot yet
 cover **waits** rather than stopping the chain: the wait ends by itself when the
-funding arrives. Two per-day waits remain, and both are materially different
-from the chain-wide stop they replaced, because a chain-wide stop had no way to
-end on its own: a day whose funding record has not landed at all, and a day that
-was deliberately recorded as zero and is still awaiting its separately-sized
-compensation — the second of which holds a funding record and waits anyway,
-precisely so its rewards are not retired for nothing before the compensation
-reaches them.
+funding arrives. What remains are per-day waits, all of them materially
+different from the chain-wide stop they replaced, because a chain-wide stop had
+no way to end on its own. A day waits until two things are true together: the
+funding it needs is present, and the accounting that establishes what it owes is
+final. That is deliberately a rule rather than a list — a day can be waiting
+because its funding record has not landed, because the budget delivered does not
+yet cover it, because it was recorded as zero and its compensation has not
+arrived, or because that compensation is present in full while the figure behind
+it is still open to revision. The last case waits with the money already there,
+which is exactly why funding alone is not the test.
 
 **The documentation did not follow.** Twenty-two separate places across ten files
 still told the reader the pause was in force and that the attempt to lift it had
