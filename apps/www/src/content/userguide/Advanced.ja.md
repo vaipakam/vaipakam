@@ -743,8 +743,7 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   ために保管されていた VPFI は default または liquidation のとき
   **没収されて treasury に入ります**。正常なクローズでは代わりに
   rebate が精算されます。金額は決済時点のあなたの割引で決まるため、
-  その時点で何も保有していなければゼロとなり、全額が treasury に
-  入ります。
+  その時点で何も保有していなければゼロとなり、全額が没収されます。
 
 Borrower position NFT が burn されるのは claim したときであって、loan が
 解決したときではありません。liquidation が残した surplus は、あとからでも

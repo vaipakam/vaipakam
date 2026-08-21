@@ -608,7 +608,7 @@ borrower claim 根据 loan 如何 settle 来返回：
   什么——但那是一种结果，不是规则。rebate 会不会回来，取决于 loan 如何结束：若该 loan 仍在
   已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 在 default 或
   liquidation 时会**被没收并转入 treasury**。正常关闭则会结算 rebate——金额取决于
-  结算时刻您的折扣，若那时没有持仓则为零，全额仍归 treasury。
+  结算时刻您的折扣，若那时没有持仓则为零，全额被没收。
 
 borrower position NFT 是在您 claim 时 burn，而不是在 loan 结清时——因此
 liquidation 留下的 surplus 之后仍可领取。但 NFT 还在，本身并不证明有

@@ -370,7 +370,7 @@ back depends on how the loan ended: on a loan still using the
 retired VPFI fee path, a full repayment, preclose or refinance
 settles the rebate on the VPFI held against the
 Loan Initiation Fee — sized by your discount at the moment it settles,
-so it can be zero, leaving the whole amount to treasury, if you hold
+so it can be zero, leaving the whole amount forfeited, if you hold
 nothing by then. Only
 a default or liquidation forfeits it outright.
 Claiming consumes your borrower position NFT. The reverse does

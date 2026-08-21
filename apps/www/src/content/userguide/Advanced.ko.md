@@ -689,7 +689,7 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   경로에 남아 있는 loan이라면 개시 수수료를 위해 보관되던 VPFI는
   default 또는 liquidation일 때 **treasury로 몰수됩니다**. 정상
   종료에서는 대신 rebate가 정산됩니다. 금액은 정산 시점의 할인으로
-  정해지므로, 그때 보유가 없으면 0이 되어 전액이 treasury로 갑니다.
+  정해지므로, 그때 보유가 없으면 0이 되어 전액이 몰수됩니다.
 
 Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙니다 —
 따라서 liquidation이 남긴 surplus는 나중에도 받아 갈 수 있습니다. 다만 NFT가

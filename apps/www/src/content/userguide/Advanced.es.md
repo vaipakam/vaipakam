@@ -814,7 +814,7 @@ liquidó el préstamo:
   retenido contra la comisión de inicio **se pierde en favor del
   tesoro** en un incumplimiento o una liquidación. Un cierre
   correcto liquida en cambio el reembolso ponderado por tiempo —
-  que puede ser cero, y entonces todo el importe va al tesoro, si
+  que puede ser cero, y entonces todo el importe se pierde, si
   tu descuento es cero en el momento de la liquidación.
 
 El NFT de posición de prestatario se quema cuando reclamas, no

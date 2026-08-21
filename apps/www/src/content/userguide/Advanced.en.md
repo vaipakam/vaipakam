@@ -762,7 +762,7 @@ The borrower claim returns, depending on how the loan settled:
   VPFI fee path, the VPFI held against its initiation fee is
   forfeited to treasury on a default or liquidation. A proper
   close instead settles the rebate — which can be
-  zero, and the whole amount go to treasury, if your discount is zero
+  zero, and the whole amount be forfeited, if your discount is zero
   at the moment it settles.
 
 The borrower position NFT is burned when you claim, not when the

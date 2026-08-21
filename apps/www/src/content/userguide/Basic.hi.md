@@ -382,7 +382,7 @@ fee rebate वापस आएगा या नहीं, यह इस पर �
 ख़त्म हुआ: बंद किए गए VPFI fee रास्ते वाले loan में full
 repayment, preclose या refinance पर Loan Initiation Fee के बदले
 रखे गए VPFI का rebate settle होता है — जो शून्य भी
-हो सकता है, और तब पूरी राशि treasury को जाती है, यदि settle होने के
+हो सकता है, और तब पूरी राशि ज़ब्त हो जाती है, यदि settle होने के
 समय आपका discount शून्य हो। पूरी ज़ब्ती केवल default या
 liquidation पर होती है, और तब पूरा VPFI treasury को चला जाता है। claim आपके borrower position NFT को consume
 करता है। उल्टा सच नहीं है: liquidation के बाद NFT का बचा रहना इस बात

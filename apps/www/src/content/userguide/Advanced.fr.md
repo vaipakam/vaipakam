@@ -810,8 +810,8 @@ prêt s'est réglé :
   retirée, le VPFI retenu au titre des frais d'initiation est
   **acquis au trésor** lors d'un défaut ou d'une liquidation. Une
   clôture régulière règle au contraire le rabais pondéré dans le
-  temps — qui peut être nul, tout le montant partant alors au
-  trésor, si ta remise est nulle au moment du règlement.
+  temps — qui peut être nul, tout le montant étant alors
+  perdu, si ta remise est nulle au moment du règlement.
 
 Le NFT de position d'emprunteur est brûlé au moment où tu
 réclames, pas quand le prêt se résout — un excédent laissé par une

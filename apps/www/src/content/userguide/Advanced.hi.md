@@ -764,7 +764,7 @@ Borrower claim इस आधार पर return करता है कि loan
   वाले loan में initiation fee के बदले रखा गया VPFI default या
   liquidation पर **treasury को ज़ब्त** हो जाता है। Proper close
   पर उसके बजाय rebate settle होता है — जो शून्य भी
-  हो सकता है, और तब पूरी राशि treasury को चली जाती है, यदि settle
+  हो सकता है, और तब पूरी राशि ज़ब्त हो जाती है, यदि settle
   होने के समय आपका discount शून्य हो।
 
 Borrower position NFT तब burn होता है जब आप claim करते हैं, तब
