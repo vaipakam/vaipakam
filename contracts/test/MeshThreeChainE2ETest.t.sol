@@ -1151,9 +1151,10 @@ contract MeshThreeChainE2ETest is Test {
      *         accumulated with nothing retiring them, so Base progressively under-uses mirror-local funding and
      *         over-funds from its own bucket — the exact waste B3 removed
      *         from Base's own books, re-entering through the mirror end. It
-     *         is recoverable (the totals are cumulative, so settlements after
-     *         the halt lifts close the backlog) but D* cannot be walked back,
-     *         so **#1434 lands before D* is chosen**.
+     *         was recoverable (the totals are cumulative, so settlements
+     *         after the halt lifted close the backlog) but D* cannot be
+     *         walked back, so **#1434 had to land before D* was chosen** —
+     *         it did, and the card is closed, so this gate is DISCHARGED.
      *
      *         **What this test does and does NOT establish (Codex #1439 r1,
      *         P1 — a correct finding, recorded rather than papered over).**

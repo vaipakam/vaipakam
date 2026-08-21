@@ -1930,7 +1930,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     /// reason — the blanket halt meant armed mirror days never priced at all
     /// — and the funded half below is what distinguishes the two; see its
     /// note. (The test forces the armed state to prove the code invariant.)
-    function testMirrorArmedDayHaltsAndNeverDebitsBucket() public {
+    function testMirrorArmedDayUnfundedDefersAndNeverDebitsBucket() public {
         vm.chainId(CHAIN_ARB);
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);

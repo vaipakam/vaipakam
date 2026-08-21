@@ -73,8 +73,10 @@ import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
  *         before #1434 P1-b, and is equally safe now that pricing is live.
  *         Δ_D comes from
  *         {LibInteractionRewards.dailyDeltaForCommitment} (the
- *         halt-independent stamp read), so it never advances the halted
- *         cumulative cursor. Day-`D` coverage of an entry is IMMUTABLE by
+ *         halt-independent stamp read), so it never advances the cumulative
+ *         cursor at all — which was what kept it safe while that cursor was
+ *         blanket-halted, and still keeps the report independent of whatever
+ *         the claim path is doing. Day-`D` coverage of an entry is IMMUTABLE by
  *         accumulation time: batches require the day's funding stamp, which
  *         Base only broadcasts after `D` has elapsed, and a post-`D` early
  *         close sets `endDay` to the (later) current day — so `startDay ≤ D

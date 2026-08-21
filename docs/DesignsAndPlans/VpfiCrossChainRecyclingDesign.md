@@ -938,8 +938,10 @@ So:
   > "#1434 does not own Mode B" and cut a duplicate card. The row was the gap;
   > the scope was never missing. The row now names it.
 
-  **⛔ SEQUENCING:** R4's **arrival reservation and claim-exclusion slice must
-  land before #1434 lifts the mirror settlement halt.** Otherwise a
+  **⛔ SEQUENCING — DISCHARGED:** R4's **arrival reservation and claim-exclusion
+  slice had to land before #1434 lifted the mirror settlement halt.** It did;
+  #1434 is closed and P1-b lifted the halt. The reasoning is kept because it
+  states what any future change to that ordering must still respect. Otherwise a
   compensation arriving after its day irreversibly lapsed has no
   stranded-recovery reservation, and the ordinary fresh-claim `backingRoom`
   can spend those tokens before the return runs — a claim spending tokens
