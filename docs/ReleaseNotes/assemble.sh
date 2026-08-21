@@ -718,7 +718,24 @@ done
 # four times per run.
 declare -A FRAG_HASH=()
 for f in "${frags[@]}"; do
-  _h="$(frag_hash "$f" || true)"
+  #
+  # Status and output are checked SEPARATELY (Codex #1863 r7). The first
+  # version used `|| true`, which discards the status entirely — so a
+  # faulty tool that exits non-zero while printing something that merely
+  # LOOKS like a hash (64 zeros, a cached line, a partial read) passed
+  # validation, and the run wrote a false marker, replaced the output and
+  # deleted the fragment. A working checksum later would not match that
+  # marker, so the fragment would be appended again. `|| true` was there
+  # to stop `set -e` pre-empting the message; `|| _hrc=$?` does that and
+  # keeps the status.
+  _hrc=0
+  _h="$(frag_hash "$f")" || _hrc=$?
+  if (( _hrc != 0 )); then
+    echo "Error: the checksum command failed on $(basename "$f") (exit $_hrc)." >&2
+    echo "Refusing to assemble: a hash that cannot be trusted must not be" >&2
+    echo "written into a marker, whatever it printed." >&2
+    exit 1
+  fi
   if [[ ! "$_h" =~ ^[0-9a-f]{64}$ ]]; then
     echo "Error: could not hash $(basename "$f") (got '${_h}')." >&2
     echo "Refusing to assemble: the marker written for a fragment is what" >&2

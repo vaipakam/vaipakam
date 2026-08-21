@@ -855,7 +855,7 @@ done
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run fails"              "$?"                          "1"
 check "the fragment is NOT deleted" "$(pending "$W")"            "2"
-check "it says it could not hash"  "$(says "$msg" 'could not hash')" "1"
+check "it reports the command failure" "$(says "$msg" 'checksum command failed')" "1"
 check "no empty-hash marker was written" \
   "$(grep -c 'sha256= -->' "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null || echo 0)" "0"
 
@@ -877,6 +877,26 @@ check "the fragment is NOT deleted"     "$(pending "$W")"                 "2"
 check "it reports the bad value"        "$(says "$msg" 'not-a-hash')"     "1"
 check "no malformed marker was written" \
   "$(grep -c 'sha256=not-a-hash' "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null || echo 0)" "0"
+
+# The third shape: a tool that prints something that LOOKS like a valid hash
+# and exits NON-ZERO. Validating the output alone accepts it, so the run
+# writes a false marker — and a working checksum later will not match it, so
+# the fragment is appended again (Codex #1863 r7).
+W="$ROOT/t30c"; build "$W"
+out="$W/docs/ReleaseNotes"
+mkdir -p "$W/fakebin"
+for tool in sha256sum shasum; do
+  printf '#!/bin/sh\necho "%s  -"\nexit 3\n' \
+    "0000000000000000000000000000000000000000000000000000000000000000" \
+    > "$W/fakebin/$tool"
+  chmod +x "$W/fakebin/$tool"
+done
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "a plausible-but-failed hash is refused" "$?"                       "1"
+check "the fragment is NOT deleted"            "$(pending "$W")"          "2"
+check "it reports the command failure"  "$(says "$msg" 'checksum command failed')" "1"
+check "no false marker was written" \
+  "$(grep -c 'sha256=0000' "$out/ReleaseNotes-2026-08-16.md" 2>/dev/null || echo 0)" "0"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
