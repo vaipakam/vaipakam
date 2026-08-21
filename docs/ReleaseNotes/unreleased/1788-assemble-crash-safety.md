@@ -108,14 +108,25 @@ runs contend for is the pile, so that is what is held.
 
 ### Verified against the fault, not just the fix
 
-Every new test was run against the older script first and fails there — the
-interrupted-run case produces two copies of a section where one is correct, the
-edited note is silently discarded, the renamed one is duplicated. Then against
-the new script, where each passes. A test for a recovery path that has never been
-seen failing is a test that might be checking nothing.
+Every test covering a **behaviour that changed** was run against the older
+script first, and fails there: the interrupted-run case produces two copies of a
+section where one is correct, an edited note is silently discarded, a renamed one
+is duplicated, a failing checksum writes an unusable record. Then against the new
+script, where each passes. A test for a recovery path that has never been seen
+failing is a test that might be checking nothing.
 
-One of them was checking nothing, briefly, and it is worth recording. The
-across-days case first "passed" against both versions — because the note it used
-was still tracked by version control, so an unrelated rule held it back and the
-part under test never ran. It only exercises what it claims with a note that was
-never committed, and it fails on the older script now.
+Not every new test does that, and saying otherwise would overstate it. A few
+guard against faults the *new* mechanism could introduce rather than against the
+old behaviour — that a record quoted inside ordinary prose is not mistaken for a
+real one, for instance. There is nothing to reproduce for those, because the
+older script had no records to quote. They are guards against a regression, not
+demonstrations of a fix, and they are worth having on those terms.
+
+Several were checking nothing when first written, which is the part worth
+recording. One used a note still tracked by version control, so an unrelated rule
+held it back and the part under test never ran. One quoted a made-up fingerprint,
+which matches nothing under any version. One stopped at an earlier failure and
+never reached the step it named. Each looked correct. Each was caught only by
+running it against the broken code and noticing it did not fail — which is now
+the rule rather than a habit: **a negative assertion is not trustworthy until it
+has been seen failing.**

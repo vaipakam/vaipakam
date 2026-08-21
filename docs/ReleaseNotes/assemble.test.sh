@@ -75,6 +75,8 @@ pending() {  # pending <dir> -> count of pending fragments
 sections() {  # sections <file> -> count of `## ` headings, 0 if absent
   if [ -f "$1" ]; then grep -c '^## ' "$1" || true; else echo 0; fi
 }
+mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
+
 count_in() {  # count_in <ere> <file> -> number of matching lines, 0 if absent
   # `grep -c` prints 0 AND exits 1 when nothing matches, so the obvious
   # `grep -c … || echo 0` emits "0\n0" and every comparison against it fails.
@@ -664,7 +666,6 @@ check "and consumes it"             "$(pending "$W")"                 "0"
 echo "T21: the assembled file stays readable, not owner-only"
 W="$ROOT/t21"; build "$W"
 out="$W/docs/ReleaseNotes"
-mode_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"; }
 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
 # mktemp creates 0600 and mv carries the mode across, so a new dated file would
 # be owner-only and an existing one would be silently narrowed.
@@ -934,26 +935,81 @@ check "it says what it could not read" "$(says "$msg" 'last byte')"         "1"
 check "no glued marker was written" \
   "$(count_in '.+<!-- assembled-fragment: ' "$out/ReleaseNotes-2026-08-16.md")" "0"
 
-echo "T32: an unreadable fragment aborts rather than skipping the duplicate check"
+echo "T32: a failing heading scan aborts rather than skipping the duplicate check"
 W="$ROOT/t32"; build "$W"
 out="$W/docs/ReleaseNotes"
-# The legacy-file stop compares each pending fragment's first heading against
-# $OUT. A grep READ ERROR there gives the same empty result as "this fragment
-# has no heading", so `|| true` would drop the fragment from the check
-# silently — a guard quietly not covering one input. Found by auditing for the
-# shape Codex flagged at r7/r8 rather than by review.
+# The failure must be injected AT THE HEADING SCAN. The first version made the
+# fragment unreadable with chmod 000, which on a non-root runner aborts at the
+# earlier `frag_hash` instead — so the case never reached the branch it was
+# written for, and asserted the wrong message (Codex #1863 r9). A shim that
+# fails only for `-m1` isolates it: `-m1` is used by the heading scan and by
+# nothing else in the script.
 printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' > "$out/ReleaseNotes-2026-08-16.md"
-chmod 000 "$W/docs/ReleaseNotes/unreleased/0001-a.md"
-msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
-rc=$?
-chmod 644 "$W/docs/ReleaseNotes/unreleased/0001-a.md"
-if [ "$(id -u)" = "0" ]; then
-  ok "skipped — running as root, chmod 000 does not deny reads"
-else
-  check "the run stops"             "$rc"                          "1"
-  check "no fragment was consumed"  "$(pending "$W")"              "2"
-  check "it says it could not read" "$(says "$msg" 'could not read')" "1"
-fi
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/grep" <<'SHIM'
+#!/bin/sh
+for a in "$@"; do
+  [ "$a" = "-m1" ] && exit 2
+done
+exec /usr/bin/grep "$@"
+SHIM
+chmod +x "$W/fakebin/grep"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run stops"               "$?"                            "1"
+check "no fragment was consumed"    "$(pending "$W")"               "2"
+check "it names the heading scan"   "$(says "$msg" 'reading 0001-a.md failed')" "1"
+
+echo "T32b: a failing heading scan of the OUTPUT is not read as no-match"
+W="$ROOT/t32b"; build "$W"
+out="$W/docs/ReleaseNotes"
+# As an `if` condition, a grep ERROR is indistinguishable from an ordinary
+# no-match, so the duplicate check would quietly clear and the section be
+# appended twice. `-qxF`/`-xF` is used only for that comparison.
+printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' > "$out/ReleaseNotes-2026-08-16.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/grep" <<'SHIM'
+#!/bin/sh
+for a in "$@"; do
+  [ "$a" = "-xF" ] && exit 2
+done
+exec /usr/bin/grep "$@"
+SHIM
+chmod +x "$W/fakebin/grep"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run stops"              "$?"                                  "1"
+check "no fragment was consumed"   "$(pending "$W")"                     "2"
+check "it names the output check"  "$(says "$msg" 'repeated heading')"   "1"
+
+echo "T32c: a fragment containing a NUL byte is still scanned as text"
+W="$ROOT/t32c"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0001-a.md" "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Without `-a`, GNU grep reports "binary file matches" INSTEAD of the marker
+# line, so the index loses that fragment's record and recovery appends it
+# again (Codex #1863 r9).
+printf '## nul note\n\000\n## nul note two\n' > "$W/docs/ReleaseNotes/unreleased/0010-nul.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "it was folded in"        "$(count_in '^## nul note$' "$out/ReleaseNotes-2026-08-16.md")" "1"
+# Interrupted after the write: restored, still pending.
+printf '## nul note\n\000\n## nul note two\n' > "$W/docs/ReleaseNotes/unreleased/0010-nul.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the marker is still recognised" \
+  "$(count_in '^## nul note$' "$out/ReleaseNotes-2026-08-16.md")" "1"
+check "and it is cleared"       "$(pending "$W")" "0"
+
+echo "T32d: an unreadable existing mode aborts instead of widening the file"
+W="$ROOT/t32d"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+chmod 600 "$out/ReleaseNotes-2026-08-16.md"
+mkdir -p "$W/fakebin"
+printf '#!/bin/sh\nexit 1\n' > "$W/fakebin/stat"
+chmod +x "$W/fakebin/stat"
+printf '## later note\n' > "$W/docs/ReleaseNotes/unreleased/0011-later.md"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"            "$?"                                   "1"
+check "the file keeps its mode"  "$(mode_of "$out/ReleaseNotes-2026-08-16.md")" "600"
+check "it says why"              "$(says "$msg" 'current mode')"        "1"
 
 echo "T33: run_checked's fatal path actually fires (no root needed)"
 W="$ROOT/t33"; build "$W"

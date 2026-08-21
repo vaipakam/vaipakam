@@ -687,8 +687,13 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
   # a fragment whose marker lives in the unreadable file reads as never
   # assembled and is appended a second time. The whole point of this scan
   # is that finding nothing is proof.
+  # `-a`: a fragment carrying a NUL byte makes GNU grep treat the file as
+  # binary and print "binary file matches" INSTEAD of the marker line, so
+  # the index silently loses that fragment's record and recovery appends
+  # it again (Codex #1863 r9). These are Markdown inputs; read them as
+  # text.
   run_checked 0,1 "scanning $(basename "$dated") for assembly markers" \
-    grep -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated"
+    grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated"
   while IFS= read -r line; do
     # `<!-- assembled-fragment: <basename> sha256=<hex> -->`, and ONLY
     # that shape. A line matching the prefix but not the full form is
@@ -879,9 +884,9 @@ if [ -f "$OUT" ]; then
   # exits the whole script when grep finds nothing, which is the ordinary
   # case here — a markerless file is exactly what this branch is for.
   out_has_markers=0
-  if grep -qE "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$OUT"; then
-    out_has_markers=1
-  fi
+  run_checked 0,1 "checking $(basename "$OUT") for assembly markers" \
+    grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$OUT"
+  [ -z "$CAPTURED" ] || out_has_markers=1
 
   suspect=()
   for f in "${frags[@]}"; do
@@ -896,10 +901,17 @@ if [ -f "$OUT" ]; then
     # Exit 1 (no heading in this fragment) is ordinary and skips it; a
     # read error is not, and would drop the fragment from this check
     # silently — a guard quietly not covering one of its inputs.
-    run_checked 0,1 "reading $(basename "$f")" grep -m1 '^#\{1,6\} ' "$f"
+    run_checked 0,1 "reading $(basename "$f")" grep -a -m1 '^#\{1,6\} ' "$f"
     head_line="$CAPTURED"
     [ -n "$head_line" ] || continue
-    if grep -qxF -- "$head_line" "$OUT"; then
+    # Status, not just the boolean. As an `if` condition a grep ERROR
+    # (exit 2) is indistinguishable from an ordinary no-match, so a
+    # transient read failure would quietly clear the duplicate check and
+    # let the section be appended twice (Codex #1863 r9). `-x` via `-F`
+    # with the whole line, and `-a` for the same NUL reason as above.
+    run_checked 0,1 "checking $(basename "$OUT") for a repeated heading" \
+      grep -a -xF -- "$head_line" "$OUT"
+    if [ -n "$CAPTURED" ]; then
       suspect+=("$(basename "$f")|$head_line")
     fi
   done
@@ -956,9 +968,19 @@ trap 'rm -f "$WORK"; _release_lock' EXIT
 # file's own mode when appending, otherwise 0666 less the umask, which
 # is what a plain `>` redirect produces.
 if [ -f "$OUT" ]; then
+  # GNU first, then BSD. If BOTH fail the mode is UNKNOWN, and falling
+  # back to the new-file default would silently WIDEN an existing file —
+  # a deliberately restricted 0600 becoming 0644 under the usual umask,
+  # before the fragments are consumed (Codex #1863 r10). "I could not
+  # read it" and "there is nothing to read" are different answers.
   out_mode="$(stat -c '%a' "$OUT" 2>/dev/null || stat -f '%Lp' "$OUT" 2>/dev/null || true)"
-fi
-if [ -n "${out_mode:-}" ]; then
+  if [[ ! "$out_mode" =~ ^[0-7]{3,4}$ ]]; then
+    echo "Error: could not read the current mode of $(basename "$OUT")." >&2
+    echo "Refusing to assemble: replacing it would have to guess a mode, and" >&2
+    echo "guessing wider than it was would expose content that was" >&2
+    echo "deliberately restricted." >&2
+    exit 1
+  fi
   chmod "$out_mode" "$WORK"
 else
   chmod "$(printf '%o' "$(( 0666 & ~0$(umask) ))")" "$WORK"
@@ -1019,8 +1041,18 @@ for f in "${frags[@]}"; do
   # is then interrupted the recovery it exists for is gone and the
   # section is appended twice. The one write the whole recovery rests on
   # must not be able to fail quietly.
+  # The NAME goes into the durable record, so it is checked like the hash
+  # (Codex #1863 r10): inlined, a `basename` failure is hidden by the
+  # successful `printf` and the marker is written without one, which no
+  # later run can match.
+  #
+  # Where the line is drawn, deliberately: `basename` is guarded where its
+  # output is WRITTEN INTO THE FILE, not at the dozens of message-only
+  # uses. A wrong word in an error message is a cosmetic fault; a wrong
+  # word in the recovery record is a duplicated section.
+  run_checked 0 "naming $f for its marker" basename "$f"
   printf '%s%s sha256=%s -->\n' \
-    "$MARKER_PREFIX" "$(basename "$f")" "${FRAG_HASH[$f]}" >> "$WORK"
+    "$MARKER_PREFIX" "$CAPTURED" "${FRAG_HASH[$f]}" >> "$WORK"
 done
 
 # The atomic step. Until this line $OUT is untouched, so an interruption
