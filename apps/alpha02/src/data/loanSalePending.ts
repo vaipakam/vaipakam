@@ -112,6 +112,20 @@ export interface LoanSalePendingState {
   /** Live-verified listing offer id (marker or recovered); null when
    *  unknown — cancel is unavailable and funding is UNKNOWN then. */
   offerId: string | null;
+  /** `offerId` is null because the link read FAILED, not because it
+   *  proved absent (Codex r18 P2).
+   *
+   *  The two were conflated: `getOfferLinkedLoanId` throwing was caught
+   *  as `resolvedId = null`, which the reconciliation effect below then
+   *  treats as "the marker is stale" and CLEARS — destroying the only
+   *  id this device holds on a transient RPC failure. If the indexer
+   *  probe later exhausts its budget or the offer falls outside its
+   *  50-row window, that id is gone and the lender loses their cancel
+   *  path with it.
+   *
+   *  Callers must not read a null `offerId` as "listed elsewhere" while
+   *  this is true; it means "we could not tell". */
+  offerIdVerifyFailed: boolean;
   /** The listing's sale rate (bps); null when the id is unknown. */
   saleRateBps: bigint | null;
   /** Chain time says the cancel cooldown has elapsed. */
@@ -252,6 +266,7 @@ export function useLoanSalePending(
       // lock verdict above (the card would silently vanish over a
       // live lock, resurrecting the listing form).
       let resolvedId: string | null = null;
+      let verifyFailed = false;
       if (listed) {
         try {
           const candidateIds: string[] = [];
@@ -285,6 +300,7 @@ export function useLoanSalePending(
           }
         } catch {
           resolvedId = null;
+          verifyFailed = true;
         }
       }
       let saleRateBps: bigint | null = null;
@@ -331,6 +347,7 @@ export function useLoanSalePending(
         loanActive: live.status === LOAN_STATUS_ACTIVE,
         isHolder,
         offerId: resolvedId,
+        offerIdVerifyFailed: verifyFailed,
         saleRateBps,
         cancelUnlocked:
           resolvedId !== null &&
@@ -369,7 +386,14 @@ export function useLoanSalePending(
       // eslint-disable-next-line react-hooks/set-state-in-effect
       remember(d.offerId);
     }
-    if (d?.listed && d.offerId === null && markerId !== null) {
+    // Only a SUCCESSFUL disproof clears the marker. A failed
+    // verification leaves it alone — see `offerIdVerifyFailed`.
+    if (
+      d?.listed &&
+      d.offerId === null &&
+      !d.offerIdVerifyFailed &&
+      markerId !== null
+    ) {
       clear();
     }
   }, [query.data, markerId, remember, clear]);
@@ -394,6 +418,16 @@ export function useLoanSalePending(
 
   return {
     state: query.data,
+    /** Whether the LAST revalidation failed (Codex #1839 r9 P2).
+     *
+     *  TanStack retains the previous success through a failed refetch,
+     *  so `state` alone cannot distinguish "the chain says no listing"
+     *  from "the chain said no listing, and we have not been able to
+     *  ask since". Callers that gate an ACTION on `listed === false`
+     *  need the difference: another device can create a listing inside
+     *  that window, and a cached clear would keep offering both sale
+     *  paths on a position that is now locked. */
+    isError: query.isError,
     endedNotice,
     clearEndedNotice,
     remember,

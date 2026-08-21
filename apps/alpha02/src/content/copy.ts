@@ -1905,6 +1905,249 @@ const copySource = {
       'Your keeper master switch is off, so nothing can run even with this loan’s switch on — turn it on under Settings → Keeper permissions.',
   },
 
+  /** Lender-side Layer 1 awareness card (LenderEarlyWithdrawalUXDesign
+   *  §"Layer 1"). The inversion from the borrower chooser is the whole
+   *  point: the borrower's card promotes ways to ACT, this one promotes
+   *  the fact that doing nothing is the default that costs nothing in
+   *  sale forfeitures. Wait renders FIRST and is worded conditionally —
+   *  never as a promise of repayment. */
+  lenderExit: {
+    title: 'Your options as the lender',
+    blurb:
+      'You don’t have to do anything with this position. If you want out before the due date, here’s what that costs:',
+    switchToAdvanced: 'Show these tools (switches to Advanced view)',
+    switchNote:
+      'These tools live in the Advanced view. Switching keeps you on this page — nothing is submitted.',
+    jump: 'Go to this option',
+    options: {
+      wait: 'Wait for the loan to run its course',
+      // Two shapes, chosen from the loan's OWN schedule. A single
+      // end-of-term sentence on a periodically-settling loan misstates
+      // WHEN the lender is paid, which is the fact this row exists to
+      // convey. Both are conditional — neither promises repayment.
+      waitDescAtClose:
+        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest at the end. If they don’t, the normal default process applies and recovery can be less.',
+      // Codex r4 P2 — a partial-repay loan pays the lender DURING the
+      // term even with no periodic schedule: `repayPartial` transfers
+      // that share of principal plus the interest built up on it right
+      // away. The plain at-close sentence states the timing wrongly for
+      // those loans, which is the same defect the cadence split exists
+      // to avoid, arriving by a second route.
+      waitDescAtClosePartial:
+        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest at the end. This loan also lets them repay part of it early, and when they do, that share of the principal and the interest built up on it reach you at the time rather than at the end. If they don’t repay, the normal default process applies and recovery can be less.',
+      waitDescPeriodic:
+        'Nothing to do — interest is paid to you on this loan’s own schedule as the borrower settles it, and you claim the principal plus whatever interest is still outstanding at the end. If they don’t repay, the normal default process applies and recovery can be less.',
+      waitDescChecking:
+        'Nothing to do — we’re still reading this loan’s interest schedule, which decides whether you’re paid during the term or only at the end.',
+      // Codex r7 P2 — a FAILED cadence read arrives as the same
+      // `undefined` a loading one does, and showing the checking line
+      // for a persistent failure promises an answer that is not
+      // coming. Says what is and is not known.
+      //
+      // Codex r11 P2 — it used to add "the loan's own terms above are
+      // the record", which was a FALSE POINTER: the terms row renders
+      // rate, duration and due date only, and has never carried the
+      // cadence. Sending a lender to a surface that cannot answer is
+      // worse than admitting the gap, because they spend the trip
+      // before finding out. Names a recovery that can actually work
+      // instead — the read is a live one, so retrying is the real fix
+      // — and says plainly that the amount owed is unaffected, since
+      // the open question is only WHEN it arrives.
+      waitDescUnknown:
+        'Nothing to do — if the borrower repays, you claim the principal plus the agreed interest. We couldn’t read this loan’s interest schedule, so we can’t say here whether that reaches you during the term or only at the end. It doesn’t change what you’re owed. Reloading the page usually clears this. If they don’t repay, the normal default process applies and recovery can be less.',
+      waitCost: 'Costs nothing — this is the default.',
+      // Waiting is only the cost-free default when nothing else can
+      // fire (Codex r24 P2). While a listing of yours stands, doing
+      // nothing does NOT select this row: a buyer can complete the sale
+      // at any moment, and the sale rows two lines below say what that
+      // costs. Two rows describing the same live listing must not
+      // disagree about whether it costs anything.
+      waitCostListed:
+        'Not the default while your listing stands — a buyer can complete it at any moment, with the costs named below. Cancel the listing first to make waiting the cost-free choice.',
+
+      sellNow: 'Sell your position now',
+      sellNowDesc:
+        'Sell this position straight into a standing lending offer that matches it. You’re paid immediately from funds already locked by that lender, and the borrower’s rate and due date don’t change.',
+      // Codex r1 P1 — "the LARGER of X or Y, never both" reads as
+      // EXHAUSTIVE, and it is not: both sale paths also migrate any
+      // held-for-lender balance to the buyer and atomically forfeit the
+      // seller's pending interaction-reward entry. The held balance can
+      // dwarf the interest figure, so naming only the interest
+      // component can induce a value-losing decision. The card cannot
+      // price these, so it NAMES them rather than implying they do not
+      // exist.
+      //
+      // It no longer says "open the tool for the actual figures"
+      // (Codex r26 P2). Verified: neither `EarlyExitFlow` nor
+      // `LoanSaleFlow` reads or renders the held balance or the reward
+      // entry — both show only `sellerEconomics`' payout and current
+      // settlement cost. So the promise was unfulfillable, and worse
+      // than unfulfillable: the tool DOES show a cost figure, a
+      // narrower one, which then reads as the complete cost precisely
+      // because this card sent the lender there to find it.
+      //
+      // The line now scopes the pointer to the figure the tool really
+      // has, and says plainly that the other two are not quantified
+      // anywhere yet. Pricing them is follow-up work; claiming a
+      // destination that prices them was the defect.
+      sellNowCost:
+        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both, and the tool shows that figure. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
+      // FOURTH loss, and only on a Full-stamped position (Codex r12
+      // P2). `FeeEntitlement` is keyed by loanId, NOT by lender, and no
+      // sale path resets it — only `repriceFeeEntitlementOnExtension`
+      // touches the stamp. So the lender NFT carries `lenderMode ==
+      // Full` to the buyer, who inherits the yield-fee bump for the
+      // remaining term without paying any `C*` of their own. The seller
+      // paid that in VPFI up front and keeps only the part already
+      // settled.
+      //
+      // Named, NOT priced — the same treatment as the held balance and
+      // the reward entry, and for the same reason: the card cannot
+      // compute a remaining-term share and a number it guessed at would
+      // be worse than the sentence. A separate line rather than a
+      // longer one so the base cost sentence stays identical for every
+      // position and needs no second translation.
+      // Says "paid for", never "you paid for" (Codex r22 P2). The
+      // entitlement is scoped to the LOAN, not the holder, so a lender
+      // who acquired this NFT by transfer or an earlier sale inherits
+      // the plan without having paid its tariff. Telling them they paid
+      // hands a secondary holder a false personal cost basis at the
+      // moment they are deciding whether to sell — a misstatement about
+      // their own money, which is the one thing this card exists to
+      // avoid. The forfeiture is true for every holder; only the
+      // payment is not.
+      costFullTariff:
+        'This position is on the Full fee plan, paid for in VPFI when the loan opened. The plan travels with the position, so the part of it covering the rest of the term goes to the buyer and is not refunded.',
+      sellNowNoOffers:
+        'No lending offer on the book matches this position right now — check back later, or list it below instead.',
+
+      list: 'List your position for sale',
+      listDesc:
+        'Publish this position at your asking rate and wait for a buyer. The sale settles only when someone accepts.',
+      listCost:
+        'Costs the LARGER of the interest built up so far or the buyer’s rate top-up — never both, and the tool shows that figure. On top of that, any balance already being held for you on this loan transfers to the buyer, and your pending reward entry for this position is given up. Those two are not shown as amounts anywhere yet — check your held balance and rewards before you sell.',
+      // Cross-party disclosure: listing does not only lock the seller.
+      // Codex r1 P2 ×2 — two corrections to what this used to claim.
+      // (a) Partial repayment is NOT held: the borrower surface
+      // deliberately leaves it open, because an acceptance binds the
+      // CURRENT principal and a paydown simply invalidates a pending
+      // buyer's signature. Saying otherwise overstated the burden on
+      // the counterparty. What IS held is collateral withdrawal (the
+      // on-chain guard) and the borrower's offset path.
+      // (b) Expiry does not clear the locks. It stops a buyer taking
+      // the listing, but the position lock and the borrower's held
+      // path persist until someone runs the permissionless teardown —
+      // so "until it expires" promised an automatic unwind that does
+      // not happen.
+      listStructural:
+        'While the listing stands, your position can’t be transferred, and it also holds two of the BORROWER’s options on this loan — the protocol refuses their collateral withdrawal and their offset exit, both to protect the buyer’s signed terms. Their repayments, full or partial, stay open. The holds end when a buyer completes or you cancel; if the listing simply expires, they stay in place until someone runs the cleanup that clears it.',
+      listAlreadyListed:
+        'Already listed — this position is on sale now. The listing card below shows its terms and lets you cancel it.',
+      // Codex r5 P2 — the line above promises a cancel the pending card
+      // does not offer when it cannot recover the listing's record
+      // (`pendingNoId`: "listed from another device, so cancelling here
+      // isn't available"). Two surfaces contradicting each other about
+      // what a lender can do to a live sale is worse than either being
+      // vague, so this variant matches what the card below will
+      // actually show.
+      listAlreadyListedNoCancel:
+        'Already listed — this position is on sale now. It was listed from another device, so it can’t be cancelled here; cancel it where it was listed. The card below shows what this device can still see about it.',
+      // Codex r1 P2 — the direct sale is refused too while a listing
+      // stands (`SaleOfferAlreadyExists`), AND the page suppresses the
+      // instant-exit card entirely, so this row's jump would have
+      // scrolled to nothing at all.
+      sellNowAlreadyListed:
+        'Not available while this position is listed for sale — cancel the listing first, using the card below.',
+      // Same correction as `listAlreadyListedNoCancel`, one row over:
+      // this row named the cancel as the fix, so it must not name a
+      // cancel this device cannot perform. Fixing only the listing row
+      // would have left the identical wrong instruction on the row
+      // directly above it.
+      sellNowAlreadyListedNoCancel:
+        'Not available while this position is listed for sale. The listing was made from another device, so it can’t be cancelled here — cancel it where it was listed.',
+      // Codex r1 P2 — the listing lock read is authoritative for BOTH
+      // sale paths, so an unanswered read must not read as "clear".
+      saleLockChecking:
+        'Checking whether this position is already listed…',
+      // Codex r3 P2 — both sale tools are held behind the
+      // fee-entitlement disclosure read, and their jump anchors go
+      // with them. A row left available then rendered a jump to an
+      // element that did not exist, and the click did nothing at all.
+      // Codex r8 P2 — the two ways a cancel can be absent want
+      // different sentences. A missing offer record really does mean
+      // "listed elsewhere"; a FAILED holder read says nothing about
+      // where it was listed and may clear on retry, so sending that
+      // lender to another device invents a cause. My own r7 fix
+      // created this by folding the second case into the first.
+      listAlreadyListedCancelUnverified:
+        'Already listed — this position is on sale now. We couldn’t confirm you still hold it from this device, so the cancel control isn’t available here at the moment; the card below shows what we can see, and reloading may restore it.',
+      sellNowAlreadyListedCancelUnverified:
+        'Not available while this position is listed for sale. We couldn’t confirm you still hold it from this device, so cancelling isn’t offered here at the moment — reloading may restore it.',
+      // Codex r8 P2 — both sale entry points require the loan to be
+      // exactly Active, and a fallback-pending loan is not. The card
+      // stays mounted (the status is not terminal and the wait row
+      // still applies) but neither sale can be started.
+      saleFallbackPending:
+        'Not available while this loan is settling through its fallback path — a sale can only be started on a loan that is running normally. Waiting still applies, and the loan’s own settlement continues.',
+      // Codex r6 P2 — the due date is chain-anchored from whichever
+      // live read answered; with neither answering there is no
+      // authoritative source, and reporting "not past due" would be a
+      // claim made from a read that did not happen. Fails closed: both
+      // contracts refuse an exit past maturity.
+      maturityUnknown:
+        'Not available right now — we couldn’t confirm this loan’s due date, and a sale can’t be started once it has passed. This usually clears on its own in a moment.',
+      // Codex r8/r9/r10 P2 — these two sentences used to NAME the read
+      // involved, and the name was wrong twice: r8 sent a token-metadata
+      // failure into a fee-terms sentence, r9 split them apart, r10
+      // found a THIRD prerequisite arriving in the fee sentence again.
+      // Naming a cause the reader cannot act on, and getting it wrong,
+      // is worse than naming none — so both now say what is true of
+      // every prerequisite, and the remedy, which is identical in each
+      // case. See `SaleToolsState` for why the states collapsed rather
+      // than growing a third name to keep straight.
+      saleToolsChecking:
+        'Not available yet — we’re still reading the details a sale needs before it can be started.',
+      saleToolsFailed:
+        'Not available right now — one of the details a sale needs couldn’t be loaded. Reload the page to try again.',
+      // Codex r3 P2 — the operator kill switch (`VITE_DISABLED_FLOWS`)
+      // disables the listing action and shows an incident banner
+      // inside the tool. Scoped to LISTING: the direct sale carries no
+      // kill switch, so gating it too would invent a blocker.
+      listUnavailableFlowDisabled:
+        'Not available right now — new listings are paused on this deployment while an issue is looked into. Your position is unaffected and the other options still apply.',
+      // The listing window is clamped at maturity, and the contract
+      // refuses a window shorter than MIN_SALE_LISTING_SECONDS — so in
+      // the last hour of a term no listing can be created, while the
+      // instant sale stays available (Codex r18 P2).
+      listUnavailableTooClose:
+        'Too close to the due date to list — a listing needs at least an hour before the loan matures. Selling into a standing offer still works.',
+      // Same refusal, WITHOUT the instant-sale assurance (Codex r22
+      // P2). The final-hour cutoff outranks the shared prerequisites,
+      // so when a fee-entitlement, token-metadata or seller-window read
+      // has also failed the listing row wins the precedence contest and
+      // its cheerful tail sat directly beside a sell-now row explaining
+      // it could not be started either. Pointing at the one exit that
+      // is also shut is worse than saying nothing about it.
+      listUnavailableTooCloseOnly:
+        'Too close to the due date to list — a listing needs at least an hour before the loan matures.',
+      listUnavailableNetwork:
+        'Not available on this network yet — the listing tools aren’t published to this deployment.',
+      listUnavailableNft:
+        'Not available for this position — listing currently supports loans backed by ERC-20 collateral only.',
+      listUnavailableHeldVpfi:
+        'Not available until this position’s outstanding VPFI balance is cleared — a listing needs a single settlement identity. Selling now, or waiting for the loan to close, stay open meanwhile.',
+      listUnavailableOffsetPending:
+        'Not available while the borrower has a linked exit pending on this loan — that has to complete or be cancelled first.',
+    },
+    // Past maturity BOTH sale rows flip to this: a fully-elapsed term
+    // is refused at creation, so advertising an exit that cannot be
+    // created would be a lie. Note this does NOT retire a listing that
+    // already went live — that surface keeps telling its own truth.
+    pastDue:
+      'This loan is past its due date — the borrower repays it or the default process resolves it. New sales can’t be started now.',
+    checking: 'Checking which of these are available on this position…',
+  },
+
   earlyExit: {
     receiptYouReceive: tmpl(
       '~{{toSeller}}, paid straight to your wallet in the same transaction — selling to offer #{{offerId}} at {{rate}} yearly. Nothing to claim afterwards.',

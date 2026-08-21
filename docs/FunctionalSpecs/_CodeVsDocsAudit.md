@@ -590,3 +590,52 @@ refusal is also not merely a nicety that could be relocated somewhere roomier:
 it belongs at ACCEPT, because refusing at completion instead would strand a
 buyer whose funds are already committed on the legacy accepted-but-not-completed
 shape, which this document's own settlement rules forbid.
+
+## Sale-cost disclosure keys on the lock, where the spec keys on fillability
+
+The spec says an exit the lender has already committed to keeps its cost stated,
+because a sale in flight has pending consequences rather than hypothetical
+prices — and that the test is whether the sale can still **complete**.
+
+The lender exit chooser implements that test as "the position lock stands",
+which is a **proxy**, and the two come apart in one state. A listing that
+expired without selling keeps the lock until the lender cancels or someone runs
+the permissionless cleanup; through that window no buyer can complete the sale,
+but the card carries on naming the held-balance transfer and the reward
+forfeiture as pending losses.
+
+**Direction of the error matters here** and is why this is recorded rather than
+rushed. The card over-warns: it names a cost the lender can no longer incur, on
+a row that already reads as unavailable. That is a poorer explanation, not a
+value-losing one — unlike the original defect this rule was written to fix,
+which HID a cost that could still be incurred.
+
+**Cheaper to fix than first recorded, for most positions.** This entry
+originally said the gap needed a new read. That is wrong for the ordinary case
+and the correction matters, because the deferral was justified on the cost:
+whenever the listing's offer id resolves — the same-device path — the hook
+already fetches that offer, and the response it decodes carries both
+`expiresAt` and `accepted`. It narrows the result to the two fields it wanted
+(the sale rate and creation time) and drops the rest. Classifying fillability
+for those positions is a matter of keeping fields already on the wire, not
+issuing another request.
+
+What genuinely remains is the **unrecovered-id** case: where the listing is
+known only by the position lock and no offer id could be resolved, there is
+nothing to widen, and answering needs either id recovery or an authoritative
+verdict from the protocol. That half belongs with the other pre-checks in
+#1841 and is part of what the shared preview verdict in
+a shared preview verdict would answer — proposed in #1847, which is
+still open, so this deliberately names the ISSUE rather than the design
+file. The file exists only on that branch; citing its path from here
+sent a reader to something not present on main.
+
+Left deferred rather than fixed here on scope, not cost — the error
+over-warns in the safe direction, and widening a shared hook's decode plus its
+state type is a change to a surface several other cards read, which does not
+belong in a chooser PR. Tracked as **#1848**, filed separately from #1841
+precisely because it is the opposite shape: #1841 collects checks that need a
+NEW authoritative read, and this one needs none for the ordinary case.
+
+Recorded so a later reader finds a known, bounded, safe-direction gap rather
+than concluding the card's rule is simply the lock.
