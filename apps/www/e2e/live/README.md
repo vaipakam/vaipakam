@@ -1,17 +1,37 @@
-# `apps/www` live post-deploy drives
+# Live post-deploy drives
 
-Committed drives that exercise the **deployed** marketing site. They run
-after a production deploy, per the live-review definition-of-done — not
-against a preview build, and not as part of CI.
+Committed drives that exercise **deployed** sites. They run after a
+production deploy, per the live-review definition-of-done — not against a
+preview build, and not as part of CI.
+
+They live under `apps/www` because that is where the browser tooling and the
+container setup below already are, but they are not all about the marketing
+site. Two kinds sit here:
+
+- **Marketing-site drives** — the rendered docs on `vaipakam.com`.
+- **Connected-app drives** — the wallet-connecting apps (`defi`, `alpha01`,
+  `alpha02`). `defi` and `alpha01` have no Playwright dependency of their own;
+  `alpha02` does (`@playwright/test`, for its own `e2e` suite), so a drive
+  specific to alpha02 could live there instead — the ones here span all three.
+
+The table further down says which is which, and how each takes its target.
 
 ## Why these are not CI specs
 
-Each one checks something that is only true once the deployed site has
-fetched the published protocol-config snapshot from the deployed
-indexer. A preview build, a prebuild guard, or an inspection of the
-shipped bundle can all pass while the rendered page shows something
-else. That gap is the reason the live review exists, so closing it
-requires a real browser pointed at the real origin.
+The reason differs by drive, and it is worth knowing which one applies before
+trusting a result.
+
+A marketing-site drive checks something only true once the deployed page has
+fetched the published protocol-config snapshot from the deployed indexer: a
+preview build, a prebuild guard, or an inspection of the shipped bundle can all
+pass while the rendered page shows something else.
+
+A connected-app drive checks behaviour of third-party SDKs as they actually run
+in a browser against the deployed bundle — whether a wallet kit phones home, for
+instance. A type-check proves an option was accepted, not that the traffic
+stopped.
+
+Both gaps close only with a real browser pointed at the real origin.
 
 The `apps/www` prebuild guards (`check:livevalue`, `check:knobs`, and
 the rest of `pnpm --filter @vaipakam/www typecheck`) cover the
@@ -24,7 +44,21 @@ what those structurally cannot see.
 pnpm --filter @vaipakam/www exec node e2e/live/live-worked-example.mjs
 ```
 
-Override the target with `WWW_ORIGIN` (defaults to
+Not every drive takes its target the same way, so check the table below
+before substituting a filename into that command. Single-origin drives use
+`WWW_ORIGIN`; `live-wallet-telemetry.mjs` takes one or more origins as
+positional arguments instead, because it checks several apps in one run and
+a single environment variable cannot express that:
+
+```bash
+node apps/www/e2e/live/live-wallet-telemetry.mjs \
+  https://defi.vaipakam.com/ https://alpha01.vaipakam.com/ https://alpha02.vaipakam.com/
+```
+
+It exits with a usage message if given no origins, rather than silently
+checking a default.
+
+Override a single-origin drive's target with `WWW_ORIGIN` (defaults to
 `https://vaipakam.com`):
 
 ```bash
@@ -106,11 +140,19 @@ surface and must not be taught to accept an unverified one.
 | File | Covers | Introduced by |
 | --- | --- | --- |
 | `live-worked-example.mjs` | The Overview's worked-example figures render as derived live values with the contract's integer arithmetic and honest provenance; the help search finds a page by a figure printed on it | #1751 (#1664 items 1 + 2) |
+| `live-wallet-telemetry.mjs` | A connected-app origin constructs the Coinbase SDK and sends nothing to its telemetry host on load. Takes origins as POSITIONAL arguments (covers `defi`, `alpha01`, `alpha02`). Fails closed unless the SDK is witnessed as constructed; the WalletConnect branch is **not** exercised (#1840) | #1836 (#1824) |
+
+The second one lives here rather than under the app it checks because it
+targets three origins and belongs to none of them, and because this is where
+the browser tooling and the container setup above already are. `apps/defi` and
+`apps/alpha01` carry no Playwright dependency; adding one to each so a
+cross-app check could sit in both would be the worse trade.
 
 ## Adding one
 
 Keep them dependency-free beyond `playwright`, parameterised by
-`WWW_ORIGIN`, and self-describing on stdout — someone reading the
+`WWW_ORIGIN` (or by positional origins where a drive spans several
+apps — say which in the table), and self-describing on stdout — someone reading the
 output during a release should be able to tell what was checked without
 opening the file. Query with what the page actually rendered rather
 than a hardcoded expectation wherever the invariant is "these two
