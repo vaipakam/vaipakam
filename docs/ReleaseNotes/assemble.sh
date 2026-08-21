@@ -105,6 +105,12 @@ UNREL="$DIR/unreleased"
 # than the bug it fixes.
 MARKER_PREFIX='<!-- assembled-fragment: '
 
+# A literal carriage return, for the marker patterns below. POSIX ERE has
+# no `\r` escape — GNU grep reads it as a literal `r` — so writing
+# `-->\r?$` silently matches "--> optionally followed by the letter r"
+# and never the thing intended. The byte has to be put in by the shell.
+CR=$'\r' 
+
 # Content identity for a fragment, hashed from its ORIGINAL bytes before
 # any link rewriting — which is what makes it exact rather than
 # approximate (see the recovery block below). Resolved once: `sha256sum`
@@ -173,6 +179,49 @@ read_mode() {  # read_mode <path>
 # that the operator sees in full on screen.
 byte_len() { local LC_ALL=C; printf '%s' "${#1}"; }
 byte_head() { local LC_ALL=C; printf '%s' "${1:0:$2}"; }
+
+# ── Set-aside names, bounded by the REAL limit ───────────────────────────────
+# NAME_MAX is resolved ONCE, before anything is published, so a filesystem
+# that will not answer cannot be discovered at the only point where
+# failing is expensive (Codex #1863 r24). A fallback of 255 recreated the
+# fixed-bound bug it replaced: on a filesystem with a smaller limit it is
+# simply wrong in the same direction. When the limit is unknown the name
+# collapses to a short hash-only form instead, which fits anywhere.
+NAME_MAX_KNOWN=0
+NAME_MAX_BYTES=255
+_resolve_name_max() {
+  local v
+  v="$(getconf NAME_MAX "$UNREL" 2>/dev/null)" || v=""
+  if [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 32 )); then
+    NAME_MAX_BYTES="$v"; NAME_MAX_KNOWN=1
+  fi
+}
+
+# quarantine_name <basename> <hash> -> a name that fits
+quarantine_name() {
+  # Separate statements: bash expands every word of a `local` command
+  # BEFORE performing any of its assignments, so referring to an earlier
+  # name in the same statement reads the OUTER one — unbound here, which
+  # `set -u` turns into an abort at the first call.
+  local base="$1"
+  local hash="$2"
+  local full=".assembled.$base"
+  if (( NAME_MAX_KNOWN )) && (( $(byte_len "$full") <= NAME_MAX_BYTES )); then
+    printf '%s' "$full"
+    return 0
+  fi
+  if (( NAME_MAX_KNOWN )); then
+    # ".assembled." is 11 bytes and ".<16 hex>" is 17.
+    local stem_max=$(( NAME_MAX_BYTES - 28 ))
+    if (( stem_max > 0 )); then
+      printf '.assembled.%s.%s' "$(byte_head "$base" "$stem_max")" "${hash:0:16}"
+      return 0
+    fi
+  fi
+  # Unknown limit, or one too small for a readable name: 19 bytes, which
+  # fits even the POSIX minimum-adjacent cases, and stays unique by hash.
+  printf '.a.%s' "${hash:0:16}"
+}
 
 # ── The one invariant this script keeps ──────────────────────────────────────
 # Three rounds of review in a row (r17, r18, r19) found the same abstract
@@ -379,6 +428,7 @@ LOCK="$UNREL/.assemble.lock"
 # `LOCK_HELD` is what keeps a losing contender from removing the lock
 # that is legitimately someone else's: the trap only ever clears a lock
 # this process created.
+_resolve_name_max
 LOCK_HELD=0
 WORK=""
 SNAP=""
@@ -414,7 +464,18 @@ _cleanup() {
   if [ -n "$_s" ]; then rm -rf "$_s" || :; fi
   if (( LOCK_HELD )); then
     LOCK_HELD=0
-    rmdir "$LOCK" 2>/dev/null || :
+    # A failure here is SAID, not swallowed (Codex #1863 r24). Suppressed,
+    # an otherwise successful run exited 0 while leaving the lock behind,
+    # and the next invocation was blocked by a stale lock that no message
+    # had ever mentioned — the operator left to discover it from an error
+    # describing a hard kill that never happened.
+    if ! rmdir "$LOCK" 2>/dev/null; then
+      echo "" >&2
+      echo "Warning: could not release the assembly lock at $LOCK." >&2
+      echo "The next run will refuse to start until it is gone. Remove it" >&2
+      echo "with:  rmdir $LOCK" >&2
+      echo "(or 'rm -rf' it if something has left files inside.)" >&2
+    fi
   fi
   return 0
 }
@@ -977,7 +1038,7 @@ for f in "${frags[@]}"; do
   # A fragment DOCUMENTING this mechanism can still quote a marker
   # indented or in a blockquote, which is what the anchor is for.
   run_checked 0,1 "checking ${FRAG_NAME[$f]} for embedded marker records" \
-    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "${FRAG_SNAP[$f]}"
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->${CR}?$" "${FRAG_SNAP[$f]}"
   if [ -n "$CAPTURED" ]; then
     echo "Error: ${FRAG_NAME[$f]} contains a line that is itself an assembly" >&2
     echo "marker:" >&2
@@ -1302,7 +1363,7 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
   # there and the index cannot see it (Codex #1863 r13). These records are
   # bytes by construction; parse them as bytes.
   run_checked 0,1 "scanning $(basename "$dated") for assembly markers" \
-    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$_d_copy"
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->${CR}?$" "$_d_copy"
   # A record carrying a NUL is REFUSED, never parsed (Codex #1863 r21).
   # Bash cannot hold a NUL in a variable and drops it from a command
   # substitution, so `<!-- assembled-fragment: note.md\0 sha256=… -->` —
@@ -1331,6 +1392,13 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     # deleting a real fragment unread (Codex #1863 r2). The grep below
     # is anchored for the same reason; this is the second gate, not the
     # only one.
+    # A trailing CR is stripped before matching (Codex #1863 r24). A dated
+    # file with CRLF endings — a checkout with Git's CRLF conversion on —
+    # leaves \r after the closing -->, so this anchored pattern matched
+    # NONE of the markers this script had written. Every fragment then
+    # read as never assembled and was appended a second time, and one
+    # with no Markdown heading slipped past the duplicate heuristic too.
+    line="${line%$'\r'}"
     [[ "$line" =~ ^"$MARKER_PREFIX"(.+)" sha256="([0-9a-f]{64})" -->"$ ]] || continue
     marker_name="${BASH_REMATCH[1]}"
     marker_hash="${BASH_REMATCH[2]}"
@@ -1484,13 +1552,31 @@ if (( ${#already[@]} > 0 )); then
     # fragment whose section was no longer anywhere. Each irreversible
     # step revalidates for itself; a loop is N steps, not one.
     assert_sources_unchanged "removing ${FRAG_NAME[$f]}"
+    # QUARANTINE, then hash, then delete — the same order the consumption
+    # loop uses, and for the same reason (Codex #1863 r24). Hashing the
+    # path and then removing the path leaves a window: bytes written in
+    # between are deleted having never been anywhere else. This path had
+    # the check but not the ordering, so the protection it looked like it
+    # had was the one thing it did not have.
+    _q_name="$(quarantine_name "${FRAG_NAME[$f]}" "${FRAG_HASH[$f]}")"
+    _q="$UNREL/$_q_name"
+    if [ -e "$_q" ]; then
+      echo "Error: a set-aside file already exists at $_q_name." >&2
+      echo "Nothing further will be consumed; move it aside and re-run." >&2
+      exit 1
+    fi
+    if ! mv "$f" "$_q"; then
+      echo "Error: could not set aside ${FRAG_NAME[$f]}." >&2
+      echo "Nothing further will be consumed." >&2
+      exit 1
+    fi
     _rc=0
-    _now="$(frag_hash "$f")" || _rc=$?
+    _now="$(frag_hash "$_q")" || _rc=$?
     if (( _rc != 0 )) || [ "$_now" != "${FRAG_HASH[$f]}" ]; then
-      _changed+=("${FRAG_NAME[$f]}")
+      _changed+=("${FRAG_NAME[$f]} -> $_q_name")
       continue
     fi
-    rm "$f"
+    rm "$_q"
   done
   if (( ${#_changed[@]} > 0 )); then
     echo ""
@@ -1542,7 +1628,7 @@ if [ -f "$OUT" ]; then
   # case here — a markerless file is exactly what this branch is for.
   out_has_markers=0
   run_checked 0,1 "checking $(basename "$OUT") for assembly markers" \
-    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$OUT"
+    env LC_ALL=C grep -a -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->${CR}?$" "$OUT"
   [ -z "$CAPTURED" ] || out_has_markers=1
 
   suspect=()
@@ -1589,8 +1675,13 @@ if [ -f "$OUT" ]; then
     # transient read failure would quietly clear the duplicate check and
     # let the section be appended twice (Codex #1863 r9). `-x` via `-F`
     # with the whole line, and `-a` for the same NUL reason as above.
+    # The COPY, not a fresh read of $OUT (Codex #1863 r24). A temporary
+    # edit hiding the matching heading for the duration of this grep, and
+    # reverted before the final check, made the duplicate check pass and
+    # the section be appended a second time — the same gap as the `cat`
+    # one round earlier, one site over.
     run_checked 0,1 "checking $(basename "$OUT") for a repeated heading" \
-      env LC_ALL=C grep -a -xF -f "$_head_file" "$OUT"
+      env LC_ALL=C grep -a -xF -f "$_head_file" "$OUT_COPY"
     if [ -n "$CAPTURED" ]; then
       suspect+=("${FRAG_NAME[$f]}")
     fi
@@ -2000,17 +2091,7 @@ for f in "${frags[@]}"; do
   # the fixed truncated length wrong in the same direction, so `mv` fails
   # only after $OUT is published. `getconf` answers for the real path;
   # if it cannot, 255 is the conservative POSIX floor to fall back to.
-  _nmax="$(getconf NAME_MAX "$UNREL" 2>/dev/null)" || _nmax=""
-  [[ "$_nmax" =~ ^[0-9]+$ ]] || _nmax=255
-  (( _nmax > 32 )) || _nmax=32
-  _q_name=".assembled.${FRAG_NAME[$f]}"
-  if (( $(byte_len "$_q_name") > _nmax )); then
-    # ".assembled." is 11 bytes, the hash suffix ".<16 hex>" is 17, so
-    # the stem gets whatever the limit leaves after those.
-    _stem_max=$(( _nmax - 28 ))
-    (( _stem_max > 0 )) || _stem_max=1
-    _q_name=".assembled.$(byte_head "${FRAG_NAME[$f]}" "$_stem_max").${FRAG_HASH[$f]:0:16}"
-  fi
+  _q_name="$(quarantine_name "${FRAG_NAME[$f]}" "${FRAG_HASH[$f]}")"
   _q="$UNREL/$_q_name"
   if [ -e "$_q" ]; then
     _abort_after_write "a set-aside file already exists at $(basename "$_q")"

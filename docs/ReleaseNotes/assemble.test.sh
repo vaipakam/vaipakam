@@ -1590,8 +1590,11 @@ exit \$_rc
 SHIM
 chmod +x "$W/fakebin/grep"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+# By CONTENT: the recovery path quarantines before deleting now, so a kept
+# fragment lives under `.assembled.<name>` and looking for the original name
+# reports "gone" for a file sitting safely right there.
 check "the edited one is kept" \
-  "$(count_in 'newly added line' "$W/docs/ReleaseNotes/unreleased/0001-a.md")" "1"
+  "$(grep -rl 'newly added line' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 check "and it says so"         "$(says "$msg" 'Kept (changed')"      "1"
 check "the untouched one goes" \
   "$([ -f "$W/docs/ReleaseNotes/unreleased/0002-b.md" ] && echo kept || echo gone)" "gone"
@@ -1952,7 +1955,11 @@ check "the lock is still released" "$(bash "$W/drive.sh" "$W")" "released"
 # Pinned to the real definition, so the drive cannot pass while the script
 # diverges from the pattern it demonstrates.
 check "removals are non-fatal in the script" \
-  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c '|| :')" "3"
+  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c '|| :')" "2"
+# And a lock that will not come off is REPORTED rather than swallowed, which
+# is what the third `|| :` used to hide.
+check "a failed lock release is reported" \
+  "$(awk '/^_cleanup\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'could not release the assembly lock')" "1"
 
 echo "T67: a name using the ABRUPT comment terminator is refused"
 W="$ROOT/t67"; build "$W"
@@ -2028,6 +2035,126 @@ check "the set-aside name fits" \
        [ -e "$q" ] || continue; n="$(basename "$q")"
        [ "$(LC_ALL=C; echo ${#n})" -le 64 ] && echo fits || echo over
      done)"                                                                 "fits"
+
+echo "T70: recovery deletion quarantines before it checks and removes"
+W="$ROOT/t70"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The recovery path hashed the PATH and then removed the PATH. Bytes written
+# between the two were deleted having never been anywhere else — it had the
+# check but not the ordering, so the protection it appeared to have was the
+# one thing it lacked (Codex #1863 r24).
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+# Shimmed on `rm`, not on the checksum: frag_hash REDIRECTS the file into
+# sha256sum rather than passing its path, so a shim keyed on the filename
+# never fires and the case tests nothing. `rm` is the step whose target
+# changed — the original path before this fix, the quarantine after it.
+cat > "$W/fakebin/rm" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '## written after the hash\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
+fi
+exec /bin/rm "\$@"
+SHIM
+chmod +x "$W/fakebin/rm"
+PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the later bytes are not destroyed" \
+  "$(grep -rl 'written after the hash' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
+
+echo "T71: the markerless heading check reads the recorded copy"
+W="$ROOT/t71"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# A markerless output already containing the heading. A temporary edit hiding
+# it for the duration of this grep, reverted before the final check, made the
+# duplicate check pass and the section be appended twice (Codex #1863 r24).
+printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' > "$out/ReleaseNotes-2026-08-16.md"
+cp "$out/ReleaseNotes-2026-08-16.md" "$W/pristine.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/grep" <<SHIM
+#!/bin/sh
+_hf=0
+for a in "\$@"; do case "\$a" in -f) _hf=1 ;; esac; done
+if [ "\$_hf" = "1" ] && [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '# Release Notes — 2026-08-16\n\nnothing here\n' > "$out/ReleaseNotes-2026-08-16.md"
+  /usr/bin/grep "\$@"; _rc=\$?
+  /bin/cp "$W/pristine.md" "$out/ReleaseNotes-2026-08-16.md"
+  exit \$_rc
+fi
+exec /usr/bin/grep "\$@"
+SHIM
+chmod +x "$W/fakebin/grep"
+PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the heading is not duplicated" \
+  "$(count_in '^## 0001-a$' "$out/ReleaseNotes-2026-08-16.md")"             "1"
+
+echo "T72: an unknown NAME_MAX falls back to a name that always fits"
+W="$ROOT/t72"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# Defaulting to 255 when getconf cannot answer recreated the fixed-bound bug:
+# on a filesystem with a smaller limit it is wrong in the same direction, and
+# mv then fails only after publication (Codex #1863 r24).
+long="0003-$(printf 'z%.0s' $(seq 1 200)).md"
+printf '## long\n' > "$W/docs/ReleaseNotes/unreleased/$long"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/getconf" <<'SHIM'
+#!/bin/sh
+exit 1
+SHIM
+chmod +x "$W/fakebin/getconf"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/$long"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run completes"      "$?"                                        "0"
+check "the set-aside name is short" \
+  "$(for q in "$W/docs/ReleaseNotes/unreleased"/.a.*; do
+       [ -e "$q" ] || continue; n="$(basename "$q")"
+       [ "$(LC_ALL=C; echo ${#n})" -le 32 ] && echo fits || echo over
+     done)"                                                                "fits"
+
+echo "T73: a lock that cannot be released is reported, not swallowed"
+W="$ROOT/t73"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Suppressed, an otherwise successful run exited 0 while leaving the lock
+# behind, and the NEXT invocation was blocked by a stale lock no message had
+# ever mentioned (Codex #1863 r24).
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/rmdir" <<'SHIM'
+#!/bin/sh
+exit 1
+SHIM
+chmod +x "$W/fakebin/rmdir"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "it warns"              "$(says "$msg" 'could not release the assembly lock')" "1"
+check "it gives the command"  "$(says "$msg" 'rmdir ')"                              "1"
+
+echo "T74: markers written with CRLF endings are still recognised"
+W="$ROOT/t74"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+# A checkout with Git's CRLF conversion leaves \r after the closing -->, and
+# the anchored pattern then matched NONE of the markers this script wrote —
+# so every fragment read as never assembled and was appended again
+# (Codex #1863 r24).
+_h="$(fixture_hash "$W/docs/ReleaseNotes/unreleased/0001-a.md")"
+printf '# Release Notes — 2026-08-16\r\n\r\n## 0001-a\r\n<!-- assembled-fragment: 0001-a.md sha256=%s -->\r\n' \
+  "$_h" > "$out/ReleaseNotes-2026-08-16.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "it is recognised as already folded in" \
+  "$(says "$msg" 'removing without re-appending')"                          "1"
+check "the section is not duplicated" \
+  "$(count_in '^## 0001-a' "$out/ReleaseNotes-2026-08-16.md")"              "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
