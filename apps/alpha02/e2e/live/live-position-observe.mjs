@@ -1979,6 +1979,65 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
   // and every exit carries it.
   await late.capture();
 
+
+  /**
+   * Was the card we just reviewed one this wallet should have been
+   * shown at all?
+   *
+   * TWO FACTS, and every zero-jump route has to consult both (Codex
+   * #1853 r20). They were each implemented once, on the ONE route that
+   * happened to surface them, which is this file's seventh and eighth
+   * instance of the same defect — so they live here and both consumers
+   * call in.
+   *
+   *   A. THE CARD WAS SCRAPED AND IS NOW GONE. A reversible transition
+   *      leaves no trace in a before/after: the position transfers
+   *      away, the page's 60-second ownership poll unmounts the card,
+   *      and it transfers back — two identical chain samples, and a
+   *      card that demonstrably went missing between them. Only the DOM
+   *      can see that round trip. The no-switch route learned this at
+   *      r17; the post-click and already-Advanced routes did not, and
+   *      reported the vanished card's zero jumps as a product FAIL.
+   *
+   *   B. THE PRE-STATE SAYS THE CARD WAS NEVER THIS WALLET'S. Ownership
+   *      can transfer after the page's initial owner read and before
+   *      the snapshot, and the card then stays mounted for up to its
+   *      60-second refresh — so a stale card can be reviewed to
+   *      completion and pass. Gating this on the card being ABSENT was
+   *      the bug: a stale card is mounted, which is precisely why it
+   *      gets reviewed. Nothing about the DOM is consulted here.
+   *
+   * `advancedPreRaced` rides on `cardAbsentAtScrape` because that flag
+   * decides whether the SCRAPE's observations may be discarded, and a
+   * card that did render with a row missing keeps its finding.
+   */
+  const staleCardEvidence = async (offered) => {
+    if (!cardAbsentAtScrape && !(await cardPresent())) {
+      return {
+        advancedOffered: offered,
+        advancedJumps: null,
+        advancedBlocked: true,
+        advancedRaced: true,
+        advancedWhy:
+          'the lender card was scraped and then vanished during the probe — ' +
+          'a transition reversed inside the window, so no audit was possible',
+      };
+    }
+    if (snapshotCardEligible(before, observed) === false) {
+      return {
+        advancedOffered: offered,
+        advancedJumps: null,
+        advancedBlocked: true,
+        advancedPreRaced: cardAbsentAtScrape,
+        advancedWhy:
+          'the card was reviewed on a position the observed wallet did not hold when ' +
+          'the chain was read — the page can keep it mounted for up to 60s after ' +
+          'ownership moves, so nothing here says anything about the app',
+      };
+    }
+    return null;
+  };
+
   /**
    * The one verdict for "the card ended up with no jump button".
    *
@@ -2023,6 +2082,11 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
         advancedWhy: `chain state moved during the probe: ${moved}`,
       };
     }
+    // Ahead of the already-unjumpable arm: "this card was never yours"
+    // and "this card had nothing to offer" are different findings, and
+    // the first is the more decisive (Codex #1853 r20).
+    const stale = await staleCardEvidence(offered);
+    if (stale) return stale;
     if (snapshotJumpable(before, observed) === false) {
       return {
         advancedOffered: offered,
@@ -2237,6 +2301,15 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
               };
             }
           }
+          // A STALE MOUNTED CARD IS NOT A CLEAN REVIEW (Codex #1853
+          // r20). Everything above turns on the card being GONE; a card
+          // the wallet no longer holds stays up for its refresh
+          // interval, and with a settled reason for having no jump —
+          // past maturity, which is most of this chain — the wait ends
+          // with it still present and this returned exit 0 on a review
+          // of somebody else's position.
+          const stale = await staleCardEvidence(false);
+          if (stale) return stale;
           return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
         }
         // It appeared while we waited: fall through to the click path.
