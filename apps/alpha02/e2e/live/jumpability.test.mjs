@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { jumpabilityMoved, snapshotJumpable } from './jumpability.mjs';
+import {
+  jumpabilityMoved,
+  snapshotCardEligible,
+  snapshotJumpable,
+} from './jumpability.mjs';
 
 /**
  * Why this file exists, stated plainly because it is the finding:
@@ -171,5 +175,75 @@ describe('snapshotJumpable — could a sale row have been offered on this state?
     const locked = { ...OK, locked: true };
     expect(jumpabilityMoved(locked, { ...locked })).toBeNull();
     expect(snapshotJumpable(locked)).toBe(false);
+  });
+});
+
+const ME = '0xAA';
+
+describe('snapshotJumpable — the holder must be the wallet we are observing', () => {
+  // `holder !== null` was the old test and it is the wrong question
+  // (r15). The card requires the holder to equal the CONNECTED address
+  // and refetches ownership only every 60s, so a transfer to a third
+  // party leaves both snapshots holding the same new, non-null address:
+  // nothing moved, the token still exists, and the stale card's jumps
+  // vanish on the next refetch — reported as a product FAIL.
+  it('says no when the position moved to somebody else', () => {
+    expect(snapshotJumpable({ ...OK, holder: '0xbb' }, ME)).toBe(false);
+  });
+
+  it('says yes when the observed wallet still holds it', () => {
+    expect(snapshotJumpable(OK, ME)).toBe(true);
+  });
+
+  it('compares case-insensitively, since one side is checksummed', () => {
+    expect(snapshotJumpable({ ...OK, holder: '0xaa' }, '0xAa')).toBe(true);
+  });
+
+  it('does not invent a mismatch when there is no wallet to compare', () => {
+    // Suppressing real findings because the caller had nobody to check
+    // against would be the worse direction.
+    expect(snapshotJumpable(OK, undefined)).toBe(true);
+  });
+});
+
+describe('snapshotCardEligible — the LOOSEST of the three questions', () => {
+  // Conflating this with jumpability is not a subtle cost. The card
+  // stays mounted past maturity, so a strict gate here would suppress
+  // the card assertions on every past-due position — which is currently
+  // every lender position on the live chain. The drive's headline check
+  // would stop checking on exactly the data it runs against.
+  it('keeps the card mounted past maturity, where a sale row is gone', () => {
+    const matured = { ...OK, matured: true };
+    expect(snapshotJumpable(matured, ME)).toBe(false);
+    expect(snapshotCardEligible(matured, ME)).toBe(true);
+  });
+
+  it('keeps the card mounted on a locked position too', () => {
+    expect(snapshotCardEligible({ ...OK, locked: true }, ME)).toBe(true);
+  });
+
+  it('keeps the card mounted on a FallbackPending loan', () => {
+    // The card exists to EXPLAIN that state, so unmounting it there
+    // would lose the explanation exactly when it becomes true.
+    const fb = { ...OK, active: false, fallbackPending: true };
+    expect(snapshotCardEligible(fb, ME)).toBe(true);
+    expect(snapshotJumpable(fb, ME)).toBe(false);
+  });
+
+  for (const [name, state] of [
+    ['the loan is terminal', { active: false, fallbackPending: false }],
+    ['the position was transferred away', { holder: '0xbb' }],
+    ['the lender token was burned', { holder: null }],
+    ['the holder is sanctions-flagged', { flagged: true }],
+  ]) {
+    it(`says no when ${name}`, () => {
+      expect(snapshotCardEligible({ ...OK, ...state }, ME)).toBe(false);
+    });
+  }
+
+  it('returns null rather than false with no snapshot', () => {
+    // The caller tests `=== false` before suppressing card assertions;
+    // a failed chain read must not silently discard real findings.
+    expect(snapshotCardEligible(null, ME)).toBeNull();
   });
 });

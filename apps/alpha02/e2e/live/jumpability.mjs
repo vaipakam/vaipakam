@@ -27,6 +27,8 @@
  * @property {boolean} locked   the lender position token carries a lock
  * @property {string|null} holder lowercased lender authority, null if burned
  * @property {boolean} flagged  the observed wallet is sanctions-flagged
+ * @property {boolean} [fallbackPending] status is FallbackPending — not
+ *   Active, but the card stays mounted to explain it
  */
 
 /**
@@ -103,7 +105,65 @@ export function jumpabilityMoved(before, after) {
  * @param {JumpabilitySnapshot|null} s
  * @returns {boolean|null} null when there is no snapshot to judge
  */
-export function snapshotJumpable(s) {
+export function snapshotJumpable(s, observed) {
   if (!s) return null;
-  return s.active && !s.matured && !s.locked && s.holder !== null && !s.flagged;
+  if (!heldByObserver(s, observed)) return false;
+  return s.active && !s.matured && !s.locked && !s.flagged;
+}
+
+/**
+ * Is the position held by the wallet the drive is observing?
+ *
+ * `holder !== null` is not the question (Codex #1853 r15). The card
+ * requires the lender token's holder to equal the CONNECTED address,
+ * and the ownership query refreshes on a 60-second interval — so a
+ * transfer to a DIFFERENT wallet that lands after the page caches
+ * ownership but before the pre-probe snapshot leaves both snapshots
+ * holding the same new, non-null address. Nothing "moved" between
+ * them, a burn check passes because the token still exists, and the
+ * stale card's jumps disappear on the next ownership refetch — which
+ * the drive would then have reported as a product FAIL.
+ *
+ * Compared case-insensitively: `jumpabilitySnapshot` lowercases the
+ * holder it reads, and the observed address arrives checksummed.
+ *
+ * A missing `observed` returns true rather than false — the caller
+ * genuinely has nobody to compare against, and inventing a mismatch
+ * there would suppress real findings.
+ */
+function heldByObserver(s, observed) {
+  if (s.holder === null) return false;
+  if (!observed) return true;
+  return s.holder === String(observed).toLowerCase();
+}
+
+/**
+ * Could the lender CARD still be mounted on this state?
+ *
+ * The third question, and deliberately the LOOSEST of the three
+ * (Codex #1853 r15). `jumpabilityMoved` asks whether anything changed;
+ * `snapshotJumpable` asks whether a sale ROW could be offered;
+ * this asks whether the card itself could be on the page at all.
+ *
+ * It must not be conflated with jumpability, and the cost of doing so
+ * is severe rather than subtle: the card stays mounted past maturity
+ * and on a FallbackPending loan — its wait row is still true — so
+ * every past-due position, which is currently EVERY lender position on
+ * the live chain, would have its card assertions suppressed. The
+ * drive's headline check would stop checking on exactly the data it
+ * runs against.
+ *
+ * What genuinely unmounts it: a terminal status, the holder no longer
+ * being the observed wallet (transferred or burned), and the holder
+ * being sanctions-flagged — which correctly suppresses the card.
+ *
+ * @param {JumpabilitySnapshot|null} s
+ * @param {string} [observed] the wallet the drive is impersonating
+ * @returns {boolean|null} null when there is no snapshot to judge
+ */
+export function snapshotCardEligible(s, observed) {
+  if (!s) return null;
+  if (s.flagged) return false;
+  if (!heldByObserver(s, observed)) return false;
+  return Boolean(s.active || s.fallbackPending);
 }

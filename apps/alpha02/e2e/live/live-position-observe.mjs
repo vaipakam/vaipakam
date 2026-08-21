@@ -88,7 +88,11 @@ import {
   http,
   numberToHex,
 } from 'viem';
-import { jumpabilityMoved, snapshotJumpable } from './jumpability.mjs';
+import {
+  jumpabilityMoved,
+  snapshotCardEligible,
+  snapshotJumpable,
+} from './jumpability.mjs';
 import { redactUrl } from './redact.mjs';
 import {
   EXECUTION_REVERTED,
@@ -1702,6 +1706,13 @@ async function jumpabilitySnapshot(loan) {
     ]);
     return {
       active: Number(live.status) === STATUS_ACTIVE,
+      // Recorded SEPARATELY from `active` so the pure module can reason
+      // about the CARD's mount gate without importing chain constants
+      // (Codex #1853 r15). The card deliberately stays mounted on a
+      // fallback-settling loan — its wait row is still true — so "not
+      // Active" and "not mountable" are different questions and the
+      // suppression below turns on the second, not the first.
+      fallbackPending: Number(live.status) === STATUS_FALLBACK_PENDING,
       // `>=`, matching the page and the contracts: AT the boundary
       // second both jumps are correctly gone (Codex #1853 r10).
       matured: now >= live.startTime + live.durationDays * 86_400n,
@@ -1812,6 +1823,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
   // reads is the wrong thing to economise on here.
   const before = loan ? await jumpabilitySnapshot(loan) : null;
   const jumpsOf = () => card.getByRole('button', { name: /Go to this option/i });
+  const cardPresent = async () => (await card.count()) > 0;
 
   /**
    * The one verdict for "the card ended up with no jump button".
@@ -1857,7 +1869,7 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
         advancedWhy: `chain state moved during the probe: ${moved}`,
       };
     }
-    if (snapshotJumpable(before) === false) {
+    if (snapshotJumpable(before, observed) === false) {
       return {
         advancedOffered: offered,
         advancedJumps: null,
@@ -1916,6 +1928,46 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
         // depends on have settled, which is exactly what we just waited
         // for.
         if (!settled.switchThere) {
+          // NO SWITCH is the ordinary, correct outcome on a position
+          // with nothing to jump to — every past-due lender position on
+          // the live chain lands here — so it must NOT be routed through
+          // `noJumpVerdict`, which would BLOCK all of them.
+          //
+          // But it is also where a page that never mounted the CARD ends
+          // up (Codex #1853 r15). `stillEligible` is re-read immediately
+          // before the visit, and the loan can still go terminal, be
+          // transferred away, or have its holder flagged during
+          // navigation and the 45s wait — after which the card correctly
+          // never renders. The shape scrape upstream then sees no card
+          // and the reporter files `chooser MISSING` as a product
+          // regression, because nothing had marked the route as raced.
+          //
+          // Re-read the chain and ask the CARD's own mount question,
+          // which is much looser than jumpability: past maturity and
+          // FallbackPending both keep it mounted. Only a genuinely
+          // unmountable pre-state suppresses the shape assertions.
+          if (!(await cardPresent())) {
+            const pre = snapshotCardEligible(before, observed);
+            if (pre === false) {
+              return {
+                advancedOffered: false,
+                advancedJumps: null,
+                advancedBlocked: true,
+                // A DIFFERENT flag from `advancedRaced`, and the
+                // difference is which observations it may discard. This
+                // transition predates the shape scrape, so those
+                // observations are of a correctly-absent card and must
+                // be suppressed. `advancedRaced` marks a transition
+                // DURING the probe, which cannot have affected a scrape
+                // that already happened — see the reporter.
+                advancedPreRaced: true,
+                advancedWhy:
+                  'the lender card could not be mounted when the probe read the chain — ' +
+                  'the position went terminal, left this wallet, or its holder was flagged ' +
+                  'before the page rendered',
+              };
+            }
+          }
           return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
         }
         // It appeared while we waited: fall through to the click path.
@@ -2109,8 +2161,33 @@ for (const v of visited) {
   // Note this is EVIDENCE-GATED, not a blanket suppression: it applies
   // only where `jumpabilityMoved` read the chain and found a specific
   // change. A page that merely looks odd still fails.
-  const racedMidProbe = v.advancedBlocked === true && v.advancedRaced === true;
-  if (detail && !v.nav && !racedMidProbe) {
+  // SUPPRESS ONLY WHAT THE RACE COULD HAVE INVALIDATED (Codex #1853 r15).
+  //
+  // Round 10 suppressed the card assertions on any detected race, and
+  // justified it as "the same transition that removed the jumps unmounts
+  // the card". That reasoning was wrong about its own mechanism, which
+  // is why the fix was too broad: `text`, `lenderCardText` and
+  // `lenderShapeOf(...)` are all evaluated EARLIER in the same object
+  // literal than `lenderAdvancedOf(...)`. A transition detected during
+  // the Advanced probe therefore cannot have affected a scrape that had
+  // already happened — so discarding those observations threw away
+  // genuine missing-row regressions that were positively observed
+  // before the chain moved.
+  //
+  // What round 10 was actually protecting against is the OTHER timing:
+  // a transition that landed before the page rendered, leaving the
+  // scrape looking at a card that was correctly never mounted. That case
+  // is now detected on its own terms and carries its own flag.
+  //
+  // So the two are split by WHEN the transition happened relative to the
+  // scrape:
+  //   advancedPreRaced — before it. The observations are of a correctly
+  //                      absent card; suppress them.
+  //   advancedRaced    — during the probe, after it. The observations
+  //                      stand; the race only excuses the zero-jump
+  //                      result, which is where it was detected.
+  const preRaced = v.advancedBlocked === true && v.advancedPreRaced === true;
+  if (detail && !v.nav && !preRaced) {
     if (!v.chooser) problems.push(`${ROLE} chooser MISSING on an eligible loan`);
     else if (ROLE === 'lender') {
       // The card is an AWARENESS surface, so what makes it correct is
