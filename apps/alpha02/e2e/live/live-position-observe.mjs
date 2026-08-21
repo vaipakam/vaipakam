@@ -88,6 +88,7 @@ import {
   http,
   numberToHex,
 } from 'viem';
+import { jumpabilityMoved } from './jumpability.mjs';
 import { redactUrl } from './redact.mjs';
 import {
   EXECUTION_REVERTED,
@@ -1711,46 +1712,6 @@ async function jumpabilitySnapshot(loan) {
   });
 }
 
-/**
- * Did the inputs that make a SALE ROW JUMPABLE actually CHANGE?
- *
- * A before/after comparison, not a post-hoc read of the current state
- * (Codex #1853 r12). The previous version read only the state AFTER the
- * click and called any unjumpable value a race — so a candidate that was
- * ALREADY FallbackPending (which lender eligibility explicitly admits),
- * already past maturity, or already locked before the page rendered
- * would be reported as "left Active during the probe" and exit BLOCKED.
- * Nothing had moved. And that is the direction that hides a real defect:
- * if a Basic-mode regression wrongly offered the switch on such a
- * position, clicking it yields no jumps and the drive would excuse it as
- * a race instead of failing.
- *
- * NOT `stillEligible`, which asks whether the CARD may mount and is
- * deliberately loose — it accepts FallbackPending and past maturity,
- * because the wait row stays true (Codex #1853 r9). This asks the
- * strict question, and its inputs are a SUPERSET of that one's: status,
- * maturity, lock, holder, sanctions (r11 added the last two).
- *
- * Deliberately a subset of everything `buildLenderExitRows` consults. A
- * complete model would be a shadow copy of that module living in a test
- * harness — the defect class this whole PR chain is about — so anything
- * uncovered still reports as the no-op-switch FAIL, the honest failure
- * for "we cannot explain this".
- */
-async function jumpabilityMoved(before, after) {
-  if (!before || !after) return null;
-  if (before.active && !after.active) return 'loan left Active during the probe';
-  if (!before.matured && after.matured) return 'loan reached maturity during the probe';
-  if (!before.locked && after.locked) return 'position became locked during the probe';
-  if (before.holder !== after.holder) {
-    return after.holder === null
-      ? 'lender token burned during the probe'
-      : 'position transferred during the probe';
-  }
-  if (!before.flagged && after.flagged) return 'holder sanctions-flagged during the probe';
-  return null;
-}
-
 /** Raw lock reason on any position token; 0 = unlocked. */
 async function positionLockOf(tokenId) {
   try {
@@ -1839,6 +1800,17 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
   // the case I defended.
   const card = page.locator('section.card').filter({ hasText: CHOOSER.title }).first();
   const sw = card.getByRole('button', { name: SWITCH });
+  // Snapshot BEFORE anything observes the switch (Codex #1853 r13).
+  // Round 12 took it after `sw.count()` had already decided, so a loan
+  // that went FallbackPending WHILE the snapshot was running recorded
+  // `active: false` in BOTH reads — no change, and the healthy race
+  // reported as a product FAIL. The pre-state has to predate the
+  // decisive observation, not merely the click.
+  //
+  // Paid on every detail page, including ones that never offer a
+  // switch. That is the cost of the ordering being load-bearing; five
+  // reads is the wrong thing to economise on here.
+  const before = loan ? await jumpabilitySnapshot(loan) : null;
   const jumpsOf = () => card.getByRole('button', { name: /Go to this option/i });
   try {
     if ((await sw.count()) === 0) {
@@ -1888,9 +1860,6 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
         return { advancedOffered: false, advancedWhy: 'already in Advanced', ...(await anchorAudit(page, card)) };
       }
     }
-    // Snapshot BEFORE the click, so the comparison below measures a
-    // change rather than a state (Codex #1853 r12).
-    const before = loan ? await jumpabilitySnapshot(loan) : null;
     await sw.first().click({ timeout: 10_000 });
     // WAIT FOR READINESS, not a fixed sleep (Codex #1853 r7). Switching
     // starts the Advanced-only `loanLive` read, and while it is in
@@ -1926,6 +1895,19 @@ async function waitForSaleRows(card, jumpsOf, page, swOf) {
       // reacting perfectly correctly. Round 7's poll fixed the slow-RPC
       // false FAIL and left this one, because both arrive as "settled,
       // no jump" and only a chain read tells them apart.
+      // `jumpabilityMoved` used to be `async` while awaiting nothing,
+      // and this call site dropped the `await` (Codex #1853 r13):
+      // `moved` was then always a truthy Promise, so EVERY zero-jump
+      // case exited BLOCKED with "[object Promise]" as its reason and
+      // the no-op-switch FAIL below was UNREACHABLE. Three rounds spent
+      // getting that branch right, on a branch that could not fire.
+      //
+      // Not caught by any run on this PR, because the live chain has no
+      // jumpable lender row — so "re-ran live, 3/3 clean" never touched
+      // this path. Recording that: the verification I have been citing
+      // does not exercise the code I have been changing. The fix is the
+      // extraction to `jumpability.mjs`, where it is synchronous (so it
+      // cannot be mis-awaited) and covered by `jumpability.test.mjs`.
       const moved = loan ? jumpabilityMoved(before, await jumpabilitySnapshot(loan)) : null;
       if (moved) {
         return {
@@ -2003,9 +1985,17 @@ async function anchorAudit(page, card) {
   }
   return {
     advancedJumps: jumping.length,
-    // `null` target = a jumping row this drive does not recognise, which
-    // is a mapping gap rather than a product defect; reported, not failed.
-    advancedAnchorsOk: checks.every((c) => c.target === null || c.present === true),
+    // An unmapped jumping row is NOT a pass (Codex #1853 r13). Treating
+    // `target === null` as satisfied meant a new jumpable row, or either
+    // title reworded past these regexes, would exit 0 with
+    // `advancedAnchorsOk: true` having audited no anchor at all — the
+    // drive's advertised every-button check, silently asserting nothing.
+    //
+    // It is still not a product FAIL: the mapping gap is the harness's,
+    // not the app's. It is BLOCKED — could not look — which is the same
+    // verdict every other "we cannot interpret this" outcome takes.
+    advancedAnchorsOk: checks.every((c) => c.present === true),
+    advancedUnmapped: checks.filter((c) => c.target === null).map((c) => c.title),
     advancedAnchors: checks,
   };
 }
@@ -2091,7 +2081,9 @@ for (const v of visited) {
       // optional-chains the lookup, so the failure is silent by
       // construction and invisible to a user as anything but a dead
       // button.
-      if (v.advancedAnchorsOk === false) {
+      // An unmapped row is the harness's gap, so it must not be filed
+      // as the app's defect — it takes the BLOCKED path instead.
+      if (v.advancedAnchorsOk === false && !(v.advancedUnmapped ?? []).length) {
         problems.push('a lender jump button has no anchor to land on');
       }
     } else {
@@ -2294,13 +2286,22 @@ if (failures) process.exit(1);
 // a clean run either, because the assertion this drive advertises did
 // not execute (Codex #1853 r6). Ranked AFTER `failures` so a real
 // regression is still reported as one.
-const advBlocked = visited.filter((v) => v.advancedBlocked);
+const advBlocked = visited.filter(
+  (v) => v.advancedBlocked || (v.advancedUnmapped ?? []).length > 0,
+);
 if (advBlocked.length) {
   console.log(
     `\nBLOCKED: the Advanced probe could not complete on ${advBlocked.length}` +
       ` page(s) — the jump-anchor assertion did not run.`,
   );
-  advBlocked.forEach((v) => console.log(`  ${v.path}: ${v.advancedWhy}`));
+  advBlocked.forEach((v) =>
+    console.log(
+      `  ${v.path}: ${
+        v.advancedWhy ??
+        `jumping row(s) this drive cannot map to an anchor: ${v.advancedUnmapped.join(', ')}`
+      }`,
+    ),
+  );
   process.exit(2);
 }
 if (allowlistTooNarrow.length || httpGaps.length) process.exit(2);
