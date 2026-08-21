@@ -734,8 +734,10 @@ The borrower claim returns, depending on how the loan settled:
   is nothing left — but that is an outcome, not a rule. Whether the rebate comes
   back depends on how the loan ended: on a loan still using the retired
   VPFI fee path, the VPFI held against its initiation fee is
-  forfeited to treasury rather than returned, and a rebate comes
-  back only on a proper close.
+  forfeited to treasury on a default or liquidation. A proper
+  close instead settles the time-weighted rebate — which can be
+  zero, and the whole amount go to treasury, if your discount
+  averaged zero across the loan.
 
 The borrower position NFT is burned when you claim, not when the
 loan resolves — so a surplus left by a liquidation is still there

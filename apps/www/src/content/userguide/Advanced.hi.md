@@ -739,8 +739,11 @@ Borrower claim इस आधार पर return करता है कि loan
   claim देखें। Illiquid asset के default में आम तौर पर पूरी
   basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम
   नहीं। rebate वापस आएगा या नहीं यह इस पर निर्भर है कि loan कैसे ख़त्म हुआ: बंद किए गए VPFI fee रास्ते
-  वाले loan में initiation fee के बदले रखा गया VPFI **treasury को
-  ज़ब्त** हो जाता है, और rebate सिर्फ़ proper close पर वापस आता है।
+  वाले loan में initiation fee के बदले रखा गया VPFI default या
+  liquidation पर **treasury को ज़ब्त** हो जाता है। Proper close
+  पर उसके बजाय time-weighted rebate settle होता है — जो शून्य भी
+  हो सकता है, और तब पूरी राशि treasury को चली जाती है, यदि loan भर
+  आपका discount औसतन शून्य रहा हो।
 
 Borrower position NFT तब burn होता है जब आप claim करते हैं, तब
 नहीं जब loan resolve होता है — इसलिए liquidation से बचा surplus

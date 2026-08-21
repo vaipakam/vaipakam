@@ -317,9 +317,10 @@ collateral。如果发生 default 或 liquidation，也请查看一下。系统�
 等着您的才是 collateral 本身。在无法定价的 collateral 上发生
 default 时，往往整个 basket 都会被取走、什么也不剩，但那是结果，不是规则。
 费用 rebate 会不会回来，取决于 loan 如何结束：即使仍在已停用 VPFI
-费用路径上的 loan，full repayment、preclose 或 refinance 也会把为
-Loan Initiation Fee 托管的 VPFI 返还一部分给您，只有 default 或
-liquidation 才会将其没收转入 treasury。claim 会 consume
+费用路径上的 loan，full repayment、preclose 或 refinance 会结算为
+Loan Initiation Fee 托管的 VPFI 的时间加权 rebate——若您在整个 loan
+期间的折扣平均为零，该 rebate 也可能为零，全额仍归 treasury。只有
+default 或 liquidation 才会将其全部没收。claim 会 consume
 您的 borrower position NFT — 这正是为什么 liquidation 之后那个 NFT 仍在，
 等着您。
 

@@ -1,9 +1,15 @@
 ## The guides no longer tell borrowers who repaid in full that their rebate is gone (#882)
 
-On loans still using the retired VPFI fee path, part of the VPFI held against
-the Loan Initiation Fee **is** returned when the loan ends properly — a full
-repayment, an early close, or a refinance. Only a default or a liquidation
-forfeits it.
+On loans still using the retired VPFI fee path, a loan that ends properly — a
+full repayment, an early close, or a refinance — **settles** the time-weighted
+rebate on the VPFI held against the Loan Initiation Fee. A default or a
+liquidation forfeits the whole amount outright.
+
+Settling is not the same as paying out. The rebate is sized by the discount the
+borrower averaged over the loan's life, so a borrower who held no VPFI, or
+dropped to no discount, can settle properly and still receive nothing — the
+whole held amount goes to treasury. What is wrong is telling every borrower it
+never comes back; what would be equally wrong is telling them it always does.
 
 Both user guides said otherwise. The Claim Center section of every Basic guide
 stated flatly that the fee rebate is what never comes back, two sentences after

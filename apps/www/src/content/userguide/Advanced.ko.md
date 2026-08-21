@@ -672,7 +672,9 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   default에서는 보통 바스켓 전체가 나가 아무것도 남지 않지만, 그것은 결과일
   뿐 규칙이 아닙니다. rebate가 돌아오는지는 loan이 어떻게 끝났는지에 달려 있습니다: 폐지된 VPFI 수수료
   경로에 남아 있는 loan이라면 개시 수수료를 위해 보관되던 VPFI는
-  **treasury로 몰수되며**, rebate는 정상 종료에서만 돌아옵니다.
+  default 또는 liquidation일 때 **treasury로 몰수됩니다**. 정상
+  종료에서는 대신 시간가중 rebate가 정산되는데 — loan 기간 평균
+  할인이 0이었다면 rebate도 0이 되어 전액이 treasury로 갑니다.
 
 Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙니다 —
 따라서 liquidation이 남긴 surplus는 나중에도 받아 갈 수 있습니다.

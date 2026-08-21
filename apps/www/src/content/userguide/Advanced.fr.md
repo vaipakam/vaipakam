@@ -784,8 +784,10 @@ prêt s'est réglé :
   issue, pas une règle. Que le rabais revienne dépend de la
   clôture : sur un prêt encore soumis à la voie de frais VPFI
   retirée, le VPFI retenu au titre des frais d'initiation est
-  **acquis au trésor**, et un rabais ne revient que lors d'une
-  clôture régulière.
+  **acquis au trésor** lors d'un défaut ou d'une liquidation. Une
+  clôture régulière règle au contraire le rabais pondéré dans le
+  temps — qui peut être nul, tout le montant partant alors au
+  trésor, si ta remise a été nulle en moyenne sur le prêt.
 
 Le NFT de position d'emprunteur est brûlé au moment où tu
 réclames, pas quand le prêt se résout — un excédent laissé par une

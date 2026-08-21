@@ -593,8 +593,10 @@ borrower claim 根据 loan 如何 settle 来返回：
   close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
   假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
   什么——但那是一种结果，不是规则。rebate 会不会回来，取决于 loan 如何结束：若该 loan 仍在
-  已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 会**被没收并转入
-  treasury**，且只有正常关闭才会返还 rebate。
+  已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 在 default 或
+  liquidation 时会**被没收并转入 treasury**。正常关闭则会结算按时间
+  加权的 rebate——如果您在整个 loan 期间的折扣平均为零，该 rebate 也
+  可能为零，全额仍归 treasury。
 
 borrower position NFT 是在您 claim 时 burn，而不是在 loan 结清时——因此
 liquidation 留下的 surplus 之后仍可领取。

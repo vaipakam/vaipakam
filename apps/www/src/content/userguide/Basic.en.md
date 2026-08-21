@@ -359,8 +359,10 @@ cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. Whether the fee rebate comes
 back depends on how the loan ended: on a loan still using the
 retired VPFI fee path, a full repayment, preclose or refinance
-pays you part of the VPFI held against the Loan Initiation Fee,
-and only a default or liquidation forfeits it to treasury.
+settles the time-weighted rebate on the VPFI held against the
+Loan Initiation Fee — which can be zero, leaving the whole amount
+to treasury, if your discount averaged zero across the loan. Only
+a default or liquidation forfeits it outright.
 The claim consumes your borrower position NFT — which is why the
 NFT is still there after a liquidation, waiting for you.
 

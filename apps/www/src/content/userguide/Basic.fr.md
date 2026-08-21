@@ -386,9 +386,11 @@ valoriser — tout le panier part et il ne reste rien, mais c'est
 une issue, pas une règle. Que le rabais de frais revienne dépend
 de la façon dont le prêt s'est terminé : sur un prêt encore soumis
 à la voie de frais VPFI retirée, un remboursement intégral, une
-clôture anticipée ou un refinancement te versent une partie du
-VPFI retenu au titre de la Loan Initiation Fee ; seuls un défaut
-ou une liquidation l'acquièrent au trésor. La réclamation consomme ton NFT de position
+clôture anticipée ou un refinancement règlent le rabais pondéré
+dans le temps sur le VPFI retenu au titre de la Loan Initiation
+Fee — qui peut être nul, tout partant alors au trésor, si ta remise
+a été nulle en moyenne sur le prêt. Seuls un défaut ou une
+liquidation l'acquièrent intégralement. La réclamation consomme ton NFT de position
 d'emprunteur — c'est pourquoi le NFT est toujours là après une
 liquidation, à t'attendre.
 

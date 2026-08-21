@@ -787,7 +787,10 @@ liquidó el préstamo:
   una regla. Que el reembolso vuelva depende de cómo terminó el préstamo: en un
   préstamo que siga en la vía de comisión VPFI retirada, el VPFI
   retenido contra la comisión de inicio **se pierde en favor del
-  tesoro**, y un reembolso sólo vuelve en un cierre correcto.
+  tesoro** en un incumplimiento o una liquidación. Un cierre
+  correcto liquida en cambio el reembolso ponderado por tiempo —
+  que puede ser cero, y entonces todo el importe va al tesoro, si
+  tu descuento promedió cero durante el préstamo.
 
 El NFT de posición de prestatario se quema cuando reclamas, no
 cuando se resuelve el préstamo — así que un excedente dejado por

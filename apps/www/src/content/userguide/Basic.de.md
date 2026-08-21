@@ -387,10 +387,12 @@ statt es zu verkaufen, wartet das Collateral selbst auf dich. Oft geht bei einem
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
 das ist aber ein Ausgang, keine Regel. Ob der Gebühren-Rebate
 zurückkommt, hängt davon ab, wie der Loan endete: bei einem Loan
-auf dem eingestellten VPFI-Gebührenweg zahlen dir eine volle
-Rückzahlung, ein Preclose oder ein Refinance einen Teil des gegen
-die Loan Initiation Fee verwahrten VPFI aus; nur ein Default oder
-eine Liquidation lässt es an die Treasury verfallen. Der Claim verbraucht deinen
+auf dem eingestellten VPFI-Gebührenweg rechnen eine volle
+Rückzahlung, ein Preclose oder ein Refinance das zeitgewichtete
+Rebate auf dem gegen die Loan Initiation Fee verwahrten VPFI ab —
+das null sein kann, womit alles an die Treasury geht, wenn dein
+Rabatt über den Loan im Mittel null war. Nur ein Default oder eine
+Liquidation lässt es vollständig verfallen. Der Claim verbraucht deinen
 Borrower-Position-NFT — deshalb ist der NFT nach einer
 Liquidation noch da und wartet auf dich.
 

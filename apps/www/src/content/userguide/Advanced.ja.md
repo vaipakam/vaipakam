@@ -723,8 +723,10 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   どちらかを推測せず、claim を確認してください。Illiquid asset の default では通常バスケット全体が失われ何も
   残りませんが、それは結果であってルールではありません。rebate が戻るかどうかは
   loan の終わり方によります。廃止された VPFI 手数料経路のままの loan では、開始手数料の
-  ために保管されていた VPFI は**没収されて treasury に入り**、rebate が
-  戻るのは正常なクローズのときだけです。
+  ために保管されていた VPFI は default または liquidation のとき
+  **没収されて treasury に入ります**。正常なクローズでは代わりに
+  時間加重の rebate が精算されます — loan 全体で割引が平均ゼロだった
+  場合は rebate もゼロになり、全額が treasury に入ります。
 
 Borrower position NFT が burn されるのは claim したときであって、loan が
 解決したときではありません。liquidation が残した surplus は、あとからでも
