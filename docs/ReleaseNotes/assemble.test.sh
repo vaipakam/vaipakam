@@ -65,7 +65,11 @@ _frag() {  # _frag <dir> <stem> <iso-utc>
 }
 
 pending() {  # pending <dir> -> count of pending fragments
-  find "$1/docs/ReleaseNotes/unreleased" -name '*.md' \
+  # `-type f`: T33 puts a DIRECTORY named like a fragment in there on
+  # purpose, and without this it would be counted as one more pending
+  # fragment — an assertion about fragments quietly measuring something
+  # else.
+  find "$1/docs/ReleaseNotes/unreleased" -type f -name '*.md' \
     ! -name README.md ! -name _TEMPLATE.md | wc -l | tr -d ' '
 }
 sections() {  # sections <file> -> count of `## ` headings, 0 if absent
@@ -861,7 +865,7 @@ done
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run fails"              "$?"                          "1"
 check "the fragment is NOT deleted" "$(pending "$W")"            "2"
-check "it reports the command failure" "$(says "$msg" 'checksum command failed')" "1"
+check "it reports the command failure" "$(says "$msg" 'hashing 0001-a.md failed')" "1"
 check "no empty-hash marker was written" \
   "$(count_in 'sha256= -->' "$out/ReleaseNotes-2026-08-16.md")" "0"
 
@@ -900,7 +904,7 @@ done
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "a plausible-but-failed hash is refused" "$?"                       "1"
 check "the fragment is NOT deleted"            "$(pending "$W")"          "2"
-check "it reports the command failure"  "$(says "$msg" 'checksum command failed')" "1"
+check "it reports the command failure"  "$(says "$msg" 'hashing 0001-a.md failed')" "1"
 check "no false marker was written" \
   "$(count_in 'sha256=0000' "$out/ReleaseNotes-2026-08-16.md")" "0"
 
@@ -950,6 +954,23 @@ else
   check "no fragment was consumed"  "$(pending "$W")"              "2"
   check "it says it could not read" "$(says "$msg" 'could not read')" "1"
 fi
+
+echo "T33: run_checked's fatal path actually fires (no root needed)"
+W="$ROOT/t33"; build "$W"
+out="$W/docs/ReleaseNotes"
+# T24 and T32 stage their read errors with chmod 000, which root reads through
+# — so in a root container the shared guard's fatal path is never exercised at
+# all, and a regression in it would go unnoticed by every case that depends on
+# it. A DIRECTORY named like a fragment produces a genuine non-zero from the
+# first command that reads it, whoever is running.
+mkdir "$W/docs/ReleaseNotes/unreleased/0003-dir.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"              "$?"                             "1"
+check "no fragment was consumed"   "$(pending "$W")"                "2"
+check "it names what it was doing" "$(says "$msg" '0003-dir.md')"   "1"
+check "and says it refuses to continue" \
+  "$(says "$msg" 'must not continue on the strength of')"           "1"
+rmdir "$W/docs/ReleaseNotes/unreleased/0003-dir.md"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

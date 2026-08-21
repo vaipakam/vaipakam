@@ -123,6 +123,49 @@ else
   exit 1
 fi
 
+# ── Running a command whose failure must not be silent ───────────────────────
+# Four separate findings on #1863 (r6, r7, r8, and one found by auditing
+# for the same shape) were ONE defect written four times:
+#
+#     value="$(some_command "$arg" || true)"
+#
+# A failing command then yields an empty — or worse, a plausible —
+# value, the script carries on, and something irreversible happens on the
+# strength of it: a marker written with no hash, a marker glued onto a
+# fragment's last line, a fragment dropped from a duplicate check. Each
+# was fixed where it was found, which left the NEXT instance to be found
+# by someone else.
+#
+# So it is a function now rather than a convention. Status and output are
+# always both examined, the failure always names what was being done, and
+# a new call site cannot reintroduce the shape without deliberately
+# avoiding this helper.
+#
+# `ok_codes` is a comma list because "no match" is a legitimate answer
+# from `grep` (exit 1) while a READ ERROR from the same command (exit >1)
+# is not — flattening those two together is exactly how the guard at the
+# markerless-file check stopped covering one of its inputs.
+#
+# The result goes in a global rather than being echoed: a `$(...)` around
+# this function would put it in a subshell, where its `exit 1` would end
+# only that subshell and the caller would sail on with an empty value —
+# the very failure being designed out.
+CAPTURED=""
+run_checked() {  # run_checked <ok-codes> <what> <command> [args...]
+  local ok_codes="$1" what="$2"
+  shift 2
+  local rc=0
+  CAPTURED="$("$@")" || rc=$?
+  case ",$ok_codes," in
+    *",$rc,"*) return 0 ;;
+  esac
+  echo "Error: $what failed (exit $rc)." >&2
+  echo "Refusing to assemble: this run replaces a published file and deletes" >&2
+  echo "the fragments it consumed, so it must not continue on the strength of" >&2
+  echo "a result it did not get." >&2
+  exit 1
+}
+
 DATE=""
 ALLOW_MIXED=0
 FORCE_APPEND=0
@@ -639,18 +682,13 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
   # shell would exit before the next line ever ran — silently, with no
   # message and no assembly. The `||` list is exempt and still lets the
   # code be captured.
-  _scan_out="$(mktemp)"
-  _scan_rc=0
-  grep -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated" \
-    > "$_scan_out" 2>/dev/null || _scan_rc=$?
-  if (( _scan_rc > 1 )); then
-    rm -f "$_scan_out"
-    echo "Error: could not read $dated (grep exit $_scan_rc)." >&2
-    echo "Refusing to assemble: an unreadable dated file means the record of" >&2
-    echo "what has already been folded in is incomplete, and a fragment whose" >&2
-    echo "marker lives there would be appended a second time." >&2
-    exit 1
-  fi
+  # Exit 1 means "no markers in this file", which is ordinary. Anything
+  # above it is a read error, and an INCOMPLETE index is worse than none:
+  # a fragment whose marker lives in the unreadable file reads as never
+  # assembled and is appended a second time. The whole point of this scan
+  # is that finding nothing is proof.
+  run_checked 0,1 "scanning $(basename "$dated") for assembly markers" \
+    grep -E "^$MARKER_PREFIX.+ sha256=[0-9a-f]{64} -->$" "$dated"
   while IFS= read -r line; do
     # `<!-- assembled-fragment: <basename> sha256=<hex> -->`, and ONLY
     # that shape. A line matching the prefix but not the full form is
@@ -676,8 +714,7 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     # because it contains no ERE metacharacter — it is
     # `<!-- assembled-fragment: `. If that literal ever gains one,
     # escape it there.
-  done < "$_scan_out"
-  rm -f "$_scan_out"
+  done <<< "$CAPTURED"
 done
 
 # ONE rule, and it is narrow on purpose: a fragment is consumed without
@@ -728,14 +765,12 @@ for f in "${frags[@]}"; do
   # marker, so the fragment would be appended again. `|| true` was there
   # to stop `set -e` pre-empting the message; `|| _hrc=$?` does that and
   # keeps the status.
-  _hrc=0
-  _h="$(frag_hash "$f")" || _hrc=$?
-  if (( _hrc != 0 )); then
-    echo "Error: the checksum command failed on $(basename "$f") (exit $_hrc)." >&2
-    echo "Refusing to assemble: a hash that cannot be trusted must not be" >&2
-    echo "written into a marker, whatever it printed." >&2
-    exit 1
-  fi
+  run_checked 0 "hashing $(basename "$f")" frag_hash "$f"
+  _h="$CAPTURED"
+  # Status AND shape, because they catch different faults: a tool that
+  # exits non-zero while printing a plausible 64-hex value, and one that
+  # exits 0 while printing junk. Either would put a marker in the file
+  # that a working checksum could never match.
   if [[ ! "$_h" =~ ^[0-9a-f]{64}$ ]]; then
     echo "Error: could not hash $(basename "$f") (got '${_h}')." >&2
     echo "Refusing to assemble: the marker written for a fragment is what" >&2
@@ -858,15 +893,11 @@ if [ -f "$OUT" ]; then
     # duplicate check silently, so the legacy stop never fires for it —
     # a guard quietly not covering one input. Exit 1 (no heading) is
     # ordinary and continues; anything above it aborts.
-    _hl_rc=0
-    head_line="$(grep -m1 '^#\{1,6\} ' "$f")" || _hl_rc=$?
-    if (( _hl_rc > 1 )); then
-      echo "Error: could not read $(basename "$f") (grep exit $_hl_rc)." >&2
-      echo "Refusing to assemble: this fragment could not be checked against" >&2
-      echo "the existing file, and skipping that check silently is how a" >&2
-      echo "duplicated section gets through." >&2
-      exit 1
-    fi
+    # Exit 1 (no heading in this fragment) is ordinary and skips it; a
+    # read error is not, and would drop the fragment from this check
+    # silently — a guard quietly not covering one of its inputs.
+    run_checked 0,1 "reading $(basename "$f")" grep -m1 '^#\{1,6\} ' "$f"
+    head_line="$CAPTURED"
     [ -n "$head_line" ] || continue
     if grep -qxF -- "$head_line" "$OUT"; then
       suspect+=("$(basename "$f")|$head_line")
@@ -969,15 +1000,8 @@ for f in "${frags[@]}"; do
   # the source. The line predates this change; what the marker did was
   # turn "two fragments run together" into "the recovery record for this
   # fragment is silently destroyed".
-  _tail_rc=0
-  _last_byte="$(tail -c1 "$f")" || _tail_rc=$?
-  if (( _tail_rc != 0 )); then
-    echo "Error: could not read the last byte of $(basename "$f") (exit $_tail_rc)." >&2
-    echo "Refusing to assemble: without it the marker below could be joined" >&2
-    echo "onto the fragment's final line and stop being readable, which" >&2
-    echo "silently costs the recovery this whole mechanism exists for." >&2
-    exit 1
-  fi
+  run_checked 0 "reading the last byte of $(basename "$f")" tail -c1 "$f"
+  _last_byte="$CAPTURED"
   # Command substitution strips trailing newlines, so a file that ends in
   # one yields the empty string here and needs no separator added.
   [ -z "$_last_byte" ] || printf '\n' >> "$WORK"
