@@ -367,8 +367,9 @@ default では、バスケット全体が失われ何も残らないことも多
 それは結果であってルールではありません。手数料の rebate が戻るかどうかは
 loan の終わり方によります。廃止された VPFI 手数料経路のままの loan
 でも、full repayment・preclose・refinance では Loan Initiation Fee
-のために保管されていた VPFI の時間加重 rebate が精算されます — loan
-全体で割引が平均ゼロなら rebate もゼロで、全額が treasury に入ります。
+のために保管されていた VPFI の rebate が精算されます。金額は決済時点の
+割引で決まるため、その時点で何も保有していなければゼロとなり、全額が
+treasury に入ります。
 全額が没収されるのは default または liquidation のときだけです。
 claim はあなたの borrower position NFT を consume します。逆は成り立ち
 ません。liquidation のあとに NFT が残っていることは、何かが待っている
@@ -580,7 +581,7 @@ role-specific tabs で各 side の options を確認できます。今は
   Claim Center の節を参照してください。廃止された手数料経路で
   保管されていた VPFI が没収されるのは default または
   liquidation のときだけで、full repayment・preclose・refinance
-  では時間加重の rebate が精算されます（ゼロのこともあります）。
+  ではrebate が精算されます（ゼロのこともあります）。
 
 ---
 

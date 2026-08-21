@@ -728,7 +728,7 @@ Loan எவ்வாறு settle ஆனது என்பதைப் பொ�
 
 - **Full repayment / preclose / refinance** — உங்கள் collateral
   basket திரும்ப; அந்த loan இன்னும் நிறுத்தப்பட்ட VPFI கட்டண
-  வழியில் இருந்தால், Loan Initiation Fee-இன் time-weighted VPFI
+  வழியில் இருந்தால், Loan Initiation Fee-இன் VPFI
   rebate-உம் சேர்ந்து தீர்க்கப்படும் (பூஜ்ஜியமாகவும் இருக்கலாம்).
 - **loan-ஐ settle செய்யும் prepay sale** — collateral வாங்குபவருக்குச்
   செல்லும், உங்களுக்குத் திரும்பாது. விற்பனை விலையிலிருந்து lender-ன்
@@ -771,9 +771,9 @@ Loan எவ்வாறு settle ஆனது என்பதைப் பொ�
   நிறுத்தப்பட்ட VPFI கட்டண வழியில் உள்ள loan-இல் தொடக்கக் கட்டணத்திற்காக
   வைக்கப்பட்டிருந்த VPFI, default அல்லது liquidation-இல்
   **treasury-க்கு பறிமுதல் ஆகும்**. Proper close-இல் அதற்குப் பதிலாக
-  time-weighted rebate தீர்க்கப்படும் — loan முழுவதும் உங்கள் தள்ளுபடி
-  சராசரியாக பூஜ்ஜியமாக இருந்தால் அது பூஜ்ஜியமாகி, முழுத் தொகையும்
-  treasury-க்கே செல்லும்.
+  rebate தீர்க்கப்படும். தொகை settle ஆகும் தருணத்தில் உங்கள்
+  தள்ளுபடியைப் பொறுத்தது — அப்போது எதுவும் வைத்திருக்கவில்லை என்றால்
+  அது பூஜ்ஜியமாகி, முழுத் தொகையும் treasury-க்கே செல்லும்.
 
 Borrower position NFT நீங்கள் claim செய்யும்போது burn ஆகும், loan
 தீரும்போது அல்ல — எனவே liquidation விட்டுச்சென்ற surplus பின்னரும்
@@ -1071,7 +1071,7 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
 
 - **Repay** — Full அல்லது partial. Partial repayment outstanding-ஐக் குறைத்து
   HF-ஐ உயர்த்துகிறது; full terminal settlement-ஐத் தூண்டுகிறது,
-  time-weighted VPFI Loan Initiation Fee rebate உட்பட.
+  VPFI Loan Initiation Fee rebate உட்பட.
 - **Preclose direct** — இப்போது உங்கள் wallet-இலிருந்து outstanding
   amount-இல் செலுத்துங்கள், collateral-ஐ release செய்யுங்கள், rebate-ஐ
   settle செய்யுங்கள்.
@@ -1087,7 +1087,7 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
   collateral மட்டுமே எடுக்கப்படுவதால்; மேலே உள்ள Claim Center பகுதியைப்
   பார்க்கவும். நிறுத்தப்பட்ட வழியில் வைக்கப்பட்டிருந்த VPFI, default அல்லது
   liquidation-இல் மட்டுமே பறிமுதல் ஆகும்; proper close-இல்
-  time-weighted rebate தீர்க்கப்படும் (பூஜ்ஜியமாகவும் இருக்கலாம்). Borrower position NFT-ஐ burn செய்கிறது.
+  rebate தீர்க்கப்படும் (பூஜ்ஜியமாகவும் இருக்கலாம்). Borrower position NFT-ஐ burn செய்கிறது.
 
 ---
 

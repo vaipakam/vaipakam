@@ -398,7 +398,7 @@ de la façon dont le prêt s'est terminé : sur un prêt encore soumis
 clôture anticipée ou un refinancement règlent le rabais pondéré
 dans le temps sur le VPFI retenu au titre de la Loan Initiation
 Fee — qui peut être nul, tout partant alors au trésor, si ta remise
-a été nulle en moyenne sur le prêt. Seuls un défaut ou une
+est nulle au moment du règlement. Seuls un défaut ou une
 liquidation le font acquérir au trésor dans son intégralité. Réclamer consomme ton NFT de position
 d'emprunteur. L'inverse n'est pas vrai : un NFT encore présent
 après une liquidation ne prouve pas que quelque chose t'attend.

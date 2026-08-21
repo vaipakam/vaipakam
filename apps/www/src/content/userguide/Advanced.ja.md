@@ -709,7 +709,7 @@ Borrower claim は、loan がどう settle されたかによって次を返し
 
 - **full repayment / preclose / refinance** — あなたの collateral
   basket。廃止された VPFI 手数料経路のままの loan であれば、Loan
-  Initiation Fee の time-weighted VPFI rebate も同時に精算されます
+  Initiation Fee の VPFI rebate も同時に精算されます
   （ゼロのこともあります）。
 - **loan を決済する prepay sale** — collateral は買い手に渡り、
   あなたには戻りません。受け取るのは、売却価格から lender の取り分、
@@ -742,8 +742,9 @@ Borrower claim は、loan がどう settle されたかによって次を返し
   loan の終わり方によります。廃止された VPFI 手数料経路のままの loan では、開始手数料の
   ために保管されていた VPFI は default または liquidation のとき
   **没収されて treasury に入ります**。正常なクローズでは代わりに
-  時間加重の rebate が精算されます — loan 全体で割引が平均ゼロだった
-  場合は rebate もゼロになり、全額が treasury に入ります。
+  rebate が精算されます。金額は決済時点のあなたの割引で決まるため、
+  その時点で何も保有していなければゼロとなり、全額が treasury に
+  入ります。
 
 Borrower position NFT が burn されるのは claim したときであって、loan が
 解決したときではありません。liquidation が残した surplus は、あとからでも
@@ -1033,7 +1034,7 @@ role に関係なく誰でも利用できる permissionless actions:
 
 - **Repay** — full または partial。Partial repayment は outstanding
   を減らし、HF を上げます。Full repayment は terminal settlement
-  を trigger し、time-weighted VPFI Loan Initiation Fee rebate を
+  を trigger し、VPFI Loan Initiation Fee rebate を
   含みます。
 - **Preclose direct** — outstanding amount を今すぐ wallet から
   支払い、collateral を release し、rebate を settle します。
@@ -1048,7 +1049,7 @@ role に関係なく誰でも利用できる permissionless actions:
   残ることがあります。collateral は債務とその清算費用に必要なぶんだけが
   取られるためです — 上の Claim Center の節を参照してください。廃止された
   手数料経路で保管されていた VPFI が没収されるのは default または
-  liquidation のときだけで、正常なクローズでは時間加重の rebate が
+  liquidation のときだけで、正常なクローズではrebate が
   精算されます（ゼロのこともあります）。
   Borrower position NFT を burn します。
 

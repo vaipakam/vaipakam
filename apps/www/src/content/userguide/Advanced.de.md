@@ -815,8 +815,8 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   verwahrte VPFI bei einem Default oder einer Liquidation **an die
   Treasury verwirkt**. Ein ordnungsgemäßer Abschluss rechnet
   stattdessen das zeitgewichtete Rebate ab — das null sein kann,
-  womit der ganze Betrag an die Treasury geht, wenn dein Rabatt
-  über den Loan im Mittel null war.
+  womit der ganze Betrag an die Treasury geht, wenn dein Rabatt im Moment
+  der Abrechnung null ist.
 
 Der Borrower-Position-NFT wird beim Claim verbrannt, nicht bei der
 Auflösung des Loans — ein von einer Liquidation übrig gelassener

@@ -657,7 +657,7 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
 
 - **full repayment / preclose / refinance** — 내 collateral basket.
   폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation
-  Fee의 time-weighted VPFI rebate도 함께 정산되며, 0일 수도 있습니다.
+  Fee의 VPFI rebate도 함께 정산되며, 0일 수도 있습니다.
 - **loan을 정산하는 prepay sale** — collateral은 구매자에게 가고 내게
   돌아오지 않습니다. 받는 것은 매각가에서 lender 몫, treasury 컷,
   listing에 붙은 seller fee를 뺀 금액이며, borrower position NFT
@@ -688,8 +688,8 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
   뿐 규칙이 아닙니다. rebate가 돌아오는지는 loan이 어떻게 끝났는지에 달려 있습니다: 폐지된 VPFI 수수료
   경로에 남아 있는 loan이라면 개시 수수료를 위해 보관되던 VPFI는
   default 또는 liquidation일 때 **treasury로 몰수됩니다**. 정상
-  종료에서는 대신 시간가중 rebate가 정산되는데 — loan 기간 평균
-  할인이 0이었다면 rebate도 0이 되어 전액이 treasury로 갑니다.
+  종료에서는 대신 rebate가 정산됩니다. 금액은 정산 시점의 할인으로
+  정해지므로, 그때 보유가 없으면 0이 되어 전액이 treasury로 갑니다.
 
 Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙니다 —
 따라서 liquidation이 남긴 surplus는 나중에도 받아 갈 수 있습니다. 다만 NFT가
@@ -959,7 +959,7 @@ role과 관계없이 누구나 사용할 수 있는 permissionless actions:
 #### 내가 borrower인 경우
 
 - **Repay** — full 또는 partial. Partial repayment는 outstanding을 줄이고
-  HF를 끌어올립니다. Full repayment는 time-weighted VPFI Loan Initiation Fee
+  HF를 끌어올립니다. Full repayment는 VPFI Loan Initiation Fee
   rebate를 포함한 terminal settlement를 trigger합니다.
 - **Preclose direct** — 지금 wallet에서 outstanding amount를 지불하고,
   collateral을 release하며, rebate를 settle합니다.
@@ -973,7 +973,7 @@ role과 관계없이 누구나 사용할 수 있는 permissionless actions:
   반환합니다. default / liquidation 시에도 surplus가 남을 수 있습니다. collateral은
   빚과 그것을 정리하는 비용에 필요한 만큼만 가져가기 때문입니다 — 위의
   Claim Center 절을 참고하세요. 폐지된 수수료 경로에서 보관되던 VPFI는
-  default 또는 liquidation에서만 몰수되며, 정상 종료에서는 시간가중 rebate가
+  default 또는 liquidation에서만 몰수되며, 정상 종료에서는 rebate가
   정산됩니다(0일 수도 있습니다). Borrower position
   NFT를 burn합니다.
 

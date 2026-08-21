@@ -725,7 +725,7 @@ Borrower claim इस आधार पर return करता है कि loan
 
 - **पूरा repayment / preclose / refinance** — आपकी collateral
   basket वापस; और अगर वह loan अब भी बंद किए गए VPFI fee रास्ते पर
-  है, तो साथ में Loan Initiation Fee का time-weighted VPFI rebate
+  है, तो साथ में Loan Initiation Fee का VPFI rebate
   settle होता है, जो शून्य भी हो सकता है।
 - **loan को settle करने वाली prepay sale** — collateral खरीदार को
   जाता है, आपको वापस नहीं। आपको बिक्री मूल्य में से lender का हक,
@@ -763,9 +763,9 @@ Borrower claim इस आधार पर return करता है कि loan
   नहीं। rebate वापस आएगा या नहीं यह इस पर निर्भर है कि loan कैसे ख़त्म हुआ: बंद किए गए VPFI fee रास्ते
   वाले loan में initiation fee के बदले रखा गया VPFI default या
   liquidation पर **treasury को ज़ब्त** हो जाता है। Proper close
-  पर उसके बजाय time-weighted rebate settle होता है — जो शून्य भी
-  हो सकता है, और तब पूरी राशि treasury को चली जाती है, यदि loan भर
-  आपका discount औसतन शून्य रहा हो।
+  पर उसके बजाय rebate settle होता है — जो शून्य भी
+  हो सकता है, और तब पूरी राशि treasury को चली जाती है, यदि settle
+  होने के समय आपका discount शून्य हो।
 
 Borrower position NFT तब burn होता है जब आप claim करते हैं, तब
 नहीं जब loan resolve होता है — इसलिए liquidation से बचा surplus
@@ -1062,7 +1062,7 @@ actions:
 
 - **Repay** — पूरा या partial. Partial repayment outstanding
   कम करता है और HF ऊपर लाता है; full repayment terminal
-  settlement trigger करता है, जिसमें time-weighted VPFI Loan
+  settlement trigger करता है, जिसमें VPFI Loan
   Initiation Fee rebate शामिल है।
 - **Preclose direct** — अपने wallet से अभी outstanding amount
   चुकाएँ, collateral release करें, rebate settle करें।
@@ -1078,8 +1078,8 @@ actions:
   सकता है, क्योंकि collateral में से उतना ही लिया जाता है जितना
   कर्ज़ और उसे बंद करने की लागत माँगे — ऊपर का Claim Center भाग
   देखें। बंद किए गए रास्ते में रखा VPFI सिर्फ़ default या liquidation
-  पर ज़ब्त होता है; proper close पर time-weighted
-  rebate settle होता है, जो शून्य भी हो सकता है। Borrower position NFT को burn करता है।
+  पर ज़ब्त होता है; proper close पर rebate settle होता है, जिसका
+  आकार settle होने के समय आपके discount से तय होता है — शून्य भी हो सकता है। Borrower position NFT को burn करता है।
 
 ---
 

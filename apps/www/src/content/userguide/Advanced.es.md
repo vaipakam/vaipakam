@@ -815,7 +815,7 @@ liquidó el préstamo:
   tesoro** en un incumplimiento o una liquidación. Un cierre
   correcto liquida en cambio el reembolso ponderado por tiempo —
   que puede ser cero, y entonces todo el importe va al tesoro, si
-  tu descuento promedió cero durante el préstamo.
+  tu descuento es cero en el momento de la liquidación.
 
 El NFT de posición de prestatario se quema cuando reclamas, no
 cuando se resuelve el préstamo — así que un excedente dejado por

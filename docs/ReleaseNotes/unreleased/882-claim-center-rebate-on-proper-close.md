@@ -1,7 +1,7 @@
 ## The guides no longer tell borrowers who repaid in full that their rebate is gone (#882)
 
 On loans still using the retired VPFI fee path, a loan that ends properly
-**settles** the time-weighted rebate on the VPFI held against the Loan
+**settles** the rebate on the VPFI held against the Loan
 Initiation Fee. A default or a liquidation forfeits the whole amount outright.
 
 Ending properly covers more routes than the three the guides used to name: a

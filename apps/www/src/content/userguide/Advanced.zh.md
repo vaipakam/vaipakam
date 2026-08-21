@@ -582,7 +582,7 @@ borrower claim 根据 loan 如何 settle 来返回：
 
 - **Full repayment / preclose / refinance** — 您的 collateral
   basket 回来；若该 loan 仍在已停用的 VPFI 费用路径上，Loan
-  Initiation Fee 的 time-weighted VPFI rebate 也会一并结算（可能为零）。
+  Initiation Fee 的 VPFI rebate 也会一并结算（可能为零）。
 - **结清该 loan 的 prepay sale** — collateral 归买家，不会退还给您。
   您拿到的是售价减去 lender 应得、treasury 抽成以及 listing 上带的
   卖方费用之后的金额，支付给持有 borrower position NFT 的人。若该 loan
@@ -607,9 +607,8 @@ borrower claim 根据 loan 如何 settle 来返回：
   假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
   什么——但那是一种结果，不是规则。rebate 会不会回来，取决于 loan 如何结束：若该 loan 仍在
   已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 在 default 或
-  liquidation 时会**被没收并转入 treasury**。正常关闭则会结算按时间
-  加权的 rebate——如果您在整个 loan 期间的折扣平均为零，该 rebate 也
-  可能为零，全额仍归 treasury。
+  liquidation 时会**被没收并转入 treasury**。正常关闭则会结算 rebate——金额取决于
+  结算时刻您的折扣，若那时没有持仓则为零，全额仍归 treasury。
 
 borrower position NFT 是在您 claim 时 burn，而不是在 loan 结清时——因此
 liquidation 留下的 surplus 之后仍可领取。但 NFT 还在，本身并不证明有
@@ -872,7 +871,7 @@ locked" 等)。
 #### 如果您是 borrower
 
 - **Repay** — full 或 partial。Partial 会减少 outstanding 并提高 HF；
-  full 会触发 terminal settlement，包括 time-weighted VPFI Loan
+  full 会触发 terminal settlement，包括 VPFI Loan
   Initiation Fee rebate。
 - **Preclose direct** — 现在从您的 wallet 支付 outstanding amount，
   release collateral，并 settle rebate。

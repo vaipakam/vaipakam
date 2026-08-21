@@ -399,7 +399,7 @@ auf dem eingestellten VPFI-Gebührenweg rechnen eine volle
 Rückzahlung, ein Preclose oder ein Refinance das zeitgewichtete
 Rebate auf dem gegen die Loan Initiation Fee verwahrten VPFI ab —
 das null sein kann, womit alles an die Treasury geht, wenn dein
-Rabatt über den Loan im Mittel null war. Nur ein Default oder eine
+Rabatt im Moment der Abrechnung null ist. Nur ein Default oder eine
 Liquidation lässt es vollständig verfallen. Der Claim verbraucht deinen
 Borrower-Position-NFT. Umgekehrt gilt das nicht: ein NFT, der nach
 einer Liquidation noch da ist, ist kein Beleg dafür, dass etwas

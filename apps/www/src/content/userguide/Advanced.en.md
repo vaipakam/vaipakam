@@ -715,9 +715,9 @@ The borrower claim returns, depending on how the loan settled:
 
 - **Full repayment / preclose / refinance** — your collateral
   basket back. On a loan still using the retired VPFI fee path,
-  the time-weighted Loan Initiation Fee rebate is settled
-  alongside it, and can come to nothing if your discount averaged
-  nothing; a loan opened under the current model has none at all,
+  the Loan Initiation Fee rebate is settled alongside it, sized by
+  your discount at the moment it settles — so it comes to nothing
+  if you hold nothing by then; a loan opened under the current model has none at all,
   because its discount was already taken off the fee at
   acceptance.
 - **A prepay sale that settles the loan** — the collateral goes to
@@ -761,9 +761,9 @@ The borrower claim returns, depending on how the loan settled:
   back depends on how the loan ended: on a loan still using the retired
   VPFI fee path, the VPFI held against its initiation fee is
   forfeited to treasury on a default or liquidation. A proper
-  close instead settles the time-weighted rebate — which can be
-  zero, and the whole amount go to treasury, if your discount
-  averaged zero across the loan.
+  close instead settles the rebate — which can be
+  zero, and the whole amount go to treasury, if your discount is zero
+  at the moment it settles.
 
 The borrower position NFT is burned when you claim, not when the
 loan resolves — so a surplus left by a liquidation is still there
@@ -1063,7 +1063,7 @@ Permissionless actions available to anyone regardless of role:
 
 - **Repay** — full or partial. Partial reduces outstanding
   and raises HF; full triggers terminal settlement, including
-  the time-weighted VPFI Loan Initiation Fee rebate.
+  the VPFI Loan Initiation Fee rebate.
 - **Swap collateral to repay** — for ERC-20-on-ERC-20 loans
   only, where you've pledged one ERC-20 as collateral against
   a different ERC-20 principal. Instead of having to withdraw
@@ -1186,7 +1186,7 @@ Permissionless actions available to anyone regardless of role:
   and the cost of closing it — see the Claim Center section above.
   VPFI held under the retired fee path is forfeited only on
   default or liquidation; a proper close settles the
-  time-weighted rebate, which can be zero. Burns the borrower position NFT.
+  rebate, which can be zero. Burns the borrower position NFT.
 
 > **If your repay tx reverts while you have a live OpenSea
 > listing** — a buyer's `Seaport.fulfillOrder` may have landed

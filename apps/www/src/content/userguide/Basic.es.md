@@ -392,7 +392,7 @@ préstamo: en uno que siga en la vía de comisión VPFI retirada, un
 repago total, un precierre o una refinanciación liquidan el
 reembolso ponderado por tiempo sobre el VPFI retenido contra la
 Loan Initiation Fee — que puede ser cero, y entonces todo va al
-tesoro, si tu descuento promedió cero durante el préstamo. Solo un
+tesoro, si tu descuento es cero en el momento de la liquidación. Solo un
 incumplimiento o una liquidación lo pierden por completo en favor
 del tesoro. Reclamar consume tu NFT de posición de prestatario.
 Lo contrario no se sigue: un NFT que sigue ahí tras una

@@ -351,8 +351,8 @@ collateral이 남습니다.
 뿐 규칙이 아닙니다. 수수료 rebate가 돌아오는지는 loan이 어떻게
 끝났는지에 달려 있습니다. 폐지된 VPFI 수수료 경로에 남아 있는 loan이라도
 full repayment·preclose·refinance에서는 Loan Initiation Fee를 위해
-보관되던 VPFI의 시간가중 rebate가 정산됩니다 — loan 기간 평균 할인이
-0이었다면 rebate도 0이 되어 전액이 treasury로 갑니다. 전액이 몰수되는
+보관되던 VPFI의 rebate가 정산됩니다. 금액은 정산 시점의 할인으로
+정해지므로, 그때 보유가 없으면 0이 되어 전액이 treasury로 갑니다. 전액이 몰수되는
 것은 default 또는 liquidation일 때뿐입니다.
 claim은 borrower position NFT를 consume합니다. 그 역은 성립하지
 않습니다. liquidation 이후 NFT가 남아 있다는 사실은 무언가가 기다리고
@@ -554,7 +554,7 @@ side의 options를 정리합니다. 지금 사용할 수 없는 buttons는 greye
   claim으로 기록됩니다. 그것이 무엇인지는 경로에 따라 다릅니다 —
   Claim Center 절을 참고하세요. 폐지된 수수료 경로에서 보관되던
   VPFI는 default 또는 liquidation에서만 몰수되며, full repayment나
-  preclose, refinance에서는 시간가중 rebate가 정산됩니다(0일 수도 있습니다).
+  preclose, refinance에서는 rebate가 정산됩니다(0일 수도 있습니다).
 
 ---
 
