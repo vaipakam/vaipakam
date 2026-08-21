@@ -23,8 +23,11 @@
  *      defect (a `useCallback` below the page's early returns) that
  *      survived fourteen review rounds, typecheck, the production build
  *      and a green preview deploy because none of those can see it.
- *   2. The #1505 "Ways to repay or exit early" chooser renders on a real
- *      active loan, naming the handover and offset paths.
+ *   2. The chooser for the observed ROLE renders on a real active loan:
+ *      the #1505 "Ways to repay or exit early" card naming the handover
+ *      and offset paths, or — with OBSERVE_ROLE=lender — the #1839 "Your
+ *      options as the lender" card naming all three of its options with
+ *      the wait row FIRST, which is the one ordering claim it makes.
  *   3. Whether the #1511 listing-hold card is present, and if so which
  *      state it reports — informational, since a hold only exists while
  *      some lender actually has a sale listing standing.
@@ -36,6 +39,7 @@
  * Usage (no secrets needed):
  *
  *   node live-position-observe.mjs                  # auto-discovers a borrower
+ *   OBSERVE_ROLE=lender node live-position-observe.mjs   # the lender card
  *   OBSERVE_ADDRESS=0x… node live-position-observe.mjs
  *   SITE_URL=https://<preview>.workers.dev node live-position-observe.mjs
  *   LIVE_PROXY_SETUP=./my-egress-shim.mjs node live-position-observe.mjs
@@ -130,6 +134,31 @@ if (!Number.isInteger(MAX_POSITIONS) || MAX_POSITIONS < 1) {
   );
   process.exit(2);
 }
+
+/**
+ * WHICH chooser to observe. Both are awareness cards on the SAME page,
+ * gated on which side of the loan the connected wallet holds, so one
+ * harness covers both and the only differences are the eligibility
+ * predicate and the string asserted.
+ *
+ *   borrower  (default) — the #1505 "Ways to repay or exit early" card
+ *   lender              — the #1839 "Your options as the lender" card
+ *
+ * Defaulting to `borrower` keeps every existing invocation, including
+ * `run-live-batch.mjs`, doing exactly what it did before.
+ */
+const ROLE = process.env.OBSERVE_ROLE ?? 'borrower';
+if (ROLE !== 'borrower' && ROLE !== 'lender') {
+  console.error(
+    `\nBLOCKED: OBSERVE_ROLE must be "borrower" or "lender", got "${ROLE}".` +
+      ` An unrecognised role would assert nothing.`,
+  );
+  process.exit(2);
+}
+/** The card this run is here to see, and the copy that identifies it. */
+const CHOOSER = ROLE === 'lender'
+  ? { what: 'lender exit chooser (#1839)', title: /Your options as the lender/i }
+  : { what: 'repay/exit chooser (#1505)', title: /Ways to repay or exit early/i };
 
 // A mistyped OBSERVE_CHAIN_ID, or one this repo has no deployment for,
 // is a SETUP precondition — the same category as an absent wallet file
@@ -544,12 +573,29 @@ async function offsetLockedOn(borrowerTokenId) {
  * anyway. A transport failure is NOT that: see `isRevert`.
  */
 async function borrowerAuthorityOf(loan) {
+  return tokenOwnerOf(loan.borrowerTokenId);
+}
+
+/**
+ * The LENDER-side authority, resolved the same way and for the same
+ * reason: `PositionDetails` decides who sees the lender card from
+ * `ownerOf(lenderTokenId)`, never from `loan.lender`. Those diverge the
+ * moment a position is sold or transferred — which is precisely the
+ * population this card was built for — so keying a drive on `loan.lender`
+ * would observe the wrong wallet on exactly the interesting loans.
+ */
+async function lenderAuthorityOf(loan) {
+  return tokenOwnerOf(loan.lenderTokenId);
+}
+
+/** Shared: a revert means burned/never-minted; anything else is BLOCKED. */
+async function tokenOwnerOf(tokenId) {
   try {
     return await pub.readContract({
       address: DIAMOND,
       abi: DIAMOND_ABI_VIEM,
       functionName: 'ownerOf',
-      args: [loan.borrowerTokenId],
+      args: [tokenId],
     });
   } catch (err) {
     if (!isRevert(err)) throw err; // no answer — BLOCKED, not "burned"
@@ -581,6 +627,7 @@ for (const id of ids) {
     status: Number(d.status),
     assetType: Number(d.assetType),
     borrowerTokenId: d.borrowerTokenId,
+    lenderTokenId: d.lenderTokenId,
     startTime: d.startTime,
     durationDays: d.durationDays,
   };
@@ -588,11 +635,25 @@ for (const id of ids) {
   // than swallowing them: unwrapped, such a rejection would reach the top
   // level and exit 1 as a product regression — the round-7 bug, reached
   // by a new route.
-  loan.authority = await discovery(`reading the borrower authority for loan ${id}`, () =>
-    borrowerAuthorityOf(loan),
+  loan.authority = await discovery(
+    `reading the ${ROLE} authority for loan ${id}`,
+    () => (ROLE === 'lender' ? lenderAuthorityOf(loan) : borrowerAuthorityOf(loan)),
   );
-  // Only worth the extra reads on loans that clear the cheap gates.
-  if (loan.status === STATUS_ACTIVE && loan.assetType === ASSET_ERC20 && loan.authority) {
+  // Only worth the extra reads on loans that clear the cheap gates, and
+  // ONLY for the borrower card: the offset lock and the grace deadline
+  // are gates on the borrower chooser. The lender card is deliberately
+  // insensitive to both — a borrower's pending offset does not hide a
+  // lender's options (it explains one of them), and past maturity the
+  // lender card stays up saying the sale rows are closed, because
+  // waiting still applies. Reading them for a lender run would be two
+  // wasted RPCs per loan and, worse, would tempt a future edit to gate
+  // on them.
+  if (
+    ROLE === 'borrower' &&
+    loan.status === STATUS_ACTIVE &&
+    loan.assetType === ASSET_ERC20 &&
+    loan.authority
+  ) {
     loan.offsetLocked = await discovery(`reading the offset lock for loan ${id}`, () =>
       offsetLockedOn(loan.borrowerTokenId),
     );
@@ -603,14 +664,31 @@ for (const id of ids) {
   loans.push(loan);
 }
 
-/** Exactly the predicate `PositionDetails` gates the chooser on. */
-const eligible = loans.filter(
-  (l) =>
-    l.status === STATUS_ACTIVE &&
-    l.assetType === ASSET_ERC20 &&
-    l.authority !== null &&
-    l.offsetLocked === false &&
-    l.graceOver === false,
+/**
+ * Exactly the predicate `PositionDetails` gates the chosen card on — and
+ * the two cards do NOT share one.
+ *
+ * The borrower chooser has four conditions (active, not a rental, no live
+ * preclose-offset lock, grace not verifiably over). The lender card has
+ * two: an active non-rental loan whose lender token resolves to the
+ * connected wallet. It deliberately survives states that hide the
+ * borrower's card, because its FIRST row is "wait", which stays true when
+ * every exit is shut — past maturity it keeps rendering and says the sale
+ * rows are closed rather than vanishing.
+ *
+ * Using the borrower's four gates for a lender run would silently narrow
+ * the candidate pool to loans where BOTH cards happen to render, and then
+ * report BLOCKED on a chain where the lender card is rendering perfectly
+ * well on loans it had discarded.
+ */
+const eligible = loans.filter((l) =>
+  ROLE === 'lender'
+    ? l.status === STATUS_ACTIVE && l.assetType === ASSET_ERC20 && l.authority !== null
+    : l.status === STATUS_ACTIVE &&
+      l.assetType === ASSET_ERC20 &&
+      l.authority !== null &&
+      l.offsetLocked === false &&
+      l.graceOver === false,
 );
 const dropped = loans.length - eligible.length;
 if (dropped > 0) {
@@ -622,7 +700,7 @@ if (dropped > 0) {
       : l.assetType !== ASSET_ERC20
         ? 'NFT rental'
         : l.authority === null
-          ? 'borrower token burned'
+          ? `${ROLE} token burned`
           : l.offsetLocked
             ? 'offset in progress'
             : 'past grace';
@@ -635,8 +713,8 @@ if (dropped > 0) {
   );
 }
 
-// The observed address: whichever borrower-side authority holds the most
-// eligible loans, so one session covers as many position pages as
+// The observed address: whichever authority on the CHOSEN side holds the
+// most eligible loans, so one session covers as many position pages as
 // possible.
 let observed = process.env.OBSERVE_ADDRESS;
 if (!observed) {
@@ -647,22 +725,31 @@ if (!observed) {
   }
   const [best] = [...byAuthority.entries()].sort((a, b) => b[1].length - a[1].length);
   if (!best) {
-    console.log('\nBLOCKED: no chooser-eligible loans on chain — nothing verified.');
+    console.log(
+      `\nBLOCKED: no ${ROLE}-eligible loans on chain — nothing verified.`,
+    );
     process.exit(2);
   }
   observed = best[1][0].authority;
 }
 const mine = eligible.filter((l) => l.authority.toLowerCase() === observed.toLowerCase());
 console.log(
-  `observing ${observed} (watch-only, no key) — ${mine.length} eligible loan(s) as borrower`,
+  `observing ${observed} (watch-only, no key) — ${mine.length} eligible loan(s) as ${ROLE}`,
 );
+console.log(`asserting ${CHOOSER.what}`);
 for (const l of mine) {
-  const moved = l.authority.toLowerCase() !== l.borrower.toLowerCase();
-  console.log(`  loan ${l.id}${moved ? ` (position transferred from ${l.borrower})` : ''}`);
+  // Compared against the ORIGINATING party on the chosen side, so
+  // "transferred" means what it says for either card. Reported because a
+  // moved position is the population the lender card was built for, and a
+  // run that covered only never-transferred loans has not exercised the
+  // interesting half.
+  const origin = ROLE === 'lender' ? l.lender : l.borrower;
+  const moved = l.authority.toLowerCase() !== origin.toLowerCase();
+  console.log(`  loan ${l.id}${moved ? ` (position transferred from ${origin})` : ''}`);
 }
 if (mine.length === 0) {
   console.error(
-    `\nBLOCKED: ${observed} holds no chooser-eligible borrower position — nothing verified.`,
+    `\nBLOCKED: ${observed} holds no eligible ${ROLE} position — nothing verified.`,
   );
   process.exit(2);
 }
@@ -1130,7 +1217,7 @@ async function visit(path, { expectChooser = false } = {}) {
       // the reporting below is what decides whether it is a failure.
       await page
         .locator('section.card')
-        .filter({ hasText: /Ways to repay or exit early/i })
+        .filter({ hasText: CHOOSER.title })
         .first()
         .waitFor({ state: 'visible', timeout: 45_000 })
         .catch(() => {});
@@ -1155,9 +1242,17 @@ async function visit(path, { expectChooser = false } = {}) {
     consoleErrors,
     hooks,
     text,
-    chooser: /Ways to repay or exit early/i.test(text),
+    chooser: CHOOSER.title.test(text),
     handover: /hand the loan to another borrower/i.test(text),
     offset: /exit by becoming a lender/i.test(text),
+    // Lender-card shape. `waitFirst` is the one ORDERING claim the card
+    // makes and the only one observable from rendered text: the wait row
+    // must precede both sale rows, because a lender's position already
+    // pays and the no-forfeiture option is meant to lead. It is checked
+    // by index rather than by presence — all three strings can be on the
+    // page in the wrong order, which is exactly the regression a
+    // presence check would wave through.
+    ...(ROLE === 'lender' ? lenderShapeOf(text) : {}),
     holdCard: holdCard > 0,
     freeHeld: freeHeld > 0,
     connected: !/Connect wallet/i.test(text.slice(0, 400)),
@@ -1188,8 +1283,11 @@ async function stillEligible(loan) {
     `re-reading loan ${loan.id} before visiting it`,
     () =>
       Promise.all([
-        offsetLockedOn(loan.borrowerTokenId),
-        borrowerAuthorityOf(loan),
+        // Not read for a lender run — the lender card is not gated on the
+        // borrower's offset lock. Resolved to `false` so the shared
+        // destructuring below keeps one shape.
+        ROLE === 'lender' ? Promise.resolve(false) : offsetLockedOn(loan.borrowerTokenId),
+        ROLE === 'lender' ? lenderAuthorityOf(loan) : borrowerAuthorityOf(loan),
         pub.getBlock({ blockTag: 'latest' }).then((b) => b.timestamp),
         pub.readContract({
           address: DIAMOND,
@@ -1204,10 +1302,14 @@ async function stillEligible(loan) {
   // chooser, and the minutes-old status would call that a regression.
   if (Number(live.status) !== STATUS_ACTIVE) return 'no longer active';
   if (lockedNow) return 'offset started since discovery';
-  if (authorityNow === null) return 'borrower token burned since discovery';
+  if (authorityNow === null) return `${ROLE} token burned since discovery`;
   if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
     return 'position transferred since discovery';
   }
+  // The grace re-check below is a BORROWER gate. Applying it to a lender
+  // run would skip a page whose card is correctly still rendering — and,
+  // if it were the only candidate, report BLOCKED on a working surface.
+  if (ROLE === 'lender') return null;
   // The LIVE term, not the discovered one. `extendLoanInPlace` rewrites
   // startTime and durationDays while the loan stays Active, so a stale
   // term would judge an extended loan against its old deadline and skip a
@@ -1223,6 +1325,45 @@ async function stillEligible(loan) {
     return 'crossed its grace deadline since discovery';
   }
   return null;
+}
+
+/**
+ * The lender card's observable shape, scraped from rendered text.
+ *
+ * Three claims, and only the third needs explaining:
+ *
+ *  - `waitRow` / `sellNowRow` / `listRow` — the three options are named.
+ *  - `blurb` — the card's own framing line, which is what distinguishes
+ *    "the card rendered" from "the words happen to appear elsewhere on a
+ *    long page". The title alone is a weaker signal than it looks.
+ *  - `waitFirst` — the wait row PRECEDES both sale rows. This is the one
+ *    ordering claim the card makes, and the reason it exists: a lender's
+ *    position already pays them, so the option that forfeits no interest
+ *    leads, which is the inversion from the borrower chooser. Checked by
+ *    index because all three rows can be present in the wrong order — a
+ *    presence check passes on exactly the regression worth catching.
+ *
+ * `waitFirst` is reported as `null`, never `false`, when a row it needs
+ * is absent: with no sell-now row there is no order to be wrong about,
+ * and returning `false` would file a missing row twice — once honestly
+ * and once as a fabricated ordering defect.
+ */
+function lenderShapeOf(text) {
+  const at = (re) => {
+    const m = re.exec(text);
+    return m ? m.index : -1;
+  };
+  const wait = at(/Wait for the loan to run its course/i);
+  const sellNow = at(/Sell your position now/i);
+  const list = at(/List your position for sale/i);
+  const known = [sellNow, list].filter((i) => i >= 0);
+  return {
+    lenderBlurb: /You don.t have to do anything with this position/i.test(text),
+    waitRow: wait >= 0,
+    sellNowRow: sellNow >= 0,
+    listRow: list >= 0,
+    waitFirst: wait >= 0 && known.length > 0 ? known.every((i) => wait < i) : null,
+  };
 }
 
 // ---------------------------------------------------------------- drive
@@ -1274,8 +1415,21 @@ for (const v of visited) {
   // failing on them let the drive pass while missing one of the two
   // #1505 surfaces it claims to validate (#1529 review).
   if (detail && !v.nav) {
-    if (!v.chooser) problems.push('chooser MISSING on an eligible loan');
-    else {
+    if (!v.chooser) problems.push(`${ROLE} chooser MISSING on an eligible loan`);
+    else if (ROLE === 'lender') {
+      // The card is an AWARENESS surface, so what makes it correct is
+      // that every option is NAMED — an unavailable row explains itself
+      // rather than vanishing, precisely because a missing row reads as
+      // "no such option". A row absent altogether is therefore a
+      // regression even on a loan where that exit is shut.
+      if (!v.lenderBlurb) problems.push('lender card title without its own blurb');
+      if (!v.waitRow) problems.push('wait row MISSING from the lender card');
+      if (!v.sellNowRow) problems.push('sell-now row MISSING from the lender card');
+      if (!v.listRow) problems.push('listing row MISSING from the lender card');
+      // `null` = not enough rows rendered to have an order; the missing
+      // row is already reported above and must not be double-counted.
+      if (v.waitFirst === false) problems.push('wait row is NOT first on the lender card');
+    } else {
       if (!v.handover) problems.push('handover path MISSING from the chooser');
       if (!v.offset) problems.push('offset path MISSING from the chooser');
     }
@@ -1286,7 +1440,10 @@ for (const v of visited) {
   console.log(`${verdict.padEnd(5)} ${v.path.padEnd(16)} http=${v.http ?? '-'} connected=${v.connected ?? '-'}`);
   if (detail && !v.nav) {
     console.log(
-      `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
+      ROLE === 'lender'
+        ? `      card=${v.chooser} blurb=${v.lenderBlurb} wait=${v.waitRow}` +
+          ` sellNow=${v.sellNowRow} list=${v.listRow} waitFirst=${v.waitFirst}`
+        : `      chooser=${v.chooser} handover=${v.handover} offset=${v.offset}` +
         ` holdCard=${v.holdCard} freeHeldBtn=${v.freeHeld}`,
     );
   }
