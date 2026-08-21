@@ -106,23 +106,74 @@ const SETTLE_MS = 12_000;
  * survives, so neither of those can serve as the discriminator.
  */
 const MINIFIED_FALSE = String.raw`(?:!1|false)`;
-const WC_FLAG = new RegExp(String.raw`telemetryEnabled\s*:\s*` + MINIFIED_FALSE);
-const WC_CALLSITE = /universal\s*:/;
-const CB_FLAG = new RegExp(String.raw`[^A-Za-z]telemetry\s*:\s*` + MINIFIED_FALSE);
 
-/** Fetch every same-origin script the page references and concatenate it.
- *  Uses the page's own request context so the container proxy applies. */
-async function deployedScripts(page, origin) {
-  const srcs = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('script[src]')).map((s) => s.src),
-  );
-  let joined = '';
-  for (const src of srcs) {
-    if (!src.startsWith(origin)) continue;
-    const r = await page.request.get(src).catch(() => null);
-    if (r && r.ok()) joined += await r.text();
+/**
+ * Anchored to the LOCAL OPTION OBJECT, not to a bundle-wide property
+ * fragment (Codex #1857 r1). A bare `telemetryEnabled\s*:\s*false` is
+ * satisfied by any `_telemetryEnabled:false` a dependency happens to
+ * contribute, so a real regression could pass the moment unrelated code
+ * grew a similar substring. These match the adjacency our own call
+ * produces — verified against the deployed bundle, which minifies to
+ * `showQrModal:!1,telemetryEnabled:!1,metadata:{…}` and
+ * `preference:{options:\`all\`,telemetry:!1}`.
+ */
+const WC_CONFIGURED = new RegExp(
+  String.raw`showQrModal\s*:\s*` + MINIFIED_FALSE + String.raw`\s*,\s*telemetryEnabled\s*:\s*` + MINIFIED_FALSE,
+);
+const CB_CONFIGURED = new RegExp(
+  String.raw`preference\s*:\s*\{[^{}]{0,160}?telemetry\s*:\s*` + MINIFIED_FALSE,
+);
+
+/**
+ * What this check can and cannot conclude, stated because an earlier
+ * draft claimed more.
+ *
+ * It can CONFIRM a setting shipped. It cannot reliably prove a benign
+ * absence. The first attempt tried to distinguish "our connector was
+ * dead-code-eliminated because this build has no project id" from "the
+ * setting regressed", using a marker token — and no such token survives
+ * scrutiny: ConnectKit generates its own WalletConnect config whose
+ * minified shape (`showQrModal:!1,projectId:…,metadata:{…}`) is nearly
+ * identical to ours, so a marker reads as "our call is present" on a
+ * build where it is not.
+ *
+ * So absence is reported as NOT CONFIRMED with both possible causes
+ * named, and treated as a failure of the CONFIGURATION check — never
+ * silently excused, and never dressed up as proof of a leak either.
+ */
+async function assertBundleSettings(page, origin) {
+  // Resource timing, not `script[src]` (Codex #1857 r1). Vite fetches
+  // statically and dynamically imported chunks through the module
+  // loader, which creates no script element — so the DOM lists only the
+  // entry, and configuration living in a chunk would read as absent.
+  const urls = await page.evaluate((o) => {
+    const fromTiming = performance
+      .getEntriesByType('resource')
+      .filter((e) => e.initiatorType === 'script' || /\.js(\?|$)/.test(e.name))
+      .map((e) => e.name);
+    const fromDom = Array.from(document.querySelectorAll('script[src]')).map((s) => s.src);
+    return Array.from(new Set([...fromTiming, ...fromDom])).filter((u) => u.startsWith(o));
+  }, origin);
+
+  if (urls.length === 0) return { ok: false, note: 'config NOT READ — no same-origin scripts observed' };
+
+  let js = '';
+  for (const u of urls) {
+    const r = await page.request.get(u).catch(() => null);
+    if (r && r.ok()) js += await r.text();
   }
-  return joined;
+  if (!js) return { ok: false, note: 'config NOT READ — scripts could not be fetched' };
+
+  const cb = CB_CONFIGURED.test(js);
+  const wc = WC_CONFIGURED.test(js);
+  if (cb && wc) return { ok: true, note: `config ok — coinbase + walletconnect (${urls.length} script(s))` };
+  const missing = [!cb && 'coinbase', !wc && 'walletconnect'].filter(Boolean).join(' + ');
+  return {
+    ok: false,
+    note:
+      `config NOT CONFIRMED — ${missing}: either the setting regressed, or this ` +
+      `build omits that connector entirely (both need a human to tell apart)`,
+  };
 }
 
 const targets = process.argv.slice(2);
@@ -139,6 +190,7 @@ const browser = await chromium.launch({
 });
 
 let clean = 0;
+let configBad = 0;
 let emitted = 0;
 let unverified = 0;
 
@@ -218,31 +270,23 @@ for (const url of targets) {
     .evaluate(() => Object.keys(localStorage).some((k) => k.startsWith('wc@2:')))
     .catch(() => false);
 
-  // Bundle assertion (#1840) — configuration evidence, independent of
-  // traffic. Skipped when readiness failed: reading scripts off a page
-  // that never mounted proves nothing about what the app would run.
-  let bundleNote = null;
+  // Configuration evidence (#1840), reported SEPARATELY from traffic —
+  // execution and configuration are different claims, and folding a
+  // config failure into "not verifiably exercised" said the app never
+  // ran when it demonstrably had (Codex #1857 r1). Skipped when
+  // readiness failed: scripts off a page that never mounted prove
+  // nothing about what the app would run.
+  let config = null;
   if (readinessError === null) {
-    const js = await deployedScripts(page, new URL(url).origin).catch(() => '');
-    if (!js) {
-      bundleNote = 'bundle NOT READ — could not fetch scripts';
-    } else {
-      const cbOk = CB_FLAG.test(js);
-      const wcBuilt = WC_CALLSITE.test(js);
-      const wcOk = WC_FLAG.test(js);
-      if (!cbOk || (wcBuilt && !wcOk)) {
-        bundleNote = `bundle MISSING setting — coinbase:${cbOk ? 'ok' : 'ABSENT'} ` +
-          `walletconnect:${wcBuilt ? (wcOk ? 'ok' : 'ABSENT') : 'not built in'}`;
-      } else {
-        bundleNote = `bundle carries settings — coinbase:ok ` +
-          `walletconnect:${wcBuilt ? 'ok' : 'not built in'}`;
-      }
-    }
+    config = await assertBundleSettings(page, new URL(url).origin).catch((e) => ({
+      ok: false,
+      note: `config NOT READ — ${String(e).split('\n')[0]}`,
+    }));
   }
-  const bundleFailed = bundleNote !== null && /MISSING|NOT READ/.test(bundleNote);
 
   const didEmit = hits.length > 0;
-  const isUnverified = readinessError !== null || bundleFailed;
+  const isUnverified = readinessError !== null;
+  const configFailed = config !== null && !config.ok;
 
   if (didEmit) {
     console.log(`FAIL  ${url} — ${hits.length} telemetry request(s) on load:`);
@@ -250,20 +294,24 @@ for (const url of targets) {
     emitted++;
   }
   if (isUnverified) {
-    console.log(
-      `FAIL  ${url} — not verifiably exercised: ${readinessError ?? bundleNote}`,
-    );
+    console.log(`FAIL  ${url} — not verifiably exercised: ${readinessError}`);
     unverified++;
   }
-  if (!didEmit && !isUnverified) {
+  // Printed on EVERY path where it was evaluated, not only on an
+  // overall pass — otherwise configuration success vanished from the
+  // report whenever traffic happened to fail.
+  if (config) {
+    console.log(`${config.ok ? 'PASS  ' : 'FAIL  '}${url} — ${config.note}`);
+    if (!config.ok) configBad++;
+  }
+  if (!didEmit && !isUnverified && !configFailed) {
     clean++;
     console.log(`PASS  ${url} — Coinbase SDK constructed and silent (cbwsdk.store present)`);
     console.log(
       wcExercised
         ? '        WalletConnect: provider constructed, also silent'
-        : '        WalletConnect: not exercised at load — covered by the bundle check below',
+        : '        WalletConnect: not exercised at load — see the config line',
     );
-    if (bundleNote) console.log(`        ${bundleNote}`);
   }
 
   await ctx.close();
@@ -277,7 +325,7 @@ await browser.close();
 // bad target in a one-target run printed "-1 clean" (Codex #1838 r3).
 // An impossible summary discredits the numbers beside it.
 console.log(
-  `\n${clean} clean, ${emitted} emitting telemetry, ${unverified} not verifiably exercised ` +
-    `(of ${targets.length}).`,
+  `\n${clean} clean, ${emitted} emitting telemetry, ${unverified} not verifiably exercised, ` +
+    `${configBad} config not confirmed (of ${targets.length}).`,
 );
-process.exit(emitted + unverified === 0 ? 0 : 1);
+process.exit(emitted + unverified + configBad === 0 ? 0 : 1);
