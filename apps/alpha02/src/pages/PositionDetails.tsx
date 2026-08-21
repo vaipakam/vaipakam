@@ -1114,7 +1114,28 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         loanLive.data && !loanLive.isError
           ? (loanLive.data.live.status as LoanStatus)
           : undefined,
-      fresh: loanLiveEnabled,
+      // NEVER admitted to the reversible question, enabled or not
+      // (Codex #1858 r7). Round 6 gated this on `loanLiveEnabled`,
+      // which is a user-controlled toggle: flip to Basic, let the
+      // borrower cure a cached FallbackPending, flip back, and the
+      // pre-cure snapshot is treated as a fresh reading the instant
+      // Advanced re-mounts — authoritative within `staleTime`, and
+      // still authoritative during the background refetch after it.
+      //
+      // Gating on `isStale` instead would trade one bug for another:
+      // `staleTime` is half the refetch interval, so a genuine
+      // FallbackPending would drop out of the answer for half of every
+      // polling cycle.
+      //
+      // The honest fix is that this read does not belong in the
+      // question at all. `liveStatus` is the always-on status read,
+      // enabled in a superset of this one's cases and polling faster;
+      // it answers the reversible question completely. This is the
+      // advanced-only STRATEGY read, and all it contributes here is a
+      // cache a mode toggle can freeze. It stays in the full candidate
+      // list below, where the answers are absorbing and a stale
+      // terminal reading is only ever ahead.
+      fresh: false,
     },
     {
       status:
