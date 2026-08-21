@@ -589,11 +589,14 @@ borrower claim 根据 loan 如何 settle 来返回：
   条件结算。
 - **HF-liquidation 或 default** — 仍请查看，可能还有 surplus。系统只取走
   足以支付 liquidator、lender 和 treasury 的那部分价值，余下的会记为您的
-  claim。它的形式取决于 loan 是以哪条路径关闭的。普通的 HF liquidation，
-  以及对可交易 collateral 的时间型 default，两者都会卖出 collateral，
-  并将剩余记为 loan 的 principal asset。只有当 liquidator 不卖出、而是
-  按折扣直接拿走 collateral 的那种 close-out，未卖出的部分才会以
-  encumbered 状态留在您的 vault 中。至于部分 liquidation，它根本不是
+  claim。它的形式只取决于一件事：collateral 是被卖出，还是被交出。被卖出——
+  也就是经交易所路由出去——剩余会以 loan 的 principal asset 到您手中。
+  被交出，剩下的就是 collateral 本身，以 encumbered 状态留在您的
+  vault 中。交出它的路径不止一条，而且都与 loan 以哪种方式结束无关：liquidator 按折扣直接拿走，close-out 没有
+  送去交易所、而是在内部与一个反向 position 撮合，以及这笔卖出根本没能成交——那里 collateral 会到您手中——除非 lender 在 claim 时带来一份能成交的报价，那样就按 loan 的 asset
+  支付；而大多数 claim 根本不带报价。普通 liquidation 和时间型 default
+  都会在转向交易所之前先尝试这种内部撮合，所以这两条路径的结果都不是固定的——这正是应当去读
+  claim，而不是从结束方式去推断的原因。折扣式拿走反而是确定的，只是方向相反：它既不卖出也不撮合，留给您的始终是 collateral。至于部分 liquidation，它根本不是
   close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
   假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
   什么——但那是一种结果，不是规则。rebate 会不会回来，取决于 loan 如何结束：若该 loan 仍在
@@ -603,7 +606,9 @@ borrower claim 根据 loan 如何 settle 来返回：
   可能为零，全额仍归 treasury。
 
 borrower position NFT 是在您 claim 时 burn，而不是在 loan 结清时——因此
-liquidation 留下的 surplus 之后仍可领取。
+liquidation 留下的 surplus 之后仍可领取。但 NFT 还在，本身并不证明有
+surplus：如果 liquidation 什么也没剩下，就没有可领取的东西，claim 会被拒绝，
+而 NFT 仍可能留着。请读 claim，而不是读 NFT。
 
 ---
 

@@ -311,18 +311,22 @@ lender position NFT — transaction 确认后，loan 的 lender 这一侧
 如果您已经全额 repay loan，borrower claim 会返还您一开始锁定的
 collateral。如果发生 default 或 liquidation，也请查看一下。系统只会取走偿还债务
 和了结它所需的那部分价值，超出的部分都会记在您名下。它以什么形式存在，
-取决于 loan 是如何结束的：普通 liquidation 之后，或可交易 collateral
-的 default 之后，basket 会被卖出，剩余部分以 loan 自身的 asset 到您
-手中。只有当 liquidator 不卖出、而是按折扣直接拿走 collateral 时，
-等着您的才是 collateral 本身。在无法定价的 collateral 上发生
+取决于 loan 是如何结束的：如果 collateral 经交易所被卖出，剩余部分
+会以 loan 自身的 asset 到您手中。如果它是被交出而非卖出，等着您的
+就是 collateral 本身。交出它的情况不止一种，且都与 loan 以哪种方式结束无关：liquidator 按折扣直接拿走，close-out 没有卖出、
+而是在协议内部与一个反向 position 撮合，或者这笔卖出根本没能成交——那里 collateral 会给到您——除非 lender 在 claim 时带来一份能成交的报价，那样就按 loan 自身的 asset
+支付；而大多数并不带报价。普通 liquidation 和 default 都会在去交易所之前先找这种内部撮合，所以这两种的结果都不是固定的——请读
+claim，而不要从结束方式去推断。按折扣直接拿走是例外，而且是反方向的确定：它从不卖出，留给您的始终是 collateral。在无法定价的 collateral 上发生
 default 时，往往整个 basket 都会被取走、什么也不剩，但那是结果，不是规则。
 费用 rebate 会不会回来，取决于 loan 如何结束：即使仍在已停用 VPFI
 费用路径上的 loan，full repayment、preclose 或 refinance 会结算为
 Loan Initiation Fee 托管的 VPFI 的时间加权 rebate——若您在整个 loan
 期间的折扣平均为零，该 rebate 也可能为零，全额仍归 treasury。只有
 default 或 liquidation 才会将其全部没收。claim 会 consume
-您的 borrower position NFT — 这正是为什么 liquidation 之后那个 NFT 仍在，
-等着您。
+您的 borrower position NFT。反过来却不成立：liquidation 之后 NFT 仍在，
+并不证明有什么在等着您。如果什么也没剩下，就没有可领取的东西，去 claim 会被拒绝，而
+NFT 仍可能留着。请读 claim 本身怎么说，不要把
+NFT 当作承诺。
 
 ---
 

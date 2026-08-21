@@ -775,13 +775,23 @@ prêt s'est réglé :
 - **Liquidation HF ou défaut** — vérifie quand même, il peut
   rester un excédent. On ne prélève que la valeur nécessaire
   pour couvrir le liquidateur, le prêteur et le trésor, et le reste
-  est enregistré comme ta créance. Sa FORME dépend de la voie par
-  laquelle le prêt s'est refermé. Une liquidation HF ordinaire et
-  un défaut temporel sur un collatéral négociable vendent tous
-  deux le collatéral et enregistrent le reliquat dans l'actif
-  principal du prêt. Seule une clôture où un liquidateur prend le
-  collatéral directement avec une décote, au lieu de le vendre,
-  laisse la part invendue grevée dans ton vault. Une liquidation
+  est enregistré comme ta créance. Sa FORME tient à une seule chose : le
+  collatéral a-t-il été VENDU ou REMIS ? Vendu — c'est-à-dire
+  acheminé au dehors par une place de marché — et le reliquat te
+  parvient dans l'actif principal du prêt. Remis, et ce qui reste
+  est le collatéral lui-même, grevé dans ton vault. Plus d'une chose le remet, et aucune ne dépend de la clôture par
+  laquelle tu es passé : un liquidateur qui prend le collatéral
+  directement avec une décote, une clôture appariée en interne contre
+  une position opposée au lieu d'être envoyée sur le marché, et une vente qui n'a pas pu aboutir — là tu reçois le collatéral, sauf si le prêteur apporte une cotation
+  qui fonctionne au moment de la réclamation — tu es alors payé dans
+  l'actif du prêt ; la plupart des réclamations n'en apportent
+  aucune. La liquidation ordinaire comme un défaut temporel
+  tentent cet appariement interne AVANT de passer par le marché, si
+  bien qu'aucune de ces deux voies ne se termine toujours de la même
+  façon — c'est pourquoi il faut lire la créance, et non la voie. La
+  voie avec décote, elle, est prévisible, mais dans l'autre sens :
+  elle ne vend ni n'apparie, donc ce qui te reste est toujours le
+  collatéral. Une liquidation
   partielle n'est pas une clôture du tout — le prêt reste ouvert
   et aucune créance n'est créée. Consulte la créance plutôt que
   de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le
@@ -796,7 +806,11 @@ prêt s'est réglé :
 
 Le NFT de position d'emprunteur est brûlé au moment où tu
 réclames, pas quand le prêt se résout — un excédent laissé par une
-liquidation reste donc récupérable ensuite.
+liquidation reste donc récupérable ensuite. La survie du NFT ne
+prouve pas à elle seule qu'il y a un excédent : si une liquidation
+n'a rien laissé, il n'y a rien à récupérer, la réclamation est
+refusée, et le NFT peut rester quand même. Lis
+la créance, pas le NFT.
 
 ---
 

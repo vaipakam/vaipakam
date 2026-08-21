@@ -373,11 +373,18 @@ prestatario devuelve el colateral que bloqueaste al inicio. En
 default o liquidación, compruébalo igualmente. Sólo se toma el
 valor que exigen la deuda y los costes de cerrarla, y todo lo que
 exceda queda registrado como tuyo. Su forma depende de cómo
-terminó el préstamo: tras una liquidación ordinaria, o un default
-sobre colateral negociable, se vende la canasta y lo que sobra te
-llega en el activo del propio préstamo. Sólo cuando un liquidador
-toma el colateral directamente con descuento, en vez de venderlo,
-lo que te espera es el colateral mismo. A menudo —en un
+terminó el préstamo: si el colateral se vendió por un exchange,
+lo que sobra te llega en el activo del propio préstamo. Si en
+cambio se entregó, lo que te espera es el colateral mismo. Varias cosas lo entregan, termine como termine el préstamo: un
+liquidador que lo toma directamente con descuento, un cierre casado
+dentro del protocolo contra una posición opuesta en lugar de vendido, o una venta que no pudo hacerse — ahí te llega el colateral salvo que el prestamista aporte una
+cotización que funcione al reclamar — entonces cobras en el activo del
+propio préstamo; la mayoría no aporta ninguna. Una liquidación ordinaria y
+un default buscan ese casamiento interno antes de ir a un exchange,
+así que ninguno de esos dos acaba siempre igual: lee la reclamación en
+vez de deducirlo de cómo cerró. La toma con descuento es la excepción,
+y es previsible al revés: nunca vende, así que siempre te deja el
+colateral. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
 entera y no queda nada, pero eso es cómo resultó, no una regla.
 Que el reembolso de la comisión vuelva depende de cómo terminó el
@@ -386,8 +393,12 @@ reembolso total, un precierre o una refinanciación liquidan el
 reembolso ponderado por tiempo sobre el VPFI retenido contra la
 Loan Initiation Fee — que puede ser cero, y entonces todo va al
 tesoro, si tu descuento promedió cero durante el préstamo. Solo un
-incumplimiento o una liquidación lo pierden por completo. La reclamación consume tu NFT de posición de prestatario
-—por eso el NFT sigue ahí tras una liquidación, esperándote.
+tesoro. Reclamar consume tu NFT de posición de prestatario.
+Lo contrario no se sigue: un NFT que sigue ahí tras una
+liquidación no es prueba de que algo te espere. Si no quedó nada,
+no hay nada que recoger, el intento se rechaza y el NFT puede
+quedarse igualmente. Lee lo que dice la
+reclamación en vez de tomar el NFT como una promesa.
 
 ---
 

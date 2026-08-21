@@ -728,13 +728,23 @@ The borrower claim returns, depending on how the loan settled:
 - **HF-liquidation or default** — check anyway; there may be a
   surplus. Only enough value is taken to cover the
   liquidator, the lender and the treasury, and the remainder is
-  recorded as your claim. Its FORM depends on the route that
-  closed the loan. An ordinary HF liquidation and a time-based
-  default on tradable collateral both sell the collateral and
-  record the residue in the loan’s principal asset. Only a
-  close-out where a liquidator takes the collateral directly at a
-  discount, instead of selling it, leaves the unsold part
-  encumbered in your vault. A partial liquidation is not a
+  recorded as your claim. Its FORM turns on one thing: whether
+  the collateral was SOLD or HANDED OVER. Sold — routed out
+  through an exchange — and the residue reaches you in the loan’s
+  principal asset. Handed over, and what is left is the
+  collateral itself, encumbered in your vault. More than one
+  thing hands it over, and none of them depends on which
+  close-out you are in: a liquidator taking the collateral
+  directly at a discount, a close-out matched internally against
+  an opposing position instead of being sent to an exchange, and a sale that could not be completed — there the collateral comes to you unless the lender brings a working
+  quote when they claim, which pays you in the loan's asset instead
+  — and most claims bring no quote at all. The
+  ordinary liquidation route and a time-based default both try that
+  internal match BEFORE reaching for an exchange, so neither of
+  those two ends reliably one way or the other, which is why the
+  claim rather than the route is the thing to read. The discounted
+  route IS reliable, and in the other direction: it neither sells
+  nor matches, so what it leaves you is always the collateral. A partial liquidation is not a
   close-out at all — the loan stays open and no claim is created.
   Check the claim rather than assuming which one you have.
   On an illiquid default the whole basket usually goes, so there
@@ -748,7 +758,10 @@ The borrower claim returns, depending on how the loan settled:
 
 The borrower position NFT is burned when you claim, not when the
 loan resolves — so a surplus left by a liquidation is still there
-to collect afterwards.
+to collect afterwards. The NFT surviving is not itself proof of a
+surplus: where a liquidation left nothing over there is nothing to
+collect, claiming is refused, and the NFT can remain regardless.
+Read the claim, not the NFT.
 
 ---
 
@@ -2217,8 +2230,15 @@ system without surprises.
   separate cross-chain "VersionBumped" message today;
   mirrors learn the new version only when a per-user
   TierUpdated message arrives carrying the new tuple. Until
-  that user-triggered push lands, old-version caches on
-  mirrors continue to apply at the OLD BPS. Operators
+  ANY such push reaches a given mirror, old-version caches
+  there continue to apply at the OLD BPS — but the version
+  the receiver raises is mirror-WIDE, so the first
+  post-bump push from any user at all flips it for
+  everyone. From that moment `_mirrorEffectiveTierAndBps`
+  reads every cache still carrying the old version as
+  tier 0, until that user's own push lands. So the
+  old-BPS grace is per-mirror and ends on someone else's
+  message, not per-user. Operators
   changing tier thresholds / BPS should top up the
   broadcast budget in advance to absorb the wave of
   per-user updates that lands on the next mutation by each
