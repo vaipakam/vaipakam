@@ -321,8 +321,8 @@ default 时，往往整个 basket 都会被取走、什么也不剩，但那是�
 费用 rebate 会不会回来，取决于 loan 如何结束：即使仍在已停用 VPFI
 费用路径上的 loan，任何正常关闭都会结算为
 Loan Initiation Fee 托管的 VPFI 的 rebate——金额取决于结算时刻您的
-折扣，若那时没有持仓则可能为零，全额被没收。只有
-default 或 liquidation 才会将其全部没收。claim 会 consume
+折扣，若那时没有持仓则可能为零，全额被没收。default 或 liquidation 会将其全部没收；以 prepay 出售结清的 loan
+目前也无法发放，请勿在该路径上指望它。claim 会 consume
 您的 borrower position NFT。反过来却不成立：liquidation 之后 NFT 仍在，
 并不证明有什么在等着您。如果什么也没剩下，就没有可领取的东西，去 claim 会被拒绝，而
 NFT 仍可能留着。请读 claim 本身怎么说，不要把

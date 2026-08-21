@@ -399,8 +399,9 @@ auf dem eingestellten VPFI-Gebührenweg rechnet jeder ordnungsgemäße
 Abschluss das Rebate auf dem gegen die Loan Initiation Fee
 verwahrten VPFI ab — seine Höhe bestimmt dein Rabatt im Moment der
 Abrechnung, es kann also null sein und dann vollständig verfallen,
-wenn du zu diesem Zeitpunkt nichts mehr hältst. Nur ein Default oder eine
-Liquidation lässt es vollständig verfallen. Der Claim verbraucht deinen
+wenn du zu diesem Zeitpunkt nichts mehr hältst. Ein Default oder eine Liquidation lässt es vollständig verfallen —
+und ein per Prepay-Sale geschlossener Loan kann es derzeit ebenfalls
+nicht auszahlen, rechne dort also nicht damit. Der Claim verbraucht deinen
 Borrower-Position-NFT. Umgekehrt gilt das nicht: ein NFT, der nach
 einer Liquidation noch da ist, ist kein Beleg dafür, dass etwas
 auf dich wartet. Blieb nichts übrig, gibt es nichts

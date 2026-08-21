@@ -397,8 +397,9 @@ de la façon dont le prêt s'est terminé : sur un prêt encore soumis
 à la voie de frais VPFI retirée, toute clôture régulière règle le rabais
 sur le VPFI retenu au titre de la Loan Initiation Fee — son montant
 est fixé par ta remise au moment du règlement, il peut donc être nul
-et entièrement perdu si tu ne détiens plus rien à cet instant. Seuls
-un défaut ou une liquidation le font perdre en totalité. Réclamer consomme ton NFT de position
+et entièrement perdu si tu ne détiens plus rien à cet instant. Un défaut ou une
+liquidation le font perdre en totalité, et un prêt soldé par une vente
+prepay ne peut pas non plus le verser actuellement : n'y compte pas. Réclamer consomme ton NFT de position
 d'emprunteur. L'inverse n'est pas vrai : un NFT encore présent
 après une liquidation ne prouve pas que quelque chose t'attend.
 S'il ne restait rien, il n'y a rien à récupérer, la tentative est

@@ -370,7 +370,9 @@ loan の終わり方によります。廃止された VPFI 手数料経路のま
 のために保管されていた VPFI の rebate が精算されます。金額は決済時点の
 割引で決まるため、その時点で何も保有していなければゼロとなり、全額が
 treasury に入ります。
-全額が没収されるのは default または liquidation のときだけです。
+全額が没収されるのは default または liquidation のときです。prepay
+売却で閉じられた loan では、現状そもそも支払われないため、その経路では
+当てにしないでください。
 claim はあなたの borrower position NFT を consume します。逆は成り立ち
 ません。liquidation のあとに NFT が残っていることは、何かが待っている
 証拠ではありません。残余がなかった場合、受け取るものはなく、claim しようとすると

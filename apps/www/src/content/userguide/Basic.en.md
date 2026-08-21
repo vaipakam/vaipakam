@@ -371,8 +371,9 @@ retired VPFI fee path, any proper close
 settles the rebate on the VPFI held against the
 Loan Initiation Fee — sized by your discount at the moment it settles,
 so it can be zero, leaving the whole amount forfeited, if you hold
-nothing by then. Only
-a default or liquidation forfeits it outright.
+nothing by then. A default or a liquidation forfeits it outright —
+and a loan closed by a prepay sale currently cannot pay it out
+either, so treat that route as one where it does not arrive.
 Claiming consumes your borrower position NFT. The reverse does
 not follow: an NFT still sitting there after a liquidation is not
 evidence that anything is waiting. Where nothing was left over there is

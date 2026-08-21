@@ -352,8 +352,10 @@ collateral이 남습니다.
 끝났는지에 달려 있습니다. 폐지된 VPFI 수수료 경로에 남아 있는 loan이라도
 정상 종료라면(repayment, early close, refinance, 또는 loan을 정산하는 매각) Loan Initiation Fee를 위해
 보관되던 VPFI의 rebate가 정산됩니다. 금액은 정산 시점의 할인으로
-정해지므로, 그때 보유가 없으면 0이 되어 전액이 몰수됩니다. 전액이 몰수되는
-것은 default 또는 liquidation일 때뿐입니다.
+정해지므로, 그때 보유가 없으면 rebate가 0이 되어 남은 금액은 돌아오지
+않습니다. 처음부터 rebate 없이 전액이 몰수되는 것은 default 또는
+liquidation일 때이며, prepay 매각으로 닫힌 loan은 현재 지급 자체가
+되지 않습니다.
 claim은 borrower position NFT를 consume합니다. 그 역은 성립하지
 않습니다. liquidation 이후 NFT가 남아 있다는 사실은 무언가가 기다리고
 있다는 증거가 아닙니다. 남은 것이 없으면 받아 갈 것도 없고, claim을 시도하면

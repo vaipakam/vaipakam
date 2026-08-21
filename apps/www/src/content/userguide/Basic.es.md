@@ -391,9 +391,9 @@ Que el reembolso de la comisión vuelva depende de cómo terminó el
 préstamo: en uno que siga en la vía de comisión VPFI retirada, cualquier cierre correcto liquida el reembolso sobre el VPFI retenido
 contra la Loan Initiation Fee — su importe lo fija tu descuento en el
 momento de la liquidación, así que puede ser cero y perderse por
-completo si para entonces no mantienes nada. Solo un
-incumplimiento o una liquidación lo pierden por completo en favor
-del tesoro. Reclamar consume tu NFT de posición de prestatario.
+completo si para entonces no mantienes nada. Un incumplimiento o una liquidación lo pierden por completo, y un
+préstamo cerrado mediante una venta prepay tampoco puede pagarlo
+actualmente, así que no cuentes con él por esa vía. Reclamar consume tu NFT de posición de prestatario.
 Lo contrario no se sigue: un NFT que sigue ahí tras una
 liquidación no es prueba de que algo te espere. Si no quedó nada,
 no hay nada que recoger, el intento se rechaza y el NFT puede

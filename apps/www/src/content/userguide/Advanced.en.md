@@ -716,18 +716,25 @@ The borrower claim returns, depending on how the loan settled:
 - **Full repayment / preclose / refinance** — your collateral
   basket back. On a loan still using the retired VPFI fee path,
   the Loan Initiation Fee rebate is settled alongside it, sized by
-  your discount at the moment it settles — so it comes to nothing
-  if you hold nothing by then; a loan opened under the current model has none at all,
+  the discount standing at the moment of settlement for the wallet
+  recorded as the loan's borrower — usually you, but if the position
+  NFT has changed hands the figure still follows the original
+  borrower's holdings, not the new owner's — so it comes to nothing
+  if that wallet holds nothing by then; a loan opened under the current model has none at all,
   because its discount was already taken off the fee at
   acceptance.
-- **A prepay sale that settles the loan** — the collateral goes to
-  the buyer, not back to you. What you receive is the sale price
+- **A prepay sale that settles the loan** — this one is not a claim
+  at all: the payout happens as the sale fills, and afterwards the
+  loan is in a state the Claim Center will not act on, so do not go
+  looking for it there. The collateral goes to the buyer, not back
+  to you. What you receive is the sale price
   less the lender's entitlement, the treasury cut and any seller
   fees the listing carried, paid to whoever holds the borrower
   position NFT. On a retired-path loan, do not count on the fee
   rebate on this route: it is calculated at settlement but cannot
   currently be collected afterwards.
-- **Swap-to-repay** — your collateral is sold to cover the debt, up
+- **A full swap-to-repay** (a partial one leaves the loan open and
+  creates no claim) — your collateral is sold to cover the debt, up
   to a ceiling you set. Set that ceiling generously and more can be
   consumed than the debt strictly needed; whatever is not consumed
   comes back to you. A surplus in the loan's own asset is normally
