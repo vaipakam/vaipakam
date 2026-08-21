@@ -76,6 +76,55 @@ const TELEMETRY_HOSTS = ['cca-lite.coinbase.com', 'pulse.walletconnect.org'];
  *  provider construction, which happens after first paint. */
 const SETTLE_MS = 12_000;
 
+/**
+ * Second, independent check: does the DEPLOYED BUNDLE actually carry the
+ * telemetry-off settings? (#1840)
+ *
+ * Watching traffic cannot answer this for WalletConnect. Its provider is
+ * not constructed at load, and even constructed it submits only events a
+ * previous session persisted — so `telemetryEnabled` could regress to its
+ * enabled default and every traffic observation would still come back
+ * clean. Reading the shipped JavaScript closes that gap without needing a
+ * wallet or a returning-visitor session.
+ *
+ * It is deliberately a check on CONFIGURATION, not behaviour, and is
+ * reported separately for that reason — it proves the option shipped, not
+ * that the vendor honours it.
+ *
+ * The conditional matters, and was found the hard way. The connector sits
+ * behind `...(WC_PROJECT_ID ? [walletConnect({…})] : [])`, and Vite
+ * substitutes that env var at build time — so a build with no project id
+ * has its whole WalletConnect call site dead-code-eliminated. Observed on
+ * a sibling app: the Coinbase half of the same commit shipped while the
+ * WalletConnect half was simply absent. Demanding the flag unconditionally
+ * would report a leak on a deployment that cannot have one. The rule is
+ * therefore: if OUR call site is in the bundle, the flag must be too.
+ *
+ * `universal:` is the call-site marker — it comes from the
+ * `metadata.redirect: { universal }` only we pass. Library code carries
+ * `projectId:` and the string "walletconnect" whether or not our call
+ * survives, so neither of those can serve as the discriminator.
+ */
+const MINIFIED_FALSE = String.raw`(?:!1|false)`;
+const WC_FLAG = new RegExp(String.raw`telemetryEnabled\s*:\s*` + MINIFIED_FALSE);
+const WC_CALLSITE = /universal\s*:/;
+const CB_FLAG = new RegExp(String.raw`[^A-Za-z]telemetry\s*:\s*` + MINIFIED_FALSE);
+
+/** Fetch every same-origin script the page references and concatenate it.
+ *  Uses the page's own request context so the container proxy applies. */
+async function deployedScripts(page, origin) {
+  const srcs = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('script[src]')).map((s) => s.src),
+  );
+  let joined = '';
+  for (const src of srcs) {
+    if (!src.startsWith(origin)) continue;
+    const r = await page.request.get(src).catch(() => null);
+    if (r && r.ok()) joined += await r.text();
+  }
+  return joined;
+}
+
 const targets = process.argv.slice(2);
 if (targets.length === 0) {
   console.error('usage: live-wallet-telemetry.mjs <origin> [origin…]');
@@ -169,8 +218,31 @@ for (const url of targets) {
     .evaluate(() => Object.keys(localStorage).some((k) => k.startsWith('wc@2:')))
     .catch(() => false);
 
+  // Bundle assertion (#1840) — configuration evidence, independent of
+  // traffic. Skipped when readiness failed: reading scripts off a page
+  // that never mounted proves nothing about what the app would run.
+  let bundleNote = null;
+  if (readinessError === null) {
+    const js = await deployedScripts(page, new URL(url).origin).catch(() => '');
+    if (!js) {
+      bundleNote = 'bundle NOT READ — could not fetch scripts';
+    } else {
+      const cbOk = CB_FLAG.test(js);
+      const wcBuilt = WC_CALLSITE.test(js);
+      const wcOk = WC_FLAG.test(js);
+      if (!cbOk || (wcBuilt && !wcOk)) {
+        bundleNote = `bundle MISSING setting — coinbase:${cbOk ? 'ok' : 'ABSENT'} ` +
+          `walletconnect:${wcBuilt ? (wcOk ? 'ok' : 'ABSENT') : 'not built in'}`;
+      } else {
+        bundleNote = `bundle carries settings — coinbase:ok ` +
+          `walletconnect:${wcBuilt ? 'ok' : 'not built in'}`;
+      }
+    }
+  }
+  const bundleFailed = bundleNote !== null && /MISSING|NOT READ/.test(bundleNote);
+
   const didEmit = hits.length > 0;
-  const isUnverified = readinessError !== null;
+  const isUnverified = readinessError !== null || bundleFailed;
 
   if (didEmit) {
     console.log(`FAIL  ${url} — ${hits.length} telemetry request(s) on load:`);
@@ -178,7 +250,9 @@ for (const url of targets) {
     emitted++;
   }
   if (isUnverified) {
-    console.log(`FAIL  ${url} — not verifiably exercised: ${readinessError}`);
+    console.log(
+      `FAIL  ${url} — not verifiably exercised: ${readinessError ?? bundleNote}`,
+    );
     unverified++;
   }
   if (!didEmit && !isUnverified) {
@@ -187,8 +261,9 @@ for (const url of targets) {
     console.log(
       wcExercised
         ? '        WalletConnect: provider constructed, also silent'
-        : '        WalletConnect: NOT EXERCISED on a first visit — see header (#1840)',
+        : '        WalletConnect: not exercised at load — covered by the bundle check below',
     );
+    if (bundleNote) console.log(`        ${bundleNote}`);
   }
 
   await ctx.close();

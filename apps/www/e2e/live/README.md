@@ -9,10 +9,12 @@ container setup below already are, but they are not all about the marketing
 site. Two kinds sit here:
 
 - **Marketing-site drives** — the rendered docs on `vaipakam.com`.
-- **Connected-app drives** — the wallet-connecting apps (`defi`, `alpha01`,
-  `alpha02`). `defi` and `alpha01` have no Playwright dependency of their own;
-  `alpha02` does (`@playwright/test`, for its own `e2e` suite), so a drive
-  specific to alpha02 could live there instead — the ones here span all three.
+- **Connected-app drives** — the wallet-connecting app. `alpha02` is the
+  surface being promoted, so it is the target that matters; the drives take
+  origins positionally and can still be pointed at a sibling app when there is
+  a reason to. `alpha02` has `@playwright/test` for its own `e2e` suite, so an
+  alpha02-only drive could live there instead; these sit here because they can
+  be aimed at any origin and share the container setup below.
 
 The table further down says which is which, and how each takes its target.
 
@@ -51,8 +53,7 @@ positional arguments instead, because it checks several apps in one run and
 a single environment variable cannot express that:
 
 ```bash
-node apps/www/e2e/live/live-wallet-telemetry.mjs \
-  https://defi.vaipakam.com/ https://alpha01.vaipakam.com/ https://alpha02.vaipakam.com/
+node apps/www/e2e/live/live-wallet-telemetry.mjs https://alpha02.vaipakam.com/
 ```
 
 It exits with a usage message if given no origins, rather than silently
@@ -140,13 +141,18 @@ surface and must not be taught to accept an unverified one.
 | File | Covers | Introduced by |
 | --- | --- | --- |
 | `live-worked-example.mjs` | The Overview's worked-example figures render as derived live values with the contract's integer arithmetic and honest provenance; the help search finds a page by a figure printed on it | #1751 (#1664 items 1 + 2) |
-| `live-wallet-telemetry.mjs` | A connected-app origin constructs the Coinbase SDK and sends nothing to its telemetry host on load. Takes origins as POSITIONAL arguments (covers `defi`, `alpha01`, `alpha02`). Fails closed unless the SDK is witnessed as constructed; the WalletConnect branch is **not** exercised (#1840) | #1836 (#1824) |
+| `live-wallet-telemetry.mjs` | A connected-app origin constructs the Coinbase SDK and sends nothing to its telemetry host on load, AND the deployed bundle carries both telemetry-off settings (#1840). Takes origins as POSITIONAL arguments; `alpha02` is the promoted target. Fails closed unless the SDK is witnessed as constructed | #1836 (#1824), #1840 |
 
-The second one lives here rather than under the app it checks because it
-targets three origins and belongs to none of them, and because this is where
-the browser tooling and the container setup above already are. `apps/defi` and
-`apps/alpha01` carry no Playwright dependency; adding one to each so a
-cross-app check could sit in both would be the worse trade.
+The second one lives here rather than under the app it checks because it takes
+any origin positionally rather than belonging to one app, and because this is
+where the browser tooling and the container setup above already are.
+
+It reports two INDEPENDENT kinds of evidence, and the distinction is the point:
+observed traffic (behaviour) and a bundle assertion (configuration). The second
+exists because traffic cannot answer for WalletConnect — its provider is not
+constructed at load, so its setting could regress and every observation would
+still look clean. Configuration evidence proves the option shipped, not that
+the vendor honours it, so neither kind is reported as the other.
 
 ## Adding one
 
