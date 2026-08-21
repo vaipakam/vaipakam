@@ -83,7 +83,21 @@ since the superseded version is probably still further up.
 
 Refusing a destination that is not a regular file belongs to the same instinct: a
 directory sitting at the output path silently swallows the assembled file, and
-the notes would then have been deleted for nothing.
+the notes would then have been deleted for nothing. A symbolic link is refused
+for a nearer-miss version of the same thing — replacing a file by renaming
+another one over it replaces the *link*, leaving the file it pointed at
+untouched while every note is consumed.
+
+### Only one assembly at a time
+
+Replacing the file and clearing the notes it consumed is now treated as a single
+transaction, and two runs for the same day can no longer overlap. Each would
+otherwise work from its own snapshot, and whichever finished second would
+overwrite what the first had added — losing a note from the assembled file *and*
+from the pending pile at once, with both runs reporting success. A second run now
+stops and says so, including how to clear the marker if the first one died
+mid-way. Different days do not block each other, since they touch different
+files.
 
 ### Verified against the fault, not just the fix
 

@@ -731,14 +731,81 @@ fi
 echo "T25: a FIFO at a dated path is refused instead of hanging the run"
 W="$ROOT/t25"; build "$W"
 out="$W/docs/ReleaseNotes"
+# Pick a timeout implementation FIRST. On stock macOS neither exists unless GNU
+# coreutils is installed, and `timeout` then returns 127 without ever launching
+# the assembler — which a "not 124 means it returned" test reads as a pass
+# while exercising nothing (Codex #1863 r4). Skip loudly instead.
+TMO=""
+if command -v timeout >/dev/null 2>&1; then TMO=timeout
+elif command -v gtimeout >/dev/null 2>&1; then TMO=gtimeout
+fi
 mkfifo "$out/ReleaseNotes-2026-01-01.md"
-# grep on a FIFO with no writer blocks forever, so every assembly run would
-# hang with no output. `timeout` is the assertion: without the guard this does
-# not return.
-timeout 20 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
-check "the run returns (did not hang)" "$([ $? -eq 124 ] && echo hung || echo returned)" "returned"
-check "no fragment was consumed"       "$(pending "$W")" "2"
+if [ -z "$TMO" ]; then
+  ok "skipped — no timeout(1) or gtimeout(1); cannot bound a hang safely"
+else
+  "$TMO" 20 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+  rc=$?
+  # 124 is timeout's own "it hung" status; 127 would be "never launched".
+  check "the run did not hang"     "$([ "$rc" -eq 124 ] && echo hung || echo returned)" "returned"
+  check "the assembler was reached" "$([ "$rc" -eq 127 ] && echo missing || echo ran)"  "ran"
+  check "and it refused"            "$rc"                                               "1"
+  check "no fragment was consumed"  "$(pending "$W")"                                   "2"
+fi
 rm -f "$out/ReleaseNotes-2026-01-01.md"
+
+echo "T26: a symlink at the output path is refused, not replaced"
+W="$ROOT/t26"; build "$W"
+out="$W/docs/ReleaseNotes"
+# `-f` FOLLOWS a symlink, so a link to a regular file passes that guard; `mv`
+# then replaces the LINK and leaves its target untouched, while every fragment
+# is consumed on a successful-looking run (Codex #1863 r4).
+printf '# real target\n' > "$W/real-notes.md"
+ln -s "$W/real-notes.md" "$out/ReleaseNotes-2026-08-16.md"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+check "the run fails"              "$?"                                          "1"
+check "no fragment was consumed"   "$(pending "$W")"                             "2"
+check "the path is still a symlink" \
+  "$([ -L "$out/ReleaseNotes-2026-08-16.md" ] && echo link || echo replaced)"    "link"
+check "its target is untouched"    "$(cat "$W/real-notes.md")"                   "# real target"
+
+echo "T27: two overlapping assemblies cannot lose a fragment"
+W="$ROOT/t27"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The lock is what makes the read/build/rename/delete sequence a transaction.
+# Held, a second run must refuse rather than build from a stale snapshot and
+# overwrite the first run's work (Codex #1863 r4).
+mkdir "$out/.assemble-2026-08-16.lock"
+msg="$(bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the second run refuses"     "$?"                                   "1"
+check "no fragment was consumed"   "$(pending "$W")"                      "2"
+check "it names the lock"          "$(says "$msg" '.assemble-2026-08-16.lock')" "1"
+check "and says how to clear it"   "$(says "$msg" 'rmdir')"               "1"
+rmdir "$out/.assemble-2026-08-16.lock"
+bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
+check "it proceeds once released"  "$(pending "$W")"                      "1"
+check "and leaves no lock behind" \
+  "$([ -e "$out/.assemble-2026-08-16.lock" ] && echo held || echo clear)" "clear"
+
+echo "T28: two fragments with IDENTICAL bytes in one assembly both stay recorded"
+W="$ROOT/t28"; build "$W"
+out="$W/docs/ReleaseNotes"
+rm "$W/docs/ReleaseNotes/unreleased/0001-a.md" "$W/docs/ReleaseNotes/unreleased/0002-b.md"
+printf '## Same wording.\n' > "$W/docs/ReleaseNotes/unreleased/0008-x.md"
+printf '## Same wording.\n' > "$W/docs/ReleaseNotes/unreleased/0009-y.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "both were folded in"  "$(sections "$out/ReleaseNotes-2026-08-16.md")" "2"
+check "both markers written" \
+  "$(grep -cE '^<!-- assembled-fragment: .+ sha256=[0-9a-f]{64} -->$' \
+      "$out/ReleaseNotes-2026-08-16.md")" "2"
+# The interrupted state, with BOTH still pending. A hash-keyed index keeps only
+# the last of them, so the other fails its exact-match test and is reported
+# ambiguous even though its own marker is right there.
+printf '## Same wording.\n' > "$W/docs/ReleaseNotes/unreleased/0008-x.md"
+printf '## Same wording.\n' > "$W/docs/ReleaseNotes/unreleased/0009-y.md"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the re-run succeeds"        "$?"                                          "0"
+check "nothing is duplicated"      "$(sections "$out/ReleaseNotes-2026-08-16.md")" "2"
+check "both are cleared"           "$(pending "$W")"                             "0"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

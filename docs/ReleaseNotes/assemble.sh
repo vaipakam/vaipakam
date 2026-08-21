@@ -489,6 +489,39 @@ else
   frags=("${selected[@]}")
 fi
 
+# ── One assembly at a time, per dated file ───────────────────────────────────
+# Everything from here to the deletes is one transaction: read $OUT, read
+# the fragments, build, rename, delete. Two overlapping runs for the same
+# date each build from their own snapshot, and the slower rename wins —
+# so a fragment the faster run had already folded in and deleted is
+# absent from BOTH the output and `unreleased/`. Lost outright, with two
+# successful-looking runs (Codex #1863 r4).
+#
+# `mkdir` as the lock: creating a directory is atomic and fails if it
+# exists, on every filesystem worth caring about, with no dependency on
+# `flock` (absent on macOS). The lock is named for the DATED FILE, not
+# globally — assembling two different days at once is harmless, since
+# they touch different outputs.
+#
+# A stale lock after a hard kill is reported with the command to clear
+# it, rather than being broken automatically on a timer: this guards a
+# transaction that deletes files, so "the other run is probably dead" is
+# not a judgement to make on the operator's behalf.
+LOCK="$DIR/.assemble-$DATE.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "Error: another assembly for $DATE appears to be running." >&2
+  echo "" >&2
+  echo "  lock: $LOCK" >&2
+  echo "" >&2
+  echo "Two overlapping runs can lose a fragment entirely — each builds from" >&2
+  echo "its own snapshot and the slower one overwrites the other's work." >&2
+  echo "If no other run is active, the lock is stale from an interrupted run:" >&2
+  echo "  rmdir '$LOCK'" >&2
+  exit 1
+fi
+_release_lock() { rmdir "$LOCK" 2>/dev/null || true; }
+trap '_release_lock' EXIT
+
 # ── Already-assembled fragments ──────────────────────────────────────────────
 # A fragment that is BOTH pending and already marked in $OUT is the
 # signature of a run interrupted between the rename and the deletes
@@ -522,8 +555,20 @@ fi
 # only the new one wrote the same payload into two files and deleted the
 # source (Codex #1863 r1). The hash is unique to the content, so finding
 # it anywhere is proof it was folded in somewhere.
-declare -A marked_in=()
-declare -A marked_as=()
+#
+# Keyed by hash AND name AND file, not by hash alone (Codex #1863 r4).
+# One assembly can legitimately contain two differently named fragments
+# with identical bytes, and a hash-keyed map keeps only the last of them
+# — so on recovery the OTHER one fails its exact-match test, is reported
+# ambiguous despite its own exact marker sitting in $OUT, and the
+# offered --force-append path then appends it a second time. A hash is
+# not a unique key here; the triple is.
+#
+# `marker_seen` answers "is this exact fragment recorded in this exact
+# file"; `marker_where` accumulates every place a given hash appears, for
+# the message when the answer is no.
+declare -A marker_seen=()
+declare -A marker_where=()
 shopt -s nullglob
 for dated in "$DIR"/ReleaseNotes-*.md; do
   # Regular files only, checked BEFORE opening (Codex #1863 r3). A FIFO
@@ -579,8 +624,9 @@ for dated in "$DIR"/ReleaseNotes-*.md; do
     [[ "$line" =~ ^"$MARKER_PREFIX"(.+)" sha256="([0-9a-f]{64})" -->"$ ]] || continue
     marker_name="${BASH_REMATCH[1]}"
     marker_hash="${BASH_REMATCH[2]}"
-    marked_in["$marker_hash"]="$dated"
-    marked_as["$marker_hash"]="$marker_name"
+    marker_seen["$marker_hash|$marker_name|$dated"]=1
+    # Appended, never overwritten — see the note above.
+    marker_where["$marker_hash"]="${marker_where[$marker_hash]:+${marker_where[$marker_hash]}; }$marker_name in $(basename "$dated")"
     # `$MARKER_PREFIX` interpolates into the grep pattern unescaped
     # because it contains no ERE metacharacter — it is
     # `<!-- assembled-fragment: `. If that literal ever gains one,
@@ -617,12 +663,10 @@ pending=()
 ambiguous=()
 for f in "${frags[@]}"; do
   h="$(frag_hash "$f")"
-  if [ -n "${marked_in[$h]+set}" ]; then
-    if [ "${marked_as[$h]}" = "$(basename "$f")" ] && [ "${marked_in[$h]}" = "$OUT" ]; then
-      already+=("$f")
-    else
-      ambiguous+=("$f")
-    fi
+  if [ -n "${marker_seen[$h|$(basename "$f")|$OUT]+set}" ]; then
+    already+=("$f")
+  elif [ -n "${marker_where[$h]+set}" ]; then
+    ambiguous+=("$f")
   else
     pending+=("$f")
   fi
@@ -638,8 +682,11 @@ if (( ${#ambiguous[@]} > 0 )) && (( FORCE_APPEND == 0 )); then
   echo "" >&2
   for f in "${ambiguous[@]}"; do
     h="$(frag_hash "$f")"
-    printf '  %s\n      same bytes as %s, folded into %s\n' \
-      "$(basename "$f")" "${marked_as[$h]}" "$(basename "${marked_in[$h]}")" >&2
+    # Every place this content already appears, not just one — with two
+    # identically-worded notes in play, naming a single site would point
+    # the operator at an arbitrary one of them.
+    printf '  %s\n      same bytes as: %s\n' \
+      "$(basename "$f")" "${marker_where[$h]}" >&2
   done
   echo "" >&2
   echo "  - already folded in, under that other name or into that other" >&2
@@ -660,8 +707,7 @@ if (( ${#already[@]} > 0 )); then
   # routed to the ambiguous branch above and never reaches this loop — so
   # there is one line to print, not two.
   for f in "${already[@]}"; do
-    printf '  %s -> already in %s\n' \
-      "$(basename "$f")" "$(basename "${marked_in[$(frag_hash "$f")]}")"
+    printf '  %s -> already in %s\n' "$(basename "$f")" "$(basename "$OUT")"
   done
   echo "  (an earlier run was interrupted after writing the file but before"
   echo "   clearing these; their content is already in place, byte for byte)"
@@ -764,7 +810,10 @@ fi
 # filesystem — across a mount boundary `mv` degrades to copy-then-unlink
 # and stops being atomic, which is the whole point of doing it this way.
 WORK="$(mktemp "$DIR/.assemble-$DATE.XXXXXX")"
-trap 'rm -f "$WORK"' EXIT
+# Both, not just the temp file: a bare `rm -f "$WORK"` here REPLACES the
+# lock-release trap set above, so an interrupted run would leave the lock
+# behind and block every later assembly for this date.
+trap 'rm -f "$WORK"; _release_lock' EXIT
 # `mktemp` creates 0600, and `mv` carries that mode onto $OUT — so every
 # successful assembly would quietly turn a world-readable release-notes
 # file into an owner-only one, or create the new one that way (Codex
@@ -834,8 +883,25 @@ if [ -e "$OUT" ] && [ ! -f "$OUT" ]; then
   echo "assembled notes would not be at that path." >&2
   exit 1
 fi
+# A SYMLINK needs its own test, because `-f` follows it and so accepts a
+# link to a regular file (Codex #1863 r4). `mv` then replaces the LINK
+# rather than writing through it: the intended target is left untouched,
+# the path silently stops being a symlink, and every fragment is consumed
+# on the strength of a successful-looking run. The old append-by-redirect
+# wrote through the link, so this would be a regression rather than a
+# pre-existing quirk.
+if [ -L "$OUT" ]; then
+  echo "Error: $OUT is a symbolic link." >&2
+  echo "Refusing to assemble: the rename would replace the link itself and" >&2
+  echo "leave its target unchanged, while consuming every fragment." >&2
+  echo "Assemble into the real path, or replace the link with a regular file." >&2
+  exit 1
+fi
 mv "$WORK" "$OUT"
-trap - EXIT
+# $WORK no longer exists, so drop only its cleanup — the lock must stay
+# held until the fragments below are deleted, which is the rest of the
+# transaction.
+trap '_release_lock' EXIT
 
 # Only now are the fragments consumed. An interruption between the rename
 # and these deletes leaves fragments pending whose content IS already in
