@@ -2206,11 +2206,21 @@ function lateScrapeRecorder(page, cardAbsentAtScrape) {
      *  COUNT BEFORE TEXT, and it is not a micro-optimisation (Codex
      *  #1853 r22). `innerText()` AUTO-WAITS — on an absent card it
      *  blocks for Playwright's default 30s before the `.catch` runs.
-     *  This is called once before the probe, once per poll iteration
-     *  and once after, so on the page it exists for — the one where
-     *  the scrape saw no card — it could spend minutes and the 1s poll
-     *  cadence never happened. The 45s deadline the drive advertises
-     *  was being blown by the code that reports on it.
+     *  On the page this exists for — the one where the scrape saw no
+     *  card — that is minutes spent inside a routine the drive treats
+     *  as free. The 45s deadline the drive advertises was being blown
+     *  by the code that reports on it.
+     *
+     *  CALLED TWICE, not per poll, and the previous wording here said
+     *  per poll. That is worth correcting rather than tidying: it is
+     *  the sentence somebody reads before deciding whether the sale-row
+     *  wait can return early on an absent card, and it makes the wait
+     *  look like the window in which a late mount is captured. It is
+     *  not. Capture happens once at the probe's start and once after it
+     *  returns, so what the wait actually contributes is ELAPSED TIME
+     *  before that second capture — which is still load-bearing for a
+     *  card that mounts late, just by a different mechanism than this
+     *  comment claimed.
      *
      *  `count()` does not auto-wait, so absence costs nothing; the
      *  bounded `timeout` covers a card that unmounts between the two
