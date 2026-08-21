@@ -292,6 +292,98 @@ export interface LenderExitInput {
    *  than as a rediscovery of this asymmetry. */
   borrowerOffsetPending: boolean;
   instantSellCandidates: InstantSellCandidates;
+  /** Has ANY live status read answered yet?
+   *
+   *  Only `chooserReadiness` consults this; no row's wording or
+   *  availability depends on it, so the rendered card is unchanged.
+   *  It exists because `fallbackPending` cannot carry its own third
+   *  state: the page derives it with `.some(...)` over the live-status
+   *  candidates, so `true` is self-evidencing while `false` is
+   *  ambiguous between "not fallback" and "nothing has answered". */
+  statusSettled: boolean;
+  /** Have ALL the enabled MATURITY reads answered yet?
+   *
+   *  A separate fact from `statusSettled`, because `maturity` is
+   *  reconciled from a different set of queries than the status is
+   *  (Codex #1858 r3). Only `chooserReadiness` consults it; no row's
+   *  wording or availability depends on it.
+   *
+   *  It exists because `maturity: 'past'` is not self-evidencing
+   *  either. The page reconciles two term reads and answers `'unknown'`
+   *  when they DISAGREE — an in-grace keeper extension re-stamps the
+   *  due date forward — so a `'past'` derived from the one source that
+   *  has landed can become `'unknown'` when the second arrives with a
+   *  longer term. Without this, readiness publishes `ready` on a
+   *  conclusion that later retracts, with no chain transition behind
+   *  the change.
+   *
+   *  Same disabled-source rule as `statusSettled`: a query that will
+   *  never fetch counts as answered, so Basic mode — where the
+   *  advanced-only term read is disabled — is unaffected. */
+  maturitySettled: boolean;
+  /** Did an enabled MATURITY read stop without contributing an answer?
+   *
+   *  Distinct from `!maturitySettled` (Codex #1858 r4). Settled means
+   *  nothing is in flight; this means a source that WAS going to
+   *  contribute did not, and — because an errored query keeps its
+   *  refetch interval — still might. A verdict resting on the sources
+   *  that did land can therefore be overturned by a recovery, which is
+   *  a retraction with no chain transition behind it.
+   *
+   *  It maps to `'failed'` rather than `'pending'`: the rows have
+   *  settled, so nobody is left waiting, but the answer must not be
+   *  read as a clean negative. */
+  maturityReadFailed: boolean;
+  /** The same question for the STATUS reads, whose failure mode is its
+   *  own: a recovered status source can report FallbackPending, which
+   *  shuts both sale routes after a positive answer was published. */
+  statusReadFailed: boolean;
+  /** Did the sale-lock read FAIL, as opposed to being in flight?
+   *
+   *  `saleLock` cannot carry this itself (Codex #1858 r6). The page
+   *  maps every lock-read error to `'checking'`, deliberately: the rows
+   *  must fail closed, and the query is live and retrying, so for a
+   *  READER the wait genuinely ends. Readiness asks a different
+   *  question, and on a lock RPC that stays down `'checking'` means
+   *  `pending` forever — the timeout this attribute exists to remove,
+   *  on a page that will never resolve.
+   *
+   *  So the failure travels separately and maps `'checking'` to
+   *  `'failed'` rather than `'pending'`. Conclusive negatives still
+   *  short-circuit above it: a confirmed listing does not care that the
+   *  lock read later broke. */
+  saleLockReadFailed: boolean;
+  /** Has the sale-lock read STOPPED, or is a refetch in flight?
+   *
+   *  The same rule as `maturitySettled`, on the third source (Codex
+   *  #1858 r10): a conclusive answer requires the source that produced
+   *  it to have stopped. TanStack retains `sale.state` through a
+   *  background poll, so a cached CLEAR could publish `ready`/`yes`
+   *  while the outstanding read was about to report a listing, and a
+   *  cached LISTED could publish `ready`/`no` just before one reported
+   *  a cancellation. Both are settled answers retracting on the
+   *  ordinary 30-second cycle. */
+  saleLockSettled: boolean;
+  /** Has the fee-entitlement read that gates BOTH sale tools stopped?
+   *
+   *  The fourth prerequisite, and the one the settlement wiring had
+   *  missed (Codex #1858 r11). `saleTools` is derived from retained
+   *  data and `isError`, both of which survive a background refetch —
+   *  so a cached `'ready'` published a settled `ready`/`yes` and a
+   *  failed refetch then turned it to `'failed'`, flipping the answer
+   *  with no chain transition. Same shape as the sale lock, on the
+   *  read that gates both rows rather than one. */
+  saleToolsSettled: boolean;
+  /** Has the source that reported FallbackPending stopped?
+   *
+   *  Narrower than `statusSettled` on purpose (Codex #1858 r10). The
+   *  fallback arm is conclusive and therefore skips the general status
+   *  gate — correctly, since waiting on unrelated sources would
+   *  reintroduce the timeout that arm exists to remove. But it must
+   *  still wait on ITS OWN source: a cached FallbackPending whose poll
+   *  is about to return Active after a cure would otherwise publish a
+   *  confident `ready`/`no` and then flip. */
+  fallbackSourceSettled: boolean;
 }
 
 export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
@@ -320,14 +412,18 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
   // Ranked above the listing lock: a fallback-pending loan refuses both
   // sales outright, so "cancel the listing first" would be advice that
   // does not lead anywhere (Codex r8 P2).
-  const pastDueOr = (reason: string | undefined) =>
-    input.maturity === 'past'
-      ? copy.lenderExit.pastDue
-      : input.maturity === 'unknown'
-        ? copy.lenderExit.options.maturityUnknown
-        : input.fallbackPending
-          ? o.saleFallbackPending
-          : reason;
+  const pastDueOr = (reason: string | undefined) => {
+    switch (conclusiveBlock(input)) {
+      case 'past-due':
+        return copy.lenderExit.pastDue;
+      case 'maturity-unknown':
+        return copy.lenderExit.options.maturityUnknown;
+      case 'fallback':
+        return o.saleFallbackPending;
+      default:
+        return reason;
+    }
+  };
 
   /** The sell-now row's verdict, hoisted so the LISTING row can read
    *  it (Codex r22 P2). The final-hour message reassures the lender
@@ -467,4 +563,200 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
  *  promise tools that would not appear. */
 export function hasJumpableRow(rows: LenderExitRow[]): boolean {
   return rows.some((r) => r.target !== undefined && r.unavailable === undefined);
+}
+
+/** Whether the chooser's answer about JUMPABILITY has settled yet.
+ *
+ *  Exposed for one reason: from outside the card, the absence of the
+ *  "switch to Advanced" control is ambiguous. It is missing both while
+ *  a prerequisite read is in flight AND when no row is genuinely
+ *  jumpable, and those are the two cases a live review most needs to
+ *  tell apart (#1855). Without a positive readiness signal a driver can
+ *  only wait out a deadline and then guess — which is what
+ *  `live-position-observe.mjs` does today, at 45 seconds per page, and
+ *  it still cannot distinguish a stale render from a regression.
+ *
+ *  Deliberately scoped to the inputs that decide JUMPABILITY, not to
+ *  everything the card reads:
+ *
+ *   - `periodicInterestCadence` is excluded. It changes the WAIT row's
+ *     wording and nothing else, so waiting on it would block readiness
+ *     on an answer that cannot move a jump — and on a loan whose
+ *     cadence read never lands, readiness would never arrive.
+ *   - `'unknown'` is NOT uniformly pending, and that asymmetry is the
+ *     whole subtlety here. `maturity: 'unknown'` means a query enabled
+ *     for exactly that case has not answered, so it clears — pending.
+ *     `saleLock: 'unknown'` and `instantSellCandidates: 'unknown'` mean
+ *     no query will EVER run, so they are settled answers; treating
+ *     them as pending would hang forever on a Basic-mode page.
+ *
+ *  `'failed'` is reported distinctly rather than folded into `'ready'`.
+ *  The rows have settled, so a reader is not left waiting — but a
+ *  consumer asserting "the switch should be here" must not treat a
+ *  failed prerequisite as a clean negative answer.
+ */
+export type ChooserReadiness = 'ready' | 'pending' | 'failed';
+
+
+/** The HEAD of the sale rows' unavailability precedence — the blocks
+ *  that decide both rows outright, before any narrower reason is read.
+ *
+ *  Extracted so `pastDueOr` and `chooserReadiness` cannot drift
+ *  (Codex #1858 r1). They had the same precedence written twice, in
+ *  different orders, and diverged immediately: the rows short-circuit
+ *  on past maturity while readiness went on waiting for a sale-lock
+ *  read whose answer could no longer matter. Two statements of one rule
+ *  is the shadow-model defect this whole PR chain keeps finding, and it
+ *  reappeared inside the fix for it. */
+type ConclusiveBlock = 'past-due' | 'maturity-unknown' | 'fallback';
+
+function conclusiveBlock(input: LenderExitInput): ConclusiveBlock | undefined {
+  if (input.maturity === 'past') return 'past-due';
+  if (input.maturity === 'unknown') return 'maturity-unknown';
+  if (input.fallbackPending) return 'fallback';
+  return undefined;
+}
+
+/** Is jumpability ALREADY decided as no, whatever else is outstanding?
+ *
+ *  Deliberately NOT `conclusiveBlock` (Codex #1858 r2). That function
+ *  orders the blocks by which COPY to show, and round 1's fix shared it
+ *  with readiness on the reasoning that one rule should not be written
+ *  twice. The rule was written twice — but they are two different rules,
+ *  and sharing the copy one imported its ordering into a question it
+ *  does not answer.
+ *
+ *  The orders genuinely differ. For copy, an unestablished due date
+ *  outranks a fallback status, because "we could not confirm the due
+ *  date" is the more informative sentence. For JUMPABILITY it does not
+ *  matter at all: a fallback-settling loan refuses both sale routes
+ *  whatever maturity later turns out to be, so the answer is no and
+ *  waiting on the terms read preserves the timeout on exactly the
+ *  fallback population.
+ *
+ *  So this asks only the question readiness needs — is the answer
+ *  already no — and takes no view on which reason a reader should see.
+ *
+ *  THE TWO ARMS ARE NOT EQUALLY CONCLUSIVE (Codex #1858 r3), and
+ *  rounds 1 and 2 both treated them as if they were.
+ *
+ *  `fallbackPending: true` is self-evidencing: a status read positively
+ *  reported FallbackPending, and no later read can un-report it in a
+ *  way that reopens a sale route. It stays conclusive while every other
+ *  query is still in flight — which is the point, since waiting would
+ *  preserve the timeout on exactly the population this arm exists for.
+ *
+ *  `maturity: 'past'` is a RECONCILIATION of two term reads, and the
+ *  page answers `'unknown'` when they disagree. So a `'past'` computed
+ *  from the only source that has landed is provisional: an in-grace
+ *  keeper extension moves the due date forward, and the second read
+ *  arriving with the longer term turns `'past'` into `'unknown'` and
+ *  readiness from `ready` back to `pending`. A value published as
+ *  settled must not retract without a chain transition behind it, so
+ *  this arm waits for the sources that produce it. */
+function conclusivelyUnjumpable(input: LenderExitInput): boolean {
+  // AN OR OVER INDEPENDENT ARMS, not a precedence chain (Codex #1858
+  // r11). Written as early returns, an arm whose own source was
+  // refetching answered `false` for the whole predicate and masked the
+  // arms after it — so a fallback loan with a refetching status source
+  // reported `pending` even when a SETTLED confirmed listing, or a
+  // settled past-maturity, already proved both rows shut. Each of
+  // these is independently sufficient; none is a tie-breaker for the
+  // others, and a chain of early returns silently made them one.
+  //
+  // Each arm still waits on its OWN source and only its own (r10): a
+  // positive observation is conclusive because nothing can retract it,
+  // which stops being true while the read that produced it is in
+  // flight. Waiting narrowly is what keeps these arms from
+  // reintroducing the general timeout they exist to remove.
+  //
+  // A CONFIRMED LISTING shuts both rows with no reference to maturity
+  // or status (r5) — the row builder marks the listing row
+  // `alreadyListed` and the direct-sale row refused-while-listed for
+  // every value of the reads this predicate would otherwise wait on.
+  // `'checking'` is NOT that: an unanswered lock read is the ambiguous
+  // case and stays pending below.
+  return (
+    (input.fallbackPending && input.fallbackSourceSettled) ||
+    (input.saleLock === 'listed' && input.saleLockSettled) ||
+    (input.maturity === 'past' && input.maturitySettled && !input.maturityReadFailed)
+  );
+}
+
+export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
+  // A CONCLUSIVE NEGATIVE IS AN ANSWER (Codex #1858 r1). Past maturity
+  // and a fallback-settling loan shut BOTH sale rows outright, so the
+  // question is already decided and no later read can change it.
+  // Reporting `pending` there kept such a page undecided behind a slow
+  // or failing secondary read, preserving the very timeout this
+  // predicate exists to remove.
+  //
+  // Asked INDEPENDENTLY of the copy precedence (Codex #1858 r2): a
+  // fallback loan with an unestablished due date is conclusively
+  // unjumpable, while `conclusiveBlock` would name the maturity arm and
+  // send it back to `pending`.
+  if (conclusivelyUnjumpable(input)) return 'ready';
+  // A conclusive arm that FELL THROUGH because its own source is still
+  // fetching is a wait, not a fall-through to the general path. Stated
+  // explicitly rather than left to `statusSettled` to catch: that
+  // would be true today, since the fallback source is one of the
+  // status sources, and it is a cross-field invariant the type does
+  // not enforce — exactly the implicit reasoning round 3 removed from
+  // this function.
+  if (input.fallbackPending && !input.fallbackSourceSettled) return 'pending';
+  // The maturity verdict is not usable until the reads behind it have
+  // finished, and `!maturitySettled` covers the in-flight case: one
+  // source has produced a verdict and the other has not answered yet,
+  // which is provisional in either direction — a `'current'` can become
+  // `'unknown'` on disagreement just as a `'past'` can.
+  //
+  // Written out rather than left to fall through to `statusSettled`
+  // below. It WOULD fall through — the maturity sources are a subset of
+  // the status sources — but that is a correctness argument living in
+  // two files, and this predicate exists because the last one of those
+  // was wrong (Codex #1858 r3).
+  if (!input.maturitySettled) return 'pending';
+  // A SOURCE THAT STOPPED WITHOUT ANSWERING IS NOT A SETTLED ANSWER
+  // (Codex #1858 r4), and this is ordered ahead of `'unknown'` for a
+  // reason: an errored query keeps polling, so its recovery can move
+  // the verdict after `ready` was published. It is `'failed'` rather
+  // than `'pending'` because the rows themselves HAVE settled — a
+  // reader is not left waiting — while a consumer asserting "the
+  // switch should be here" must not read it as a clean negative. Round
+  // 3 fixed the in-flight case and left this one, which is the same
+  // retraction reached by a different route.
+  if (input.maturityReadFailed) return 'failed';
+  // Settled, nothing failed, and the two healthy sources still
+  // disagree. That clears on the next poll of either, so it is pending
+  // rather than failed.
+  if (input.maturity === 'unknown') return 'pending';
+  // The status read must have SETTLED before a non-fallback answer can
+  // be trusted (Codex #1858 r1). `fallbackPending` is derived by the
+  // page from `liveStatusCandidates.some(...)`, so `false` means either
+  // "not fallback" or "no status read has answered yet" — and if an
+  // outstanding query then reports FallbackPending, the head above
+  // turns both jumps off and a `ready` answer would have flipped from
+  // yes to no after being published as settled. Only `true` is
+  // self-evidencing; `false` needs this second fact to be meaningful.
+  if (!input.statusSettled) return 'pending';
+  // Same rule on the status set, stated here rather than left implied
+  // by the maturity gate above. The failure mode is its own: an errored
+  // status source can recover reporting FallbackPending, which shuts
+  // both sale routes — so a `ready`/`yes` published while it was down
+  // flips to `no` with nothing having happened on chain.
+  if (input.statusReadFailed) return 'failed';
+  if (!input.saleToolsSettled) return 'pending';
+  if (input.saleTools === 'failed') return 'failed';
+  if (input.saleTools === 'checking') return 'pending';
+  // A lock that CANNOT answer is settled-but-untrustworthy, not a wait
+  // (Codex #1858 r6). The page collapses a failed lock read into
+  // `'checking'` so the rows fail closed; readiness must not inherit
+  // that collapse, or a broken lock RPC leaves the card pending for as
+  // long as the page is open.
+  if (!input.saleLockSettled) return 'pending';
+  if (input.saleLock === 'checking') {
+    return input.saleLockReadFailed ? 'failed' : 'pending';
+  }
+  if (input.instantSellCandidates === 'checking') return 'pending';
+  return 'ready';
 }

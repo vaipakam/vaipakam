@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { copy } from '../content/copy';
 import {
   buildLenderExitRows,
+  chooserReadiness,
   hasJumpableRow,
   type LenderExitInput,
 } from './lenderExitRows';
@@ -27,6 +28,14 @@ const base: LenderExitInput = {
   heldVpfiUnresolved: false,
   borrowerOffsetPending: false,
   instantSellCandidates: 'some',
+  statusSettled: true,
+  maturitySettled: true,
+  maturityReadFailed: false,
+  statusReadFailed: false,
+  saleLockReadFailed: false,
+  saleLockSettled: true,
+  saleToolsSettled: true,
+  fallbackSourceSettled: true,
 };
 
 const rowFor = (input: Partial<LenderExitInput>, key: string) =>
@@ -60,6 +69,14 @@ describe('wait row — ordering and framing', () => {
       heldVpfiUnresolved: true,
       borrowerOffsetPending: true,
       instantSellCandidates: 'none',
+      statusSettled: false,
+      maturitySettled: false,
+      maturityReadFailed: true,
+      statusReadFailed: true,
+      saleLockReadFailed: true,
+      saleLockSettled: false,
+      saleToolsSettled: false,
+      fallbackSourceSettled: false,
     };
     expect(buildLenderExitRows(hostile)[0].unavailable).toBeUndefined();
   });
@@ -896,5 +913,532 @@ describe('final-hour message does not promise a shut exit', () => {
     expect(rows.find((r) => r.key === 'list')!.unavailable).toBe(
       o.listUnavailableTooCloseOnly,
     );
+  });
+});
+
+describe('chooserReadiness — has the jumpability question settled?', () => {
+  // Why this exists at all: from outside the card, "no switch" means
+  // either "still reading" or "nothing to switch to", and a live driver
+  // cannot tell those apart from the DOM. It waits out a 45-second
+  // deadline per page and still cannot distinguish a stale render from
+  // a regression (#1855, and three defect families on #1853).
+
+  it('is ready when every jumpability input has answered', () => {
+    expect(chooserReadiness(base)).toBe('ready');
+  });
+
+  const pendingCases: Array<[string, Partial<LenderExitInput>]> = [
+    ['the sale tools are still checking', { saleTools: 'checking' }],
+    ['the due date has not been established', { maturity: 'unknown' }],
+    ['the sale lock is still being read', { saleLock: 'checking' }],
+    ['the offer sweep is still running', { instantSellCandidates: 'checking' }],
+  ];
+  for (const [name, patch] of pendingCases) {
+    it(`is pending while ${name}`, () => {
+      expect(chooserReadiness({ ...base, ...patch })).toBe('pending');
+    });
+  }
+
+  // The load-bearing asymmetry, and the reason this is not just
+  // "anything not concrete is pending".
+  describe("'unknown' is not uniformly pending", () => {
+    it('treats an unreadable sale lock as SETTLED, not pending', () => {
+      // No query can run for it and none ever will, so waiting would
+      // hang forever — on a Basic-mode page, permanently.
+      expect(chooserReadiness({ ...base, saleLock: 'unknown' })).toBe('ready');
+    });
+
+    it('treats an unrun offer sweep as SETTLED, not pending', () => {
+      // Basic mode deliberately does not run it; the row makes no claim
+      // rather than waiting on an answer nobody is fetching.
+      expect(chooserReadiness({ ...base, instantSellCandidates: 'unknown' })).toBe('ready');
+    });
+
+    it('treats an unestablished due date as PENDING, because it clears', () => {
+      // A query enabled for exactly this case has not answered yet.
+      expect(chooserReadiness({ ...base, maturity: 'unknown' })).toBe('pending');
+    });
+  });
+
+  it('reports a failed prerequisite distinctly from ready', () => {
+    // The rows HAVE settled, so a reader is not left waiting — but a
+    // consumer asserting "the switch should be here" must not read a
+    // failed prerequisite as a clean negative answer.
+    expect(chooserReadiness({ ...base, saleTools: 'failed' })).toBe('failed');
+  });
+
+  it('does not wait on the cadence read, which cannot move a jump', () => {
+    // Cadence changes the WAIT row's wording only. Waiting on it would
+    // block readiness on an answer irrelevant to jumpability — and on a
+    // loan whose cadence read never lands, readiness would never come.
+    expect(chooserReadiness({ ...base, periodicInterestCadence: undefined })).toBe('ready');
+    expect(chooserReadiness({ ...base, cadenceReadFailed: true })).toBe('ready');
+  });
+
+  it('answers ready on a past-due position, where nothing is jumpable', () => {
+    // Settled and negative is the common live case — every lender
+    // position on the testnet chain today. Readiness must not be
+    // conflated with jumpability: the question has an answer, and the
+    // answer is no.
+    const pastDue = { ...base, maturity: 'past' as const };
+    expect(chooserReadiness(pastDue)).toBe('ready');
+    expect(hasJumpableRow(buildLenderExitRows(pastDue))).toBe(false);
+  });
+
+  describe('a conclusive negative does not wait on reads that cannot matter', () => {
+    // The combination the first version of this suite MISSED, because
+    // every case inherited fully-settled secondaries from `base` (Codex
+    // #1858 r1). Past maturity shuts both sale rows ahead of every
+    // narrower reason, so a still-checking lock or sweep cannot change
+    // the answer — and reporting `pending` there kept a past-due page
+    // undecided behind a slow read, which is the exact timeout this
+    // predicate exists to remove.
+    const stillLoading = {
+      saleTools: 'checking' as const,
+      saleLock: 'checking' as const,
+      instantSellCandidates: 'checking' as const,
+    };
+
+    it('is ready past maturity even with every secondary read in flight', () => {
+      const input = { ...base, maturity: 'past' as const, ...stillLoading };
+      expect(chooserReadiness(input)).toBe('ready');
+      expect(hasJumpableRow(buildLenderExitRows(input))).toBe(false);
+    });
+
+    it('is ready past maturity even when a prerequisite read FAILED', () => {
+      const input = { ...base, maturity: 'past' as const, saleTools: 'failed' as const };
+      expect(chooserReadiness(input)).toBe('ready');
+    });
+
+    it('is ready on a fallback-settling loan with reads in flight', () => {
+      // Same shape: a fallback-pending loan refuses both sales outright.
+      const input = { ...base, fallbackPending: true, ...stillLoading };
+      expect(chooserReadiness(input)).toBe('ready');
+      expect(hasJumpableRow(buildLenderExitRows(input))).toBe(false);
+    });
+
+    it('agrees with the rows about which blocks are conclusive', () => {
+      // The anti-drift assertion. `pastDueOr` and `chooserReadiness` now
+      // share one precedence head; this pins that they still agree
+      // rather than trusting the extraction to hold.
+      for (const head of [{ maturity: 'past' as const }, { fallbackPending: true }]) {
+        const input = { ...base, ...head, ...stillLoading };
+        expect(chooserReadiness(input)).toBe('ready');
+        expect(hasJumpableRow(buildLenderExitRows(input))).toBe(false);
+      }
+    });
+  });
+
+  describe('an unsettled status read is not a settled answer', () => {
+    // `fallbackPending` is a `.some(...)` on the page, so `false` means
+    // either "not fallback" or "nothing has answered yet" (Codex #1858
+    // r1). Publishing `ready` on the ambiguous case let the answer flip
+    // from yes to no when the outstanding query reported
+    // FallbackPending — a settled verdict that unsettled itself.
+    it('is pending while no live status read has answered', () => {
+      expect(chooserReadiness({ ...base, statusSettled: false })).toBe('pending');
+    });
+
+    it('stays pending even when another input has already failed', () => {
+      // Pending outranks failed here: the status answer could still make
+      // this a conclusive negative, which is a better answer than
+      // "settled but untrustworthy".
+      const input = { ...base, statusSettled: false, saleTools: 'failed' as const };
+      expect(chooserReadiness(input)).toBe('pending');
+    });
+
+    it('does not gate a conclusive negative on the status read', () => {
+      // Past-due does not wait on `liveStatus`: that query carries a
+      // status enum, not a term, so it cannot change the maturity
+      // verdict. The maturity sources are a different question — see
+      // the block below.
+      expect(chooserReadiness({ ...base, maturity: 'past', statusSettled: false })).toBe(
+        'ready',
+      );
+    });
+
+    it('does not gate a fallback negative on the status read either', () => {
+      // Same reasoning as past-due: fallback shuts both rows outright.
+      expect(
+        chooserReadiness({ ...base, fallbackPending: true, statusSettled: false }),
+      ).toBe('ready');
+    });
+  });
+
+  describe('a past-due verdict is provisional until its own reads land', () => {
+    // The retraction this closes (Codex #1858 r3). `maturity` is
+    // RECONCILED from two term reads and answers `'unknown'` when they
+    // disagree, so a `'past'` computed from the one that landed first
+    // is not yet an answer: an in-grace keeper extension moves the due
+    // date forward, the second read arrives with the longer term, and
+    // the verdict becomes `'unknown'`. Readiness had already published
+    // `ready`/`no` — a settled answer retracting with no chain
+    // transition behind it, which is precisely what an external check
+    // reads this attribute to avoid.
+    it('is pending when past maturity but a term read is still in flight', () => {
+      expect(
+        chooserReadiness({ ...base, maturity: 'past', maturitySettled: false }),
+      ).toBe('pending');
+    });
+
+    it('is pending on a current verdict that is equally provisional', () => {
+      // Not a past-due special case: a `'current'` from one source can
+      // become `'unknown'` on disagreement just as a `'past'` can, so
+      // the wait is on the RECONCILIATION, not on which side it landed.
+      expect(
+        chooserReadiness({ ...base, maturity: 'current', maturitySettled: false }),
+      ).toBe('pending');
+    });
+
+    it('becomes ready once the term reads have all answered', () => {
+      expect(chooserReadiness({ ...base, maturity: 'past', maturitySettled: true })).toBe(
+        'ready',
+      );
+    });
+
+    it('does NOT hold a fallback answer behind the term reads', () => {
+      // The asymmetry that makes this correct rather than merely
+      // cautious. `fallbackPending: true` is a positive observation
+      // from a status read; nothing a term read reports can reopen a
+      // sale route on a fallback-settling loan. Waiting here would
+      // restore the timeout on exactly the population the conclusive
+      // arm exists to spare — so the two arms are gated differently on
+      // purpose.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          maturity: 'past',
+          maturitySettled: false,
+        }),
+      ).toBe('ready');
+    });
+
+    it('holds even when a later input has already failed', () => {
+      // Same precedence as the status gate: the term reads could still
+      // make this a conclusive negative, which beats "settled but
+      // untrustworthy".
+      expect(
+        chooserReadiness({
+          ...base,
+          maturity: 'past',
+          maturitySettled: false,
+          saleTools: 'failed' as const,
+        }),
+      ).toBe('pending');
+    });
+  });
+
+  describe('a conclusive arm waits on its OWN source', () => {
+    // The rule the three conclusive arms share (Codex #1858 r10): a
+    // positive observation is conclusive because nothing can retract
+    // it — which stops being true while the read that produced it is
+    // still in flight. Each waits narrowly, so none reintroduces the
+    // general timeout they exist to remove.
+    it('holds a fallback answer while ITS source is refetching', () => {
+      expect(
+        chooserReadiness({ ...base, fallbackPending: true, fallbackSourceSettled: false }),
+      ).toBe('pending');
+    });
+
+    it('does not make the fallback arm wait on unrelated status sources', () => {
+      // The whole point of that arm: a fallback loan is conclusively
+      // unjumpable whatever else is outstanding.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          statusSettled: false,
+          maturitySettled: false,
+          saleTools: 'checking' as const,
+        }),
+      ).toBe('ready');
+    });
+
+    it('holds a confirmed listing while the lock read is refetching', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'listed', saleLockSettled: false }),
+      ).toBe('pending');
+    });
+
+    it('publishes the listing once its own read has stopped', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'listed', saleLockSettled: true }),
+      ).toBe('ready');
+    });
+
+    it('holds a clear lock while its read is refetching', () => {
+      // The other direction of the same fact: a cached clear could
+      // otherwise publish `ready`/`yes` seconds before the poll
+      // reported a listing.
+      expect(chooserReadiness({ ...base, saleLockSettled: false })).toBe('pending');
+    });
+  });
+
+  describe('a lock read that cannot answer is not a wait', () => {
+    // The page maps every lock-read error to `'checking'` so the ROWS
+    // fail closed, and for a reader that is right — the query retries,
+    // so the wait ends. Readiness inherited the collapse and reported
+    // `pending` for as long as the lock RPC stayed down: the timeout
+    // this attribute exists to remove, on a page that never resolves
+    // (Codex #1858 r6).
+    it('is failed when the lock read errored', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'checking', saleLockReadFailed: true }),
+      ).toBe('failed');
+    });
+
+    it('is still pending when the lock read is genuinely in flight', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'checking', saleLockReadFailed: false }),
+      ).toBe('pending');
+    });
+
+    it('does not let a lock failure override a conclusive negative', () => {
+      // A confirmed listing shuts both rows whatever the lock read did
+      // afterwards — and a listing is itself a lock answer.
+      expect(
+        chooserReadiness({ ...base, saleLock: 'listed', saleLockReadFailed: true }),
+      ).toBe('ready');
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          saleLock: 'checking',
+          saleLockReadFailed: true,
+        }),
+      ).toBe('ready');
+    });
+
+    it('leaves an impossible lock read alone', () => {
+      // `'unknown'` means no query will ever run; a failure flag from
+      // some other read must not turn that into a failure claim.
+      expect(
+        chooserReadiness({ ...base, saleLock: 'unknown', saleLockReadFailed: true }),
+      ).toBe('ready');
+    });
+  });
+
+  describe('a standing listing is an answer on its own', () => {
+    // Both sale rows are shut by a confirmed listing with no reference
+    // to maturity or status — the listing row says `alreadyListed`, the
+    // direct-sale row says refused-while-listed — and only a chain
+    // action that clears the listing reopens either (Codex #1858 r5).
+    // Holding the verdict behind a slow or failed prerequisite
+    // preserved the timeout this attribute exists to remove, on a
+    // population that already had a definite answer.
+    it('is ready while a maturity read is still in flight', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'listed', maturitySettled: false }),
+      ).toBe('ready');
+    });
+
+    it('is ready even when a prerequisite read failed outright', () => {
+      expect(
+        chooserReadiness({
+          ...base,
+          saleLock: 'listed',
+          maturityReadFailed: true,
+          statusReadFailed: true,
+          saleTools: 'failed' as const,
+        }),
+      ).toBe('ready');
+    });
+
+    it('does NOT extend that to an unanswered lock read', () => {
+      // `'checking'` is the ambiguous case, not a conclusive one — the
+      // whole reason `SaleLockState` is a union rather than a boolean.
+      expect(chooserReadiness({ ...base, saleLock: 'checking' })).toBe('pending');
+    });
+
+    it('does NOT extend it to a lock read that can never run', () => {
+      // `'unknown'` makes no claim and leaves the rows available, so it
+      // is not a negative at all.
+      expect(
+        chooserReadiness({ ...base, saleLock: 'unknown', maturitySettled: false }),
+      ).toBe('pending');
+    });
+  });
+
+  describe('settled and ANSWERED are not the same thing', () => {
+    // Round 3 stopped readiness resting on a verdict whose reads were
+    // still in flight. This is the same retraction reached by the other
+    // route (Codex #1858 r4): a source that stopped by ERRORING counted
+    // as settled, so a verdict resting on whichever source landed could
+    // be published — and an errored query keeps its refetch interval,
+    // so its recovery can overturn that verdict with nothing having
+    // happened on chain.
+    it('reports failed when a maturity read errored, even past maturity', () => {
+      expect(
+        chooserReadiness({ ...base, maturity: 'past', maturityReadFailed: true }),
+      ).toBe('failed');
+    });
+
+    it('reports failed when a status read errored on an otherwise ready card', () => {
+      expect(chooserReadiness({ ...base, statusReadFailed: true })).toBe('failed');
+    });
+
+    it('is failed rather than pending — the rows HAVE settled', () => {
+      // The distinction is the whole reason `failed` exists as a third
+      // state. Pending says "wait, an answer is coming"; nothing is
+      // coming here, and a consumer asserting "the switch should be
+      // here" must not read the result as a clean negative either.
+      const out = chooserReadiness({ ...base, maturityReadFailed: true });
+      expect(out).toBe('failed');
+      expect(out).not.toBe('pending');
+    });
+
+    it('still holds an in-flight read ahead of a failed one', () => {
+      // Ordering: something outstanding could still make this a
+      // conclusive negative, which beats "settled but untrustworthy".
+      expect(
+        chooserReadiness({
+          ...base,
+          maturitySettled: false,
+          maturityReadFailed: true,
+        }),
+      ).toBe('pending');
+    });
+
+    it('does NOT hold a fallback answer behind a failed read', () => {
+      // Same asymmetry as round 3's: a positive FallbackPending
+      // observation shuts both sale routes whatever any other read
+      // later reports, so no failure can make it provisional.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          maturityReadFailed: true,
+          statusReadFailed: true,
+        }),
+      ).toBe('ready');
+    });
+
+    it('reads a disagreement as pending, not failed', () => {
+      // Two HEALTHY sources that disagree resolve to `unknown`, and
+      // that clears on the next poll of either — so it is a wait, not
+      // an untrustworthy answer. Ordering `maturityReadFailed` ahead of
+      // the `unknown` check is what keeps these two apart.
+      expect(chooserReadiness({ ...base, maturity: 'unknown' })).toBe('pending');
+    });
+  });
+
+  describe('jumpability conclusiveness is NOT the copy precedence', () => {
+    // Round 1 shared `conclusiveBlock` between the row copy and
+    // readiness, on the reasoning that one rule should not be written
+    // twice. They are two different rules (Codex #1858 r2): for COPY an
+    // unestablished due date outranks a fallback status, because it is
+    // the more informative sentence; for JUMPABILITY it does not matter
+    // at all, because fallback refuses both routes whatever maturity
+    // turns out to be.
+    it('is ready when fallback lands before the due date is established', () => {
+      // The exact combination the shared precedence got wrong: the copy
+      // arm names maturity-unknown, which sent this back to `pending`
+      // and preserved the timeout on the whole fallback population.
+      const input = { ...base, fallbackPending: true, maturity: 'unknown' as const };
+      expect(chooserReadiness(input)).toBe('ready');
+      expect(hasJumpableRow(buildLenderExitRows(input))).toBe(false);
+    });
+
+    it('still reports the maturity reason in the ROW, not the readiness', () => {
+      // The two answers coexist: readiness says "decided, and the answer
+      // is no", while the row still shows the more informative copy.
+      // Conflating them is what round 1 did.
+      const input = { ...base, fallbackPending: true, maturity: 'unknown' as const };
+      const sellNow = buildLenderExitRows(input).find((r) => r.key === 'sell-now');
+      expect(sellNow?.unavailable).toBe(copy.lenderExit.options.maturityUnknown);
+    });
+
+    it('is pending on an unestablished due date with NO fallback', () => {
+      // Without the fallback the maturity answer genuinely can still
+      // change the outcome, so waiting is right.
+      expect(chooserReadiness({ ...base, maturity: 'unknown' })).toBe('pending');
+    });
+  });
+
+  describe('the conclusive arms are independent, not a precedence chain', () => {
+    // Round 10 gave each arm its own settled gate, and round 11 found
+    // that writing them as early returns had quietly made the FIRST
+    // matching arm the only one consulted: an arm whose own source was
+    // refetching answered for the whole predicate and masked every arm
+    // after it. Each of these is independently sufficient — a page
+    // whose listing is confirmed does not become less decided because
+    // an unrelated read is in flight.
+    it('publishes a settled listing while the fallback source is refetching', () => {
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          fallbackSourceSettled: false,
+          saleLock: 'listed',
+          saleLockSettled: true,
+        }),
+      ).toBe('ready');
+    });
+
+    it('publishes a settled past maturity while the lock read is refetching', () => {
+      expect(
+        chooserReadiness({
+          ...base,
+          maturity: 'past',
+          maturitySettled: true,
+          saleLock: 'listed',
+          saleLockSettled: false,
+        }),
+      ).toBe('ready');
+    });
+
+    it('still waits when NO arm is both matched and settled', () => {
+      // The masking fix must not turn the predicate into "any arm
+      // matched": each arm's own settled gate still binds.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          fallbackSourceSettled: false,
+          saleLock: 'listed',
+          saleLockSettled: false,
+        }),
+      ).toBe('pending');
+    });
+  });
+
+  describe('the read that gates BOTH sale tools must have stopped', () => {
+    // The fourth prerequisite, missed by the settlement wiring until
+    // round 11. `saleTools` is derived from retained data and
+    // `isError`, and both survive a background refetch — so a cached
+    // `'ready'` published a settled `ready`/`yes`, and a failed
+    // refetch then turned it `'failed'` with nothing having happened
+    // on chain.
+    it('holds a ready card while the fee-entitlement read is refetching', () => {
+      expect(chooserReadiness({ ...base, saleToolsSettled: false })).toBe('pending');
+    });
+
+    it('is pending, not failed, while a FAILED tools answer refetches', () => {
+      // Ordering: something outstanding could still clear the failure,
+      // and the same rule applies here as everywhere else — an
+      // in-flight read beats a settled-but-untrustworthy one.
+      expect(
+        chooserReadiness({ ...base, saleTools: 'failed', saleToolsSettled: false }),
+      ).toBe('pending');
+    });
+
+    it('reports failed once that answer has stopped', () => {
+      expect(
+        chooserReadiness({ ...base, saleTools: 'failed', saleToolsSettled: true }),
+      ).toBe('failed');
+    });
+
+    it('does NOT hold a conclusive negative behind it', () => {
+      // Same asymmetry the other arms have: both sale rows are already
+      // shut, so no tools answer can reopen them.
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          saleToolsSettled: false,
+        }),
+      ).toBe('ready');
+    });
   });
 });

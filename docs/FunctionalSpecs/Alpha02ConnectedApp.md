@@ -693,6 +693,19 @@ Coverage should include:
 The regression tier should assert visible app state and the corresponding chain
 outcome where a chain outcome exists.
 
+Where a surface decides whether to offer an action, and that decision is
+expressed only as rendered prose, the surface should also state the decision in
+a form a review can read directly. A control's absence is otherwise ambiguous
+between "the answer is no" and "the answer has not arrived", and a review that
+cannot separate those must either wait out a timeout and guess, or report a
+healthy page as a defect. Two facts are enough: whether the decision has
+settled, and what it settled to. A failed prerequisite should be reported as its
+own third state rather than folded into either, because the decision has settled
+in that case but its answer is not trustworthy as a negative.
+
+This is a requirement on surfaces whose correctness depends on offering or
+withholding an action — not a general instruction to annotate the app.
+
 ## Detailed Connected-App Requirements
 
 The following requirements preserve the detailed connected-app behaviour that
