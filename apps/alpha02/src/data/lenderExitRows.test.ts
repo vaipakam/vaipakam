@@ -32,6 +32,7 @@ const base: LenderExitInput = {
   maturitySettled: true,
   maturityReadFailed: false,
   statusReadFailed: false,
+  saleLockReadFailed: false,
 };
 
 const rowFor = (input: Partial<LenderExitInput>, key: string) =>
@@ -69,6 +70,7 @@ describe('wait row — ordering and framing', () => {
       maturitySettled: false,
       maturityReadFailed: true,
       statusReadFailed: true,
+      saleLockReadFailed: true,
     };
     expect(buildLenderExitRows(hostile)[0].unavailable).toBeUndefined();
   });
@@ -1118,6 +1120,50 @@ describe('chooserReadiness — has the jumpability question settled?', () => {
           saleTools: 'failed' as const,
         }),
       ).toBe('pending');
+    });
+  });
+
+  describe('a lock read that cannot answer is not a wait', () => {
+    // The page maps every lock-read error to `'checking'` so the ROWS
+    // fail closed, and for a reader that is right — the query retries,
+    // so the wait ends. Readiness inherited the collapse and reported
+    // `pending` for as long as the lock RPC stayed down: the timeout
+    // this attribute exists to remove, on a page that never resolves
+    // (Codex #1858 r6).
+    it('is failed when the lock read errored', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'checking', saleLockReadFailed: true }),
+      ).toBe('failed');
+    });
+
+    it('is still pending when the lock read is genuinely in flight', () => {
+      expect(
+        chooserReadiness({ ...base, saleLock: 'checking', saleLockReadFailed: false }),
+      ).toBe('pending');
+    });
+
+    it('does not let a lock failure override a conclusive negative', () => {
+      // A confirmed listing shuts both rows whatever the lock read did
+      // afterwards — and a listing is itself a lock answer.
+      expect(
+        chooserReadiness({ ...base, saleLock: 'listed', saleLockReadFailed: true }),
+      ).toBe('ready');
+      expect(
+        chooserReadiness({
+          ...base,
+          fallbackPending: true,
+          saleLock: 'checking',
+          saleLockReadFailed: true,
+        }),
+      ).toBe('ready');
+    });
+
+    it('leaves an impossible lock read alone', () => {
+      // `'unknown'` means no query will ever run; a failure flag from
+      // some other read must not turn that into a failure claim.
+      expect(
+        chooserReadiness({ ...base, saleLock: 'unknown', saleLockReadFailed: true }),
+      ).toBe('ready');
     });
   });
 

@@ -1096,17 +1096,53 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
   const statusSourcesFailed =
     sourceFailed(liveStatus, liveStatusEnabled) || maturitySourcesFailed;
 
-  const liveStatusCandidates: (LoanStatus | undefined)[] = [
-    loanLive.data && !loanLive.isError
-      ? (loanLive.data.live.status as LoanStatus)
-      : undefined,
-    liveStatus.data && !liveStatus.isError
-      ? (liveStatus.data.status as LoanStatus)
-      : undefined,
-    bannerTerms.data && !bannerTerms.isError
-      ? (bannerTerms.data.live.status as LoanStatus)
-      : undefined,
+  /** Each status read, WITH whether its source can still speak.
+   *
+   *  `fresh` is the query's own `enabled` const, carried beside the
+   *  value rather than in a parallel array (Codex #1858 r6) — a
+   *  positional contract between two lists is the drift this whole PR
+   *  is about, so freshness travels with the reading it describes.
+   *
+   *  It matters because a disabled query keeps its cache. After
+   *  Advanced → Basic the advanced-only read is frozen, and a frozen
+   *  FallbackPending can no longer be cured by its own refetch: the
+   *  live reads report Active, the stale one keeps saying otherwise,
+   *  and every REVERSIBLE consumer stays stuck on it. */
+  const statusReads: { status: LoanStatus | undefined; fresh: boolean }[] = [
+    {
+      status:
+        loanLive.data && !loanLive.isError
+          ? (loanLive.data.live.status as LoanStatus)
+          : undefined,
+      fresh: loanLiveEnabled,
+    },
+    {
+      status:
+        liveStatus.data && !liveStatus.isError
+          ? (liveStatus.data.status as LoanStatus)
+          : undefined,
+      fresh: liveStatusEnabled,
+    },
+    {
+      status:
+        bannerTerms.data && !bannerTerms.isError
+          ? (bannerTerms.data.live.status as LoanStatus)
+          : undefined,
+      fresh: bannerTermsEnabled,
+    },
   ];
+  /** Every reading, fresh or frozen. Correct for ABSORBING answers: a
+   *  terminal status cannot become untrue, so a cached one is only
+   *  ahead, never wrong. */
+  const liveStatusCandidates: (LoanStatus | undefined)[] = statusReads.map(
+    (r) => r.status,
+  );
+  /** Only the readings whose source can still change its mind. Correct
+   *  for REVERSIBLE answers — Active vs FallbackPending — where a
+   *  frozen cache is a claim nothing can retract. */
+  const freshStatusCandidates: (LoanStatus | undefined)[] = statusReads.map(
+    (r) => (r.fresh ? r.status : undefined),
+  );
 
   /** Whether the optional seller-window call inside `readLoanLive`
    *  answered — `false` when a HEALTHY snapshot carries
@@ -1178,7 +1214,11 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
         st !== undefined &&
         st !== LoanStatus.Active &&
         st !== LoanStatus.FallbackPending,
-    ) ?? liveStatusCandidates.find((st) => st !== undefined);
+      // The non-terminal fallback ranks Active against FallbackPending,
+      // and that pair IS reversible — the comment above says so — so it
+      // reads only the sources that can still speak (Codex #1858 r6).
+      // The terminal find above keeps the full list on purpose.
+    ) ?? freshStatusCandidates.find((st) => st !== undefined);
 
   /** `loanLive`'s chain clock, ADVANCED by local elapsed time.
    *
@@ -3463,7 +3503,12 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           //
           // I fixed the tool side and not the row side of the very
           // split this card exists to prevent.
-          fallbackPending={liveStatusCandidates.some(
+          // FRESH sources only (Codex #1858 r6). FallbackPending cures
+          // back to Active, so a frozen cache asserting it is a claim
+          // that nothing can retract — both sale rows would stay shut
+          // and readiness would publish `ready`/`no` indefinitely, on a
+          // loan the live reads say is Active again.
+          fallbackPending={freshStatusCandidates.some(
             (st) => st === LoanStatus.FallbackPending,
           )}
           // The companion fact `fallbackPending` cannot carry (#1855):
@@ -3483,6 +3528,10 @@ function PositionDetailsInner({ loanIdParam }: { loanIdParam: string | undefined
           maturitySettled={maturitySourcesSettled}
           maturityReadFailed={maturitySourcesFailed}
           statusReadFailed={statusSourcesFailed}
+          // The lock read's own failure, which `saleLock` cannot
+          // carry: every error there is mapped to `'checking'` so the
+          // rows fail closed, and readiness needs the distinction.
+          saleLockReadFailed={sale.isError}
           // Tri-state, not a boolean (Codex r1 P2): `sale.state` is
           // undefined while the listing read is in flight and stays so
           // if it errors. Collapsing that to `false` showed BOTH sale

@@ -338,6 +338,21 @@ export interface LenderExitInput {
    *  own: a recovered status source can report FallbackPending, which
    *  shuts both sale routes after a positive answer was published. */
   statusReadFailed: boolean;
+  /** Did the sale-lock read FAIL, as opposed to being in flight?
+   *
+   *  `saleLock` cannot carry this itself (Codex #1858 r6). The page
+   *  maps every lock-read error to `'checking'`, deliberately: the rows
+   *  must fail closed, and the query is live and retrying, so for a
+   *  READER the wait genuinely ends. Readiness asks a different
+   *  question, and on a lock RPC that stays down `'checking'` means
+   *  `pending` forever — the timeout this attribute exists to remove,
+   *  on a page that will never resolve.
+   *
+   *  So the failure travels separately and maps `'checking'` to
+   *  `'failed'` rather than `'pending'`. Conclusive negatives still
+   *  short-circuit above it: a confirmed listing does not care that the
+   *  lock read later broke. */
+  saleLockReadFailed: boolean;
 }
 
 export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
@@ -681,7 +696,14 @@ export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
   if (input.statusReadFailed) return 'failed';
   if (input.saleTools === 'failed') return 'failed';
   if (input.saleTools === 'checking') return 'pending';
-  if (input.saleLock === 'checking') return 'pending';
+  // A lock that CANNOT answer is settled-but-untrustworthy, not a wait
+  // (Codex #1858 r6). The page collapses a failed lock read into
+  // `'checking'` so the rows fail closed; readiness must not inherit
+  // that collapse, or a broken lock RPC leaves the card pending for as
+  // long as the page is open.
+  if (input.saleLock === 'checking') {
+    return input.saleLockReadFailed ? 'failed' : 'pending';
+  }
   if (input.instantSellCandidates === 'checking') return 'pending';
   return 'ready';
 }
