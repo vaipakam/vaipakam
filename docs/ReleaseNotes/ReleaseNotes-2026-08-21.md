@@ -491,9 +491,12 @@ rebate promise meant reading every passage that describes how the discount is
 earned. Some were incomplete in a way that costs a reader money; others were
 worse than incomplete. The Basic guide's introduction to the discount
 affirmatively told readers it does not matter which chain holds the balance, and
-that the consent is switched on once. Both are false, not merely partial, and a
-reader following them lands on no discount at all — which is why that section is
-called out below as still uncorrected rather than counted among the fixes.
+that the consent is switched on once. Both are false, not merely partial. A
+reader who holds on the canonical chain and borrows there is saved by
+coincidence — the two requirements collapse into one for them — but anyone
+settling on a mirror follows that advice into no discount at all, and nothing on
+the page tells them which of the two they are. That is why the section is called
+out below as still uncorrected rather than counted among the fixes.
 The pages that set expectations now state the conditions that actually govern
 it — not as a closed list, since assembling one is what kept going wrong: the
 VPFI must sit in the vault on the canonical chain; it must have been held for a
