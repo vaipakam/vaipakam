@@ -592,7 +592,7 @@ borrower claim 根据 loan 如何 settle 来返回：
   encumbered 状态留在您的 vault 中。至于部分 liquidation，它根本不是
   close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
   假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
-  什么——但那是一种结果，不是规则。始终会失去的是 rebate：若该 loan 仍在
+  什么——但那是一种结果，不是规则。rebate 会不会回来，取决于 loan 如何结束：若该 loan 仍在
   已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 会**被没收并转入
   treasury**，且只有正常关闭才会返还 rebate。
 

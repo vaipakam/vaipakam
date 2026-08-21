@@ -738,7 +738,7 @@ Borrower claim इस आधार पर return करता है कि loan
   loan खुला रहता है और कोई claim बनता ही नहीं। अनुमान लगाने के बजाय
   claim देखें। Illiquid asset के default में आम तौर पर पूरी
   basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम
-  नहीं। हमेशा जो खोता है वह rebate है: बंद किए गए VPFI fee रास्ते
+  नहीं। rebate वापस आएगा या नहीं यह इस पर निर्भर है कि loan कैसे ख़त्म हुआ: बंद किए गए VPFI fee रास्ते
   वाले loan में initiation fee के बदले रखा गया VPFI **treasury को
   ज़ब्त** हो जाता है, और rebate सिर्फ़ proper close पर वापस आता है।
 

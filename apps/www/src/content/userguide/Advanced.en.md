@@ -731,8 +731,8 @@ The borrower claim returns, depending on how the loan settled:
   close-out at all — the loan stays open and no claim is created.
   Check the claim rather than assuming which one you have.
   On an illiquid default the whole basket usually goes, so there
-  is nothing left — but that is an outcome, not a rule. What is
-  always lost is the rebate: on a loan still using the retired
+  is nothing left — but that is an outcome, not a rule. Whether the rebate comes
+  back depends on how the loan ended: on a loan still using the retired
   VPFI fee path, the VPFI held against its initiation fee is
   forfeited to treasury rather than returned, and a rebate comes
   back only on a proper close.

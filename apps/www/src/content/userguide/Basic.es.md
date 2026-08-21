@@ -380,10 +380,11 @@ toma el colateral directamente con descuento, en vez de venderlo,
 lo que te espera es el colateral mismo. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
 entera y no queda nada, pero eso es cómo resultó, no una regla.
-Lo que nunca vuelve es el reembolso de la comisión: en un
-préstamo que siga en la vía de comisión VPFI retirada, el VPFI
-retenido contra la Loan Initiation Fee se pierde en favor del
-tesoro. La reclamación consume tu NFT de posición de prestatario
+Que el reembolso de la comisión vuelva depende de cómo terminó el
+préstamo: en uno que siga en la vía de comisión VPFI retirada, un
+reembolso total, un precierre o una refinanciación te pagan parte
+del VPFI retenido contra la Loan Initiation Fee, y solo un
+incumplimiento o una liquidación lo pierden en favor del tesoro. La reclamación consume tu NFT de posición de prestatario
 —por eso el NFT sigue ahí tras una liquidación, esperándote.
 
 ---

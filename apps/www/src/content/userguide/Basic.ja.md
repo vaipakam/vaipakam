@@ -361,9 +361,11 @@ default のあとも、バスケットは売られ、残りは loan 自体の as
 届きます。collateral そのものが残るのは、liquidator が売らずに割引で
 直接引き取ったときだけです。価格を付けられない collateral の
 default では、バスケット全体が失われ何も残らないことも多いですが、
-それは結果であってルールではありません。決して戻らないのは手数料の
-rebate です。廃止された VPFI 手数料経路のままの loan では、Loan
-Initiation Fee のために保管されていた VPFI は treasury に没収されます。
+それは結果であってルールではありません。手数料の rebate が戻るかどうかは
+loan の終わり方によります。廃止された VPFI 手数料経路のままの loan
+でも、full repayment・preclose・refinance では Loan Initiation Fee
+のために保管されていた VPFI の一部が支払われ、treasury に没収される
+のは default または liquidation のときだけです。
 claim はあなたの borrower position NFT を consume します — だからこそ
 liquidation のあとも NFT は残り、あなたを待っています。
 

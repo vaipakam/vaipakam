@@ -781,8 +781,8 @@ prêt s'est réglé :
   et aucune créance n'est créée. Consulte la créance plutôt que
   de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le
   panier part en général et il ne reste rien — mais c'est une
-  issue, pas une règle. Ce qui est toujours perdu, c'est le
-  rabais : sur un prêt encore soumis à la voie de frais VPFI
+  issue, pas une règle. Que le rabais revienne dépend de la
+  clôture : sur un prêt encore soumis à la voie de frais VPFI
   retirée, le VPFI retenu au titre des frais d'initiation est
   **acquis au trésor**, et un rabais ne revient que lors d'une
   clôture régulière.

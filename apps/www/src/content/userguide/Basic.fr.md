@@ -383,10 +383,12 @@ avec une décote, au lieu de le vendre, que c'est le collatéral
 lui-même qui t'attend. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
 valoriser — tout le panier part et il ne reste rien, mais c'est
-une issue, pas une règle. Ce qui ne revient jamais, c'est le
-rabais de frais : sur un prêt encore soumis à la voie de frais
-VPFI retirée, le VPFI retenu au titre de la Loan Initiation Fee
-est acquis au trésor. La réclamation consomme ton NFT de position
+une issue, pas une règle. Que le rabais de frais revienne dépend
+de la façon dont le prêt s'est terminé : sur un prêt encore soumis
+à la voie de frais VPFI retirée, un remboursement intégral, une
+clôture anticipée ou un refinancement te versent une partie du
+VPFI retenu au titre de la Loan Initiation Fee ; seuls un défaut
+ou une liquidation l'acquièrent au trésor. La réclamation consomme ton NFT de position
 d'emprunteur — c'est pourquoi le NFT est toujours là après une
 liquidation, à t'attendre.
 

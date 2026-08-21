@@ -372,9 +372,11 @@ default या liquidation पर भी एक बार देख लें।
 लेता है। अक्सर —
 ऐसे collateral पर default में जिसकी कीमत हम नहीं आँक सकते — पूरी
 basket चली जाती है और कुछ नहीं बचता, पर वह नतीजा है, नियम नहीं।
-जो कभी वापस नहीं आता वह fee rebate है: बंद किए गए VPFI fee रास्ते
-वाले loan में Loan Initiation Fee के बदले रखा गया VPFI treasury
-को ज़ब्त हो जाता है। claim आपके borrower position NFT को consume
+fee rebate वापस आएगा या नहीं, यह इस पर निर्भर है कि loan कैसे
+ख़त्म हुआ: बंद किए गए VPFI fee रास्ते वाले loan में full
+repayment, preclose या refinance पर Loan Initiation Fee के बदले
+रखा गया VPFI का एक हिस्सा आपको मिलता है; केवल default या
+liquidation पर ही वह treasury को ज़ब्त होता है। claim आपके borrower position NFT को consume
 करता है — इसीलिए liquidation के बाद भी वह NFT मौजूद रहता है, आपका
 इंतज़ार करता हुआ।
 
