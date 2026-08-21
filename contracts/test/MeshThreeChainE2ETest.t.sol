@@ -1148,8 +1148,9 @@ contract MeshThreeChainE2ETest is Test {
      *         cutover) is the single switch that starts creating mirror
      *         reservations. While mirror armed-day pricing STOOD halted
      *         (before #1434 P1-b lifted it — see below), those reservations
-     *         accumulated with nothing retiring them, so Base progressively under-uses mirror-local funding and
-     *         over-funds from its own bucket — the exact waste B3 removed
+     *         accumulated with nothing retiring them, so Base progressively
+     *         under-used mirror-local funding and over-funded from its own
+     *         bucket — the exact waste B3 removed
      *         from Base's own books, re-entering through the mirror end. It
      *         was recoverable (the totals are cumulative, so settlements
      *         after the halt lifted close the backlog) but D* cannot be

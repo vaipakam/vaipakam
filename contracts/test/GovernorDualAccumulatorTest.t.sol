@@ -1925,7 +1925,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     /// equivalents and then debited the LOCAL bucket at claim (canonical
     /// `consume` semantics), a remittance-funded reward would cannibalise
     /// the mirror's own recycled balance — the exact mirror consumption the
-    /// re-slice defers. An UNFUNDED armed day defers, so a mirror claim
+    /// delivered bound now defers rather than the halt forbidding it. An UNFUNDED armed day defers, so a mirror claim
     /// never touches its bucket. Before #1434 P1-b this held for a different
     /// reason — the blanket halt meant armed mirror days never priced at all
     /// — and the funded half below is what distinguishes the two; see its

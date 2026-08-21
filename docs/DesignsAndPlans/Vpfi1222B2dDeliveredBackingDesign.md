@@ -29,7 +29,7 @@ reviewable PR. The pieces, and why they couple:
 | **P2 Mirror commitment-on-arrival + two-sided netting** *(this row said "consume-on-arrival / mirror debits its own bucket" while the slice was being planned; §2e.1 superseded that before implementation — recorded here because a planning table that outlives its own correction reads as shipped behaviour)* | mirror RESERVES the locally-funded slice into its own `outstandingCommitRecycled`; the bucket drains later, pro-rata, at claim/remit. Base books `chainConsumedRecycled` / `chainOutstandingRecycledCommit`; `_stampOne` splits local vs Base top-up | must be gated by delivered backing (P4) or it cannibalises the mirror bucket |
 | **P3 Σcommitments remittance clamp** | `chainRewardBudgetForDay = min(uncappedSlice, Σcommitments − remitted − pending)`, 3 sites | needs P1's reported total + P4's ledgers |
 | **P4 Delivered-backing ledger** | `pendingRemitted` reservation at dispatch → authenticated ack → `loanSideRewardRemitted`; bounded reconciliation | **greenfield** — no ack channel exists in any direction today |
-| **P5 Mirror armed-day pricing ON** — **DELIVERED by #1434 P1-b (`83483149e`); first attempt withdrawn, see §2g** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g for why, and **§2h for the zeroed-day scope** (the fresh side's receipt half shipped as #1556) |
+| **P5 Mirror armed-day pricing ON** — **DELIVERED by #1434 P1-b (`83483149e`); first attempt withdrawn, see §2g** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | Historically: P2+P4 backed the RECYCLED halves (done), but the halt ALSO guarded the then-unbounded FRESH side and deliberately-zeroed days — both since addressed, which is what allowed its removal — see §2g for why, and **§2h for the zeroed-day scope** (the fresh side's receipt half shipped as #1556) |
 | **P6 Third credit class (#1331)** | Ā-**excluded** custody-credit for remitted-recycled forfeit/expiry; provenance tag at remit arrival; `VpfiRecycled` discriminator | needs P4's provenance signal |
 | **P7 Keeper + indexer** | keeper drives the mirror→Base report send; out-of-window reconciled-day rediscovery via the `CommitmentRemitEligibilityReconciled` hook; indexer handlers + D1 | needs P1/P4 to exist first |
 
@@ -664,7 +664,10 @@ follow-up). **#1434 P1-b (`83483149e`) later discharged both prerequisites and
 removed the halt**. `_dayPoolHalves` itself now halts only on an unstamped
 day; a stamped day can still WAIT, via the separate `_p2DayDeltas`
 zeroed-and-open state that defers a compensable day rather than retiring it for
-zero. Both are per-day waits that end when their funding arrives. This
+zero. Both are per-day waits, but they end on different things: the unstamped
+one on funding arriving, the zeroed-and-open one on its compensation being
+both funded AND settled — a fully funded compensation still defers while its
+quote is undispatched or its credit provisional. This
 section is retained as the record of why, and of the two
 approaches tried and dropped along the way, so neither is repeated.
 
