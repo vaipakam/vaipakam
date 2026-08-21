@@ -208,9 +208,17 @@ charged with no discount at all. It does not, and you would not: no
 cross-chain message carries the new version, so the mirror goes on applying
 the rate it already has until a per-user push arrives. This document says so
 itself, in a section 1,400 lines further down, which the correction
-contradicted. So the push is worth making when the new rate is better for you
-and costs nothing to skip when it is not — a different situation from the
-60-day expiry, which does drop you to nothing.
+contradicted. That second attempt was also wrong, in the
+opposite direction, and the third is the one to read. The version a mirror
+holds is mirror-WIDE, and its receiver raises it from ANY user's message — so
+the first push by anybody after a retune flips the version for everyone on
+that mirror, and every cache still carrying the old one reads as tier 0 from
+that moment until its own push arrives. The old-BPS grace is real, is
+per-mirror rather than per-user, and ends on a stranger's message. So the
+push is worth making promptly, whether or not the new rate suits you.
+
+The passage that misled me is in this same document, and it has been corrected
+too: it described the grace without saying what ends it.
 
 **And the renewal procedure has been withdrawn rather than qualified.** Two
 rounds ago these pages started describing how to refresh a lapsed mirror

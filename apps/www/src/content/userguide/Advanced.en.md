@@ -2212,8 +2212,15 @@ system without surprises.
   separate cross-chain "VersionBumped" message today;
   mirrors learn the new version only when a per-user
   TierUpdated message arrives carrying the new tuple. Until
-  that user-triggered push lands, old-version caches on
-  mirrors continue to apply at the OLD BPS. Operators
+  ANY such push reaches a given mirror, old-version caches
+  there continue to apply at the OLD BPS — but the version
+  the receiver raises is mirror-WIDE, so the first
+  post-bump push from any user at all flips it for
+  everyone. From that moment `_mirrorEffectiveTierAndBps`
+  reads every cache still carrying the old version as
+  tier 0, until that user's own push lands. So the
+  old-BPS grace is per-mirror and ends on someone else's
+  message, not per-user. Operators
   changing tier thresholds / BPS should top up the
   broadcast budget in advance to absorb the wave of
   per-user updates that lands on the next mutation by each
