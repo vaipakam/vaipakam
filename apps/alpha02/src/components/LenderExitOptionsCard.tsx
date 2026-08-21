@@ -34,6 +34,7 @@ import { ListChecks } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
   buildLenderExitRows,
+  chooserReadiness,
   hasJumpableRow,
   type InstantSellCandidates,
   type LenderExitJumpTarget,
@@ -137,7 +138,28 @@ export function LenderExitOptionsCard({
   const anyJumpableRow = hasJumpableRow(rows);
 
   return (
-    <section className="card">
+    <section
+      className="card"
+      data-testid="lender-exit-card"
+      // A READINESS SIGNAL, not decoration (#1855). From outside this
+      // card the absence of the switch below is ambiguous — it is
+      // missing both while a prerequisite read is in flight and when no
+      // row is genuinely jumpable. A live review cannot tell those apart
+      // from the DOM, so it waits out a 45-second deadline per page and
+      // then still cannot distinguish a stale render from a regression.
+      //
+      // These two attributes make the card state its own answer:
+      // `ready` says the jumpability question has settled, and
+      // `jumpable` says what it settled to. With both, "the switch
+      // should be here" becomes a fact a driver can read rather than
+      // one it has to infer from an absence.
+      //
+      // Presentational-null: nothing styles or branches on these, and
+      // removing them changes no rendered pixel. They are the smallest
+      // thing that makes the invariant observable.
+      data-chooser-ready={chooserReadiness(rowInput)}
+      data-chooser-jumpable={anyJumpableRow ? 'yes' : 'no'}
+    >
       <div className="card-title">
         <ListChecks aria-hidden />
         <h3 style={{ margin: 0 }}>{copy.lenderExit.title}</h3>

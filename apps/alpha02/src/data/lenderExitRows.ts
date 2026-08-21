@@ -468,3 +468,44 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
 export function hasJumpableRow(rows: LenderExitRow[]): boolean {
   return rows.some((r) => r.target !== undefined && r.unavailable === undefined);
 }
+
+/** Whether the chooser's answer about JUMPABILITY has settled yet.
+ *
+ *  Exposed for one reason: from outside the card, the absence of the
+ *  "switch to Advanced" control is ambiguous. It is missing both while
+ *  a prerequisite read is in flight AND when no row is genuinely
+ *  jumpable, and those are the two cases a live review most needs to
+ *  tell apart (#1855). Without a positive readiness signal a driver can
+ *  only wait out a deadline and then guess — which is what
+ *  `live-position-observe.mjs` does today, at 45 seconds per page, and
+ *  it still cannot distinguish a stale render from a regression.
+ *
+ *  Deliberately scoped to the inputs that decide JUMPABILITY, not to
+ *  everything the card reads:
+ *
+ *   - `periodicInterestCadence` is excluded. It changes the WAIT row's
+ *     wording and nothing else, so waiting on it would block readiness
+ *     on an answer that cannot move a jump — and on a loan whose
+ *     cadence read never lands, readiness would never arrive.
+ *   - `'unknown'` is NOT uniformly pending, and that asymmetry is the
+ *     whole subtlety here. `maturity: 'unknown'` means a query enabled
+ *     for exactly that case has not answered, so it clears — pending.
+ *     `saleLock: 'unknown'` and `instantSellCandidates: 'unknown'` mean
+ *     no query will EVER run, so they are settled answers; treating
+ *     them as pending would hang forever on a Basic-mode page.
+ *
+ *  `'failed'` is reported distinctly rather than folded into `'ready'`.
+ *  The rows have settled, so a reader is not left waiting — but a
+ *  consumer asserting "the switch should be here" must not treat a
+ *  failed prerequisite as a clean negative answer.
+ */
+export type ChooserReadiness = 'ready' | 'pending' | 'failed';
+
+export function chooserReadiness(input: LenderExitInput): ChooserReadiness {
+  if (input.saleTools === 'failed') return 'failed';
+  if (input.saleTools === 'checking') return 'pending';
+  if (input.maturity === 'unknown') return 'pending';
+  if (input.saleLock === 'checking') return 'pending';
+  if (input.instantSellCandidates === 'checking') return 'pending';
+  return 'ready';
+}

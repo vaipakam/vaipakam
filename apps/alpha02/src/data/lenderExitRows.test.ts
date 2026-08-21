@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { copy } from '../content/copy';
 import {
   buildLenderExitRows,
+  chooserReadiness,
   hasJumpableRow,
   type LenderExitInput,
 } from './lenderExitRows';
@@ -896,5 +897,75 @@ describe('final-hour message does not promise a shut exit', () => {
     expect(rows.find((r) => r.key === 'list')!.unavailable).toBe(
       o.listUnavailableTooCloseOnly,
     );
+  });
+});
+
+describe('chooserReadiness — has the jumpability question settled?', () => {
+  // Why this exists at all: from outside the card, "no switch" means
+  // either "still reading" or "nothing to switch to", and a live driver
+  // cannot tell those apart from the DOM. It waits out a 45-second
+  // deadline per page and still cannot distinguish a stale render from
+  // a regression (#1855, and three defect families on #1853).
+
+  it('is ready when every jumpability input has answered', () => {
+    expect(chooserReadiness(base)).toBe('ready');
+  });
+
+  const pendingCases: Array<[string, Partial<LenderExitInput>]> = [
+    ['the sale tools are still checking', { saleTools: 'checking' }],
+    ['the due date has not been established', { maturity: 'unknown' }],
+    ['the sale lock is still being read', { saleLock: 'checking' }],
+    ['the offer sweep is still running', { instantSellCandidates: 'checking' }],
+  ];
+  for (const [name, patch] of pendingCases) {
+    it(`is pending while ${name}`, () => {
+      expect(chooserReadiness({ ...base, ...patch })).toBe('pending');
+    });
+  }
+
+  // The load-bearing asymmetry, and the reason this is not just
+  // "anything not concrete is pending".
+  describe("'unknown' is not uniformly pending", () => {
+    it('treats an unreadable sale lock as SETTLED, not pending', () => {
+      // No query can run for it and none ever will, so waiting would
+      // hang forever — on a Basic-mode page, permanently.
+      expect(chooserReadiness({ ...base, saleLock: 'unknown' })).toBe('ready');
+    });
+
+    it('treats an unrun offer sweep as SETTLED, not pending', () => {
+      // Basic mode deliberately does not run it; the row makes no claim
+      // rather than waiting on an answer nobody is fetching.
+      expect(chooserReadiness({ ...base, instantSellCandidates: 'unknown' })).toBe('ready');
+    });
+
+    it('treats an unestablished due date as PENDING, because it clears', () => {
+      // A query enabled for exactly this case has not answered yet.
+      expect(chooserReadiness({ ...base, maturity: 'unknown' })).toBe('pending');
+    });
+  });
+
+  it('reports a failed prerequisite distinctly from ready', () => {
+    // The rows HAVE settled, so a reader is not left waiting — but a
+    // consumer asserting "the switch should be here" must not read a
+    // failed prerequisite as a clean negative answer.
+    expect(chooserReadiness({ ...base, saleTools: 'failed' })).toBe('failed');
+  });
+
+  it('does not wait on the cadence read, which cannot move a jump', () => {
+    // Cadence changes the WAIT row's wording only. Waiting on it would
+    // block readiness on an answer irrelevant to jumpability — and on a
+    // loan whose cadence read never lands, readiness would never come.
+    expect(chooserReadiness({ ...base, periodicInterestCadence: undefined })).toBe('ready');
+    expect(chooserReadiness({ ...base, cadenceReadFailed: true })).toBe('ready');
+  });
+
+  it('answers ready on a past-due position, where nothing is jumpable', () => {
+    // Settled and negative is the common live case — every lender
+    // position on the testnet chain today. Readiness must not be
+    // conflated with jumpability: the question has an answer, and the
+    // answer is no.
+    const pastDue = { ...base, maturity: 'past' as const };
+    expect(chooserReadiness(pastDue)).toBe('ready');
+    expect(hasJumpableRow(buildLenderExitRows(pastDue))).toBe(false);
   });
 });
