@@ -1985,8 +1985,17 @@ const copySource = {
       // be worse than the sentence. A separate line rather than a
       // longer one so the base cost sentence stays identical for every
       // position and needs no second translation.
+      // Says "paid for", never "you paid for" (Codex r22 P2). The
+      // entitlement is scoped to the LOAN, not the holder, so a lender
+      // who acquired this NFT by transfer or an earlier sale inherits
+      // the plan without having paid its tariff. Telling them they paid
+      // hands a secondary holder a false personal cost basis at the
+      // moment they are deciding whether to sell — a misstatement about
+      // their own money, which is the one thing this card exists to
+      // avoid. The forfeiture is true for every holder; only the
+      // payment is not.
       costFullTariff:
-        'This position is on the Full fee plan, which you paid for in VPFI when the loan opened. That plan travels with the position, so the part of it covering the rest of the term goes to the buyer and is not refunded.',
+        'This position is on the Full fee plan, paid for in VPFI when the loan opened. The plan travels with the position, so the part of it covering the rest of the term goes to the buyer and is not refunded.',
       sellNowNoOffers:
         'No lending offer on the book matches this position right now — check back later, or list it below instead.',
 
@@ -2090,6 +2099,15 @@ const copySource = {
       // instant sale stays available (Codex r18 P2).
       listUnavailableTooClose:
         'Too close to the due date to list — a listing needs at least an hour before the loan matures. Selling into a standing offer still works.',
+      // Same refusal, WITHOUT the instant-sale assurance (Codex r22
+      // P2). The final-hour cutoff outranks the shared prerequisites,
+      // so when a fee-entitlement, token-metadata or seller-window read
+      // has also failed the listing row wins the precedence contest and
+      // its cheerful tail sat directly beside a sell-now row explaining
+      // it could not be started either. Pointing at the one exit that
+      // is also shut is worse than saying nothing about it.
+      listUnavailableTooCloseOnly:
+        'Too close to the due date to list — a listing needs at least an hour before the loan matures.',
       listUnavailableNetwork:
         'Not available on this network yet — the listing tools aren’t published to this deployment.',
       listUnavailableNft:

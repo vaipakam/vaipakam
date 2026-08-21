@@ -329,24 +329,13 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
           ? o.saleFallbackPending
           : reason;
 
-  return [
-    {
-      key: 'wait',
-      title: o.wait,
-      desc: waitDesc,
-      cost: o.waitCost,
-    },
-    {
-      key: 'sell-now',
-      title: o.sellNow,
-      desc: o.sellNowDesc,
-      cost: o.sellNowCost,
-      costExtra: input.lenderFeeModeFull ? o.costFullTariff : undefined,
-      // Same reasoning as the listing row: while a listing stands, the
-      // buyer completing it incurs these same losses, and this row's
-      // cost line carries the identical disclosure.
-      costStillApplies: input.listingMayStand,
-      unavailable: pastDueOr(
+  /** The sell-now row's verdict, hoisted so the LISTING row can read
+   *  it (Codex r22 P2). The final-hour message reassures the lender
+   *  that "selling into a standing offer still works" — true only when
+   *  that row is in fact takeable, and the shared prerequisites can
+   *  shut both at once. Two rows describing each other must read one
+   *  value, not two copies of a guess. */
+  const sellNowUnavailable = pastDueOr(
         input.saleLock === 'checking'
           ? o.saleLockChecking
           : input.saleLock === 'listed'
@@ -379,7 +368,26 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
               // because we have not looked and must not pretend to
               // have. The difference is visible in the tool, not here.
               undefined,
-      ),
+      );
+
+  return [
+    {
+      key: 'wait',
+      title: o.wait,
+      desc: waitDesc,
+      cost: o.waitCost,
+    },
+    {
+      key: 'sell-now',
+      title: o.sellNow,
+      desc: o.sellNowDesc,
+      cost: o.sellNowCost,
+      costExtra: input.lenderFeeModeFull ? o.costFullTariff : undefined,
+      // Same reasoning as the listing row: while a listing stands, the
+      // buyer completing it incurs these same losses, and this row's
+      // cost line carries the identical disclosure.
+      costStillApplies: input.listingMayStand,
+      unavailable: sellNowUnavailable,
       target: 'early-exit-card',
     },
     {
@@ -409,7 +417,13 @@ export function buildLenderExitRows(input: LenderExitInput): LenderExitRow[] {
             // "not on this network" would go looking for another
             // network when the real answer is "not in the last hour".
             input.listingWindowTooShort
-            ? o.listUnavailableTooClose
+            ? // The variant WITHOUT the "selling still works" tail when
+              // the instant sale is not in fact available (Codex r22
+              // P2). Computed from the sell-now row's own verdict, so
+              // the two rows cannot contradict each other.
+              sellNowUnavailable === undefined
+              ? o.listUnavailableTooClose
+              : o.listUnavailableTooCloseOnly
             : !input.listingSupportedOnChain
               ? o.listUnavailableNetwork
               : input.collateralIsNft

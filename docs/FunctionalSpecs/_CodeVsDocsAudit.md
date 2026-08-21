@@ -625,7 +625,10 @@ known only by the position lock and no offer id could be resolved, there is
 nothing to widen, and answering needs either id recovery or an authoritative
 verdict from the protocol. That half belongs with the other pre-checks in
 #1841 and is part of what the shared preview verdict in
-`docs/DesignsAndPlans/SaleExitPreviewVerdict.md` would answer.
+a shared preview verdict would answer — proposed in #1847, which is
+still open, so this deliberately names the ISSUE rather than the design
+file. The file exists only on that branch; citing its path from here
+sent a reader to something not present on main.
 
 Left deferred rather than fixed here on scope, not cost — the error
 over-warns in the safe direction, and widening a shared hook's decode plus its

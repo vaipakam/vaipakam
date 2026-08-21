@@ -839,3 +839,27 @@ describe('lock trust vs listing risk — two questions, two inputs', () => {
     }
   });
 });
+
+
+describe('final-hour message does not promise a shut exit', () => {
+  it('reassures about the instant sale only when that row is takeable', () => {
+    expect(rowFor({ listingWindowTooShort: true }, 'list').unavailable).toBe(
+      o.listUnavailableTooClose,
+    );
+  });
+
+  it('drops the reassurance when a shared prerequisite shut sell-now too', () => {
+    // saleTools 'failed' shuts BOTH rows; the listing row still wins
+    // the precedence contest, so its tail must not point at an exit
+    // that is equally unavailable.
+    const rows = buildLenderExitRows({
+      ...base,
+      listingWindowTooShort: true,
+      saleTools: 'failed',
+    });
+    expect(rows.find((r) => r.key === 'sell-now')!.unavailable).toBeDefined();
+    expect(rows.find((r) => r.key === 'list')!.unavailable).toBe(
+      o.listUnavailableTooCloseOnly,
+    );
+  });
+});
