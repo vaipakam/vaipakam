@@ -77,11 +77,17 @@ abgelehnt.
 
 ### Zustimmung zum Gebühren-Rabatt
 
-Ein Opt-in-Flag auf Wallet-Ebene, das dem Protokoll erlaubt, den
-rabattierten Anteil einer Gebühr in VPFI abzurechnen, das bei
-terminalen Ereignissen aus deinem Vault abgebucht wird. Standard:
-aus. Aus bedeutet, dass du 100% jeder Gebühr im Principal-Asset
-zahlst; an bedeutet, dass der zeitgewichtete Rabatt angewendet wird.
+Ein Opt-in-Flag auf Wallet-Ebene, das deinen VPFI-Bestand in einen
+Gebühren-Rabatt umsetzt. Standard: aus — aus bedeutet, dass du 100%
+jeder Gebühr im Principal-Asset zahlst.
+
+Die beiden Seiten funktionieren unterschiedlich. **Als Borrower**
+ist der Rabatt eine direkte Minderung der Loan Initiation Fee, die
+bei Annahme im Lending-Asset berechnet wird; dafür wird nichts aus
+deinem Vault abgebucht. **Als Lender** greift der Yield-Rabatt beim
+Settlement, und wenn eine VPFI-Preisreferenz konfiguriert ist, kann
+er stattdessen in VPFI aus deinem Vault beglichen werden, sodass dir
+die volle Gebühr im Lending-Asset verbleibt.
 
 Tier-Leiter:
 
@@ -102,9 +108,27 @@ wird das Muster geschlossen, bei dem ein Nutzer kurz vor Loan-Ende
 VPFI aufladen, den vollen Tier-Rabatt mitnehmen und Sekunden später
 wieder abheben könnte.
 
+**Das gilt für die Lender-Yield-Fee.** Der Satz des Borrowers für die
+Initiation-Fee wird einmal bei Annahme des Loans gelesen; danach ändert ihn
+weder eine Abhebung noch eine Aufstockung.
+
 Der Rabatt gilt für die Lender-Yield-Fee beim Settlement und für
-die Borrower-Loan-Initiation-Fee (ausgezahlt als VPFI-Rebate, wenn
-der Borrower claimt).
+die Borrower-Loan-Initiation-Fee — dort als **direkte Minderung
+der Gebühr, die du im Lending-Asset zahlst**, angewendet bei
+Annahme des Loans. Es wird kein VPFI aus deinem Vault entnommen,
+um diese Gebühr zu bezahlen, und es gibt danach keinen Rebate zu
+claimen.
+
+> **Falls du auf einen Loan-Initiation-Fee-Rebate wartest, lies
+> das hier.** Ein früheres Modell zog die volle Gebühr vorab in
+> VPFI ein, hielt sie über die gesamte Laufzeit des Loans in
+> Verwahrung und gab beim Claim einen Teil zurück. **Dieser Weg
+> ist eingestellt.** Loans, die noch unter dem alten Modell
+> eröffnet wurden, werden weiterhin so abgerechnet, und die
+> Rebate-Abschnitte weiter unten beschreiben genau diese Loans.
+> Ein heute eröffneter Loan hat kein VPFI gegen seine
+> Initiation-Fee verwahrt und keinen ausstehenden Rebate — darauf
+> zu warten hieße, auf Geld zu warten, das nicht kommen kann.
 
 > **Netzwerk-Gas ist separat.** Der obige Rabatt gilt für die
 > **Protokollgebühren** von Vaipakam (Yield-Fee
@@ -440,7 +464,9 @@ Timelock abgesichert und können keine Assets bewegen.
 - **Defaults bei illiquidem Collateral** — der Default überträgt
   dein gesamtes Collateral an den Lender. Es gibt keinen
   Restanspruch; nur ein eventuell ungenutzter VPFI-Loan-
-  Initiation-Fee-Rebate, den du als Borrower beim Claim erhältst.
+  Initiation-Fee-Rebate. Bei einem Loan auf dem eingestellten
+  VPFI-Gebührenweg wird dieses VPFI an die Treasury verwirkt, nicht
+  an dich zurückgegeben.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -742,14 +768,32 @@ wird in derselben Transaktion verbrannt.
 Der Borrower-Claim gibt je nach Settlement des Loans zurück:
 
 - **Volle Rückzahlung / Preclose / Refinance** — dein
-  Collateral-Korb zurück, plus den zeitgewichteten VPFI-Rebate
-  aus der Loan Initiation Fee.
-- **HF-Liquidation oder Default** — nur den ungenutzten
-  VPFI-Loan-Initiation-Fee-Rebate, der auf diesen terminalen
-  Pfaden null ist, sofern nicht ausdrücklich erhalten.
-  Collateral ist bereits an den Lender gegangen.
+  Collateral-Korb zurück, plus — nur bei einem Loan auf dem
+  eingestellten VPFI-Gebührenweg — den zeitgewichteten
+  VPFI-Rebate aus der Loan Initiation Fee.
+- **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
+  ein Überschuss übrig sein. Es wird nur so viel Wert
+  genommen, wie Liquidator, Lender und Treasury decken; der Rest
+  wird als dein Claim erfasst. Seine FORM hängt davon ab, wie der Loan
+  geschlossen wurde. Eine gewöhnliche HF-Liquidation und ein
+  zeitbasierter Default auf handelbares Collateral verkaufen beide
+  das Collateral und erfassen den Rest im Principal-Asset des
+  Loans. Nur ein Close-out, bei dem ein Liquidator das Collateral
+  mit Abschlag direkt übernimmt, statt es zu verkaufen, lässt den
+  nicht verkauften Teil verpfändet in deinem Vault. Eine
+  Teilliquidation ist überhaupt kein Close-out — der Loan bleibt
+  offen und es entsteht kein Claim. Sieh in den Claim, statt zu
+  raten. Bei
+  einem Default auf ein illiquides Asset geht meist der ganze Korb
+  weg, dann bleibt nichts — das ist ein Ergebnis, keine Regel.
+  Immer verloren ist das Rebate: bei einem Loan auf dem
+  eingestellten VPFI-Gebührenweg wird das gegen die Initiation-Fee
+  verwahrte VPFI **an die Treasury verwirkt**, und ein Rebate kommt
+  nur bei einem ordnungsgemäßen Abschluss zurück.
 
-Der Borrower-Position-NFT wird in derselben Transaktion verbrannt.
+Der Borrower-Position-NFT wird beim Claim verbrannt, nicht bei der
+Auflösung des Loans — ein von einer Liquidation übrig gelassener
+Überschuss ist also danach noch abholbar.
 
 ---
 
@@ -1000,8 +1044,10 @@ Sobald HF unter 1,0 fällt, kann jeder eine HF-basierte
 Liquidation auslösen; der Swap verkauft dein Collateral zu Preisen,
 die durch Slippage ausgehöhlt sind, um den Lender zurückzuzahlen.
 Bei illiquidem Collateral überträgt der Default dein gesamtes
-Collateral an den Lender — es bleibt nur ein eventuell
-ungenutzter VPFI-Loan-Initiation-Fee-Rebate zum Claimen.
+Collateral an den Lender, und es bleibt nichts zum Claimen: bei
+einem Loan auf dem eingestellten VPFI-Gebührenweg wird das gegen
+die Initiation-Fee verwahrte VPFI an die Treasury verwirkt statt
+zurückgegeben.
 
 <a id="loan-details.parties"></a>
 
@@ -1068,9 +1114,12 @@ verfügbar sind:
   Refinance-Abschluss die Loans atomar, ohne dass das
   Collateral deinen Vault verlässt.
 - **Als Borrower claimen** — nur in terminalen Zuständen. Gibt das
-  Collateral bei voller Rückzahlung zurück, oder den ungenutzten
-  VPFI-Loan-Initiation-Fee-Rebate bei Default / Liquidation.
-  Verbrennt den Borrower-Position-NFT.
+  Collateral bei voller Rückzahlung zurück; bei Default oder
+  Liquidation kann ein Überschuss bleiben, da nur so viel Collateral
+  genommen wird, wie Schuld und Auflösungskosten erfordern — siehe
+  den Claim-Center-Abschnitt oben. VPFI, das unter dem eingestellten
+  Gebührenweg verwahrt war, wird nur bei Default oder Liquidation
+  verwirkt; ein ordnungsgemäßer Abschluss zahlt den Rebate aus. Verbrennt den Borrower-Position-NFT.
 
 ---
 

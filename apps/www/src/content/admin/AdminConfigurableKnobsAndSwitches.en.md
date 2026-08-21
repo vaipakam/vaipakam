@@ -63,8 +63,13 @@ Default 0.2% of principal (also the rev-8 freeze, #1352; it was
 `MAX_FEE_BPS` (50%), the same cap as the treasury fee.
 
 **It is charged in the LENDING ASSET, not in VPFI.** #1352 retired
-the peg-custody borrower path: a new loan takes no VPFI into Diamond
-custody and earns no settlement rebate. Instead the borrower's
+the peg-custody borrower path: a new loan puts no VPFI into
+borrower-LIF **rebate** custody and earns no settlement rebate. That
+is the invariant for every new loan — `vpfiHeld == 0`. It is NOT the
+broader claim that no VPFI moves at origination: a loan whose party
+opts into the **Full tariff** does hand that party's non-refundable
+`C*` into the Diamond, credited to the recycle bucket. Different
+custody, different counter, no rebate. Instead the borrower's
 time-weighted VPFI hold tier is applied as a **direct reduction of
 the lending-asset fee at acceptance** (the "HoldOnly" path), pinned
 at origination so a post-hoc top-up cannot game it. Two conditions
@@ -1058,7 +1063,9 @@ contract upgrade to change.
 
 Zero rejected at the setter level. The
 treasury is the destination for all yield-fee and loan-initiation-fee
-flows that don't go to the matcher kickback or VPFI tier rebates.
+flows that don't go to the matcher kickback or the VPFI tier discount
+(a direct reduction of the fee charged, not a rebate — see the
+Loan Initiation Fee section above).
 Misconfig surfaces as fees disappearing into the wrong wallet —
 no on-chain bound stops this beyond the "non-zero" check. Operators
 must sanity-check the address against the published treasury

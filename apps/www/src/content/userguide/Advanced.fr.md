@@ -76,9 +76,13 @@ déploiement.
 
 ### Consentement à la remise sur frais
 
-Un drapeau d'opt-in au niveau wallet qui permet au protocole de
-régler la portion remisée d'un frais en VPFI prélevés sur ton
-vault lors des événements terminaux. Par défaut : désactivé.
+Un drapeau d'opt-in au niveau wallet qui transforme tes VPFI en remise
+sur les frais. **En tant qu'emprunteur**, la remise est une réduction
+directe du Loan Initiation Fee, prélevé dans l'actif prêté à
+l'acceptation ; rien n'est débité de ton vault pour cela. **En tant que
+prêteur**, la remise de rendement s'applique au règlement et, si une
+référence de prix VPFI est configurée, elle peut être réglée en VPFI
+depuis ton vault, te laissant la totalité des frais dans l'actif prêté. Par défaut : désactivé.
 Désactivé signifie que tu paies 100% de chaque frais dans l'actif
 principal ; activé signifie que la remise pondérée dans le temps
 s'applique.
@@ -102,9 +106,27 @@ d'abus où un utilisateur pourrait recharger du VPFI juste
 avant la fin d'un prêt, capturer la remise du tier complet, et
 retirer quelques secondes plus tard.
 
+**Cela vaut pour le yield-fee du prêteur.** Le taux de l'emprunteur sur les
+frais d'initiation est lu une seule fois, à l'acceptation du prêt ; ensuite, ni
+un retrait ni un rechargement ne le modifient.
+
 La remise s'applique au yield-fee du prêteur au moment du
-règlement et au Loan Initiation Fee de l'emprunteur (versé comme
-rabais VPFI lorsque l'emprunteur réclame).
+règlement et au Loan Initiation Fee de l'emprunteur, où elle est
+une **réduction directe des frais que tu paies dans l'actif
+prêté**, appliquée à l'acceptation du prêt. Aucun VPFI n'est
+prélevé de ton vault pour payer ces frais, et il n'y a aucun
+rabais à réclamer ensuite.
+
+> **Si tu attends un rabais sur le Loan Initiation Fee, lis
+> ceci.** Un modèle antérieur prélevait la totalité des frais en
+> VPFI d'avance, les conservait pendant toute la durée du prêt et
+> en restituait une partie lors de la réclamation. **Cette voie
+> est retirée.** Les prêts ouverts pendant qu'elle était active se
+> règlent toujours ainsi, et les passages sur le rabais plus bas
+> décrivent ces prêts. Un prêt ouvert aujourd'hui n'a aucun VPFI
+> retenu contre ses frais d'initiation ni rabais en attente —
+> l'attendre reviendrait à attendre un argent qui ne peut pas
+> arriver.
 
 > **Le gas du réseau est séparé.** La remise ci-dessus s'applique
 > aux **frais de protocole** de Vaipakam (yield-fee
@@ -443,9 +465,9 @@ déplacer d'actifs.
   sous 1,0.
 - **Défauts sur collatéral illiquide** — le défaut transfère ton
   collatéral intégral au prêteur. Aucune réclamation
-  résiduelle ; seulement le rabais VPFI Loan Initiation Fee
-  inutilisé, que tu encaisses en tant qu'emprunteur au moment de
-  la réclamation.
+  résiduelle. Sur un prêt encore soumis à la voie de frais VPFI
+  retirée, le VPFI retenu au titre des frais d'initiation est acquis
+  au trésor plutôt que restitué : il n'y a rien à encaisser.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -742,15 +764,32 @@ La réclamation de l'emprunteur rend, selon la manière dont le
 prêt s'est réglé :
 
 - **Remboursement total / preclose / refinance** — ton panier de
-  collatéral, plus le rabais VPFI pondéré dans le temps issu de
-  la Loan Initiation Fee.
-- **Liquidation HF ou défaut** — uniquement le rabais VPFI Loan
-  Initiation Fee inutilisé, qui sur ces chemins terminaux est
-  zéro à moins d'être explicitement préservé. Le collatéral est
-  déjà passé au prêteur.
+  collatéral, plus — uniquement sur un prêt encore soumis à la
+  voie de frais VPFI retirée — le rabais VPFI pondéré dans le
+  temps issu de la Loan Initiation Fee.
+- **Liquidation HF ou défaut** — vérifie quand même, il peut
+  rester un excédent. On ne prélève que la valeur nécessaire
+  pour couvrir le liquidateur, le prêteur et le trésor, et le reste
+  est enregistré comme ta créance. Sa FORME dépend de la voie par
+  laquelle le prêt s'est refermé. Une liquidation HF ordinaire et
+  un défaut temporel sur un collatéral négociable vendent tous
+  deux le collatéral et enregistrent le reliquat dans l'actif
+  principal du prêt. Seule une clôture où un liquidateur prend le
+  collatéral directement avec une décote, au lieu de le vendre,
+  laisse la part invendue grevée dans ton vault. Une liquidation
+  partielle n'est pas une clôture du tout — le prêt reste ouvert
+  et aucune créance n'est créée. Consulte la créance plutôt que
+  de supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le
+  panier part en général et il ne reste rien — mais c'est une
+  issue, pas une règle. Ce qui est toujours perdu, c'est le
+  rabais : sur un prêt encore soumis à la voie de frais VPFI
+  retirée, le VPFI retenu au titre des frais d'initiation est
+  **acquis au trésor**, et un rabais ne revient que lors d'une
+  clôture régulière.
 
-Le NFT de position d'emprunteur est brûlé dans la même
-transaction.
+Le NFT de position d'emprunteur est brûlé au moment où tu
+réclames, pas quand le prêt se résout — un excédent laissé par une
+liquidation reste donc récupérable ensuite.
 
 ---
 
@@ -1002,8 +1041,10 @@ Une fois HF descendu sous 1,0, n'importe qui peut déclencher une
 liquidation basée sur HF ; le swap vend ton collatéral à des
 prix érodés par le slippage pour rembourser le prêteur. Sur
 collatéral illiquide, le défaut transfère ton collatéral
-intégral au prêteur — il ne reste à réclamer que le rabais VPFI
-Loan Initiation Fee inutilisé.
+intégral au prêteur, et il ne reste rien à réclamer : sur un prêt
+encore soumis à la voie de frais VPFI retirée, le VPFI retenu au
+titre des frais d'initiation est acquis au trésor plutôt que
+restitué.
 
 <a id="loan-details.parties"></a>
 
@@ -1067,9 +1108,13 @@ Actions permissionless disponibles à tous quel que soit le rôle :
   finaliser le refinancement échange les prêts atomiquement
   sans que le collatéral ne quitte ton vault.
 - **Réclamer en tant qu'emprunteur** — uniquement en état terminal. Rend
-  le collatéral en cas de remboursement total, ou le rabais
-  VPFI Loan Initiation Fee inutilisé en défaut / liquidation.
-  Brûle le NFT de position d'emprunteur.
+  le collatéral en cas de remboursement total ; en défaut ou
+  liquidation il peut rester un excédent, car on ne prélève que le
+  collatéral qu'exigent la dette et le coût de sa clôture — voir la
+  section Claim Center ci-dessus. Le VPFI retenu sous la voie
+  retirée n'est acquis au trésor qu'en cas de défaut ou de
+  liquidation ; une clôture régulière verse le rabais. Brûle le NFT de position
+  d'emprunteur.
 
 ---
 

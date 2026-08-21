@@ -65,8 +65,11 @@ gate 被拒绝。
 
 ### Fee-discount consent
 
-这是 wallet-level opt-in flag。它允许 protocol 在 terminal events
-时，用从您 vault debit 的 VPFI 来 settle fee 的 discounted 部分。
+这是 wallet-level opt-in flag，把您持有的 VPFI 转化为 fee 折扣。
+**作为 borrower**，折扣是对 Loan Initiation Fee 的直接减免，在 loan 被
+accept 时以 lending asset 计收，不会从您的 vault 中扣除任何东西。
+**作为 lender**，收益费折扣在 settlement 时适用；若已配置 VPFI 价格参考，
+也可改为从您的 vault 中以 VPFI 结算，使您保留 lending asset 中的全额费用。
 Default：off。off 表示每笔 fee 的 100% 都用 principal asset 支付；
 on 则会应用 time-weighted discount。
 
@@ -86,8 +89,13 @@ balance re-stamp rate — 没有让旧的 (更高) tier 继续适用的 grace
 window。这会关闭一种 exploit pattern：在 loan 即将结束时临时 top up
 VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
 
+**以上针对的是 lender yield fee。** Borrower 的发起费费率在 loan 被 accept 时
+读取一次，此后 withdraw 或 top up 都不会改变它。
+
 discount 在 settlement 时适用于 lender yield fee，也适用于 borrower
-Loan Initiation Fee (borrower claim 时以 VPFI rebate 形式支付)。
+Loan Initiation Fee——就后者而言，它是**对您以 lending asset 支付的费用的直接减免**，在 loan 被 accept 时生效。不会从您的 vault 中扣除 VPFI 来支付该费用，之后也没有任何 rebate 可以 claim。
+
+> **如果您在等待 Loan Initiation Fee 的 rebate，请读这一段。** 早期模型会预先以 VPFI 收取全额费用，在 loan 存续期间托管，并在您 claim 时退回其中一部分。**该路径已停用。** 在其生效期间开立的 loan 仍按那种方式结算，下文关于 rebate 的段落描述的正是这些 loan。今天开立的 loan 没有为其 initiation fee 托管任何 VPFI，也没有待领的 rebate——等待它等于等待一笔不可能到账的钱。
 
 > **Network gas 与协议费用是分开的。** 上面的 discount 适用于 Vaipakam 的 **protocol fees**（yield fee `{liveValue:treasuryFeeBps}`%、Loan Initiation Fee `{liveValue:loanInitiationFeeBps}`%）。每次 on-chain action 都需要的 **blockchain 网络 gas 费**（在 Base / Sepolia / Arbitrum 等链上 create offer / accept / repay / claim / withdraw 等操作时支付给 validators）不是协议费用。Vaipakam 从不收取，由网络收取。它无法按 tier 处理或 rebate，并且取决于 submission 时该链的拥堵情况，与 loan 大小或您的 VPFI tier 无关。
 
@@ -349,8 +357,8 @@ cross-chain-facing contracts 中，受 timelock 控制，也不能移动 assets�
   slippage 影响的价格出售您的 collateral。swap 是 permissionless
   的 — 您的 HF 跌破 1.0 的瞬间，任何人都可以 trigger。
 - **Illiquid-collateral defaults** — Default 会把您的全部 collateral
-  转给 lender。没有 leftover claim；只有未使用的 VPFI Loan Initiation
-  Fee rebate 可以在 claim time 由 borrower 收取。
+  转给 lender，也没有任何 leftover claim：若该 loan 仍在已停用的 VPFI
+  费用路径上，为其发起费托管的 VPFI 会被没收转入 treasury，而不会退还。
 
 <a id="create-offer.advanced-options"></a>
 
@@ -573,13 +581,23 @@ claim。lender position NFT 会在同一 transaction 中 burn。
 borrower claim 根据 loan 如何 settle 来返回：
 
 - **Full repayment / preclose / refinance** — 您的 collateral
-  basket 回来，加上 Loan Initiation Fee 的 time-weighted VPFI
-  rebate。
-- **HF-liquidation 或 default** — 仅 unused VPFI Loan Initiation
-  Fee rebate；在这些 terminal paths 上，除非明确保留，否则为零。
-  Collateral 已经移动给 lender。
+  basket 回来；若该 loan 仍在已停用的 VPFI 费用路径上，还会加上
+  Loan Initiation Fee 的 time-weighted VPFI rebate。
+- **HF-liquidation 或 default** — 仍请查看，可能还有 surplus。系统只取走
+  足以支付 liquidator、lender 和 treasury 的那部分价值，余下的会记为您的
+  claim。它的形式取决于 loan 是以哪条路径关闭的。普通的 HF liquidation，
+  以及对可交易 collateral 的时间型 default，两者都会卖出 collateral，
+  并将剩余记为 loan 的 principal asset。只有当 liquidator 不卖出、而是
+  按折扣直接拿走 collateral 的那种 close-out，未卖出的部分才会以
+  encumbered 状态留在您的 vault 中。至于部分 liquidation，它根本不是
+  close-out —— loan 仍然开着，也不会产生 claim。请查看 claim，而不要
+  假设是哪一种。非流动资产的 default 通常会拿走整个 basket，因而不剩
+  什么——但那是一种结果，不是规则。始终会失去的是 rebate：若该 loan 仍在
+  已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 会**被没收并转入
+  treasury**，且只有正常关闭才会返还 rebate。
 
-borrower position NFT 会在同一 transaction 中 burn。
+borrower position NFT 是在您 claim 时 burn，而不是在 loan 结清时——因此
+liquidation 留下的 surplus 之后仍可领取。
 
 ---
 
@@ -790,8 +808,9 @@ route 成您的 principal asset。Recovery 是 slippage 之后的净额。
 
 一旦 HF 跌破 1.0，任何人都可以触发 HF-based liquidation；swap 会
 以受 slippage 影响的价格出售您的 collateral 来偿还 lender。在
-illiquid collateral 上，default 会把您的全部 collateral 转给 lender
-— 只有未使用的 VPFI Loan Initiation Fee rebate 还留给您 claim。
+illiquid collateral 上，default 会把您的全部 collateral 转给 lender，
+且没有任何东西留给您 claim：已停用费用路径下托管的 VPFI 会被没收转入
+treasury。
 
 <a id="loan-details.parties"></a>
 
@@ -847,8 +866,9 @@ locked" 等)。
   complete refinance 会 atomically swap loans，collateral 始终不离开
   您的 vault。
 - **Claim as borrower** — 仅在 terminal state 可用。full repayment 时返还
-  collateral；default / liquidation 时返还 unused VPFI Loan Initiation
-  Fee rebate。会 burn borrower position NFT。
+  collateral；default / liquidation 时也可能还有 surplus，因为系统只取走偿还债务
+  和了结它所需的那部分 collateral——参见上文的 Claim Center 一节。已停用
+  费用路径下托管的 VPFI 只在 default 或 liquidation 时被没收；正常关闭仍会支付 rebate。会 burn borrower position NFT。
 
 ---
 

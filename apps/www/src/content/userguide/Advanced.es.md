@@ -76,9 +76,14 @@ defecto de un solo verificador se rechaza en el gate de despliegue.
 
 ### Consentimiento de descuento en comisiones
 
-Una bandera de opt-in a nivel de billetera que permite al protocolo
-liquidar la porción descontada de una comisión en VPFI debitado de
-tu vault en eventos terminales. Por defecto: desactivado.
+Una bandera de opt-in a nivel de billetera que convierte tu VPFI en
+un descuento de comisiones. **Como prestatario**, el descuento es una
+reducción directa de la Loan Initiation Fee, cobrada en el activo
+prestado al aceptarse el préstamo; no se debita nada de tu vault por
+ello. **Como prestamista**, el descuento de rendimiento se aplica en
+la liquidación y, si hay una referencia de precio de VPFI configurada,
+puede liquidarse en VPFI desde tu vault, dejándote la comisión íntegra
+en el activo prestado. Por defecto: desactivado.
 Desactivado significa que pagas el 100% de cada comisión en el
 activo principal; activado significa que se aplica el descuento
 ponderado por tiempo.
@@ -102,9 +107,26 @@ patrón de abuso en el que un usuario podría recargar VPFI justo
 antes del cierre de un préstamo, capturar el descuento del nivel
 completo y retirar segundos después.
 
+**Eso vale para la comisión de rendimiento del prestamista.** La tasa del
+prestatario para la comisión de iniciación se lee una sola vez al aceptarse el
+préstamo; después, ni un retiro ni una recarga la mueven.
+
 El descuento se aplica a la comisión por rendimiento del prestamista
-en la liquidación, y a la Loan Initiation Fee del prestatario
-(entregada como un reembolso de VPFI cuando el prestatario reclama).
+en la liquidación, y a la Loan Initiation Fee del prestatario, donde
+es una **reducción directa de la comisión que pagas en el activo
+prestado**, aplicada al aceptarse el préstamo. No se retira VPFI de
+tu vault para pagar esa comisión, y no hay ningún reembolso que
+reclamar después.
+
+> **Si esperas un reembolso de la Loan Initiation Fee, lee esto.**
+> Un modelo anterior cobraba la comisión completa en VPFI por
+> adelantado, la mantenía en custodia durante toda la vida del
+> préstamo y devolvía una parte al reclamar. **Esa vía está
+> retirada.** Los préstamos abiertos mientras estuvo vigente siguen
+> liquidándose así, y los pasajes sobre reembolsos más abajo
+> describen esos préstamos. Un préstamo abierto hoy no tiene VPFI
+> retenido contra su comisión de inicio ni reembolso pendiente:
+> esperarlo sería esperar un dinero que no puede llegar.
 
 > **El gas de red es independiente.** El descuento anterior se
 > aplica a las **comisiones del protocolo** de Vaipakam (Comisión
@@ -444,9 +466,10 @@ timelock, y no pueden mover activos.
   slippage para repagar al prestamista. El swap es permissionless —cualquiera puede
   dispararlo en el instante en que tu HF cae por debajo de 1,0.
 - **Defaults con colateral ilíquido** — el default transfiere
-  todo tu colateral al prestamista. No hay reclamación residual;
-  sólo cualquier reembolso de VPFI Loan Initiation Fee no usado,
-  que cobras como prestatario al reclamar.
+  todo tu colateral al prestamista y no queda nada por reclamar:
+  en un préstamo que siga en la vía de comisión VPFI retirada, el
+  VPFI retenido contra la comisión de inicio se pierde en favor
+  del tesoro en lugar de devolverse.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -744,15 +767,31 @@ La reclamación del prestatario devuelve, dependiendo de cómo se
 liquidó el préstamo:
 
 - **Repago total / preclose / refinance** — tu canasta de
-  colateral de vuelta, más el reembolso de VPFI ponderado por
-  tiempo de la Loan Initiation Fee.
-- **Liquidación por HF o default** — sólo el reembolso de VPFI
-  Loan Initiation Fee no usado, que en estos caminos terminales
-  es cero a menos que se preserve explícitamente. El colateral
-  ya se movió al prestamista.
+  colateral de vuelta, más —sólo en un préstamo que siga en la
+  vía de comisión VPFI retirada— el reembolso de VPFI ponderado
+  por tiempo de la Loan Initiation Fee.
+- **Liquidación por HF o default** — compruébalo igualmente,
+  puede quedar un excedente. Sólo se toma el valor suficiente
+  para cubrir al liquidador, al prestamista y al tesoro, y el resto
+  queda registrado como tu reclamación. Su FORMA depende de la vía por la que
+  se cerró el préstamo. Una liquidación por HF ordinaria y un
+  default por tiempo sobre colateral negociable venden ambos el
+  colateral y registran el residuo en el activo principal del
+  préstamo. Sólo un cierre en el que un liquidador toma el
+  colateral directamente con descuento, en vez de venderlo, deja
+  gravada en tu bóveda la parte no vendida. Una liquidación
+  parcial no es un cierre en absoluto — el préstamo sigue abierto
+  y no se crea ninguna reclamación. Consulta la reclamación en
+  lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la
+  canasta entera y no queda nada — pero eso es un resultado, no
+  una regla. Lo que siempre se pierde es el reembolso: en un
+  préstamo que siga en la vía de comisión VPFI retirada, el VPFI
+  retenido contra la comisión de inicio **se pierde en favor del
+  tesoro**, y un reembolso sólo vuelve en un cierre correcto.
 
-El NFT de posición de prestatario se quema en la misma
-transacción.
+El NFT de posición de prestatario se quema cuando reclamas, no
+cuando se resuelve el préstamo — así que un excedente dejado por
+una liquidación sigue ahí para recogerlo después.
 
 ---
 
@@ -1001,8 +1040,9 @@ Una vez que HF cae por debajo de 1,0, cualquiera puede disparar
 una liquidación basada en HF; el swap vende tu colateral a
 precios mermados por slippage para repagar al prestamista. Sobre
 colateral ilíquido, el default transfiere todo tu colateral al
-prestamista —sólo queda por reclamar cualquier reembolso de VPFI
-Loan Initiation Fee no usado.
+prestamista y no queda nada por reclamar: en un préstamo que siga
+en la vía retirada, el VPFI retenido contra la comisión de inicio
+se pierde en favor del tesoro.
 
 <a id="loan-details.parties"></a>
 
@@ -1067,9 +1107,13 @@ del rol:
   refinance intercambia los préstamos atómicamente sin que el
   colateral salga de tu vault.
 - **Reclamar como prestatario** — sólo en estados terminales. Devuelve el
-  colateral en repago total, o el reembolso de VPFI Loan
-  Initiation Fee no usado en default / liquidación. Quema el NFT
-  de posición de prestatario.
+  colateral en repago total; en default o liquidación puede quedar un
+  excedente, ya que sólo se toma el colateral que exigen la deuda y
+  el coste de cerrarla — véase la sección del Claim Center más
+  arriba. El VPFI retenido bajo la vía retirada sólo se pierde en
+  default o liquidación; un cierre correcto sigue pagando el
+  reembolso. Quema el NFT de posición de
+  prestatario.
 
 ---
 

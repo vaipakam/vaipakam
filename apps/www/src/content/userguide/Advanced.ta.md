@@ -74,9 +74,13 @@ gate-இல் நிராகரிக்கப்படும்.
 
 ### Fee-discount consent
 
-இது wallet-level opt-in flag. Terminal events-இல் fee-இன் discounted
-பகுதியை உங்கள் vault-இலிருந்து debit செய்யப்படும் VPFI மூலம் settle
-செய்ய protocol-ஐ அனுமதிக்கிறது. Default: off. Off என்றால் ஒவ்வொரு
+இது wallet-level opt-in flag; உங்கள் VPFI வைத்திருப்பை fee தள்ளுபடியாக
+மாற்றுகிறது. **Borrower-ஆக**, தள்ளுபடி என்பது Loan Initiation Fee-இலேயே
+நேரடியான குறைப்பு; loan accept ஆகும்போது lending asset-இல் வசூலிக்கப்படும்,
+அதற்காக உங்கள் vault-இலிருந்து எதுவும் கழிக்கப்படாது. **Lender-ஆக**, பலன்
+தள்ளுபடி settlement-இல் பொருந்தும்; VPFI விலை மேற்கோள் அமைக்கப்பட்டிருந்தால்
+உங்கள் vault-இலிருந்து VPFI-ஆகவும் தீர்க்கப்படலாம் — அப்போது lending
+asset-இல் கட்டணம் முழுவதும் உங்களிடமே இருக்கும். Default: off. Off என்றால் ஒவ்வொரு
 fee-இன் 100%-ஐயும் principal asset-இல் செலுத்துகிறீர்கள்; on என்றால்
 time-weighted discount பொருந்தும்.
 
@@ -98,9 +102,25 @@ balance அடிப்படையில் rate-ஐ உடனடியாக r
 VPFI-ஐ top up செய்து full-tier discount-ஐப் பெற்று, சில நொடிகளில்
 withdraw செய்யும் exploit pattern-ஐ இது தடுக்கிறது.
 
+**மேலே சொன்னது lender yield fee பற்றியது.** Borrower-ன் தொடக்கக் கட்டண
+விகிதம் loan accept ஆகும்போது ஒரே ஒரு முறை படிக்கப்படுகிறது; அதன் பிறகு
+withdraw-ஓ top up-ஓ அதை மாற்றாது.
+
 Discount settlement-இல் lender yield fee-க்கு பொருந்தும்; borrower-க்கு
-Loan Initiation Fee-ல் பொருந்தும் (borrower claim செய்யும்போது VPFI
-rebate ஆக வழங்கப்படும்).
+Loan Initiation Fee-ல் பொருந்தும் — அங்கே அது நீங்கள் lending asset-இல்
+செலுத்தும் **கட்டணத்திலேயே நேரடியான குறைப்பு**, loan accept ஆகும்போது
+பொருந்துகிறது. அந்தக் கட்டணத்தைச் செலுத்த உங்கள் vault-இலிருந்து VPFI
+எடுக்கப்படுவதில்லை; பின்னர் claim செய்ய rebate எதுவும் இல்லை.
+
+> **Loan Initiation Fee rebate-க்காகக் காத்திருந்தால், இதைப் படியுங்கள்.**
+> முந்தைய model முழுக் கட்டணத்தையும் VPFI-ஆக முன்கூட்டியே எடுத்து, loan
+> முழு காலத்திற்கும் custody-இல் வைத்து, claim செய்யும்போது ஒரு பகுதியைத்
+> திருப்பித் தந்தது. **அந்த வழி நிறுத்தப்பட்டுவிட்டது.** அது இயங்கிய
+> காலத்தில் திறக்கப்பட்ட loans இன்னும் அப்படியே settle ஆகின்றன; கீழே
+> உள்ள rebate பகுதிகள் அந்த loans-ஐத்தான் விவரிக்கின்றன. இன்று திறக்கும்
+> loan-க்கு அதன் initiation fee-க்கு எதிராக VPFI எதுவும் custody-இல்
+> இல்லை, rebate எதுவும் நிலுவையில் இல்லை — அதற்குக் காத்திருப்பது வர
+> முடியாத பணத்திற்குக் காத்திருப்பதாகும்.
 
 > **Network gas தனியானது.** மேலே உள்ள discount Vaipakam-ன்
 > **protocol fees** (yield fee `{liveValue:treasuryFeeBps}`%,
@@ -410,9 +430,10 @@ admin key இல்லை. Pause levers cross-chain-facing contracts-களி�
   permissionless — உங்கள் HF 1.0-க்குக் கீழே drop ஆகும் கணத்தில் யாரும்
   trigger செய்யலாம்.
 - **Illiquid-collateral defaults** — Default உங்கள் முழு collateral-ஐ
-  lender-க்கு transfer செய்கிறது. Leftover claim இல்லை; எஞ்சியுள்ள
-  unused VPFI Loan Initiation Fee rebate மட்டும் claim time-இல்
-  borrower-ஆக சேகரிக்க முடியும்.
+  lender-க்கு transfer செய்கிறது; claim செய்ய எதுவும் மீதியில்லை.
+  நிறுத்தப்பட்ட VPFI கட்டண வழியில் உள்ள loan-இல் தொடக்கக்
+  கட்டணத்திற்காக வைக்கப்பட்டிருந்த VPFI treasury-க்கு பறிமுதல்
+  ஆகும், திருப்பித் தரப்படாது.
 
 <a id="create-offer.advanced-options"></a>
 
@@ -706,14 +727,30 @@ Loan எவ்வாறு settle ஆனது என்பதைப் பொ�
 தருவது:
 
 - **Full repayment / preclose / refinance** — உங்கள் collateral basket
-  திரும்ப, கூடவே Loan Initiation Fee-இலிருந்து time-weighted VPFI
-  rebate.
-- **HF-liquidation அல்லது default** — unused VPFI Loan Initiation Fee
-  rebate மட்டும்; இந்த terminal paths-களில் explicitly preserve
-  செய்யப்படாவிட்டால் அது zero ஆகும். Collateral ஏற்கனவே lender-க்கு
-  நகர்ந்திருக்கும்.
+  திரும்ப; அந்த loan இன்னும் நிறுத்தப்பட்ட VPFI கட்டண வழியில்
+  இருந்தால், Loan Initiation Fee-இலிருந்து time-weighted VPFI
+  rebate-உம் சேர்ந்து.
+- **HF-liquidation அல்லது default** — இருந்தாலும் பார்த்துவிடுங்கள்;
+  surplus மிச்சம் இருக்கலாம். Liquidator, lender, treasury ஆகியோருக்குத்
+  தேவையான மதிப்பு மட்டுமே எடுக்கப்படும்; மீதி உங்கள் claim ஆகப்
+  பதிவாகும். அதன் வடிவம், loan எந்த வழியில் மூடப்பட்டது
+  என்பதைப் பொறுத்தது. வழக்கமான HF liquidation-உம், விற்கக்கூடிய
+  collateral மீதான கால-அடிப்படை default-உம் இரண்டுமே collateral-ஐ
+  விற்று, மீதியை loan-இன் principal asset-இல் பதிவு செய்யும்.
+  விற்கப்படாத பகுதி உங்கள் vault-இல் encumbered ஆக இருப்பது,
+  liquidator அதை விற்காமல் தள்ளுபடியில் நேரடியாக எடுத்துக்கொள்ளும்
+  close-out-இல் மட்டுமே. பகுதி liquidation என்பது close-out-ஏ அல்ல —
+  loan திறந்தே இருக்கும், claim-உம் உருவாகாது. எது என்று ஊகிக்காமல்
+  claim-ஐப் பாருங்கள். Illiquid asset-இன்
+  default-இல் பொதுவாக முழு basket-உம் போய்விடும், எதுவும் மிஞ்சாது —
+  ஆனால் அது ஒரு விளைவு, விதி அல்ல. எப்போதும் இழக்கப்படுவது rebate:
+  நிறுத்தப்பட்ட VPFI கட்டண வழியில் உள்ள loan-இல் தொடக்கக் கட்டணத்திற்காக
+  வைக்கப்பட்டிருந்த VPFI **treasury-க்கு பறிமுதல் ஆகும்**; rebate proper
+  close-இல் மட்டுமே திரும்பும்.
 
-Borrower position NFT அதே transaction-இல் burn செய்யப்படும்.
+Borrower position NFT நீங்கள் claim செய்யும்போது burn ஆகும், loan
+தீரும்போது அல்ல — எனவே liquidation விட்டுச்சென்ற surplus பின்னரும்
+பெறக் கிடைக்கும்.
 
 ---
 
@@ -952,8 +989,9 @@ levers:
 HF 1.0-க்குக் கீழே சென்றவுடன், யாரும் HF-based liquidation-ஐ trigger
 செய்யலாம்; swap உங்கள் collateral-ஐ slippage-ஆல் பாதிக்கப்பட்ட விலையில்
 விற்று lender-க்கு திருப்பிச் செலுத்தும். Illiquid collateral-இல்,
-default உங்கள் முழு collateral-ஐ lender-க்கு transfer செய்கிறது — claim
-செய்ய உங்களுக்கு unused VPFI Loan Initiation Fee rebate மட்டுமே மீதியாகும்.
+default உங்கள் முழு collateral-ஐ lender-க்கு transfer செய்கிறது; claim
+செய்ய எதுவும் மீதியில்லை — நிறுத்தப்பட்ட வழியில் வைக்கப்பட்டிருந்த VPFI
+treasury-க்கு பறிமுதல் ஆகும்.
 
 <a id="loan-details.parties"></a>
 
@@ -1014,8 +1052,12 @@ Role-இப் பொருட்படுத்தாமல் யாரும�
   ஒரு lender accept செய்தவுடன், complete refinance, collateral உங்கள்
   vault-ஐ விட்டு வெளியேறாமல் loans-ஐ atomically swap செய்கிறது.
 - **Claim as borrower** — Terminal state-இல் மட்டும். Full repayment-இல் collateral-ஐ,
-  அல்லது default / liquidation-இல் unused VPFI Loan Initiation Fee
-  rebate-ஐ திருப்பித் தருகிறது. Borrower position NFT-ஐ burn செய்கிறது.
+  திருப்பித் தருகிறது; default / liquidation-இல் surplus மிச்சம்
+  இருக்கலாம் — கடனுக்கும் அதை முடிக்கும் செலவுக்கும் தேவையான அளவு
+  collateral மட்டுமே எடுக்கப்படுவதால்; மேலே உள்ள Claim Center பகுதியைப்
+  பார்க்கவும். நிறுத்தப்பட்ட வழியில் வைக்கப்பட்டிருந்த VPFI, default அல்லது
+  liquidation-இல் மட்டுமே பறிமுதல் ஆகும்; proper close-இல் rebate
+  வழங்கப்படும். Borrower position NFT-ஐ burn செய்கிறது.
 
 ---
 

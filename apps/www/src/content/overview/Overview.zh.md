@@ -45,7 +45,7 @@ Vaipakam 面向四类用户：
 - 你们双方都会收到一个 position NFT - 你的表示“我应收到 1,000 USDC + interest”；他们的表示“我 repay 后应取回我的 WETH”
 - Loan clock 开始计时
 
-系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**，并转入 protocol treasury。因此 borrower 收到的是 `{liveValue:exampleBorrowerReceives}` USDC，而不是 1,000。（你也可以用 **VPFI** 支付该 fee，让 borrower 收到完整的 1,000；VPFI 会在下文说明。）
+系统会从 loaned amount 中收取一笔很小的 **Loan Initiation Fee (`{liveValue:loanInitiationFeeBps}`%)**，并转入 protocol treasury。因此 borrower 收到的是 `{liveValue:exampleBorrowerReceives}` USDC，而不是 1,000。（持有 **VPFI** 可以降低该 fee——前提是 borrower 已开启折扣设置且所借 asset 为流动资产——从而保留更多的 1,000；折扣直接从 fee 中减免，而不是事后返还。VPFI 会在下文说明。）
 
 ### Step 3 — 时间经过；borrower 还款
 

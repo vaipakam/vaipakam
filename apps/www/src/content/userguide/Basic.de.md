@@ -376,10 +376,21 @@ Seite des Loans vollständig abgeschlossen.
 
 Wenn du den Loan vollständig zurückgezahlt hast, gibt dein
 Borrower-Claim das Collateral zurück, das du am Anfang gesperrt
-hast. Bei Default oder Liquidation wird nur ein etwaiger
-ungenutzter VPFI-Rebate aus der Loan Initiation Fee zurückgegeben
-— das Collateral selbst ist bereits an den Lender gegangen. Der
-Claim verbraucht deinen Borrower-Position-NFT atomar.
+hast. Bei Default oder Liquidation sieh trotzdem nach. Es wird nur so
+viel Wert genommen, wie die Schuld und die Kosten ihrer Auflösung
+erfordern; alles darüber wird als deines erfasst. Welche Form es
+hat, hängt davon ab, wie der Loan endete: nach einer gewöhnlichen
+Liquidation oder einem Default auf handelbares Collateral wird der
+Korb verkauft und der Rest erreicht dich im Asset des Loans. Nur
+wenn ein Liquidator das Collateral mit Abschlag direkt übernimmt,
+statt es zu verkaufen, wartet das Collateral selbst auf dich. Oft geht bei einem Default über Collateral, das wir
+nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
+das ist aber ein Ausgang, keine Regel. Nie zurück kommt der
+Gebühren-Rebate: bei einem Loan auf dem eingestellten
+VPFI-Gebührenweg wird das gegen die Loan Initiation Fee verwahrte
+VPFI an die Treasury verwirkt. Der Claim verbraucht deinen
+Borrower-Position-NFT — deshalb ist der NFT nach einer
+Liquidation noch da und wartet auf dich.
 
 ---
 
@@ -588,8 +599,14 @@ mit einem kleinen Tooltip, das erklärt, warum.
   das Protokoll zahlt den alten Loan vom neuen Principal in einer
   Transaktion ab. Das Collateral verlässt nie den Vault.
 - **Claim** — sobald der Loan settled, gibt dein Collateral bei
-  voller Rückzahlung zurück, oder einen etwaig übrig gebliebenen
-  VPFI-Rebate aus der Loan-Initiation-Fee bei Default.
+  voller Rückzahlung zurück. Bei Default kann ein Überschuss
+  bleiben: es wird nur so viel Collateral genommen, wie Schuld und
+  Auflösungskosten erfordern, alles darüber wird als dein Claim
+  erfasst. Was genau, hängt vom Pfad ab —
+  siehe den Claim-Center-Abschnitt. VPFI, das unter dem
+  eingestellten Gebührenweg verwahrt war, wird nur bei Default
+  oder Liquidation verwirkt; volle Rückzahlung, Preclose oder
+  Refinance zahlen den Rebate weiterhin aus.
 
 ---
 
