@@ -2041,7 +2041,15 @@ async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
       ...result,
       advancedJumps: null,
       advancedBlocked: true,
-      advancedPreRaced: cardAbsentAtScrape,
+      // A LATE CAPTURE DEFEATS THE SUPPRESSION (Codex #1853 r26).
+      // This flag exists to discard observations of a card that was
+      // correctly absent — but the sticky recorder may since have
+      // observed that card WITH A ROW MISSING, and `late.value`
+      // replaces the scrape's absence in the merged result. Suppressing
+      // on the original absence then throws away a positively observed
+      // shape failure, which is the direction round 16 established must
+      // never happen.
+      advancedPreRaced: cardAbsentAtScrape && !late.recorded,
       advancedWhy: `the card was audited on a state it should not have rendered for: ${why}`,
     };
   }
@@ -2638,10 +2646,26 @@ async function anchorAudit(page, card) {
     };
   });
 
+  // ITERATE THE BUTTONS, not the rows (Codex #1853 r26). `hasJump` is
+  // a boolean, so `jumping` holds one entry per ROW — and the loop
+  // indexed `buttons` by that. With one button per row the two align
+  // and the audit is right; with two in a row, which is exactly the
+  // regression this check exists to catch, the second is never clicked
+  // and every later index is paired with the wrong row's expectation.
+  // A count taken from the wrong collection, in the function whose job
+  // is to exercise every rendered button.
+  //
+  // Each button's expectation now comes from its OWN enclosing row,
+  // read out of the DOM rather than matched by position.
   const buttons = card.getByRole('button', { name: /Go to this option/i });
+  const buttonCount = await buttons.count();
   const checks = [];
-  for (let i = 0; i < jumping.length; i++) {
-    const target = targetFor(jumping[i].title);
+  for (let i = 0; i < buttonCount; i++) {
+    const owningTitle = await buttons
+      .nth(i)
+      .evaluate((el) => el.closest('.item-row')?.querySelector('.row-title')?.textContent?.trim() ?? '')
+      .catch(() => '');
+    const target = targetFor(owningTitle);
     await page.evaluate(() => {
       /** @type {any} */ (window).__vpkJumpRecorder.length = 0;
     });
@@ -2661,7 +2685,7 @@ async function anchorAudit(page, card) {
       reached = undefined;
     }
     checks.push({
-      title: jumping[i].title.slice(0, 40),
+      title: owningTitle.slice(0, 40),
       target,
       reached,
       // `present` keeps its name and its meaning for the reporter: did
@@ -2673,7 +2697,9 @@ async function anchorAudit(page, card) {
     });
   }
   return {
-    advancedJumps: jumping.length,
+    // COUNTED FROM THE BUTTONS for the same reason the loop iterates
+    // them: a row with two would have reported one (Codex #1853 r26).
+    advancedJumps: buttonCount,
     // An unmapped jumping row is NOT a pass (Codex #1853 r13). Treating
     // `target === null` as satisfied meant a new jumpable row, or either
     // title reworded past these regexes, would exit 0 with
@@ -2841,9 +2867,19 @@ for (const v of visited) {
         (a) => a.target && a.present === false,
       );
       if (deadAnchors.length) {
+        // NAME WHERE IT WENT, not only where it should have (Codex
+        // #1853 r26). The audit now MEASURES navigation, so
+        // `present: false` covers two different defects: an anchor
+        // that is not there, and a button bound to the wrong one. The
+        // old sentence described only the first and printed only the
+        // expected id, which on a swapped binding — both anchors
+        // present — sends a reader looking for a missing element that
+        // exists.
         problems.push(
-          'a lender jump button has no anchor to land on: ' +
-            deadAnchors.map((a) => a.target).join(', '),
+          'a lender jump button did not reach its own anchor: ' +
+            deadAnchors
+              .map((a) => `${a.target} → ${a.reached ?? 'nowhere'}`)
+              .join(', '),
         );
       } else if (v.advancedJumps === 0 && v.advancedAnchorsOk === false) {
         // The no-op switch has NO jump button at all, so the anchor
