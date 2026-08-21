@@ -104,6 +104,36 @@ nothing, then one that costs the reader. The pattern in both is the same: a
 sentence written from what the mechanism seemed to imply rather than from what
 the mechanism does.
 
+**Three times, as it turned out.** The consent round-trip is real, but the
+first description of it said it costs nothing but gas, and that is not true
+either. The fee path reads the consent flag at the moment a fee is charged, so
+for as long as the consent is off — three transactions' worth of time — any
+offer of yours that somebody accepts, and any loan of yours that settles, is
+charged at the full rate. Nobody needs your permission to accept a standing
+offer, and a loan can settle without you. So the pages now say to cancel
+standing offers and pick a quiet moment before starting, rather than presenting
+the sequence as free.
+
+The through-line in all three is the same and worth naming once: each wrong
+sentence was written from what the mechanism seemed to imply, and each was
+corrected by someone reading what the mechanism does.
+
+**A separate correction, and the most consequential one here.** The Claim
+Center guidance told a borrower that an HF-liquidation or a default returns
+**nothing**. That is false whenever the position was overcollateralised: only
+enough collateral is taken to cover the liquidator, the lender and the treasury,
+and the remainder is recorded as the borrower's claim and stays in their vault
+until they withdraw it. A borrower who believed the page would simply never go
+and collect it. The guidance now tells them to check, explains that an illiquid
+default usually does take the whole basket — an outcome, not a rule — and keeps
+the one thing that is always lost, which is the rebate.
+
+The same passage also said the borrower position NFT is burned when the loan
+resolves. It is burned when the borrower *claims*, which is exactly the
+distinction that makes a surplus collectable afterwards; stating it the other
+way round reinforced the false conclusion. Corrected in all ten editions of the
+guide.
+
 Worth noting where the correct account already lived. The Advanced guide's own
 refresh paragraph states the deduplication rule explicitly, and why it exists,
 fifteen lines below the expiry bullet the first attempt drew on. The card was

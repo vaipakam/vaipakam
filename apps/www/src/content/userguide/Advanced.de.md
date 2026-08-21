@@ -771,14 +771,21 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   Collateral-Korb zurück, plus — nur bei einem Loan auf dem
   eingestellten VPFI-Gebührenweg — den zeitgewichteten
   VPFI-Rebate aus der Loan Initiation Fee.
-- **HF-Liquidation oder Default** — nichts. Das Collateral ist
-  bereits an den Lender gegangen, und bei einem Loan auf dem
-  eingestellten VPFI-Gebührenweg wird das gegen die
-  Initiation-Fee verwahrte VPFI **an die Treasury verwirkt**,
-  nicht zurückgegeben. Ein Rebate kommt nur bei einem
-  ordnungsgemäßen Abschluss zurück.
+- **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
+  ein Überschuss übrig sein. Es wird nur so viel Collateral
+  genommen, wie Liquidator, Lender und Treasury decken; bei einer
+  überbesicherten Position wird der Rest als dein Claim erfasst
+  und bleibt in deinem Vault verpfändet, bis du ihn abholst. Bei
+  einem Default auf ein illiquides Asset geht meist der ganze Korb
+  weg, dann bleibt nichts — das ist ein Ergebnis, keine Regel.
+  Immer verloren ist das Rebate: bei einem Loan auf dem
+  eingestellten VPFI-Gebührenweg wird das gegen die Initiation-Fee
+  verwahrte VPFI **an die Treasury verwirkt**, und ein Rebate kommt
+  nur bei einem ordnungsgemäßen Abschluss zurück.
 
-Der Borrower-Position-NFT wird in derselben Transaktion verbrannt.
+Der Borrower-Position-NFT wird beim Claim verbrannt, nicht bei der
+Auflösung des Loans — ein von einer Liquidation übrig gelassener
+Überschuss ist also danach noch abholbar.
 
 ---
 

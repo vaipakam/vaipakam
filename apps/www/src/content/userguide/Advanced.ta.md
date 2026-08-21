@@ -730,13 +730,20 @@ Loan எவ்வாறு settle ஆனது என்பதைப் பொ�
   திரும்ப; அந்த loan இன்னும் நிறுத்தப்பட்ட VPFI கட்டண வழியில்
   இருந்தால், Loan Initiation Fee-இலிருந்து time-weighted VPFI
   rebate-உம் சேர்ந்து.
-- **HF-liquidation அல்லது default** — எதுவும் திரும்ப வராது.
-  Collateral ஏற்கனவே lender-க்குச் சென்றிருக்கும்; நிறுத்தப்பட்ட VPFI
-  கட்டண வழியில் உள்ள loan-இல் தொடக்கக் கட்டணத்திற்காக வைக்கப்பட்டிருந்த
-  VPFI **treasury-க்கு பறிமுதல் ஆகும்**, திருப்பித் தரப்படாது. Rebate
-  proper close-இல் மட்டுமே திரும்பும்.
+- **HF-liquidation அல்லது default** — இருந்தாலும் பார்த்துவிடுங்கள்;
+  surplus மிச்சம் இருக்கலாம். Liquidator, lender, treasury ஆகியோருக்குத்
+  தேவையான அளவு collateral மட்டுமே எடுக்கப்படும்; over-collateralised
+  position-இல் மீதி உங்கள் claim ஆகப் பதிவாகி, நீங்கள் எடுக்கும் வரை
+  உங்கள் vault-இல் encumbered ஆக இருக்கும். Illiquid asset-இன்
+  default-இல் பொதுவாக முழு basket-உம் போய்விடும், எதுவும் மிஞ்சாது —
+  ஆனால் அது ஒரு விளைவு, விதி அல்ல. எப்போதும் இழக்கப்படுவது rebate:
+  நிறுத்தப்பட்ட VPFI கட்டண வழியில் உள்ள loan-இல் தொடக்கக் கட்டணத்திற்காக
+  வைக்கப்பட்டிருந்த VPFI **treasury-க்கு பறிமுதல் ஆகும்**; rebate proper
+  close-இல் மட்டுமே திரும்பும்.
 
-Borrower position NFT அதே transaction-இல் burn செய்யப்படும்.
+Borrower position NFT நீங்கள் claim செய்யும்போது burn ஆகும், loan
+தீரும்போது அல்ல — எனவே liquidation விட்டுச்சென்ற surplus பின்னரும்
+பெறக் கிடைக்கும்.
 
 ---
 

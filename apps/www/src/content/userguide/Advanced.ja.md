@@ -710,12 +710,19 @@ Borrower claim は、loan がどう settle されたかによって次を返し
 - **full repayment / preclose / refinance** — あなたの collateral
   basket。廃止された VPFI 手数料経路のままの loan であれば、
   Loan Initiation Fee からの time-weighted VPFI rebate も戻ります。
-- **HF-liquidation または default** — 戻るものはありません。Collateral は
-  すでに lender に渡っており、廃止された VPFI 手数料経路のままの loan では、
-  開始手数料のために保管されていた VPFI は**没収されて treasury に入り**、
-  返還されません。rebate が戻るのは正常なクローズのときだけです。
+- **HF-liquidation または default** — それでも確認してください。surplus が
+  残っている場合があります。Collateral は liquidator・lender・treasury を
+  まかなうぶんだけが取られ、over-collateralised なポジションでは残りが
+  あなたの claim として記録され、引き出すまで vault に encumbered のまま
+  残ります。Illiquid asset の default では通常バスケット全体が失われ何も
+  残りませんが、それは結果であってルールではありません。常に失われるのは
+  rebate です。廃止された VPFI 手数料経路のままの loan では、開始手数料の
+  ために保管されていた VPFI は**没収されて treasury に入り**、rebate が
+  戻るのは正常なクローズのときだけです。
 
-Borrower position NFT は同じ transaction で burn されます。
+Borrower position NFT が burn されるのは claim したときであって、loan が
+解決したときではありません。liquidation が残した surplus は、あとからでも
+受け取れます。
 
 ---
 

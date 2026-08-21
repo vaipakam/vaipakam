@@ -767,14 +767,22 @@ prêt s'est réglé :
   collatéral, plus — uniquement sur un prêt encore soumis à la
   voie de frais VPFI retirée — le rabais VPFI pondéré dans le
   temps issu de la Loan Initiation Fee.
-- **Liquidation HF ou défaut** — rien. Le collatéral est déjà
-  passé au prêteur, et sur un prêt encore soumis à la voie de
-  frais VPFI retirée, le VPFI retenu au titre des frais
-  d'initiation est **acquis au trésor**, non restitué. Un rabais
-  ne revient que lors d'une clôture régulière.
+- **Liquidation HF ou défaut** — vérifie quand même, il peut
+  rester un excédent. On ne prélève que le collatéral nécessaire
+  pour couvrir le liquidateur, le prêteur et le trésor ; sur une
+  position surcollatéralisée, le reste est enregistré comme ta
+  créance et demeure grevé dans ton vault jusqu'à ce que tu le
+  retires. Sur un défaut portant sur un actif illiquide, tout le
+  panier part en général et il ne reste rien — mais c'est une
+  issue, pas une règle. Ce qui est toujours perdu, c'est le
+  rabais : sur un prêt encore soumis à la voie de frais VPFI
+  retirée, le VPFI retenu au titre des frais d'initiation est
+  **acquis au trésor**, et un rabais ne revient que lors d'une
+  clôture régulière.
 
-Le NFT de position d'emprunteur est brûlé dans la même
-transaction.
+Le NFT de position d'emprunteur est brûlé au moment où tu
+réclames, pas quand le prêt se résout — un excédent laissé par une
+liquidation reste donc récupérable ensuite.
 
 ---
 

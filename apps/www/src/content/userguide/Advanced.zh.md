@@ -583,12 +583,16 @@ borrower claim 根据 loan 如何 settle 来返回：
 - **Full repayment / preclose / refinance** — 您的 collateral
   basket 回来；若该 loan 仍在已停用的 VPFI 费用路径上，还会加上
   Loan Initiation Fee 的 time-weighted VPFI rebate。
-- **HF-liquidation 或 default** — 没有任何返还。Collateral 已经移动给
-  lender；若该 loan 仍在已停用的 VPFI 费用路径上，为其发起费托管的
-  VPFI 会**被没收并转入 treasury**，不会退还。只有正常关闭才会返还
-  rebate。
+- **HF-liquidation 或 default** — 仍请查看，可能还有 surplus。系统只取走
+  足以支付 liquidator、lender 和 treasury 的那部分 collateral；在超额抵押
+  的仓位上，余下的会记为您的 claim，并在您提取之前一直以 encumbered 状态
+  留在您的 vault 中。非流动资产的 default 通常会拿走整个 basket，因而不剩
+  什么——但那是一种结果，不是规则。始终会失去的是 rebate：若该 loan 仍在
+  已停用的 VPFI 费用路径上，为其发起费托管的 VPFI 会**被没收并转入
+  treasury**，且只有正常关闭才会返还 rebate。
 
-borrower position NFT 会在同一 transaction 中 burn。
+borrower position NFT 是在您 claim 时 burn，而不是在 loan 结清时——因此
+liquidation 留下的 surplus 之后仍可领取。
 
 ---
 

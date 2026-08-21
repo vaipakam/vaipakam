@@ -718,13 +718,21 @@ The borrower claim returns, depending on how the loan settled:
   the time-weighted Loan Initiation Fee rebate comes back with
   it; a loan opened under the current model has none, because
   its discount was already taken off the fee at acceptance.
-- **HF-liquidation or default** — nothing. Collateral has
-  already moved to the lender, and on a loan still using the
-  retired VPFI fee path the VPFI held against its initiation fee
-  is forfeited to treasury rather than returned. A rebate comes
+- **HF-liquidation or default** — check anyway; there may be a
+  surplus. Only enough collateral is taken to cover the
+  liquidator, the lender and the treasury, and on an
+  overcollateralised position the remainder is recorded as your
+  claim and stays encumbered in your vault until you withdraw it.
+  On an illiquid default the whole basket usually goes, so there
+  is nothing left — but that is an outcome, not a rule. What is
+  always lost is the rebate: on a loan still using the retired
+  VPFI fee path, the VPFI held against its initiation fee is
+  forfeited to treasury rather than returned, and a rebate comes
   back only on a proper close.
 
-The borrower position NFT is burned in the same transaction.
+The borrower position NFT is burned when you claim, not when the
+loan resolves — so a surplus left by a liquidation is still there
+to collect afterwards.
 
 ---
 

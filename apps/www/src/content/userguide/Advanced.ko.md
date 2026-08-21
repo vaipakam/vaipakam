@@ -658,12 +658,17 @@ Borrower claim은 loan이 어떻게 정산되었는지에 따라 다음을
 - **full repayment / preclose / refinance** — 내 collateral basket과
   폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation
   Fee에서 나온 time-weighted VPFI rebate도 함께 받습니다.
-- **HF-liquidation 또는 default** — 반환되는 것이 없습니다. collateral은
-  이미 lender에게 갔고, 폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 개시
-  수수료를 위해 보관되던 VPFI는 **treasury로 몰수되어** 돌려주지 않습니다.
-  rebate는 정상 종료에서만 돌아옵니다.
+- **HF-liquidation 또는 default** — 그래도 확인해 보세요. surplus가 남아
+  있을 수 있습니다. collateral은 liquidator와 lender, treasury를 충당할
+  만큼만 가져가며, 초과담보 포지션이라면 나머지가 내 claim으로 기록되어
+  인출할 때까지 vault에 encumbered 상태로 남습니다. 비유동 자산의
+  default에서는 보통 바스켓 전체가 나가 아무것도 남지 않지만, 그것은 결과일
+  뿐 규칙이 아닙니다. 언제나 잃는 것은 rebate입니다: 폐지된 VPFI 수수료
+  경로에 남아 있는 loan이라면 개시 수수료를 위해 보관되던 VPFI는
+  **treasury로 몰수되며**, rebate는 정상 종료에서만 돌아옵니다.
 
-Borrower position NFT는 같은 transaction에서 burn됩니다.
+Borrower position NFT는 claim할 때 burn되며 loan이 정리될 때가 아닙니다 —
+따라서 liquidation이 남긴 surplus는 나중에도 받아 갈 수 있습니다.
 
 ---
 
