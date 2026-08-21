@@ -131,6 +131,33 @@ else
   exit 1
 fi
 
+# ── A file's mode, as octal digits ───────────────────────────────────────────
+# Sets MODE_READ and returns 0, or returns 1 with MODE_READ meaningless.
+#
+# GNU first, then BSD. If BOTH fail the mode is UNKNOWN, and a caller
+# falling back to the new-file default would silently WIDEN an existing
+# file — a deliberately restricted 0600 becoming 0644 under the usual
+# umask (Codex #1863 r10). "I could not read it" and "there is nothing to
+# read" are different answers, so this reports failure rather than
+# guessing.
+#
+# Each form is tried with its OWN status (Codex #1863 r12), and the
+# status is checked BEFORE the shape: a `stat` that prints a plausible
+# `644` and exits non-zero was once accepted by the regex alone, and an
+# existing 0600 file was then widened before its fragments were consumed.
+# Shape cannot tell a real answer from a failed one that looks like one.
+read_mode() {  # read_mode <path>
+  local rc=0
+  MODE_READ="$(stat -c '%a' "$1" 2>/dev/null)" || rc=$?
+  if (( rc != 0 )); then
+    rc=0
+    MODE_READ="$(stat -f '%Lp' "$1" 2>/dev/null)" || rc=$?
+  fi
+  (( rc == 0 )) || return 1
+  [[ "$MODE_READ" =~ ^[0-7]{3,4}$ ]] || return 1
+  return 0
+}
+
 # ── Running a command whose failure must not be silent ───────────────────────
 # Four separate findings on #1863 (r6, r7, r8, and one found by auditing
 # for the same shape) were ONE defect written four times:
@@ -1219,20 +1246,19 @@ if [ -f "$OUT" ]; then
   # then widened to 0644 before its fragments were consumed. Shape alone
   # cannot tell a real answer from a failed one that happens to look
   # like one.
-  _sm_rc=0
-  out_mode="$(stat -c '%a' "$OUT" 2>/dev/null)" || _sm_rc=$?
-  if (( _sm_rc != 0 )); then
-    _sm_rc=0
-    out_mode="$(stat -f '%Lp' "$OUT" 2>/dev/null)" || _sm_rc=$?
-  fi
-  if (( _sm_rc != 0 )) || [[ ! "$out_mode" =~ ^[0-7]{3,4}$ ]]; then
+  #
+  # Extracted into `read_mode` because the mode is now read TWICE — here
+  # and again just before the rename (Codex #1863 r18). Two copies of a
+  # portability chain this fiddly drift; one copy cannot.
+  if read_mode "$OUT"; then
+    FINAL_MODE="$MODE_READ"
+  else
     echo "Error: could not read the current mode of $(basename "$OUT")." >&2
     echo "Refusing to assemble: replacing it would have to guess a mode, and" >&2
     echo "guessing wider than it was would expose content that was" >&2
     echo "deliberately restricted." >&2
     exit 1
   fi
-  FINAL_MODE="$out_mode"
 else
   FINAL_MODE="$(printf '%o' "$(( 0666 & ~0$(umask) ))")"
 fi
@@ -1341,6 +1367,29 @@ done
 # Applied to the FINISHED file, so nothing above can be locked out of it.
 chmod "$FINAL_MODE" "$WORK"
 
+# Push the replacement's bytes to disk BEFORE the fragments — the only
+# copies of that text — are removed (Codex #1863 r17). `mv` within a
+# directory is a rename(2), which is atomic for what a running system
+# SEES, but says nothing about what survives a power cut: with write-back
+# caching the deletions can reach disk while the new file's data has not,
+# and the text is then gone from both places.
+#
+# Best-effort on purpose, and the one deliberate exception to this
+# script's no-silent-failure rule. It narrows a crash window and cannot
+# corrupt anything by not happening, so aborting a release-notes assembly
+# because `sync` is missing or refuses a file argument would trade a rare
+# fault for a common one. GNU `sync` takes file operands; BSD/macOS
+# `sync` does not, hence the fallback to the whole-system form.
+#
+# It runs BEFORE the revalidation below, not between it and the rename
+# (Codex #1863 r18). Placed after the check it is a long operation — the
+# whole-system fallback can take seconds — sitting inside the very window
+# the check exists to close, so an edit arriving during the flush was
+# validated as absent and then overwritten anyway. A slow step belongs on
+# the far side of the last look, never between it and the act.
+_persist() { sync "$@" 2>/dev/null || sync 2>/dev/null || true; }
+_persist "$WORK"
+
 # ── Last look at the output before replacing it ──────────────────────────────
 # The shape guards ran at startup and the content was snapshotted after
 # them; both are re-checked here, because both describe $OUT as it was
@@ -1391,21 +1440,41 @@ if [ "$_out_now" != "$OUT_HASH_AT_SNAPSHOT" ]; then
   exit 1
 fi
 
-# Push the replacement's bytes to disk BEFORE the fragments — the only
-# copies of that text — are removed (Codex #1863 r17). `mv` within a
-# directory is a rename(2), which is atomic for what a running system
-# SEES, but says nothing about what survives a power cut: with write-back
-# caching the deletions can reach disk while the new file's data has not,
-# and the text is then gone from both places.
+# The MODE is re-checked too, and it is a separate question from the
+# content (Codex #1863 r18). `FINAL_MODE` was resolved before the build
+# and is applied to the temp file, so a `chmod 600` landing on $OUT
+# meanwhile is undone by the rename — the replacement arrives wearing the
+# older, wider mode, and the fragments are consumed on a run that reports
+# success. That is the exact fault the mode-preservation code exists to
+# prevent, reached through timing instead of a missing read: content is
+# unchanged, so nothing above notices.
 #
-# Best-effort on purpose, and the one deliberate exception to this
-# script's no-silent-failure rule. It narrows a crash window and cannot
-# corrupt anything by not happening, so aborting a release-notes assembly
-# because `sync` is missing or refuses a file argument would trade a rare
-# fault for a common one. GNU `sync` takes file operands; BSD/macOS
-# `sync` does not, hence the fallback to the whole-system form.
-_persist() { sync "$@" 2>/dev/null || sync 2>/dev/null || true; }
-_persist "$WORK"
+# Refusing rather than re-deriving, to match the check above it. A
+# permission change arriving mid-run is somebody acting on this file
+# deliberately, and re-running picks up the new mode as the baseline.
+if [ -n "$OUT_HASH_AT_SNAPSHOT" ]; then
+  if ! read_mode "$OUT"; then
+    echo "Error: could not re-read the mode of $(basename "$OUT")." >&2
+    echo "Nothing has been consumed; every fragment is still pending." >&2
+    exit 1
+  fi
+  if [ "$MODE_READ" != "$FINAL_MODE" ]; then
+    echo "Error: the permissions on $(basename "$OUT") changed while this run" >&2
+    echo "was building its replacement ($FINAL_MODE -> $MODE_READ)." >&2
+    echo "" >&2
+    echo "Replacing it now would put the older mode back, undoing that change" >&2
+    echo "silently — and widening a file someone had just restricted." >&2
+    echo "" >&2
+    echo "Nothing has been consumed and no fragment has been touched. Re-run" >&2
+    echo "to assemble with the new permissions." >&2
+    exit 1
+  fi
+fi
+
+# What remains between the last check and the rename is a handful of
+# syscalls, which is as narrow as this gets without holding a lock on
+# $OUT itself — a shell script cannot, and claiming the window is closed
+# rather than minimised would be overstating it.
 
 mv "$WORK" "$OUT"
 # The directory entry too, for the same reason: the rename itself is

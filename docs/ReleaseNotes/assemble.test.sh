@@ -1394,6 +1394,57 @@ check "reported with an empty pool" \
   "$(says "$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)" 'Left behind by an interrupted run')" "1"
 rm -f "$out/.assemble-2026-08-16.Ab3xYz"
 
+echo "T48: an edit during the disk flush is still caught"
+W="$ROOT/t48"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The flush must sit BEFORE the last look, not between it and the rename
+# (Codex #1863 r18). Placed after the check it is a long step — the
+# whole-system fallback can take seconds — inside the very window the check
+# exists to close, so an edit arriving during it was validated as absent and
+# overwritten anyway. Shimming `sync` puts the edit exactly there.
+printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  printf '\n## edited during the flush\n' >> "$out/ReleaseNotes-2026-08-16.md"
+fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                     "1"
+check "no fragment consumed"   "$(pending "$W")"                        "2"
+check "it says what happened"  "$(says "$msg" 'changed while this run')"  "1"
+check "the other edit survives" \
+  "$(count_in '^## edited during the flush$' "$out/ReleaseNotes-2026-08-16.md")" "1"
+
+echo "T49: a permission change mid-run is not silently undone"
+W="$ROOT/t49"; build "$W"
+out="$W/docs/ReleaseNotes"
+# FINAL_MODE is resolved before the build and applied to the temp file, so a
+# `chmod 600` landing meanwhile is reverted by the rename — the replacement
+# arrives wearing the older, WIDER mode while the content check sees nothing
+# wrong, because nothing about the content changed (Codex #1863 r18).
+printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
+chmod 644 "$out/ReleaseNotes-2026-08-16.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+if [ ! -f "$W/fired" ]; then
+  : > "$W/fired"
+  chmod 600 "$out/ReleaseNotes-2026-08-16.md"
+fi
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"           "$?"                                        "1"
+check "no fragment consumed"    "$(pending "$W")"                           "2"
+check "it names the change"     "$(says "$msg" 'permissions on')"            "1"
+check "the restriction stands"  "$(mode_of "$out/ReleaseNotes-2026-08-16.md")" "600"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

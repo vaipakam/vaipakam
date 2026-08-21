@@ -158,6 +158,24 @@ Refusing costs nothing here — the run has not consumed anything yet, so the
 recovery is to run it again once the other change has settled, and it is built
 on top.
 
+A permission change arriving in that same window is caught too, and it is a
+separate question from the content. The mode to give the replacement is worked
+out before the build and applied to the copy — so someone restricting the file
+to its owner while the run was working would have had that undone by the
+rename, the replacement arriving wearing the older and *wider* mode. Nothing
+about the content changed, so no content check could have noticed. This is the
+fault the mode-preserving code already existed to prevent, reached through
+timing rather than through a missing read.
+
+It refuses rather than quietly adopting the new mode, matching the check beside
+it: a permission change mid-run is somebody acting on the file deliberately, and
+re-running takes the new mode as the starting point.
+
+What remains between the last check and the replacement is a few system calls.
+That is as narrow as this gets without holding a lock on the file itself, which
+a shell script cannot do — the window is minimised, not closed, and saying
+otherwise would overstate it.
+
 ### Two smaller ones from the same round
 
 The replacement's bytes are now pushed to disk before the notes are removed.
@@ -169,6 +187,15 @@ break anything by not happening, so failing an assembly because the flush is
 unavailable would trade a rare fault for a common one. It is also the one change
 here with no test behind it, because reproducing it needs a real power cut
 rather than a shell script, and saying otherwise would be inventing coverage.
+
+**Where that flush sits turned out to matter more than the flush.** Put between
+the last look and the replacement, it *reopened* the window it had been added
+alongside: flushing can take seconds, and an edit arriving during it had already
+been checked for and was overwritten regardless. It now runs before the last
+look. A slow step belongs on the far side of a final check, never between the
+check and the act — which is the general form of the mistake, and worth stating
+that way, because it is easy to make again anywhere a verification precedes a
+commit.
 
 And a hard kill leaves the half-built copy behind, since no trap runs. It sits
 in the release-notes directory where nothing else looks, and the `git add`

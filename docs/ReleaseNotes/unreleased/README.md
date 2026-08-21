@@ -96,7 +96,10 @@ overwritten while the fragments were consumed and the run reported
 success. The lock only keeps two assemblies apart; it does not know
 about an editor. The file's identity is re-checked immediately before
 the rename, and a change refuses the whole run with nothing consumed.
-Re-run once the other change has settled and it is built on top.
+Re-run once the other change has settled and it is built on top. A
+change to its *permissions* refuses the run for the same reason — the
+mode is worked out before the build, so replacing the file would put the
+older, wider one back.
 
 **A hard kill can also leave a temp file behind** — a
 `.assemble-<date>.XXXXXX` in `docs/ReleaseNotes/`, which is a partly- or
