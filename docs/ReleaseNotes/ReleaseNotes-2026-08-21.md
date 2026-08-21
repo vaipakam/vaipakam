@@ -7,8 +7,9 @@ borrowers — a VPFI rebate that, under the current fee model, cannot arrive. Th
 correction runs through the documentation and site copy — whitepaper, overview,
 both user guides, the FAQ and the localized interface strings — in all ten
 languages, and it scopes the retired mechanism rather than deleting it, because
-the loans opened while it was live still settle that way and their holders still
-have something to claim. Several surfaces inside the connected app are
+the loans opened while it was live still settle that way and are settled on that
+basis when they close — which may or may not leave the holder anything, since the
+amount is sized by the discount they averaged over the loan. Several surfaces inside the connected app are
 deliberately not part of it and are listed further down, so this is not yet a
 complete sweep of everything a user can read.
 
@@ -32,8 +33,9 @@ Until now, a lender in the simple view saw **nothing at all** about this. The
 sale tools existed, but they lived behind the Advanced view, so unless you had
 already switched over you would not learn that selling your position early was
 possible, what it would cost, or that waiting is itself a choice. The card is
-informational only — it never submits anything, and each row points at the tool
-that does the actual work.
+informational only — it never submits anything, and each row that represents an
+action points at the tool that does the actual work. The row for waiting does
+not, because waiting needs no tool.
 
 **Waiting is listed first, on purpose.** For a borrower, the useful thing to
 surface is the ways out of a debt. For a lender the situation is reversed: the
@@ -386,15 +388,16 @@ there is no rebate. A borrower reading the old pages would have been waiting for
 money that could never arrive — and would have had no way to discover that from
 the pages themselves.
 
-Every public page now says what actually happens, and says it in the same place
+The documentation and site copy now say what actually happens, and say it in the same place
 the old promise stood: the discount is a direct reduction, no VPFI leaves the
 vault to pay the fee, and there is nothing to claim afterwards.
 
 **The old mechanism is scoped, not deleted.** Loans opened while it was live
-still settle exactly that way, and a rebate on one of them is claimable **when it
-closes properly** — repayment, early close, or refinance. If such a loan instead
-defaults or is liquidated, the held VPFI is forfeited and there is no rebate at
-all, which the pages now say wherever they describe those outcomes. Deleting the
+still settle exactly that way: **a proper close** — repayment, early close, or
+refinance — settles the time-weighted rebate on one of them, which can come to
+nothing if the borrower's discount averaged nothing. If such a loan instead
+defaults or is liquidated, the held VPFI is forfeited in full and there is no
+rebate at all, which the pages now say wherever they describe those outcomes. Deleting the
 description outright would have stranded the people it still applies to.
 
 **One thing deliberately not over-corrected.** Where the optional per-party
@@ -416,13 +419,13 @@ those.
 
 **The correction reaches the places a borrower actually looks.** Beyond the page
 that introduces the fee discount, four surfaces mattered more than the rest and
-each is now corrected — including the site's **public FAQ**, which answered "how
-does the VPFI discount work?" by describing the retired mechanism outright, on
-the homepage and in the structured data search engines read: the **Claim Center** list a borrower reads to find out what a
-claim will pay them; the **illiquid-default** passage that tells them what is left
-after losing their collateral; and the **public marketing bullet** on the buy-VPFI
-page, which advertised the rebate as a reason to hold VPFI; and the FAQ answer
-just described. The introductory
+each is now corrected. They are: the site's **public FAQ**, which answered "how
+does the VPFI discount work?" by describing the retired mechanism outright — on
+the homepage and in the structured data search engines read; the **Claim Center**
+list a borrower reads to find out what a claim will pay them; the
+**illiquid-default** passage that tells them what is left after losing their
+collateral; and the **public marketing bullet** on the buy-VPFI page, which
+advertised the rebate as a reason to hold VPFI. The introductory
 walkthrough also stopped offering the retired "pay the fee in VPFI and receive the
 full amount" route as a live choice.
 
@@ -561,13 +564,16 @@ corrected by someone reading what the mechanism does.
 
 **A separate correction, and the most consequential one here.** The Claim
 Center guidance told a borrower that an HF-liquidation or a default returns
-**nothing**. That is false whenever the position was overcollateralised: only
-enough collateral is taken to cover the liquidator, the lender and the treasury,
-and the remainder is recorded as the borrower's claim and stays in their vault
-until they withdraw it. A borrower who believed the page would simply never go
+**nothing**. That is not something a page can promise either way: only enough
+collateral is taken to cover the liquidator, the lender and the treasury, and any
+remainder is recorded as the borrower's claim and stays in their vault until they
+withdraw it. Whether a remainder exists depends on what the collateral actually
+realised — the liquidator's incentive and the realised slippage come out first —
+so an overcollateralised position often leaves one and is not guaranteed to. A borrower who believed the page would simply never go
 and collect it. The guidance now tells them to check, explains that an illiquid
-default usually does take the whole basket — an outcome, not a rule — and keeps
-the one thing that is always lost, which is the rebate.
+default usually does take the whole basket — an outcome, not a rule — and states
+what happens to the retired-path rebate: forfeited outright on a default or
+liquidation, and settled on a proper close.
 
 The same passage also said the borrower position NFT is burned when the loan
 resolves. It is burned when the borrower *claims*, which is exactly the
