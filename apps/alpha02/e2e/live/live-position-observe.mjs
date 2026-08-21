@@ -395,7 +395,49 @@ console.log(`fetched   ${ids.length} loan id(s) across ${Math.ceil(Number(active
 // is either would be a FALSE "chooser MISSING" rather than a finding
 // (#1529 review).
 const STATUS_ACTIVE = 0;
+/**
+ * LoanStatus.FallbackPending. The lender card mounts on it DELIBERATELY
+ * (`PositionDetails.tsx`: `row.status === 'active' || 'fallback_pending'`,
+ * and the live-status exclusion admits it too) — round 10 of #1839 added
+ * copy telling a lender that a fallback-settling loan blocks both sales
+ * and that waiting still applies, and a strict Active gate made that copy
+ * reachable only while the indexer lagged.
+ *
+ * So an Active-only drive races out a candidate whose card is rendering
+ * a state the card was specifically built to explain — and if those are
+ * the only lender positions on chain, reports BLOCKED on a working
+ * surface (Codex #1853 r1).
+ */
+const STATUS_FALLBACK_PENDING = 4;
 const ASSET_ERC20 = 0;
+/** The statuses the LENDER card mounts on; the borrower card takes Active only. */
+const lenderStatusOk = (st) => st === STATUS_ACTIVE || st === STATUS_FALLBACK_PENDING;
+
+/**
+ * The page's own sanctions gate, mirrored: `!(sanctions.ready &&
+ * sanctions.flagged)` suppresses the lender card entirely for a flagged
+ * wallet. That is CORRECT behaviour, so a flagged authority left in the
+ * pool buys a 45-second wait and then a fabricated "chooser MISSING"
+ * product regression (Codex #1853 r1).
+ *
+ * Fails OPEN on a read error, exactly as `useSanctionsCheck` does —
+ * mirroring the app matters more here than picking a safer default,
+ * because the point is to predict what the page will do. On the retail
+ * deploy the oracle is commonly unset, in which case the contract
+ * returns false for every address and this costs one cheap read.
+ */
+async function sanctionedAuthority(addr) {
+  try {
+    return await pub.readContract({
+      address: DIAMOND,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'isSanctionedAddress',
+      args: [addr],
+    });
+  } catch {
+    return false;
+  }
+}
 /** LibERC721.LockReason.PrecloseOffset — mirrors data/offsetPending.ts. */
 const LOCK_PRECLOSE_OFFSET = 1;
 
@@ -648,6 +690,14 @@ for (const id of ids) {
   // waiting still applies. Reading them for a lender run would be two
   // wasted RPCs per loan and, worse, would tempt a future edit to gate
   // on them.
+  // Only for loans that clear the cheap gates, and only for the lender
+  // run — the borrower chooser has no sanctions gate.
+  if (ROLE === 'lender' && lenderStatusOk(loan.status) && loan.authority) {
+    loan.authoritySanctioned = await discovery(
+      `reading the sanctions status of ${loan.authority}`,
+      () => sanctionedAuthority(loan.authority),
+    );
+  }
   if (
     ROLE === 'borrower' &&
     loan.status === STATUS_ACTIVE &&
@@ -683,7 +733,10 @@ for (const id of ids) {
  */
 const eligible = loans.filter((l) =>
   ROLE === 'lender'
-    ? l.status === STATUS_ACTIVE && l.assetType === ASSET_ERC20 && l.authority !== null
+    ? lenderStatusOk(l.status) &&
+      l.assetType === ASSET_ERC20 &&
+      l.authority !== null &&
+      l.authoritySanctioned === false
     : l.status === STATUS_ACTIVE &&
       l.assetType === ASSET_ERC20 &&
       l.authority !== null &&
@@ -695,15 +748,17 @@ if (dropped > 0) {
   // Never silently narrow the candidate set — say what was set aside, and
   // why, so a shrinking pool is legible rather than mysterious.
   const why = (l) =>
-    l.status !== STATUS_ACTIVE
+    (ROLE === 'lender' ? !lenderStatusOk(l.status) : l.status !== STATUS_ACTIVE)
       ? 'not active'
       : l.assetType !== ASSET_ERC20
         ? 'NFT rental'
         : l.authority === null
           ? `${ROLE} token burned`
-          : l.offsetLocked
-            ? 'offset in progress'
-            : 'past grace';
+          : l.authoritySanctioned
+            ? 'holder sanctions-flagged (card correctly suppressed)'
+            : l.offsetLocked
+              ? 'offset in progress'
+              : 'past grace';
   console.log(
     `skipping  ${dropped} loan(s) the chooser does not render for: ` +
       loans
@@ -1300,7 +1355,13 @@ async function stillEligible(loan) {
   // STATUS too, not just the volatile gates: a loan repaid, liquidated or
   // defaulted between discovery and the visit correctly loses its
   // chooser, and the minutes-old status would call that a regression.
-  if (Number(live.status) !== STATUS_ACTIVE) return 'no longer active';
+  if (
+    ROLE === 'lender'
+      ? !lenderStatusOk(Number(live.status))
+      : Number(live.status) !== STATUS_ACTIVE
+  ) {
+    return 'no longer active';
+  }
   if (lockedNow) return 'offset started since discovery';
   if (authorityNow === null) return `${ROLE} token burned since discovery`;
   if (authorityNow.toLowerCase() !== observed.toLowerCase()) {
@@ -1309,7 +1370,17 @@ async function stillEligible(loan) {
   // The grace re-check below is a BORROWER gate. Applying it to a lender
   // run would skip a page whose card is correctly still rendering — and,
   // if it were the only candidate, report BLOCKED on a working surface.
-  if (ROLE === 'lender') return null;
+  //
+  // Sanctions IS re-read here, because unlike grace it can change in
+  // either direction between discovery and the visit, and a flag that
+  // landed in that window correctly suppresses the card.
+  if (ROLE === 'lender') {
+    const flaggedNow = await discovery(
+      `re-reading the sanctions status of ${observed}`,
+      () => sanctionedAuthority(authorityNow),
+    );
+    return flaggedNow ? 'holder sanctions-flagged since discovery' : null;
+  }
   // The LIVE term, not the discovered one. `extendLoanInPlace` rewrites
   // startTime and durationDays while the loan stays Active, so a stale
   // term would judge an extended loan against its old deadline and skip a
@@ -1356,13 +1427,20 @@ function lenderShapeOf(text) {
   const wait = at(/Wait for the loan to run its course/i);
   const sellNow = at(/Sell your position now/i);
   const list = at(/List your position for sale/i);
-  const known = [sellNow, list].filter((i) => i >= 0);
+  // ALL THREE indices, not "wait plus whichever sale row happens to be
+  // there" (Codex #1853 r1). With one sale row missing, the earlier
+  // version still judged the order against the survivor — so if THAT row
+  // preceded the wait row, the report emitted the legitimate missing-row
+  // failure AND a second ordering failure, for an order that could not
+  // be observed. Double-counting one defect is exactly what the `null`
+  // arm was introduced to prevent, and it had a hole in it.
+  const allPresent = wait >= 0 && sellNow >= 0 && list >= 0;
   return {
     lenderBlurb: /You don.t have to do anything with this position/i.test(text),
     waitRow: wait >= 0,
     sellNowRow: sellNow >= 0,
     listRow: list >= 0,
-    waitFirst: wait >= 0 && known.length > 0 ? known.every((i) => wait < i) : null,
+    waitFirst: allPresent ? wait < sellNow && wait < list : null,
   };
 }
 
@@ -1514,11 +1592,23 @@ if (httpGaps.length) {
   );
 }
 
-const holds = visited.filter((v) => v.holdCard);
-console.log(
-  `\nlisting-hold card observed on ${holds.length} of ${visited.filter((v) => /\d$/.test(v.path)).length} position page(s)` +
-    (holds.length ? '' : ' — no lender sale listing standing right now, so the hold state is not reachable to observe'),
-);
+// BORROWER runs only (Codex #1853 r1). `SaleListingHoldCard` is gated on
+// `role === 'borrower'`, so on a lender run it can never render — and the
+// "no lender sale listing standing right now" gloss then draws a
+// conclusion about CHAIN STATE from a card that was never eligible to
+// appear. A lender with a live listing of their own would have been told
+// no listing existed, by a line whose whole purpose is to distinguish
+// "not observed" from "not there".
+//
+// Reporting nothing beats reporting a confident falsehood; the lender
+// side of listing state belongs to its own surface, not to this one.
+if (ROLE === 'borrower') {
+  const holds = visited.filter((v) => v.holdCard);
+  console.log(
+    `\nlisting-hold card observed on ${holds.length} of ${visited.filter((v) => /\d$/.test(v.path)).length} position page(s)` +
+      (holds.length ? '' : ' — no lender sale listing standing right now, so the hold state is not reachable to observe'),
+  );
+}
 
 console.log(`\n${visited.length - failures}/${visited.length} routes clean`);
 
