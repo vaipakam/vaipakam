@@ -1942,13 +1942,44 @@ function lateScrapeRecorder(page, cardAbsentAtScrape) {
  */
 async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
   const late = lateScrapeRecorder(page, cardAbsentAtScrape);
-  const result = await lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late);
+  // HOISTED OUT OF THE PROBE (Codex #1853 r21) so the wrapper can apply
+  // the stale-owner verdict to EVERY exit. Its ordering constraint is
+  // unchanged and in fact strengthened: it still predates the first
+  // observation of the switch, which is what r13 required.
+  const before = loan ? await jumpabilitySnapshot(loan) : null;
+  const result = await lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before);
   // Last chance, for a card that mounted after the probe's own capture.
   await late.capture();
+  // A SUCCESSFUL AUDIT OF SOMEBODY ELSE'S CARD IS STILL NOT A PASS
+  // (Codex #1853 r21). Round 20 put this test on the zero-jump routes,
+  // where the finding had surfaced — but a stale card keeps its switch
+  // AND its jump buttons until the page's 60-second ownership refresh,
+  // so the anchors resolve, the audit succeeds and the run exits 0
+  // having reviewed a position the observed wallet does not hold. That
+  // is the same defect the round-20 fix was about, on the one route
+  // where the outcome looks like success.
+  //
+  // Applied HERE rather than at the two audit returns, because "here"
+  // is every return there will ever be. `advancedBlocked` results are
+  // left alone: they already carry a reason, and overwriting it with
+  // this one would lose the more specific finding.
+  if (!result.advancedBlocked && snapshotCardEligible(before, observed) === false) {
+    return {
+      ...late.value,
+      ...result,
+      advancedJumps: null,
+      advancedBlocked: true,
+      advancedPreRaced: cardAbsentAtScrape,
+      advancedWhy:
+        'the card was audited on a position the observed wallet did not hold when ' +
+        'the chain was read — the page can keep it mounted, switch and jumps ' +
+        'included, for up to 60s after ownership moves',
+    };
+  }
   return { ...late.value, ...result };
 }
 
-async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
+async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late, before) {
   const SWITCH = /Show these tools \(switches to Advanced view\)/i;
   // SCOPED TO THE LENDER CARD (Codex #1853 r5). The borrower chooser
   // uses the IDENTICAL labels — `copy.earlyRepay.switchToAdvanced` and
@@ -1969,8 +2000,9 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
   //
   // Paid on every detail page, including ones that never offer a
   // switch. That is the cost of the ordering being load-bearing; five
-  // reads is the wrong thing to economise on here.
-  const before = loan ? await jumpabilitySnapshot(loan) : null;
+  // reads is the wrong thing to economise on here. Taken by the WRAPPER
+  // and passed in (Codex #1853 r21), so the stale-owner verdict can be
+  // applied to every exit rather than to the routes that surfaced it.
   const jumpsOf = () => card.getByRole('button', { name: /Go to this option/i });
   const cardPresent = async () => (await card.count()) > 0;
   // EAGER, and before any branch decides anything (Codex #1853 r18).
@@ -1981,37 +2013,26 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
 
 
   /**
-   * Was the card we just reviewed one this wallet should have been
-   * shown at all?
+   * Did the card VANISH between being scraped and now?
    *
-   * TWO FACTS, and every zero-jump route has to consult both (Codex
-   * #1853 r20). They were each implemented once, on the ONE route that
-   * happened to surface them, which is this file's seventh and eighth
-   * instance of the same defect — so they live here and both consumers
-   * call in.
+   * A reversible transition leaves no trace in a before/after: the
+   * position transfers away, the page's 60-second ownership poll
+   * unmounts the card, and it transfers back — two identical chain
+   * samples, and a card that demonstrably went missing between them.
+   * Only the DOM can see that round trip (Codex #1853 r17/r20).
    *
-   *   A. THE CARD WAS SCRAPED AND IS NOW GONE. A reversible transition
-   *      leaves no trace in a before/after: the position transfers
-   *      away, the page's 60-second ownership poll unmounts the card,
-   *      and it transfers back — two identical chain samples, and a
-   *      card that demonstrably went missing between them. Only the DOM
-   *      can see that round trip. The no-switch route learned this at
-   *      r17; the post-click and already-Advanced routes did not, and
-   *      reported the vanished card's zero jumps as a product FAIL.
+   * SCOPED TO THE UNEXPLAINED-OUTCOME ROUTES on purpose (Codex #1853
+   * r21). Its sibling test — "the pre-state says the card was never
+   * this wallet's" — moved to the wrapper, because that one must reach
+   * a SUCCESSFUL audit too. This one must not: an audit that completed
+   * against a rendered card produced real observations, and a card
+   * disappearing afterwards does not retract them.
    *
-   *   B. THE PRE-STATE SAYS THE CARD WAS NEVER THIS WALLET'S. Ownership
-   *      can transfer after the page's initial owner read and before
-   *      the snapshot, and the card then stays mounted for up to its
-   *      60-second refresh — so a stale card can be reviewed to
-   *      completion and pass. Gating this on the card being ABSENT was
-   *      the bug: a stale card is mounted, which is precisely why it
-   *      gets reviewed. Nothing about the DOM is consulted here.
-   *
-   * `advancedPreRaced` rides on `cardAbsentAtScrape` because that flag
-   * decides whether the SCRAPE's observations may be discarded, and a
-   * card that did render with a row missing keeps its finding.
+   * The two were briefly bundled together, which is how the difference
+   * became visible: one belongs on every exit, the other only where
+   * nothing was learned.
    */
-  const staleCardEvidence = async (offered) => {
+  const vanishedCardVerdict = async (offered) => {
     if (!cardAbsentAtScrape && !(await cardPresent())) {
       return {
         advancedOffered: offered,
@@ -2021,18 +2042,6 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
         advancedWhy:
           'the lender card was scraped and then vanished during the probe — ' +
           'a transition reversed inside the window, so no audit was possible',
-      };
-    }
-    if (snapshotCardEligible(before, observed) === false) {
-      return {
-        advancedOffered: offered,
-        advancedJumps: null,
-        advancedBlocked: true,
-        advancedPreRaced: cardAbsentAtScrape,
-        advancedWhy:
-          'the card was reviewed on a position the observed wallet did not hold when ' +
-          'the chain was read — the page can keep it mounted for up to 60s after ' +
-          'ownership moves, so nothing here says anything about the app',
       };
     }
     return null;
@@ -2085,7 +2094,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
     // Ahead of the already-unjumpable arm: "this card was never yours"
     // and "this card had nothing to offer" are different findings, and
     // the first is the more decisive (Codex #1853 r20).
-    const stale = await staleCardEvidence(offered);
+    const stale = await vanishedCardVerdict(offered);
     if (stale) return stale;
     if (snapshotJumpable(before, observed) === false) {
       return {
@@ -2308,7 +2317,7 @@ async function lenderAdvancedProbe(page, loan, cardAbsentAtScrape, late) {
           // past maturity, which is most of this chain — the wait ends
           // with it still present and this returned exit 0 on a review
           // of somebody else's position.
-          const stale = await staleCardEvidence(false);
+          const stale = await vanishedCardVerdict(false);
           if (stale) return stale;
           return { advancedOffered: false, advancedJumps: null, advancedWhy: 'no jumpable row' };
         }
