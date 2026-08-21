@@ -379,18 +379,25 @@ Borrower-Claim das Collateral zurück, das du am Anfang gesperrt
 hast. Bei Default oder Liquidation sieh trotzdem nach. Es wird nur so
 viel Wert genommen, wie die Schuld und die Kosten ihrer Auflösung
 erfordern; alles darüber wird als deines erfasst. Welche Form es
-hat, hängt davon ab, wie der Loan endete: nach einer gewöhnlichen
-Liquidation oder einem Default auf handelbares Collateral wird der
-Korb verkauft und der Rest erreicht dich im Asset des Loans. Nur
-wenn ein Liquidator das Collateral mit Abschlag direkt übernimmt,
-statt es zu verkaufen, wartet das Collateral selbst auf dich. Oft geht bei einem Default über Collateral, das wir
+hat, hängt davon ab, wie der Loan endete: wurde das Collateral verkauft —
+gewöhnliche Liquidation über eine Börse, oder Default auf
+handelbares Collateral —, erreicht dich der Rest im Asset des
+Loans. Wurde es stattdessen übergeben, wartet das Collateral selbst
+auf dich. Zweierlei übergibt es: ein Liquidator, der es mit
+Abschlag direkt übernimmt, und eine gewöhnliche Liquidation, die
+protokollintern gegen eine andere Position gematcht statt verkauft
+wird. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
 das ist aber ein Ausgang, keine Regel. Nie zurück kommt der
 Gebühren-Rebate: bei einem Loan auf dem eingestellten
 VPFI-Gebührenweg wird das gegen die Loan Initiation Fee verwahrte
-VPFI an die Treasury verwirkt. Der Claim verbraucht deinen
-Borrower-Position-NFT — deshalb ist der NFT nach einer
-Liquidation noch da und wartet auf dich.
+VPFI an die Treasury verwirkt. Ein Claim verbraucht deinen
+Borrower-Position-NFT. Umgekehrt gilt das nicht: ein NFT, der nach
+einer Liquidation noch da ist, ist kein Beleg dafür, dass etwas
+auf dich wartet. Blieb nichts übrig, wird der Claim als bereits
+erledigt erfasst und der NFT kann trotzdem bleiben — der Versuch,
+ihn einzulösen, wird abgelehnt. Lies, was der Claim sagt, statt
+den NFT als Zusage zu nehmen.
 
 ---
 

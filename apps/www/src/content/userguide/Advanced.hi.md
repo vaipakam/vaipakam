@@ -729,12 +729,14 @@ Borrower claim इस आधार पर return करता है कि loan
   rebate भी।
 - **HF-liquidation या default** — फिर भी देख लें, surplus बचा
   हो सकता है। Liquidator, lender और treasury को चुकाने भर का मूल्य ही लिया
-  जाता है, और बाकी आपके claim के रूप में दर्ज होता है। उसका रूप इस पर निर्भर है कि loan किस
-  रास्ते से बंद हुआ। सामान्य HF liquidation और बिकने योग्य collateral
-  पर समय-आधारित default — दोनों collateral बेचते हैं और बचा हुआ loan
-  के principal asset में दर्ज करते हैं। बिना बिका हिस्सा आपके vault में
-  encumbered सिर्फ़ तब रहता है जब liquidator collateral बेचने के बजाय
-  छूट पर सीधे ले लेता है। आंशिक liquidation तो बंद होना है ही नहीं —
+  जाता है, और बाकी आपके claim के रूप में दर्ज होता है। उसका रूप एक ही बात पर टिका है: collateral
+  बेचा गया या सौंपा गया। बेचा गया — exchange के ज़रिए हुई सामान्य
+  liquidation, या बिकने योग्य collateral पर समय-आधारित default — तो
+  बचा हुआ आपको loan के principal asset में मिलता है। सौंपा गया, तो जो
+  बचता है वह collateral ही है, आपके vault में encumbered। दो रास्ते उसे
+  सौंपते हैं: liquidator का छूट पर सीधे ले लेना, और वह सामान्य
+  liquidation जो exchange भेजे जाने के बजाय अंदरूनी तौर पर किसी दूसरे
+  position से match हो जाती है। आंशिक liquidation तो बंद होना है ही नहीं —
   loan खुला रहता है और कोई claim बनता ही नहीं। अनुमान लगाने के बजाय
   claim देखें। Illiquid asset के default में आम तौर पर पूरी
   basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम
@@ -744,7 +746,10 @@ Borrower claim इस आधार पर return करता है कि loan
 
 Borrower position NFT तब burn होता है जब आप claim करते हैं, तब
 नहीं जब loan resolve होता है — इसलिए liquidation से बचा surplus
-बाद में भी लेने के लिए मौजूद रहता है।
+बाद में भी लेने के लिए मौजूद रहता है। पर NFT का बचा रहना अपने आप में
+surplus का सबूत नहीं है: अगर liquidation ने कुछ छोड़ा ही नहीं, तो
+claim पहले से निपटा हुआ दर्ज होता है और NFT फिर भी रह सकता है, और
+claim करना अस्वीकार हो जाता है। NFT नहीं, claim पढ़ें।
 
 ---
 

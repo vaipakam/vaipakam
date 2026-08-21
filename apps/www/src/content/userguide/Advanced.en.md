@@ -721,13 +721,15 @@ The borrower claim returns, depending on how the loan settled:
 - **HF-liquidation or default** — check anyway; there may be a
   surplus. Only enough value is taken to cover the
   liquidator, the lender and the treasury, and the remainder is
-  recorded as your claim. Its FORM depends on the route that
-  closed the loan. An ordinary HF liquidation and a time-based
-  default on tradable collateral both sell the collateral and
-  record the residue in the loan’s principal asset. Only a
-  close-out where a liquidator takes the collateral directly at a
-  discount, instead of selling it, leaves the unsold part
-  encumbered in your vault. A partial liquidation is not a
+  recorded as your claim. Its FORM turns on one thing: whether
+  the collateral was SOLD or HANDED OVER. Sold — an ordinary
+  liquidation routed through an exchange, or a time-based default
+  on tradable collateral — and the residue reaches you in the
+  loan’s principal asset. Handed over, and what is left is the
+  collateral itself, encumbered in your vault. Two routes hand it
+  over: a liquidator taking the collateral directly at a discount,
+  and an ordinary liquidation that is matched internally against
+  another position rather than sent to an exchange. A partial liquidation is not a
   close-out at all — the loan stays open and no claim is created.
   Check the claim rather than assuming which one you have.
   On an illiquid default the whole basket usually goes, so there
@@ -739,7 +741,10 @@ The borrower claim returns, depending on how the loan settled:
 
 The borrower position NFT is burned when you claim, not when the
 loan resolves — so a surplus left by a liquidation is still there
-to collect afterwards.
+to collect afterwards. The NFT surviving is not itself proof of a
+surplus: where a liquidation left nothing over, the claim is
+recorded as already settled and the NFT can remain anyway, so
+claiming is refused. Read the claim, not the NFT.
 
 ---
 

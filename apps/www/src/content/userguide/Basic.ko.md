@@ -338,16 +338,21 @@ loan을 full repay했다면 borrower claim은 시작할 때 lock한 collateral�
 돌려줍니다. default 또는 liquidation 시에도 한 번 확인해 보세요. 빚과 그것을
 정리하는 비용에 필요한 만큼의 가치만 가져가며, 그것을 넘는 몫은 내
 것으로 기록됩니다. 그 형태는 loan이 어떻게 끝났는지에 따라 다릅니다:
-일반 liquidation 뒤에도, 거래 가능한 collateral의 default 뒤에도
-바스켓은 팔리고 남은 몫이 loan 자체의 asset으로 도착합니다.
-collateral 자체가 남는 것은 liquidator가 팔지 않고 할인된 값에
-직접 가져갔을 때뿐입니다. 값을 매길 수 없는 collateral에 대한 default에서는
+collateral이 팔렸다면 — 거래소를 거친 일반 liquidation,
+또는 거래 가능한 collateral의 default — 남은 몫은 loan 자체의 asset으로
+도착합니다. 팔리지 않고 넘겨졌다면 collateral 자체가 여러분을 기다립니다.
+넘기는 경우는 둘입니다: liquidator가 할인된 값에 직접 가져가는 경우와,
+일반 liquidation이 팔리지 않고 프로토콜 내부에서 다른 position과
+매칭되는 경우. 값을 매길 수 없는 collateral에 대한 default에서는
 바스켓 전체가 나가 아무것도 남지 않는 경우가 많지만, 그것은 결과일
 뿐 규칙이 아닙니다. 결코 돌아오지 않는 것은 수수료 rebate입니다:
 폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation Fee를
 위해 보관되던 VPFI는 treasury로 몰수됩니다.
-claim은 borrower position NFT를 consume합니다 — 그래서 liquidation
-이후에도 그 NFT는 남아 여러분을 기다립니다.
+claim은 borrower position NFT를 consume합니다. 그 역은 성립하지
+않습니다. liquidation 이후 NFT가 남아 있다는 사실은 무언가가 기다리고
+있다는 증거가 아닙니다. 남은 것이 없으면 claim은 이미 정산된 것으로
+기록되고 NFT는 그대로 남을 수 있으며 — claim을 시도하면 거절됩니다.
+NFT를 약속으로 받아들이지 말고 claim이 무엇이라 말하는지 읽으세요.
 
 ---
 

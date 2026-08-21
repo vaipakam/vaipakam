@@ -167,8 +167,32 @@ a discount, rather than selling it, leaves the collateral itself waiting. So the
 correction pointed most borrowers at the wrong thing while sounding more precise
 than the sentence it replaced.
 
-Both guides now name all three routes and say which asset each returns, and
-still say to look at the claim rather than assume.
+It took a third attempt to get right, and the second was wrong in a way the
+first had made likely: it enumerated ROUTES, so the route it had not heard of
+was simply absent. An ordinary liquidation does not always go to an exchange —
+where another position can absorb it, the protocol matches it internally and
+the borrower's residue is the collateral, not the loan's asset. Naming three
+routes left that one out; naming four would have left out the fifth.
+
+So the guides no longer enumerate routes at all. They state the one thing the
+answer actually turns on: whether the collateral was SOLD or HANDED OVER. Sold
+returns the loan's own asset, handed over returns the collateral, and both ways
+of handing it over are named as examples rather than as the list.
+
+**And the position NFT is not proof that anything is waiting.** Where a
+liquidation left nothing over, the claim is recorded as already settled — and
+the NFT is not burned on that path, so it can sit there afterwards looking
+exactly like an unclaimed one. The pages had gone further than that and pointed
+at the surviving NFT as the reason to expect a surplus, which sends a borrower
+to sign a transaction that is refused. Both guides now say to read the claim
+and not the NFT.
+
+**The renewal warning needed one exception.** After it was narrowed, the pages
+said a push is sent only when your tier changes. A push carries the tier's rate
+and the tier-table version too, and mirrors stop honouring a cached older
+version — so after a governance retune the button does work, and pressing it is
+the difference between your discount and no discount at all. The warning stays;
+the case where the button is worth pressing is now named.
 
 **And the renewal procedure has been withdrawn rather than qualified.** Two
 rounds ago these pages started describing how to refresh a lapsed mirror
