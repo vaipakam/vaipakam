@@ -728,11 +728,12 @@ Borrower claim इस आधार पर return करता है कि loan
   पर है, तो साथ में Loan Initiation Fee से time-weighted VPFI
   rebate भी।
 - **HF-liquidation या default** — फिर भी देख लें, surplus बचा
-  हो सकता है। Collateral में से केवल उतना ही लिया जाता है जितना
-  liquidator, lender और treasury को चुकाने के लिए ज़रूरी हो; और
-  over-collateralised position में बाकी हिस्सा आपके claim के रूप
-  में दर्ज होकर आपके vault में encumbered रहता है जब तक आप उसे
-  निकाल न लें। Illiquid asset के default में आम तौर पर पूरी
+  हो सकता है। Liquidator, lender और treasury को चुकाने भर का मूल्य ही लिया
+  जाता है, और बाकी आपके claim के रूप में दर्ज होता है। उसका रूप
+  रास्ते पर निर्भर है: आंशिक HF liquidation बिना बिका collateral
+  आपके vault में encumbered छोड़ती है, जबकि बिकने योग्य collateral
+  पर समय-आधारित default पूरी basket बेच देता है और बचा हुआ loan के
+  principal asset में दर्ज करता है। अनुमान लगाने के बजाय claim देखें। Illiquid asset के default में आम तौर पर पूरी
   basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम
   नहीं। हमेशा जो खोता है वह rebate है: बंद किए गए VPFI fee रास्ते
   वाले loan में initiation fee के बदले रखा गया VPFI **treasury को
@@ -1045,8 +1046,8 @@ actions:
   collateral लौटाता है; default / liquidation पर भी surplus बच
   सकता है, क्योंकि collateral में से उतना ही लिया जाता है जितना
   कर्ज़ और उसे बंद करने की लागत माँगे — ऊपर का Claim Center भाग
-  देखें। बंद किए गए रास्ते में रखा VPFI दोनों ही स्थितियों में
-  treasury को ज़ब्त हो जाता है। Borrower position NFT को burn करता है।
+  देखें। बंद किए गए रास्ते में रखा VPFI सिर्फ़ default या liquidation
+  पर ज़ब्त होता है; proper close पर rebate मिलता है। Borrower position NFT को burn करता है।
 
 ---
 

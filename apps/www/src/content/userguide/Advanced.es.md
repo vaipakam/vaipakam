@@ -771,11 +771,14 @@ liquidó el préstamo:
   vía de comisión VPFI retirada— el reembolso de VPFI ponderado
   por tiempo de la Loan Initiation Fee.
 - **Liquidación por HF o default** — compruébalo igualmente,
-  puede quedar un excedente. Sólo se toma el colateral suficiente
-  para cubrir al liquidador, al prestamista y al tesoro; en una
-  posición sobrecolateralizada el resto queda registrado como tu
-  reclamación y permanece gravado en tu bóveda hasta que lo
-  retires. En un default sobre un activo ilíquido suele irse la
+  puede quedar un excedente. Sólo se toma el valor suficiente
+  para cubrir al liquidador, al prestamista y al tesoro, y el resto
+  queda registrado como tu reclamación. Su FORMA depende de la vía:
+  una liquidación parcial por HF deja colateral sin vender gravado
+  en tu bóveda, mientras que un default por tiempo sobre colateral
+  negociable vende la canasta entera y registra el residuo en el
+  activo principal del préstamo. Consulta la reclamación en lugar de
+  suponer cuál tienes. En un default sobre un activo ilíquido suele irse la
   canasta entera y no queda nada — pero eso es un resultado, no
   una regla. Lo que siempre se pierde es el reembolso: en un
   préstamo que siga en la vía de comisión VPFI retirada, el VPFI
@@ -1103,8 +1106,9 @@ del rol:
   colateral en repago total; en default o liquidación puede quedar un
   excedente, ya que sólo se toma el colateral que exigen la deuda y
   el coste de cerrarla — véase la sección del Claim Center más
-  arriba. El VPFI retenido bajo la vía retirada se pierde en favor
-  del tesoro en cualquier caso. Quema el NFT de posición de
+  arriba. El VPFI retenido bajo la vía retirada sólo se pierde en
+  default o liquidación; un cierre correcto sigue pagando el
+  reembolso. Quema el NFT de posición de
   prestatario.
 
 ---

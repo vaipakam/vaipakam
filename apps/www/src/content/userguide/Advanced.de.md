@@ -772,10 +772,13 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   eingestellten VPFI-Gebührenweg — den zeitgewichteten
   VPFI-Rebate aus der Loan Initiation Fee.
 - **HF-Liquidation oder Default** — sieh trotzdem nach, es kann
-  ein Überschuss übrig sein. Es wird nur so viel Collateral
-  genommen, wie Liquidator, Lender und Treasury decken; bei einer
-  überbesicherten Position wird der Rest als dein Claim erfasst
-  und bleibt in deinem Vault verpfändet, bis du ihn abholst. Bei
+  ein Überschuss übrig sein. Es wird nur so viel Wert
+  genommen, wie Liquidator, Lender und Treasury decken; der Rest
+  wird als dein Claim erfasst. Seine FORM hängt vom Pfad ab: eine
+  partielle HF-Liquidation lässt unverkauftes Collateral verpfändet
+  in deinem Vault, während ein zeitbasierter Default auf handelbares
+  Collateral den ganzen Korb verkauft und den Rest im Principal-Asset
+  des Loans erfasst. Sieh in den Claim, statt zu raten. Bei
   einem Default auf ein illiquides Asset geht meist der ganze Korb
   weg, dann bleibt nichts — das ist ein Ergebnis, keine Regel.
   Immer verloren ist das Rebate: bei einem Loan auf dem
@@ -1110,8 +1113,8 @@ verfügbar sind:
   Liquidation kann ein Überschuss bleiben, da nur so viel Collateral
   genommen wird, wie Schuld und Auflösungskosten erfordern — siehe
   den Claim-Center-Abschnitt oben. VPFI, das unter dem eingestellten
-  Gebührenweg verwahrt war, wird in beiden Fällen an die Treasury
-  verwirkt. Verbrennt den Borrower-Position-NFT.
+  Gebührenweg verwahrt war, wird nur bei Default oder Liquidation
+  verwirkt; ein ordnungsgemäßer Abschluss zahlt den Rebate aus. Verbrennt den Borrower-Position-NFT.
 
 ---
 

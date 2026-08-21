@@ -719,10 +719,13 @@ The borrower claim returns, depending on how the loan settled:
   it; a loan opened under the current model has none, because
   its discount was already taken off the fee at acceptance.
 - **HF-liquidation or default** — check anyway; there may be a
-  surplus. Only enough collateral is taken to cover the
-  liquidator, the lender and the treasury, and on an
-  overcollateralised position the remainder is recorded as your
-  claim and stays encumbered in your vault until you withdraw it.
+  surplus. Only enough value is taken to cover the
+  liquidator, the lender and the treasury, and the remainder is
+  recorded as your claim. Its FORM depends on the path: a partial
+  HF liquidation leaves unsold collateral encumbered in your
+  vault, while a time-based default on tradable collateral sells
+  the whole basket and records the residue in the loan’s principal
+  asset. Check the claim rather than assuming which one you have.
   On an illiquid default the whole basket usually goes, so there
   is nothing left — but that is an outcome, not a rule. What is
   always lost is the rebate: on a loan still using the retired
@@ -1146,8 +1149,8 @@ Permissionless actions available to anyone regardless of role:
   full repayment; on default or liquidation there may still be a
   surplus, since only enough collateral is taken to cover the debt
   and the cost of closing it — see the Claim Center section above.
-  Any VPFI held under the retired fee path is forfeited to treasury
-  either way. Burns the borrower position NFT.
+  VPFI held under the retired fee path is forfeited only on
+  default or liquidation; a proper close still pays the rebate. Burns the borrower position NFT.
 
 > **If your repay tx reverts while you have a live OpenSea
 > listing** — a buyer's `Seaport.fulfillOrder` may have landed

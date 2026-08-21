@@ -142,6 +142,32 @@ to look harder next time. It is that correcting published copy should start by
 finding every place the sentence appears, which is what happened here and not in
 the two rounds before it.
 
+**Sweeping it introduced two new errors of its own, which is worth admitting
+rather than quietly fixing.** The first: a sentence saying the VPFI held under
+the retired fee path is forfeited "either way" read as covering a proper close
+too, when a full repayment, preclose or refinance all still pay the rebate. So a
+borrower who refinanced could have been told to give up a claim that was waiting
+for them — the same shape of harm the whole correction was meant to undo, caused
+by the correction.
+
+The second: describing the surplus as collateral waiting in your vault is only
+true after a partial liquidation. When a default sells tradable collateral, the
+whole basket goes and what is left reaches you as the loan's own asset instead.
+Telling a borrower to look for the wrong thing is a quieter failure than telling
+them there is nothing, but it is the same kind. Both guides now say the form
+depends on how the loan ended, and to look at the claim rather than assume.
+
+**And the renewal procedure has been withdrawn rather than qualified.** Two
+rounds ago these pages started describing how to refresh a lapsed mirror
+discount by switching the fee-discount consent off and on. It works, and it is
+the wrong thing to publish: each half of it spends cross-chain budget the
+protocol funds, and the code says in as many words that repeated toggling drains
+that budget. A procedure that is harmless once and harmful at scale should not
+be printed on a page read by everyone. The pages now say plainly that there is
+no supported way to refresh an unchanged tier, that the discount returns by
+itself the next time the tier moves, and that this is the one condition here
+that can cost someone their discount through no fault of their own.
+
 The through-line in all three is the same and worth naming once: each wrong
 sentence was written from what the mechanism seemed to imply, and each was
 corrected by someone reading what the mechanism does.

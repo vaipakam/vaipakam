@@ -768,11 +768,14 @@ prêt s'est réglé :
   voie de frais VPFI retirée — le rabais VPFI pondéré dans le
   temps issu de la Loan Initiation Fee.
 - **Liquidation HF ou défaut** — vérifie quand même, il peut
-  rester un excédent. On ne prélève que le collatéral nécessaire
-  pour couvrir le liquidateur, le prêteur et le trésor ; sur une
-  position surcollatéralisée, le reste est enregistré comme ta
-  créance et demeure grevé dans ton vault jusqu'à ce que tu le
-  retires. Sur un défaut portant sur un actif illiquide, tout le
+  rester un excédent. On ne prélève que la valeur nécessaire
+  pour couvrir le liquidateur, le prêteur et le trésor, et le reste
+  est enregistré comme ta créance. Sa FORME dépend du chemin : une
+  liquidation HF partielle laisse du collatéral invendu grevé dans
+  ton vault, tandis qu'un défaut temporel sur un collatéral
+  négociable vend tout le panier et enregistre le reliquat dans
+  l'actif principal du prêt. Consulte la créance plutôt que de
+  supposer laquelle tu as. Sur un défaut portant sur un actif illiquide, tout le
   panier part en général et il ne reste rien — mais c'est une
   issue, pas une règle. Ce qui est toujours perdu, c'est le
   rabais : sur un prêt encore soumis à la voie de frais VPFI
@@ -1105,7 +1108,8 @@ Actions permissionless disponibles à tous quel que soit le rôle :
   liquidation il peut rester un excédent, car on ne prélève que le
   collatéral qu'exigent la dette et le coût de sa clôture — voir la
   section Claim Center ci-dessus. Le VPFI retenu sous la voie
-  retirée est acquis au trésor dans tous les cas. Brûle le NFT de position
+  retirée n'est acquis au trésor qu'en cas de défaut ou de
+  liquidation ; une clôture régulière verse le rabais. Brûle le NFT de position
   d'emprunteur.
 
 ---

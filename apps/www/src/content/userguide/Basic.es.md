@@ -371,9 +371,12 @@ ese lado del préstamo queda completamente cerrado.
 Si repagaste el préstamo en su totalidad, tu reclamación de
 prestatario devuelve el colateral que bloqueaste al inicio. En
 default o liquidación, compruébalo igualmente. Sólo se toma el
-colateral que exigen la deuda y los costes de cerrarla, así que
-si habías aportado más, el resto queda registrado como tuyo y
-espera en tu bóveda hasta que lo reclames. A menudo —en un
+valor que exigen la deuda y los costes de cerrarla, y todo lo que
+exceda queda registrado como tuyo. Su forma depende de cómo
+terminó el préstamo: tras una liquidación parcial es el colateral
+que no se vendió, aún en tu bóveda; tras un default sobre colateral
+negociable se vende la canasta entera y lo que sobra te llega en el
+activo del propio préstamo. A menudo —en un
 default sobre colateral que no podemos valorar— se va la canasta
 entera y no queda nada, pero eso es cómo resultó, no una regla.
 Lo que nunca vuelve es el reembolso de la comisión: en un
@@ -586,8 +589,10 @@ explicando por qué.
   colateral en caso de repago total. En caso de default puede quedar un
   excedente: sólo se toma el colateral que exigen la deuda y el coste
   de cerrarla, y lo que aportaste de más queda registrado como tu
-  reclamación. El VPFI retenido bajo la vía retirada se pierde en
-  favor del tesoro en cualquier caso.
+  reclamación. Qué es exactamente depende de la vía —
+  véase la sección del Claim Center. El VPFI retenido bajo la vía
+  retirada sólo se pierde en default o liquidación; un repago
+  total, un preclose o un refinance siguen pagando el reembolso.
 
 ---
 

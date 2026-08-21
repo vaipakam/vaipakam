@@ -335,10 +335,12 @@ loan은 완전히 close됩니다.
 #### 내가 borrower인 경우
 
 loan을 full repay했다면 borrower claim은 시작할 때 lock한 collateral을
-돌려줍니다. default 또는 liquidation 시에도 한 번 확인해 보세요. collateral은
-빚과 그것을 정리하는 비용에 필요한 만큼만 가져가므로, 그보다 많이
-맡겨 두었다면 나머지는 내 몫으로 기록되어 claim할 때까지 vault에
-남아 있습니다. 값을 매길 수 없는 collateral에 대한 default에서는
+돌려줍니다. default 또는 liquidation 시에도 한 번 확인해 보세요. 빚과 그것을
+정리하는 비용에 필요한 만큼의 가치만 가져가며, 그것을 넘는 몫은 내
+것으로 기록됩니다. 그 형태는 loan이 어떻게 끝났는지에 따라 다릅니다:
+부분 liquidation 뒤에는 팔리지 않은 collateral이 vault에 그대로
+남고, 거래 가능한 collateral의 default 뒤에는 바스켓 전체가 팔려
+남은 몫이 loan 자체의 asset으로 도착합니다. 값을 매길 수 없는 collateral에 대한 default에서는
 바스켓 전체가 나가 아무것도 남지 않는 경우가 많지만, 그것은 결과일
 뿐 규칙이 아닙니다. 결코 돌아오지 않는 것은 수수료 rebate입니다:
 폐지된 VPFI 수수료 경로에 남아 있는 loan이라면 Loan Initiation Fee를
@@ -537,8 +539,10 @@ side의 options를 정리합니다. 지금 사용할 수 없는 buttons는 greye
 - **Claim** — loan이 settle되면 full repayment 시 collateral을 돌려주고,
   default 시에도 surplus가 남을 수 있습니다: collateral은 빚과 그것을
   정리하는 비용에 필요한 만큼만 가져가며, 그보다 많이 맡긴 몫은 내
-  claim으로 기록됩니다. 폐지된 수수료 경로에서 보관되던 VPFI는 어느
-  경우든 treasury로 몰수됩니다.
+  claim으로 기록됩니다. 그것이 무엇인지는 경로에 따라 다릅니다 —
+  Claim Center 절을 참고하세요. 폐지된 수수료 경로에서 보관되던
+  VPFI는 default 또는 liquidation에서만 몰수되며, full repayment나
+  preclose, refinance에서는 rebate가 그대로 지급됩니다.
 
 ---
 

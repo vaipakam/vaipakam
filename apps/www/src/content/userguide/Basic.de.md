@@ -377,10 +377,12 @@ Seite des Loans vollständig abgeschlossen.
 Wenn du den Loan vollständig zurückgezahlt hast, gibt dein
 Borrower-Claim das Collateral zurück, das du am Anfang gesperrt
 hast. Bei Default oder Liquidation sieh trotzdem nach. Es wird nur so
-viel Collateral genommen, wie die Schuld und die Kosten ihrer
-Auflösung erfordern — hattest du mehr hinterlegt, wird der Rest
-als deiner erfasst und wartet in deinem Vault, bis du ihn
-abholst. Oft geht bei einem Default über Collateral, das wir
+viel Wert genommen, wie die Schuld und die Kosten ihrer Auflösung
+erfordern; alles darüber wird als deines erfasst. Welche Form es
+hat, hängt davon ab, wie der Loan endete: nach einer Teilliquidation
+ist es das nicht verkaufte Collateral, das in deinem Vault bleibt;
+nach einem Default auf handelbares Collateral wird der ganze Korb
+verkauft und der Rest erreicht dich im Asset des Loans. Oft geht bei einem Default über Collateral, das wir
 nicht bepreisen können, der ganze Korb weg und es bleibt nichts;
 das ist aber ein Ausgang, keine Regel. Nie zurück kommt der
 Gebühren-Rebate: bei einem Loan auf dem eingestellten
@@ -599,8 +601,11 @@ mit einem kleinen Tooltip, das erklärt, warum.
   voller Rückzahlung zurück. Bei Default kann ein Überschuss
   bleiben: es wird nur so viel Collateral genommen, wie Schuld und
   Auflösungskosten erfordern, alles darüber wird als dein Claim
-  erfasst. VPFI, das unter dem eingestellten Gebührenweg verwahrt
-  war, wird in beiden Fällen an die Treasury verwirkt.
+  erfasst. Was genau, hängt vom Pfad ab —
+  siehe den Claim-Center-Abschnitt. VPFI, das unter dem
+  eingestellten Gebührenweg verwahrt war, wird nur bei Default
+  oder Liquidation verwirkt; volle Rückzahlung, Preclose oder
+  Refinance zahlen den Rebate weiterhin aus.
 
 ---
 

@@ -347,10 +347,13 @@ out.
 
 If you repaid the loan in full, your borrower claim returns the
 collateral you locked at the start. On default or liquidation,
-check anyway. Only as much collateral is taken as the debt and
-the costs of closing it require, so if you had put up more than
-that, the remainder is recorded as yours and waits in your vault
-until you claim it. Often — on a default over collateral we
+check anyway. Only as much value is taken as the debt and
+the costs of closing it require, and anything beyond that is
+recorded as yours. What form it takes depends on how the loan
+ended: after a partial liquidation it is the collateral that was
+not sold, still in your vault; after a default on tradable
+collateral the whole basket is sold and what is left reaches you
+as the loan’s own asset. Often — on a default over collateral we
 cannot price — the whole basket goes and nothing is left, but
 that is how it turned out, not a rule. What never comes back is
 the fee rebate: on a loan still using the retired VPFI fee path
@@ -555,8 +558,10 @@ will be greyed out, with a small tooltip explaining why.
   full repayment. On default there may still be a
   surplus: only enough collateral is taken to cover the debt and
   the cost of closing it, so anything you put up beyond that is
-  recorded as yours to claim. Any VPFI held under the retired fee
-  path is forfeited to treasury either way.
+  recorded as yours to claim. What that is depends on the path —
+  see the Claim Center section. VPFI held under the retired fee
+  path is forfeited only on default or liquidation; a full
+  repayment, preclose or refinance still pays the rebate.
 
 ---
 

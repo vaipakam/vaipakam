@@ -373,9 +373,12 @@ exécutée, ce côté du prêt est entièrement clos.
 Si tu as remboursé le prêt en totalité, ta réclamation d'emprunteur
 te rend le collatéral que tu as verrouillé au début. En cas de
 défaut ou de liquidation, vérifie quand même. On ne prélève que
-le collatéral qu'exigent la dette et les frais de sa clôture : si
-tu en avais déposé davantage, le reste est enregistré comme tien
-et attend dans ton vault que tu le réclames. Souvent — sur un
+la valeur qu'exigent la dette et les frais de sa clôture, et tout
+ce qui dépasse est enregistré comme tien. Sa forme dépend de la
+manière dont le prêt s'est terminé : après une liquidation
+partielle, c'est le collatéral non vendu, toujours dans ton vault ;
+après un défaut sur un collatéral négociable, tout le panier est
+vendu et le reste te parvient dans l'actif du prêt lui-même. Souvent — sur un
 défaut portant sur un collatéral que nous ne pouvons pas
 valoriser — tout le panier part et il ne reste rien, mais c'est
 une issue, pas une règle. Ce qui ne revient jamais, c'est le
@@ -597,8 +600,11 @@ info-bulle expliquant pourquoi.
   cas de remboursement total. En cas de défaut il peut rester un
   excédent : on ne prélève que le collatéral qu'exigent la dette et
   le coût de sa clôture, et ce que tu avais déposé en plus est
-  enregistré comme ta créance. Le VPFI retenu sous la voie retirée
-  est acquis au trésor dans tous les cas.
+  enregistré comme ta créance. Ce que c'est dépend du chemin —
+  voir la section Claim Center. Le VPFI retenu sous la voie
+  retirée n'est acquis au trésor qu'en cas de défaut ou de
+  liquidation ; un remboursement total, un preclose ou un
+  refinance versent toujours le rabais.
 
 ---
 
