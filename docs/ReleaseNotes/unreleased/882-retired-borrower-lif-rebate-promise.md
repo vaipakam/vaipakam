@@ -114,6 +114,14 @@ offer, and a loan can settle without you. So the pages now say to cancel
 standing offers and pick a quiet moment before starting, rather than presenting
 the sequence as free.
 
+That warning, as first written, then overshot in the other direction: it said
+such a charge lands **at the full rate**. Not quite. A Full tariff already paid
+keeps its own reduction whatever the consent says — which is the very fact
+established two rounds earlier in this same note. What is exposed during the
+window is the hold-tier discount, not every discount, and the pages now say so.
+A warning that overstates a risk still has to be corrected, and this one
+contradicted a correction made two rounds above it.
+
 The through-line in all three is the same and worth naming once: each wrong
 sentence was written from what the mechanism seemed to imply, and each was
 corrected by someone reading what the mechanism does.
