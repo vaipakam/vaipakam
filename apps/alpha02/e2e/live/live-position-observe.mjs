@@ -1855,34 +1855,39 @@ async function waitForSaleRows(card, jumpsOf, page, swOf, late, watch, selfOf) {
     // invisible. #1855's readiness attribute is what removes the guess
     // entirely.
     await watch?.();
-    const jumps = await jumpsOf().count();
-    const switchThere = swOf ? (await swOf().count()) > 0 : false;
-    if (jumps > 0 || switchThere) {
-      return { jumps, switchThere, toolsFailed: false, timedOut: false };
-    }
-    // THE CARD'S OWN ANSWER, ASKED EVERY TICK (Codex #1853 r29). Every
-    // other arm here reasons from an absence and therefore cannot
-    // conclude before the deadline. This one is a positive statement,
-    // so the moment it is recognised the wait is over — which is the
-    // entire point of the attributes and the reason the common
-    // past-due page no longer costs 45 seconds.
+    // THE CARD'S OWN ANSWER, ASKED FIRST (Codex #1853 r29, reordered
+    // r31). Every other arm here reasons from an absence and cannot
+    // conclude before the deadline; this one is a positive statement,
+    // so the moment it is recognised the wait is over — which is why
+    // the common past-due page no longer costs 45 seconds.
     //
-    // `unknown` deliberately does NOT end the wait: an older bundle
-    // publishes nothing, and the deadline below is still its answer.
-    // PENDING IS THE CARD STILL WORKING, NOT AN ANSWER (Codex #1853
-    // r30). Returning on every recognised verdict included
-    // `blocked-pending`, so a normally slow page exited 2 on its FIRST
-    // tick — and the caller reported that the deadline had expired
-    // after roughly a second. That is worse than the wait it replaced:
-    // the old code was slow, this was wrong. Pending keeps the loop
-    // running and is reported below only if the clock actually runs
-    // out, which is what the card means by it.
+    // Asked BEFORE the controls are counted, because a control being
+    // on screen is not evidence that it should be. A background
+    // refetch leaves the card publishing `pending` while its cached
+    // switch and jump buttons are still rendered, and the previous
+    // order returned on those without ever asking — so the audit
+    // clicked controls the in-flight read was about to withdraw and
+    // the run exited 0. Same shape as everything else on this PR: the
+    // strict treatment was on the zero-jump path and the successful
+    // path took the cached answer.
+    //
+    // Two non-answers, treated differently and deliberately.
+    // `unknown` is an older bundle publishing nothing, so the controls
+    // in front of us are the only evidence there is and we use them.
+    // `blocked-pending` is the card saying it is still deciding, so we
+    // keep waiting — and it is reported only if the clock runs out
+    // (r30: returning on it made a merely slow page report a failure).
     lastVerdict = missingSwitchVerdict(await selfOf?.());
     if (lastVerdict !== 'unknown' && lastVerdict !== 'blocked-pending') {
       return {
         jumps: 0, switchThere: false, toolsFailed: false, timedOut: false,
         settled: lastVerdict,
       };
+    }
+    const jumps = await jumpsOf().count();
+    const switchThere = swOf ? (await swOf().count()) > 0 : false;
+    if ((jumps > 0 || switchThere) && lastVerdict !== 'blocked-pending') {
+      return { jumps, switchThere, toolsFailed: false, timedOut: false };
     }
     // Same auto-wait trap as the recorder above (Codex #1853 r22):
     // this ran every iteration, and on an absent card each one blocked
@@ -2207,6 +2212,41 @@ async function lenderAdvancedOf(page, loan, cardAbsentAtScrape = false) {
   // The precedence and the which-results-qualify test live in
   // `excursionExplains` so they are exercised rather than asserted —
   // this driver's own r13 lesson, on a rule with the same history.
+  // A SUCCESSFUL AUDIT OF CONTROLS THAT SHOULD NOT EXIST IS NOT A PASS
+  // (Codex #1853 r31). The wrapper already applies `snapshotCardEligible`
+  // to every exit — but that test is deliberately LOOSE, because the
+  // card legitimately stays mounted past maturity, under a position
+  // lock, and on FallbackPending. In all three the card is entitled to
+  // be there and the JUMPS are not, so a page still showing cached
+  // buttons from an earlier render gets audited, passes, and exits 0.
+  //
+  // The strict `snapshotJumpable` test existed for exactly this and was
+  // applied only where there were no jumps to audit. That is the shape
+  // this PR keeps producing: rigour on the failing path, the cached
+  // answer taken on the successful one. Positive jumps are now held to
+  // the same pre-state as their absence.
+  //
+  // BLOCKED, not FAIL: the card rendering stale controls after a chain
+  // transition is a refresh-interval artefact, not a product defect —
+  // the same reading the zero-jump side gives it.
+  if (
+    !result.advancedBlocked &&
+    typeof result.advancedJumps === 'number' &&
+    result.advancedJumps > 0 &&
+    snapshotJumpable(before, observed) === false
+  ) {
+    return {
+      ...late.value,
+      ...result,
+      advancedJumps: null,
+      advancedBlocked: true,
+      advancedWhy:
+        'the anchors audited cleanly, but the chain says this position was ' +
+        'already unjumpable when first read — past maturity, locked, or ' +
+        'settling a fallback — so the buttons were a stale render and the ' +
+        'audit proved nothing about a live one',
+    };
+  }
   if (excursionExplains(result, watch.excursion)) {
     return {
       ...late.value,
