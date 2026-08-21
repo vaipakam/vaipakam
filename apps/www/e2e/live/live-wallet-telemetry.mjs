@@ -69,9 +69,11 @@ import { chromium } from 'playwright';
 /** Hosts each SDK reports to when its telemetry is left enabled. */
 const TELEMETRY_HOSTS = ['cca-lite.coinbase.com', 'pulse.walletconnect.org'];
 
-/** Time after load for `reconnectOnMount` to build every provider. The
- *  beacons are not sent during navigation — they follow provider
- *  construction, which happens after first paint. */
+/** Time after load for `reconnectOnMount` to build the COINBASE
+ *  provider — not "every provider": WalletConnect is not constructed at
+ *  load on these apps, so this window is not WalletConnect coverage
+ *  (#1840). Beacons are not sent during navigation; they follow
+ *  provider construction, which happens after first paint. */
 const SETTLE_MS = 12_000;
 
 const targets = process.argv.slice(2);
@@ -87,8 +89,10 @@ const browser = await chromium.launch({
     : {}),
 });
 
+let clean = 0;
 let emitted = 0;
 let unverified = 0;
+
 for (const url of targets) {
   // A FRESH context per origin: telemetry state can be influenced by
   // stored data, and reusing one would let an earlier origin's storage
@@ -114,27 +118,31 @@ for (const url of targets) {
     // settles and the check would time out on a perfectly healthy app.
     const resp = await page.goto(url, { timeout: 45_000, waitUntil: 'domcontentloaded' });
 
+    const status = resp?.status() ?? 0;
+    if (!resp?.ok()) throw new Error(`HTTP ${status}`);
+
     // A cross-origin redirect means the witnesses below would pass on
     // whatever app we LANDED on, not the one asked for — so a
     // misconfigured origin redirecting to a sibling app would report
-    // clean while never being exercised (Codex #1838 r2 P2). Compare
-    // origins, not URLs: path and trailing slash are irrelevant here.
+    // clean while never being exercised (Codex #1838 r2).
     const landed = new URL(page.url()).origin;
     const asked = new URL(url).origin;
     if (landed !== asked) throw new Error(`redirected to ${landed}`);
 
-    // FAIL CLOSED (Codex #1838 r1 P1). `page.goto` resolves happily on
-    // an HTML 404/500, and a fixed delay proves nothing about whether
-    // the app hydrated or the SDK was ever constructed. Without these
-    // gates an error shell or a broken bundle produces a silent PASS —
-    // which is this drive's own stated failure mode, aimed at itself.
-    const status = resp?.status() ?? 0;
-    if (!resp?.ok()) throw new Error(`HTTP ${status}`);
-
-    // Witness 1 — the app rendered something, so this is not a shell.
-    await page.waitForFunction(() => (document.getElementById('root')?.children.length ?? 0) > 0, {
-      timeout: 30_000,
-    });
+    // Witness 1 — the APP rendered, not merely "#root has children".
+    // alpha02 ships a static `#boot-splash` INSIDE `#root` in its
+    // server HTML, so a children-count test is already true before any
+    // React render and would bless a bundle that never mounted (Codex
+    // #1838 r3). React replaces `#root`'s children on mount, so the
+    // splash's disappearance is the app-owned signal that it did.
+    await page.waitForFunction(
+      () => {
+        const root = document.getElementById('root');
+        if (!root || root.children.length === 0) return false;
+        return document.getElementById('boot-splash') === null;
+      },
+      { timeout: 30_000 },
+    );
 
     // Witness 2, the load-bearing one — `cbwsdk.store` is written by
     // the Coinbase Wallet SDK itself, so its presence proves the SDK
@@ -144,43 +152,37 @@ for (const url of targets) {
     await page.waitForFunction(() => localStorage.getItem('cbwsdk.store') !== null, {
       timeout: 30_000,
     });
-
-    // Only now is the settle window meaningful: the SDK exists, so if
-    // it were going to report, this is when.
-    await page.waitForTimeout(SETTLE_MS);
   } catch (e) {
-    // Do NOT return here. Telemetry may already have been observed —
-    // an error page can still load vendor code, and an SDK can report
-    // and then fail to persist its witness. Reporting only "not
-    // verifiably exercised" in that case hides a real privacy
-    // regression behind a readiness failure (Codex #1838 r2 P2), so
-    // both facts are reported below.
+    // Record rather than return: telemetry may already have been
+    // observed, and an origin can be both emitting AND unverified.
     readinessError = String(e).split('\n')[0];
   }
 
-  // Report per host rather than as one combined line. WalletConnect's
-  // provider is not constructed at load on these apps (no `wc@2:*`
-  // storage appears), so folding it into a single "no requests to A /
-  // B" claim would assert coverage this run does not have.
+  // ALWAYS observe for the full window, including after a readiness
+  // failure. Beacons are scheduled after first paint, so closing the
+  // context early would CANCEL an in-flight request and report "0
+  // emitting telemetry" for an origin that was in fact regressing —
+  // the readiness failure masking the privacy failure (Codex #1838 r3).
+  await page.waitForTimeout(SETTLE_MS).catch(() => {});
+
   const wcExercised = await page
     .evaluate(() => Object.keys(localStorage).some((k) => k.startsWith('wc@2:')))
     .catch(() => false);
 
-  if (hits.length > 0) {
+  const didEmit = hits.length > 0;
+  const isUnverified = readinessError !== null;
+
+  if (didEmit) {
     console.log(`FAIL  ${url} — ${hits.length} telemetry request(s) on load:`);
     for (const h of hits) console.log(`        ${h}`);
     emitted++;
-    // Both can be true at once, and the telemetry is the more serious
-    // of the two — report the readiness failure as well rather than
-    // letting either mask the other.
-    if (readinessError) {
-      console.log(`        (also not verifiably exercised: ${readinessError})`);
-      unverified++;
-    }
-  } else if (readinessError) {
+  }
+  if (isUnverified) {
     console.log(`FAIL  ${url} — not verifiably exercised: ${readinessError}`);
     unverified++;
-  } else {
+  }
+  if (!didEmit && !isUnverified) {
+    clean++;
     console.log(`PASS  ${url} — Coinbase SDK constructed and silent (cbwsdk.store present)`);
     console.log(
       wcExercised
@@ -188,16 +190,17 @@ for (const url of targets) {
         : '        WalletConnect: NOT EXERCISED on a first visit — see header (#1840)',
     );
   }
+
   await ctx.close();
 }
 
 await browser.close();
-// Report the two failure kinds SEPARATELY. Collapsing them once made
-// this drive announce "1 of 1 origin(s) emitted telemetry" for a page
-// that emitted nothing and had simply failed the readiness gate —
-// a false accusation in the same breath as a check about honest
-// reporting.
-const clean = targets.length - emitted - unverified;
+
+// Report the two failure kinds SEPARATELY, and count clean origins
+// DIRECTLY rather than subtracting. An origin can be both emitting and
+// unverified; subtracting each from the total counted it twice, so one
+// bad target in a one-target run printed "-1 clean" (Codex #1838 r3).
+// An impossible summary discredits the numbers beside it.
 console.log(
   `\n${clean} clean, ${emitted} emitting telemetry, ${unverified} not verifiably exercised ` +
     `(of ${targets.length}).`,

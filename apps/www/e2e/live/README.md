@@ -10,7 +10,9 @@ site. Two kinds sit here:
 
 - **Marketing-site drives** — the rendered docs on `vaipakam.com`.
 - **Connected-app drives** — the wallet-connecting apps (`defi`, `alpha01`,
-  `alpha02`), which have no Playwright dependency of their own.
+  `alpha02`). `defi` and `alpha01` have no Playwright dependency of their own;
+  `alpha02` does (`@playwright/test`, for its own `e2e` suite), so a drive
+  specific to alpha02 could live there instead — the ones here span all three.
 
 The table further down says which is which, and how each takes its target.
 
