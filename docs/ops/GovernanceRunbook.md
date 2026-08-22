@@ -958,8 +958,21 @@ any historical finalization**, so it is not an included chain for any pre-`D*`
 day and `_planDay` produces no budget for it — the remit reverts
 `NothingToRemit`. Use a pre-`D*` day the mirror has not applied and broadcast it
 WITHOUT a remit; the day carries no budget for that mirror, so there is nothing
-to strand, and the mirror installs `D*` and can report from then on. Confirm the
-day predates `D*`, has fully ELAPSED, and carries a lapse clock (below).
+to strand, and the mirror installs `D*` and can report from then on.
+
+**Check what the FAN-OUT does to the OTHER mirrors first.** The dark mirror has
+no day standing, so `broadcastGlobalTo` cannot target it and the fan-out form is
+forced — which delivers that day to every destination. Any active mirror that has
+not already applied it, and has a non-zero slice for it, gets its claim gate
+opened unfunded. Choose a day every other destination has already applied, or
+remit their slices before the fan-out.
+
+Confirm the day predates `D*` and has fully ELAPSED. **A lapse clock is NOT
+required here**: on a deployment armed before the V3 upgrade every pre-`D*` day
+may have `finalizedAt == 0`, and demanding one would leave no eligible day and no
+way to promote the mirror at all. The fan-out falls back to the clockless wire —
+it is the per-destination form that needs the clock, and this case uses the
+fan-out anyway.
 
 **On the Base-only / dark-mirror branch, skip this step entirely.** There is no
 mirror to propagate `D*` to, and the remit, receipt and broadcast surfaces this
