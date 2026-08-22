@@ -2267,9 +2267,27 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
 
         // ── The SECOND live consumption (Codex #1907 r5) ────────────────────
+        //
+        // Self-review: the first claim carries a custody-conservation pair and
+        // the second was added without one. Same omission shape as the
+        // unanchored second RELEASE — an assertion that exists three lines
+        // away from where its twin belongs.
+        uint256 custodyMid = vpfi.balanceOf(address(diamond));
+        uint256 bobBefore = vpfi.balanceOf(bob);
+
         vm.prank(bob);
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+        (uint256 paid2, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        assertEq(
+            vpfi.balanceOf(bob) - bobBefore,
+            paid2,
+            "the second claimant received what their claim reported paying"
+        );
+        assertEq(
+            custodyMid - vpfi.balanceOf(address(diamond)),
+            paid2,
+            "and the Diamond parted with exactly that, nothing leaked"
         );
 
         uint256 consumed2 = bucketAfterFirst - _cfg().getRecycleBucket();
