@@ -599,7 +599,9 @@ That warning, as first written, then overshot in the other direction: it said
 such a charge lands **at the full rate**. Not quite. A Full tariff already paid
 keeps its own reduction whatever the consent says — which is the very fact
 established two rounds earlier in this same note. What is exposed during the
-window is the hold-tier discount, not every discount, and the pages now say so.
+window is the hold-tier discount, not every discount, and the Advanced guide now
+says so. The Basic guide does not describe the mirror-refresh window at all, so
+the scoping has no home there.
 A warning that overstates a risk still has to be corrected, and this one
 contradicted a correction made two rounds above it.
 
@@ -680,8 +682,10 @@ or, on an exactly-matched internal close, not recorded at all — and
 the NFT is not burned on that path, so it can sit there afterwards looking
 exactly like an unclaimed one. The pages had gone further than that and pointed
 at the surviving NFT as the reason to expect a surplus, which sends a borrower
-to sign a transaction that is refused. Both guides now say to read the claim
-and not the NFT.
+to sign a transaction that is refused. The Advanced guide now says to read the claim and not
+the NFT. The Basic guide does not — it does not discuss the position NFT as a
+signal at all, so there was nothing there to correct; "both guides" would have
+claimed a change it never received.
 
 **A zero-surplus liquidation is not always recorded the same way.** The pages
 said the claim is filed as already settled. That is true of the ordinary and
@@ -746,8 +750,11 @@ Center guidance told a borrower that an HF-liquidation or a default returns
 **nothing**. Whether that is true turns on the route, and on one route it is a
 rule rather than a guess. Where the collateral cannot be priced at all, an
 illiquid default hands the entire basket to the lender and creates no borrower
-claim — there, "nothing" is exactly right and always will be. Where the protocol
-does price it and takes only what the waterfall needs — the liquidator, the
+claim — there, "nothing" is exactly right and always will be. The whole basket also goes where the protocol CAN price the
+collateral but the position's ratio has passed the collapse threshold — pricing
+is not the discriminator, and a borrower on a collapsed position gets no claim
+either. Where the protocol prices it, the ratio has not collapsed, and the
+waterfall takes only what it needs — the liquidator, the
 lender, the treasury — any remainder is recorded as the borrower's claim,
 waiting in their vault until they withdraw it, and THAT is the case a page
 cannot promise either way. Whether a remainder exists depends on what the collateral actually
@@ -758,10 +765,12 @@ collateral was sold, what waits is the proceeds in the loan's own asset; where i
 was handed over instead, the collateral itself waits. Telling a borrower to look
 for the wrong token is the same error, one level down, as telling them there is
 nothing to look for. A borrower who believed the page would simply never go
-and collect it. The guidance now tells them to check, explains that an illiquid
-default takes the whole basket as a rule rather than an unlucky outcome — and states
-what happens to the retired-path rebate: forfeited outright on a default or
-liquidation, and settled on a proper close.
+and collect it. The guidance now tells them to check, and states what happens to the
+retired-path rebate: forfeited outright on a default or liquidation, and settled
+on a proper close. It does NOT yet carry the full-basket rule: the pages still
+present the whole-basket outcome as how a particular default turned out rather
+than as what the protocol always does, in every language. Correcting that is
+filed separately — this note describes what shipped, and that part did not.
 
 The same passage also said the borrower position NFT is burned when the loan
 resolves. It is burned when the borrower *claims*, which is exactly the
