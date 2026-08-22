@@ -23,7 +23,7 @@ No dev loop — this is a consumed-only package. Edit its files via the export s
 
 ```bash
 cd contracts
-forge build && bash script/exportFrontendAbis.sh
+bash script/exportFrontendAbis.sh   # builds (--skip test) before inspecting
 bash script/exportFrontendDeployments.sh
 ```
 

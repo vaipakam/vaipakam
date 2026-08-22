@@ -62,11 +62,20 @@
 #     with every actual diagnostic thrown away. Building once, up
 #     front, with stderr intact, reports the real error once.
 #
-#     It also closes a narrow partial-write window: the loop `mv`s
-#     each file as it goes, so a failure part-way (a renamed or
-#     deleted contract still listed in FACETS) leaves the earlier
-#     facets rewritten while the `_source.json` stamp — written only
-#     after the loop — still names the previous export.
+#   - Stages every inspect and publishes only if ALL of them
+#     succeed, so a stale FACETS entry (a renamed or deleted
+#     contract) can no longer leave the bundle MIXED — earlier
+#     facets replaced, that one stale, later ones replaced, under a
+#     `_source.json` still naming the previous export.
+#
+#     An earlier revision of this change DESCRIBED that window and
+#     then did not close it, while claiming it had. The loop still
+#     wrote each file as it went. Staging is the part that actually
+#     closes it, and the guarantee is bounded: it removes the
+#     partial publish caused by an EXPORT FAILURE. It does not make
+#     publication atomic in general — a signal during the publish
+#     loop still leaves a mixed directory, because shell cannot swap
+#     N files as one operation.
 #
 #     `--skip test` (not a bare `forge build`) is deliberate: the
 #     test-inclusive compilation unit trips the viaIR stack ceiling
@@ -311,30 +320,55 @@ FACETS=(
   "RiskPremiumRateModel"
 )
 
+# ── Stage every facet, publish only if ALL of them succeeded (#1893, Codex r1) ─
+# The previous shape wrote each file into OUT_DIR as it went and `continue`d past
+# a failure, so a FACETS entry naming a renamed or deleted contract left the
+# bundle MIXED: earlier facets replaced, that one stale, later ones replaced, and
+# `_source.json` never updated because the stamp is written after the loop.
+#
+# Note this is not the same as the build gate above — the build succeeds fine in
+# this scenario. It is specifically a stale FACETS entry.
+#
+# Scope of the guarantee, stated precisely because an earlier revision of this
+# very commit overclaimed it: staging removes the partial publish caused by an
+# EXPORT FAILURE, which is the reachable case. It does not make publication
+# atomic in general — a signal during the publish loop below still leaves a mixed
+# directory, since shell cannot swap N files as one operation.
+STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vaipakam-abis.XXXXXX")"
+# shellcheck disable=SC2064  # expand STAGE_DIR now, not at trap time
+trap "rm -rf '$STAGE_DIR'" EXIT
+
 echo "Exporting ABIs to $OUT_DIR"
 fail=0
 for facet in "${FACETS[@]}"; do
-  out="$OUT_DIR/$facet.json"
   # stderr is NOT discarded (#1893). It used to be, which turned every
   # failure into the same "run 'forge build' first" hint with the real
   # diagnostic thrown away. The build above has already succeeded by the
   # time we get here, so a failure now means the NAME is wrong — a contract
   # renamed or deleted while its entry stayed in FACETS — and forge says so.
-  if ! forge inspect "$facet" abi --json > "$out.tmp"; then
+  if ! forge inspect "$facet" abi --json > "$STAGE_DIR/$facet.json"; then
     echo "  ✗ $facet — forge inspect failed (renamed or removed? check the FACETS list)" >&2
-    rm -f "$out.tmp"
+    rm -f "$STAGE_DIR/$facet.json"
     fail=1
+    # Deliberately `continue` rather than `break`: one run should name EVERY
+    # bad entry, not just the first. Nothing has been published yet, so there
+    # is no cost to finishing the sweep.
     continue
   fi
-  mv "$out.tmp" "$out"
   echo "  ✓ $facet"
 done
 
 if [ "$fail" -ne 0 ]; then
   echo "" >&2
-  echo "One or more facets failed to export. Fix the missing artifact(s) and re-run." >&2
+  echo "One or more facets failed to export — NOTHING was published." >&2
+  echo "The bundle in $OUT_DIR is unchanged. Fix the FACETS entries named above and re-run." >&2
   exit 1
 fi
+
+# Every inspect succeeded; publish the complete set.
+for facet in "${FACETS[@]}"; do
+  mv "$STAGE_DIR/$facet.json" "$OUT_DIR/$facet.json"
+done
 
 # Stamp output dir with the monorepo commit so a frontend build can
 # be correlated against a specific contracts state.

@@ -1599,7 +1599,6 @@ directory to keep in sync. `contracts/script/exportWatcherAbis.sh` was
 deleted with it.
 
 ```bash
-forge build   # if not already built since the last edit
 
 # (a) Frontend — full Diamond surface (~27 facets). Run on every
 #     facet-touching deploy.
