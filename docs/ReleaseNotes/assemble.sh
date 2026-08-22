@@ -1400,6 +1400,7 @@ assert_output_unchanged() {  # assert_output_unchanged <what-was-about-to-happen
 # inherits the same call.
 declare -A SRC_ID=()
 CONSUMED=()
+QUARANTINED=()
 _d_n=0
 
 # ── Refusing, once, wherever it happens ──────────────────────────────────────
@@ -1418,8 +1419,19 @@ _refuse_reporting_consumed() {
     echo "" >&2
     echo "Their text was in $(basename "$OUT") when they went. If the change" >&2
     echo "above removed it, recover them from git." >&2
-  else
+  elif (( ${#QUARANTINED[@]} == 0 )); then
     echo "Nothing has been consumed and no fragment has been touched." >&2
+  fi
+  # TOUCHED is not CONSUMED, and the difference is the whole point of
+  # this list (Codex #1863 r43). A fragment moved aside but not yet
+  # removed is no longer in the pending pool, so "no fragment has been
+  # touched" is false — and the one path the operator needs is missing.
+  if (( ${#QUARANTINED[@]} > 0 )); then
+    echo "Moved aside but not removed:" >&2
+    printf '  %s\n' "${QUARANTINED[@]}" >&2
+    echo "" >&2
+    echo "These are no longer in the pending pool. Compare each against the" >&2
+    echo "dated file, then delete it or move it back up a level." >&2
   fi
   echo "Nothing further will be consumed. Re-run once the other change has" >&2
   echo "settled." >&2
@@ -1773,6 +1785,21 @@ if (( ${#ambiguous[@]} > 0 )); then
   pending+=("${ambiguous[@]}")
 fi
 
+# ── Implicit failures report like explicit ones ──────────────────────────────
+# T119 pinned every `exit 1` between here and the rename, and Codex was
+# right that this is the wrong thing to have pinned on its own (r43):
+# `set -e` also exits on any unguarded command that fails, and those went
+# out with the tool's diagnostic and nothing else — no list of what had
+# already been removed, no recovery guidance. An `exit` is the visible
+# half of the exits; the invisible half is every command.
+#
+# An ERR trap covers both without needing each command guarded, which is
+# what made the explicit list drift in the first place. `set -E` so it
+# reaches inside functions. Cleared after the rename, where the contract
+# changes and `_abort_after_write` takes over.
+set -E
+trap '_refuse_reporting_consumed' ERR
+
 if (( ${#already[@]} > 0 )); then
   # The records that authorise these deletions were read from $OUT some
   # time ago; the deletions happen now (Codex #1863 r19). If the file
@@ -1827,6 +1854,12 @@ if (( ${#already[@]} > 0 )); then
       echo "Nothing further will be consumed." >&2
       _refuse_reporting_consumed
     fi
+    # Recorded the moment the move succeeds (Codex #1863 r43). From here
+    # the fragment is no longer in the pending pool — it exists only
+    # under `.assembled/` — so a refusal below saying "no fragment was
+    # touched" is false, and it omits the one path the operator needs.
+    # Touched is not consumed, and the reporter has to say which.
+    QUARANTINED+=("${FRAG_NAME[$f]} -> .assembled/$_q_name")
     _rc=0
     _now="$(frag_hash "$_q")" || _rc=$?
     if (( _rc != 0 )) || [ "$_now" != "${FRAG_HASH[$f]}" ]; then
@@ -1859,6 +1892,9 @@ if (( ${#already[@]} > 0 )); then
       _refuse_reporting_consumed
     fi
     CONSUMED+=("${FRAG_NAME[$f]}")
+    # Consumed now, not merely moved: drop it from the touched list.
+    unset 'QUARANTINED[-1]'
+    QUARANTINED=(${QUARANTINED[@]+"${QUARANTINED[@]}"})
   done
   if (( ${#_changed[@]} > 0 )); then
     echo ""
@@ -2613,6 +2649,11 @@ _final_gate
 # syscalls, which is as narrow as this gets without holding a lock on
 # $OUT itself — a shell script cannot, and claiming the window is closed
 # rather than minimised would be overstating it.
+
+# Past this line the contract is different: the file is published, and
+# `_abort_after_write` is the handler that says so.
+trap - ERR
+set +E
 
 mv "$WORK" "$OUT"
 

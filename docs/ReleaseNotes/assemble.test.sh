@@ -3319,6 +3319,71 @@ check "both directories are tested" \
 check "the pool is still tested" \
   "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -cF '[ -k "$UNREL" ]')" "1"
 
+echo "T122: an implicit set -e exit reports what already went too"
+W="$ROOT/t122"; build "$W"
+out="$W/docs/ReleaseNotes"
+# T119 pinned every explicit `exit 1` in that region, which was the wrong thing
+# to pin on its own: `set -e` also exits on any unguarded command that fails,
+# and those went out with the tool's diagnostic and nothing else (Codex #1863
+# r43). One fragment recovers, then the build's `sed` fails.
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+printf '## 0003-new\n' > "$W/docs/ReleaseNotes/unreleased/0003-new.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sed" <<SHIM
+#!/bin/sh
+# Fail only the link-rewriting pass that builds the replacement. Keyed on
+# the -E flag, which no other sed in the script uses: the rewrite pattern
+# is backslash-escaped in the source, so matching it literally never
+# fired. NO BACKTICKS in here -- this heredoc is unquoted, so backticks in
+# a COMMENT are still command substitution and the shell runs them.
+for a in "\$@"; do
+  case "\$a" in -E) exit 7 ;; esac
+done
+exec /usr/bin/sed "\$@"
+SHIM
+chmod +x "$W/fakebin/sed"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                             "1"
+check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
+check "it does not claim nothing went" \
+  "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')"  "0"
+# And the trap is scoped: it must not still be armed past the rename.
+check "the trap is cleared after publishing" \
+  "$(grep -c 'trap - ERR' "$out/assemble.sh")"                                  "1"
+
+echo "T123: a fragment moved aside is reported as touched, not untouched"
+W="$ROOT/t123"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Between the set-aside `mv` and the removal the fragment is no longer in the
+# pending pool — it exists only under `.assembled/`. A refusal in that window
+# said "no fragment has been touched", which is false, and omitted the one path
+# the operator needs (Codex #1863 r43).
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/mv" <<SHIM
+#!/bin/sh
+/bin/mv "\$@"; _rc=\$?
+case "\$*" in
+  */.assembled/*)
+    if [ ! -f "$W/fired" ]; then
+      : > "$W/fired"
+      # Change a dated file so the very next revalidation refuses.
+      printf '# Release Notes — 2026-08-14\n' > "$out/ReleaseNotes-2026-08-14.md"
+    fi
+    ;;
+esac
+exit \$_rc
+SHIM
+chmod +x "$W/fakebin/mv"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"        "$?"                                              "1"
+check "it says it was moved" "$(says "$msg" 'Moved aside but not removed')"     "1"
+check "it names the path"    "$(says "$msg" '.assembled/0001-a.md')"            "1"
+check "it does not claim untouched" \
+  "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')" "0"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
