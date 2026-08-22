@@ -47,15 +47,33 @@ fi
 # Named explicitly rather than relying on a shebang: the file is invoked
 # as an argument here, so its executable bit is irrelevant and a
 # checkout that lost it still works.
-if command -v python3 >/dev/null 2>&1; then
-  PY=python3
-elif command -v python >/dev/null 2>&1; then
-  PY=python
-else
-  echo "Error: neither python3 nor python found." >&2
+#
+# Each candidate is ASKED ITS VERSION rather than trusted by name (Codex
+# #1898 r2). `python` is still Python 2 on some workstations, and
+# selecting it ran `assemble.py` straight into a syntax error — a
+# traceback where the assembler's own diagnostics belong, before `main()`
+# could say anything about what had or had not been consumed. Checking by
+# interrogation rather than by naming also catches the other half of the
+# same problem, a `python3` that is too OLD: the implementation's
+# annotations are evaluated at import, so 3.10 is a hard floor, not a
+# preference.
+MIN="3.10"
+PY=""
+for candidate in python3 python; do
+  command -v "$candidate" >/dev/null 2>&1 || continue
+  if "$candidate" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
+      >/dev/null 2>&1; then
+    PY="$candidate"
+    break
+  fi
+done
+
+if [ -z "$PY" ]; then
+  echo "Error: no Python $MIN or newer found." >&2
   echo "" >&2
-  echo "Release-note assembly is implemented in Python (#1877). Install it," >&2
-  echo "or run '$IMPL' with an interpreter directly." >&2
+  echo "Release-note assembly is implemented in Python (#1877). Tried 'python3'" >&2
+  echo "and 'python'; neither is present or both are older than $MIN." >&2
+  echo "Install a supported Python, or run '$IMPL' with one directly." >&2
   exit 1
 fi
 

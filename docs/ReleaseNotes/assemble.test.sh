@@ -174,29 +174,28 @@ case_start() { CASE="${1%%:*}"; echo "$1"; }
 # the fault can actually be produced. Retiring the old body rather than
 # contorting it is the point: a case that cannot inject its fault is not
 # testing anything, whatever its assertions say.
+#
+# EVERY ROW HERE IS CHECKED, not asserted (T211, Codex #1898 r2). A
+# retirement is a claim — "this case can no longer produce its fault" —
+# and I had been making it by reading the body, which got it wrong
+# nineteen times: three git cases were retired as "re-tested at the seam
+# below" when no seam for git existed and the PATH shim still worked
+# perfectly, and sixteen more still passed untouched. A claim nobody
+# tests is exactly what the suite exists to disallow, so T211 lifts
+# every retirement and requires the case to FAIL. A case that passes
+# without its retirement does not belong in this table — restore it.
 declare -A RETIRED_CASES=(
   ["T101"]="shimmed chmod(1) after recovery deletions — re-tested at the seam below"
   ["T102"]="shimmed to replace the output after publishing — clear seam below"
   ["T103"]="shimmed rm(1) after a recovery deletion — re-tested at the seam below"
   ["T104"]="shimmed rm(1) to save a fragment mid-clear — re-tested at the seam below"
-  ["T107"]="shimmed grep for a non-UTF-8 marker name — now decoded byte-wise"
   ["T108"]="shimmed rm(1) to recreate a cleared path — re-tested at the seam below"
   ["T109"]="shimmed sync to alter the replacement — re-tested at the flush seam below"
-  ["T10f"]="shimmed git(1) to fail the index read — re-tested at the seam below"
-  ["T10g"]="shimmed git(1) to fail the HEAD lookup — re-tested at the seam below"
-  ["T10h"]="shimmed git(1) to fail the shallow probe — re-tested at the seam below"
-  ["T10j"]="pinned the Bash-4 floor; the work is Python and the shim needs no bash 4"
-  ["T110"]="shimmed mktemp for the source probe — re-tested at the gate below"
   ["T111"]="shimmed chmod during the flush — re-tested at the flush seam below"
-  ["T112"]="pinned where a temp file was created; none is created now"
-  ["T113"]="shimmed stat for the sticky read, which is now one os.stat"
   ["T114"]="shimmed to swap the replacement for a FIFO — re-tested at the gate below"
-  ["T115"]="shimmed stat for the group recheck, which is now one os.stat"
   ["T116"]="pinned mktemp -d flags; tempfile.mkdtemp is 0700 by construction"
   ["T117"]="shimmed stat for the group pin, which is now one os.stat"
   ["T118"]="shimmed rm(1) during recovery — re-tested at the recover seam below"
-  ["T120"]="pinned shell array membership syntax; list membership is exact now"
-  ["T121"]="shimmed stat for the sticky read, which is now one os.stat"
   ["T122"]="shimmed sed to force an implicit errexit — no errexit, no sed"
   ["T123"]="shimmed mv(1) mid-clear — re-tested at the clear seam below"
   ["T124"]="shimmed stat for the device read — re-tested at the gate below"
@@ -218,24 +217,26 @@ declare -A RETIRED_CASES=(
   ["T54"]="shimmed grep mid-scan — re-tested at the scan seam below"
   ["T55"]="shimmed rm(1) per deletion — re-tested at the clear seam below"
   ["T56"]="shimmed cp(1) during the copy — re-tested at the snapshot seam below"
-  ["T60"]="pinned that a shell function was defined before its first caller"
   ["T63"]="shimmed cp(1) during the copy — re-tested at the snapshot seam below"
-  ["T65"]="pinned shell trap/flag handling; cleanup is a finally with one flag"
   ["T66"]="pinned that shell removals were non-fatal; they are try/except pass now"
-  ["T68"]="shimmed cat(1) while building — re-tested at the build seam below"
   ["T70"]="shimmed rm(1) during recovery — re-tested at the recover seam below"
   ["T73"]="shimmed rmdir(1) to fail the lock release — re-tested for real below"
-  ["T80"]="shimmed stat(1) for the group read, which is now one os.stat"
-  ["T81"]="shimmed stat(1) for the owner read, which is now one os.stat"
   ["T82"]="shimmed cp+grep together to fake a transient marker — seam below"
   ["T86"]="shimmed chmod(1) to apply a different mode — re-tested at the seam below"
-  ["T88"]="shimmed stat(1) for the group read, which is now one os.stat"
-  ["T8b"]="shimmed git(1) to fail history reads — re-tested at the seam below"
   ["T95"]="pinned trap ordering around the probe; HoldSignals cannot be half-applied"
-  ["T96"]="pinned trap ordering around the probe; HoldSignals cannot be half-applied"
   ["T97"]="shimmed rm(1) mid-consumption — re-tested at the clear seam below"
   ["T98"]="shimmed sha256sum in the recovery loop — re-tested at the seam below"
 )
+
+# The audit pass T211 drives: every retirement lifted, so each case runs
+# with its assertions live and is expected to FAIL. Kept as a mode of
+# this same file rather than a second script, so the audit can never be
+# auditing an older copy of the suite.
+RETIRED_CASE_IDS=("${!RETIRED_CASES[@]}")
+if [ "${ASSEMBLE_TEST_AUDIT:-}" = "1" ]; then
+  RETIRED_CASES=()
+fi
+
 RETIRED=0
 retired() { echo "  RTRD — $1"; RETIRED=$((RETIRED + 1)); }
 check() {  # check <condition-description> <actual> <expected>
@@ -4058,6 +4059,130 @@ for phase in snapshot scan build flush; do
   if [ "$rc" != "0" ] && [ "$published" = "no" ]; then _enforced=$(( _enforced + 1 )); fi
 done
 check "every phase enforces a failing hook" "$_enforced" "$_phases"
+
+case_start "T213: an ASCII stdio encoding does not turn a run into a traceback"
+W="$ROOT/t213"; build "$W"
+out="$W/docs/ReleaseNotes"
+# Nearly every diagnostic here carries an em dash. Under LC_ALL=C with
+# the UTF-8 mode off, printing one raised UnicodeEncodeError (Codex #1898
+# r2) — verified against the pre-fix file, which ends in a traceback from
+# `print` rather than the normal exit. The same fault could fire AFTER
+# publication and fragment clearing, where a traceback is the one answer
+# this script must never give.
+msg="$(LC_ALL=C PYTHONUTF8=0 PYTHONCOERCECLOCALE=0 \
+  bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run succeeds"       "$?"                                   "0"
+check "no traceback"           "$(says "$msg" 'Traceback')"           "0"
+check "no encoding error"      "$(says "$msg" 'UnicodeEncodeError')"  "0"
+check "the notes were written" \
+  "$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)" "wrote"
+
+case_start "T214: an unsupported interpreter is refused, not run into a syntax error"
+W="$ROOT/t214"; build "$W"
+out="$W/docs/ReleaseNotes"
+# `python` is still Python 2 on some workstations, and selecting it by
+# NAME ran assemble.py straight into a syntax error — a traceback where
+# the assembler's own diagnostics belong, before it could say what had or
+# had not been consumed (Codex #1898 r2). Each candidate is asked its
+# version instead, which also catches a python3 that is too old.
+_fake="$ROOT/t214bin"; mkdir -p "$_fake"
+for _n in python3 python; do printf '#!/bin/sh\nexit 1\n' > "$_fake/$_n"; chmod +x "$_fake/$_n"; done
+msg="$(PATH="$_fake:/usr/bin:/bin" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run refuses"        "$?"                                        "1"
+check "it names the floor"     "$(says "$msg" 'no Python 3.10 or newer')"   "1"
+check "it says what it tried"  "$(says "$msg" "Tried 'python3'")"           "1"
+check "nothing was consumed"   "$(pending "$W")"                           "2"
+
+case_start "T212: SIGTERM DURING cleanup still releases the lock"
+W="$ROOT/t212"; build "$W"
+out="$W/docs/ReleaseNotes"
+mkdir -p "$W/hooks"
+# The earlier SIGTERM fix installed a handler that RAISES, and it stayed
+# armed inside the cleanup that the handler exists to reach: a signal
+# arriving mid-cleanup raised straight out of it, so the lock release
+# below never ran (Codex #1898 r2). The seam fires at the top of cleanup,
+# which is before that release.
+cat > "$W/hooks/cleanup" <<'HK'
+#!/bin/sh
+kill -TERM "$ASSEMBLE_PID"
+exit 0
+HK
+chmod +x "$W/hooks/cleanup"
+ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates \
+  >/dev/null 2>&1
+# CALIBRATED against the pre-fix code, which strands both working
+# directories and prints a traceback out of cleanup. The stranded-
+# directory assertion is the DISCRIMINATING one; the two below it held
+# in both versions for this injection and are regression guards, kept
+# because the whole point of the fix is that the release below the
+# raise still runs.
+check "no working directory is stranded" \
+  "$(ls -d "$out"/.assemble-* >/dev/null 2>&1 && echo left || echo clean)" "clean"
+check "the lock is not left behind (guard)" \
+  "$(ls -d "$out/.assemble.lock" >/dev/null 2>&1 && echo held || echo free)" "free"
+check "a later run is not blocked (guard)" \
+  "$(bash "$out/assemble.sh" 2026-08-17 --allow-mixed-dates >/dev/null 2>&1; echo $?)" "0"
+
+case_start "T211: every retirement in the table is real"
+# A retirement claims a case can no longer produce its fault. Read by
+# eye, that claim was wrong nineteen times (Codex #1898 r2) — three git
+# cases whose PATH shim still worked, and sixteen more that simply
+# passed. So the claim is TESTED: re-run this same file with every
+# retirement lifted, and require each retired case to fail. This case
+# does not run inside that pass.
+#
+# The audit takes BOTH privilege passes, like any other run. Restricting
+# it to one looked cheaper and was wrong: the permission-staged cases are
+# SKIPPED under root, so a root-only audit cannot make them fail and then
+# reports every one of them as a bogus retirement. T117 was the proof --
+# it failed this guard on its first run for exactly that reason, not
+# because its retirement was unjustified.
+if [ "${ASSEMBLE_TEST_AUDIT:-}" != "1" ]; then
+  _audit_out="$ROOT/audit.log"
+  ASSEMBLE_TEST_AUDIT=1 bash "$0" > "$_audit_out" 2>&1 || true
+  # Attribute each FAIL to the case_start line above it, which is what
+  # `case_start` exists for. `grep -B1` cannot do this: consecutive
+  # FAILs make the previous line another FAIL.
+  _audit_failed="$(awk '
+    /^T[0-9A-Za-z]+:/ { split($0, a, ":"); cur = a[1] }
+    /^  FAIL/         { if (cur != "") print cur }
+  ' "$_audit_out" | sort -u)"
+  # SKIPPED is a THIRD answer, not a quiet no (T117). A permission-staged
+  # case cannot run as root and a root-staged one cannot run unprivileged,
+  # so in a single-privilege environment some retired cases are simply
+  # unmeasured — and counting those as "passed un-retired" condemned a
+  # retirement that was perfectly sound. Only a case that RAN and did not
+  # fail is a bogus retirement.
+  _audit_skipped="$(awk '
+    /^T[0-9A-Za-z]+:/ { split($0, a, ":"); cur = a[1] }
+    /^  SKIP/         { if (cur != "") print cur }
+  ' "$_audit_out" | sort -u)"
+  _still_real=0
+  _bogus=""
+  _unmeasured=""
+  for _rc in "${RETIRED_CASE_IDS[@]}"; do
+    if printf '%s\n' "$_audit_failed" | grep -qx -- "$_rc"; then
+      _still_real=$(( _still_real + 1 ))
+    elif printf '%s\n' "$_audit_skipped" | grep -qx -- "$_rc"; then
+      _unmeasured="$_unmeasured $_rc"
+    else
+      _bogus="$_bogus $_rc"
+    fi
+  done
+  # The audit run must itself have produced failures — an audit that
+  # silently ran nothing would make every retirement look unjustified
+  # rather than justified, so it fails loudly instead of quietly.
+  check "the audit pass ran and failed" \
+    "$([ -n "$_audit_failed" ] && echo ran || echo empty)" "ran"
+  check "no retirement survives without its retirement" \
+    "$([ -z "$_bogus" ] && echo none || echo "$_bogus")" "none"
+  # Named rather than counted, so an environment that cannot measure a
+  # retirement says so instead of reporting a clean table. Under root
+  # the audit takes both privilege passes, so this is normally empty.
+  if [ -n "$_unmeasured" ]; then
+    echo "  RTRD — unmeasured in this environment (privilege-staged):$_unmeasured"
+  fi
+fi
 
 case_start "T11: argument handling"
 W="$ROOT/t11"; build "$W"

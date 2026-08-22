@@ -80,6 +80,25 @@ class AbortAfterWrite(Exception):
     """A failure in the clearing step, after the dated file is published."""
 
 
+# Diagnostics are written in UTF-8 regardless of the ambient locale
+# (Codex #1898 r2). Nearly every message here carries an em dash or an
+# arrow, and under an ASCII stdio encoding — `LC_ALL=C` with the UTF-8
+# mode off — `print` raises `UnicodeEncodeError`. That turned a
+# no-pending run's successful exit into a traceback, and could raise
+# AFTER publication and fragment clearing, where a traceback is the one
+# thing this script must never answer with. `backslashreplace` is the
+# floor: if a stream genuinely cannot carry a character, the message
+# still gets out, degraded rather than fatal.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="backslashreplace")
+    except (AttributeError, ValueError, OSError):
+        # A stream that cannot be reconfigured (already detached, or
+        # replaced by something without the method) is not worth dying
+        # over here — the writes below tolerate it.
+        pass
+
+
 def out_line(msg: str = "") -> None:
     print(msg)
 
@@ -108,6 +127,35 @@ def frag_hash(path: str) -> str:
 def read_mode(path: str) -> str:
     """Permission bits as octal digits, setuid/setgid/sticky included."""
     return format(statmod.S_IMODE(os.stat(path).st_mode), "o")
+
+
+def git_path(stdout: str) -> str:
+    """A path git printed, with only its record terminator removed.
+
+    `.strip()` is wrong for a path: a directory component may legally end
+    in a space, and stripping it addresses somewhere that does not exist.
+    Git terminates these single-value outputs with one newline (and a
+    Windows checkout may add the carriage return), so that is all that
+    comes off.
+    """
+    return stdout.rstrip("\n").rstrip("\r")
+
+
+def identity_owner(identity: str | None) -> tuple[int, int]:
+    """The (uid, gid) recorded inside a `file_identity` string.
+
+    Read back rather than re-stat'ed, so a decision made from the
+    baseline and a decision made from the recheck cannot disagree about
+    which owner they meant. A missing or malformed identity yields the
+    running user, which is the only safe reading: it means the file did
+    not exist when this run started, so nothing is being taken from
+    anyone.
+    """
+    if identity:
+        m = re.search(r"owner=(\d+):(\d+)$", identity)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    return os.getuid(), os.getgid()
 
 
 def file_identity(path: str) -> str:
@@ -291,6 +339,20 @@ class Assembly:
         A cleanup that can itself fail part way leaves the lock behind,
         which is the one piece of state a later run cannot work around.
         """
+        # The seam sits at the TOP of cleanup, because the moment worth
+        # testing is a signal arriving while cleanup is part way through
+        # (Codex #1898 r2) — before the lock release, which is the one
+        # piece of state a later run cannot work around.
+        #
+        # Its exit code is deliberately ignored, unlike every other
+        # phase: cleanup has no failure semantics to enforce — every step
+        # in it is non-fatal by design — and a hook that could raise here
+        # would introduce the exact abort this seam exists to test for.
+        try:
+            test_hook("cleanup", out=self.out)
+        except StepFailed:
+            pass
+
         probe, self.probe = self.probe, None
         work, self.work = self.work, None
         workdir, self.workdir = self.workdir, None
@@ -580,8 +642,19 @@ class Assembly:
     # ── UTC-day selection ────────────────────────────────────────────────
 
     def git(self, *args: str, cwd: str | None = None) -> subprocess.CompletedProcess:
+        # `surrogateescape`, not the locale's strict decoder (Codex #1898
+        # r2). `git status -z` emits a filename's bytes verbatim, so a
+        # fragment whose name carries an undecodable byte made the strict
+        # decode raise `UnicodeDecodeError` — a traceback on the DEFAULT
+        # date-selecting path, before publication. The same escape the
+        # filesystem encoding uses round-trips those bytes through
+        # `os.fsencode` when the name is written back out, which is what
+        # the marker line and the set-aside rename already do.
         return subprocess.run(
-            ["git", "-C", cwd or self.dir, *args], capture_output=True, text=True
+            ["git", "-C", cwd or self.dir, *args],
+            capture_output=True,
+            text=True,
+            errors="surrogateescape",
         )
 
     def select_by_day(self) -> None:
@@ -616,7 +689,13 @@ class Assembly:
             err("note: not a git work tree — cannot date fragments, assembling all pending.")
             return
 
-        root = self.git("rev-parse", "--show-toplevel").stdout.strip()
+        # Only the RECORD TERMINATOR comes off, not arbitrary whitespace
+        # (Codex #1898 r2). A checkout whose final path component legally
+        # ends in a space had that space stripped, so every later
+        # `os.path.relpath` and `git -C` addressed a directory that does
+        # not exist and the run refused every tracked fragment with a
+        # misleading unreadable-HEAD error.
+        root = git_path(self.git("rev-parse", "--show-toplevel").stdout)
 
         shallow_boundary: set[str] = set()
         r = self.git("rev-parse", "--is-shallow-repository")
@@ -629,7 +708,7 @@ class Assembly:
             err("filed under a fabricated date and then deleted. Refusing instead.")
             raise SystemExit(1)
         if r.stdout.strip() == "true":
-            cdir = self.git("rev-parse", "--git-common-dir").stdout.strip()
+            cdir = git_path(self.git("rev-parse", "--git-common-dir").stdout)
             common = os.path.realpath(os.path.join(self.dir, cdir)) if cdir else ""
             shallow_file = os.path.join(common, "shallow") if common else ""
             if not shallow_file or not os.access(shallow_file, os.R_OK):
@@ -1080,7 +1159,14 @@ class Assembly:
             body = self.rewrite_links(fh.read())
         if not body.strip():
             return
-        appended = body if body.endswith(b"\n") else body + b"\n"
+        # Including the LEADING SEPARATOR `build()` writes before every
+        # fragment (Codex #1898 r2). Starting the reconstruction at the
+        # body left the same prefix hole the trailing newline had, only
+        # at the other end: a fragment whose body is `body\n` matched a
+        # dated file whose section had been edited to `extended body\n`,
+        # so the marker still authorised the deletion while the run
+        # claimed the section was present byte for byte.
+        appended = b"\n" + body if body.endswith(b"\n") else b"\n" + body + b"\n"
         appended += os.fsencode(
             f"{MARKER_PREFIX}{self.frag_name[f]} "
             f"sha256={self.frag_hash[f]} -->\n"
@@ -1264,9 +1350,18 @@ class Assembly:
         self.work = os.path.join(self.workdir, "replacement")
 
         if os.path.isfile(self.out):
-            st = os.stat(self.out)
-            if st.st_uid != os.getuid():
-                err(f"Error: {os.path.basename(self.out)} is owned by uid {st.st_uid}, not by you.")
+            # From the RECORDED BASELINE, not a fresh stat (Codex #1898
+            # r2 P1). Both this check and the whole-identity recheck at
+            # the gate used to look at the live metadata: an owner
+            # flipped to the runner for the duration of `build()` and
+            # restored before `final_gate()` satisfied both, and the
+            # rename then installed the replacement under the runner —
+            # silently transferring ownership. `self.out_id` is the
+            # identity every later decision is compared against, so it is
+            # the identity this decision has to be made from too.
+            base_uid, base_gid = identity_owner(self.out_id)
+            if base_uid != os.getuid():
+                err(f"Error: {os.path.basename(self.out)} is owned by uid {base_uid}, not by you.")
                 err("")
                 err("Refusing to assemble: this script replaces the dated file by")
                 err("renaming a new one over it, which would transfer ownership to you")
@@ -1277,8 +1372,8 @@ class Assembly:
             shutil.copyfile(self.out_copy or self.out, self.work)
             self.final_mode = self.out_mode
             new_gid = os.stat(self.work).st_gid
-            if st.st_gid != new_gid:
-                err(f"Error: {os.path.basename(self.out)} has group {st.st_gid}; a new file here")
+            if base_gid != new_gid:
+                err(f"Error: {os.path.basename(self.out)} has group {base_gid}; a new file here")
                 err(f"would take group {new_gid}.")
                 err("")
                 err("Refusing to assemble: this script replaces the dated file by")
@@ -1402,17 +1497,34 @@ class Assembly:
 
         # The SOURCE directory too: a rename removes the source entry,
         # so `mv` needs write permission on BOTH.
+        # The path stays RECORDED until removal actually succeeds (Codex
+        # #1898 r2). Clearing `self.probe` in the failure branch meant a
+        # probe that was created but could not be removed — directory
+        # permissions changing between the two calls — was dropped from
+        # `cleanup()`'s retry list, and `report_leftovers()` never names
+        # it because that scanner only looks inside `.assembled`. The
+        # printed `git add -A docs/ReleaseNotes/` would then stage it.
         try:
             with HoldSignals():
                 fd, p = tempfile.mkstemp(prefix=".probe.", dir=self.unrel)
                 self.probe = p
                 os.close(fd)
-            os.remove(p)
-            self.probe = None
         except OSError:
             self.probe = None
             err(f"Error: entries can no longer be created in {self.unrel}.")
             self.refuse_reporting_consumed()
+
+        try:
+            os.remove(p)
+            self.probe = None
+        except OSError:
+            # Distinct from the creation failure above, and deliberately
+            # not fatal on its own: creation is what this probe exists to
+            # answer, and it succeeded. But the file is real now, so say
+            # where it is and leave `cleanup()` holding it.
+            err(f"Warning: could not remove the probe file {p}.")
+            err("It is left for cleanup to retry; remove it by hand if it survives,")
+            err("and do not commit it.")
 
     def publish(self) -> None:
         os.chmod(self.work, int(self.final_mode, 8))
@@ -1701,7 +1813,23 @@ def main(argv: list[str]) -> int:
             return int(se.code or 1)
         return 1
     finally:
-        run.cleanup()
+        # Cleanup is the one sequence a signal must not cut into (Codex
+        # #1898 r2). The handler installed above raises, and it stays
+        # armed inside this `finally`: a SIGTERM arriving mid-`rmtree`
+        # raised straight out of cleanup, so the lock release below it
+        # never ran and the run left `.assemble.lock` plus both working
+        # directories behind — the exact state the handler was added to
+        # prevent. Deferring is right HERE, where the earlier objection
+        # (that masking is not handling) does not apply: there is no
+        # later step left to protect, so a pending TERM has nothing to
+        # interrupt once cleanup has finished.
+        with HoldSignals():
+            run.cleanup()
+            # Handed back to the kernel before the mask lifts, so a
+            # SIGTERM that arrived during cleanup terminates the process
+            # the way the sender asked — rather than raising `Terminated`
+            # out of this `finally` and past the return value.
+            signal.signal(signal.SIGTERM, signal.SIG_DFL)
     return 0
 
 
