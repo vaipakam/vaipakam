@@ -24,7 +24,7 @@ work than the card implies:
 | --- | --- |
 | the delivered bound is unbuilt; design it with P1-b | **built for mirrors, ARMED DAYS ONLY.** `deliveredFreshBound` returns `received − paid`; both counters are armed-scoped, and a pre-`D*` slice is paid before the walk that reads them |
 | three drifted copies of the headroom arithmetic (#1499) | **collapsed by #1555.** All enforcement sites call `LibVpfiRecycle.backingPosition` |
-| the fix must cover every claim path | **partly** — #1555 collapsed the `backingPosition` copies, but `_entryExecutableNow` never used it and still measures `balanceOf` directly on canonical |
+| the fix must cover every claim path | **partly, and NOT "all enforcement sites"** — #1555 collapsed the PAYOUT and SWEEP gates onto `backingPosition`; `_entryExecutableNow` never used it and still measures `balanceOf` directly on canonical. Searching that helper's callers finds three of four |
 
 So the remaining defect is **narrower and more precisely locatable** than the
 card describes. It is worth stating exactly.
@@ -119,8 +119,17 @@ It may still be worth having as a sanity ceiling. It does not establish the
 delivered-or-set-aside invariant and must not be treated as sufficient.
 
 **Option B — a canonical emissions earmark.** Give Base the mirror's shape: a
-`received`-analogue incremented when emission is allocated to rewards, **and
-canonical WRITERS for the paid side.** The existing paid counter cannot simply
+`received`-analogue **incremented only when VPFI actually becomes available to
+the reward programme, never when emission is merely "allocated"**, and canonical
+WRITERS for the paid side.
+
+The funding half is the part that is easy to get wrong, and getting it wrong
+reproduces Option A's defect exactly: a canonical claim **transfers existing
+VPFI** out of the Diamond (`_deliverReward` → `safeTransfer`), while minting is a
+separate admin operation (`TreasuryFacet.mintVPFI`). So a counter incremented at
+allocation time is accounting with no funding behind it, and the allowance it
+authorises can still be paid out of borrower custody. The credit must be tied to
+tokens the programme actually holds. The existing paid counter cannot simply
 be reused: all three of its writers — the claim walk, the expiry sweep and the
 forfeit sweep — are guarded by `isMirrorRewardChain`, and its storage docs define
 it as mirror-era delivered spending. Add a Base `received` analogue without
@@ -153,8 +162,31 @@ only the first two — reserving those alone would still let rewards consume a
 borrower's VPFI and leave the later settlement reverting or underpaying.
 It is a bounded list, which is the argument for it; but "bounded" only helps if
 the boundary is drawn correctly, and mine was not on the first attempt.
-*Cost:* it accepts that an operational over-draw remains possible, and it is a
-subtraction, which §3 argues against on the general case.
+*Cost:* it accepts that an operational over-draw remains possible; it is a
+subtraction, which §3 argues against on the general case; **and on an upgraded
+Diamond it cannot find what it is meant to protect.** `fallbackSnapshot` and
+`borrowerLifRebate` are loan-keyed mappings with no enumerable aggregate, so a
+new counter cannot discover existing `vpfiHeld`, `rebateAmount` or fallback
+custody on-chain. Writers started at upgrade time reserve **zero** for precisely
+the grandfathered balances this option exists to protect. Any costing must
+include an aggregation mechanism — an off-chain enumeration seeded at upgrade,
+or a lazy per-loan reservation on first touch — and neither is free.
+
+**Option D — segregate the funding physically.** All three options above leave
+reward funding in the shared Diamond balance and differ only in how they *reason*
+about it — a bound, a counter, or a subtraction list. The alternative is to stop
+sharing: hold canonical reward funding in a dedicated escrow, and let claims
+spend only from there. Ownership ambiguity is then structural rather than
+accounted, so no list can be incomplete and no counter can drift from reality —
+the failure mode that produced this card twice.
+
+*Cost:* it is the largest change of the four, and it has to answer for the paths
+that currently rely on one pooled balance — mirror remittance arrival, expiry and
+forfeit routing, and the recycle bucket's own credits. It also needs a migration
+for funds already held. **It is nonetheless the only option that removes the
+question rather than answering it**, and it was absent from the first two
+revisions of this note because I was looking for a better bound rather than for a
+different arrangement.
 
 **This note does not pick one.** A and B differ in what the platform promises;
 C narrows the goal. That is an owner call.
@@ -192,13 +224,25 @@ fund-safety property unmet is worse than one that recommends nothing.
 
 What the options need before a choice is possible:
 
-1. **Option B costed properly** — it is the only candidate that establishes
-   "bounded by what was set aside" on canonical, and its true scope includes
-   canonical writers for the paid side plus a migration answer for a deployment
-   that has already paid rewards under the old rule.
-2. **Option C's boundary re-drawn** to all three user-owned classes, and an
-   explicit decision that operational over-draw is acceptable.
-3. **Either way, the expiry predicates change WITH the claim gate** — including
+1. **Option B costed properly** — its true scope is canonical writers for the
+   paid side, a `received` side tied to VPFI the programme actually holds rather
+   than to an allocation entry, and a migration answer for a deployment that has
+   already paid rewards under the old rule.
+2. **Option C's boundary re-drawn to all FOUR user-owned classes** —
+   `custodialCollateral`, `fallbackSnapshot` custody, `vpfiHeld`, and the settled
+   `rebateAmount` — plus an aggregation mechanism for grandfathered balances that
+   loan-keyed mappings cannot enumerate, plus an explicit decision that
+   operational over-draw is acceptable.
+3. **Option D evaluated at all** — a segregated reward escrow removes the
+   ownership question instead of accounting for it, and no revision of this note
+   before r3 considered it.
+4. **Whichever is chosen, three closures are required, not one:**
+   the canonical bound; the **legacy mirror payout**, which today spends without
+   recording and so lets one claimant reuse the delivered allowance; and the
+   **detached "neither" role**, which is bounded and recorded by nothing.
+   Closing only the canonical side leaves two live custody-drain paths and does
+   not unblock arming.
+5. **Either way, the expiry predicates change WITH the claim gate** — including
    `_entryExecutableNow`, which does not go through `backingPosition`.
 
 What should NOT happen is a sixth subtraction. That is the one path with
