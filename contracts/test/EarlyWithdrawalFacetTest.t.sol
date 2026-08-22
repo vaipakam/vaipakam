@@ -2490,6 +2490,48 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #1835 (Codex #1891 F14) — the linked borrower buying a STALE
+    ///      listing gets the staleness, on both surfaces.
+    ///
+    ///      Self-buy is the one refusal staleness outranks, and deliberately.
+    ///      The rule everywhere else is "staleness speaks last because the
+    ///      relist it asks for is refused" — but here the seller CAN relist and
+    ///      the new listing is correct; it simply still cannot be bought by this
+    ///      buyer. Different question, so the general rule does not apply.
+    ///
+    ///      Pinning it matters because the accept and the preview reach the
+    ///      borrower check by different routes: the preview classifies
+    ///      `SaleSelfBuy` inline, while the accept's borrower-vs-buyer check
+    ///      lives downstream in `LoanFacet.initiateLoan`. The generic
+    ///      `lender == borrower` guard does NOT cover it — that compares the
+    ///      buyer with the sale-offer creator, the exiting lender. So the two
+    ///      surfaces agree here only because the preview classifier was ordered
+    ///      to match, and this test is what holds them there.
+    function test_item23_staleTermsOutrankLinkedBorrowerSelfBuy() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // The buyer is the linked loan's own borrower — self-buy AND stale.
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), borrower, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig =
+            LibAcceptTestSigner.sign(address(diamond), t, borrowerPk);
+
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, borrower);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleListingTermsStale),
+            "both surfaces must agree, and staleness wins over self-buy"
+        );
+    }
+
     /// @dev #1835 (Codex #1891 F6) — `useFullTermInterest` is the FOURTH
     ///      behavioural term and is checked like the rest.
     ///

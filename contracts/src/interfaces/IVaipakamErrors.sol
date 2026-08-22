@@ -1065,17 +1065,39 @@ interface IVaipakamErrors {
     ///         loan passes all of them — the buyer signed honestly and it is the
     ///         listing that is wrong.
     ///
-    ///         ORDERED AFTER the expiry gate, the non-Active linked-loan gate
-    ///         and the maturity gate, and NOT in `_bindTermsToOffer` where the
-    ///         other term checks live — the binding runs before all three, so a
-    ///         comparison there answers "stale listing, relist" for offers that
-    ///         are expired, whose position is terminal, or which have crossed
-    ///         maturity in the grace window. Each of those is more structural
-    ///         AND actionable where this one is not (a matured or terminal loan
-    ///         cannot be relisted at all), and each disagrees with
-    ///         `previewAccept`, which reports them first. Moving this back into
-    ///         the binding reintroduces all three misclassifications — they
-    ///         arrived as three separate review findings on #1891.
+    ///         ORDERED LAST AMONG EVERY REFUSAL THAT MOVES NO VALUE, and that
+    ///         is the invariant to preserve rather than the line number. It runs
+    ///         after the sale branch's expiry / non-Active / maturity / solvency
+    ///         gates, after sanctions, asset-pause, country, risk-consent and
+    ///         KYC, and after the self-trade check — the next statement begins
+    ///         moving funds. It is deliberately NOT in `_bindTermsToOffer` with
+    ///         the other term checks, which runs before all of them.
+    ///
+    ///         THE RULE: staleness is the lowest-priority refusal there is, so
+    ///         it speaks only when nothing else has. This error tells the seller
+    ///         to relist, and every gate above refuses that remedy —
+    ///         `_boundListingExpiry` will not relist a matured loan,
+    ///         `createLoanSaleOffer` re-runs the same solvency guard, and
+    ///         `OfferCreateFacet` refuses a sanctioned creator or a paused
+    ///         asset, while a terminal loan cannot be relisted at all.
+    ///         Answering "relist" in any of those states is advice that cannot
+    ///         be taken, and it hides the reason that can be acted on.
+    ///
+    ///         A new refusal belongs ABOVE this one unless it is genuinely less
+    ///         actionable than "your listing is out of date". Moving this back
+    ///         up reintroduces the misclassifications — which arrived as FIVE
+    ///         separate review findings on #1891 (status, expiry, maturity,
+    ///         solvency, sanctions/pause), each fixed by moving the check behind
+    ///         the one gate that finding named while the next stayed ahead of
+    ///         it. `previewAccept` mirrors this position for the same reason,
+    ///         with ONE deliberate difference (#1891 F14): there this check sits
+    ///         ABOVE the `SaleSelfBuy` classifier, because self-buy is the one
+    ///         refusal where relisting IS an available remedy — the seller can
+    ///         relist correctly, the new listing simply still cannot be bought
+    ///         by the linked loan's own borrower. The accept needs no
+    ///         counterpart move: its borrower-vs-buyer check already lives
+    ///         downstream in `LoanFacet.initiateLoan`, so the two paths report
+    ///         the same first failure.
     ///
     ///         Deliberately parameterless, and deliberately NOT
     ///         `OfferTermsMismatch`: the buyer cannot cure this by re-signing,

@@ -300,39 +300,41 @@ contract OfferPreviewFacet {
         // (else the position doesn't exist), and the buyer must not be the loan's
         // CURRENT borrower (resolved live via `ownerOf`, not the stale stored
         // `borrower` — Codex #959 round-8 P1).
-        if (_saleLoanId != 0) {
-            LibVaipakam.Loan storage _saleLoan = s.loans[_saleLoanId];
-            // (Both the `Active` and the live-maturity classifiers sit EARLIER
-            // in this chain — right after the expiry gate, mirroring
-            // `_acceptOffer`'s ordering; Codex #1505 r3, #1635 r10. The
-            // `Active` check moved up there because the solvency block must not
-            // measure a position that no longer exists, which left the copy
-            // that used to be here unreachable.)
-            if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
-                preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
-                return preview;
-            }
-        }
-
         // #1835 (Codex #1891 F1/F10/F11) — the accept refuses a vehicle whose
         // four behavioural terms disagree with the live loan. Classified so the
         // card can disable "Accept" rather than letting the buyer discover it
         // by burning gas.
         //
-        // ORDERED LAST, mirroring `_acceptOffer`, and by the same rule:
-        // **staleness is the lowest-priority refusal there is, so it speaks
-        // only when nothing else has.** Every classifier above — expiry, the
-        // sale branch's status / maturity / solvency, sanctions, asset-pause,
-        // country, risk-consent, KYC, self-buy — is both more structural AND
-        // actionable, where this one is not: it tells the seller to relist, and
+        // ORDERED LAST AMONG THE REFUSALS NOTHING CAN CURE, mirroring
+        // `_acceptOffer`. Every classifier above — expiry, the sale branch's
+        // status / maturity / solvency, sanctions, asset-pause, country,
+        // risk-consent, KYC — is both more structural AND actionable, where
+        // this one is not: it tells the seller to relist, and
         // `_boundListingExpiry`, `createLoanSaleOffer` and `OfferCreateFacet`
-        // each refuse that remedy in the states they describe.
+        // each REFUSE that relist in the states they describe, so the advice
+        // could not be taken.
         //
-        // State the rule rather than the position: this arrived as FIVE review
-        // findings (#1891 F3/F4/F5/F10/F11), each moving the check behind the
-        // one gate that finding named while the next stayed ahead of it. A new
-        // classifier belongs ABOVE this one unless it is genuinely less
-        // actionable than "your listing is out of date".
+        // It sits ABOVE `SaleSelfBuy` deliberately, and that is not an
+        // exception to the rule but the rule applied honestly (Codex #1891
+        // F14). Self-buy is the one case where relisting IS an available
+        // remedy: the seller can relist and the new listing is correct — it
+        // simply still cannot be bought by THIS buyer, who is the linked loan's
+        // own borrower. So the two are not the same question, and staleness
+        // legitimately outranks it.
+        //
+        // That ordering is also what keeps first-failure parity with the
+        // accept, where the borrower-vs-buyer check lives downstream in
+        // `LoanFacet.initiateLoan` — after the stale comparison. The
+        // alternative, hoisting an `ownerOf` read into `_acceptOffer` to put
+        // self-buy first, would add an external call to a frame already at the
+        // viaIR stack budget to reorder two refusals whose priority is
+        // genuinely arguable.
+        //
+        // State the rule rather than the position: this arrived as SIX review
+        // findings (#1891 F3/F4/F5/F10/F11/F14), each moving the check behind
+        // the one gate that finding named while the next stayed ahead of it. A
+        // new classifier belongs ABOVE this one unless, like self-buy, relisting
+        // genuinely remains available.
         if (_saleLoanId != 0) {
             LibVaipakam.Offer storage _vehicle = s.offers[offerId];
             LibVaipakam.Loan storage _staleChk = s.loans[_saleLoanId];
@@ -345,6 +347,20 @@ contract OfferPreviewFacet {
                 preview.errorCode = OfferAcceptFacet
                     .AcceptError
                     .SaleListingTermsStale;
+                return preview;
+            }
+        }
+
+        if (_saleLoanId != 0) {
+            LibVaipakam.Loan storage _saleLoan = s.loans[_saleLoanId];
+            // (Both the `Active` and the live-maturity classifiers sit EARLIER
+            // in this chain — right after the expiry gate, mirroring
+            // `_acceptOffer`'s ordering; Codex #1505 r3, #1635 r10. The
+            // `Active` check moved up there because the solvency block must not
+            // measure a position that no longer exists, which left the copy
+            // that used to be here unreachable.)
+            if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
+                preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
                 return preview;
             }
         }
