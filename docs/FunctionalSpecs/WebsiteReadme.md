@@ -125,26 +125,54 @@ Public-navigation requirements:
   marker defers to the least certain input rather than the most
 - the machine-readable copies are the one surface with no runtime, so
   they resolve every reference when they are produced — a crawler must
-  receive a number, never the embedding syntax. What they resolve to
-  today is the value set shipped with the site, which is pinned to the
-  protocol's compiled starting rates: a governance retune moves the live
-  configuration, not those starting rates, so these artefacts do not
-  follow a retune even across rebuilds, while the rendered pages that
-  successfully accept the published snapshot do — a page whose own read
-  fails renders the same shipped values these artefacts carry.
-  "Current as of its build" is therefore NOT a property these artefacts
-  have, and nothing may claim it for them, and any surface describing
-  them must say what they carry rather than imply currency
-- the machine-readable copies must NOT be produced by reading the
-  published configuration at publication time. Doing so would not make
-  them current — it would move their staleness from release to
-  publication while making publication depend on a service that can be
-  unavailable, and making two publications of the same source produce
-  different artefacts. A consumer that needs current figures is instead
+  receive a number, never the embedding syntax
+- **the machine-readable copies ARE produced by reading the published
+  configuration at publication time** (superseding the rule below, by
+  owner decision 2026-08-22). They must carry the same figures the
+  rendered pages carry, so a consumer reading the published documents
+  and a reader looking at the site are told the same thing. The intent
+  that changed is which inconsistency is worse: an artefact that is
+  behind by one deploy, or an artefact that never moves at all and so
+  drifts without limit from the pages beside it. The second was judged
+  worse
+- publication must therefore state its own provenance, ON EVERY
+  DOCUMENT and not only in the crawler index. The document is the unit
+  of consumption — a crawler fetches one on its own and an assistant
+  ingests one on its own — so a figure whose date lives in a different
+  file is, to that reader, a figure with no date. That is the same
+  defect this section exists to remove, moved from "wrong number" to
+  "undated number", and an undated number is the one repeated with
+  confidence. Each document says which chain its figures came from and
+  when the snapshot was stamped, so a consumer can judge the age rather
+  than assume currency. "Current as of its build" is a claim these artefacts may
+  make ONLY in that form — naming the moment — and never as a bare
+  assertion
+- publication must FAIL rather than silently fall back. These artefacts
+  are static until the next deploy and nothing re-reads them, so a
+  publication that quietly used the shipped starting rates would emit
+  figures that stop matching the pages after any retune with no signal
+  anywhere. An operator may override that deliberately, and when they
+  do the artefacts must say on their face that they carry build-time
+  defaults, so the fallback is legible to the consumer and not only to
+  whoever ran the build
+- the superseded rule and its reasoning, kept because the trade-offs are
+  real and a future reader should not have to rediscover them: it held
+  that publication-time reads must NOT happen, on the grounds that they
+  move staleness from release to publication, make publication depend on
+  a service that can be unavailable, and let two publications of the
+  same source produce different artefacts. The first is accepted — one
+  deploy of lag is the improvement being bought. The second is answered
+  by the fail-closed rule above. The third is no longer treated as a
+  fault: after a retune, two publications of the same source SHOULD
+  differ, because the configuration they describe did. A consumer that
+  needs figures newer than the publication is still
   told where to read them: the crawler index must advertise the live
   configuration endpoint alongside the documents, name the chain it
-  describes, and state plainly that the documents carry starting rates
-  while that endpoint carries current ones. Static documents plus a
+  describes, and say what the documents themselves carry — which, under
+  the superseding rule above, is the published configuration as of the
+  moment the index names, not the compiled starting rates. It may
+  describe them as starting rates only on the deliberate-override path,
+  where that is what they actually are. Static documents plus a
   named live endpoint is the same division the site already publishes
   for offer and loan data, and it keeps the documentation surface free
   of the protocol-data dependencies that belong to the read API
@@ -728,7 +756,7 @@ Governance-configuration visibility:
 - pages that always present English content, whatever locale prefix the reader arrived through, should format their embedded values as English, so a figure never uses another language's conventions or digits inside an English sentence
 - a page that falls back to English because a translation is missing should likewise format its embedded values as English
 - the documentation search index should hold the same rendered figures the reader sees, formatted for the same document, so searching for a value visible on a page finds that page
-- the machine-readable copies of the docs that the site publishes for automated consumers should carry resolved values formatted for the document's language and never expose the embedding syntax. They carry the value set shipped with the site rather than the live configuration the rendered pages follow, so they match the human-facing pages exactly while the published configuration equals the shipped values, and after a retune they lag the pages that successfully loaded the published configuration — a page whose own read fails renders the same shipped values, and the two surfaces coincide again. The divergence is specified and stated, not a defect: the copies resolve against the shipped value set by design, and a consumer needing the current figures is pointed to the live configuration endpoint named in the crawler index
+- the machine-readable copies of the docs that the site publishes for automated consumers should carry resolved values formatted for the document's language and never expose the embedding syntax. They carry the published configuration read when they were produced (owner decision 2026-08-22, superseding the shipped-values rule), so they state the same figures as the rendered pages rather than drifting from them after a retune. The crawler index names the chain and the moment the snapshot was stamped, so a consumer can judge the age instead of assuming currency; a consumer needing figures newer than the publication is pointed to the live configuration endpoint named there. If no snapshot can be read, publication fails rather than quietly emitting shipped values — and where an operator overrides that deliberately, the artefacts say on their face that they carry build-time defaults
 
 Foundational frontend migration requirements:
 

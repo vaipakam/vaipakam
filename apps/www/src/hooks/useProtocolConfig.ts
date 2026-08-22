@@ -115,180 +115,25 @@ const CHAIN_NAMES: Record<number, string> = {
 /** The chain the documented figures describe, e.g. "Base Sepolia". */
 export const DOCS_CHAIN_LABEL = CHAIN_NAMES[DOCS_CHAIN_ID] ?? `chain ${DOCS_CHAIN_ID}`;
 
-/**
- * Refuse a snapshot older than a day. Config flips reach the snapshot
- * within about one ingest scan, so a row this stale means the refresh
- * rail is wedged — and a wedged rail serving a confidently wrong number
- * is worse than the bundled default, which at least announces itself as
- * a build-time value. Same window the connected app applies
- * (`protocolConfigFresh`); deliberately the same rule rather than a
- * second opinion about the same rail.
- */
-const FRESH_WINDOW_SECONDS = 24 * 3600;
+// Decode, freshness and the fetch itself now live in a REACT-FREE
+// module (#1664 item 3): the build script that writes `/docs/*.md` and
+// `llms-full.txt` needs the same logic, and a build script importing a
+// hook is the wrong shape. Re-exported here so existing importers of
+// `decodeMarketingConfig` / `snapshotFresh` are unaffected.
+import {
+  FRESH_WINDOW_SECONDS,
+  decodeMarketingConfig,
+  snapshotFresh,
+  fetchProtocolConfigSnapshot,
+  type MarketingProtocolConfig,
+} from '../lib/protocolConfigSnapshot';
 
-/** How far ahead of the reader's clock a snapshot may be stamped before
- *  it is treated as wrong rather than merely new. Browsers' clocks are
- *  routinely a few minutes out; nothing legitimate is hours ahead. */
-const CLOCK_SKEW_TOLERANCE_SECONDS = 5 * 60;
-
-/** VPFI is 18 decimals on every deploy — required by the bridge spec,
- *  and the connected app's own fallback when its `decimals()` read
- *  fails. Reading it live would need the chain client this file exists
- *  to avoid. */
-const VPFI_DECIMALS = 18n;
-
-/**
- * The ceiling the protocol APPLIES to a per-tier VPFI fee discount —
- * `LibVaipakam.MAX_FEE_DISCOUNT_BPS`.
- *
- * Mirrored here rather than read, for the same reason the knob defaults
- * are: this surface has no chain client. It is a deliberately narrow
- * mirror — one number, guarding a display clamp — and the drift risk is
- * bounded by the fact that raising the applied ceiling is a protocol
- * change that would go through the same review that would notice this
- * line. (`ConfigFacet`'s SETTER ceiling is a different, higher number —
- * 9,000 — which is exactly why the clamp is needed.)
- */
-const APPLIED_DISCOUNT_CEILING_BPS = 5000;
-
-/**
- * The knobs the marketing pages quote, mapped from the display bundle.
- * Field names match what `<LiveValue>`'s registry reads, so the two
- * cannot drift apart silently — a rename breaks the build.
- */
-export interface MarketingProtocolConfig {
-  /** Yield fee on lender interest, BPS. Bundle index 0. */
-  treasuryFeeBps: number;
-  /** Borrower loan-initiation fee, BPS. Bundle index 1. */
-  loanInitiationFeeBps: number;
-  /** Tier minimums in WHOLE VPFI, T1..T4. Bundle index 7 (wei). */
-  tierThresholdsTokens: [number, number, number, number];
-  /** Per-tier discount, BPS, T1..T4. Bundle index 8. */
-  tierDiscountBps: [number, number, number, number];
-}
-
-/**
- * The serializer emits bigints as DECIMAL STRINGS. Accept those and
- * plain integers, and nothing else.
- *
- * The strictness is load-bearing for the thresholds specifically: an
- * 18-decimal value that arrived as a JSON number has already lost
- * precision before this function could see it, so coercing whatever
- * turned up would render a confidently wrong tier table. Rejecting
- * falls back to the bundled default, which is the safe direction.
- */
-function asBigInt(value: unknown): bigint | null {
-  if (typeof value === 'string' && /^\d+$/.test(value)) return BigInt(value);
-  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {
-    return BigInt(value);
-  }
-  return null;
-}
-
-/**
- * Narrow a bigint to a `number` ONLY where the cast is exact.
- *
- * `asBigInt` happily accepts an arbitrarily long decimal string — that
- * is correct for a bigint and wrong for what happens next. `Number(…)`
- * on a large one silently rounds, and past ~1.8e308 yields `Infinity`,
- * which `bpsAsPct` would render as `∞%` with a `published` provenance
- * badge on it. A value that cannot survive the cast is a malformed
- * payload, and malformed payloads take the bundled default.
- */
-function toSafeNumber(v: bigint | null): number | null {
-  if (v === null) return null;
-  const n = Number(v);
-  return Number.isSafeInteger(n) ? n : null;
-}
-
-function asBpsQuad(value: unknown): [number, number, number, number] | null {
-  if (!Array.isArray(value) || value.length !== 4) return null;
-  const out = value.map((v) => toSafeNumber(asBigInt(v)));
-  if (out.some((v) => v === null)) return null;
-  return out as [number, number, number, number];
-}
-
-function asTokenQuad(value: unknown): [number, number, number, number] | null {
-  if (!Array.isArray(value) || value.length !== 4) return null;
-  const out = value.map(asBigInt);
-  if (out.some((v) => v === null)) return null;
-  // Divide in BIGINT space before the Number cast. `Number(100_000n *
-  // 10n ** 18n)` silently rounds past 2^53; dividing first keeps the
-  // whole-token figure exact, which is the one a reader sees.
-  const scale = 10n ** VPFI_DECIMALS;
-  // ...but that division FLOORS, and `ConfigFacet.setVpfiTierThresholds`
-  // permits a threshold that is not a whole multiple of 1e18. A
-  // configured 100.9 VPFI would publish as "100 VPFI" wearing the
-  // `published` badge — a documented eligibility boundary that is simply
-  // wrong, and wrong in the direction that tells a reader they qualify
-  // when they do not. The display format for these is whole tokens
-  // (`format: 'count'`, zero fraction digits), so there is nowhere to
-  // put the remainder even if we kept it.
-  //
-  // So reject rather than truncate. That drops the whole bundle to
-  // bundled defaults, which is the same all-or-nothing rule the decoder
-  // already applies elsewhere: a figure the site cannot state exactly is
-  // one it should not state as live.
-  if (out.some((v) => v! % scale !== 0n)) return null;
-  const tokens = out.map((v) => toSafeNumber(v! / scale));
-  if (tokens.some((v) => v === null)) return null;
-  return tokens as [number, number, number, number];
-}
-
-/** Map a display bundle onto the knobs the docs quote, or `null` if any
- *  field fails to decode. All-or-nothing on purpose: a half-decoded
- *  config would show live figures beside build-time ones with no way
- *  for a reader to tell which is which. */
-export function decodeMarketingConfig(
-  bundle: unknown,
-): MarketingProtocolConfig | null {
-  if (!Array.isArray(bundle) || bundle.length < 9) return null;
-  const treasuryFeeBps = toSafeNumber(asBigInt(bundle[0]));
-  const loanInitiationFeeBps = toSafeNumber(asBigInt(bundle[1]));
-  const tierThresholdsTokens = asTokenQuad(bundle[7]);
-  // The bundle carries the CONFIGURED per-tier discount, which
-  // `ConfigFacet.setVpfiTierDiscountBps` permits up to 9,000 BPS. What a
-  // user actually receives is clamped to `LibVaipakam.MAX_FEE_DISCOUNT_BPS`
-  // (5,000) by `getEffectiveDiscount` and every fee path. Publishing the
-  // raw figure would advertise a 60% discount that reduces fees by 50%
-  // across all 134 documentation references — a promise the protocol does
-  // not keep. The docs describe the discount a user GETS, so publish the
-  // applied value.
-  const rawDiscountBps = asBpsQuad(bundle[8]);
-  const tierDiscountBps = rawDiscountBps?.map((v) =>
-    Math.min(v, APPLIED_DISCOUNT_CEILING_BPS),
-  ) as [number, number, number, number] | undefined ?? null;
-  if (
-    treasuryFeeBps === null ||
-    loanInitiationFeeBps === null ||
-    tierThresholdsTokens === null ||
-    tierDiscountBps === null
-  ) {
-    return null;
-  }
-  return {
-    treasuryFeeBps,
-    loanInitiationFeeBps,
-    tierThresholdsTokens,
-    tierDiscountBps,
-  };
-}
-
-/** Exported for the render guard: the freshness rule, stated once. */
-export function snapshotFresh(updatedAt: unknown): boolean {
-  if (typeof updatedAt !== 'number' || !Number.isFinite(updatedAt)) return false;
-  const ageSeconds = Date.now() / 1000 - updatedAt;
-  // A NEGATIVE age is not "very fresh", it is a broken clock or a
-  // timestamp emitted in the wrong unit — milliseconds instead of
-  // seconds puts `updatedAt` ~55,000 years ahead, and `age < WINDOW`
-  // would then be true forever, pinning a wedged row as `published`
-  // permanently. That is the precise failure this window exists to
-  // prevent, so a future-dated row is refused rather than trusted.
-  // The small tolerance absorbs ordinary clock skew between the
-  // indexer and the reader's machine.
-  if (ageSeconds < -CLOCK_SKEW_TOLERANCE_SECONDS) return false;
-  return ageSeconds < FRESH_WINDOW_SECONDS;
-}
+export {
+  decodeMarketingConfig,
+  snapshotFresh,
+  fetchProtocolConfigSnapshot,
+  type MarketingProtocolConfig,
+};
 
 // ─── Module-level store ───────────────────────────────────────────────
 //
@@ -377,32 +222,27 @@ const REQUEST_TIMEOUT_MS = 4_000;
 async function load() {
   loading = true;
   publish();
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(`${INDEXER_ORIGIN}/config/${DOCS_CHAIN_ID}`, {
-      headers: { accept: 'application/json' },
-      signal: ac.signal,
+    // THE SAME validated fetch the build script calls (Codex #1895 r2).
+    // Extracting the helper and then leaving this duplicate inline was
+    // the worst of both: the generator gained the chain-id check while
+    // the HUMAN-FACING pages — the surface a reader actually sees —
+    // kept the version without it, so a routing slip or a shared cache
+    // could still show another deployment's rates under this chain's
+    // name. One acceptance rule, one place, both callers.
+    //
+    // It swallows every failure itself, including the timeout abort:
+    // there is nothing a reader of a docs page can do about an
+    // unreachable indexer, and the page still renders bundled defaults.
+    const accepted = await fetchProtocolConfigSnapshot({
+      origin: INDEXER_ORIGIN,
+      chainId: DOCS_CHAIN_ID,
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
-    if (res.ok) {
-      const body: unknown = await res.json();
-      if (
-        typeof body === 'object' &&
-        body !== null &&
-        (body as { available?: unknown }).available === true &&
-        snapshotFresh((body as { updatedAt?: unknown }).updatedAt)
-      ) {
-        config = decodeMarketingConfig((body as { bundle?: unknown }).bundle);
-        acceptedUpdatedAt =
-          config !== null ? ((body as { updatedAt: number }).updatedAt) : null;
-      }
+    if (accepted !== null) {
+      config = accepted.config;
+      acceptedUpdatedAt = accepted.updatedAt;
     }
-  } catch {
-    // Deliberately silent, and this now also swallows the abort above.
-    // There is nothing a reader of a docs page can do about an
-    // unreachable or unresponsive indexer, and the page still renders
-    // its bundled defaults. Logging here would put a red error in the
-    // console of a perfectly working page.
   } finally {
     // A held snapshot that has aged past the freshness window must not
     // keep claiming published provenance just because this refresh
@@ -414,7 +254,6 @@ async function load() {
       config = null;
       acceptedUpdatedAt = null;
     }
-    clearTimeout(timer);
     loading = false;
     hasConcluded = true;
     // Re-arm (or clear) the expiry deadline for whatever this load
