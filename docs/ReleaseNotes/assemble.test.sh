@@ -20,6 +20,11 @@ set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$DIR/assemble.sh"
+# The entry point is a shim; the assembler itself is `assemble.py` (#1877).
+# A fixture that installs only the shim runs a command with no
+# implementation behind it, which fails every case for one reason and
+# tells you nothing about any of them.
+IMPL="$DIR/assemble.py"
 
 # ── Cases that need a privilege, and cases that need the lack of one ─────────
 # Some cases stage a fault by TAKING A PERMISSION AWAY — an unreadable file, an
@@ -123,6 +128,7 @@ build() {
   fi
   mkdir -p "$d/docs/ReleaseNotes/unreleased"
   cp "$SRC" "$d/docs/ReleaseNotes/assemble.sh"
+  cp "$IMPL" "$d/docs/ReleaseNotes/assemble.py"
   printf '# unreleased\n' > "$d/docs/ReleaseNotes/unreleased/README.md"
   printf '## template\n'  > "$d/docs/ReleaseNotes/unreleased/_TEMPLATE.md"
   git -C "$d" init -q
@@ -250,6 +256,7 @@ echo "T4b: a shallow clone whose fragments POST-date the boundary proceeds"
 S="$ROOT/t4bsrc"
 mkdir -p "$S/docs/ReleaseNotes/unreleased"
 cp "$SRC" "$S/docs/ReleaseNotes/assemble.sh"
+cp "$IMPL" "$S/docs/ReleaseNotes/assemble.py"
 printf '# unreleased\n' > "$S/docs/ReleaseNotes/unreleased/README.md"
 printf '## template\n'  > "$S/docs/ReleaseNotes/unreleased/_TEMPLATE.md"
 git -C "$S" init -q
