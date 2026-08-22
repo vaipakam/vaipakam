@@ -2093,8 +2093,23 @@ contract GovernorDualAccumulatorTest is SetupTest {
             100 ether,
             "the broadcast's instruction reserved against the local bucket"
         );
-        (uint256 retiredBefore, ) = _agg().getLocalRecycledCommitRetirement();
+        (uint256 retiredBefore, uint256 releasedBefore) =
+            _agg().getLocalRecycledCommitRetirement();
         uint256 bucketBefore = _cfg().getRecycleBucket();
+
+        // Codex #1907 r1 — the baselines above are read AFTER the broadcast, so
+        // on their own they cannot see a `reserveMirrorCommit` that ALSO moved a
+        // retirement counter: every later assertion compares claim-time deltas,
+        // and the outstanding assertion would still read 100 ether. Pin the
+        // reservation's own footprint here. A reservation encumbers and nothing
+        // else -- reporting a commitment retired before any claim or forfeit
+        // happened would tell Base the mirror had spent what it had only
+        // promised.
+        assertEq(retiredBefore, 0, "a reservation retires nothing");
+        assertEq(releasedBefore, 0, "a reservation releases nothing");
+        assertEq(paidBefore, 0, "a reservation pays nobody");
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        uint256 creditedBefore = _cfg().getRecycledCreditedByDay(today);
 
         _seedEntry(alice, 90, 5, 6);
         // P1-b: the FRESH leg needs a delivered bound before the armed day
@@ -2112,7 +2127,8 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         (, , uint256 outAfter, uint256 paidAfter) =
             _agg().getGovernorCommitState();
-        (uint256 retiredAfter, ) = _agg().getLocalRecycledCommitRetirement();
+        (uint256 retiredAfter, uint256 releasedAfter) =
+            _agg().getLocalRecycledCommitRetirement();
 
         // The floor did NOT bind, so the equalities below are the retirement
         // identity rather than two exhausted counters agreeing at zero.
@@ -2132,6 +2148,25 @@ contract GovernorDualAccumulatorTest is SetupTest {
             paidAfter - paidBefore,
             consumed,
             "paidOutRecycled moved by the same"
+        );
+        // Codex #1907 r1 — and the RELEASE cumulative must NOT move. The two
+        // cumulatives are not interchangeable on Base: a release restores the
+        // mirror's availability because the tokens stayed in the bucket, while
+        // a consumption spent them. A claim that reported its payout as a
+        // release would make already-spent tokens committable again.
+        assertEq(
+            releasedAfter,
+            releasedBefore,
+            "a claim SPENDS; it must never report a release"
+        );
+        // Same class, predicted rather than reported: spending the bucket is
+        // not ABSORBING into it. `credited[D]` feeds the trailing average that
+        // sizes future budgets, so a consumption that credited it would let a
+        // mirror inflate tomorrow's runway with tokens it just paid away.
+        assertEq(
+            _cfg().getRecycledCreditedByDay(today),
+            creditedBefore,
+            "a claim credits nothing; consumption is not absorption"
         );
     }
 
@@ -2154,15 +2189,19 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         (, , uint256 outBefore, uint256 paidBefore) =
             _agg().getGovernorCommitState();
-        (, uint256 releasedBefore) = _agg().getLocalRecycledCommitRetirement();
+        (uint256 retiredBefore, uint256 releasedBefore) =
+            _agg().getLocalRecycledCommitRetirement();
         uint256 bucketBefore = _cfg().getRecycleBucket();
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        uint256 creditedBefore = _cfg().getRecycledCreditedByDay(today);
 
         vm.prank(makeAddr("mirror-keeper"));
-        _facet().sweepForfeitedInteractionRewards(91);
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(91);
 
         (, , uint256 outAfter, uint256 paidAfter) =
             _agg().getGovernorCommitState();
-        (, uint256 releasedAfter) = _agg().getLocalRecycledCommitRetirement();
+        (uint256 retiredAfter, uint256 releasedAfter) =
+            _agg().getLocalRecycledCommitRetirement();
 
         uint256 released = outBefore - outAfter;
         assertGt(released, 0, "the forfeit released a recycled commitment");
@@ -2177,12 +2216,35 @@ contract GovernorDualAccumulatorTest is SetupTest {
             paidBefore,
             "a release pays nobody, so paidOutRecycled must not move"
         );
-        // The recycled tokens never left, so the bucket cannot have fallen.
-        // (It may RISE: the forfeit's FRESH share is genuine absorption.)
-        assertGe(
-            _cfg().getRecycleBucket(),
-            bucketBefore,
-            "released tokens stay in the bucket"
+        // Codex #1907 r1 — the RETIRED cumulative rises too. `releaseCommitment`
+        // feeds both: the release-only subset AND the shared retirement total,
+        // and Base CLAMPS a reported release to the retired figure. A release
+        // that advanced only its own subset would break the
+        // `released <= retired` invariant and be clamped away on arrival --
+        // the mirror's availability would never be restored even though the
+        // local reservation had genuinely disappeared.
+        assertEq(
+            retiredAfter - retiredBefore,
+            released,
+            "a release advances the shared retirement total as well"
+        );
+
+        // Codex #1907 r1 — pin the bucket DELTA, not its direction. A mirror
+        // that credited the released share into the bucket on top of the
+        // legitimate fresh absorption would inflate its reported recycled
+        // availability for tokens that never left. The fresh portion is
+        // exactly what the sweep moved less what it released.
+        assertEq(
+            _cfg().getRecycleBucket() - bucketBefore,
+            swept - released,
+            "the bucket gains the FRESH share only, never the released one"
+        );
+        // Same rule one layer down: credited[D] feeds the trailing absorption
+        // average, so the released share must not reach it either.
+        assertEq(
+            _cfg().getRecycledCreditedByDay(today) - creditedBefore,
+            swept - released,
+            "credited[D] carries the fresh share only"
         );
     }
 
