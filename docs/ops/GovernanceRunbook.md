@@ -692,8 +692,10 @@ B explicitly permits. What still applies on the dark branch: `KEEPER_ROLE` on Ba
 half) **and on every dark mirror the Worker still resolves** — `KEEPER_ENABLED`
 runs the liquidity-confidence pass on each of them and submits the role-gated
 `setKeeperTier`, so a dark mirror without the role has its risk-tier updates
-reverting; Base funding (3d); the RL-4 readback (3f-bis); and `KEEPER_ENABLED`
-with its tail confirmation. **NOT 3c** — there is no Base→mirror
+reverting; Base funding (3d) **and native gas on every dark mirror the Worker resolves**,
+since the liquidity-confidence pass signs `setKeeperTier` there and an unfunded
+signer leaves those writes failing; the RL-4 readback (3f-bis); and
+`KEEPER_ENABLED` with its tail confirmation. **NOT 3c** — there is no Base→mirror
 remittance to authorize — and **not** `REWARD_COMMIT_ENABLED` or
 `REWARD_REMIT_ENABLED`, whose passes have no mirrors to serve.
 
@@ -865,7 +867,12 @@ describes the posture; this is where it gets checked, because Step 6 may be
 deferred past `D*`.
 
 **3g. Set and CONFIRM the master flags NOW, before the arm — they are not a
-step 5 item.** `KEEPER_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_REMIT_ENABLED`.
+step 5 item.** **`KEEPER_ENABLED` is not a reward flag**: turning it on resumes
+the matcher, the liquidator, the liquidity-confidence pass and the rest of the
+keeper's jobs on every resolved chain. If it is currently off — on a fresh
+deployment, or because of an incident — validate ALL of those passes before
+flipping it, not only the reward ones. This ceremony must not be the thing that
+silently restarts an unrelated subsystem. `KEEPER_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_REMIT_ENABLED`.
 These are secrets, and **secrets cannot be read back** — the API returns names
 only, so an unset, mis-cased or malformed value is indistinguishable from a
 correct one until a pass actually runs. One `wrangler tail` cycle is the
@@ -940,7 +947,11 @@ Pick `D*` several broadcast cycles beyond the **expected execution time**, and
 schedule/wait/execute as for any other Timelock action.
 
 **Re-run the volatile preflights immediately before EXECUTING, not only before
-scheduling.** The delay is long enough for the state Step 3 checked to move:
+scheduling — and that includes Steps 1 and 2.** `setFeeEntitlementEnabled(false)`
+executing after Step 2's scan lets subsequent canonical originations skip
+stamping again, so the clean scan goes stale and those loans enter `D*`
+uncapped. Re-read the entitlement flag and re-run the unstamped scan at
+execution, not only the balances and endpoints. The delay is long enough for the state Step 3 checked to move:
 keeper balances drain, an RPC or deployment artifact can be re-pointed, lane
 buckets deplete, the watcher can start failing, and a Worker flag can be changed
 by anyone with secret access. Balances, endpoint-and-Diamond identity, both
@@ -1008,6 +1019,15 @@ local pre-`D*` entries, it prices the day from `halfPoolForDay` — its own loca
 pool — not from the zero slice it was allotted, so the no-remit bootstrap opens
 it against a day it was never funded for. Where the mirror holds local entries,
 fund it before the broadcast rather than relying on the absent slice.
+
+**If the promoted mirror holds local pre-`D*` entries, there is no safe day to
+bootstrap it with, and you must fund it first.** It was excluded from every
+historical finalization, so no pre-`D*` day carries a slice for it, and a
+zero-slice destination cannot be remitted at all — the plan returns before
+setting a close and the remit reverts. Credit the mirror's local pool by the
+normal funding route BEFORE broadcasting the bootstrap day, or promote it only
+after its local entries have settled. Broadcasting first is the case this whole
+section exists to prevent.
 
 Confirm the day predates `D*` and has fully ELAPSED. **A lapse clock is NOT
 required here**: on a deployment armed before the V3 upgrade every pre-`D*` day
@@ -1094,7 +1114,11 @@ pay against a day it was never funded for. **Choose a day every destination was
 included in.** That is the only safe resolution, and it also avoids the
 `broadcastGlobalTo` restriction below.
 
-Treat a zero-total close as satisfying the wait for that destination: its
+**A pre-`D*` day cannot produce a zero-total close at all** — the plan returns
+before setting one and the remit reverts, so there is nothing to observe and
+nothing to treat as satisfied. The zero-close exception below applies to armed
+days; on the pre-`D*` propagation day, require a destination-inclusive day
+instead. Treat a zero-total close as satisfying the wait for that destination: its
 stamped payable budget is zero, so opening its gate funds nothing and strands
 nobody. Confirm the zero-total close in the emitted event rather than assuming
 it.
