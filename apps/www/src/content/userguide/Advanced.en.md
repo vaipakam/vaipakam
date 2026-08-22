@@ -2185,8 +2185,23 @@ When you unstake:
 The mirror's cache has a staleness threshold
 (`cfgMirrorTierMaxAgeSec`, default 60 days; min-floor of
 30 days enforced by the setter). If your tier hasn't been
-pushed in that long, the mirror falls back to "no discount"
-until a fresh push lands.
+pushed in that long, the mirror falls back to "no discount".
+
+**You cannot refresh an unchanged tier on demand.** The push
+button and `pokeMyTier()` only send when your
+`(tier, bps, expiry, version)` tuple has actually changed —
+an unchanged tuple is skipped, and nothing is broadcast. So
+an expired cache on a tier that hasn't moved is not something
+pressing the button fixes: the discount returns when a later
+broadcast carries an eligible changed tier, whether from your
+own next tier change or from any vault mutation that triggers
+a fresh rollup.
+
+There is deliberately no supported way to force a refresh
+otherwise. Repeatedly toggling a value to manufacture
+broadcasts would drain the protocol-funded cross-chain
+budget, and once that is exhausted legitimate broadcasts fail
+for everyone.
 
 ### Operator runbook — discount system maintenance
 
