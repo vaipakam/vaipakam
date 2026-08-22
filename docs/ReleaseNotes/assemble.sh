@@ -1820,12 +1820,12 @@ if (( ${#already[@]} > 0 )); then
     if [ -e "$_q" ] || [ -L "$_q" ]; then
       echo "Error: a set-aside file already exists at $_q_name." >&2
       echo "Nothing further will be consumed; move it aside and re-run." >&2
-      exit 1
+      _refuse_reporting_consumed
     fi
     if ! mv "$f" "$_q"; then
       echo "Error: could not set aside ${FRAG_NAME[$f]}." >&2
       echo "Nothing further will be consumed." >&2
-      exit 1
+      _refuse_reporting_consumed
     fi
     _rc=0
     _now="$(frag_hash "$_q")" || _rc=$?
@@ -1885,7 +1885,16 @@ if (( ${#pending[@]} == 0 )); then
   _still=()
   for _p in "$UNREL"/*.md; do
     case "$(basename "$_p")" in README.md | _TEMPLATE.md) continue ;; esac
-    case " ${HELD_PATHS[*]} " in *" $_p "*) continue ;; esac
+    # Element by element, not a flattened string (Codex #1863 r42).
+    # `${HELD_PATHS[*]}` joins with spaces, so a legal space in a
+    # filename made an unrelated path look held: a recreated `x.md` was
+    # skipped because `x.md held.md` was in the list, and the run said
+    # the pool was clear with new text pending.
+    _is_held=0
+    for _h in ${HELD_PATHS[@]+"${HELD_PATHS[@]}"}; do
+      if [ "$_h" = "$_p" ]; then _is_held=1; break; fi
+    done
+    if (( _is_held )); then continue; fi
     _still+=("$(basename "$_p")")
   done
   if (( ${#_still[@]} > 0 )); then
@@ -1985,7 +1994,7 @@ if [ -f "$OUT" ]; then
       echo "Refusing to assemble: this fragment could not be checked against" >&2
       echo "the existing file, and skipping that check silently is how a" >&2
       echo "duplicated section gets through." >&2
-      exit 1
+      _refuse_reporting_consumed
     fi
     if [ ! -s "$_head_file" ]; then rm -f "$_head_file"; continue; fi
     # Status, not just the boolean. As an `if` condition a grep ERROR
@@ -2016,7 +2025,7 @@ if [ -f "$OUT" ]; then
       echo "Error: could not normalise the heading of ${FRAG_NAME[$f]}." >&2
       echo "Refusing to assemble: skipping that check silently is how a" >&2
       echo "duplicated section gets through." >&2
-      exit 1
+      _refuse_reporting_consumed
     fi
     mv "$_head_file.n" "$_head_file"
     _out_n="$SNAP/out.normalised"
@@ -2025,7 +2034,7 @@ if [ -f "$OUT" ]; then
       echo "Error: could not normalise $(basename "$OUT") for comparison." >&2
       echo "Refusing to assemble: skipping that check silently is how a" >&2
       echo "duplicated section gets through." >&2
-      exit 1
+      _refuse_reporting_consumed
     fi
     run_checked 0,1 "checking $(basename "$OUT") for a repeated heading" \
       env LC_ALL=C grep -a -xF -f "$_head_file" "$_out_n"
@@ -2046,7 +2055,7 @@ if [ -f "$OUT" ]; then
     echo "Read that section of $(basename "$OUT") and then either:" >&2
     echo "  - it is already there  -> delete the fragment(s) by hand" >&2
     echo "  - it is a new section  -> re-run with --force-append" >&2
-    exit 1
+    _refuse_reporting_consumed
   fi
 
   if (( ${#suspect[@]} > 0 )); then
@@ -2129,7 +2138,7 @@ if [ -f "$OUT" ]; then
     echo "Error: could not read the owner of $(basename "$OUT")." >&2
     echo "Refusing to assemble: replacing it installs a new file, so the" >&2
     echo "current ownership has to be known before that is safe to do." >&2
-    exit 1
+    _refuse_reporting_consumed
   fi
   _og_rc=0
   out_gid="$(stat -c '%g' "$OUT" 2>/dev/null)" || _og_rc=$?
@@ -2141,7 +2150,7 @@ if [ -f "$OUT" ]; then
     echo "Error: could not read the group of $(basename "$OUT")." >&2
     echo "Refusing to assemble: replacing it installs a new file, so the" >&2
     echo "current group has to be known before that is safe to do." >&2
-    exit 1
+    _refuse_reporting_consumed
   fi
   # The GROUP matters as much as the owner (Codex #1863 r15). Outside a
   # setgid directory the temp inode takes the runner's primary group, so
@@ -2176,7 +2185,7 @@ if [ -f "$OUT" ]; then
     echo "Error: could not determine the group a new file here would take." >&2
     echo "Refusing to assemble: replacing the dated file installs a new" >&2
     echo "inode, so that group has to be known before it is safe." >&2
-    exit 1
+    _refuse_reporting_consumed
   fi
   if [ "$out_gid" != "$_new_gid" ]; then
     echo "Error: $(basename "$OUT") has group $out_gid; a new file here" >&2
@@ -2186,7 +2195,7 @@ if [ -f "$OUT" ]; then
     echo "renaming a new one over it, and the replacement takes that group —" >&2
     echo "so anyone who reaches the file through its current group would" >&2
     echo "quietly lose access." >&2
-    exit 1
+    _refuse_reporting_consumed
   fi
   # Compared against the owner recorded in the baseline, not a fresh read
   # (Codex #1863 r26). A file chowned to the runner for the duration of
@@ -2203,7 +2212,7 @@ if [ -f "$OUT" ]; then
     echo "and leave the current owner unable to change its permissions." >&2
     echo "Ask the owner to run the assembly, or take ownership deliberately" >&2
     echo "before re-running." >&2
-    exit 1
+    _refuse_reporting_consumed
   fi
   # GNU first, then BSD. If BOTH fail the mode is UNKNOWN, and falling
   # back to the new-file default would silently WIDEN an existing file —
@@ -2237,7 +2246,7 @@ else
     echo "Error: could not read the group of the replacement." >&2
     echo "Refusing to assemble: the published file's group has to be known" >&2
     echo "before it is installed." >&2
-    exit 1
+    _refuse_reporting_consumed
   fi
 fi
 
@@ -2351,7 +2360,7 @@ _abort_after_write() {
   echo "Everything still in $UNREL is either uncleared or set aside. Re-running" >&2
   echo "is safe: the markers in the dated file are how the next run recognises" >&2
   echo "what is already folded in." >&2
-  exit 1
+  _refuse_reporting_consumed
 }
 
 # Every set-aside destination is checked BEFORE publishing (Codex #1863
@@ -2433,7 +2442,13 @@ _final_gate() {
     # pool that gains the sticky bit during `_persist` skipped the guard
     # entirely, and the probe passed because the probe's own entry
     # belongs to the runner.
-    if [ -k "$UNREL" ] && [ ! -O "$_f" ] && [ ! -O "$UNREL" ]; then
+    # BOTH directories (Codex #1863 r42). The quarantine can be sticky
+    # independently of the pool — a mode-1777 `.assembled/` owned by
+    # someone else accepts the move and then forbids the removal, which
+    # fails after publication. The source restricts the unlink from the
+    # pool; the destination restricts the later unlink from quarantine.
+    if { [ -k "$UNREL" ] && [ ! -O "$_f" ] && [ ! -O "$UNREL" ]; } \
+       || { [ -k "$QDIR" ] && [ ! -O "$_f" ] && [ ! -O "$QDIR" ]; }; then
       echo "Error: ${FRAG_NAME[$_f]} is owned by someone else, and" >&2
       echo "$UNREL is sticky." >&2
       echo "" >&2
@@ -2453,7 +2468,7 @@ _final_gate() {
       echo "" >&2
       echo "Compare that file against the dated notes and remove it, or move" >&2
       echo "it elsewhere, then re-run." >&2
-      exit 1
+      _refuse_reporting_consumed
     fi
   done
   # The REPLACEMENT's own mode, re-read after the flush (Codex #1863

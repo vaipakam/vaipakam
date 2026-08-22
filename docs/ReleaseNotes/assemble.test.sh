@@ -765,6 +765,19 @@ out="$W/docs/ReleaseNotes"
 # coreutils is installed, and `timeout` then returns 127 without ever launching
 # the assembler — which a "not 124 means it returned" test reads as a pass
 # while exercising nothing (Codex #1863 r4). Skip loudly instead.
+# The checksum implementation the ASSEMBLER would pick, resolved once
+# (Codex #1863 r42). Four shims hard-coded /usr/bin/sha256sum. On stock
+# macOS that binary does not exist and the script uses `shasum -a 256`
+# instead — but planting a fake `sha256sum` makes the script's own
+# feature detection select the shim, which then fails at a nonexistent
+# absolute target. Those cases would exercise checksum-tool failure
+# rather than the fault they name, and at least one fails the suite. The
+# shims delegate to whatever is really there.
+REAL_SUM=""
+if command -v sha256sum >/dev/null 2>&1; then REAL_SUM="$(command -v sha256sum)"
+elif command -v shasum >/dev/null 2>&1; then REAL_SUM="$(command -v shasum) -a 256"
+fi
+
 TMO=""
 if command -v timeout >/dev/null 2>&1; then TMO=timeout
 elif command -v gtimeout >/dev/null 2>&1; then TMO=gtimeout
@@ -1805,7 +1818,7 @@ mkdir -p "$W/fakebin"
 cat > "$W/fakebin/sha256sum" <<SHIM
 #!/bin/sh
 if [ -f "$out/ReleaseNotes-2026-08-16.md" ]; then exit 3; fi
-exec /usr/bin/sha256sum "\$@"
+exec $REAL_SUM "\$@"
 SHIM
 chmod +x "$W/fakebin/sha256sum"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
@@ -2598,7 +2611,7 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 mkdir -p "$W/fakebin"
 cat > "$W/fakebin/sha256sum" <<SHIM
 #!/bin/sh
-/usr/bin/sha256sum "\$@"; _rc=\$?
+$REAL_SUM "\$@"; _rc=\$?
 if [ -f "$out/ReleaseNotes-2026-08-16.md" ] && [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   rm -f "$out/ReleaseNotes-2026-08-16.md"
@@ -2622,7 +2635,7 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 mkdir -p "$W/fakebin"
 cat > "$W/fakebin/sha256sum" <<SHIM
 #!/bin/sh
-/usr/bin/sha256sum "\$@"; _rc=\$?
+$REAL_SUM "\$@"; _rc=\$?
 # Fire while the OUTPUT is being hashed after publication, writing through to
 # the quarantined inode by its new path.
 if [ -f "$out/ReleaseNotes-2026-08-16.md" ] && [ ! -f "$W/fired" ]; then
@@ -2716,7 +2729,7 @@ git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
 mkdir -p "$W/fakebin"
 cat > "$W/fakebin/sha256sum" <<SHIM
 #!/bin/sh
-/usr/bin/sha256sum "\$@"; _rc=\$?
+$REAL_SUM "\$@"; _rc=\$?
 q="$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
 if [ -f "\$q" ] && [ ! -f "$W/fired" ]; then
   : > "$W/fired"
@@ -3261,6 +3274,50 @@ check "it says which one"      "$(says "$msg" 'could not remove')"              
 check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
 check "it does not claim nothing went" \
   "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')"  "0"
+
+echo "T119: every pre-rename exit reports what already went"
+W="$ROOT/t119"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A quarantine collision after an earlier recovery removal exited directly,
+# bypassing the shared reporter — the FIFTH missed call site (Codex #1863 r42).
+# Rather than fix one more, every bare exit between the recovery loop and the
+# rename now routes through it; this asserts that structurally as well as
+# behaviourally, because a sixth would otherwise be found the same way.
+check "no bare exits remain in that region" \
+  "$(awk '/removing without re-appending/,/^mv "\$WORK" "\$OUT"$/' "$out/assemble.sh" \
+     | grep -cE '^[[:space:]]*exit 1[[:space:]]*$')"                          "0"
+# Behaviourally: two fragments recover, the second collides.
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
+printf 'squatter\n' > "$W/docs/ReleaseNotes/unreleased/.assembled/0002-b.md"
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"              "$?"                                        "1"
+check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
+
+echo "T120: a held path with a space does not mask a recreated fragment"
+W="$ROOT/t120"; build "$W"
+out="$W/docs/ReleaseNotes"
+# `${HELD_PATHS[*]}` joins with spaces, so a legal space in a filename made an
+# unrelated path look held: a recreated `x.md` was skipped because
+# `x.md held.md` was in the list (Codex #1863 r42).
+# Non-comment lines only: the note explaining the fix quotes the old form, and
+# matching it made this assertion fail against the fixed script.
+check "membership is compared element-wise" \
+  "$(grep -v '^[[:space:]]*#' "$out/assemble.sh" | grep -c 'HELD_PATHS\[\*\]')"  "0"
+check "and by exact match" \
+  "$(grep -c 'if \[ "\$_h" = "\$_p" \]' "$out/assemble.sh")"                   "1"
+
+echo "T121: the sticky check covers the quarantine directory too"
+W="$ROOT/t121"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The quarantine can be sticky independently of the pool — a mode-1777
+# `.assembled/` owned by someone else accepts the move and then forbids the
+# removal, which fails after publication (Codex #1863 r42).
+check "both directories are tested" \
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -cF '[ -k "$QDIR" ]')" "1"
+check "the pool is still tested" \
+  "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -cF '[ -k "$UNREL" ]')" "1"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
