@@ -614,7 +614,13 @@ spend a borrower's collateral. This is a fund-safety gate, not an accounting one
   components will not fit the un-earmarked balance. It **reverts rather than
   truncating** on purpose: `backingRoom` rises when a remit lands, so truncating
   would delete value that was about to become payable.
-- **The fund-safety half is #1566, and it is OPEN.** Do not arm until it closes.
+- **The fund-safety half is #1566, and it is OPEN.** Do not arm until it closes
+  — and **not until the fix is DEPLOYED on every Diamond you are arming.** Issue
+  closure is not an on-chain safeguard: the arming setter checks authorization,
+  canonical role, one-shot state and the future day, and nothing about which
+  implementation is routed. A merged fix on an un-refreshed Diamond leaves the
+  vulnerable claim path live. Assert the deployment, per chain, the same way the
+  other code-slice gates in this section are asserted.
 
 > **#1498 is not the card to check.** It reads `closed / completed` and was the
 > original number for this work; #1555's `Closes #1498` fired when only the
@@ -718,18 +724,24 @@ whoever maintains the deployment artifacts can be missing the same chain the
 keeper is missing, and then the preflight passes while Base waits for a report
 from a chain nobody has noticed is absent.
 
-**The two getters cover different sets, and comparing against both as one list
-can never pass.** The keeper resolves Base *and* the mirrors;
-`getExpectedSourceChainIds()` on Base is the full reward-chain list, while the
-messenger's `getBroadcastDestinations()` holds **mirrors only** — canonical is
-filtered out when it is configured. So:
+**Check CONTAINMENT, not equality, and check it in one direction only.** The
+defect is a chain the keeper cannot see; an extra chain it can see is harmless.
+Equality fails on correct configurations for two independent reasons — the two
+getters cover different sets (`getExpectedSourceChainIds()` is the full
+reward-chain list, the messenger's `getBroadcastDestinations()` holds **mirrors
+only**, canonical filtered out), and the Worker binds both mainnet and testnet
+RPC families, so a correctly configured keeper legitimately resolves chains
+outside this Diamond's mesh.
 
-- the keeper's **full** resolved set must equal `getExpectedSourceChainIds()`;
-- the keeper's resolved set **minus canonical Base** must equal
-  `getBroadcastDestinations()`.
+So, against **this** Diamond's mesh:
 
-Then confirm each resolved endpoint's `eth_chainId` matches the id it is filed
-under. All of this BEFORE the arm.
+- every id in `getExpectedSourceChainIds()` must be **present** in the keeper's
+  resolved set;
+- every id in `getBroadcastDestinations()` must be **present** there too;
+- and each of those resolved endpoints must return a matching `eth_chainId`.
+
+Extra resolved chains from another environment are not a failure. A missing one
+is. All of this BEFORE the arm.
 
 **3c. Authorize the Base remittance signer — a SEPARATE authorization, and easy
 to miss.** `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
@@ -802,6 +814,14 @@ missing; it is never an instruction to disable a running one.
 RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)   # ADMIN_ROLE, canonical only
 ```
 
+**Read back that the D1 share-of-pool cap (M2 PR-2) is live on this Diamond
+first.** The setter checks authorization, canonical role, one-shot state and a
+future day — and nothing else. At `D*` the reward path switches to ShareOfPool,
+and on a partial or stacked Diamond that has the PR-3c setter but not PR-2, that
+switch happens with the required `(user, side, day)` cap absent. The joint
+cutover gate is PR-2 **and** PR-5c; step 1 covers PR-5c and PR-6, this covers
+PR-2.
+
 This single Base call **is** the `D*` cutover. It is:
 
 - **one-shot** — a second call reverts `GovernorAlreadyArmed`;
@@ -827,6 +847,9 @@ value.
 
 ### Step 5 — DRIVE the propagation and verify it
 
+(For the RL-3 horizon knob that completes M7, see Step 6 — it is deliberately
+separate and separately gated.)
+
 **Arming sends nothing, and nothing sends it for you.** The setter writes Base
 storage and emits its event; mirrors learn `D*` only from a day broadcast. On the
 documented operating path there is **no deployed daemon that finalizes a day and
@@ -836,9 +859,26 @@ mirrors to show `D*` can wait until the cutover day arrives with every mirror
 still unarmed.
 
 After arming, drive the cycle explicitly: finalize a day that has not yet been
-applied on the mirrors, **remit that day to every destination first**, and only
-then call the payable `broadcastGlobal` (or `broadcastGlobalTo` per destination)
-and pay the transport fee.
+applied on the mirrors, **remit that day to every destination and wait for each
+mirror to CONFIRM receipt**, and only then call the payable `broadcastGlobal` (or
+`broadcastGlobalTo` per destination) and pay the transport fee.
+
+**That first propagation day must be strictly BEFORE `D*`, or the ceremony
+deadlocks — after the irreversible arm.** An armed-day remit is refused until
+that mirror's commitment report is complete; the keeper's report returns early
+while the mirror's `armedFromDay` is still zero; and the mirror learns `D*` only
+from the broadcast this step performs after remitting. Remit waits on the
+report, the report waits on `D*`, `D*` waits on the broadcast, the broadcast
+waits on the remit. Choosing a pre-`D*` day breaks the cycle, because a pre-`D*`
+remit does not need the report. **Confirm such a day will still be available
+when you execute** — this is another reason `D*` needs a real buffer beyond
+execution.
+
+**Source order is not delivery order.** The messenger sets
+`allowOutOfOrderExecution: true`, so sending the remit first does not guarantee
+it ARRIVES first — and it is the arrival that funds the mirror, while the
+broadcast opens its claim gate. Wait for each mirror's `RewardBudgetReceived`
+before broadcasting to it, rather than treating the send order as sufficient.
 
 The remit-first order is not a preference. The broadcast **opens the mirror's
 claim gate**, and it does so independently of the keeper's remittance cron — so a
@@ -865,6 +905,34 @@ without all three leaves reports and acks inert and stalls multi-chain funding,
 and that is not something to discover once `D*` is immutable. Re-check the tail
 here only to confirm the armed-day passes are running against the new state.
 
+
+### Step 6 — the RL-3 horizon knob (M7.2), separately gated
+
+```
+ConfigFacet.setRewardClaimHorizonDays(<days>)      # ADMIN_ROLE
+```
+
+**It defaults to zero, and zero means the expiry/sweep path is dark.** A
+ceremony that stops at Step 5 leaves it that way — which is a coherent state,
+but an operator who marks recycling "activated" without noticing will believe
+RL-3 is live when nothing sweeps.
+
+It is separate from Steps 1-5 on purpose: it carries **its own** preconditions,
+and setting it ad hoc later is how those get skipped. All of them must be
+verified live first:
+
+- **both** ratified RL-3 UX safeguards — the free-channel pre-expiry notice in
+  the in-app notification centre **and** the claim-centre countdown surface.
+  Notice alone does not satisfy the ratified safeguard: a user has to be able to
+  see when claimable rewards become terminally sweepable;
+- the **same mesh gate as arming** — rewards Base-only / dark on mirrors, OR M3
+  complete. Mirror expiry credits land in local buckets Base can neither count
+  nor consume until B′, so activating across an incomplete mesh strands them;
+- **#1499's shared definition**, which is why the sweep and the claim gate must
+  measure the same quantity — see Gate A.
+
+The setter range-checks a non-zero value against the configured minimum, so a
+too-short horizon reverts rather than silently truncating a user's window.
 
 ## Testnet rehearsal
 
