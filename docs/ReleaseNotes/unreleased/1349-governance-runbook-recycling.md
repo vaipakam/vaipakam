@@ -28,4 +28,17 @@ why the closed one is not evidence. Anyone verifying this gate by opening the
 card the documents used to name would have read a green label over an open
 fund-safety defect.
 
+**Review then found three ways the first draft would have stranded an
+operator mid-ceremony**, all of them about order rather than fact. Every piece
+of keeper preparation now comes before the irreversible step, because none of it
+can be redone afterwards — the day being switched on cannot be moved once it is
+named. One authorization was missing outright: the address that sends funding
+from the main chain has to be approved for that specifically, and the approvals
+covering the other chains do not include it, so an operator following the first
+draft would have finished the ceremony and then watched every funding send be
+refused. And the day chosen has to be counted from when the switch-on actually
+happens, not from when it is requested — on a live deployment those are two days
+apart by design, which was enough to consume the whole safety margin the step
+exists to provide.
+
 Nothing about how the platform behaves changed here.

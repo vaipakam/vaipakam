@@ -588,13 +588,18 @@ the current Governance Safe:
 ## VPFI recycling — activation ceremony (M7)
 
 One-time, cross-chain, and **partly irreversible**. Read the gates before
-scheduling anything: two of the steps below cannot be undone once they land, and
-one of them is a single Base transaction that commits every chain.
+scheduling anything: the arming call cannot be undone, cannot be repeated, and
+cannot be postponed once the day it names arrives.
 
 Sourced from `docs/DesignsAndPlans/VpfiRecyclingCompletionPlan.md` §M7 and
-verified against the contracts at the time of writing. Where the two disagreed,
-the contracts won and the plan is being corrected — see the note on the backing
-gate below.
+verified against the contracts. Where the two disagreed, the contracts won.
+
+**Order matters, and it is not the order the plan reads in.** Every keeper-side
+prerequisite comes BEFORE the arming call. Arming is a one-shot write that names
+a future day; if a role grant, a balance, or a lane limit turns out to be wrong
+afterwards, governance cannot move `D*` and the affected mirrors' claims stay
+halted until the setup is repaired. Nothing below the arm is recoverable by
+re-arming, so nothing that can fail belongs after it.
 
 ### Gate A — backing separation (NOT yet discharged)
 
@@ -611,11 +616,12 @@ spend a borrower's collateral. This is a fund-safety gate, not an accounting one
   would delete value that was about to become payable.
 - **The fund-safety half is #1566, and it is OPEN.** Do not arm until it closes.
 
-> **Do not verify this gate by opening #1498.** It reads `closed / completed` and
-> is not. It was auto-closed by #1555's `Closes #1498` when #1555 landed only the
-> de-duplication half of the work; its own last comment records that close as
-> wrong and re-files the fund-safety half as #1566. The completion plan still
-> points at #1498 here. Follow #1566.
+> **#1498 is not the card to check.** It reads `closed / completed` and was the
+> original number for this work; #1555's `Closes #1498` fired when only the
+> de-duplication half landed, and the fund-safety half was re-filed as #1566.
+> The completion plan and `LibVpfiRecycle`'s natspec both name #1566 now. If you
+> arrive at #1498 from an older document, its green label is an artifact of that
+> mis-scoped close, not evidence.
 
 ### Gate B — arming preconditions
 
@@ -627,37 +633,96 @@ M1b live (absorption has a live feed) **AND** one of:
 The dark-mirror branch does not require #1434. Only the M3 branch carries the
 settlement-reachability condition. Gate A constrains **both** branches.
 
-### Chain-side sequence — the ORDER is load-bearing
-
-**1. Enable the fee entitlement first.**
+### Step 1 — enable the fee entitlement (chain-side, before the scan)
 
 ```
 ConfigFacet.setFeeEntitlementEnabled(true)      # ADMIN_ROLE
 ```
 
-While this is off, plain canonical originations skip Full-tariff stamping, so any
+Post-handover this is a Timelock action: Safe schedules, wait the delay, execute.
+
+While it is off, plain canonical originations skip Full-tariff stamping, so any
 loan accepted between a clean unstamped-scan and enablement rejoins the unstamped
 class and invalidates the scan. Enabling first means every subsequent origination
 stamps itself and the scan result cannot be overtaken by new loans.
 
-**2. Zero the unstamped reward-eligible canonical loans, and read back zero.**
+### Step 2 — zero the unstamped reward-eligible canonical loans
 
 On armed days the legacy cap retires and the loan-side cap deliberately skips an
 **unstamped** loan, so any reward-eligible canonical loan still open and unstamped
 at `D*` earns **uncapped**. Enumerate open reward-eligible canonical loans with
-`openDays == 0` and resolve each.
+`openDays == 0`, resolve each, and read back **zero unresolved**.
 
-**There is no backfill surface.** Stamping runs only at origination; no admin or
-migration path stamps an existing loan. The supported resolutions are the
-enable-first ordering above (which prevents new members of the class) and
-**waiting for close** — or a voluntary close and re-open — for existing ones. A
-true backfill needs a migration card that does not yet exist.
+**There is no backfill surface.** Stamping runs only at origination —
+`chargeFullTariff` is `address(this)`-gated with `OfferAcceptFacet` its only
+caller — and no admin or migration path stamps an existing loan. The supported
+resolutions are the enable-first ordering above (which prevents new members of
+the class) and **waiting for close**, or a voluntary close and re-open, for
+existing ones. A true backfill needs a migration card that does not yet exist.
 
 On a pre-live mainnet genesis, enabling and arming together makes this set empty
 by construction. The readback is still the gate; any testnet rehearsal or
 post-launch `D*` will have such loans.
 
-**3. Arm, with a multi-day propagation buffer.**
+### Step 3 — complete EVERY keeper prerequisite (still before the arm)
+
+**3a. Apply the D1 migrations** — from `apps/indexer/`:
+
+```
+wrangler d1 migrations apply vaipakam-archive --remote
+```
+
+covering `0043_keeper_commitment_scan.sql` and `0044_keeper_remit_ack.sql`.
+
+**3b. Grant `KEEPER_ROLE` to the keeper EOA on EVERY mirror Diamond.**
+`submitCommitmentBatch` is mirror-only (`_assertMirror`) and role-gated. Granting
+on Base alone, or missing one mirror, leaves that mirror's commitment pass
+reverting forever: its report never completes and the remit gate stalls that
+chain's funding.
+
+**3c. Authorize the Base remittance signer — a SEPARATE authorization, and easy
+to miss.** `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
+`_checkRemitter` admits only an `ADMIN_ROLE` holder or the address stored as
+`rewardRemittanceKeeper`. A least-privilege keeper EOA is neither by default, and
+the mirror-side `KEEPER_ROLE` grants of 3b do **not** cover it:
+
+```
+RewardRemittanceFacet.setRewardRemittanceKeeper(<keeper EOA>)   # ADMIN_ROLE, on Base
+```
+
+Read the value back before proceeding. Skip this and commitment reports complete
+normally while **every** Base→mirror remit reverts `NotRewardRemitter`, so mirror
+claims stay unfunded — a failure that looks like a funding problem and is a
+permissions one.
+
+**3d. Fund the keeper EOA on every mirror AND on Base.** Mirrors need gas for
+`submitCommitmentBatch` plus the quoted native CCIP fee for
+`sendCommitmentReport` / `sendRemitAck`. **Base needs gas and the CCIP
+`msg.value` fee for every Base→mirror `remitRewardBudget` send** — the remit is
+submitted from the canonical chain, so an unfunded Base EOA lets commitment
+reports complete while every reward-budget send fails. Read balances back per
+chain, **including Base**.
+
+**3e. Raise BOTH capacity limits, and understand that only one of them is the
+keeper's.** The keeper excludes a day whose eligible slice exceeds
+`REWARD_REMIT_LANE_CAP` — its own configured value — and logs that exclusion.
+**It does not read the on-chain CCIP token-bucket capacity at all.** So a lane
+cap configured above the live bucket capacity does not produce an exclusion: the
+oversized send is planned, dispatched, and **rejected by the rate limiter
+on-chain**. The two limits must be raised together, and the 50,000-VPFI default
+bucket capacity can sit below an early high-concentration daily slice. Read back
+each destination's bucket capacity *and* the keeper lane cap against the largest
+supported single-day slice (#918).
+
+**3f. Deploy `ops/mesh-watcher`.** It reads every reward chain's recycled ledger
+and alerts on the commitment invariants, and it is code-complete but
+**undeployed** — D1 creation, secrets and the first deploy are operator steps in
+its README. Do this before arming, not after: arming is when the invariants it
+watches start moving.
+
+Leave the master flags OFF for now — they are step 5.
+
+### Step 4 — arm, sized from EXECUTION time
 
 ```
 RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)   # ADMIN_ROLE, canonical only
@@ -666,10 +731,19 @@ RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)   # ADMIN_ROLE, canonica
 This single Base call **is** the `D*` cutover. It is:
 
 - **one-shot** — a second call reverts `GovernorAlreadyArmed`;
-- **future-day-only** — `dayId <= today` reverts `GovernorArmingDayNotFuture`, so
-  no already-stamped day flips semantics retroactively;
+- **future-day-only** — `dayId <= today` reverts `GovernorArmingDayNotFuture`;
 - **canonical-only** — there is no per-chain `D*` administration, and a call on a
   mirror reverts.
+
+**`D*` must be measured from when the call EXECUTES, not from when you schedule
+it.** Post-handover this is an `ADMIN_ROLE` action and therefore goes through the
+Timelock: Safe schedules, the delay elapses, then someone executes. The contract
+evaluates `dayId <= today` **at execution**. So a `D*` chosen a few broadcast
+cycles from the scheduling moment either reverts on execution because the day has
+already arrived, or lands with most of its propagation buffer already spent.
+
+Pick `D*` several broadcast cycles beyond the **expected execution time**, and
+schedule/wait/execute as for any other Timelock action.
 
 The setter writes Base storage and emits `GovernorCommitArmed`. **It sends
 nothing itself.** A mirror learns `D*` in-band, when the first *not-yet-applied*
@@ -677,62 +751,23 @@ finalized day's broadcast reaches it after arming — a replay of an
 already-applied day exits through the idempotency branch without installing the
 value.
 
-Because the call is irreversible the moment it lands while `D*` may legally be
-`today + 1`, choose `D*` several broadcast cycles out.
+### Step 5 — verify propagation, then arm the worker flags
 
-**4. Read `D*` back on every mirror, well before it arrives.**
+Read `D*` back on every mirror, with days to spare:
 
 ```
 RewardAggregatorFacet.getGovernorCommitState()   # → (armedFromDay, outstandingFresh, outstandingRecycled, paidOutRecycled)
 ```
 
-`armedFromDay` is `0` while unarmed. Confirm the expected `D*` on **each** mirror
-with days to spare, and have the contingency written down before you arm:
-governance **cannot postpone `D*`**, so a mirror that misses it keeps its claims
-halted until CCIP delivery recovery or manual re-execution restores the
-broadcast.
+`armedFromDay` is `0` while unarmed. Governance **cannot postpone `D*`**, so have
+the contingency written down before you arm: a mirror that misses the day keeps
+its claims halted until CCIP delivery recovery or manual re-execution restores
+the broadcast.
 
-### Keeper-side sequence
+Then arm the master flags **together** — `KEEPER_ENABLED`,
+`REWARD_COMMIT_ENABLED`, `REWARD_REMIT_ENABLED`. Arming a chain without all three
+leaves reports and acks inert and stalls multi-chain funding.
 
-**1. Apply the D1 migrations** — from `apps/indexer/`:
-
-```
-wrangler d1 migrations apply vaipakam-archive --remote
-```
-
-covering `0043_keeper_commitment_scan.sql` and `0044_keeper_remit_ack.sql`.
-
-**2. Grant `KEEPER_ROLE` to the keeper EOA on EVERY mirror Diamond.**
-`submitCommitmentBatch` is mirror-only and role-gated. Granting on Base alone, or
-missing one mirror, leaves that mirror's commitment pass reverting forever: its
-report never completes and the remit gate stalls that chain's funding.
-
-**3. Fund the keeper EOA on every mirror AND on Base.** Mirrors need gas for
-`submitCommitmentBatch` plus the quoted native CCIP fee for
-`sendCommitmentReport` / `sendRemitAck`. **Base needs gas and the CCIP
-`msg.value` fee for every Base→mirror `remitRewardBudget` send** — the remit is
-submitted from the canonical chain, so an unfunded Base EOA lets commitment
-reports complete while every reward-budget send fails and mirror claims stay
-unfunded. Read balances back per chain, **including Base**.
-
-**4. Preflight the lane capacity before enabling the flags.** The keeper excludes
-any day whose eligible slice exceeds `REWARD_REMIT_LANE_CAP` or the CCIP
-token-bucket capacity, and retries cannot fund it until the limits are raised.
-The default 50,000-VPFI bucket capacity can sit below an early
-high-concentration daily slice. Read back that each destination's bucket capacity
-**and** the keeper lane cap clear the largest supported single-day slice.
-
-**5. Arm the master flags together** — `KEEPER_ENABLED`,
-`REWARD_COMMIT_ENABLED`, `REWARD_REMIT_ENABLED`. Arming a chain without all
-three leaves reports and acks inert and stalls multi-chain funding.
-
-### After arming
-
-`ops/mesh-watcher` reads every reward chain's recycled ledger and alerts on the
-commitment invariants. It is code-complete and **undeployed** — D1 creation,
-secrets and the first deploy are operator steps in its README, and they are worth
-completing *before* arming rather than after, since arming is when the invariants
-it watches start moving.
 
 ## Testnet rehearsal
 
