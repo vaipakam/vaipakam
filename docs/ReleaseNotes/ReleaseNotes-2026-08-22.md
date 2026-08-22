@@ -1,6 +1,6 @@
 # Release Notes — 2026-08-22
 
-A long day, and the entries fall into four kinds rather than a sequence — this
+A long day, and the entries fall into a few kinds rather than a sequence — this
 summary names the kinds, because an intro that counts entries or points at "the
 last two" goes stale the moment another one lands, which has already happened to
 this file twice.
@@ -15,50 +15,35 @@ introduced by the earlier fixes, not on the original mistake. Replacing a claim
 that is too general with another claim that is too general is not progress.
 
 **Changes to the platform.** Two contract entries, one of which changes what a
-buyer can do, plus an app change that stops asking people to sign before it knows
-the answer.
+buyer can do, plus an app change that stops asking people to sign before it knows the answer —
+where the deployment can tell it. Older Diamonds that do not route the preview
+call are deliberately allowed through unchanged, so the improvement is real but
+not universal.
 
 **Work written down rather than shipped.** A design note that re-scopes a
 reward-payout safety gap without closing it, and the activation ceremony for the
 recycling programme, which existed only as scattered prose until now.
 
+**Tooling.** The assembler that produces these files could duplicate entries if
+it was interrupted partway; it no longer can.
+
 **And one investigation that ended in nothing being wrong** — a reported stuck
 state turned out to be unreachable. Worth publishing, since "we looked and it
 cannot happen" is a result.
 
-On the first of those corrections: a cross-chain pause on reward claims was lifted some time ago, and the
-documentation went on describing it as standing — across the specification, the
-design records, the test suite and the contract comments. The specification is
-the document the platform's behaviour is meant to be checked against, so a reader
-following it would have concluded that correct behaviour was a defect. How many
-places is deliberately not stated; the entry explains why, and that reasoning
-applies to this summary of it too. Most of the work went into the pause's
-REPLACEMENT rather than its retraction — what stands in its place is a set of
-per-day waits, and the early attempts to describe them were confidently wrong
-about which deadline applies to which day, about what "compensated" means, and
-about who can end a wait.
+The largest of the corrections is worth a note here, because the shape of it
+recurs. A cross-chain pause on reward claims was lifted some time ago and the
+documentation went on describing it as standing — including the specification,
+which is the document the platform's behaviour is meant to be checked against, so
+a reader following it would have concluded that correct behaviour was a defect.
+Most of the work went into the pause's REPLACEMENT rather than its retraction:
+what stands in its place is a set of per-day waits, and the early attempts to
+describe them were confidently wrong about which deadline applies to which day,
+about what "compensated" means, and about who can end a wait.
 
-The second is the assembler that produces these files, which could duplicate
-entries if it was interrupted partway.
-
-The third corrects a published note from earlier this month that described a
-payout formula that was never right — and is worth reading beside the first,
-because the two share a lesson. Both were fixed more than once, and in both cases
-the later rounds were spent on errors introduced by the earlier fixes rather than
-on the original mistake. Replacing a claim that is too general with another claim
-that is too general is not progress, and it is what happened here twice before it
-was noticed.
-
-After those, a design note re-scopes a reward-payout safety gap: the part that
-looked closed turns out to be evadable, so what remains is differently shaped
-rather than smaller. It is worth reading for what it decided NOT to do.
-
-The two contract entries close the day. The first makes the accept path
-changeable again: it had reached its size limit, and splitting it was a
-prerequisite rather than an improvement in itself. The second is the only entry
-here that a user can notice — a sale listing that no longer describes the
-position it sells is now refused at purchase instead of completing, and the
-reason given is the one that can actually be acted on.
+A published payout formula corrected here shares that lesson, and so does the
+guide entry. In each case the later rounds went on errors introduced by the
+earlier fixes rather than on the original mistake.
 
 ## The documentation caught up with a pause that had already been lifted (#1222)
 
