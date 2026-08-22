@@ -181,8 +181,10 @@ Diamond it cannot find what it is meant to protect.** `fallbackSnapshot` and
 new counter cannot discover existing `vpfiHeld`, `rebateAmount` or fallback
 custody on-chain. Writers started at upgrade time reserve **zero** for precisely
 the grandfathered balances this option exists to protect. Any costing must
-include an aggregation mechanism — an off-chain enumeration whose PRODUCERS ARE
-FROZEN across it — pausing intent creation and fallback snapshotting from before
+include an aggregation mechanism — an off-chain enumeration whose PRODUCERS AND
+CONSUMERS ARE BOTH FROZEN across it — reward claims paused as well as intent
+creation and fallback snapshotting, because a pre-`D*` claim executing after the
+snapshot but before the reserve is live transfers the very tokens being counted — pausing intent creation and fallback snapshotting from before
 the enumeration's block until the writers are live. Atomicity with the upgrade is
 not sufficient on its own: the enumeration necessarily observes an earlier block,
 so a loan can open an intent or take a snapshot between that block and the
@@ -214,8 +216,15 @@ analysed-and-rejected step, not as a candidate: it does not satisfy the
 fund-safety invariant, so presenting it as one of the choices would offer an
 owner something that cannot close the card.
 
-**This note does not pick between the three.** A and B differ in what the platform promises;
-C narrows the goal. That is an owner call.
+**This note does not pick between the three.** **B** establishes
+"bounded by what was set aside" inside the shared balance, at the cost of a new
+invariant, five writers to reconcile and a migration. **C** narrows the goal to
+the user-owned classes and accepts an operational — and, on a Diamond-as-treasury
+deployment, a payroll — exposure, at the cost of an aggregation it cannot perform
+without a frozen migration. **D** removes the ownership question entirely by
+holding reward funding outside the shared balance, at the cost of being the
+largest change and having to re-home remittance, expiry and forfeit routing. That
+is an owner call, and it is a three-way one.
 
 ## 5. What is true regardless of the option
 
