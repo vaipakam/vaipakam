@@ -1544,8 +1544,8 @@ out="$W/docs/ReleaseNotes"
 # exists to close, so an edit arriving during it was validated as absent and
 # overwritten anyway. Shimming `sync` puts the edit exactly there.
 printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
@@ -1553,8 +1553,8 @@ if [ ! -f "$W/fired" ]; then
 fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/flush"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                     "1"
 check "no fragment consumed"   "$(pending "$W")"                        "2"
 check "it says what happened"  "$(says "$msg" 'changed while this run')"  "1"
@@ -1747,16 +1747,16 @@ out="$W/docs/ReleaseNotes"
 # the fragments — the only other copy — were deleted on the strength of bytes
 # nothing had looked at since, so a dated file removed during the flush took
 # them both (Codex #1863 r20). The sync shim fires on the post-rename flush.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 if [ -f "$out/ReleaseNotes-2026-08-16.md" ]; then
   rm -f "$out/ReleaseNotes-2026-08-16.md"
 fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/flush"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run fails"            "$?"                                   "1"
 check "it says it is gone"       "$(says "$msg" 'gone or altered')"      "1"
 check "the fragments survive"    "$(pending "$W")"                       "2"
@@ -2910,8 +2910,8 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # copy elsewhere: content matches, fragments are consumed, and the release-note
 # path ends up pointing outside the repository — so the `git add` this script
 # prints would not commit the assembled bytes at all (Codex #1863 r33).
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 f="$out/ReleaseNotes-2026-08-16.md"
 if [ -f "\$f" ] && [ ! -L "\$f" ] && [ ! -f "$W/fired" ]; then
@@ -2922,8 +2922,8 @@ if [ -f "\$f" ] && [ ! -L "\$f" ] && [ ! -f "$W/fired" ]; then
 fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/flush"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run fails"            "$?"                                        "1"
 check "it says what changed"     "$(says "$msg" 'no longer a regular file')"  "1"
 # By CONTENT: the abort happens after the fragment is set aside, and `pending`
@@ -3001,8 +3001,8 @@ out="$W/docs/ReleaseNotes"
 # The startup probe answers for startup. A mode change during `_persist` —
 # slow by design — left the gate passing on a directory the set-aside move
 # would be refused by, after publication (Codex #1863 r34).
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
@@ -3010,11 +3010,11 @@ if [ ! -f "$W/fired" ]; then
 fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
+chmod +x "$W/hooks/flush"
 if [ "$(id -u)" = "0" ]; then
   skip "root writes through mode bits (CI runs it)"
 else
-  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"          "$?"                                        "1"
   check "nothing was published" \
     "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
@@ -3112,8 +3112,8 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # rather than checking it is what was constructed — so $WORK altered during the
 # deliberately slow `_persist` was published and then vouched for by its own
 # digest, with the fragment consumed on the strength of it (Codex #1863 r36).
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   for a in "\$@"; do
@@ -3127,8 +3127,8 @@ if [ ! -f "$W/fired" ]; then
 fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/flush"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run fails"          "$?"                                          "1"
 # r46 moved the catch EARLIER, and this assertion moved with it. The gate now
 # compares the replacement's content before the rename, so this substitution is
@@ -3151,8 +3151,8 @@ out="$W/docs/ReleaseNotes"
 # (Codex #1863 r36).
 check "the source is probed too" \
   "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -cF 'UNREL/.probe')" "1"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
@@ -3160,11 +3160,11 @@ if [ ! -f "$W/fired" ]; then
 fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
+chmod +x "$W/hooks/flush"
 if [ "$(id -u)" = "0" ]; then
   skip "root writes through mode bits (CI runs it)"
 else
-  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"         "$?"                                        "1"
   check "nothing was published" \
     "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
@@ -3178,8 +3178,8 @@ out="$W/docs/ReleaseNotes"
 # at $WORK, and the post-rename readback compares content only — so a mode
 # change during `_persist` published a widened file and consumed the fragments
 # (Codex #1863 r37).
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   for a in "\$@"; do
@@ -3190,8 +3190,8 @@ if [ ! -f "$W/fired" ]; then
 fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/flush"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                        "1"
 check "no fragment consumed"   "$(pending "$W")"                           "2"
 check "it names the change"    "$(says "$msg" "replacement's mode changed")" "1"
@@ -3238,8 +3238,8 @@ out="$W/docs/ReleaseNotes"
 # blocked FOREVER with the real dated file already gone (Codex #1863 r38).
 # A hang after publication is the worst outcome this script has — it cannot
 # even report.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   for a in "\$@"; do
@@ -3254,7 +3254,7 @@ if [ ! -f "$W/fired" ]; then
 fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
+chmod +x "$W/hooks/flush"
 # A timeout, so a regression reports a failure instead of hanging the suite —
 # routed through the same `$TMO` selection T25 uses (Codex #1863 r39). Hard-
 # coding `timeout` returns 127 on stock macOS, where it is absent and
@@ -3263,7 +3263,7 @@ chmod +x "$W/fakebin/sync"
 if [ -z "$TMO" ]; then
   skip "no timeout(1) available, and this case can hang"
 else
-  msg="$(PATH="$W/fakebin:$PATH" "$TMO" 60 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" "$TMO" 60 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   rc=$?
   check "it did not hang"      "$([ "$rc" = "124" ] && echo hung || echo ok)"  "ok"
   check "the run stops"        "$rc"                                          "1"
@@ -3326,8 +3326,8 @@ check "the approved group is recorded for new outputs" \
   "$(grep -c 'APPROVED_GID="\$GID_READ"' "$out/assemble.sh")"               "1"
 check "the gate compares unconditionally" \
   "$(awk '/^_final_gate\(\) \{/,/^\}/' "$out/assemble.sh" | grep -c 'APPROVED_GID')" "2"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   for a in "\$@"; do
@@ -3338,9 +3338,9 @@ if [ ! -f "$W/fired" ]; then
 fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
+chmod +x "$W/hooks/flush"
 if [ "$(id -u)" = "0" ]; then
-  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"        "$?"                                          "1"
   check "it names the change"  "$(says "$msg" "replacement's group changed")"  "1"
   check "nothing was published" \
@@ -3500,8 +3500,8 @@ out="$W/docs/ReleaseNotes"
 # run, which is the window the finding names: `_persist` is the long operation
 # sitting between the startup check and the rename.
 REAL_STAT="$(command -v stat)"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 : > "$W/mounted"
 exit 0
@@ -3511,13 +3511,13 @@ cat > "$W/fakebin/stat" <<SHIM
 # Only the device question, only about the quarantine, and only after the
 # flush. Every other stat -- mode, owner, group -- must go through untouched
 # or the run fails for an unrelated reason and the case proves nothing.
-if [ "\$1" = "-c" ] && [ "\$2" = "%d" ] && [ -f "$W/mounted" ]; then
+if [ "\$ASSEMBLE_WORK" = "-c" ] && [ "\$2" = "%d" ] && [ -f "$W/mounted" ]; then
   case "\$3" in *.assembled) echo 999999; exit 0 ;; esac
 fi
 exec "$REAL_STAT" "\$@"
 SHIM
-chmod +x "$W/fakebin/sync" "$W/fakebin/stat"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+chmod +x "$W/hooks/flush" "$W/fakebin/stat"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run stops"          "$?"                                              "1"
 check "it names the boundary"  "$(says "$msg" 'not on the same filesystem')"      "1"
 check "nothing was consumed"   "$(says "$msg" 'Nothing has been consumed')"       "1"
@@ -3651,16 +3651,16 @@ out="$W/docs/ReleaseNotes"
 # "overwritten and then complained".
 printf '# Release Notes — 2026-08-16\n\nPRE-EXISTING LINE\n' \
   > "$out/ReleaseNotes-2026-08-16.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sync" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/flush" <<SHIM
 #!/bin/sh
 # The flush is the long step the finding names: alter the replacement while it
 # runs. \$1 is the file being persisted.
-if [ -f "\$1" ]; then printf 'INJECTED\n' >> "\$1"; fi
+if [ -f "\$ASSEMBLE_WORK" ]; then printf 'INJECTED\n' >> "\$ASSEMBLE_WORK"; fi
 exit 0
 SHIM
-chmod +x "$W/fakebin/sync"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/flush"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"           "$?"                                            "1"
 check "it says the content changed" \
   "$(says "$msg" "replacement's content changed")"                              "1"

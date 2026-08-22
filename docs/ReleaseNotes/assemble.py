@@ -147,6 +147,45 @@ class HoldSignals:
         return False
 
 
+
+# ── The test seam ────────────────────────────────────────────────────────────
+#
+# A named point where a test may act, and nothing else.
+#
+# The old suite injected faults by shimming whichever command the shell
+# happened to spawn — `sed` for the link rewrite, `sync` for the flush,
+# `grep` for the marker scan. That worked, and it tested the
+# IMPLEMENTATION's choice of subprocess rather than the moment the case
+# was really about: a fragment edited during the flush, an output file
+# replaced mid-scan. Those moments are still real here; the subprocesses
+# are not.
+#
+# So the moments are named. `ASSEMBLE_TEST_HOOK_DIR` points at a
+# directory; if an executable matching the phase name is in it, it runs
+# with the run's paths in the environment, and a non-zero exit means
+# "this phase failed" — the same fault the shim used to produce.
+#
+# Deliberately inert unless that variable is set, and it is set by
+# nothing but the suite. A seam a test can rely on is worth more than a
+# coincidence a test can exploit: the coincidence breaks whenever the
+# implementation changes which command it calls, which is exactly what
+# just happened to 114 cases.
+_HOOK_DIR = os.environ.get("ASSEMBLE_TEST_HOOK_DIR", "")
+
+
+def test_hook(phase: str, **paths: str) -> bool:
+    """Run the hook for `phase` if one exists. False means it failed."""
+    if not _HOOK_DIR:
+        return True
+    script = os.path.join(_HOOK_DIR, phase)
+    if not os.path.isfile(script) or not os.access(script, os.X_OK):
+        return True
+    env = dict(os.environ)
+    for key, value in paths.items():
+        env[f"ASSEMBLE_{key.upper()}"] = value
+    return subprocess.run([script], env=env).returncode == 0
+
+
 # ── The run ──────────────────────────────────────────────────────────────────
 
 
@@ -678,6 +717,7 @@ class Assembly:
                 raise SystemExit(1)
 
             dest = os.path.join(self.snap, str(n))
+            test_hook("snapshot", fragment=f, out=self.out)
             before = frag_hash(f)
             shutil.copyfile(f, dest)
             after = frag_hash(f)
@@ -815,6 +855,10 @@ class Assembly:
                 marker_where.setdefault(digest, []).append(
                     f"{name} in {os.path.basename(dated)}"
                 )
+        if not test_hook("scan", out=self.out):
+            err("Error: scanning for assembly markers failed.")
+            err("Refusing to assemble: an incomplete index is worse than none.")
+            raise SystemExit(1)
         return marker_seen, marker_where
 
     # ── revalidation ─────────────────────────────────────────────────────
@@ -1005,6 +1049,7 @@ class Assembly:
                 err("Nothing further will be consumed.")
                 self.refuse_reporting_consumed()
             self.quarantined.append(f"{self.frag_name[f]} -> .assembled/{qname}")
+            test_hook("recover-moved", out=self.out, fragment=f, quarantine=q)
 
             try:
                 now = frag_hash(q)
@@ -1150,6 +1195,13 @@ class Assembly:
             self.final_mode = format(0o666 & ~umask, "o")
             self.approved_gid = os.stat(self.work).st_gid
 
+        if not test_hook("build", work=self.work or "", out=self.out):
+            err("Error: building the replacement failed.")
+            err("Refusing to assemble: this run replaces a published file and deletes")
+            err("the fragments it consumed, so it must not continue on the strength of")
+            err("a result it did not get.")
+            self.refuse_reporting_consumed()
+
         with open(self.work, "ab") as fh:
             for f in self.frags:
                 fh.write(b"\n")
@@ -1284,6 +1336,9 @@ class Assembly:
                 os.close(fd)
         except OSError:
             pass
+        # The flush is the long step the gate exists to close a window
+        # over, so it is the moment a test needs to act in.
+        test_hook("flush", work=self.work or "", out=self.out)
 
         self.final_gate()
 
@@ -1317,6 +1372,7 @@ class Assembly:
                     f"{os.path.basename(self.out)} is gone or altered since it was written"
                 )
             q = os.path.join(self.qdir, name)
+            test_hook("clear", out=self.out, fragment=f, quarantine=q)
             if os.path.exists(q) or os.path.islink(q):
                 self.abort_after_write(f"a set-aside file already exists at {name}")
             try:
@@ -1324,6 +1380,9 @@ class Assembly:
             except OSError:
                 self.abort_after_write(f"could not set aside {name}")
             self.quarantined.append(f"{name} -> .assembled/{name}")
+            # After the move, before the last look: the window in which a
+            # writer holding the old inode can still append.
+            test_hook("clear-moved", out=self.out, fragment=f, quarantine=q)
 
             try:
                 current = frag_hash(q)
