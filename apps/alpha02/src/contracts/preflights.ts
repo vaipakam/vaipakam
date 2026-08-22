@@ -600,12 +600,18 @@ export async function assertRowActionStillValid(opts: {
  *   - the selector not routed (an older deploy without the view, which
  *     the Diamond answers with `FunctionDoesNotExist`): PASS. The
  *     contract still enforces; refusing here would block every accept
- *     on a deploy that simply predates the preview.
+ *     on a deploy that simply predates the preview. Confirmed against
+ *     the LOUPE rather than inferred from the error, because a nested
+ *     unrouted dependency raises the identical selector — see the
+ *     branch itself.
  *   - anything else (transport trouble, or the view itself reverting):
  *     FAIL CLOSED with a retry. Retrying a read is free; a wasted
  *     signature and approval is not.
  */
 const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
+/** `previewAccept(uint256,address)` — asked of the loupe by selector,
+ *  because that is the routing question the fail-open branch turns on. */
+const PREVIEW_ACCEPT_SELECTOR = '0xa9582660';
 
 export async function assertAcceptPreviewClearLive(opts: {
   publicClient: PublicClient;
@@ -640,7 +646,32 @@ export async function assertAcceptPreviewClearLive(opts: {
     // full revert data. `data` is the DECODED form and is necessarily
     // undefined here, so reading it would always miss.
     const raw = reverted?.signature ?? reverted?.raw ?? '';
-    if (raw.startsWith(FUNCTION_DOES_NOT_EXIST_SELECTOR)) return;
+    if (!raw.startsWith(FUNCTION_DOES_NOT_EXIST_SELECTOR)) {
+      throw new Error(copy.errors.checkRetry);
+    }
+    // That selector alone does NOT prove the deploy lacks this view.
+    // `previewAccept` reaches other facets through the Diamond, so an
+    // unrouted DEPENDENCY (country, KYC-threshold, numeraire) raises the
+    // very same error from a nested call and would otherwise read as
+    // "old deploy, carry on" — waving through a preview that is broken
+    // rather than absent, on exactly the deployment where the accept
+    // will hit the same missing dependency.
+    //
+    // Ask the loupe instead of inferring: it answers about the selector
+    // we actually called. Only a zero address means unrouted, and only
+    // then do we pass. A loupe that cannot answer leaves us knowing
+    // nothing, which is the fail-closed case.
+    try {
+      const host = (await opts.publicClient.readContract({
+        address: opts.diamondAddress,
+        abi: DIAMOND_ABI_VIEM,
+        functionName: 'facetAddress',
+        args: [PREVIEW_ACCEPT_SELECTOR],
+      })) as `0x${string}`;
+      if (/^0x0{40}$/i.test(host)) return;
+    } catch {
+      // fall through to fail closed
+    }
     throw new Error(copy.errors.checkRetry);
   }
   const reason = acceptBlockReason(Number(preview.errorCode));

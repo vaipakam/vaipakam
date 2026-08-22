@@ -34,7 +34,7 @@
  * figure from a different read, would assert a measurement this call
  * never made.
  */
-import { copy } from '../content/copy';
+import { copy, type CopySource } from '../content/copy';
 
 /**
  * The contract's members, in contract order. Index === the on-chain
@@ -69,33 +69,47 @@ export type AcceptErrorName = (typeof ACCEPT_ERROR_NAMES)[number];
 /** `None` — the accept is not blocked by any classifier. */
 export const ACCEPT_OK = 0;
 
+/** The leaf names under `copy.errors.acceptBlocked`. */
+type AcceptBlockedKey = keyof CopySource['errors']['acceptBlocked'];
+
 /**
- * Per-member copy. Keyed by name rather than by index so a member
+ * Per-member copy, held as the KEY of the catalog leaf rather than the
+ * string itself. Keyed by member name rather than by index so a member
  * inserted upstream (which the enum forbids, but which the guard would
  * catch) cannot silently re-point an existing message at a different
  * condition.
+ *
+ * Storing keys is load-bearing, not a style choice. `copy` is an
+ * i18n proxy that resolves each string leaf through i18next AT ACCESS
+ * TIME; a module-level read captures whatever was resolvable at import,
+ * which is before the i18n bootstrap finishes. `reactiveCopy.ts` says
+ * so directly — *"a module-level read evaluates once and stays
+ * English"*. Building this table out of resolved strings therefore
+ * froze all twenty messages in English and made every translated
+ * bundle dead weight. The lookup happens in `acceptBlockReason`, inside
+ * the caller's scope, so the active language wins.
  */
-const ACCEPT_ERROR_COPY: Record<AcceptErrorName, string | null> = {
+const ACCEPT_ERROR_COPY_KEY: Record<AcceptErrorName, AcceptBlockedKey | null> = {
   None: null,
-  OfferAlreadyAccepted: copy.errors.acceptBlocked.alreadyAccepted,
-  SanctionedAcceptor: copy.errors.acceptBlocked.flaggedAcceptor,
-  SanctionedCreator: copy.errors.acceptBlocked.flaggedCreator,
-  AssetPaused: copy.errors.acceptBlocked.assetPaused,
-  CountriesNotCompatible: copy.errors.acceptBlocked.countryBlocked,
-  RiskAndTermsConsentRequired: copy.errors.acceptBlocked.consentRequired,
-  KYCRequired: copy.errors.acceptBlocked.kycBlocked,
-  OfferExpired: copy.errors.acceptBlocked.expired,
-  OfferPartiallyFilled: copy.errors.acceptBlocked.partiallyFilled,
-  SaleLoanNotActive: copy.errors.acceptBlocked.saleLoanNotActive,
-  SaleSelfBuy: copy.errors.acceptBlocked.saleSelfBuy,
-  OfferIsCancelled: copy.errors.acceptBlocked.cancelled,
-  SaleLoanPastMaturity: copy.errors.acceptBlocked.saleLoanPastMaturity,
-  SalePositionBelowSolvencyFloor: copy.errors.acceptBlocked.saleBelowFloor,
-  SaleAdmissionBlocked: copy.errors.acceptBlocked.saleAdmissionBlocked,
-  SaleListingTermsStale: copy.errors.acceptBlocked.saleListingStale,
-  ProtocolPaused: copy.errors.acceptBlocked.protocolPaused,
-  VaultUpgradeRequired: copy.errors.acceptBlocked.vaultUpgradeRequired,
-  SelfTrade: copy.errors.acceptBlocked.selfTrade,
+  OfferAlreadyAccepted: 'alreadyAccepted',
+  SanctionedAcceptor: 'flaggedAcceptor',
+  SanctionedCreator: 'flaggedCreator',
+  AssetPaused: 'assetPaused',
+  CountriesNotCompatible: 'countryBlocked',
+  RiskAndTermsConsentRequired: 'consentRequired',
+  KYCRequired: 'kycBlocked',
+  OfferExpired: 'expired',
+  OfferPartiallyFilled: 'partiallyFilled',
+  SaleLoanNotActive: 'saleLoanNotActive',
+  SaleSelfBuy: 'saleSelfBuy',
+  OfferIsCancelled: 'cancelled',
+  SaleLoanPastMaturity: 'saleLoanPastMaturity',
+  SalePositionBelowSolvencyFloor: 'saleBelowFloor',
+  SaleAdmissionBlocked: 'saleAdmissionBlocked',
+  SaleListingTermsStale: 'saleListingStale',
+  ProtocolPaused: 'protocolPaused',
+  VaultUpgradeRequired: 'vaultUpgradeRequired',
+  SelfTrade: 'selfTrade',
 };
 
 /**
@@ -112,8 +126,12 @@ const ACCEPT_ERROR_COPY: Record<AcceptErrorName, string | null> = {
 export function acceptBlockReason(code: number): string | null {
   if (code === ACCEPT_OK) return null;
   const name = ACCEPT_ERROR_NAMES[code] as AcceptErrorName | undefined;
-  if (name === undefined) return copy.errors.acceptBlocked.unknown;
-  return ACCEPT_ERROR_COPY[name] ?? copy.errors.acceptBlocked.unknown;
+  const key = name === undefined ? undefined : ACCEPT_ERROR_COPY_KEY[name];
+  // Read the leaf HERE, not at module scope — see the note on
+  // ACCEPT_ERROR_COPY_KEY. Every branch resolves through the proxy in
+  // the caller's scope so the active language applies.
+  if (!key) return copy.errors.acceptBlocked.unknown;
+  return copy.errors.acceptBlocked[key];
 }
 
 /** Name for logs and test assertions. Never user-facing. */
