@@ -138,6 +138,39 @@ async function loadPublishedConfig() {
 
 const publishedConfig = await loadPublishedConfig();
 
+/**
+ * The provenance line that goes at the top of EVERY published document.
+ *
+ * Per document, not only in `llms.txt`, because the document is the unit
+ * of consumption: a crawler fetches `docs/overview.en.md` on its own,
+ * and an assistant ingests it on its own. A figure with the date kept in
+ * a different file is, to that reader, a figure with no date — which is
+ * the same failure this whole change is about, moved from "wrong number"
+ * to "undated number". An undated number is the one that gets repeated
+ * with confidence.
+ *
+ * An HTML comment so it is invisible in any rendered view of the
+ * markdown while still being plain text a machine reader gets for free.
+ * Kept to two lines: this is metadata attached to the document, not a
+ * preamble competing with its first heading.
+ */
+function figureProvenanceNote() {
+  if (publishedConfig) {
+    const stamped = new Date(publishedConfig.updatedAt * 1000).toISOString();
+    return (
+      `<!-- Protocol figures (fees, VPFI tiers) below are from the published ` +
+      `configuration of chain ${DOCS_CONFIG_CHAIN_ID}, stamped ${stamped}. ` +
+      `Newer values: ${INDEXER_ORIGIN}/config/${DOCS_CONFIG_CHAIN_ID} -->\n\n`
+    );
+  }
+  return (
+    `<!-- Protocol figures (fees, VPFI tiers) below are BUILD-TIME DEFAULTS: ` +
+    `the published configuration could not be read when this was generated, ` +
+    `so they do not reflect any later change. Current values: ` +
+    `${INDEXER_ORIGIN}/config/${DOCS_CONFIG_CHAIN_ID} -->\n\n`
+  );
+}
+
 /** content subdir → public URL slug. Locale suffixes carry over
  *  (`Overview.ta.md` → `overview.ta.md`). */
 const DOC_SETS = [
@@ -171,11 +204,12 @@ for (const set of DOC_SETS) {
     // locale, matching what a reader of the same page sees.
     writeFileSync(
       resolve(DOCS_OUT, outName),
-      substituteLiveValuesInMarkdown(
-        readFileSync(resolve(srcDir, file), 'utf8'),
-        locale,
-        publishedConfig?.config ?? null,
-      ),
+      figureProvenanceNote() +
+        substituteLiveValuesInMarkdown(
+          readFileSync(resolve(srcDir, file), 'utf8'),
+          locale,
+          publishedConfig?.config ?? null,
+        ),
     );
     published.push({ slug: set.slug, locale, url: `${ORIGIN}/docs/${outName}` });
   }

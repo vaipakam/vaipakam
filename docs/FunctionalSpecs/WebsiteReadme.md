@@ -135,10 +135,16 @@ Public-navigation requirements:
   behind by one deploy, or an artefact that never moves at all and so
   drifts without limit from the pages beside it. The second was judged
   worse
-- publication must therefore state its own provenance. When a snapshot
-  is read, the crawler index says which chain it came from and when it
-  was stamped, so a consumer can judge the age rather than assume
-  currency. "Current as of its build" is a claim these artefacts may
+- publication must therefore state its own provenance, ON EVERY
+  DOCUMENT and not only in the crawler index. The document is the unit
+  of consumption — a crawler fetches one on its own and an assistant
+  ingests one on its own — so a figure whose date lives in a different
+  file is, to that reader, a figure with no date. That is the same
+  defect this section exists to remove, moved from "wrong number" to
+  "undated number", and an undated number is the one repeated with
+  confidence. Each document says which chain its figures came from and
+  when the snapshot was stamped, so a consumer can judge the age rather
+  than assume currency. "Current as of its build" is a claim these artefacts may
   make ONLY in that form — naming the moment — and never as a bare
   assertion
 - publication must FAIL rather than silently fall back. These artefacts
