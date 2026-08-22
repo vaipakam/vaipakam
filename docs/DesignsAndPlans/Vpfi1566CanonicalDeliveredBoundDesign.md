@@ -22,9 +22,9 @@ work than the card implies:
 
 | Card's claim (2026-08-04) | Tree today |
 | --- | --- |
-| the delivered bound is unbuilt; design it with P1-b | **built for mirrors.** `deliveredFreshBound` returns `received − paid` from `rewardBudgetArmedFreshReceived` / `rewardBudgetArmedFreshPaid` |
+| the delivered bound is unbuilt; design it with P1-b | **built for mirrors, ARMED DAYS ONLY.** `deliveredFreshBound` returns `received − paid`; both counters are armed-scoped, and a pre-`D*` slice is paid before the walk that reads them |
 | three drifted copies of the headroom arithmetic (#1499) | **collapsed by #1555.** All enforcement sites call `LibVpfiRecycle.backingPosition` |
-| the fix must cover every claim path | **one quantity, three enforcement sites** — the drift that made this hard is already gone |
+| the fix must cover every claim path | **partly** — #1555 collapsed the `backingPosition` copies, but `_entryExecutableNow` never used it and still measures `balanceOf` directly on canonical |
 
 So the remaining defect is **narrower and more precisely locatable** than the
 card describes. It is worth stating exactly.
@@ -35,8 +35,16 @@ card describes. It is worth stating exactly.
 
 > `if (!LibVaipakam.isMirrorRewardChain(s)) return type(uint256).max;`
 
-**On a mirror**, a payout is bounded by what was actually delivered to that
-chain for rewards. This is the property #1566 asks for, and it is live.
+**On a mirror**, an ARMED-day payout is bounded by what was actually delivered
+to that chain for rewards. That is the property #1566 asks for, and it is live —
+**for armed days only.**
+
+**The legacy slice on a mirror is NOT covered.** Both counters
+(`rewardBudgetArmedFreshReceived` / `...Paid`) track armed fresh by definition,
+and a pre-`D*` entitlement is paid O(1) by `_processEntry` *before* the walk that
+consults `deliveredFreshBound` ever runs. That slice is gated only by
+`backingPosition` — so unrelated VPFI custody on a mirror can fund it exactly as
+on Base.
 
 **On canonical Base, there is no bound at all** from that function, so the
 claim gate falls through to `backingPosition`'s un-earmarked figure —
@@ -46,8 +54,11 @@ of them are user collateral**: a live swap-to-repay intent's
 `custodialCollateral`, and liquidation `fallbackSnapshot` custody. A reward
 payout drawing on those spends a borrower's collateral.
 
-**This is the whole of what remains open on #1566.** The cross-chain axis is
-closed; the canonical axis is not.
+**So the axis split is not clean, and an earlier revision of this note said it
+was.** What is closed is *armed-day payouts on mirrors*. What is open is
+*canonical payouts* AND *pre-`D*` payouts on mirrors* — the latter reached by
+the same `backingPosition` fallback, and easy to miss precisely because the
+mirror path looks solved from the armed side.
 
 ## 3. Why "subtract one more owner" is not the answer
 
@@ -78,16 +89,24 @@ delivered** — the budget is scheduled and minted. So the canonical bound has t
 be defined, not merely ported, and the options differ in what they promise a
 claimant:
 
-**Option A — the day's own stamped pool.** Bound a canonical payout by the
-fresh half already stamped at finalization (`scheduleFloor / 2`, or
-`halfPoolForDay`). Needs no new storage and no new wire: the figure is written
-at day-close and is what every chain prices against.
-*Cost:* it bounds per day, not cumulatively, so it does not by itself stop the
-aggregate of many days' claims from exceeding what the platform set aside.
+**Option A — the day's own stamped pool. NOT a fund-safety closure, and an
+earlier revision of this note recommended it as one.** `scheduleFloor` is
+computed from the emission schedule and remaining 69M accounting capacity;
+stamping it neither mints, transfers, nor earmarks anything in the Diamond. A
+payout below one day's stamped half can therefore still be funded from borrower
+collateral, and successive days repeat the draw. It bounds *how much a day may
+price*, which is a different question from *what is actually set aside*.
+It may still be worth having as a sanity ceiling. It does not establish the
+delivered-or-set-aside invariant and must not be treated as sufficient.
 
-**Option B — a canonical emissions earmark.** Give Base the mirror's shape:
-a `received`-analogue incremented when emission is allocated to rewards, and
-the existing paid counter. `rewardEmissionsBudget` already exists but is a
+**Option B — a canonical emissions earmark.** Give Base the mirror's shape: a
+`received`-analogue incremented when emission is allocated to rewards, **and
+canonical WRITERS for the paid side.** The existing paid counter cannot simply
+be reused: all three of its writers — the claim walk, the expiry sweep and the
+forfeit sweep — are guarded by `isMirrorRewardChain`, and its storage docs define
+it as mirror-era delivered spending. Add a Base `received` analogue without
+changing them and canonical payouts never decrement the allowance, so every later
+payout reuses the whole earmark. `rewardEmissionsBudget` already exists but is a
 **buyback routing target** fed by `LibTreasuryBuyback._routePriority`, not an
 earmark the claim path consults — so this is either a new counter or a
 deliberate re-purposing of that one.
@@ -95,10 +114,16 @@ deliberate re-purposing of that one.
 that has already paid rewards under the old rule.
 
 **Option C — hold the canonical side on the balance figure deliberately**, and
-close the fund-safety gap by earmarking the two USER-COLLATERAL owners instead
-of all owners. That is a bounded list — collateral custody is not open-ended
-the way operational budgets are — and it targets exactly the severity that
-makes this card fund-safety rather than bookkeeping.
+close the fund-safety gap by earmarking the USER-OWNED classes instead of all
+owners. There are **three, not two**: a live swap-to-repay intent's
+`custodialCollateral`, liquidation `fallbackSnapshot` custody, **and
+`borrowerLifRebate[loanId].vpfiHeld`**, which stays non-zero for loans
+grandfathered from a pre-#1352 deployment and is today spendable by a reward
+claim or relabelable by the RL-3 sweep. An earlier revision of this note named
+only the first two — reserving those alone would still let rewards consume a
+borrower's VPFI and leave the later settlement reverting or underpaying.
+It is a bounded list, which is the argument for it; but "bounded" only helps if
+the boundary is drawn correctly, and mine was not on the first attempt.
 *Cost:* it accepts that an operational over-draw remains possible, and it is a
 subtraction, which §3 argues against on the general case.
 
@@ -107,14 +132,19 @@ C narrows the goal. That is an owner call.
 
 ## 5. What is true regardless of the option
 
-- **There is exactly one definition to change.** `backingPosition` is called by
-  `RewardClaimFacet`, `RewardHorizonSweepFacet` and `InteractionRewardsFacet`
-  as an enforcement gate, and by `InteractionRewardsLensFacet` as a read. Any
-  change must keep those four consistent — the #1555 revert is what happens
-  when the claim gate and the expiry predicates stop agreeing.
-- **The expiry path must move with the claim path.** Whatever bounds a payout
-  must bound the sweep, or expiry clocks run against a window claims cannot
-  use.
+- **There is NOT exactly one definition to change, and an earlier revision of
+  this note said there was.** `backingPosition` is an enforcement gate in
+  `RewardClaimFacet`, `RewardHorizonSweepFacet` and `InteractionRewardsFacet`,
+  and a read in `InteractionRewardsLensFacet`. But
+  `LibInteractionRewards._entryExecutableNow` **does not call it at all**: its
+  delivered-bound branch is mirror-only, and on canonical it measures
+  `balanceOf(...) >= _userClaimFundingNeedView(...)` directly. A new canonical
+  earmark that makes claims reject through `backingPosition` while that
+  predicate is untouched keeps executable time accruing against a window claims
+  can no longer use — **the exact divergence that got the #1555 attempt
+  reverted**, reproduced by a fix aimed at avoiding it.
+- **The expiry predicates are separate enforcement sites and must be changed
+  explicitly**, not assumed to follow.
 - **Arming stays blocked until this closes.** The `BACKING --> ARM` edge is
   live: arming while a reward payout can draw on borrower collateral converts a
   quiet exposure into a routine one, because armed days are when recycled
@@ -124,11 +154,25 @@ C narrows the goal. That is an owner call.
 
 ## 6. Recommendation
 
-Take **Option A first** as a strict-improvement step — it needs no new storage,
-no wire change and no migration, and it removes the unbounded case on canonical
-immediately — then decide A-plus-cumulative versus B with the aggregate
-question stated explicitly. Option C is the fallback if the aggregate question
-turns out to need a governance decision that is not ready.
+**No recommendation is offered.** An earlier revision of this note recommended
+Option A as a strict-improvement first step; review established that it does not
+establish the invariant at all, because the quantity it bounds against is
+schedule accounting rather than money set aside. Withdrawing that rather than
+softening it, because a fund-safety note whose recommended step leaves the
+fund-safety property unmet is worse than one that recommends nothing.
+
+What the options need before a choice is possible:
+
+1. **Option B costed properly** — it is the only candidate that establishes
+   "bounded by what was set aside" on canonical, and its true scope includes
+   canonical writers for the paid side plus a migration answer for a deployment
+   that has already paid rewards under the old rule.
+2. **Option C's boundary re-drawn** to all three user-owned classes, and an
+   explicit decision that operational over-draw is acceptable.
+3. **Either way, the expiry predicates change WITH the claim gate** — including
+   `_entryExecutableNow`, which does not go through `backingPosition`.
 
 What should NOT happen is a sixth subtraction. That is the one path with
-evidence against it in this repository's own history.
+evidence against it in this repository's own history — and the near-miss above
+is a reminder that "cheap and strictly better" is exactly how that path gets
+taken.

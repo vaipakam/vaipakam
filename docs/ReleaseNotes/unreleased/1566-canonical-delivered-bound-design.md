@@ -7,11 +7,13 @@ spare — it also holds two kinds of user collateral, so a reward payout can in
 principle be paid out of a borrower's collateral.
 
 Re-reading that issue against the platform as it stands today changed the
-picture. The cross-chain half of it was closed a fortnight ago by separate work
-and nobody had gone back to say so: on any chain that RECEIVES its reward
-funding, a payout is already limited to what actually arrived. What remains open
-is only the chain rewards originate on, where nothing arrives and so the limit
-had to be defined rather than copied across.
+picture, though not as cleanly as a first pass suggested. Separate work two days
+earlier had already limited part of it: on a chain that RECEIVES its reward
+funding, a payout for a day inside the new programme is limited to what actually
+arrived. That leaves two things still open rather than one — the chain rewards
+originate on, where nothing arrives and so the limit has to be defined rather
+than copied across, and older entitlements on the receiving chains, which are
+paid by a different route that the new limit never sees.
 
 That distinction is now written down, along with why the obvious repair — keep a
 list of everything else the balance is holding and subtract it — is the one
@@ -22,5 +24,10 @@ user value: it left expiry clocks running on entitlements whose claims had begun
 to fail.
 
 Three options are set out with what each promises a claimant, and the choice is
-left to the owner rather than made in passing. The reward programme stays
+left to the owner rather than made in passing. A first draft of this note did
+recommend one of them as a cheap first step; review established that it does not
+actually set any money aside — it limits what a day may price, which is a
+different question — so the recommendation was withdrawn rather than softened.
+A note on a fund-safety question whose recommended step leaves the property
+unmet is worse than one that recommends nothing. The reward programme stays
 un-armed until this closes, which is unchanged and deliberate.
