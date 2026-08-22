@@ -27,10 +27,15 @@ compensation — also carries a deadline after which it can be settled by anyone
 There are two such deadlines, not one, and they are not interchangeable: a day
 that never drew compensation is closed out on a clock fixed at the day's
 freezing, while a day compensated below what it owed is closed out on a separate
-clock that starts at its first compensation and stretches with each qualifying
-top-up. Passing the first does not open the second. And a compensation still
-sitting in a provisional state opens NEITHER — that day's way out is the record
-being re-sent, which confirms the figure, and anyone can do that. The stop
+clock that starts when its compensation is SETTLED — at arrival where the
+record was already there to settle it, at settlement time where the money
+overtook the record — and stretches with each qualifying top-up. Passing the
+first deadline does not open the second. And a compensation still sitting
+unsettled opens NEITHER, nor has its clock begun: that day's way out is the
+record being re-sent, which anyone can do. Re-sending settles the figure — it
+does not necessarily uphold it. Where the record agrees with what was paid the
+figure stands; where it does not, the credit is set aside instead, and that
+money is destined for return rather than for this day's rewards. The stop
 they replaced had neither: nothing to supply, and no ending. A day waits until everything it needs is in place, and
 the things it can be waiting for are given as examples rather than as a complete
 set — deliberately, because every earlier attempt to close that list was

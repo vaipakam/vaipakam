@@ -298,8 +298,16 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      *      {RewardCompensationDispatchFacet.remitManualBudget} — so a zeroed
      *      chain-day's compensation no longer falls back to the pre-mesh
      *      out-of-band governance posture
-     *      ({RewardAggregatorFacet.forceFinalizeDay}'s documented recovery),
-     *      which remains only as the historical predecessor.
+     *      ({RewardAggregatorFacet.forceFinalizeDay}'s documented recovery)
+     *      for any day that HAS a lapse clock. That posture is NOT merely
+     *      historical: a pre-w1 zeroed day with no clock cannot use the
+     *      evidenced vehicle at all (`_remitManualBudget` reverts
+     *      {CompensationDayHasNoClock}, `broadcastGlobalTo` rejects it, and
+     *      `broadcastGlobal` falls back to the clockless wire permanently),
+     *      and {stampLegacyCompensation} only migrates a receipt already
+     *      delivered — so it cannot fund a day that never was. For that
+     *      legacy state the out-of-band posture remains the supported
+     *      route.
      *
      *      ORDERING IS LOAD-BEARING: send the manual compensation BEFORE
      *      clearing `remitIneligible`. The flag is the vehicle's on-chain

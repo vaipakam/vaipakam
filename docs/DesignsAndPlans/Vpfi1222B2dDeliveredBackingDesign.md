@@ -681,9 +681,13 @@ compensation becoming both funded AND settled (a fully funded compensation still
 its quote is undispatched or its credit provisional), or one of the two permissionless lapse
 terminals — which do not share a clock and do NOT settle alike. The
 uncompensated terminal runs on the day's FROZEN expiry, a fixed offset from
-finalization. The short-compensated one cannot use that clock at all: it arms on
-the FIRST compensation receipt and waits on a rolling window that each
-qualifying top-up extends, capped at three windows from that first receipt. So
+finalization. The short-compensated one cannot use that clock at all: it arms on the first
+CONFIRMED compensation and waits on a rolling window that each qualifying top-up
+extends, capped at three windows from that arming. Confirmed, not merely
+received — a credit that overtakes its day record arrives provisional and stamps
+no clock at all; the clock starts when the record lands and confirms it. Reading
+"first receipt" for "first confirmation" moves the deadline earlier by the whole
+receipt-to-confirmation gap and sends an operator to a call that reverts. So
 passing the frozen expiry does not make the short terminal callable, and an
 operator reading one deadline for both will reach for a terminal that reverts. `lapseZeroedDay` crosses an uncompensated day at zero: nothing was
 backed, nothing pays. `lapseShortCompensatedDay` takes a confirmed-but-
