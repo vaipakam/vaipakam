@@ -75,9 +75,19 @@ _second_pass() {
   local _tmp="$ROOT/unprivileged"
   # Traversable, not writable: the second pass writes only inside the directory
   # made for it, which is sticky like /tmp. Both go with $ROOT on exit.
-  mkdir -p "$_tmp" || return 1
-  chmod o+rx "$ROOT" || return 1
-  chmod 1777 "$_tmp" || return 1
+  #
+  # Each step SAYS SO when it fails, rather than returning a bare nonzero that
+  # the caller renders as "FAILURES in one or both passes" with nothing above
+  # it to read. Setting the pass up is not the pass failing, and a suite whose
+  # whole subject is not-reporting-success-for-work-not-done should not have a
+  # silent one of its own.
+  if ! mkdir -p "$_tmp" \
+     || ! chmod o+rx "$ROOT" \
+     || ! chmod 1777 "$_tmp"; then
+    echo "  Could not prepare a working directory for the second pass." >&2
+    echo "  The permission-staged cases are UNMEASURED, not passing." >&2
+    return 1
+  fi
   setpriv --reuid="$DROP_UID" --regid="$DROP_GID" --clear-groups \
     env ASSEMBLE_TEST_NESTED=1 HOME="$_tmp" TMPDIR="$_tmp" bash "$0" "$@"
 }
