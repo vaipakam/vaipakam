@@ -134,7 +134,11 @@ VPFI** out of the Diamond (`_deliverReward` → `safeTransfer`), while minting i
 separate admin operation (`TreasuryFacet.mintVPFI`). So a counter incremented at
 allocation time is accounting with no funding behind it, and the allowance it
 authorises can still be paid out of borrower custody. The credit must be tied to
-tokens the programme actually holds. **The canonical writers must also see EVERY payout, legacy included** — adding
+tokens the programme actually holds. **The canonical writers must see every OUTFLOW, not merely every payout** — an
+outbound remittance and a compensation dispatch both move earmarked tokens off
+Base with no claimant involved, so charging only the payout and settlement
+writers leaves the earmark reusable once its tokens have already left. Legacy
+payouts are one of the outflows they must see, and — adding
 canonical versions of the existing writers is not enough, because pre-`D*`
 payouts run through `_processEntry` before the armed walk and none of those
 writers sees them, so a canonical claimant holding both spends the earmark twice:
@@ -174,7 +178,11 @@ only the first two — reserving those alone would still let rewards consume a
 borrower's VPFI and leave the later settlement reverting or underpaying.
 It is a bounded list, which is the argument for it; but "bounded" only helps if
 the boundary is drawn correctly, and mine was not on the first attempt.
-*Cost:* it accepts that an operational over-draw remains possible; it is a
+*Cost:* it accepts that an operational over-draw remains possible — and on a
+Diamond-as-treasury deployment that is not merely a budget question: a funded
+VPFI payroll stream debits `treasuryBalances[vpfi]` while the tokens stay in the
+Diamond, so an unreserved reward payout can consume a liability owed to a real
+payee. That belongs in the disclosure, not under "operational". It is also a
 subtraction, which §3 argues against on the general case; **and on an upgraded
 Diamond it cannot find what it is meant to protect.** `fallbackSnapshot` and
 `borrowerLifRebate` are loan-keyed mappings with no enumerable aggregate, so a
