@@ -11,10 +11,13 @@ clean scan and that switch rejoins the class the scan was checking for — so
 scanning first and enabling second means the scan result can be overtaken by
 ordinary business. There is no way to fix such a loan afterwards: the stamp is
 written when the loan opens and nothing can add it later, so the only remedies
-are the ordering above and waiting for the loan to close. And the arming call
-itself is a single transaction on one chain that commits every chain, cannot be
-repeated, cannot be undone, and cannot be postponed once the day it names
-arrives — so the day chosen has to leave room for every other chain to hear
+are the ordering above and waiting for the loan to close. And where the platform is running
+across several chains, the arming call is a single transaction on one chain that
+commits all of them — it cannot be repeated, cannot be undone, and cannot be
+postponed once the day it names arrives. (On the simpler arrangement where only
+the main chain pays rewards, that call commits only that chain and nothing has to
+be told; the runbook now separates the two, because a step that cannot be
+completed on the simpler arrangement was previously demanded of it.) — so the day chosen has to leave room for every other chain to hear
 about it, and each one has to be checked before that day, not after.
 
 **A gate that reads as closed is not.** The plan pointed at a card for the

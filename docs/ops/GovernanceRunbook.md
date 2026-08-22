@@ -740,6 +740,14 @@ So, against **this** Diamond's mesh:
 - every id in `getBroadcastDestinations()` must be **present** there too;
 - and each of those resolved endpoints must return a matching `eth_chainId`.
 
+**And compare the two getters to EACH OTHER, not only to the keeper.** A mirror
+present in `getExpectedSourceChainIds()` but absent from
+`getBroadcastDestinations()` passes both checks above as long as the keeper
+resolves it — and then never receives `D*`, because `broadcastGlobal` enumerates
+only the messenger's destination list. Base waits for a chain that was never
+told. Require the expected-source mirrors and the broadcast destinations to
+describe the same set before the arm.
+
 A missing chain is the defect. **An extra one is not automatically harmless,
 though — and that is a consequence of step 3g.** Both the remit and the
 commitment-report passes iterate the FULL `getChainConfigs(env)` result, so
@@ -839,11 +847,17 @@ missing; it is never an instruction to disable a running one.
 RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)   # ADMIN_ROLE, canonical only
 ```
 
-**Read back that the D1 share-of-pool cap (M2 PR-2) is live on EVERY Diamond
-this arm will reach — Base and every mirror — not only the one you are calling.**
-Arming propagates: each mirror installs `D*` from the broadcast and switches to
-ShareOfPool on its own schedule, so a partially upgraded mirror makes that switch
-without the `(user, side, day)` concentration bound even though Base is fine. The setter checks authorization, canonical role, one-shot state and a
+**Read back that the D1 share-of-pool cap (M2 PR-2) is live on every Diamond
+this arm will actually reach.** On the **M3 / active-mirror** branch that is Base
+AND every mirror, not only the one you are calling: arming propagates, each
+mirror installs `D*` from the broadcast and switches to ShareOfPool on its own
+schedule, so a partially upgraded mirror makes that switch without the
+`(user, side, day)` concentration bound even though Base is fine.
+
+On the **dark-mirror** branch it is **Base only**. Nothing propagates there, so a
+dark mirror may legitimately lack PR-2 under Gate B and requiring it would block
+a cutover the gate permits. The same scoping applies to the per-chain clock
+readback below. The setter checks authorization, canonical role, one-shot state and a
 future day — and nothing else. At `D*` the reward path switches to ShareOfPool,
 and on a partial or stacked Diamond that has the PR-3c setter but not PR-2, that
 switch happens with the required `(user, side, day)` cap absent. The joint
@@ -904,6 +918,13 @@ After arming, drive the cycle explicitly: finalize a day that has not yet been
 applied on the mirrors, **remit that day to every destination and wait for each
 mirror to CONFIRM receipt**, and only then call the payable `broadcastGlobal` (or
 `broadcastGlobalTo` per destination) and pay the transport fee.
+
+**The per-destination form is not always available.** If the chosen pre-`D*` day
+was grace- or force-finalized without a particular mirror's daily report, that
+mirror has no day standing for it — and being pre-cutover, it has no armed-day
+zeroed marker either — so `broadcastGlobalTo` reverts
+`DestinationHasNoDayStanding`. Use the fan-out form for such a day, or pick a day
+every destination was included in.
 
 **That first propagation day must be strictly BEFORE `D*`, or the ceremony
 deadlocks — after the irreversible arm.** An armed-day remit is refused until
