@@ -682,10 +682,7 @@ or, on an exactly-matched internal close, not recorded at all — and
 the NFT is not burned on that path, so it can sit there afterwards looking
 exactly like an unclaimed one. The pages had gone further than that and pointed
 at the surviving NFT as the reason to expect a surplus, which sends a borrower
-to sign a transaction that is refused. The Advanced guide now says to read the claim and not
-the NFT. The Basic guide does not — it does not discuss the position NFT as a
-signal at all, so there was nothing there to correct; "both guides" would have
-claimed a change it never received.
+to sign a transaction that is refused. Both guides now say to read the claim and not the NFT.
 
 **A zero-surplus liquidation is not always recorded the same way.** The pages
 said the claim is filed as already settled. That is true of the ordinary and
@@ -718,8 +715,13 @@ holds is mirror-WIDE, and its receiver raises it from ANY user's message — so
 the first push by anybody after a retune flips the version for everyone on
 that mirror, and every cache still carrying the old one reads as tier 0 from
 that moment until its own push arrives. The old-BPS grace is real, is
-per-mirror rather than per-user, and ends on a stranger's message. So the
-push is worth making promptly, whether or not the new rate suits you.
+per-mirror rather than per-user, and ends on a stranger's message. So where the retune
+raised the rate, or where the cached rate is already stale, pushing promptly is
+what secures it. Where the retune LOWERED it and no other message has reached
+that mirror yet, pushing is what installs the worse rate — the grace is worth
+keeping until a stranger's message ends it. The advice is therefore conditional
+on which way the rate moved, which is the opposite of what an earlier draft of
+this passage said.
 
 The passage that misled me is in this same document, and it has been corrected
 too: it described the grace without saying what ends it.
@@ -766,8 +768,10 @@ was handed over instead, the collateral itself waits. Telling a borrower to look
 for the wrong token is the same error, one level down, as telling them there is
 nothing to look for. A borrower who believed the page would simply never go
 and collect it. The guidance now tells them to check, and states what happens to the
-retired-path rebate: forfeited outright on a default or liquidation, and settled
-on a proper close. It does NOT yet carry the full-basket rule: the pages still
+retired-path rebate: forfeited outright on a default or on a liquidation that
+ENDS the loan, and settled on a proper close. A partial liquidation is not one
+of those — it leaves the loan open, forfeits nothing, and a later proper close
+still settles the rebate, exactly as this note says higher up. It does NOT yet carry the full-basket rule: the pages still
 present the whole-basket outcome as how a particular default turned out rather
 than as what the protocol always does, in every language. Correcting that is
 filed separately — this note describes what shipped, and that part did not.
