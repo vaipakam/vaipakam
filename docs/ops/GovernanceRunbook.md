@@ -680,7 +680,8 @@ post-launch `D*` will have such loans.
 
 ### Step 3 — complete EVERY keeper prerequisite (still before the arm)
 
-**Which of these apply depends on which Gate B branch you took.** On the
+**Which of these apply depends on which Gate B branch you took, and the split is
+not cosmetic — items that do not apply must be SKIPPED, not performed anyway.** On the
 **M3 / active-mirror** branch, all of it applies. On the **Base-only /
 dark-mirror** branch, the commitment-report and recycled-ledger surfaces need not
 exist on those chains at all — so 3a, 3b's mirror half, 3b-i, 3e and 3f are M3
@@ -688,8 +689,10 @@ items and are not preconditions there. Do not treat them as blocking on the dark
 branch: requiring a clean commitment-report tail or a mesh-watcher tick over
 ledgers that were never deployed makes the ceremony unreachable on a branch Gate
 B explicitly permits. What still applies on the dark branch: `KEEPER_ROLE` on
-Base (3b's canonical half), the Base remittance signer (3c), Base funding (3d),
-and the flags with their tail confirmation (3g).
+Base (3b's canonical half), Base funding (3d), the RL-4 readback (3f-bis), and
+`KEEPER_ENABLED` with its tail confirmation. **NOT 3c** — there is no Base→mirror
+remittance to authorize — and **not** `REWARD_COMMIT_ENABLED` or
+`REWARD_REMIT_ENABLED`, whose passes have no mirrors to serve.
 
 **3a. Apply the D1 migrations** — from `apps/indexer/`:
 
@@ -918,6 +921,12 @@ rate-limiter states, watcher health and the three flags are all point-in-time
 readings — take them again at execution, because the call they gate cannot be
 undone.
 
+**Re-check `D*` itself, not only the preflights.** The day is encoded when the
+action is scheduled, so an execution later than planned can leave a `D*` that is
+merely `today + 1` — the setter still succeeds, and the several-cycle propagation
+buffer the choice existed to provide is simply gone. If the buffer has eroded,
+cancel and re-schedule with a later `D*` rather than executing.
+
 The setter writes Base storage and emits `GovernorCommitArmed`. **It sends
 nothing itself.** A mirror learns `D*` in-band, when the first *not-yet-applied*
 finalized day's broadcast reaches it after arming — a replay of an
@@ -930,9 +939,12 @@ value.
 otherwise provide one.** Once Base is armed, EVERY subsequent broadcast carries
 its stored `armedFromDay`, and a mirror sitting at zero installs it on first
 application — so a mirror brought up after M3 lands cuts over the moment it
-receives any broadcast, at a `D*` that may be long past. Before promoting one:
-confirm PR-2, PR-5c, PR-6 and the #1566 fix are live on it, its clock agrees with
-Base, and its `armedFromDay` reads zero; then expect it to arm on its first
+receives any broadcast, at a `D*` that may be long past. **Promotion is a full Step 3 for that chain, not a short checklist.** Run the
+whole active-mirror preflight against it — `KEEPER_ROLE`, keeper funding, the
+deployment artifact's Diamond address, both lane rate-limiter states, watcher
+coverage — plus PR-2, PR-5c, PR-6 and the #1566 fix live on it, its clock
+agreeing with Base, and its `armedFromDay` reading zero. A mirror bootstrapped
+without those arms into a mesh that cannot report, fund or observe it; then expect it to arm on its first
 broadcast rather than on a day you choose. There is no second cutover to
 schedule.
 
@@ -940,10 +952,14 @@ schedule.
 same deadlock as the original propagation, arriving by a different door. The
 keeper's report returns while the mirror's `armedFromDay` is zero, while
 `_planDay` declines an armed-day remit until that report completes; and after
-`D*` has passed, every current day IS an armed day. Bootstrap it the way Step 5
-bootstraps the mesh: pick a day BEFORE `D*` that the mirror has not applied,
-remit it (a pre-`D*` remit needs no report), then broadcast that day. The mirror
-installs `D*` from it and can report from then on.
+`D*` has passed, every current day IS an armed day. Bootstrapping it is harder than Step 5's case and may not be possible with a
+remit at all: a mirror that was genuinely dark until after M3 has **no report in
+any historical finalization**, so it is not an included chain for any pre-`D*`
+day and `_planDay` produces no budget for it — the remit reverts
+`NothingToRemit`. Use a pre-`D*` day the mirror has not applied and broadcast it
+WITHOUT a remit; the day carries no budget for that mirror, so there is nothing
+to strand, and the mirror installs `D*` and can report from then on. Confirm the
+day predates `D*`, has fully ELAPSED, and carries a lapse clock (below).
 
 **On the Base-only / dark-mirror branch, skip this step entirely.** There is no
 mirror to propagate `D*` to, and the remit, receipt and broadcast surfaces this
@@ -973,7 +989,16 @@ cannot prevent that — you can only shrink the window by finalizing and remitti
 close together and confirming receipts promptly — so treat the order as your
 intent rather than a guarantee.
 
-**The per-destination form is not always available.** If the chosen pre-`D*` day
+**The propagation day must have fully ELAPSED, not merely be numerically below
+`D*`.** The force-finalization path does not check the reward clock, so "a day
+before `D*`" admits today or a future day; finalizing one of those publishes a
+day whose activity is still accruing. Require `day < currentRewardDay` as well as
+`day < D*`.
+
+**The per-destination form is not always available.** It also reverts
+`DayHasNoLapseClock` on a day finalized before the V3 lapse-clock upgrade, whose
+`dayLapseClock.finalizedAt` is zero — likely for exactly the old pre-`D*` days
+this step reaches for. Check the clock before choosing the per-destination form. If the chosen pre-`D*` day
 was grace- or force-finalized without a particular mirror's daily report, that
 mirror has no day standing for it — and being pre-cutover, it has no armed-day
 zeroed marker either — so `broadcastGlobalTo` reverts
