@@ -2,18 +2,17 @@
 
 One entry today, and it changes no behaviour: it corrects what the documentation
 said about behaviour that had already changed. A cross-chain pause on reward
-claims was lifted some time ago; thirteen places across the specification, the
-design records, the test suite and the contract comments went on describing it as
-standing — the functional specification among them, which is the document the
-platform's behaviour is meant to be checked against. A reader following any of
-them would have concluded that a chain's rewards were stopped when they were
-running.
+claims was lifted some time ago, and the documentation went on describing it as
+standing — across the specification, the design records, the test suite and the
+contract comments. The specification is the document the platform's behaviour is
+meant to be checked against, so a reader following it would have concluded that
+correct behaviour was a defect. How many places is deliberately not stated here;
+the entry below explains why, and that reasoning applies to its own summary.
 
-Correcting it took nineteen review rounds, most of them spent on the replacement
-rather than the retraction: what stands in the pause's place is a set of per-day
-waits, and the first several attempts to describe them were confidently wrong
-about which deadline applies to which day, what "compensated" means, and who is
-able to end a wait.
+Most of the correction went into the pause's REPLACEMENT rather than its
+retraction. What stands in its place is a set of per-day waits, and the early
+attempts to describe them were confidently wrong about which deadline applies to
+which day, about what "compensated" means, and about who is able to end a wait.
 
 ## The documentation caught up with a pause that had already been lifted (#1222)
 
