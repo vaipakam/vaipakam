@@ -1994,7 +1994,21 @@ contract OfferAcceptFacet is
         // buyer-specific reason, all of which are unactionable while paused
         // (relisting is `whenNotPaused` too). APPENDED — prior values stay
         // stable.
-        ProtocolPaused
+        ProtocolPaused,
+        // #1835 (Codex #1891 F20 → F22) — a party to this accept already holds
+        // a vault below `mandatoryVaultVersion`, so `_acceptOffer` reverts
+        // `VaultFactoryFacet.VaultUpgradeRequired` before it reaches staleness.
+        //
+        // Classified because the accept-side check exists at all: F20 added it
+        // ahead of the stale comparison, which immediately made the preview
+        // wrong in the same way it had been about the pause. Parity is the
+        // point of this enum.
+        //
+        // A surface built on this code must say the vault needs upgrading and
+        // point at `upgradeUserVault` — NOT that the listing is stale, which
+        // advises a relist the same floor blocks (`OfferCreateFacet` resolves a
+        // vault too). APPENDED — prior values stay stable.
+        VaultUpgradeRequired
     }
 
     /// @notice Projection of the loan that would land if the supplied

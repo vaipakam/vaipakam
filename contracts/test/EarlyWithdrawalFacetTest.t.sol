@@ -2575,6 +2575,17 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
         vm.prank(buyer);
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview agrees (Codex #1891 F22). Adding the accept-side
+        // check without this classifier is the divergence this surface exists
+        // to prevent — F20 created it, and one round later it was found.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.VaultUpgradeRequired),
+            "the upgrade refusal is actionable; it outranks staleness on both surfaces"
+        );
     }
 
     /// @dev #1835 (Codex #1891 F21) — a paused preview still carries a

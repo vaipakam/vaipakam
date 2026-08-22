@@ -352,6 +352,29 @@ contract OfferPreviewFacet {
         // (else the position doesn't exist), and the buyer must not be the loan's
         // CURRENT borrower (resolved live via `ownerOf`, not the stale stored
         // `borrower` — Codex #959 round-8 P1).
+        // #1835 (Codex #1891 F22) — the mandatory vault-version floor, mirroring
+        // the accept-side check F20 added ahead of staleness. Adding a refusal
+        // to `_acceptOffer` without a matching classifier here is precisely the
+        // divergence this surface exists to prevent, and F20 created it.
+        //
+        // Non-deploying by construction: reads storage directly, so a party
+        // with no vault is untouched (they cannot be below the floor — a fresh
+        // vault is stamped at the current version) and none is created by a
+        // view. Roles resolve the same way `_acceptOffer` resolves them.
+        if (s.mandatoryVaultVersion > 0) {
+            address _vLender = _isLender ? offer.creator : acceptor;
+            address _vBorrower = _isLender ? acceptor : offer.creator;
+            if (
+                (s.userVaipakamVaults[_vLender] != address(0) &&
+                    s.vaultVersion[_vLender] < s.mandatoryVaultVersion) ||
+                (s.userVaipakamVaults[_vBorrower] != address(0) &&
+                    s.vaultVersion[_vBorrower] < s.mandatoryVaultVersion)
+            ) {
+                preview.errorCode = OfferAcceptFacet.AcceptError.VaultUpgradeRequired;
+                return preview;
+            }
+        }
+
         // #1835 (Codex #1891 F1/F10/F11) — the accept refuses a vehicle whose
         // four behavioural terms disagree with the live loan. Classified so the
         // card can disable "Accept" rather than letting the buyer discover it
