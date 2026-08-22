@@ -743,6 +743,17 @@ So, against **this** Diamond's mesh:
 - every id in `getBroadcastDestinations()` must be **present** there too;
 - and each of those resolved endpoints must return a matching `eth_chainId`.
 
+**Check that canonical Base is IN the expected-source list**, explicitly. Every
+containment test above validates only ids already present, and the mirror-set
+comparison looks at the mirror subset — so a list that OMITS Base passes all of
+them while the mesh has no canonical member.
+
+**And check both ends of every reward channel.** Matching chain ids, Diamond
+addresses and lane limiter states all pass with a missing or stale messenger
+peer: `setBroadcastDestinations` validates neither `remoteMessengerOf` nor the
+channel peer. Read both directions of each pairing before the arm — a broadcast
+that cannot authenticate is a `D*` that never lands.
+
 **And compare the two getters to EACH OTHER, not only to the keeper.** A mirror
 present in `getExpectedSourceChainIds()` but absent from
 `getBroadcastDestinations()` passes both checks above as long as the keeper
@@ -939,7 +950,16 @@ value.
 otherwise provide one.** Once Base is armed, EVERY subsequent broadcast carries
 its stored `armedFromDay`, and a mirror sitting at zero installs it on first
 application — so a mirror brought up after M3 lands cuts over the moment it
-receives any broadcast, at a `D*` that may be long past. **Promotion is a full Step 3 for that chain, not a short checklist.** Run the
+receives any broadcast, at a `D*` that may be long past. **Check the mirror's Base-era binding FIRST — a wrong one makes propagation
+impossible, not merely slow.** If `baseRewardDeployment` is unset or still names
+an earlier Base Diamond, the clock-bearing broadcast is rejected outright
+(`BroadcastEraUnauthenticated`) and `D*` cannot install by any route. And if the
+mirror previously followed a Base rotation, `rewardEraRotated` stays permanently
+true, which closes the clockless V2 fallback too — so a rotated mirror needs BOTH
+a correct era binding and a clock-bearing day, and the clockless bootstrap below
+does not apply to it.
+
+**Promotion is a full Step 3 for that chain, not a short checklist.** Run the
 whole active-mirror preflight against it — `KEEPER_ROLE`, keeper funding, the
 deployment artifact's Diamond address, both lane rate-limiter states, watcher
 coverage — plus PR-2, PR-5c, PR-6 and the #1566 fix live on it, its clock
@@ -1044,10 +1064,13 @@ A THIRD case sits between those two, and the fan-out advice above does not
 reach it: if the chosen pre-`D*` day was grace- or force-finalized without a
 mirror's report, `_planDay` sees no included-chain budget, returns no close at
 all, and `remitRewardBudget` reverts `NothingToRemit` — so there is neither a
-receipt nor a zero-message close to observe. That mirror simply has nothing owed
-for that day; record the revert as the evidence and broadcast to it. Better still,
-prefer a day every destination was included in, which avoids this and the
-`broadcastGlobalTo` restriction below at the same time.
+receipt nor a zero-message close to observe. **Do not read that revert as permission to broadcast.** `NothingToRemit` means
+the day carries no budget FOR THAT DESTINATION — not that opening its gate is
+harmless. Before `D*` a mirror prices the day from its own local pool rather than
+from the per-destination slice, so an active mirror holding local entries will
+pay against a day it was never funded for. **Choose a day every destination was
+included in.** That is the only safe resolution, and it also avoids the
+`broadcastGlobalTo` restriction below.
 
 Treat a zero-total close as satisfying the wait for that destination: its
 stamped payable budget is zero, so opening its gate funds nothing and strands

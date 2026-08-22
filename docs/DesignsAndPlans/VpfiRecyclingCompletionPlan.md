@@ -1492,7 +1492,8 @@ flowchart LR
     PR2[PR-2 D1 share cap] --> DSTAR[joint D* cutover]
     PR5c --> DSTAR
   end
-  FEE[M7.4 feeEntitlementEnabled] --> DSTAR
+  PR5c --> FEE[M7.4 feeEntitlementEnabled]
+  FEE --> DSTAR
   PR6[#1354 PR-6 settlement sweep] --> FEE
   GATE --> FEE
   PR2 -. one wire evolution .-> M3[M3 #1222 B1..B4]
