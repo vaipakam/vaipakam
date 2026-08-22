@@ -1055,4 +1055,22 @@ interface IVaipakamErrors {
     ///         forward link and strand the reverse link, splitting accept/cancel
     ///         authority across two offers.
     error SaleOfferAlreadyExists();
+    /// @notice #1835 — the sale listing's behavioural terms disagree with the
+    ///         live loan it sells, so the listing describes a position that is
+    ///         not the one on offer.
+    /// @dev    Raised at ACCEPT, by `OfferAcceptFacet._bindTermsToOffer`'s sale
+    ///         branch, comparing the VEHICLE against the LOAN. That pairing is
+    ///         the point: the accept-time signature checks compare the buyer's
+    ///         terms against the vehicle, so a vehicle that disagrees with its
+    ///         loan passes all of them — the buyer signed honestly and it is the
+    ///         listing that is wrong.
+    ///
+    ///         Deliberately parameterless, and deliberately NOT
+    ///         `OfferTermsMismatch`: the buyer cannot cure this by re-signing,
+    ///         so the actionable answer is "this listing is stale, the seller
+    ///         must relist", which is a different instruction from "your terms
+    ///         don't match". Only pre-#1779 listings can reach it — after that
+    ///         change the builder mirrors these terms, so a fresh listing
+    ///         satisfies the invariant by construction.
+    error SaleListingTermsStale();
 }

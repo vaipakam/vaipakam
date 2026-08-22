@@ -2112,6 +2112,171 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    // ─── #1835 — a pre-mirroring listing is refused at accept ─────────
+
+    /// @dev Stage the ONLY shape in which the #1835 defect can still exist: a
+    ///      listing created BEFORE #1779 taught `_buildSaleParams` to mirror.
+    ///      Such a vehicle holds the struct defaults while its loan holds the
+    ///      real values.
+    ///
+    ///      It has to be staged by writing the STORED OFFER back, not by
+    ///      listing differently: the builder mirrors now, so no reachable
+    ///      listing call produces this shape any more. Writing the loan instead
+    ///      would stage the wrong thing — it is the vehicle that is stale, not
+    ///      the position.
+    /// @param staleRepay   The stale vehicle's `allowsPartialRepay`.
+    /// @param stalePrepay  The stale vehicle's `allowsPrepayListing`.
+    /// @param staleCadence The stale vehicle's `periodicInterestCadence`.
+    function _stagePreMirroringListing(
+        bool staleRepay,
+        bool stalePrepay,
+        LibVaipakam.PeriodicInterestCadence staleCadence
+    ) internal returns (uint256 saleOfferId) {
+        // The live position permits all three. A real pre-#1779 listing of it
+        // would have described none of them.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        ld.allowsPrepayListing = true;
+        ld.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Quarterly;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        saleOfferId = _listSaleOffer();
+
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        vehicle.allowsPartialRepay = staleRepay;
+        vehicle.allowsPrepayListing = stalePrepay;
+        vehicle.periodicInterestCadence = staleCadence;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, vehicle);
+    }
+
+    /// @dev Build the accept terms the way every client does — FROM THE VEHICLE
+    ///      — and sign them honestly. On a stale listing this yields a signature
+    ///      that agrees with the vehicle on all three fields, so the accept-time
+    ///      checks at 18/19/23 are SATISFIED. That is the whole difficulty of
+    ///      #1835: the buyer does nothing wrong and nothing existing objects.
+    function _honestBuyerFor(uint256 saleOfferId, string memory who)
+        internal
+        returns (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer)
+    {
+        uint256 buyerPk;
+        (buyer, buyerPk) = makeAddrAndKey(who);
+        t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+    }
+
+    /// @dev #1835 — the headline case: a listing stale on all three behavioural
+    ///      terms is refused at accept, before the buyer's funds move.
+    ///
+    ///      The buyer signed the vehicle faithfully, so this cannot be
+    ///      `OfferTermsMismatch` — there is no mismatch to find between the
+    ///      signature and the vehicle. Only a vehicle-vs-LOAN comparison sees
+    ///      it, and `SaleListingTermsStale` says the actionable thing: the
+    ///      listing is stale, not the buyer's terms.
+    function test_item23_staleListingIsRefusedAtAccept() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "staleListingBuyer");
+
+        // Proof that the EXISTING checks are satisfied and this is not a
+        // re-discovery of 18/19/23: the honest signature matches the stale
+        // vehicle exactly, which is precisely why they cannot catch it.
+        assertFalse(t.allowsPartialRepay, "signature agrees with the stale vehicle (18)");
+        assertFalse(t.allowsPrepayListing, "signature agrees with the stale vehicle (19)");
+        assertEq(
+            uint8(t.periodicInterestCadence),
+            uint8(LibVaipakam.PeriodicInterestCadence.None),
+            "signature agrees with the stale vehicle (23)"
+        );
+
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 — each of the three terms is checked INDEPENDENTLY. Without
+    ///      this, a guard comparing only `allowsPartialRepay` would pass the
+    ///      headline test above (which stales all three at once) while leaving
+    ///      two of the three fields entirely unguarded — and those two are the
+    ///      ones that decide whether the borrower may park interest or list a
+    ///      prepay against the buyer's new position.
+    ///
+    ///      Three functions rather than a loop: one live sale route per
+    ///      position, so each case needs its own `setUp`.
+    function test_item23_staleOnPartialRepayAloneIsRefused() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, true, LibVaipakam.PeriodicInterestCadence.Quarterly
+        );
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "stalePartialOnly");
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 — see {test_item23_staleOnPartialRepayAloneIsRefused}.
+    function test_item23_staleOnPrepayListingAloneIsRefused() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            true, false, LibVaipakam.PeriodicInterestCadence.Quarterly
+        );
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "stalePrepayOnly");
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 — see {test_item23_staleOnPartialRepayAloneIsRefused}. The
+    ///      cadence is the field no other accept test exercises.
+    function test_item23_staleOnCadenceAloneIsRefused() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            true, true, LibVaipakam.PeriodicInterestCadence.None
+        );
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "staleCadenceOnly");
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 — the guard rejects STALENESS, not sale accepts. Runs the same
+    ///      staging helper with the vehicle left mirroring, and the accept
+    ///      completes. Without this, a guard that reverted unconditionally would
+    ///      satisfy all four tests above while removing the lender's exit.
+    ///
+    ///      This is the same shape as
+    ///      {test_item23_afreshListingSatisfiesTheMirrorInvariant}, but driven
+    ///      through a REAL accept rather than asserted on the stored offer — so
+    ///      it pins the guard's behaviour rather than the builder's.
+    function test_item23_afreshListingStillAccepts() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            true, true, LibVaipakam.PeriodicInterestCadence.Quarterly
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "freshListingBuyerOk");
+
+        // This one completes, so the buyer needs funding + the two approvals.
+        // The refusal cases above need none: they fail at the binding before any
+        // value moves, which is itself the ordering proof.
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
     /// @dev #951 (Codex #959 round-6, P1) — the linked loan's OWN borrower cannot
     ///      buy the lender position of their own debt (it would leave an Active
     ///      loan with lender == borrower). The generic self-trade check only

@@ -585,6 +585,39 @@ contract OfferAcceptFacet is
             if (t.amount != saleLoan.principal) revert OfferTermsMismatch(6);
             if (saleLoan.collateralAmount < t.collateralAmount) revert OfferTermsMismatch(7);
             if (t.durationDays != saleLoan.durationDays) revert OfferTermsMismatch(9);
+            // #1835 — the sale VEHICLE must mirror the position it sells.
+            //
+            // #1779 made `_buildSaleParams` copy these three behavioural terms
+            // onto the vehicle at listing time, which fixes every listing made
+            // from then on. A listing created BEFORE it still carries the
+            // struct defaults (false / false / None) while its loan carries the
+            // real values — and that gap is invisible to the checks at 18/19/23
+            // below, because those compare the buyer's SIGNATURE against the
+            // VEHICLE and the two agree perfectly. The buyer signs honestly,
+            // every client reads the same wrong vehicle, and the position they
+            // receive permits what they were told it forbids. These are exactly
+            // the terms that decide what the borrower may do to the buyer after
+            // the sale.
+            //
+            // So the comparison has to be vehicle-vs-LOAN, which is the one
+            // pairing no signature check can stand in for. A fresh listing
+            // satisfies it by construction, so the normal path pays nothing.
+            //
+            // Deliberately NOT `OfferTermsMismatch(18/19/23)`: nothing the
+            // buyer did is wrong, and the actionable answer is "this listing is
+            // stale, ask the seller to relist" — a different instruction than
+            // "your terms don't match", which would send them to re-sign the
+            // same wrong vehicle forever. Parameterless is also the cheaper
+            // encoding, which this facet still cares about.
+            //
+            // `useFullTermInterest` (17) is excluded on purpose: it has been
+            // mirrored since #408/#410/#413, long before any listing this guard
+            // could still see, so it has no stale population to catch.
+            if (
+                o.allowsPartialRepay != saleLoan.allowsPartialRepay ||
+                o.allowsPrepayListing != saleLoan.allowsPrepayListing ||
+                o.periodicInterestCadence != saleLoan.periodicInterestCadence
+            ) revert SaleListingTermsStale();
         } else {
             if (t.amount != roleAmount) revert OfferTermsMismatch(6);
             if (t.collateralAmount != o.collateralAmount) revert OfferTermsMismatch(7);
