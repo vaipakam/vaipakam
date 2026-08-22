@@ -18,20 +18,6 @@
 # constraints); tightening to nonces is a follow-up hardening pass —
 # do not loosen further without review.
 #
-# `static.cloudflareinsights.com` is deliberately ABSENT (#1592). Until
-# 2026-08-22 Cloudflare Web Analytics auto-injected its beacon here and
-# this policy refused it on every page load — so it collected nothing
-# while filling the console with violations that every live review then
-# had to read past. The injection was zone-wide: ONE Web Analytics site
-# record on `vaipakam.com` covered every subdomain, which is why there
-# was no alpha02 entry to find and why all three hosts served the same
-# beacon token. It is now disabled at that record ("Manage site" → RUM
-# → Disable), verified 0 on all three.
-#
-# Do not add the host back to re-enable it. If analytics is ever wanted
-# here, that is a decision to take deliberately — this file's whole
-# premise is that alpha02 carries no third-party script origins.
-#
 # Safe-App embed support: `frame-ancestors` allows Safe's dapp-browser
 # origins (alpha02 registers the Safe connector). `X-Frame-Options` is
 # deliberately omitted — it can't express an allowlist; modern browsers
@@ -58,6 +44,19 @@
 # worse — the console error stops because the collector starts. If a red
 # sweep sends you to this line, the change belongs in the Cloudflare
 # dashboard, not in this file.
+#
+# RESOLVED 2026-08-22 (#1592) — the injection is now off, and where it
+# lived is the part worth recording. There was no alpha02 entry to find:
+# Web Analytics auto-injection is ZONE-WIDE, so a single site record on
+# `vaipakam.com` covered every subdomain. All three hosts served the
+# same beacon token, which is how that was confirmed. Turned off at that
+# one record (Web Analytics → Manage site → RUM → Disable); verified 0
+# on alpha02, vaipakam.com and defi, and the sweep went from a violation
+# on every page to 54/54 routes with 0 console errors.
+#
+# So if it ever comes back, look for one zone-level record rather than a
+# per-site switch — the search for an alpha02 entry is what stalled this
+# the first time.
 
 /*
   X-Content-Type-Options: nosniff
