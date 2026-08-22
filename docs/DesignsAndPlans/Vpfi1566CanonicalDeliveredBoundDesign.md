@@ -39,14 +39,32 @@ card describes. It is worth stating exactly.
 to that chain for rewards. That is the property #1566 asks for, and it is live —
 **for armed days only.**
 
-**The legacy slice on a mirror is NOT covered.** Both counters
+**The legacy slice on a mirror is NOT covered, and it DEFEATS the armed bound
+rather than merely sitting outside it.** Both counters
 (`rewardBudgetArmedFreshReceived` / `...Paid`) track armed fresh by definition,
 and a pre-`D*` entitlement is paid O(1) by `_processEntry` *before* the walk that
-consults `deliveredFreshBound` ever runs. That slice is gated only by
-`backingPosition` — so unrelated VPFI custody on a mirror can fund it exactly as
-on Base.
+consults `deliveredFreshBound` ever runs. Critically, **that spend never
+increments the paid counter** — `_processEntry` does not touch it — so the walk
+still sees the entire `received − paid` allowance afterwards.
 
-**On canonical Base, there is no bound at all** from that function, so the
+A claimant holding both a legacy slice and an armed tail therefore spends twice
+against one balance: 100 VPFI delivered beside 100 VPFI of borrower custody lets
+one claim pay 100 legacy plus 100 armed, clear the aggregate `backingPosition`
+check against the 200-token balance, and drain the custody — while the armed
+bound reports itself satisfied. So the mirror bound is not "correct but partial";
+it is **evadable** by any claimant with entitlements on both sides of `D*`.
+
+**There is a THIRD chain role, and it is the least bounded of the three.**
+`isMirrorRewardChain` is `!isCanonicalRewardChain && baseChainId != 0`, so
+detaching a former mirror with `setBaseChainId(0)` leaves a deployment that is
+neither canonical nor a mirror. In that state `deliveredFreshBound` returns
+`type(uint256).max` **and** every paid-counter writer stops recording — while
+persisted armed-day stamps stay claimable. An armed claim there is bounded by
+nothing but the balance, and nothing even tracks what it spent. Any fix must
+decide what this role does rather than inheriting the mirror check's negation,
+which is how it arose.
+
+**On canonical Base, there is no bound at all** from that function either, so the
 claim gate falls through to `backingPosition`'s un-earmarked figure —
 `balanceOf − recycleBucket − strandedRecoveryReserved − recovered-position`.
 That figure still contains every other owner of the Diamond's VPFI, and **two
@@ -55,10 +73,11 @@ of them are user collateral**: a live swap-to-repay intent's
 payout drawing on those spends a borrower's collateral.
 
 **So the axis split is not clean, and an earlier revision of this note said it
-was.** What is closed is *armed-day payouts on mirrors*. What is open is
-*canonical payouts* AND *pre-`D*` payouts on mirrors* — the latter reached by
-the same `backingPosition` fallback, and easy to miss precisely because the
-mirror path looks solved from the armed side.
+was.** What is closed is *armed-day payouts on mirrors, in isolation*. What is open is
+*canonical payouts*, *pre-`D*` payouts on mirrors*, *the combination of the two
+on one claimant* (which evades the armed bound outright), and *the detached
+"neither" role*, which is bounded by nothing at all. The mirror path looks solved
+from the armed side, which is precisely why three of those four went unnoticed.
 
 ## 3. Why "subtract one more owner" is not the answer
 
@@ -115,11 +134,21 @@ that has already paid rewards under the old rule.
 
 **Option C — hold the canonical side on the balance figure deliberately**, and
 close the fund-safety gap by earmarking the USER-OWNED classes instead of all
-owners. There are **three, not two**: a live swap-to-repay intent's
-`custodialCollateral`, liquidation `fallbackSnapshot` custody, **and
-`borrowerLifRebate[loanId].vpfiHeld`**, which stays non-zero for loans
-grandfathered from a pre-#1352 deployment and is today spendable by a reward
-claim or relabelable by the RL-3 sweep. An earlier revision of this note named
+owners. There are **four, not two**: a live swap-to-repay intent's
+`custodialCollateral`; liquidation `fallbackSnapshot` custody;
+`borrowerLifRebate[loanId].vpfiHeld`, which stays non-zero for loans
+grandfathered from a pre-#1352 deployment; **and
+`borrowerLifRebate[loanId].rebateAmount`**, which is the SETTLED-but-unclaimed
+form of the same money — `settleBorrowerLifProper` zeroes `vpfiHeld` and stores
+the borrower's retained share there, where it sits in Diamond custody until
+`claimAsBorrower` transfers it. Reserving only the held form leaves the settled
+form spendable, so a reward payout consumes it and the borrower's later claim
+reverts.
+
+That fourth class is worth dwelling on: it is the same storage examined under
+#1867 (the prepay-sale stranding) hours before this note was written, and the
+connection to this card's custody list was not made. Two cards reading one slot
+for different reasons, neither seeing the other's. An earlier revision of this note named
 only the first two — reserving those alone would still let rewards consume a
 borrower's VPFI and leave the later settlement reverting or underpaying.
 It is a bounded list, which is the argument for it; but "bounded" only helps if

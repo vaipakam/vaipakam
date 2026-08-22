@@ -10,10 +10,13 @@ Re-reading that issue against the platform as it stands today changed the
 picture, though not as cleanly as a first pass suggested. Separate work two days
 earlier had already limited part of it: on a chain that RECEIVES its reward
 funding, a payout for a day inside the new programme is limited to what actually
-arrived. That leaves two things still open rather than one — the chain rewards
+arrived. That leaves more open than a first pass suggested, not less: the chain rewards
 originate on, where nothing arrives and so the limit has to be defined rather
-than copied across, and older entitlements on the receiving chains, which are
-paid by a different route that the new limit never sees.
+than copied across; older entitlements on the receiving chains, which are paid by
+a route the new limit never sees and never records, so a single person holding
+both kinds can spend twice against one balance; and a chain that has been
+detached from the group, which ends up limited by nothing at all because it is
+no longer recognised as either kind.
 
 That distinction is now written down, along with why the obvious repair — keep a
 list of everything else the balance is holding and subtract it — is the one
