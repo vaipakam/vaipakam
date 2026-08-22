@@ -107,7 +107,61 @@ ok()   { echo "  ok   — $1"; }
 # of them went unread. It is counted, and the count is stated at the end.
 skip() { echo "  SKIP — $1"; SKIPPED=$((SKIPPED + 1)); }
 fail() { echo "  FAIL — $1" >&2; FAILED=1; }
+
+# ── Assertions retired with the shell implementation (#1877) ─────────────
+#
+# Each of these pinned the SOURCE TEXT of `assemble.sh` — a trap, a
+# `mapfile`, a `mktemp` flag, a `local`. The implementation is Python
+# now, so the construct is gone and the grep can only fail. What the
+# assertion GUARDED is not gone: it is either guaranteed by construction
+# in Python, or covered by a behavioural assertion in the same case that
+# still runs. The reason is recorded per name, here, rather than the
+# lines being deleted — 29 assertions vanishing during a rewrite is
+# exactly how the coverage that made the rewrite safe would be lost.
+#
+# Matched BY NAME, and every name was verified to appear exactly once in
+# this file before this table was written. Retiring by name is what let
+# this be done without moving a line; three attempts to excise the
+# statements mechanically each broke the file, because a `check` can
+# span a heredoc or a `case` and no simple span rule survives that.
+declare -A RETIRED_ASSERTIONS=(
+  ["guard present"]="no Bash-4 floor — the entry point uses no bash-4 feature and the work is Python"
+  ["guard is before the first mapfile"]="no mapfile anywhere"
+  ["guard names bash 4"]="no Bash-4 floor any more"
+  ["the script clears the flag"]="lock_held is cleared before the rmdir, in one place"
+  ["removals are non-fatal in the script"]="every cleanup step is a try/except pass, by construction"
+  ["it reads the replacement"]="the gate stats the replacement itself; no probe file to confuse it"
+  ["no second probe file"]="no probe file is created for the group read at all"
+  ["the owner comes from the baseline"]="the baseline is one identity string, compared whole"
+  ["the group comes from OUT_ID"]="the baseline is one identity string, compared whole"
+  ["the probe runs after the traps"]="no traps — cleanup runs in a finally"
+  ["signals are held across it"]="HoldSignals is a context manager; it cannot be left half-applied"
+  ["and restored after recording"]="HoldSignals restores in __exit__"
+  ["the source is probed too"]="covered behaviourally by the rest of this case"
+  ["it is created under SNAP"]="the heading is normalised in memory; no temp file is created"
+  ["no bare mktemp for it"]="no temp file is created for it"
+  ["the check exists"]="covered behaviourally by the rest of this case"
+  ["no startup cache is used"]="the sticky bits are stat-ed inside the gate, never cached"
+  ["the gate re-reads the group"]="covered behaviourally by the rest of this case"
+  ["and compares the approved one"]="covered behaviourally by the rest of this case"
+  ["it builds inside a private directory"]="tempfile.mkdtemp is 0700 by construction"
+  ["which is private by construction"]="tempfile.mkdtemp is 0700 by construction"
+  ["the directory denies others"]="tempfile.mkdtemp is 0700 by construction"
+  ["the approved group is recorded for new outputs"]="covered behaviourally by the rest of this case"
+  ["the gate compares unconditionally"]="covered behaviourally by the rest of this case"
+  ["membership is compared element-wise"]="list membership in Python is exact, by construction"
+  ["and by exact match"]="list membership in Python is exact, by construction"
+  ["both directories are tested"]="covered behaviourally by the rest of this case"
+  ["the pool is still tested"]="covered behaviourally by the rest of this case"
+  ["the trap is cleared after publishing"]="no traps — the backstop words itself from run.published"
+)
+RETIRED=0
+retired() { echo "  RTRD — $1"; RETIRED=$((RETIRED + 1)); }
 check() {  # check <condition-description> <actual> <expected>
+  if [ -n "${RETIRED_ASSERTIONS[$1]+set}" ]; then
+    retired "$1 — ${RETIRED_ASSERTIONS[$1]}"
+    return
+  fi
   if [ "$2" = "$3" ]; then ok "$1"; else fail "$1 (got '$2', want '$3')"; fi
 }
 
@@ -3683,6 +3737,10 @@ bash "$S" 20260816            >/dev/null 2>&1; check "bad date format refused" "
 bash -n "$SRC"                >/dev/null 2>&1; check "assemble.sh parses"    "$?" "0"
 
 echo ""
+if (( RETIRED > 0 )); then
+  echo "assemble.test.sh: $RETIRED assertion(s) RETIRED — the shell construct each"
+  echo "  pinned no longer exists (#1877); every one states its reason inline."
+fi
 if (( SKIPPED > 0 )); then
   echo "assemble.test.sh: $SKIPPED case(s) SKIPPED in this pass (uid $(id -u))."
   if [ -z "$DROP_UID" ] && [ "${ASSEMBLE_TEST_NESTED:-}" != "1" ] && [ "$(id -u)" = "0" ]; then
