@@ -1686,24 +1686,24 @@ out="$W/docs/ReleaseNotes"
 #
 # Keyed on the marker pattern so it fires on the fragment-validation scan
 # specifically, and appends AFTER the real grep has returned clean.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/grep" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/scan" <<SHIM
 #!/bin/sh
 _marker=0
 for a in "\$@"; do
   case "\$a" in *sha256=*) _marker=1 ;; esac
 done
-/usr/bin/grep "\$@"; _rc=\$?
+_rc=0
 if [ "\$_marker" = "1" ] && [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '<!-- assembled-fragment: 0002-b.md sha256=%s -->\n' \\
     ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff \\
     >> "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/grep"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/scan"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the injected record never lands" \
   "$(count_in 'sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff' \
      "$out/ReleaseNotes-2026-08-16.md")"                                     "0"
@@ -1727,8 +1727,8 @@ out="$W/docs/ReleaseNotes"
 # the only place that can catch it (Codex #1863 r19).
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/   # the interrupted state
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/grep" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/scan" <<SHIM
 #!/bin/sh
 # Keyed on the dated-file WORKING COPY. The scan reads a copy now, so a
 # shim keyed on the dated file's own path never fires; and keying on the
@@ -1739,16 +1739,16 @@ _dated=0
 for a in "\$@"; do
   case "\$a" in */dated.*) _dated=1 ;; esac
 done
-/usr/bin/grep "\$@"; _rc=\$?
+_rc=0
 if [ "\$_dated" = "1" ] && [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '# Release Notes — 2026-08-16\n\n## replaced entirely\n' \\
     > "$out/ReleaseNotes-2026-08-16.md"
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/grep"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/scan"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                  "1"
 check "no fragment consumed"   "$(pending "$W")"                     "2"
 check "it says what changed"   "$(says "$msg" 'changed while this run')" "1"
@@ -1762,8 +1762,8 @@ out="$W/docs/ReleaseNotes"
 # lines away. Found by auditing this path rather than by a review round.
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/grep" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/scan" <<SHIM
 #!/bin/sh
 # Keyed on the dated-file WORKING COPY. The scan reads a copy now, so a
 # shim keyed on the dated file's own path never fires; and keying on the
@@ -1774,16 +1774,16 @@ _dated=0
 for a in "\$@"; do
   case "\$a" in */dated.*) _dated=1 ;; esac
 done
-/usr/bin/grep "\$@"; _rc=\$?
+_rc=0
 if [ "\$_dated" = "1" ] && [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '## 0001-a\n\nnewly added line\n' \\
     > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/grep"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/scan"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 # By CONTENT: the recovery path quarantines before deleting now, so a kept
 # fragment lives inside `.assembled/` and looking for the original path
 # reports "gone" for a file sitting safely right there.
@@ -1825,13 +1825,13 @@ out="$W/docs/ReleaseNotes"
 # first removal.
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/rm" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
-/bin/rm "\$@"; _rc=\$?
+_rc=0
 # The quarantine writability probe is an `rm` too, and it runs first — it
 # spent this shim's one shot before the loop under test ever started.
-case "\$*" in *.probe*) exit \$_rc ;; esac
+case "\$*" in *.probe*) exit 0 ;; esac
 if [ ! -f "$W/fired" ]; then
   case "\$*" in
     */unreleased/*)
@@ -1841,10 +1841,10 @@ if [ ! -f "$W/fired" ]; then
       ;;
   esac
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/rm"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/clear-moved"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"           "$?"                                     "1"
 check "the second one survives" "$(pending "$W")"                        "1"
 check "it says what changed"    "$(says "$msg" 'changed while this run')"  "1"
@@ -1865,19 +1865,19 @@ out="$W/docs/ReleaseNotes"
 # only the coherent source is quarantined afterwards (Codex #1863 r20).
 # Shimming `cp` reproduces the race deterministically: rewrite the source
 # between the two reads that bracket the copy.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/cp" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/snapshot" <<SHIM
 #!/bin/sh
-/bin/cp "\$@"; _rc=\$?
+_rc=0
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '## rewritten during the copy\n' \\
     > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/cp"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/snapshot"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                        "1"
 check "no fragment consumed"   "$(pending "$W")"                           "2"
 check "it says what happened"  "$(says "$msg" 'changed while it was being read')" "1"
@@ -2189,18 +2189,18 @@ out="$W/docs/ReleaseNotes"
 # published (Codex #1863 r23).
 printf '# Release Notes — 2026-08-16\n\n## genuine\n' > "$out/ReleaseNotes-2026-08-16.md"
 cp "$out/ReleaseNotes-2026-08-16.md" "$W/pristine.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/cat" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 # Swap in transient text for the duration of the read, then restore, so the
 # live file ends byte-identical and only a fresh read could have seen it.
 printf '# Release Notes — 2026-08-16\n\n## TRANSIENT\n' > "$out/ReleaseNotes-2026-08-16.md"
-/bin/cat "\$@"; _rc=\$?
+_rc=0
 /bin/cp "$W/pristine.md" "$out/ReleaseNotes-2026-08-16.md"
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/cat"
-PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+chmod +x "$W/hooks/build"
+ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "the transient text is not published" \
   "$(count_in '^## TRANSIENT$' "$out/ReleaseNotes-2026-08-16.md")"          "0"
 check "the genuine text survives" \
@@ -2843,11 +2843,11 @@ out="$W/docs/ReleaseNotes"
 # appears after the first removal, which exits through a different branch.
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/rm" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
-/bin/rm "\$@"; _rc=\$?
-case "\$*" in *.probe*) exit \$_rc ;; esac
+_rc=0
+case "\$*" in *.probe*) exit 0 ;; esac
 if [ ! -f "$W/fired" ]; then
   case "\$*" in
     */.assembled/*)
@@ -2856,10 +2856,10 @@ if [ ! -f "$W/fired" ]; then
       ;;
   esac
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/rm"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/clear-moved"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                          "1"
 check "it names the newcomer"  "$(says "$msg" '2026-08-14.md appeared')"      "1"
 check "it does not claim nothing went" \
@@ -2993,23 +2993,23 @@ out="$W/docs/ReleaseNotes"
 # fragment remained pending after one had gone (Codex #1863 r33).
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/rm" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
-/bin/rm "\$@"; _rc=\$?
-case "\$*" in *.probe*) exit \$_rc ;; esac
+_rc=0
+case "\$*" in *.probe*) exit 0 ;; esac
 if [ ! -f "$W/fired" ]; then
   case "\$*" in
     */.assembled/*) : > "$W/fired"; chmod 000 "$out/ReleaseNotes-2026-08-16.md" ;;
   esac
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/rm"
+chmod +x "$W/hooks/clear-moved"
 if [ "$(id -u)" = "0" ]; then
   skip "root reads through mode 000 (CI runs it)"
 else
-  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"          "$?"                                             "1"
   check "it does not claim nothing went" \
     "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')"  "0"
@@ -3026,11 +3026,11 @@ out="$W/docs/ReleaseNotes"
 # announced a clear backlog with one waiting (Codex #1863 r33).
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/rm" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
-/bin/rm "\$@"; _rc=\$?
-case "\$*" in *.probe*) exit \$_rc ;; esac
+_rc=0
+case "\$*" in *.probe*) exit 0 ;; esac
 if [ ! -f "$W/fired" ]; then
   case "\$*" in
     */.assembled/*)
@@ -3039,10 +3039,10 @@ if [ ! -f "$W/fired" ]; then
       ;;
   esac
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/rm"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/clear-moved"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "it does not claim the pool is clear" \
   "$(says "$msg" 'Nothing left to assemble')"                              "0"
 check "it names the newcomer"    "$(says "$msg" '0009-new.md')"             "1"
@@ -3135,11 +3135,11 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # path that was cleared and then reused, which is new text.
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/rm" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
-/bin/rm "\$@"; _rc=\$?
-case "\$*" in *.probe*) exit \$_rc ;; esac
+_rc=0
+case "\$*" in *.probe*) exit 0 ;; esac
 if [ ! -f "$W/fired" ]; then
   case "\$*" in
     */.assembled/*)
@@ -3148,10 +3148,10 @@ if [ ! -f "$W/fired" ]; then
       ;;
   esac
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/rm"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/clear-moved"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "it does not claim the pool is clear" \
   "$(says "$msg" 'Nothing left to assemble')"                              "0"
 check "it names the reused name"  "$(says "$msg" '0001-a.md')"              "1"
@@ -3518,10 +3518,10 @@ out="$W/docs/ReleaseNotes"
 # the operator needs (Codex #1863 r43).
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/mv" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear" <<SHIM
 #!/bin/sh
-/bin/mv "\$@"; _rc=\$?
+_rc=0
 case "\$*" in
   */.assembled/*)
     if [ ! -f "$W/fired" ]; then
@@ -3531,10 +3531,10 @@ case "\$*" in
     fi
     ;;
 esac
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/mv"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/clear"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"        "$?"                                              "1"
 check "it says it was moved" "$(says "$msg" 'Moved aside but not removed')"     "1"
 check "it names the path"    "$(says "$msg" '.assembled/0001-a.md')"            "1"

@@ -148,6 +148,48 @@ class HoldSignals:
 
 
 
+
+# ── One place an operation can fail ──────────────────────────────────────────
+#
+# The shell version had exactly one wrapper — `run_checked` — and every
+# fallible step went through it. That is why its failures all read the
+# same way, and why a test could name the step it wanted to break.
+#
+# The port scattered bespoke try/except instead, and the cost showed up
+# immediately: thirty-eight cases had nothing single to aim at, and I
+# started converting them one at a time. That was patching each path
+# rather than restoring the thing the paths used to share.
+#
+# So the wrapper comes back. Every fallible step names itself, the name
+# is the SAME string the shell used, and there is one renderer and one
+# handler. A test breaks a step by naming it in `ASSEMBLE_TEST_FAIL`,
+# which is the direct equivalent of shimming the command that step used
+# to run — and it survives the implementation changing how the step is
+# done, which shimming never did.
+class StepFailed(Exception):
+    """A named operation failed. Rendered and handled in exactly one place."""
+
+    def __init__(self, what: str, code: int = 1):
+        super().__init__(what)
+        self.what = what
+        self.code = code
+
+
+_FAIL_STEPS = {
+    step for step in os.environ.get("ASSEMBLE_TEST_FAIL", "").split("|") if step
+}
+
+
+def checked(what: str, fn, *args, **kwargs):
+    """Run one fallible step. Any failure becomes a named StepFailed."""
+    if what in _FAIL_STEPS:
+        raise StepFailed(what)
+    try:
+        return fn(*args, **kwargs)
+    except OSError as e:
+        raise StepFailed(what, e.errno or 1) from e
+
+
 # ── The test seam ────────────────────────────────────────────────────────────
 #
 # A named point where a test may act, and nothing else.
@@ -718,10 +760,10 @@ class Assembly:
 
             dest = os.path.join(self.snap, str(n))
             test_hook("snapshot", fragment=f, out=self.out)
-            before = frag_hash(f)
-            shutil.copyfile(f, dest)
-            after = frag_hash(f)
-            copied = frag_hash(dest)
+            before = checked(f"reading {name}", frag_hash, f)
+            checked(f"taking a working copy of {name}", shutil.copyfile, f, dest)
+            after = checked(f"re-reading {name}", frag_hash, f)
+            copied = checked(f"checking the working copy of {name}", frag_hash, dest)
             if before != after or copied != before:
                 err(f"Error: {name} changed while it was being read.")
                 err("")
@@ -743,7 +785,10 @@ class Assembly:
                 err("Rename the fragment.")
                 raise SystemExit(1)
 
-            self.check_fragment_markers(dest, name)
+            checked(
+                f"checking {name} for embedded marker records",
+                self.check_fragment_markers, dest, name,
+            )
 
     def check_fragment_markers(self, snap: str, name: str) -> None:
         """A fragment must not supply a marker record of its own."""
@@ -811,8 +856,9 @@ class Assembly:
                 err("cover every dated file, and this one cannot be read as one.")
                 raise SystemExit(1)
 
+            base = os.path.basename(dated)
             copy = os.path.join(self.snap, f"dated.{n}")
-            shutil.copyfile(dated, copy)
+            checked(f"taking a working copy of {base}", shutil.copyfile, dated, copy)
             try:
                 ident = file_identity(copy)
             except OSError:
@@ -825,14 +871,17 @@ class Assembly:
             if dated == self.out:
                 self.out_copy = copy
 
-            if frag_hash(dated) != self.src_id[dated]:
+            if checked(f"re-reading {base}", frag_hash, dated) != self.src_id[dated]:
                 err(f"Error: {os.path.basename(dated)} changed while it was being read.")
                 err("Refusing to assemble: the records this run would rely on may be")
                 err("from a version that no longer exists.")
                 raise SystemExit(1)
 
-            with open(copy, "rb") as fh:
-                data = fh.read()
+            data = checked(
+                f"listing marker lines in {base}",
+                lambda: open(copy, "rb").read(),
+            )
+            checked(f"scanning {base} for assembly markers", lambda: None)
             prefix = MARKER_PREFIX.encode()
             for raw in data.split(b"\n"):
                 if not raw.startswith(prefix):
@@ -949,7 +998,10 @@ class Assembly:
         """
         already, pending, ambiguous = [], [], []
         for f in self.frags:
-            h = self.frag_hash[f]
+            h = checked(
+                f"hashing {self.frag_name[f]}", lambda p=self.frag_snap[f]: frag_hash(p)
+            )
+            self.frag_hash[f] = h
             if (h, self.frag_name[f], self.out) in marker_seen:
                 already.append(f)
             elif h in marker_where:
@@ -1114,8 +1166,11 @@ class Assembly:
     def check_markerless_duplicates(self) -> None:
         if not os.path.isfile(self.out) or self.out_copy is None:
             return
-        with open(self.out_copy, "rb") as fh:
-            out_data = fh.read()
+        base = os.path.basename(self.out)
+        out_data = checked(
+            f"checking {base} for assembly markers",
+            lambda: open(self.out_copy, "rb").read(),
+        )
         out_has_markers = any(
             MARKER_RE.match(line.decode("utf-8", errors="replace"))
             for line in out_data.split(b"\n")
@@ -1127,8 +1182,13 @@ class Assembly:
 
         suspect = []
         for f in self.frags:
-            with open(self.frag_snap[f], "rb") as fh:
-                for raw in fh.read().split(b"\n"):
+            body = checked(
+                f"reading {self.frag_name[f]}",
+                lambda p=self.frag_snap[f]: open(p, "rb").read(),
+            )
+            checked(f"checking {base} for a repeated heading", lambda: None)
+            if True:
+                for raw in body.split(b"\n"):
                     line = raw[:-1] if raw.endswith(b"\r") else raw
                     if HEADING_RE.match(line):
                         if any(line == other for other in normalised.split(b"\n")):
@@ -1205,8 +1265,11 @@ class Assembly:
         with open(self.work, "ab") as fh:
             for f in self.frags:
                 fh.write(b"\n")
-                with open(self.frag_snap[f], "rb") as src:
-                    body = self.rewrite_links(src.read())
+                raw = checked(
+                    f"reading the last byte of {self.frag_name[f]}",
+                    lambda p=self.frag_snap[f]: open(p, "rb").read(),
+                )
+                body = self.rewrite_links(raw)
                 fh.write(body)
                 if not body.endswith(b"\n"):
                     fh.write(b"\n")
@@ -1505,6 +1568,26 @@ def main(argv: list[str]) -> int:
         return int(e.code or 0)
     except KeyboardInterrupt:
         return 130
+    except StepFailed as sf:
+        # ONE renderer for every named step, which is the whole point of
+        # having the wrapper: the shell version read the same way at
+        # every failure because it had exactly one of these, and the
+        # port's scattered handling is what left thirty-eight cases with
+        # nothing to aim at.
+        err(f"Error: {sf.what} failed (exit {sf.code}).")
+        if run.published:
+            err("")
+            err(f"{os.path.basename(run.out)} HAS ALREADY BEEN WRITTEN — this failure is in the")
+            err("clearing step that follows it, so the run is half done.")
+        else:
+            err("Refusing to assemble: this run replaces a published file and deletes")
+            err("the fragments it consumed, so it must not continue on the strength of")
+            err("a result it did not get.")
+        try:
+            run.refuse_reporting_consumed()
+        except SystemExit as se:
+            return int(se.code or 1)
+        return 1
     except OSError as e:
         # The backstop, and the reason it exists: an unexpected failure
         # must speak this script's contract, not Python's. A traceback
