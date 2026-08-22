@@ -574,8 +574,13 @@ broadcasts whose payloads differ, and the contract names exactly that repetition
 as a way to drain the protocol-funded cross-chain budget — which, once
 exhausted, makes legitimate broadcasts fail for everyone. Harmless once and
 harmful at scale is not something to publish on a page read by everyone, so the
-pages say instead that there is no supported way to refresh a tier that has not
-changed.
+release note says instead that there is no supported way to refresh a tier that
+has not changed. The GUIDES do not yet say it: a passage in the Advanced guide
+still names an expired mirror cache as a reason to use the push button and tells
+the reader a fresh push will land, which is true only if something about their
+tier actually changed. A reader whose cache simply aged out follows that
+instruction, nothing is sent, and they stay at no discount. Correcting it is
+filed separately — this note reports what shipped, and that has not.
 
 Three times in a row, then, this note named the wrong remedy — first one that
 does nothing, then one that costs the reader, then one that costs everyone
@@ -755,8 +760,11 @@ illiquid default hands the entire basket to the lender and creates no borrower
 claim — there, "nothing" is exactly right and always will be. The whole basket also goes where the protocol CAN price the
 collateral but the position's ratio has passed the collapse threshold — pricing
 is not the discriminator, and a borrower on a collapsed position gets no claim
-either. Where the protocol prices it, the ratio has not collapsed, and the
-waterfall takes only what it needs — the liquidator, the
+either. Priceable is not the same as saleable, either: an asset with a good price feed
+but no market deep enough to absorb the protocol's test trade is treated as
+unpriceable for this purpose and takes the same whole-basket path. Where the
+protocol prices it, a deep enough market exists, the ratio has not collapsed, and
+the waterfall takes only what it needs — the liquidator, the
 lender, the treasury — any remainder is recorded as the borrower's claim,
 waiting in their vault until they withdraw it, and THAT is the case a page
 cannot promise either way. Whether a remainder exists depends on what the collateral actually
