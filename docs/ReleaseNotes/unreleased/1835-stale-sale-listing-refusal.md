@@ -32,8 +32,10 @@ seller to relist" is useful advice, but only where relisting is actually
 possible — and often it isn't. A position that has already been repaid,
 defaulted or liquidated cannot be relisted at all. Neither can one that has
 passed its due date, or one whose seller has since been placed under
-sanctions, or one holding an asset the platform has paused. In each of those
-cases the platform has a reason that the person reading it can act on, and
+sanctions, or one holding an asset the platform has paused — and while the
+platform as a whole is paused, nothing can be listed or bought at all. In each
+of those cases the platform has a reason that the person reading it can act on
+(even if only by waiting), and
 answering "relist" instead would have buried it behind advice that cannot be
 followed. So the out-of-date refusal now speaks last, after every other reason
 a purchase can be turned down, and the buyer sees the reason that is worth
@@ -46,5 +48,7 @@ satisfies the check by construction, and a normal purchase is unaffected.
 
 This closes a gap that had been recorded but left open, because the change
 needed room the accept path did not have until the facet carrying it was split
-in the preceding release. The check costs 164 bytes; before the split there were
-exactly 164 bytes free, which would have left nothing for whatever came next.
+in the preceding release. As shipped the check costs 448 bytes, and the facet it
+lives in now stands 3,057 bytes below the size limit. Before the split there
+were 164 bytes free — not enough for even the smaller prototype this grew from,
+and nothing at all for whatever came next.

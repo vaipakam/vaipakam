@@ -1935,7 +1935,23 @@ contract OfferAcceptFacet is
         // are wrong: they signed the listing faithfully, and re-signing
         // reproduces the same wrong vehicle. APPENDED — prior values stay
         // stable.
-        SaleListingTermsStale
+        SaleListingTermsStale,
+        // #1835 (Codex #1891 F15) — the PROTOCOL-WIDE pause is active, so every
+        // accept entry point reverts `EnforcedPause` in its `whenNotPaused`
+        // modifier before `_acceptOffer` runs at all.
+        //
+        // Distinct from `AssetPaused`, which is per-asset and checked INSIDE
+        // the chain. This one outranks every other classifier — the modifier
+        // sits in front of the whole function — so `previewAccept` tests it
+        // FIRST, not merely ahead of whichever check a finding happened to
+        // name. Nothing below it can be the true first failure while it holds.
+        //
+        // A surface built on this code must say the protocol is paused and no
+        // action is available right now — never a listing-, offer- or
+        // buyer-specific reason, all of which are unactionable while paused
+        // (relisting is `whenNotPaused` too). APPENDED — prior values stay
+        // stable.
+        ProtocolPaused
     }
 
     /// @notice Projection of the loan that would land if the supplied

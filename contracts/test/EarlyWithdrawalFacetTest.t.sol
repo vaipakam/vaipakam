@@ -33,6 +33,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
@@ -2488,6 +2489,58 @@ contract EarlyWithdrawalFacetTest is Test {
             uint8(OfferAcceptFacet.AcceptError.SanctionedCreator),
             "the compliance refusal is actionable; it outranks staleness"
         );
+    }
+
+    /// @dev #1835 (Codex #1891 F15) — the PROTOCOL-WIDE pause outranks
+    ///      staleness, and outranks it from the top of the chain rather than
+    ///      from just above it.
+    ///
+    ///      The pause is the one refusal that is not in `_acceptOffer` at all:
+    ///      it lives in `whenNotPaused` on both accept entry points, so while
+    ///      paused the body never runs and NO classifier below it can be the
+    ///      transaction's real first failure. A preview that answered
+    ///      "this listing is out of date, ask the seller to relist" would be
+    ///      doubly wrong — the accept reverts `EnforcedPause`, and
+    ///      `createLoanSaleOffer` is `whenNotPaused` too, so the relist it
+    ///      advises is equally unavailable.
+    ///
+    ///      Staged on a listing that IS stale, so the assertion is about
+    ///      precedence and not about the pause merely being detected.
+    function test_item23_protocolPauseOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "pausedStaleBuyer");
+
+        // Sanity: while unpaused this very listing reports the staleness, so a
+        // pass below cannot come from the fixture failing to be stale.
+        OfferAcceptFacet.AcceptPreview memory before =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(before.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleListingTermsStale),
+            "fixture must be stale before the pause, or this test proves nothing"
+        );
+
+        AdminFacet(address(diamond)).pause();
+
+        // The accept never reaches `_acceptOffer` — the modifier refuses first.
+        vm.expectRevert(LibPausable.EnforcedPause.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview names the same thing, not the staleness.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.ProtocolPaused),
+            "the pause is the transaction's first failure; staleness must not speak over it"
+        );
+
+        AdminFacet(address(diamond)).unpause();
     }
 
     /// @dev #1835 (Codex #1891 F14) — the linked borrower buying a STALE
