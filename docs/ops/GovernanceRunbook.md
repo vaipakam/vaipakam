@@ -851,15 +851,34 @@ bucket lets a batch of legal days exceed the bucket that only per-day checking
 said was fine. Bound the keeper's cap by the live bucket capacities, not by the
 largest single-day slice.
 
-**And verify the Diamond's OWN stored messenger addresses.** Every check above
-inspects the adapter you believe is in use; the Diamond dispatches through what
-it has STORED. If `ConfigureCcip` only partly completed, or an adapter was
-redeployed, Base can hold a stale or zero cross-chain messenger while every pool,
-limiter, peer and token-pool readback passes against the intended one — and then
-the pre-`D*` remit reverts or takes an uninspected lane after the one-shot arm,
-so Step 5 never sees a receipt. Read the stored messenger back on Base (and the
-reward messenger on each mirror) and require it to be the adapter whose lane you
-just inspected.
+**Verify the WIRING, not the components — as one pass, because they fail the
+same way.** Every check above inspects a component you believe is in use. The
+protocol dispatches through what is actually STORED and REGISTERED, and a
+`ConfigureCcip` or `ConfigureRewardReporter` that stopped partway leaves those
+disagreeing while each component reads back healthy on its own. Before the arm,
+read back on every chain:
+
+- **each Diamond's reward-chain ROLE** — `isCanonicalRewardChain`, and
+  `baseChainId` non-zero and correct on every mirror. A partial reporter config
+  can leave a mirror flagged canonical, or pointed at the wrong Base id, and the
+  topology checks above still pass because they validate RPC and artifact
+  identity rather than the Diamond's own belief about what it is;
+- **the Diamond's OWN stored messenger addresses** — Base's cross-chain
+  messenger and each mirror's reward messenger. `remitRewardBudget` dispatches
+  through the stored value, so a stale or zero one reverts or takes an
+  uninspected lane after the arm;
+- **the remittance RECEIVER wiring on each mirror** — a redeployed
+  `RewardRemittanceReceiver`, or a config that stopped before the reward-budget
+  wiring, leaves an inbound delivery with nowhere to land while every outbound
+  check passes;
+- **each live pool through the CCIP token registry** — `getPool` for the token,
+  not the pool address you configured. If CCT registration was skipped because
+  the configuring account did not own the token, or a pool was redeployed, you
+  will have inspected a healthy pool that is not the one CCIP will use;
+- **and that the whole path is UNPAUSED.** Every cross-chain contract carries a
+  guardian pause, the remit is `whenNotPaused`, and the arming setter checks none
+  of it — so an emergency pause left on after a partial recovery passes every
+  wiring readback and then stops the propagation the arm depends on.
 
 **And verify the mirror token's live minting pool.** Messenger peers and rate
 limiters can all read back correctly against the intended pool while the mirror
