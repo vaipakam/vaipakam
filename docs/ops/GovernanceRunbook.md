@@ -753,6 +753,12 @@ containment test above validates only ids already present, and the mirror-set
 comparison looks at the mirror subset — so a list that OMITS Base passes all of
 them while the mesh has no canonical member.
 
+**Check every rotated mirror's clock requirement HERE, not in Step 5.** A mirror
+with `rewardEraRotated == true` rejects the legacy V2 wire, so a clockless
+propagation day cannot reach it — and Step 5 is after the one-shot arm has
+already executed. If any destination has rotated, confirm now that a
+clock-bearing pre-`D*` day exists for it.
+
 **Check every mirror's Base-era binding here, not only at promotion.** If an
 active mirror's `baseRewardDeployment` is unset or names an earlier Base Diamond,
 the V3 ingress rejects the clock-bearing propagation broadcast with
@@ -839,6 +845,18 @@ mirror's inbound limiter, and Step 5 is waiting on `RewardBudgetReceived` agains
 an immutable `D*`. Read both states, both directions, per lane, and check present
 `tokens` as well as configured capacity.
 
+**And check the BATCH, not only the largest day.** The keeper greedily combines
+several individually-valid days into one send, so a lane cap above either enabled
+bucket lets a batch of legal days exceed the bucket that only per-day checking
+said was fine. Bound the keeper's cap by the live bucket capacities, not by the
+largest single-day slice.
+
+**And verify the mirror token's live minting pool.** Messenger peers and rate
+limiters can all read back correctly against the intended pool while the mirror
+token still points at a redeployed or unset one — `setTokenPool` is a separate
+step that `ConfigureCcip` may not have completed. Read the token's pool back on
+each mirror and confirm it is the pool whose limits you just checked.
+
 **A DISABLED limiter is not a failure — it is unlimited.** The rate limiter
 returns immediately when the bucket is disabled, and the config validator
 requires a disabled bucket to be fully zeroed. So `isEnabled == false` with zero
@@ -918,7 +936,15 @@ This single Base call **is** the `D*` cutover. It is:
 - **canonical-only** — there is no per-chain `D*` administration, and a call on a
   mirror reverts.
 
-**First confirm every target mirror is still UNARMED.** Both ingress paths
+**First confirm the reward clock is actually RUNNING.** On a fresh Diamond
+`interactionLaunchTimestamp` is zero and the current day reads zero too, so a
+"the clocks agree" check passes vacuously — every chain agreeing at zero — and
+the setter then accepts any non-zero `D*` because the current day is zero as
+well. Require a NON-ZERO launch timestamp and a non-zero current day on every
+chain before comparing them. A check that cannot fail on the state you are
+guarding against is not a check.
+
+**Then confirm every target mirror is still UNARMED.** Both ingress paths
 install the incoming `armedFromDay` only while the local value is zero
 (`armedFromDay != 0 && s.governorCommitArmedFromDay == 0`), so a mirror carrying
 a non-zero value from a rehearsal, a previous Base deployment or a partial
@@ -1122,9 +1148,9 @@ included in.** That is the only safe resolution, and it also avoids the
 
 **A pre-`D*` day cannot produce a zero-total close at all** — the plan returns
 before setting one and the remit reverts, so there is nothing to observe and
-nothing to treat as satisfied. The zero-close exception below applies to armed
-days; on the pre-`D*` propagation day, require a destination-inclusive day
-instead. Treat a zero-total close as satisfying the wait for that destination: its
+nothing to treat as satisfied. That is why the propagation day must give every
+destination a NON-ZERO remittable slice: there is no benign zero case here to
+fall back on. The zero-close exception below applies to ARMED days only: its
 stamped payable budget is zero, so opening its gate funds nothing and strands
 nobody. Confirm the zero-total close in the emitted event rather than assuming
 it.
