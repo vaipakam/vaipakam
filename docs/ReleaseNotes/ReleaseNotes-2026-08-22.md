@@ -1,3 +1,20 @@
+# Release Notes — 2026-08-22
+
+One entry today, and it changes no behaviour: it corrects what the documentation
+said about behaviour that had already changed. A cross-chain pause on reward
+claims was lifted some time ago; thirteen places across the specification, the
+design records, the test suite and the contract comments went on describing it as
+standing — the functional specification among them, which is the document the
+platform's behaviour is meant to be checked against. A reader following any of
+them would have concluded that a chain's rewards were stopped when they were
+running.
+
+Correcting it took nineteen review rounds, most of them spent on the replacement
+rather than the retraction: what stands in the pause's place is a set of per-day
+waits, and the first several attempts to describe them were confidently wrong
+about which deadline applies to which day, what "compensated" means, and who is
+able to end a wait.
+
 ## The documentation caught up with a pause that had already been lifted (#1222)
 
 Reward claims on chains other than the canonical one used to stop entirely for
