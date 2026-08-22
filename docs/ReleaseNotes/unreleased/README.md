@@ -65,6 +65,114 @@ git add -A docs/ReleaseNotes/
 git commit -m "docs: release notes <date>"
 ```
 
+**If a run is interrupted, run it again** — with two cases below that
+need a manual step first. The
+dated file is built in a temp file and renamed into place at the end, so
+it is either the old file or the complete new one, never a partial
+append. Each folded
+fragment also leaves an invisible HTML-comment marker
+(`<!-- assembled-fragment: <name> sha256=<hash> -->`) in the dated file,
+which is how a re-run tells a fragment already folded in from one still
+pending: it names those, removes them, and does not append them a second
+time.
+
+The marker matches on the **hash**, not the name, so editing a pending
+fragment after an interrupted run appends the new text rather than
+discarding it. Every dated file is searched, so a run resumed after UTC
+midnight does not write the same content into two of them.
+
+A fragment is removed without being re-appended only when its marker is
+in **the file being assembled** under **the same name** — the signature
+of an interrupted run, since resuming one means re-running for the same
+day. Any other match stops the run and says what it found: a different
+name (a rename, or a fragment that happens to read alike) or a marker in
+another dated file (a reused fragment, or a run resumed past UTC
+midnight). Delete it by hand if it really is already folded in, or
+re-run with `--force-append` if it is genuinely new.
+
+**If the dated file changes while a run is building its replacement, the
+run stops.** Assembly copies the existing file, appends to the copy, and
+renames the copy into place — so an edit landing in between would be
+overwritten while the fragments were consumed and the run reported
+success. The lock only keeps two assemblies apart; it does not know
+about an editor. The file's identity is re-checked immediately before
+the rename, and a change refuses the whole run with nothing consumed.
+Re-run once the other change has settled and it is built on top. A
+change to its *permissions or ownership* refuses the run for the same
+reason — replacing the file installs a new one carrying what the run
+worked out earlier, so it would quietly put the older, wider settings
+back. The same check runs before fragments are removed on the
+already-assembled path, which can otherwise finish without ever
+reaching it.
+
+**Each fragment is copied once, and the run reads only the copy.** So a
+fragment edited while assembly is in progress cannot make the different
+stages disagree about what it said, and what lands in the dated file is
+always the version read at the start. The edited one is then set aside
+rather than deleted and named on screen, so the newer text is never the
+thing that gets thrown away — it lands in `unreleased/.assembled/<name>`,
+keeping its own name. That directory is
+hidden, so `git add -A` would stage anything in it; the run names what it
+put there. A set-aside fragment is **not** necessarily already in the
+dated file: one set aside because it *changed* holds the newer text while
+the dated file holds what was read first, so compare before deleting. A fragment rewritten
+*during* its copy stops the run outright, since the copy could otherwise
+hold half of one version and half of another.
+
+**A fragment belonging to another day can never stop this day's run.**
+Fragments are copied and checked *after* the day is chosen, so anything
+wrong with tomorrow's fragment is tomorrow's problem — a mixed backlog
+stays assemblable, one day at a time. The single exception is a newline
+in a filename, which is refused early because the ordering step cannot
+survive it.
+
+**Any other dated file changing also stops the run**, not just the one
+being written. Which fragments count as already folded in is decided by
+reading all of them, so a marker appearing in another day's file — or a
+new dated file appearing at all — means those decisions were made on
+stale information. Re-run and it reads them again.
+
+**A hard kill can also leave a temp file behind** — a
+`.assemble-<date>.XXXXXX` in `docs/ReleaseNotes/`, which is a partly- or
+fully-built copy that was never renamed into place. Nothing depends on
+it and no dated file is missing anything because of it, but
+`git add -A docs/ReleaseNotes/` would stage it, so every later run names
+it until it is deleted. Like the lock, it is reported rather than
+removed automatically: a temp file belonging to a run that is still
+alive looks exactly the same.
+
+**A fragment may be waiting in `unreleased/.assembled/`.** Any
+interruption — an ordinary Ctrl-C, not only a hard kill — between setting
+a fragment aside and removing it leaves it there with no pending copy for
+a re-run to pick up. Cleanup does not move it back, on purpose: the
+original path may by then hold something newly saved, and restoring the
+older copy over it would destroy exactly the text this mechanism exists
+to protect.
+
+So assembly reports it and stops short of deciding: the run cannot tell
+whether that copy is the one already folded in or a newer edit. It does
+mean a re-run alone is not always enough. Compare it against the dated
+file, then delete it or move it back up a level to assemble it.
+
+**The other case is a stale lock.** Assembly holds a lock
+(`unreleased/.assemble.lock`) so two runs cannot overlap, and it is
+released when the script exits — including on Ctrl-C. A *hard* kill
+(`SIGKILL`, or the machine dying) leaves it behind, and so does anything
+that stops the release from working — the directory turning read-only
+mid-run, say. The run that could not release it warns and prints the
+command; after a hard kill nothing is printed at all, and every later run
+then stops with "another assembly appears to be running" until it is
+cleared. That is deliberate: the lock guards a step that deletes files,
+so a stale one is reported rather than broken automatically on a
+timer. The error prints the exact command — `rmdir <path>` — and it is
+safe to run once you know no other assembly is in progress.
+
+**Leave the markers in place** when editing the assembled notes.
+Deleting one makes a re-run duplicate that fragment. If a dated file has
+no markers at all (it predates them) and already contains a pending
+fragment's heading, the script stops and asks rather than guessing —
+`--force-append` overrides it once you have checked (#1788).
+
 ### The date is the fragment's UTC merge day
 
 A fragment belongs to the day its PR merged **in UTC** — the clock
@@ -126,6 +234,15 @@ Worth knowing:
 [`assemble.test.sh`](../assemble.test.sh) covers all of this against
 throwaway repositories with fragments committed at chosen UTC timestamps;
 run it after any change to the assembler.
+
+Some of its cases stage a fault by taking a permission away and some by
+handing a file to another owner, so no single run can set up both. Run
+as an ordinary user it does the first set; run with full privileges it
+does the second and then repeats itself as an ordinary account to cover
+the first as well. Either way it counts what it could not stage and says
+so at the end — **a skipped case is unmeasured, not passing**, and
+reading it as a pass is how two of them stayed broken for several
+rounds.
 
 See [`feedback_post_merge_definition_of_done`] in agent memory and the
 "Release notes" section of `CLAUDE.md` for the surrounding workflow.
