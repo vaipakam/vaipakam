@@ -1070,16 +1070,26 @@ contract OfferAcceptFacet is
         address lender;
         address borrower;
 
+        // Role resolution ONLY — vault creation is deliberately NOT here
+        // (#1835, Codex #1891 F19). `LibUserVault.getOrCreate` deploys an
+        // `ERC1967Proxy` for a first-time party, and it used to run in both
+        // branches BEFORE the two refusals below. A revert rolls the deployment
+        // back but cannot refund the gas already burned executing it, so a
+        // first-time buyer met a stale legacy listing — the exact case this
+        // guard exists to reject cheaply — only after paying for a proxy
+        // deployment. Self-trade had the same shape.
+        //
+        // The vaults are not read until the settlement block far below, so
+        // deferring them costs nothing and removes the duplicated pair. The
+        // sanctions screen inside `getOrCreateUserVault` is not what protects
+        // this path — `_acceptOffer` screens both parties explicitly further
+        // up — so nothing is skipped by creating the vaults later.
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             lender = offer.creator;
             borrower = acceptor;
-            lenderVault = LibUserVault.getOrCreate(lender);
-            borrowerVault = LibUserVault.getOrCreate(borrower);
         } else {
             lender = acceptor;
             borrower = offer.creator;
-            lenderVault = LibUserVault.getOrCreate(lender);
-            borrowerVault = LibUserVault.getOrCreate(borrower);
         }
 
         // #194 — self-trade prevention. A user filling their own
@@ -1099,6 +1109,83 @@ contract OfferAcceptFacet is
         // submitting; the load-bearing revert is here (every match
         // routes through `_acceptOffer` via `acceptOfferInternal`).
         if (lender == borrower) revert SelfTradeForbidden(lender);
+
+        // #1835 (Codex #1891 F20) — the mandatory vault-version floor stays
+        // AHEAD of staleness even though vault CREATION moved below it.
+        //
+        // `getOrCreateUserVault` does two things, and F19 only reasoned about
+        // one: it deploys a proxy for a first-time party (the gas cost F19
+        // deferred) AND it enforces this floor for a party who already has one
+        // (`VaultFactoryFacet.sol:288-293`). Deferring both meant a party with
+        // an outdated vault got `SaleListingTermsStale` instead of the
+        // upgrade refusal — and by the rule this whole ordering rests on, that
+        // is wrong: `OfferCreateFacet._createOfferSetup` calls `getUserVault`,
+        // so the relist staleness advises is blocked by the same floor. Advice
+        // that cannot be taken, hiding the reason that can.
+        //
+        // Checked inline against storage rather than by calling the factory,
+        // so an EXISTING vault is validated without deploying a missing one —
+        // which is the whole point of F19. A party with no vault yet cannot be
+        // below the floor: they get a fresh one at the current version.
+        if (s.mandatoryVaultVersion > 0) {
+            if (
+                (s.userVaipakamVaults[lender] != address(0) &&
+                    s.vaultVersion[lender] < s.mandatoryVaultVersion) ||
+                (s.userVaipakamVaults[borrower] != address(0) &&
+                    s.vaultVersion[borrower] < s.mandatoryVaultVersion)
+            ) revert VaultFactoryFacet.VaultUpgradeRequired();
+        }
+
+        // #1835 (Codex #1891 F3/F4/F5/F10/F11) — the sale VEHICLE must MIRROR
+        // the position it sells. A listing created before #1779 taught
+        // `_buildSaleParams` to copy these four behavioural terms holds the
+        // struct defaults while its loan holds the real values, and that gap is
+        // invisible to the accept-time checks at 17/18/19/23: those compare the
+        // buyer's SIGNATURE against the VEHICLE, and on a stale listing the two
+        // agree perfectly. The buyer signs honestly, every client reads the same
+        // wrong vehicle, and the position they receive permits what they were
+        // told it forbids. Vehicle-vs-LOAN is the one pairing no signature check
+        // can stand in for.
+        //
+        // ORDERED LAST AMONG EVERY REFUSAL THAT MOVES NO VALUE — after the sale
+        // branch's expiry / status / maturity / solvency gates, after sanctions,
+        // asset-pause, country, risk-consent and KYC, and after the self-trade
+        // check directly above; the next statement begins moving funds.
+        //
+        // The RULE, which is what to preserve: **staleness is the lowest-priority
+        // refusal there is, so it speaks only when nothing else has.** This error
+        // tells the seller to relist, and every gate above refuses that remedy —
+        // `_boundListingExpiry` will not relist a matured loan, `createLoanSaleOffer`
+        // re-runs the same solvency guard, `OfferCreateFacet` refuses a sanctioned
+        // creator or a paused asset, and a terminal loan cannot be relisted at
+        // all. Answering "relist" in any of those states is advice that cannot be
+        // taken, and it hides the reason that could be acted on.
+        //
+        // State the rule rather than the position, because the POSITION is what
+        // kept being wrong: this arrived as FIVE review findings (F3 status, F4
+        // expiry, F5 maturity, F10 solvency, F11 sanctions/pause), each fixed by
+        // moving the check behind the one gate that finding named while the next
+        // stayed ahead of it. A new refusal belongs ABOVE this one unless it is
+        // genuinely less actionable than "your listing is out of date".
+        //
+        // Reads `_saleLoanId`, already resolved above for the principal, so this
+        // adds no local to an at-budget viaIR frame.
+        if (_saleLoanId != 0) {
+            LibVaipakam.Loan storage _staleChk = s.loans[_saleLoanId];
+            if (
+                offer.allowsPartialRepay != _staleChk.allowsPartialRepay ||
+                offer.allowsPrepayListing != _staleChk.allowsPrepayListing ||
+                offer.useFullTermInterest != _staleChk.useFullTermInterest ||
+                offer.periodicInterestCadence != _staleChk.periodicInterestCadence
+            ) revert SaleListingTermsStale();
+        }
+
+        // Vaults, now that the listing and the parties are both known to be
+        // admissible (#1891 F19). Every refusal above this line costs the
+        // caller no proxy deployment; the first read of either vault is in the
+        // settlement block below.
+        lenderVault = LibUserVault.getOrCreate(lender);
+        borrowerVault = LibUserVault.getOrCreate(borrower);
 
         // `effectivePrincipal` was computed earlier (before KYC) so the
         // value is available for KYC, LIF math, principal transfer, and
@@ -1877,7 +1964,62 @@ contract OfferAcceptFacet is
         // Distinct from the floor code so a surface never tells a buyer their
         // health factor is short when it is not, and never quotes a figure for
         // a position that has none. APPENDED — prior values stay stable.
-        SaleAdmissionBlocked
+        SaleAdmissionBlocked,
+        // #1835 (Codex #1891 F1) — the sale vehicle's behavioural terms
+        // disagree with the live loan it sells, so acceptance reverts
+        // `SaleListingTermsStale`. Classified rather than left to the revert
+        // because this surface exists to keep the preview and the accept
+        // agreeing on FIRST FAILURE: without it a pre-#1779 listing previews as
+        // fillable, the buyer signs, and the transaction reverts — the
+        // preview/accept divergence #1503 exists to remove.
+        //
+        // A surface built on this code must say the LISTING is out of date and
+        // the seller should relist. It must never tell the buyer their terms
+        // are wrong: they signed the listing faithfully, and re-signing
+        // reproduces the same wrong vehicle. APPENDED — prior values stay
+        // stable.
+        SaleListingTermsStale,
+        // #1835 (Codex #1891 F15) — the PROTOCOL-WIDE pause is active, so every
+        // accept entry point reverts `EnforcedPause` in its `whenNotPaused`
+        // modifier before `_acceptOffer` runs at all.
+        //
+        // Distinct from `AssetPaused`, which is per-asset and checked INSIDE
+        // the chain. This one outranks every other classifier — the modifier
+        // sits in front of the whole function — so `previewAccept` tests it
+        // FIRST, not merely ahead of whichever check a finding happened to
+        // name. Nothing below it can be the true first failure while it holds.
+        //
+        // A surface built on this code must say the protocol is paused and no
+        // action is available right now — never a listing-, offer- or
+        // buyer-specific reason, all of which are unactionable while paused
+        // (relisting is `whenNotPaused` too). APPENDED — prior values stay
+        // stable.
+        ProtocolPaused,
+        // #1835 (Codex #1891 F20 → F22) — a party to this accept already holds
+        // a vault below `mandatoryVaultVersion`, so `_acceptOffer` reverts
+        // `VaultFactoryFacet.VaultUpgradeRequired` before it reaches staleness.
+        //
+        // Classified because the accept-side check exists at all: F20 added it
+        // ahead of the stale comparison, which immediately made the preview
+        // wrong in the same way it had been about the pause. Parity is the
+        // point of this enum.
+        //
+        // A surface built on this code must say the vault needs upgrading and
+        // point at `upgradeUserVault` — NOT that the listing is stale, which
+        // advises a relist the same floor blocks (`OfferCreateFacet` resolves a
+        // vault too). APPENDED — prior values stay stable.
+        VaultUpgradeRequired,
+        // #1835 (Codex #1891 F25) — the acceptor IS the offer's creator, so
+        // `_acceptOffer` resolves `lender == borrower` and reverts
+        // `SelfTradeForbidden`. This surface had NO generic self-trade
+        // classifier at all: `SaleSelfBuy` covers the DIFFERENT case of the
+        // linked loan's current borrower buying the vehicle. So the exiting
+        // seller previewing their own stale listing was told to relist, when a
+        // relisted offer still cannot be self-filled.
+        //
+        // Ordered where `_acceptOffer` orders it — after KYC, before the vault
+        // floor and the stale comparison. APPENDED; prior values stay stable.
+        SelfTrade
     }
 
     /// @notice Projection of the loan that would land if the supplied

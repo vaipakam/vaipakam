@@ -2800,6 +2800,11 @@
   },
   {
     "type": "error",
+    "name": "SaleListingTermsStale",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SaleOfferAlreadyExists",
     "inputs": []
   },

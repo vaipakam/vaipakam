@@ -33,6 +33,7 @@ import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {LibPausable} from "../src/libraries/LibPausable.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RiskAccessFacet} from "../src/facets/RiskAccessFacet.sol";
 import {RiskPreviewFacet} from "../src/facets/RiskPreviewFacet.sol";
@@ -2109,6 +2110,723 @@ contract EarlyWithdrawalFacetTest is Test {
             uint8(vehicle.periodicInterestCadence),
             uint8(live.periodicInterestCadence),
             "cadence must mirror"
+        );
+    }
+
+    // ─── #1835 — a pre-mirroring listing is refused at accept ─────────
+
+    /// @dev Stage the ONLY shape in which the #1835 defect can still exist: a
+    ///      listing created BEFORE #1779 taught `_buildSaleParams` to mirror.
+    ///      Such a vehicle holds the struct defaults while its loan holds the
+    ///      real values.
+    ///
+    ///      It has to be staged by writing the STORED OFFER back, not by
+    ///      listing differently: the builder mirrors now, so no reachable
+    ///      listing call produces this shape any more. Writing the loan instead
+    ///      would stage the wrong thing — it is the vehicle that is stale, not
+    ///      the position.
+    /// @param staleRepay   The stale vehicle's `allowsPartialRepay`.
+    /// @param stalePrepay  The stale vehicle's `allowsPrepayListing`.
+    /// @param staleCadence The stale vehicle's `periodicInterestCadence`.
+    function _stagePreMirroringListing(
+        bool staleRepay,
+        bool stalePrepay,
+        LibVaipakam.PeriodicInterestCadence staleCadence
+    ) internal returns (uint256 saleOfferId) {
+        // The live position permits all three. A real pre-#1779 listing of it
+        // would have described none of them.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        ld.allowsPrepayListing = true;
+        ld.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Quarterly;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        saleOfferId = _listSaleOffer();
+
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        vehicle.allowsPartialRepay = staleRepay;
+        vehicle.allowsPrepayListing = stalePrepay;
+        vehicle.periodicInterestCadence = staleCadence;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, vehicle);
+    }
+
+    /// @dev Build the accept terms the way every client does — FROM THE VEHICLE
+    ///      — and sign them honestly. On a stale listing this yields a signature
+    ///      that agrees with the vehicle on all three fields, so the accept-time
+    ///      checks at 18/19/23 are SATISFIED. That is the whole difficulty of
+    ///      #1835: the buyer does nothing wrong and nothing existing objects.
+    function _honestBuyerFor(uint256 saleOfferId, string memory who)
+        internal
+        returns (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer)
+    {
+        uint256 buyerPk;
+        (buyer, buyerPk) = makeAddrAndKey(who);
+        t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+    }
+
+    /// @dev #1835 — the headline case: a listing stale on all three behavioural
+    ///      terms is refused at accept, before the buyer's funds move.
+    ///
+    ///      The buyer signed the vehicle faithfully, so this cannot be
+    ///      `OfferTermsMismatch` — there is no mismatch to find between the
+    ///      signature and the vehicle. Only a vehicle-vs-LOAN comparison sees
+    ///      it, and `SaleListingTermsStale` says the actionable thing: the
+    ///      listing is stale, not the buyer's terms.
+    function test_item23_staleListingIsRefusedAtAccept() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "staleListingBuyer");
+
+        // Proof that the EXISTING checks are satisfied and this is not a
+        // re-discovery of 18/19/23: the honest signature matches the stale
+        // vehicle exactly, which is precisely why they cannot catch it.
+        assertFalse(t.allowsPartialRepay, "signature agrees with the stale vehicle (18)");
+        assertFalse(t.allowsPrepayListing, "signature agrees with the stale vehicle (19)");
+        assertEq(
+            uint8(t.periodicInterestCadence),
+            uint8(LibVaipakam.PeriodicInterestCadence.None),
+            "signature agrees with the stale vehicle (23)"
+        );
+
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 — each of the three terms is checked INDEPENDENTLY. Without
+    ///      this, a guard comparing only `allowsPartialRepay` would pass the
+    ///      headline test above (which stales all three at once) while leaving
+    ///      two of the three fields entirely unguarded — and those two are the
+    ///      ones that decide whether the borrower may park interest or list a
+    ///      prepay against the buyer's new position.
+    ///
+    ///      Three functions rather than a loop: one live sale route per
+    ///      position, so each case needs its own `setUp`.
+    function test_item23_staleOnPartialRepayAloneIsRefused() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, true, LibVaipakam.PeriodicInterestCadence.Quarterly
+        );
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "stalePartialOnly");
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 — see {test_item23_staleOnPartialRepayAloneIsRefused}.
+    function test_item23_staleOnPrepayListingAloneIsRefused() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            true, false, LibVaipakam.PeriodicInterestCadence.Quarterly
+        );
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "stalePrepayOnly");
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 — see {test_item23_staleOnPartialRepayAloneIsRefused}. The
+    ///      cadence is the field no other accept test exercises.
+    function test_item23_staleOnCadenceAloneIsRefused() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            true, true, LibVaipakam.PeriodicInterestCadence.None
+        );
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "staleCadenceOnly");
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 — the guard rejects STALENESS, not sale accepts. Runs the same
+    ///      staging helper with the vehicle left mirroring, and the accept
+    ///      completes. Without this, a guard that reverted unconditionally would
+    ///      satisfy all four tests above while removing the lender's exit.
+    ///
+    ///      This is the same shape as
+    ///      {test_item23_afreshListingSatisfiesTheMirrorInvariant}, but driven
+    ///      through a REAL accept rather than asserted on the stored offer — so
+    ///      it pins the guard's behaviour rather than the builder's.
+    function test_item23_afreshListingStillAccepts() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            true, true, LibVaipakam.PeriodicInterestCadence.Quarterly
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "freshListingBuyerOk");
+
+        // This one completes, so the buyer needs funding + the two approvals.
+        // The refusal cases above need none: they fail at the binding before any
+        // value moves, which is itself the ordering proof.
+        ERC20Mock(mockERC20).mint(buyer, 100000 ether);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(address(diamond), type(uint256).max);
+        address buyerVault =
+            VaultFactoryFacet(address(diamond)).getOrCreateUserVault(buyer);
+        vm.prank(buyer);
+        ERC20(mockERC20).approve(buyerVault, type(uint256).max);
+
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 (Codex #1891 F3) — a TERMINAL loan's stale listing must still
+    ///      report the terminal loan, not the stale terms.
+    ///
+    ///      The comparison lives in the term binding, which runs before
+    ///      `_acceptOffer` reaches its non-Active check — so ungated it would
+    ///      answer "this listing is stale, relist", advice that cannot be
+    ///      followed, because a repaid / defaulted / liquidated loan cannot be
+    ///      relisted at all. Worse, it would mask the refusal that names the
+    ///      real problem. This is the same ordering the status check itself
+    ///      already carries a note about, from when a torn-down listing
+    ///      previewed as a health shortfall on a position that no longer
+    ///      existed.
+    function test_item23_terminalLoanOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // The position ends after listing but before the buyer arrives, and the
+        // permissionless teardown has not run yet — the window this guards.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.status = LibVaipakam.LoanStatus.Repaid;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "terminalStaleBuyer");
+
+        // `InvalidOffer`, NOT `SaleListingTermsStale`.
+        vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 (Codex #1891 F4) — an EXPIRED stale listing must report the
+    ///      expiry, on both surfaces.
+    ///
+    ///      This is the sibling of the terminal-loan case and the reason the
+    ///      comparison was moved out of the term binding entirely rather than
+    ///      gated condition by condition: the binding runs before `_acceptOffer`
+    ///      reaches its expiry gate, so gating only on loan status would have
+    ///      left this one wrong, and the next gate anyone adds wrong after that.
+    ///      The population is real — finite sale-listing expiry shipped in
+    ///      #1772, behavioural mirroring in #1779, so listings exist that are
+    ///      both stale and expirable.
+    function test_item23_expiredListingOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // Past the listing's 7-day window, still well inside the loan's term.
+        vm.warp(block.timestamp + 8 days);
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "expiredStaleBuyer");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferAcceptFacet.OfferExpired.selector,
+                saleOfferId,
+                OfferCancelFacet(address(diamond)).getOffer(saleOfferId).expiresAt
+            )
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview agrees, which is the parity the ordering exists for.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.OfferExpired),
+            "expiry is the structural reason; it outranks stale terms"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F5) — a MATURED loan's stale listing must report
+    ///      the maturity, on both surfaces.
+    ///
+    ///      The third instance of the same ordering, and the one that finally
+    ///      moved the comparison behind every sale gate rather than in front of
+    ///      one more. A loan can cross maturity and stay `Active` through the
+    ///      grace window, so this is not covered by the terminal-loan case; and
+    ///      it is the sharper of the two, because `_boundListingExpiry` refuses
+    ///      to relist a matured loan — so "relist" is advice the seller cannot
+    ///      take.
+    ///      The fixture must be a GTC vehicle (`expiresAt == 0`), and that is
+    ///      not incidental — it is the only shape that reaches this state.
+    ///      `_boundListingExpiry` clamps a normal listing's expiry at maturity,
+    ///      so a listing with a finite window is always EXPIRED by the time its
+    ///      loan matures, and the expiry gate answers first. A first attempt at
+    ///      this test used the ordinary 7-day listing and got
+    ///      `OfferExpired` — correct behaviour, wrong fixture. Which is also
+    ///      why the guard's reachable population here is precisely the
+    ///      pre-upgrade GTC vehicle the expiry gate above exists for.
+    function test_item23_maturedLoanOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // The pre-upgrade GTC shape: never expires, so it survives to maturity.
+        LibVaipakam.Offer memory gtc =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        gtc.expiresAt = 0;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, gtc);
+
+        // Past the loan's own maturity, still `Active` in its grace window.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        vm.warp(
+            uint256(ld.startTime) + uint256(ld.durationDays) * 1 days + 1
+        );
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "fixture must be matured-but-Active, not terminal"
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "maturedStaleBuyer");
+
+        vm.expectRevert(OfferAcceptFacet.SaleLoanPastMaturity.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 (Codex #1891 F10) — a listing that is BOTH stale and no
+    ///      longer sale-admissible must report the admission failure.
+    ///
+    ///      The fourth and last instance of the same ordering. `createLoanSaleOffer`
+    ///      re-runs this very solvency guard, so it would refuse the relist —
+    ///      making "your listing is stale, relist" advice the seller cannot
+    ///      take, while hiding the reason they could act on.
+    ///
+    ///      This case is why the comparison is now LAST in the sale branch
+    ///      rather than merely behind whichever gate a finding named: three
+    ///      earlier fixes each moved it behind one gate and left the next ahead
+    ///      of it. Staleness is the lowest-priority sale refusal, so it speaks
+    ///      only when nothing else has.
+    function test_item23_solvencyFailureOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // Below the admission floor, still above the liquidation trigger —
+        // the shared fixture the direct-sale solvency tests use.
+        (uint256 hf, uint256 floor) = _sinkBelowFloorButSolvent();
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "insolventStaleBuyer");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+                activeLoanId,
+                hf,
+                floor
+            )
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview agrees, which is the parity the ordering exists for.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor),
+            "the admission failure is the actionable reason; it outranks staleness"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F11) — a SANCTIONED seller's stale listing must
+    ///      report the sanction.
+    ///
+    ///      The fifth and final instance, and the one that showed the rule was
+    ///      being stated but not kept: "staleness speaks only when nothing else
+    ///      has" was written while sanctions, asset-pause, country, KYC and
+    ///      self-trade all still ran AFTER it, because those live outside the
+    ///      sale branch the check had been moved to the end of. `OfferCreateFacet`
+    ///      refuses a sanctioned creator, so "relist" is once more a remedy the
+    ///      seller cannot perform.
+    ///
+    ///      The check now sits after every refusal that moves no value, which is
+    ///      what the rule always claimed.
+    function test_item23_sanctionedSellerOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // The seller is flagged after listing — the vehicle is still stale.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "sanctionedSellerStaleBuyer");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender)
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview agrees.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SanctionedCreator),
+            "the compliance refusal is actionable; it outranks staleness"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F15) — the PROTOCOL-WIDE pause outranks
+    ///      staleness, and outranks it from the top of the chain rather than
+    ///      from just above it.
+    ///
+    ///      The pause is the one refusal that is not in `_acceptOffer` at all:
+    ///      it lives in `whenNotPaused` on both accept entry points, so while
+    ///      paused the body never runs and NO classifier below it can be the
+    ///      transaction's real first failure. A preview that answered
+    ///      "this listing is out of date, ask the seller to relist" would be
+    ///      doubly wrong — the accept reverts `EnforcedPause`, and
+    ///      `createLoanSaleOffer` is `whenNotPaused` too, so the relist it
+    ///      advises is equally unavailable.
+    ///
+    ///      Staged on a listing that IS stale, so the assertion is about
+    ///      precedence and not about the pause merely being detected.
+    function test_item23_protocolPauseOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "pausedStaleBuyer");
+
+        // Sanity: while unpaused this very listing reports the staleness, so a
+        // pass below cannot come from the fixture failing to be stale.
+        OfferAcceptFacet.AcceptPreview memory before =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(before.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleListingTermsStale),
+            "fixture must be stale before the pause, or this test proves nothing"
+        );
+
+        AdminFacet(address(diamond)).pause();
+
+        // The accept never reaches `_acceptOffer` — the modifier refuses first.
+        vm.expectRevert(LibPausable.EnforcedPause.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview names the same thing, not the staleness.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.ProtocolPaused),
+            "the pause is the transaction's first failure; staleness must not speak over it"
+        );
+
+        AdminFacet(address(diamond)).unpause();
+    }
+
+    /// @dev #1835 (Codex #1891 F20) — the mandatory vault-version floor
+    ///      outranks staleness, even though F19 moved vault CREATION below it.
+    ///
+    ///      `getOrCreateUserVault` does two jobs: deploy a proxy for a
+    ///      first-time party, and enforce this floor for a party who already
+    ///      has one. F19 deferred the deployment cost and took the floor check
+    ///      with it by accident, so an outdated vault reported
+    ///      `SaleListingTermsStale` — and the relist that advises is blocked by
+    ///      the same floor, since `OfferCreateFacet` resolves a vault too.
+    ///      Advice that cannot be taken, hiding the reason that can: exactly the
+    ///      rule this PR's ordering rests on.
+    function test_item23_vaultUpgradeOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "vaultFloorStaleBuyer");
+
+        // Control: without the floor this listing answers staleness.
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // Governance raises the floor above the seller's existing vault.
+        (uint256 sellerVersion,,,) =
+            VaultFactoryFacet(address(diamond)).getVaultVersionInfo(lender);
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(sellerVersion + 1);
+
+        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview agrees (Codex #1891 F22). Adding the accept-side
+        // check without this classifier is the divergence this surface exists
+        // to prevent — F20 created it, and one round later it was found.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.VaultUpgradeRequired),
+            "the upgrade refusal is actionable; it outranks staleness on both surfaces"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F25) — the EXITING SELLER previewing their own
+    ///      stale listing gets the self-trade refusal, not the staleness.
+    ///
+    ///      Distinct from `test_item23_staleTermsOutrankLinkedBorrowerSelfBuy`,
+    ///      and the distinction is the finding: that one is the linked LOAN's
+    ///      current borrower (`SaleSelfBuy`), this is the offer's own CREATOR
+    ///      (`SelfTrade`). `previewAccept` had no generic self-trade classifier
+    ///      at all, so the seller was told to relist — and a relisted offer
+    ///      still cannot be self-filled, which is the unactionable-advice shape
+    ///      the whole ordering rule exists to avoid.
+    ///
+    ///      Staged on a listing that IS stale, so this asserts precedence
+    ///      rather than mere detection.
+    function test_item23_sellerSelfTradeOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // Control: a third-party buyer still sees the staleness on this listing.
+        OfferAcceptFacet.AcceptPreview memory other =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(other.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleListingTermsStale),
+            "fixture must be stale for a normal buyer, or this proves nothing"
+        );
+
+        // The seller (the sale offer's creator) previewing their own listing.
+        address seller = OfferCancelFacet(address(diamond)).getOffer(saleOfferId).creator;
+        OfferAcceptFacet.AcceptPreview memory own =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, seller);
+        assertEq(
+            uint8(own.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SelfTrade),
+            "the seller cannot self-fill; relisting does not change that"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F21) — a paused preview still carries a
+    ///      truthful quote.
+    ///
+    ///      F18's first fix returned the pause classifier before the
+    ///      projections ran, zeroing them. A consumer reading `lifEstimate`
+    ///      alone reads 0 as a fee WAIVER, and that false quote can outlive the
+    ///      pause. So the projections must be populated even when the answer is
+    ///      `ProtocolPaused`.
+    ///
+    ///      Uses `buyOfferId` — a plain ERC-20 lender offer, NOT a sale
+    ///      vehicle. The sale path skips the LIF entirely, so a sale fixture
+    ///      could not detect a zeroed one.
+    function test_item23_pausedPreviewStillQuotesTruthfully() public {
+        OfferAcceptFacet.AcceptPreview memory live =
+            OfferPreviewFacet(address(diamond)).previewAccept(buyOfferId, borrower);
+        assertTrue(
+            live.errorCode != OfferAcceptFacet.AcceptError.ProtocolPaused,
+            "control: not paused to begin with"
+        );
+        assertGt(live.effectivePrincipal, 0, "control: a real quote exists to be preserved");
+
+        AdminFacet(address(diamond)).pause();
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(buyOfferId, borrower);
+        AdminFacet(address(diamond)).unpause();
+
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.ProtocolPaused),
+            "the pause is still the first failure"
+        );
+        // The point of the test: the quote survives the classification.
+        assertEq(p.effectivePrincipal, live.effectivePrincipal, "principal must not zero out under a pause");
+        assertEq(p.interestRateBps, live.interestRateBps, "rate must not zero out under a pause");
+        assertEq(p.collateralAmount, live.collateralAmount, "collateral must not zero out under a pause");
+        assertEq(p.lifEstimate, live.lifEstimate, "a zeroed LIF reads as a fee waiver");
+    }
+
+    /// @dev #1835 (Codex #1891 F18) — the pause outranks the OFFER LOOKUP too,
+    ///      not merely the precondition chain.
+    ///
+    ///      F15's classifier sat at the top of the chain, which is still below
+    ///      `previewAccept`'s `InvalidOffer` revert. So a client previewing a
+    ///      stale or malformed cached id during a pause got `InvalidOffer`
+    ///      while the accept would have given `EnforcedPause` — the modifier
+    ///      runs ahead of the whole body, offer validation included.
+    ///
+    ///      The unpaused leg is the control: the SAME id still reverts
+    ///      `InvalidOffer`, so the paused answer comes from the pause and not
+    ///      from the id having become valid.
+    function test_item23_protocolPauseOutranksTheOfferLookup() public {
+        uint256 unknownOfferId = type(uint256).max;
+
+        AdminFacet(address(diamond)).pause();
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(unknownOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.ProtocolPaused),
+            "a paused preview must answer the pause even for an unknown offer"
+        );
+        AdminFacet(address(diamond)).unpause();
+
+        vm.expectRevert(OfferPreviewFacet.InvalidOffer.selector);
+        OfferPreviewFacet(address(diamond)).previewAccept(unknownOfferId, newLender);
+    }
+
+    /// @dev #1835 (Codex #1891 F14) — the linked borrower buying a STALE
+    ///      listing gets the staleness, on both surfaces.
+    ///
+    ///      Self-buy is the one refusal staleness outranks, and deliberately.
+    ///      The rule everywhere else is "staleness speaks last because the
+    ///      relist it asks for is refused" — but here the seller CAN relist and
+    ///      the new listing is correct; it simply still cannot be bought by this
+    ///      buyer. Different question, so the general rule does not apply.
+    ///
+    ///      Pinning it matters because the accept and the preview reach the
+    ///      borrower check by different routes: the preview classifies
+    ///      `SaleSelfBuy` inline, while the accept's borrower-vs-buyer check
+    ///      lives downstream in `LoanFacet.initiateLoan`. The generic
+    ///      `lender == borrower` guard does NOT cover it — that compares the
+    ///      buyer with the sale-offer creator, the exiting lender. So the two
+    ///      surfaces agree here only because the preview classifier was ordered
+    ///      to match, and this test is what holds them there.
+    function test_item23_staleTermsOutrankLinkedBorrowerSelfBuy() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // The buyer is the linked loan's own borrower — self-buy AND stale.
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), borrower, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig =
+            LibAcceptTestSigner.sign(address(diamond), t, borrowerPk);
+
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(borrower);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, borrower);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleListingTermsStale),
+            "both surfaces must agree, and staleness wins over self-buy"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F6) — `useFullTermInterest` is the FOURTH
+    ///      behavioural term and is checked like the rest.
+    ///
+    ///      An earlier revision excluded it, on the reasoning that its
+    ///      mirroring predates any listing still live. That is false for a GTC
+    ///      vehicle (`expiresAt == 0`) — the same pre-upgrade shape the expiry
+    ///      gate exists for. It never expires, and loans run 365 days by default
+    ///      and can be configured longer, so such a listing can still be bought
+    ///      today while storing the old `false` against a loan running the
+    ///      full-term model: a materially different interest settlement, decided
+    ///      against the buyer.
+    function test_item23_staleOnFullTermInterestAloneIsRefused() public {
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        ld.allowsPrepayListing = true;
+        ld.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Quarterly;
+        ld.useFullTermInterest = true;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        uint256 saleOfferId = _listSaleOffer();
+
+        // Only field 17 goes stale; the other three keep mirroring.
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        vehicle.useFullTermInterest = false;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, vehicle);
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "staleFullTermOnly");
+
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 (Codex #1891 F1) — the preview must classify a stale listing,
+    ///      or the card enables "Accept", the buyer signs, and the transaction
+    ///      reverts. That preview/accept divergence is what #1503 exists to
+    ///      remove, and an accept-time refusal with no preview counterpart
+    ///      re-creates it.
+    function test_item23_previewClassifiesAStaleListing() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleListingTermsStale),
+            "preview must name the stale listing, not quote it as fillable"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F1) — companion: the classifier reports
+    ///      staleness, not sales. A preview that returned this code for every
+    ///      listing would satisfy the test above while disabling every buy.
+    function test_item23_previewDoesNotFlagAFreshListing() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            true, true, LibVaipakam.PeriodicInterestCadence.Quarterly
+        );
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertTrue(
+            p.errorCode != OfferAcceptFacet.AcceptError.SaleListingTermsStale,
+            "a mirroring listing must never be reported stale"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F1/F3) — first-failure parity on the case that
+    ///      pins the classifier's POSITION in the preview chain. A terminal
+    ///      loan whose listing is also stale must preview `SaleLoanNotActive`,
+    ///      matching the accept, which skips the stale comparison entirely for
+    ///      a non-Active loan. Placing the classifier above the status gate
+    ///      would break exactly this.
+    function test_item23_previewTerminalLoanOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.status = LibVaipakam.LoanStatus.Repaid;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleLoanNotActive),
+            "the terminal loan is the structural reason; it outranks stale terms"
         );
     }
 

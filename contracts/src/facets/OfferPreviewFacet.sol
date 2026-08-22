@@ -6,6 +6,7 @@ import {LibVaipakam} from "../libraries/LibVaipakam.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibSaleSolvency} from "../libraries/LibSaleSolvency.sol";
+import {LibPausable} from "../libraries/LibPausable.sol";
 import {OfferAcceptFacet} from "./OfferAcceptFacet.sol";
 import {OracleFacet} from "./OracleFacet.sol";
 import {ProfileFacet} from "./ProfileFacet.sol";
@@ -55,9 +56,44 @@ contract OfferPreviewFacet {
         view
         returns (OfferAcceptFacet.AcceptPreview memory preview)
     {
+        // #1835 (Codex #1891 F15 → F18) — the protocol-wide pause, ahead of
+        // the offer lookup itself. `whenNotPaused` on both accept entry points
+        // runs before ANY of the function body, offer validation included, so a
+        // stale or malformed cached id previewed while paused must answer
+        // `ProtocolPaused` — not `InvalidOffer`, which is what this surface did
+        // when the classifier sat merely at the top of the precondition chain.
+        //
+        // F15 moved this to the top of that chain and the comment claimed it
+        // "outranks every classifier". It did not: the `InvalidOffer` revert
+        // above the chain still won. Same lesson as F3-F11, one level further
+        // out — a check placed at the top of a list is not at the top of the
+        // FUNCTION.
+        //
+        // F18's first fix returned IMMEDIATELY here, which zeroed the
+        // happy-path projections for a paused preview. That was a real defect,
+        // not the harmless trade-off the comment claimed (Codex #1891 F21):
+        // a consumer reading `lifEstimate` alone sees 0 and renders it as a
+        // fee WAIVER, and that false quote can outlive the pause and precede an
+        // acceptance that charges the normal fee. "No accept is possible while
+        // paused" does not mean the quote goes unread.
+        //
+        // So the pause is split in two, which is what satisfies both findings
+        // at once:
+        //   - here, only for an offer that does not exist — nothing to quote,
+        //     and the accept would answer `EnforcedPause` rather than
+        //     `InvalidOffer` (F18);
+        //   - below, after the projections are populated (F21).
+        bool _paused = LibPausable.paused();
+
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.creator == address(0)) revert InvalidOffer();
+        if (offer.creator == address(0)) {
+            if (_paused) {
+                preview.errorCode = OfferAcceptFacet.AcceptError.ProtocolPaused;
+                return preview;
+            }
+            revert InvalidOffer();
+        }
 
         // ─── Happy-path projections (populated unconditionally) ─────
         bool _isErc20 = offer.assetType == LibVaipakam.AssetType.ERC20;
@@ -144,6 +180,22 @@ contract OfferPreviewFacet {
         // ─── Precondition chain (first failure wins) ────────────────
         // Order mirrors `_acceptOffer`. First failing check sets `errorCode`;
         // subsequent checks are short-circuited via the sentinel return.
+
+        // The protocol-wide pause, ahead of every classifier below, because
+        // `whenNotPaused` is a MODIFIER on both accept entry points — while it
+        // holds the function body never runs, so nothing below can be the
+        // transaction's real first failure (#1891 F15/F18). It sits here rather
+        // than before the projections so a paused preview still carries a
+        // truthful quote instead of a zeroed one a consumer would read as a fee
+        // waiver (F21).
+        //
+        // Not to be confused with the per-asset pause (`AssetPaused`), further
+        // down and genuinely part of this chain — that one is an ordinary check
+        // inside `_acceptOffer`.
+        if (_paused) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.ProtocolPaused;
+            return preview;
+        }
         if (offer.accepted) {
             preview.errorCode = OfferAcceptFacet.AcceptError.OfferAlreadyAccepted;
             return preview;
@@ -219,6 +271,11 @@ contract OfferPreviewFacet {
                     .SaleAdmissionBlocked;
                 return preview;
             }
+            // #1835 (Codex #1891 F1) — the accept refuses a vehicle whose
+            // behavioural terms disagree with the live loan. Classified here so
+            // the card can disable "Accept" instead of letting the buyer
+            // discover it by burning gas.
+            //
         }
         if (LibVaipakam.isSanctionedAddress(acceptor)) {
             preview.errorCode = OfferAcceptFacet.AcceptError.SanctionedAcceptor;
@@ -288,6 +345,27 @@ contract OfferPreviewFacet {
             }
         }
 
+        // #1835 (Codex #1891 F25) — the GENERIC self-trade refusal, which this
+        // surface was missing entirely. `_acceptOffer` resolves roles and
+        // reverts `SelfTradeForbidden` when `lender == borrower` (`:1111`);
+        // since one side is always the creator and the other the acceptor, that
+        // collapses to `acceptor == offer.creator`.
+        //
+        // Distinct from `SaleSelfBuy` below, and the distinction is the whole
+        // finding: that one is the linked LOAN's current borrower buying the
+        // vehicle, this one is the EXITING SELLER accepting their own offer. On
+        // a stale listing the seller previewed `SaleListingTermsStale` and was
+        // told to relist — but a relisted offer still cannot be self-filled, so
+        // the advice was unactionable in the same way every other misordering on
+        // this PR was.
+        //
+        // Positioned exactly where the accept raises it: after KYC, before the
+        // vault floor and the stale comparison.
+        if (acceptor == offer.creator) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.SelfTrade;
+            return preview;
+        }
+
         // #951 v2 (Codex #959 bind-to-live) — sale-vehicle structural blockers,
         // mirroring `LoanFacet.initiateLoan`'s sale-vehicle reverts so the UI can
         // disable "Accept" without a revert. Placed last: `initiateLoan` runs
@@ -295,6 +373,80 @@ contract OfferPreviewFacet {
         // (else the position doesn't exist), and the buyer must not be the loan's
         // CURRENT borrower (resolved live via `ownerOf`, not the stale stored
         // `borrower` — Codex #959 round-8 P1).
+        // #1835 (Codex #1891 F22) — the mandatory vault-version floor, mirroring
+        // the accept-side check F20 added ahead of staleness. Adding a refusal
+        // to `_acceptOffer` without a matching classifier here is precisely the
+        // divergence this surface exists to prevent, and F20 created it.
+        //
+        // Non-deploying by construction: reads storage directly, so a party
+        // with no vault is untouched (they cannot be below the floor — a fresh
+        // vault is stamped at the current version) and none is created by a
+        // view. Roles resolve the same way `_acceptOffer` resolves them.
+        if (s.mandatoryVaultVersion > 0) {
+            address _vLender = _isLender ? offer.creator : acceptor;
+            address _vBorrower = _isLender ? acceptor : offer.creator;
+            if (
+                (s.userVaipakamVaults[_vLender] != address(0) &&
+                    s.vaultVersion[_vLender] < s.mandatoryVaultVersion) ||
+                (s.userVaipakamVaults[_vBorrower] != address(0) &&
+                    s.vaultVersion[_vBorrower] < s.mandatoryVaultVersion)
+            ) {
+                preview.errorCode = OfferAcceptFacet.AcceptError.VaultUpgradeRequired;
+                return preview;
+            }
+        }
+
+        // #1835 (Codex #1891 F1/F10/F11) — the accept refuses a vehicle whose
+        // four behavioural terms disagree with the live loan. Classified so the
+        // card can disable "Accept" rather than letting the buyer discover it
+        // by burning gas.
+        //
+        // ORDERED LAST AMONG THE REFUSALS NOTHING CAN CURE, mirroring
+        // `_acceptOffer`. Every classifier above — expiry, the sale branch's
+        // status / maturity / solvency, sanctions, asset-pause, country,
+        // risk-consent, KYC — is both more structural AND actionable, where
+        // this one is not: it tells the seller to relist, and
+        // `_boundListingExpiry`, `createLoanSaleOffer` and `OfferCreateFacet`
+        // each REFUSE that relist in the states they describe, so the advice
+        // could not be taken.
+        //
+        // It sits ABOVE `SaleSelfBuy` deliberately, and that is not an
+        // exception to the rule but the rule applied honestly (Codex #1891
+        // F14). Self-buy is the one case where relisting IS an available
+        // remedy: the seller can relist and the new listing is correct — it
+        // simply still cannot be bought by THIS buyer, who is the linked loan's
+        // own borrower. So the two are not the same question, and staleness
+        // legitimately outranks it.
+        //
+        // That ordering is also what keeps first-failure parity with the
+        // accept, where the borrower-vs-buyer check lives downstream in
+        // `LoanFacet.initiateLoan` — after the stale comparison. The
+        // alternative, hoisting an `ownerOf` read into `_acceptOffer` to put
+        // self-buy first, would add an external call to a frame already at the
+        // viaIR stack budget to reorder two refusals whose priority is
+        // genuinely arguable.
+        //
+        // State the rule rather than the position: this arrived as SIX review
+        // findings (#1891 F3/F4/F5/F10/F11/F14), each moving the check behind
+        // the one gate that finding named while the next stayed ahead of it. A
+        // new classifier belongs ABOVE this one unless, like self-buy, relisting
+        // genuinely remains available.
+        if (_saleLoanId != 0) {
+            LibVaipakam.Offer storage _vehicle = s.offers[offerId];
+            LibVaipakam.Loan storage _staleChk = s.loans[_saleLoanId];
+            if (
+                _vehicle.allowsPartialRepay != _staleChk.allowsPartialRepay ||
+                _vehicle.allowsPrepayListing != _staleChk.allowsPrepayListing ||
+                _vehicle.useFullTermInterest != _staleChk.useFullTermInterest ||
+                _vehicle.periodicInterestCadence != _staleChk.periodicInterestCadence
+            ) {
+                preview.errorCode = OfferAcceptFacet
+                    .AcceptError
+                    .SaleListingTermsStale;
+                return preview;
+            }
+        }
+
         if (_saleLoanId != 0) {
             LibVaipakam.Loan storage _saleLoan = s.loans[_saleLoanId];
             // (Both the `Active` and the live-maturity classifiers sit EARLIER

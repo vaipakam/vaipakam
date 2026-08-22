@@ -564,34 +564,56 @@ regimes are distinguished from the record's own state, needing no migration.
 ## Sale listing vs live position — behavioural terms (#1503 item 23)
 
 The spec says a lender-sale listing carries the position's behavioural terms —
-partial-repay permission, prepay-listing permission and periodic cadence — and
+partial-repay permission, prepay-listing permission, the interest model
+(`useFullTermInterest`) and periodic cadence — and
 that a listing whose terms disagree with its position "does not describe what it
 sells" and ought to be refused at purchase.
 
-**Two halves, and only one is implemented.**
+**RESOLVED (#1835). Both halves are now implemented; this entry is retained as
+the record of how the gap was carried and closed.**
 
-The copying half is live: a listing built from this point on takes all three
-from the position, so it describes what it sells, and the buyer's signature
-binds against the listing rather than needing to read the position. That is
-sound permanently, not just at listing time, because the three are written once
-at loan initiation and never again.
+The copying half went live first: a listing built from that point on takes all
+FOUR from the position, so it describes what it sells, and the buyer's
+signature binds against the listing rather than needing to read the position.
+That is sound permanently, not just at listing time, because all four are
+written once at loan initiation and never again.
 
-The **refusal half is DEFERRED and the divergence is deliberate**. A listing
-created before the copying rule holds the empty defaults while its position
-holds the truth, and nothing checks the two against each other at purchase, so
-such a listing can still be bought on a false description. The check is written
-and tested and costs 164 bytes; `OfferAcceptFacet` has exactly 164 bytes of
-EIP-170 headroom, so landing it would leave that facet on the ceiling and make
-the next correction to it undeployable. It is tracked in #1835, behind a split
-of that facet.
+**The interest model is in scope and must stay in scope.** An earlier revision
+of this entry listed only three terms, and that omission is load-bearing in the
+wrong direction: a maintainer reading this record as the invariant could delete
+the `useFullTermInterest` comparison as out of scope and recreate exactly the
+legacy full-term-interest mismatch the refusal exists to catch. The shipped
+guard compares all four.
 
-This entry is the record that the spec here states INTENT ahead of code
-deliberately, rather than describing shipped behaviour — so a later reader finds
-a known, bounded gap rather than concluding the spec is simply wrong. Note the
-refusal is also not merely a nicety that could be relocated somewhere roomier:
-it belongs at ACCEPT, because refusing at completion instead would strand a
-buyer whose funds are already committed on the legacy accepted-but-not-completed
-shape, which this document's own settlement rules forbid.
+The refusal half was **deferred for one release, deliberately**, and the reason
+is worth keeping. A listing created before the copying rule holds the empty
+defaults while its position holds the truth, so it could still be bought on a
+false description. The PROTOTYPE was written and tested and cost 164 bytes;
+`OfferAcceptFacet` had exactly 164 bytes of EIP-170 headroom, so landing it
+would have left that facet on the ceiling and made the next correction to it
+undeployable — passing CI green while removing the ability to fix anything
+further on the accept path. The facet was split first (#1888), and the refusal
+landed immediately after.
+
+**Do not read 164 as the shipped cost** — that figure measured the prototype
+and is kept only because it is what justified the deferral. Review added the
+fourth term and moved the comparison, so **as shipped the guard costs 448
+bytes** against the post-split baseline of 21,071, leaving `OfferAcceptFacet`
+at 21,519 with 3,057 free. Anyone sizing a future change against EIP-170 should
+use those numbers; the prototype figure understates the consumption by 284
+bytes.
+
+Two things about the shape are load-bearing and should survive future edits.
+The comparison is listing-against-POSITION: the accept-time checks compare the
+buyer's agreement against the listing, and on a stale listing those agree
+perfectly, so no signature check can substitute. And the refusal belongs at
+ACCEPT specifically — refusing at completion instead would strand a buyer whose
+funds are already committed on the legacy accepted-but-not-completed shape,
+which this document's own settlement rules forbid.
+
+Kept, rather than deleted, because the interval is the instructive part: the
+spec stated INTENT ahead of code for one release, under a recorded and bounded
+gap, rather than being quietly wrong or being watered down to match what shipped.
 
 ## Sale-cost disclosure keys on the lock, where the spec keys on fillability
 
