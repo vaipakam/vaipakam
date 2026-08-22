@@ -2101,12 +2101,20 @@ CCIP fee.
 For most users, this propagation is invisible. Take a loan
 on a mirror chain → the cached tier applies. Done.
 
-For edge cases (mirror cache stale, governance bumped the
-tier table, you just disabled consent and want to
-immediately clear), the dapp's Dashboard surfaces a "Push my
-tier to mirrors now" button. Clicking it triggers
-`pokeMyTier()` — permissionless, fires a fresh CCIP
-broadcast at the protocol's cost.
+For edge cases (governance bumped the tier table, you just
+disabled consent and want to immediately clear), the dapp's
+Dashboard surfaces a "Push my tier to mirrors now" button.
+Clicking it triggers `pokeMyTier()` — permissionless, fires a
+fresh CCIP broadcast at the protocol's cost.
+
+**A cache stale by AGE is not one of those cases.** The push
+only sends when your `(tier, bps, expiry, version)` tuple has
+changed. A version-mismatched cache is covered — that is the
+governance-bump case above, where the version field differs
+and the push does send. But a cache that merely aged out
+while your tier stayed put is skipped, and nothing is
+broadcast. See the staleness threshold below for what does
+restore that one.
 
 ### Consent toggle
 
@@ -2185,8 +2193,47 @@ When you unstake:
 The mirror's cache has a staleness threshold
 (`cfgMirrorTierMaxAgeSec`, default 60 days; min-floor of
 30 days enforced by the setter). If your tier hasn't been
-pushed in that long, the mirror falls back to "no discount"
-until a fresh push lands.
+pushed in that long, the mirror falls back to "no discount".
+
+**You cannot refresh an unchanged tier on demand.** The push
+button and `pokeMyTier()` only send when your
+`(tier, bps, expiry, version)` tuple has actually changed —
+an unchanged tuple is skipped, and nothing is broadcast. So
+an expired cache on a tier that hasn't moved is not something
+pressing the button fixes, and neither is a same-tier deposit
+or withdrawal — a rollup that produces the same tuple de-dups
+exactly as the button does. Restoring it takes two things, and both are needed:
+
+1. your current `(tier, bps, expiry, version)` must DIFFER
+   from the last tuple you pushed ANYWHERE, and must name an
+   eligible non-zero tier. The de-dup is global per user, not
+   per mirror — so a mirror added after your last push, or one
+   whose delivery reverted, will not receive a replacement:
+   from the sender's side nothing has changed, so no amount of
+   pushing catches it up. (A delivery that arrived and then
+   reverted is a separate matter — CCIP holds it for manual
+   re-execution, which is an operator action rather than
+   something you can trigger.) And a different tuple alone is not enough:
+   dropping below Tier 1 leaves you at `(0, 0)`, which the
+   mirror correctly reads as no discount;
+2. something must then BROADCAST it. Changing the state does
+   not send anything by itself — turning consent EITHER WAY
+   writes the flag and emits, and a governance table bump
+   moves the version, but none of them push. You still need
+   the button or a rollup-bearing Base action to carry the new
+   tuple. (This cuts both ways: disabling consent does not
+   clear a mirror's cached discount until something
+   broadcasts the change either.)
+
+A governance version bump is the case where an unchanged tier
+still works — the version field alone makes the tuple differ,
+so any subsequent push sends.
+
+There is deliberately no supported way to force a refresh
+otherwise. Repeatedly toggling a value to manufacture
+broadcasts would drain the protocol-funded cross-chain
+budget, and once that is exhausted legitimate broadcasts fail
+for everyone.
 
 ### Operator runbook — discount system maintenance
 
