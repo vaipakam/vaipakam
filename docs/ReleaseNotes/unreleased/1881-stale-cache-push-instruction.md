@@ -12,8 +12,10 @@ believing they have fixed it.
 
 The passage now says so directly: an expired cache on a tier that has not moved
 is not something the button fixes, and restoring it takes two separate things.
-Your standing with the protocol has to differ from whatever was last sent to that
-chain — and still be good enough to earn a discount, since dropping below the
+Your standing with the protocol has to differ from whatever you last sent
+ANYWHERE — the check is one per person, not one per chain, so a chain that was
+added later or that missed a delivery will not get a replacement copy just
+because it is behind — and it has to still be good enough to earn a discount, since dropping below the
 lowest band or switching the discount off is a difference that gets sent
 faithfully and leaves you no better off. And then something has to actually send
 it: changing your standing does not broadcast anything on its own, so a push is

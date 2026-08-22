@@ -2208,9 +2208,12 @@ exactly as the button does. Restoring it takes two things, and both are needed:
    from the last tuple you pushed ANYWHERE, and must name an
    eligible non-zero tier. The de-dup is global per user, not
    per mirror — so a mirror added after your last push, or one
-   whose delivery failed, stays behind until your tuple changes
-   for some other reason; no amount of pushing catches it up on
-   its own. And a different tuple alone is not enough:
+   whose delivery reverted, will not receive a replacement:
+   from the sender's side nothing has changed, so no amount of
+   pushing catches it up. (A delivery that arrived and then
+   reverted is a separate matter — CCIP holds it for manual
+   re-execution, which is an operator action rather than
+   something you can trigger.) And a different tuple alone is not enough:
    dropping below Tier 1 leaves you at `(0, 0)`, which the
    mirror correctly reads as no discount;
 2. something must then BROADCAST it. Changing the state does
