@@ -2234,6 +2234,17 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 bucketBefore = _cfg().getRecycleBucket();
         uint256 creditedBefore = _cfg().getRecycledCreditedByDay(today);
 
+        // Codex #1907 r3 — the same independent anchor the claim test uses,
+        // on the site I should have swept when I added it there. `released`
+        // below is derived from the outstanding delta, so an UNDERSIZED
+        // recycled component satisfies every identity: both cumulatives move
+        // by that same smaller number, and `swept - released` is still exactly
+        // what the facet credited. The entry is processed either way, so the
+        // omitted entitlement stays outstanding forever and the mirror
+        // under-reports retirement to Base.
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(5, uint32(CHAIN_ARB));
+
         vm.prank(makeAddr("mirror-keeper"));
         uint256 swept = _facet().sweepForfeitedInteractionRewards(91);
 
@@ -2244,6 +2255,22 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         uint256 released = outBefore - outAfter;
         assertGt(released, 0, "the forfeit released a recycled commitment");
+        assertApproxEqAbs(
+            released,
+            funding.lenderHalfEquiv,
+            1e6,
+            "released the lender side's WHOLE recycled share, not a slice"
+        );
+        // Predicted sibling: `swept` is the facet's own return, so the two
+        // assertions below that spend it would move WITH an undersized fresh
+        // leg. Anchor the sweep total on the stored funding record too, so
+        // both legs are pinned to something outside the engine.
+        assertApproxEqAbs(
+            swept,
+            funding.freshLenderHalf + funding.lenderHalfEquiv,
+            1e6,
+            "the sweep took the lender side's fresh AND recycled halves"
+        );
         assertGt(outAfter, 0, "reservation outlived the forfeit (floor unbound)");
         assertEq(
             releasedAfter - releasedBefore,
