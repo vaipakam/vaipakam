@@ -34,11 +34,10 @@
 #   - Before pushing a contract change that the frontend depends on.
 #
 # What it does NOT do:
-#   - Doesn't commit anything. The script only writes files; review
-#     the diff with `git diff packages/contracts/src/abis/` and
-#     commit alongside the contract change.
-#   - Doesn't commit anything — the build below is run for you, but
-#     reviewing and committing the diff is still yours.
+#   - Doesn't commit anything. The build below is run for you, but
+#     the script only WRITES files: review the diff with
+#     `git diff packages/contracts/src/abis/` and commit alongside
+#     the contract change.
 #
 # What it DOES do, and what it does NOT claim to fix (#1893):
 #   - Runs `forge build --skip test` itself, from `contracts/`, and
@@ -78,10 +77,13 @@
 #     mix generations, because shell cannot rename N files as one
 #     operation.
 #
-#     Staging happens BESIDE each destination (`<facet>.json.tmp` in
-#     OUT_DIR), never in $TMPDIR: a temp dir is routinely on another
-#     filesystem, which downgrades every publish `mv` to
-#     copy-and-delete and reintroduces truncation as a failure mode.
+#     Staging happens in a RUN-UNIQUE directory INSIDE OUT_DIR, and
+#     both halves of that are load-bearing. Inside OUT_DIR: a
+#     $TMPDIR path is routinely on another filesystem, which
+#     downgrades every publish `mv` to copy-and-delete and
+#     reintroduces truncation. Run-unique: a shared staging name plus
+#     a startup sweep let a second concurrent export delete the
+#     first's staged files out from under its publish loop.
 #
 #     `--skip test` (not a bare `forge build`) is deliberate: the
 #     test-inclusive compilation unit trips the viaIR stack ceiling
@@ -335,7 +337,7 @@ FACETS=(
 # Note this is not the same as the build gate above — the build succeeds fine in
 # this scenario. It is specifically a stale FACETS entry.
 #
-# Staged BESIDE each destination as `<facet>.json.tmp`, NOT in a $TMPDIR
+# Staged in a run-unique directory INSIDE OUT_DIR, never in a $TMPDIR
 # directory (Codex #1897 r2). A temp dir is very often on a different
 # filesystem from a mounted workspace, which turns every publish-time `mv` into
 # copy-and-delete — so an interruption or a full disk mid-copy can leave an
@@ -354,10 +356,26 @@ FACETS=(
 # left truncated. It does NOT make publication atomic as a set — a signal
 # during the publish loop below can still mix generations, because shell
 # cannot rename N files as one operation.
-_cleanup_tmp() { rm -f "$OUT_DIR"/*.json.tmp; }
-trap _cleanup_tmp EXIT
-# Any `.json.tmp` here is debris from an earlier interrupted run, never input.
-_cleanup_tmp
+# RUN-UNIQUE, and inside OUT_DIR (Codex #1897 r3). The previous revision staged
+# as `$OUT_DIR/<facet>.json.tmp` and swept `*.json.tmp` at startup — which meant
+# a second concurrent export DELETED the first run's staged files. If that lands
+# after the first has entered its publish loop, its next `mv` fails, `set -e`
+# aborts it, and the bundle is left partially updated under the old stamp: the
+# same mixed-generation outcome staging exists to prevent, reached from the
+# other direction. The sweep I added to clear debris is what made it reachable.
+#
+# A subdirectory of OUT_DIR keeps the same filesystem — so publish-time `mv`
+# stays an atomic rename rather than the copy-and-delete a $TMPDIR path would
+# reintroduce (r2) — while being unique per run, so no export can see or delete
+# another's files. Nothing here deletes a path it does not own.
+#
+# A hard-killed run leaves its `.stage.XXXXXX` behind, since the trap cannot
+# fire. That is inert untracked debris rather than a corrupt bundle, and
+# sweeping it automatically is exactly what caused this finding, so it stays a
+# manual cleanup.
+STAGE_DIR="$(mktemp -d "$OUT_DIR/.stage.XXXXXX")"
+# shellcheck disable=SC2064  # expand STAGE_DIR now, not at trap time
+trap "rm -rf '$STAGE_DIR'" EXIT
 
 echo "Exporting ABIs to $OUT_DIR"
 fail=0
@@ -367,9 +385,9 @@ for facet in "${FACETS[@]}"; do
   # diagnostic thrown away. The build above has already succeeded by the
   # time we get here, so a failure now means the NAME is wrong — a contract
   # renamed or deleted while its entry stayed in FACETS — and forge says so.
-  if ! forge inspect "$facet" abi --json > "$OUT_DIR/$facet.json.tmp"; then
+  if ! forge inspect "$facet" abi --json > "$STAGE_DIR/$facet.json"; then
     echo "  ✗ $facet — forge inspect failed (renamed or removed? check the FACETS list)" >&2
-    rm -f "$OUT_DIR/$facet.json.tmp"
+    rm -f "$STAGE_DIR/$facet.json"
     fail=1
     # Deliberately `continue` rather than `break`: one run should name EVERY
     # bad entry, not just the first. Nothing has been published yet, so there
@@ -389,7 +407,7 @@ fi
 # Every inspect succeeded; publish the complete set. Same directory, so each
 # rename is atomic and no reader can observe a half-written file.
 for facet in "${FACETS[@]}"; do
-  mv "$OUT_DIR/$facet.json.tmp" "$OUT_DIR/$facet.json"
+  mv "$STAGE_DIR/$facet.json" "$OUT_DIR/$facet.json"
 done
 
 # Stamp output dir with the monorepo commit so a frontend build can
