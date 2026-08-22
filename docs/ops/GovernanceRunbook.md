@@ -740,8 +740,23 @@ So, against **this** Diamond's mesh:
 - every id in `getBroadcastDestinations()` must be **present** there too;
 - and each of those resolved endpoints must return a matching `eth_chainId`.
 
-Extra resolved chains from another environment are not a failure. A missing one
-is. All of this BEFORE the arm.
+A missing chain is the defect. **An extra one is not automatically harmless,
+though — and that is a consequence of step 3g.** Both the remit and the
+commitment-report passes iterate the FULL `getChainConfigs(env)` result, so
+turning the Worker-wide flags on for THIS ceremony also starts fund-moving and
+reporting passes against every other resolved mesh, testnet included. Either
+scope the Worker to one mesh for the ceremony, or run the same role, remitter,
+balance, migration and lane checks against every mesh the flags will reach. Do
+not read "extra chains are fine" as "extra chains can be ignored".
+
+**And the chain ID is not enough to identify the right Diamond.** A deployment
+artifact pointing at an OBSOLETE Diamond on the correct chain passes every check
+above: the id is in both live lists, the keeper reports it, and the RPC agrees.
+The keeper then reads the old Diamond, whose `armedFromDay` stays zero, and
+submits nothing while Base waits for the live mirror. Compare the artifact's
+Diamond ADDRESS per chain against the address governance actually administers.
+
+All of this BEFORE the arm.
 
 **3c. Authorize the Base remittance signer — a SEPARATE authorization, and easy
 to miss.** `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
@@ -814,8 +829,11 @@ missing; it is never an instruction to disable a running one.
 RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)   # ADMIN_ROLE, canonical only
 ```
 
-**Read back that the D1 share-of-pool cap (M2 PR-2) is live on this Diamond
-first.** The setter checks authorization, canonical role, one-shot state and a
+**Read back that the D1 share-of-pool cap (M2 PR-2) is live on EVERY Diamond
+this arm will reach — Base and every mirror — not only the one you are calling.**
+Arming propagates: each mirror installs `D*` from the broadcast and switches to
+ShareOfPool on its own schedule, so a partially upgraded mirror makes that switch
+without the `(user, side, day)` concentration bound even though Base is fine. The setter checks authorization, canonical role, one-shot state and a
 future day — and nothing else. At `D*` the reward path switches to ShareOfPool,
 and on a partial or stacked Diamond that has the PR-3c setter but not PR-2, that
 switch happens with the required `(user, side, day)` cap absent. The joint
@@ -880,6 +898,16 @@ it ARRIVES first — and it is the arrival that funds the mirror, while the
 broadcast opens its claim gate. Wait for each mirror's `RewardBudgetReceived`
 before broadcasting to it, rather than treating the send order as sufficient.
 
+**One exception, and without it the wait never ends.** If the chosen day
+allocates zero budget to a destination, `remitRewardBudget` closes it locally,
+emits `RewardBudgetRemitted` with a zero message id and returns **without sending
+a CCIP payload** — so that mirror will never emit `RewardBudgetReceived`. Waiting
+for one there burns the propagation window and can run past an immutable `D*`.
+Treat a zero-total close as satisfying the wait for that destination: its
+stamped payable budget is zero, so opening its gate funds nothing and strands
+nobody. Confirm the zero-total close in the emitted event rather than assuming
+it.
+
 The remit-first order is not a preference. The broadcast **opens the mirror's
 claim gate**, and it does so independently of the keeper's remittance cron — so a
 day broadcast before its budget lands leaves users hitting an empty-balance
@@ -933,6 +961,13 @@ verified live first:
 
 The setter range-checks a non-zero value against the configured minimum, so a
 too-short horizon reverts rather than silently truncating a user's window.
+
+**It is a LOCAL write with no broadcast.** Unlike `D*`, nothing propagates this:
+the setter writes the calling Diamond's storage and emits. Setting it on Base
+alone leaves every mirror at the zero/dark default, so mirror entries never
+accrue toward expiry and never sweep — while the ceremony looks complete.
+Schedule it through the Timelock **on every reward chain**, and read
+`getRewardClaimHorizonDays` back on each.
 
 ## Testnet rehearsal
 
