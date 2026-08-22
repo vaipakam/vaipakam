@@ -192,16 +192,20 @@ contract OfferPreviewFacet {
             // discover it by burning gas.
             //
             // Position is load-bearing for first-failure parity, which is this
-            // chain's whole point. On the accept side the comparison lives in
-            // the TERM BINDING, which runs before `_acceptOffer` reaches its
-            // maturity gate — so a stale listing whose loan is also past
-            // maturity reverts `SaleListingTermsStale`, not
-            // `SaleLoanPastMaturity`. Hence: after the status gate (the accept
-            // skips the comparison entirely for a non-Active loan, so
-            // `SaleLoanNotActive` still wins there) and BEFORE the maturity
-            // gate. Moving it below maturity would make the two surfaces
-            // disagree on exactly the legacy GTC vehicle this chain was
-            // reordered for.
+            // chain's whole point, and it mirrors `_acceptOffer` exactly: that
+            // function orders the same comparison AFTER its expiry gate and its
+            // non-Active gate and BEFORE its maturity gate, so this one sits
+            // after `OfferExpired` (above, outside this branch) and
+            // `SaleLoanNotActive`, and before `SaleLoanPastMaturity`.
+            //
+            // The comparison deliberately does NOT live in the accept's term
+            // binding with the other term checks: the binding runs before every
+            // one of those gates, so a stale listing that is also expired, or
+            // whose position has been repaid, would revert on staleness while
+            // this surface reported the expiry or the dead position. Both
+            // populations are reachable — finite sale expiry shipped in #1772
+            // and mirroring in #1779 — which is why the ordering is structural
+            // on both sides rather than a list of conditions to skip.
             {
                 LibVaipakam.Offer storage _saleVehicle = s.offers[offerId];
                 if (

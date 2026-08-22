@@ -2310,6 +2310,48 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
+    /// @dev #1835 (Codex #1891 F4) — an EXPIRED stale listing must report the
+    ///      expiry, on both surfaces.
+    ///
+    ///      This is the sibling of the terminal-loan case and the reason the
+    ///      comparison was moved out of the term binding entirely rather than
+    ///      gated condition by condition: the binding runs before `_acceptOffer`
+    ///      reaches its expiry gate, so gating only on loan status would have
+    ///      left this one wrong, and the next gate anyone adds wrong after that.
+    ///      The population is real — finite sale-listing expiry shipped in
+    ///      #1772, behavioural mirroring in #1779, so listings exist that are
+    ///      both stale and expirable.
+    function test_item23_expiredListingOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // Past the listing's 7-day window, still well inside the loan's term.
+        vm.warp(block.timestamp + 8 days);
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "expiredStaleBuyer");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                OfferAcceptFacet.OfferExpired.selector,
+                saleOfferId,
+                OfferCancelFacet(address(diamond)).getOffer(saleOfferId).expiresAt
+            )
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview agrees, which is the parity the ordering exists for.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.OfferExpired),
+            "expiry is the structural reason; it outranks stale terms"
+        );
+    }
+
     /// @dev #1835 (Codex #1891 F1) — the preview must classify a stale listing,
     ///      or the card enables "Accept", the buyer signs, and the transaction
     ///      reverts. That preview/accept divergence is what #1503 exists to
