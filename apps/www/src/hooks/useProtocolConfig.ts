@@ -222,32 +222,27 @@ const REQUEST_TIMEOUT_MS = 4_000;
 async function load() {
   loading = true;
   publish();
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
   try {
-    const res = await fetch(`${INDEXER_ORIGIN}/config/${DOCS_CHAIN_ID}`, {
-      headers: { accept: 'application/json' },
-      signal: ac.signal,
+    // THE SAME validated fetch the build script calls (Codex #1895 r2).
+    // Extracting the helper and then leaving this duplicate inline was
+    // the worst of both: the generator gained the chain-id check while
+    // the HUMAN-FACING pages — the surface a reader actually sees —
+    // kept the version without it, so a routing slip or a shared cache
+    // could still show another deployment's rates under this chain's
+    // name. One acceptance rule, one place, both callers.
+    //
+    // It swallows every failure itself, including the timeout abort:
+    // there is nothing a reader of a docs page can do about an
+    // unreachable indexer, and the page still renders bundled defaults.
+    const accepted = await fetchProtocolConfigSnapshot({
+      origin: INDEXER_ORIGIN,
+      chainId: DOCS_CHAIN_ID,
+      timeoutMs: REQUEST_TIMEOUT_MS,
     });
-    if (res.ok) {
-      const body: unknown = await res.json();
-      if (
-        typeof body === 'object' &&
-        body !== null &&
-        (body as { available?: unknown }).available === true &&
-        snapshotFresh((body as { updatedAt?: unknown }).updatedAt)
-      ) {
-        config = decodeMarketingConfig((body as { bundle?: unknown }).bundle);
-        acceptedUpdatedAt =
-          config !== null ? ((body as { updatedAt: number }).updatedAt) : null;
-      }
+    if (accepted !== null) {
+      config = accepted.config;
+      acceptedUpdatedAt = accepted.updatedAt;
     }
-  } catch {
-    // Deliberately silent, and this now also swallows the abort above.
-    // There is nothing a reader of a docs page can do about an
-    // unreachable or unresponsive indexer, and the page still renders
-    // its bundled defaults. Logging here would put a red error in the
-    // console of a perfectly working page.
   } finally {
     // A held snapshot that has aged past the freshness window must not
     // keep claiming published provenance just because this refresh
@@ -259,7 +254,6 @@ async function load() {
       config = null;
       acceptedUpdatedAt = null;
     }
-    clearTimeout(timer);
     loading = false;
     hasConcluded = true;
     // Re-arm (or clear) the expiry deadline for whatever this load

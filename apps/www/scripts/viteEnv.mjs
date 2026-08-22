@@ -13,29 +13,47 @@
  * read the app's environment" is exactly the drift that keeps costing
  * rounds — so it lives here once and both import it.
  *
- * Precedence is Vite's own for a production build, later file winning,
- * with a real `process.env` value overriding every file.
+ * VITE'S OWN LOADER, not a regex over the files (Codex #1895 r2). The
+ * first version matched `NAME=value` per line and stripped surrounding
+ * quotes, which is most of dotenv and not all of it: an inline comment
+ * came through as part of the value, and `VITE_INDEXER_ORIGIN=https://${
+ * INDEXER_HOST}` came through unexpanded. Either one makes the prebuild
+ * read a DIFFERENT value than the browser bundle beside it — the exact
+ * failure this module exists to prevent, reintroduced by the mechanism
+ * meant to prevent it. `loadEnv` is what Vite itself calls, so there is
+ * one parser and no second interpretation of the same file.
  */
-import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadEnv } from 'vite';
 
 const APP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** Vite's production order: later files win. */
-const ENV_FILES = ['.env', '.env.local', '.env.production', '.env.production.local'];
+/**
+ * `loadEnv` reads and parses on every call. These scripts ask for a
+ * handful of names during one process, so the answer is resolved once.
+ *
+ * Mode is `production`: these scripts run from `prebuild`, ahead of the
+ * production build whose bundle they must agree with. `loadEnv` layers
+ * `.env`, `.env.local`, `.env.production` and `.env.production.local` in
+ * Vite's own precedence and lets a real `process.env` value win over all
+ * of them — the same order the previous hand-rolled list described, now
+ * enforced by the implementation that defines it.
+ */
+let cached;
 
 export function readViteEnv(name) {
-  if (process.env[name] !== undefined) return process.env[name];
-  let value;
-  for (const file of ENV_FILES) {
-    const p = resolve(APP_DIR, file);
-    if (!existsSync(p)) continue;
-    for (const line of readFileSync(p, 'utf8').split('\n')) {
-      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
-      if (!m || m[1] !== name) continue;
-      value = m[2].replace(/^["']|["']$/g, '');
-    }
+  cached ??= loadEnv('production', APP_DIR, 'VITE_');
+  // `loadEnv` returns only prefixed names, so anything else is a caller
+  // bug rather than a missing configuration — say so instead of handing
+  // back `undefined` and letting a default stand in for it.
+  if (!name.startsWith('VITE_')) {
+    throw new Error(
+      `readViteEnv('${name}'): only VITE_-prefixed names reach the browser ` +
+        `bundle, so reading any other name here cannot agree with it.`,
+    );
   }
-  return value;
+  // Vite treats an unset variable as absent; an empty string is a real,
+  // deliberate value and is returned as one.
+  return cached[name];
 }

@@ -168,8 +168,11 @@ Public-navigation requirements:
   needs figures newer than the publication is still
   told where to read them: the crawler index must advertise the live
   configuration endpoint alongside the documents, name the chain it
-  describes, and state plainly that the documents carry starting rates
-  while that endpoint carries current ones. Static documents plus a
+  describes, and say what the documents themselves carry — which, under
+  the superseding rule above, is the published configuration as of the
+  moment the index names, not the compiled starting rates. It may
+  describe them as starting rates only on the deliberate-override path,
+  where that is what they actually are. Static documents plus a
   named live endpoint is the same division the site already publishes
   for offer and loan data, and it keeps the documentation surface free
   of the protocol-data dependencies that belong to the read API
