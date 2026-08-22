@@ -384,8 +384,7 @@ so essentially every facet edit needs a re-export.
 parameters, change struct shape, etc.), run:
 
 ```bash
-forge build   # build before inspecting
-bash contracts/script/exportFrontendAbis.sh
+bash contracts/script/exportFrontendAbis.sh   # runs its own --skip test build
 ```
 
 The script regenerates every JSON via `forge inspect <Facet> abi

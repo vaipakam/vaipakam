@@ -566,8 +566,7 @@ resulting revert during `eth_estimateGas` as the generic
 nothing like an ABI mismatch from the user's side.
 
 ```bash
-forge build   # if you haven't built since the last edit
-bash contracts/script/exportFrontendAbis.sh
+bash contracts/script/exportFrontendAbis.sh   # runs its own --skip test build
 cd apps/defi
 node_modules/.bin/tsc -b --noEmit   # confirm the frontend still typechecks
 git diff ../../packages/contracts/src/abis/    # review the change

@@ -34,11 +34,62 @@
 #   - Before pushing a contract change that the frontend depends on.
 #
 # What it does NOT do:
-#   - Doesn't commit anything. The script only writes files; review
-#     the diff with `git diff packages/contracts/src/abis/` and
-#     commit alongside the contract change.
-#   - Doesn't run `forge build` first. Assumes you've run
-#     `forge build` in `contracts/` since the last edit.
+#   - Doesn't commit anything. The build below is run for you, but
+#     the script only WRITES files: review the diff with
+#     `git diff packages/contracts/src/abis/` and commit alongside
+#     the contract change.
+#
+# What it DOES do, and what it does NOT claim to fix (#1893):
+#   - Runs `forge build --skip test` itself, from `contracts/`, and
+#     aborts before touching the bundle if that fails.
+#
+#     This is a FAIL-FAST + DIAGNOSTICS fix, not a correctness one,
+#     and the distinction is worth recording because #1893 originally
+#     claimed the latter and was wrong. The claim was that a failed
+#     or absent build let this script export STALE artifacts under a
+#     `Done.` message. It cannot: `forge inspect` compiles on demand,
+#     so on a broken tree it exits non-zero and writes nothing, the
+#     loop below sets `fail=1`, and the script exits 1. Verified by
+#     appending a syntax error to a shared interface and running
+#     `forge inspect` directly — exit 1, zero bytes out.
+#
+#     What was genuinely wrong is what the operator SEES. Each
+#     inspect discards the compiler's stderr (`2>/dev/null`), so a
+#     compile error surfaced 74 times as
+#     "✗ <Facet> — forge inspect failed (missing artifact? run
+#     'forge build' first)" — a hint pointing at the wrong cause,
+#     with every actual diagnostic thrown away. Building once, up
+#     front, with stderr intact, reports the real error once.
+#
+#   - Stages every inspect and publishes only if ALL of them
+#     succeed, so a stale FACETS entry (a renamed or deleted
+#     contract) can no longer leave the bundle MIXED — earlier
+#     facets replaced, that one stale, later ones replaced, under a
+#     `_source.json` still naming the previous export.
+#
+#     An earlier revision of this change DESCRIBED that window and
+#     then did not close it, while claiming it had. The loop still
+#     wrote each file as it went. Staging is the part that actually
+#     closes it, and the guarantee is bounded: it removes the
+#     partial publish caused by an EXPORT FAILURE, and no individual
+#     file can be left truncated. It does NOT make publication
+#     atomic as a set — a signal during the publish loop can still
+#     mix generations, because shell cannot rename N files as one
+#     operation.
+#
+#     Staging happens in a RUN-UNIQUE directory INSIDE OUT_DIR, and
+#     both halves of that are load-bearing. Inside OUT_DIR: a
+#     $TMPDIR path is routinely on another filesystem, which
+#     downgrades every publish `mv` to copy-and-delete and
+#     reintroduces truncation. Run-unique: a shared staging name plus
+#     a startup sweep let a second concurrent export delete the
+#     first's staged files out from under its publish loop.
+#
+#     `--skip test` (not a bare `forge build`) is deliberate: the
+#     test-inclusive compilation unit trips the viaIR stack ceiling
+#     (#601/#603), and `forge inspect` only ever needs `src/`.
+#     An already-built tree makes this a no-op, so the deploy
+#     scripts that call this after their own build pay nothing.
 #   - Doesn't touch `index.ts` (the re-export barrel). If you add a
 #     brand-new facet, add it to FACETS below AND wire it into
 #     `packages/contracts/src/abis/index.ts` manually.
@@ -125,6 +176,34 @@ cd "$CONTRACTS_DIR"
 
 if ! command -v forge >/dev/null 2>&1; then
   echo "Error: forge not in PATH. Install Foundry: https://book.getfoundry.sh/getting-started/installation" >&2
+  exit 1
+fi
+
+# ── Build once, up front, with diagnostics intact (#1893) ────────────────────
+# `forge inspect` already compiles on demand and already fails loudly, so this
+# is NOT what stands between the bundle and stale artifacts — the per-facet
+# `fail=1` path below is. What this fixes is the operator's view: the loop
+# discards each inspect's stderr, so a compile error arrived as 74 copies of a
+# hint naming the wrong cause and not one line of the actual error. Building
+# here surfaces it once, in full, before anything is written.
+#
+# Runs from CONTRACTS_DIR — guaranteed by the `cd` above regardless of the
+# caller's working directory, which matters because remappings live in
+# `contracts/remappings.txt` and a build from the repo root dies on the
+# vendored `@openzeppelin` / `@chainlink` imports.
+#
+# `--skip test` compiles `src/` + `script/` only. A bare `forge build` compiles
+# the test-inclusive unit and can fail on the viaIR whole-unit stack ceiling
+# ("Variable size N too deep") even when every file is correct — which would
+# turn this step into a new way for a correct tree to fail.
+#
+# Deliberately NOT overridable: a SKIP_BUILD flag would reintroduce exactly the
+# path this exists to remove, and an already-built tree costs nothing anyway.
+echo "Building contracts (forge build --skip test) …"
+if ! forge build --skip test; then
+  echo "" >&2
+  echo "Error: forge build failed — see the compiler output above." >&2
+  echo "The bundle in $OUT_DIR has NOT been modified." >&2
   exit 1
 fi
 
@@ -249,25 +328,120 @@ FACETS=(
   "RiskPremiumRateModel"
 )
 
+# ── Stage every facet, publish only if ALL of them succeeded (#1893, Codex r1) ─
+# The previous shape wrote each file into OUT_DIR as it went and `continue`d past
+# a failure, so a FACETS entry naming a renamed or deleted contract left the
+# bundle MIXED: earlier facets replaced, that one stale, later ones replaced, and
+# `_source.json` never updated because the stamp is written after the loop.
+#
+# Note this is not the same as the build gate above — the build succeeds fine in
+# this scenario. It is specifically a stale FACETS entry.
+#
+# Staged in a run-unique directory INSIDE OUT_DIR, never in a $TMPDIR
+# directory (Codex #1897 r2). A temp dir is very often on a different
+# filesystem from a mounted workspace, which turns every publish-time `mv` into
+# copy-and-delete — so an interruption or a full disk mid-copy can leave an
+# individual JSON TRUNCATED. That would be a worse failure than the mixed
+# bundle this staging exists to prevent, and it would be a regression: the
+# original `$out.tmp` sat beside its destination, so each replacement was an
+# atomic same-filesystem rename.
+#
+# Staging in OUT_DIR keeps that atomicity by construction and still defers
+# every rename until all inspects have succeeded, so both properties hold at
+# once.
+#
+# Scope of the guarantee, stated precisely because an earlier revision of this
+# very commit overclaimed it: this removes the partial publish caused by an
+# EXPORT FAILURE, which is the reachable case, and no individual file can be
+# left truncated. It does NOT make publication atomic as a set — a signal
+# during the publish loop below can still mix generations, because shell
+# cannot rename N files as one operation.
+# RUN-UNIQUE, and inside OUT_DIR (Codex #1897 r3). The previous revision staged
+# as `$OUT_DIR/<facet>.json.tmp` and swept `*.json.tmp` at startup — which meant
+# a second concurrent export DELETED the first run's staged files. If that lands
+# after the first has entered its publish loop, its next `mv` fails, `set -e`
+# aborts it, and the bundle is left partially updated under the old stamp: the
+# same mixed-generation outcome staging exists to prevent, reached from the
+# other direction. The sweep I added to clear debris is what made it reachable.
+#
+# A subdirectory of OUT_DIR keeps the same filesystem — so publish-time `mv`
+# stays an atomic rename rather than the copy-and-delete a $TMPDIR path would
+# reintroduce (r2) — while being unique per run, so no export can see or delete
+# another's files. Nothing here deletes a path it does not own.
+#
+# A hard-killed run leaves its `.stage.XXXXXX` behind, since the trap cannot
+# fire. That is inert untracked debris rather than a corrupt bundle, and
+# sweeping it automatically is exactly what caused this finding, so it stays a
+# manual cleanup.
+# The trap runs a FUNCTION NAME, never a string with the path interpolated into
+# it (Codex #1897 r4). `trap "rm -rf '$STAGE_DIR'" EXIT` embeds the path in
+# shell SOURCE, so a `CONTRACTS_PKG_DIR` containing a single quote — which the
+# documented arbitrary-absolute-path override permits — either breaks the trap's
+# syntax (exit 2, staging left behind, after a `Done.`) or injects commands into
+# it. A function name is a fixed token; the path is only ever a quoted variable
+# expansion inside the body, so nothing in it is ever parsed as code.
+#
+# The previous revision silenced SC2064 here to say "expand now, not at trap
+# time". That reasoning was about WHEN the value is substituted and missed that
+# substituting it at all is the hazard. Reading the variable at trap time is
+# both safer and what we actually want.
+#
+# `--` guards a staging path that starts with a dash; the `-n` guard covers
+# `mktemp` failing before STAGE_DIR is ever set, since the trap is armed first.
+# Cleared BEFORE the trap is armed (Codex #1897 r5, P1). The `-n` guard below
+# was added so arming the trap before `mktemp` would be safe — but
+# `${STAGE_DIR:-}` reads an INHERITED export, so if the caller had `STAGE_DIR`
+# in the environment and the script died before the assignment (a signal while
+# `mktemp` blocks on a slow filesystem, or `mktemp` failing under `set -e`), the
+# trap ran `rm -rf` on the CALLER'S directory.
+#
+# That is the guard creating the hazard it was written to prevent, and it is
+# strictly worse than anything this script did before this PR: an arbitrary
+# directory deletion, in a script whose documented `CONTRACTS_PKG_DIR` override
+# already invites unusual environments. Clearing it first makes the guard mean
+# what the comment always claimed — "not created yet" — rather than "whatever
+# the environment says".
+STAGE_DIR=''
+_cleanup_stage() {
+  if [ -n "${STAGE_DIR:-}" ]; then
+    rm -rf -- "$STAGE_DIR"
+  fi
+}
+trap _cleanup_stage EXIT
+STAGE_DIR="$(mktemp -d "$OUT_DIR/.stage.XXXXXX")"
+
 echo "Exporting ABIs to $OUT_DIR"
 fail=0
 for facet in "${FACETS[@]}"; do
-  out="$OUT_DIR/$facet.json"
-  if ! forge inspect "$facet" abi --json > "$out.tmp" 2>/dev/null; then
-    echo "  ✗ $facet — forge inspect failed (missing artifact? run 'forge build' first)" >&2
-    rm -f "$out.tmp"
+  # stderr is NOT discarded (#1893). It used to be, which turned every
+  # failure into the same "run 'forge build' first" hint with the real
+  # diagnostic thrown away. The build above has already succeeded by the
+  # time we get here, so a failure now means the NAME is wrong — a contract
+  # renamed or deleted while its entry stayed in FACETS — and forge says so.
+  if ! forge inspect "$facet" abi --json > "$STAGE_DIR/$facet.json"; then
+    echo "  ✗ $facet — forge inspect failed (renamed or removed? check the FACETS list)" >&2
+    rm -f "$STAGE_DIR/$facet.json"
     fail=1
+    # Deliberately `continue` rather than `break`: one run should name EVERY
+    # bad entry, not just the first. Nothing has been published yet, so there
+    # is no cost to finishing the sweep.
     continue
   fi
-  mv "$out.tmp" "$out"
   echo "  ✓ $facet"
 done
 
 if [ "$fail" -ne 0 ]; then
   echo "" >&2
-  echo "One or more facets failed to export. Fix the missing artifact(s) and re-run." >&2
+  echo "One or more facets failed to export — NOTHING was published." >&2
+  echo "The bundle in $OUT_DIR is unchanged. Fix the FACETS entries named above and re-run." >&2
   exit 1
 fi
+
+# Every inspect succeeded; publish the complete set. Same directory, so each
+# rename is atomic and no reader can observe a half-written file.
+for facet in "${FACETS[@]}"; do
+  mv "$STAGE_DIR/$facet.json" "$OUT_DIR/$facet.json"
+done
 
 # Stamp output dir with the monorepo commit so a frontend build can
 # be correlated against a specific contracts state.
