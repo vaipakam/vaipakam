@@ -65,7 +65,7 @@
 //   SITE_URL=http://localhost:4319 node e2e/live/live-connect-telemetry.mjs
 //
 // Exit: 0 pass, 1 fail, 2 blocked (setup/precondition, nothing observed).
-import { addressOf, blockedSync, launch, precondition, SITE, visit } from './driver.mjs';
+import { addressOf, blockedSync, launch, SITE, visit } from './driver.mjs';
 
 /** The two endpoints #1836 turned off. Watched for the whole session. */
 const TELEMETRY_HOSTS = ['cca-lite.coinbase.com', 'pulse.walletconnect.org'];
@@ -104,6 +104,11 @@ const { page, done } = await launch({
   // already connected and there is no connect flow left to review.
   preAuthorized: false,
   allowRequestAccounts: true,
+  // Nothing here needs to sign or send. Left writable, a compromised or
+  // simply broken SITE could have the injected provider sign a message
+  // or broadcast a transaction against a funded Base Sepolia wallet,
+  // and this drive would neither prevent nor record it (Codex #1894 r2).
+  readOnly: true,
   // The persistent profile carries connectkit state from earlier runs,
   // which would skip the very step this drive exists to walk.
   freshProfile: true,
@@ -118,7 +123,19 @@ context.on('page', (p) => watch(p, 'popup'));
  *  relay can be opened while the modal is first built, so a listener
  *  attached at the WC step would miss it. */
 const sockets = [];
-page.on('websocket', (ws) => sockets.push(ws.url()));
+// OPENED, not merely requested (Codex #1894 r1). Playwright emits
+// `websocket` when the handshake is SENT, so a relay that rejects the
+// project id — or an egress that blocks the socket — still produced an
+// entry, and the drive reported the rail healthy and the project id
+// usable on the strength of an attempt. A socket counts only once a
+// frame has crossed it and no error arrived first.
+page.on('websocket', (ws) => {
+  const record = { url: ws.url(), framed: false, errored: false };
+  sockets.push(record);
+  ws.on('framereceived', () => { record.framed = true; });
+  ws.on('framesent', () => { record.framed = true; });
+  ws.on('socketerror', () => { record.errored = true; });
+});
 
 let failed = false;
 try {
@@ -130,11 +147,21 @@ try {
   const connectCta = page.getByRole('button', { name: /connect wallet/i }).first();
   const ctaVisible = await connectCta.isVisible().catch(() => false);
   if (!ctaVisible) {
-    // Not a telemetry failure — the session is not the one being
-    // reviewed, so everything below would measure the wrong thing.
-    blockedSync('first visit did not render the connect CTA; the session is not disconnected');
+    // A product FAIL, not a precondition (Codex #1894 r1). The fresh
+    // profile and `preAuthorized: false` mean a first-time visitor was
+    // authorized WITHOUT clicking anything — which is a wallet-state
+    // regression, not a missing precondition. Calling it BLOCKED would
+    // file the most interesting result this drive can produce under
+    // "could not observe".
+    step(
+      'first visit renders disconnected',
+      'FAIL',
+      'no connect CTA — the session was authorized without a click',
+    );
+    failed = true;
+  } else {
+    step('first visit renders disconnected', 'PASS', 'connect CTA present');
   }
-  step('first visit renders disconnected', 'PASS', 'connect CTA present');
 
   const loadBeacons = beacons.length;
   step('page load sends no telemetry', loadBeacons === 0 ? 'PASS' : 'FAIL', `${loadBeacons} beacon(s)`);
@@ -187,10 +214,21 @@ try {
     blockedSync('the Coinbase SDK never opened its connect window; nothing was initialized to measure');
   }
   const popupUrl = popup.url();
-  if (!popupUrl.includes('coinbase.com')) {
-    blockedSync(`the connector opened ${popupUrl}, which is not the Coinbase SDK`);
+  // EXACT host (Codex #1894 r1). `includes('coinbase.com')` accepts
+  // `coinbase.com.evil` and any other Coinbase page, so a broken or
+  // spoofed connector could satisfy the calibration precondition without
+  // the SDK ever starting — and the zero-beacon result would then mean
+  // nothing at all.
+  let popupHost = '';
+  try {
+    popupHost = new URL(popupUrl).host;
+  } catch {
+    blockedSync(`the connector opened an unparseable URL: ${popupUrl}`);
   }
-  step('Coinbase SDK initializes', 'PASS', new URL(popupUrl).host);
+  if (popupHost !== 'keys.coinbase.com') {
+    blockedSync(`the connector opened ${popupHost}, not keys.coinbase.com`);
+  }
+  step('Coinbase SDK initializes', 'PASS', popupHost);
 
   const sdkBeacons = beacons.length - loadBeacons - modalBeacons;
   step(
@@ -222,12 +260,16 @@ try {
   // relay while the modal is first built, which is BEFORE this step —
   // a listener attached now would miss it and report a working rail as
   // broken, which is what the first run of this step did.
-  const relayOpened = sockets.some((u) => u.includes('relay.walletconnect.org'));
+  const relayOpened = sockets.some(
+    (s) => s.url.includes('relay.walletconnect.org') && s.framed && !s.errored,
+  );
 
   step(
     'WalletConnect relay initializes',
     relayOpened ? 'PASS' : 'FAIL',
-    relayOpened ? 'wss://relay.walletconnect.org opened' : 'the relay socket never opened',
+    relayOpened
+      ? 'wss://relay.walletconnect.org opened and exchanged a frame'
+      : 'no relay socket exchanged a frame — attempted but never established',
   );
   if (!relayOpened) failed = true;
 
@@ -238,11 +280,25 @@ try {
   // `telemetryEnabled: true`, so a zero here is not evidence the flag
   // works — see the header. Reported so the number is on the record
   // without pretending it settles anything.
-  step(
-    'WalletConnect telemetry (NOT calibrated — observation only)',
-    'OBSERVED',
-    `${wcBeacons} beacon(s) to pulse.walletconnect.org; this probe reads zero with the flag ON too, so it cannot prove the flag`,
-  );
+  // ASYMMETRIC on purpose (Codex #1894 r2). The missing calibration is
+  // what makes a ZERO inconclusive — the same probe reads zero with the
+  // flag on. It says nothing about a POSITIVE count, which is direct
+  // evidence that telemetry a build claims to have disabled phoned home.
+  // Treating both alike let that evidence exit 0.
+  if (wcBeacons > 0) {
+    step(
+      'WalletConnect telemetry',
+      'FAIL',
+      `${wcBeacons} beacon(s) to pulse.walletconnect.org — telemetryEnabled:false did not hold`,
+    );
+    failed = true;
+  } else {
+    step(
+      'WalletConnect telemetry (NOT calibrated — observation only)',
+      'OBSERVED',
+      '0 beacons; this probe reads zero with the flag ON too, so zero cannot prove the flag',
+    );
+  }
   void wcBefore;
 
   await page.keyboard.press('Escape').catch(() => {});
@@ -264,15 +320,25 @@ try {
     .catch(() => {});
   const account = addressOf('lender');
   const fragment = account.slice(2, 6).toLowerCase();
-  const connected = await precondition('the wallet connects', async () => {
+  // NOT `precondition` (Codex #1894 r2). If the page crashes or closes
+  // during this poll, `innerText` throws and precondition exits 2 —
+  // BLOCKED, "nothing could be observed" — discarding every Coinbase and
+  // WalletConnect step already recorded above. A crash here is a failed
+  // connection, which is a finding, so it stays in the verdict.
+  let connected = false;
+  {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
-      const body = (await page.locator('body').innerText()).toLowerCase();
-      if (body.includes(fragment)) return true;
+      let body = '';
+      try {
+        body = (await page.locator('body').innerText()).toLowerCase();
+      } catch {
+        break;
+      }
+      if (body.includes(fragment)) { connected = true; break; }
       await page.waitForTimeout(1_000);
     }
-    return false;
-  });
+  }
   step(
     'connect completes and renders the account',
     connected ? 'PASS' : 'FAIL',
@@ -295,6 +361,21 @@ try {
     stillConnected ? 'returning visitor stays connected' : 'the session was lost',
   );
   if (!stillConnected) failed = true;
+
+  // WHOLE SESSION, not per phase (Codex #1894 r1). Each step measures
+  // its own window, so a Coinbase beacon arriving late — queued, retried,
+  // or simply after a window closed — landed in no step's count, and the
+  // run could print "0 beacons" having seen one. The Coinbase half IS
+  // calibrated, so any count at all is a failure.
+  const coinbaseTotal = beacons.filter((b) =>
+    b.url.includes('cca-lite.coinbase.com'),
+  ).length;
+  step(
+    'no Coinbase telemetry at any point in the session',
+    coinbaseTotal === 0 ? 'PASS' : 'FAIL',
+    `${coinbaseTotal} beacon(s) across every phase`,
+  );
+  if (coinbaseTotal !== 0) failed = true;
 
   const afterConnect = beacons.length - before;
   step(

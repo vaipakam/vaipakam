@@ -19,8 +19,12 @@ flow when nothing is sent, and would have reported a clean result whether
 the setting was on or off.
 
 The new check walks the real path: arrive as a first-time visitor, open
-the dialog, choose the wallet and let its software actually start up,
-complete a connection, then return as a repeat visitor. On the live site
+the dialog, choose the wallet and let its software actually start up —
+then, because finishing inside that wallet needs a person, complete a
+connection through the **test wallet the check injects**, and return as a
+repeat visitor. Naming which connector completes it matters: the gap this
+work was closing was "nobody has put a real wallet through a connect",
+and that gap is narrowed here, not closed. On the live site
 it is silent at every step. Against the re-broken build it fails loudly.
 That pairing is the point — a check that has never been seen failing is
 not evidence of anything, and this one had not been.
