@@ -2101,12 +2101,17 @@ CCIP fee.
 For most users, this propagation is invisible. Take a loan
 on a mirror chain → the cached tier applies. Done.
 
-For edge cases (mirror cache stale, governance bumped the
-tier table, you just disabled consent and want to
-immediately clear), the dapp's Dashboard surfaces a "Push my
-tier to mirrors now" button. Clicking it triggers
-`pokeMyTier()` — permissionless, fires a fresh CCIP
-broadcast at the protocol's cost.
+For edge cases (governance bumped the tier table, you just
+disabled consent and want to immediately clear), the dapp's
+Dashboard surfaces a "Push my tier to mirrors now" button.
+Clicking it triggers `pokeMyTier()` — permissionless, fires a
+fresh CCIP broadcast at the protocol's cost.
+
+**A stale cache is NOT one of those cases.** The push only
+sends when your `(tier, bps, expiry, version)` tuple has
+changed; a cache that merely aged out on an unchanged tier is
+skipped and nothing is broadcast. See the staleness threshold
+below for what does restore it.
 
 ### Consent toggle
 
