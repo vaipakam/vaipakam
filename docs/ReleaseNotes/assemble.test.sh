@@ -1067,16 +1067,16 @@ out="$W/docs/ReleaseNotes"
 # fails only for `-m1` isolates it: `-m1` is used by the heading scan and by
 # nothing else in the script.
 printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' > "$out/ReleaseNotes-2026-08-16.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/grep" <<'SHIM'
+mkdir -p "$W/hooks"
+cat > "$W/hooks/scan" <<'SHIM'
 #!/bin/sh
 for a in "$@"; do
   [ "$a" = "-m1" ] && exit 2
 done
-exec /usr/bin/grep "$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/grep"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+chmod +x "$W/hooks/scan"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run stops"               "$?"                            "1"
 check "no fragment was consumed"    "$(pending "$W")"               "2"
 check "it names the heading scan"   "$(says "$msg" 'reading 0001-a.md failed')" "1"
@@ -1088,16 +1088,16 @@ out="$W/docs/ReleaseNotes"
 # no-match, so the duplicate check would quietly clear and the section be
 # appended twice. `-qxF`/`-xF` is used only for that comparison.
 printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' > "$out/ReleaseNotes-2026-08-16.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/grep" <<'SHIM'
+mkdir -p "$W/hooks"
+cat > "$W/hooks/scan" <<'SHIM'
 #!/bin/sh
 for a in "$@"; do
   [ "$a" = "-xF" ] && exit 2
 done
-exec /usr/bin/grep "$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/grep"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+chmod +x "$W/hooks/scan"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run stops"              "$?"                                  "1"
 check "no fragment was consumed"   "$(pending "$W")"                     "2"
 check "it names the output check"  "$(says "$msg" 'repeated heading')"   "1"
@@ -1279,8 +1279,8 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # `sed` is what reads the fragment into the output. A shim that rewrites the
 # file as a side effect reproduces "edited between the hash and the read"
 # deterministically (Codex #1863 r13).
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 # Writes the ORIGINAL fragment, not whatever path sed was handed. Since the
 # run now assembles from a working COPY taken up front, a shim keyed on
@@ -1289,10 +1289,10 @@ cat > "$W/fakebin/sed" <<SHIM
 # is a fragment changing after the run has read it and before it is
 # removed, so the shim edits the fragment where it actually lives.
 printf '## edited underneath\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run still succeeds"       "$?"                              "0"
 # By CONTENT, not by the pending count: a kept fragment now lives in the
 # quarantine directory, which `pending` deliberately prunes, so counting it
@@ -1353,16 +1353,16 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # two are deleted having never reached $OUT. Quarantining first makes the
 # checked object and the deleted object the same inode (Codex #1863 r14). The
 # shim writes the fragment during the read, so the re-hash differs.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 # Writes the ORIGINAL fragment — see the note in T38. Keyed on sed's
 # argument this stopped firing once assembly began reading a working copy.
 printf '## rewritten mid-run\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run succeeds"        "$?"                                 "0"
 check "the new bytes survive somewhere" \
   "$(grep -rl 'rewritten mid-run' "$W/docs/ReleaseNotes/unreleased" | wc -l | tr -d ' ')" "1"
@@ -1379,15 +1379,15 @@ out="$W/docs/ReleaseNotes"
 # behaviour and leaves this case with nothing to trip. A failing `mv`
 # reproduces the state directly: the set-aside move is the first thing the
 # clearing loop does after the rename.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/mv" <<'SHIM'
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear" <<'SHIM'
 #!/bin/sh
 # Only the set-aside move, not the publication rename that precedes it.
 case "$*" in */.assembled/*) exit 1 ;; esac
-exec /bin/mv "$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/mv"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+chmod +x "$W/hooks/clear"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 check "the run fails"               "$?"                                        "1"
 check "it says the file is written" "$(says "$msg" 'HAS ALREADY BEEN WRITTEN')"  "1"
 check "it names the fragment"       "$(says "$msg" 'could not set aside')"       "1"
@@ -1441,17 +1441,17 @@ out="$W/docs/ReleaseNotes"
 # the fragment loop, which is after the `cat` and before the `mv`. A shim
 # firing anywhere earlier would land INSIDE the snapshot and prove nothing.
 printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '\n## edited by someone else\n' >> "$out/ReleaseNotes-2026-08-16.md"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"            "$?"                                       "1"
 check "no fragment consumed"     "$(pending "$W")"                          "2"
 check "it says what happened"    "$(says "$msg" 'changed while this run')"   "1"
@@ -1465,18 +1465,18 @@ W="$ROOT/t45b"; build "$W"
 out="$W/docs/ReleaseNotes"
 # The absent case takes the other branch — the snapshot is a fresh header
 # rather than a copy — and an empty recorded hash must not read as "matches".
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '# Release Notes — 2026-08-16\n\n## created by someone else\n' \
     > "$out/ReleaseNotes-2026-08-16.md"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"           "$?"                                     "1"
 check "no fragment consumed"    "$(pending "$W")"                        "2"
 # A dated file appearing mid-run is now caught by the set check across every
@@ -1497,18 +1497,18 @@ out="$W/docs/ReleaseNotes"
 # this case about the shape re-check.
 printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
 cp "$out/ReleaseNotes-2026-08-16.md" "$W/real-target.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   rm -f "$out/ReleaseNotes-2026-08-16.md"
   ln -s "$W/real-target.md" "$out/ReleaseNotes-2026-08-16.md"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                        "1"
 check "no fragment consumed"   "$(pending "$W")"                           "2"
 check "it names the shape"     "$(says "$msg" 'no longer a regular file')"  "1"
@@ -1570,17 +1570,17 @@ out="$W/docs/ReleaseNotes"
 # wrong, because nothing about the content changed (Codex #1863 r18).
 printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
 chmod 644 "$out/ReleaseNotes-2026-08-16.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   chmod 600 "$out/ReleaseNotes-2026-08-16.md"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"           "$?"                                        "1"
 check "no fragment consumed"    "$(pending "$W")"                           "2"
 check "it names the change"     "$(says "$msg" 'permissions or ownership')"  "1"
@@ -1602,17 +1602,17 @@ else
   # `sed`, the chown landed before that probe, which then refused first
   # with its own message and this case stopped exercising the branch it
   # is named for.
-  mkdir -p "$W/fakebin"
-  cat > "$W/fakebin/cat" <<SHIM
+  mkdir -p "$W/hooks"
+  cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   chown 65534:65534 "$out/ReleaseNotes-2026-08-16.md"
 fi
-exec /bin/cat "\$@"
+exit 0
 SHIM
-  chmod +x "$W/fakebin/cat"
-  msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  chmod +x "$W/hooks/build"
+  msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"          "$?"                                        "1"
   check "no fragment consumed"   "$(pending "$W")"                           "2"
   check "it names the change"    "$(says "$msg" 'permissions or ownership')"  "1"
@@ -1837,17 +1837,17 @@ out="$W/docs/ReleaseNotes"
 # scan left this run still believing the fragment was unfiled — appending the
 # same section to a second day and deleting the source (Codex #1863 r20).
 printf '# Release Notes — 2026-08-15\n\n## older day\n' > "$out/ReleaseNotes-2026-08-15.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '\n## 0001-a\n' >> "$out/ReleaseNotes-2026-08-15.md"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                    "1"
 check "no fragment consumed"   "$(pending "$W")"                       "2"
 check "it names the other day" "$(says "$msg" 'ReleaseNotes-2026-08-15.md changed')" "1"
@@ -1858,17 +1858,17 @@ out="$W/docs/ReleaseNotes"
 # A file created since the scan was never recorded, so comparing recorded
 # entries alone cannot see it — and a new file is exactly where a competing
 # writer would put a record.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '# Release Notes — 2026-08-14\n' > "$out/ReleaseNotes-2026-08-14.md"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                     "1"
 check "no fragment consumed"   "$(pending "$W")"                        "2"
 check "it names the newcomer"  "$(says "$msg" '2026-08-14.md appeared')"  "1"
@@ -1901,14 +1901,14 @@ out="$W/docs/ReleaseNotes"
 # further down, so the first post-publication failure died with exit 127 and
 # "command not found", telling the operator nothing about the dated file
 # already being written (Codex #1863 r21).
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sha256sum" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
 if [ -f "$out/ReleaseNotes-2026-08-16.md" ]; then exit 3; fi
 exec $REAL_SUM "\$@"
 SHIM
-chmod +x "$W/fakebin/sha256sum"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/clear-moved"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 rc=$?
 check "it is not 127"            "$([ "$rc" = "127" ] && echo bad || echo ok)"  "ok"
 check "no command-not-found"     "$(says "$msg" 'command not found')"           "0"
@@ -1928,18 +1928,18 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 long="0003-$(printf 'x%.0s' $(seq 1 240)).md"
 [ "${#long}" -eq 248 ] || { echo "  FAIL — test bug: fixture name is ${#long} bytes"; FAILED=1; }
 printf '## long name\n' > "$W/docs/ReleaseNotes/unreleased/$long"
-mkdir -p "$W/fakebin"
+mkdir -p "$W/hooks"
 # Force the set-aside path: the fragment changes after it is read.
-cat > "$W/fakebin/sed" <<SHIM
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/$long"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run completes"       "$?"                                      "0"
 check "no name-too-long"        "$(says "$msg" 'too long')"                "0"
 check "the newer bytes survive" \
@@ -1974,8 +1974,8 @@ out="$W/docs/ReleaseNotes"
 _h="$(fixture_hash "$W/docs/ReleaseNotes/unreleased/0001-a.md")"
 printf '# Release Notes — 2026-08-16\n\n## something\n' > "$out/ReleaseNotes-2026-08-16.md"
 cp "$out/ReleaseNotes-2026-08-16.md" "$W/pristine.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/cp" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/snapshot" <<SHIM
 #!/bin/sh
 # Inject the record, let the copy be taken, then restore — so the live file
 # ends identical to how it started and only the copy could ever have seen it.
@@ -1985,13 +1985,13 @@ case "\$*" in
       >> "$out/ReleaseNotes-2026-08-16.md"
     /bin/cp "\$@"; _rc=\$?
     /bin/cp "$W/pristine.md" "$out/ReleaseNotes-2026-08-16.md"
-    exit \$_rc
+exit 0
     ;;
 esac
-exec /bin/cp "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/cp"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/snapshot"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "0001-a is not destroyed" \
   "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
@@ -2007,16 +2007,16 @@ long="$(printf '界%.0s' $(seq 1 81)).md"
 [ "$(LC_ALL=C; echo ${#long})" -eq 246 ] || {
   echo "  FAIL — test bug: fixture is $(LC_ALL=C; echo ${#long}) bytes, want 246"; FAILED=1; }
 printf '## wide name\n' > "$W/docs/ReleaseNotes/unreleased/$long"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/$long"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
+chmod +x "$W/hooks/build"
 # The locale has to actually EXIST or bash warns, falls back to C, and
 # ${#var} counts bytes again — which makes this case pass against the very
 # code it is meant to catch. It did exactly that when written against
@@ -2033,7 +2033,7 @@ else
   # locale that exists but behaves like C cannot make this vacuous either.
   check "the locale distinguishes the two" \
     "$(LC_ALL=$utf8 bash -c 'x="界界界"; echo ${#x}' 2>/dev/null)"          "3"
-  msg="$(PATH="$W/fakebin:$PATH" LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+  msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run completes"       "$?"                                      "0"
   check "no name-too-long"        "$(says "$msg" 'too long')"                "0"
   check "the newer bytes survive" \
@@ -2166,17 +2166,17 @@ long="0003-$(printf 'x%.0s' $(seq 1 240)).md"
 [ "$(LC_ALL=C; echo ${#long})" -eq 248 ] || {
   echo "  FAIL — test bug: fixture is $(LC_ALL=C; echo ${#long}) bytes"; FAILED=1; }
 printf '## long name\n' > "$W/docs/ReleaseNotes/unreleased/$long"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/$long"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run completes"      "$?"                                        "0"
 check "no name-too-long"       "$(says "$msg" 'too long')"                  "0"
 check "kept under its own name" \
@@ -2193,12 +2193,12 @@ out="$W/docs/ReleaseNotes"
 # one thing it lacked (Codex #1863 r24).
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
+mkdir -p "$W/hooks"
 # Shimmed on `rm`, not on the checksum: frag_hash REDIRECTS the file into
 # sha256sum rather than passing its path, so a shim keyed on the filename
 # never fires and the case tests nothing. `rm` is the step whose target
 # changed — the original path before this fix, the quarantine after it.
-cat > "$W/fakebin/rm" <<SHIM
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
 # Ignore the quarantine writability probe: it is an `rm` that runs before
 # the loop under test and would otherwise spend this shim's one shot.
@@ -2207,10 +2207,10 @@ if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '## written after the hash\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 fi
-exec /bin/rm "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/rm"
-PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+chmod +x "$W/hooks/clear-moved"
+ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "the later bytes are not destroyed" \
   "$(grep -rl 'written after the hash' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
@@ -2223,8 +2223,8 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # duplicate check pass and the section be appended twice (Codex #1863 r24).
 printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' > "$out/ReleaseNotes-2026-08-16.md"
 cp "$out/ReleaseNotes-2026-08-16.md" "$W/pristine.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/grep" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/scan" <<SHIM
 #!/bin/sh
 _hf=0
 for a in "\$@"; do case "\$a" in -f) _hf=1 ;; esac; done
@@ -2233,12 +2233,12 @@ if [ "\$_hf" = "1" ] && [ ! -f "$W/fired" ]; then
   printf '# Release Notes — 2026-08-16\n\nnothing here\n' > "$out/ReleaseNotes-2026-08-16.md"
   /usr/bin/grep "\$@"; _rc=\$?
   /bin/cp "$W/pristine.md" "$out/ReleaseNotes-2026-08-16.md"
-  exit \$_rc
+exit 0
 fi
-exec /usr/bin/grep "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/grep"
-PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+chmod +x "$W/hooks/scan"
+ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "the heading is not duplicated" \
   "$(count_in '^## 0001-a$' "$out/ReleaseNotes-2026-08-16.md")"             "1"
 
@@ -2287,8 +2287,8 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 printf '# Release Notes — 2026-08-16\n\n## 0001-a\n' > "$out/ReleaseNotes-2026-08-16.md"
 cp "$out/ReleaseNotes-2026-08-16.md" "$W/pristine.md"
 _h="$(fixture_hash "$W/docs/ReleaseNotes/unreleased/0001-a.md")"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/grep" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/scan" <<SHIM
 #!/bin/sh
 _m=0
 for a in "\$@"; do case "\$a" in *sha256=*) _m=1 ;; esac; done
@@ -2304,14 +2304,14 @@ if [ "\$_m" = "1" ] && [ ! -f "$W/fired" ]; then
         >> "$out/ReleaseNotes-2026-08-16.md"
       /usr/bin/grep "\$@"; _rc=\$?
       /bin/cp "$W/pristine.md" "$out/ReleaseNotes-2026-08-16.md"
-      exit \$_rc
+exit 0
       ;;
   esac
 fi
-exec /usr/bin/grep "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/grep"
-PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+chmod +x "$W/hooks/scan"
+ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "the heading is not duplicated" \
   "$(count_in '^## 0001-a$' "$out/ReleaseNotes-2026-08-16.md")"             "1"
 
@@ -2323,17 +2323,17 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # link and the later `rm` removed whatever now sat there (Codex #1863 r25).
 mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
 ln -s "$W/nowhere.md" "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '## changed after reading\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the link is still a link" \
   "$([ -L "$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md" ] && echo link || echo gone)" "link"
 # Now caught BEFORE publication rather than during clearing, which is the
@@ -2585,12 +2585,12 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # success (Codex #1863 r27).
 printf '## dup\r\nbody\r\n' > "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 printf '# Release Notes — 2026-08-16\n\n## dup\n' > "$out/ReleaseNotes-2026-08-16.md"
-mkdir -p "$W/fakebin"
+mkdir -p "$W/hooks"
 # Fails ONLY the heading normalisation, not the one applied to the dated
 # file. Failing both made the SECOND abort under `set -e`, so the old code
 # stopped and the case reported a pass it had not earned — the finding is
 # specifically that the FIRST is exempt, being the left side of an `&&`.
-cat > "$W/fakebin/sed" <<'SHIM'
+cat > "$W/hooks/build" <<'SHIM'
 #!/bin/sh
 _norm=0; _dated=0
 for a in "$@"; do
@@ -2600,10 +2600,10 @@ for a in "$@"; do
   esac
 done
 [ "$_norm" = "1" ] && [ "$_dated" = "0" ] && exit 4
-exec /usr/bin/sed "$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"        "$?"                                          "1"
 check "no fragment consumed" "$(pending "$W")"                             "1"
 check "the heading is not duplicated" \
@@ -2703,18 +2703,18 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # check sat before it — so $OUT removed during that hash was never noticed and
 # the fragment went while the dated file held none of its text (Codex #1863
 # r28). The check has to be adjacent to the act.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sha256sum" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
-$REAL_SUM "\$@"; _rc=\$?
+_rc=0
 if [ -f "$out/ReleaseNotes-2026-08-16.md" ] && [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   rm -f "$out/ReleaseNotes-2026-08-16.md"
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/sha256sum"
-PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+chmod +x "$W/hooks/clear-moved"
+ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "the fragment survives somewhere" \
   "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
@@ -2727,10 +2727,10 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # window — bytes then deleted having reached no file at all (Codex #1863 r29).
 # The quarantine is re-hashed last, so the check nearest the delete is the one
 # about the thing being deleted.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sha256sum" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
-$REAL_SUM "\$@"; _rc=\$?
+_rc=0
 # Fire while the OUTPUT is being hashed after publication, writing through to
 # the quarantined inode by its new path.
 if [ -f "$out/ReleaseNotes-2026-08-16.md" ] && [ ! -f "$W/fired" ]; then
@@ -2740,10 +2740,10 @@ if [ -f "$out/ReleaseNotes-2026-08-16.md" ] && [ ! -f "$W/fired" ]; then
     printf '## written during the output hash\n' >> "\$q"
   fi
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/sha256sum"
-PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+chmod +x "$W/hooks/clear-moved"
+ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "the later write survives" \
   "$(grep -rl 'written during the output hash' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
@@ -2821,19 +2821,19 @@ out="$W/docs/ReleaseNotes"
 # already ordered it this way; the recovery loop did not.
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sha256sum" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
-$REAL_SUM "\$@"; _rc=\$?
+_rc=0
 q="$W/docs/ReleaseNotes/unreleased/.assembled/0001-a.md"
 if [ -f "\$q" ] && [ ! -f "$W/fired" ]; then
   : > "$W/fired"
   printf '## appended during validation\n' >> "\$q"
 fi
-exit \$_rc
+exit 0
 SHIM
-chmod +x "$W/fakebin/sha256sum"
-PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+chmod +x "$W/hooks/clear-moved"
+ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 check "the appended bytes survive" \
   "$(grep -rl 'appended during validation' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
@@ -2846,8 +2846,8 @@ rm "$W/docs/ReleaseNotes/unreleased/0002-b.md"
 # only the set-aside move — after publication — discovers the link resolves
 # somewhere else (Codex #1863 r32).
 printf '## 0001-a\n' > "$W/body.txt"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 if [ ! -f "$W/fired" ]; then
   : > "$W/fired"
@@ -2855,10 +2855,10 @@ if [ ! -f "$W/fired" ]; then
   rm -f "$W/docs/ReleaseNotes/unreleased/0001-a.md"
   ln -s body.txt "$W/docs/ReleaseNotes/unreleased/0001-a.md"
 fi
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"         "$?"                                        "1"
 check "nothing was published" \
   "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
@@ -3358,8 +3358,8 @@ out="$W/docs/ReleaseNotes"
 # recovery path; the second removal fails.
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/rm" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear-moved" <<SHIM
 #!/bin/sh
 case "\$*" in *.probe*) exec /bin/rm "\$@" ;; esac
 case "\$*" in
@@ -3368,10 +3368,10 @@ case "\$*" in
     : > "$W/once"
     ;;
 esac
-exec /bin/rm "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/rm"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/clear-moved"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                             "1"
 check "it says which one"      "$(says "$msg" 'could not remove')"               "1"
 check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
@@ -3432,8 +3432,8 @@ out="$W/docs/ReleaseNotes"
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
 printf '## 0003-new\n' > "$W/docs/ReleaseNotes/unreleased/0003-new.md"
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/sed" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/build" <<SHIM
 #!/bin/sh
 # Fail only the link-rewriting pass that builds the replacement. Keyed on
 # the -E flag, which no other sed in the script uses: the rewrite pattern
@@ -3443,10 +3443,10 @@ cat > "$W/fakebin/sed" <<SHIM
 for a in "\$@"; do
   case "\$a" in -E) exit 7 ;; esac
 done
-exec /usr/bin/sed "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/sed"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/build"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run stops"          "$?"                                             "1"
 check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
 check "it does not claim nothing went" \
@@ -3534,16 +3534,16 @@ out="$W/docs/ReleaseNotes"
 # errexit -- so a failing `mv` exited carrying mv's own diagnostic and nothing
 # about the fragments, which are all still pending and the thing the operator
 # needs told.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/mv" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear" <<SHIM
 #!/bin/sh
 # Only the publication rename: its source is inside the run's temp directory.
 # The set-aside moves must still work, or this measures a different failure.
 case "\$1" in *.assemble-*) exit 1 ;; esac
-exec /bin/mv "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/mv"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+chmod +x "$W/hooks/clear"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 2>&1)"
 # The middle three are the demonstration -- all three were silent before the
 # fix. The exit code and the pending count held either way (errexit stopped the
 # run at the same command), so they are regression guards, not evidence.
@@ -3564,8 +3564,8 @@ out="$W/docs/ReleaseNotes"
 # itself about the only question being asked.
 #
 # Both fragments are taken, the first clears, and the second's set-aside fails.
-mkdir -p "$W/fakebin"
-cat > "$W/fakebin/mv" <<SHIM
+mkdir -p "$W/hooks"
+cat > "$W/hooks/clear" <<SHIM
 #!/bin/sh
 case "\$*" in
   */.assembled/*)
@@ -3573,10 +3573,10 @@ case "\$*" in
     : > "$W/fired"
     ;;
 esac
-exec /bin/mv "\$@"
+exit 0
 SHIM
-chmod +x "$W/fakebin/mv"
-msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+chmod +x "$W/hooks/clear"
+msg="$(ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 # The last three are the demonstration. The first two, and "it names the
 # fragment", held before the fix as well -- the old handler's own list said the
 # name; what it could not do was stop the reporter denying it a moment later.

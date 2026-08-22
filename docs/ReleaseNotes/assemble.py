@@ -1505,6 +1505,34 @@ def main(argv: list[str]) -> int:
         return int(e.code or 0)
     except KeyboardInterrupt:
         return 130
+    except OSError as e:
+        # The backstop, and the reason it exists: an unexpected failure
+        # must speak this script's contract, not Python's. A traceback
+        # says nothing about whether a fragment has already been removed
+        # or set aside, which is the only question the operator has —
+        # and it is the same fault the shell version kept having, where
+        # a command failing under `errexit` exited with the tool's own
+        # one-line diagnostic and nothing else.
+        #
+        # Which side of the rename it happened on decides the wording,
+        # so the two handlers stay distinct and both are reached from
+        # here rather than from each call site. Enumerating the sites
+        # was what kept going wrong.
+        err("")
+        err(f"Error: {e.strerror or e}: {e.filename or ''}".rstrip(": "))
+        if run.published:
+            err("")
+            err(f"{os.path.basename(run.out)} HAS ALREADY BEEN WRITTEN — this failure is in the")
+            err("clearing step that follows it, so the run is half done.")
+        else:
+            err("Refusing to assemble: this run replaces a published file and deletes")
+            err("the fragments it consumed, so it must not continue on the strength of")
+            err("a result it did not get.")
+        try:
+            run.refuse_reporting_consumed()
+        except SystemExit as se:
+            return int(se.code or 1)
+        return 1
     finally:
         run.cleanup()
     return 0
