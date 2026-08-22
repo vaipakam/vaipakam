@@ -3384,6 +3384,110 @@ check "it names the path"    "$(says "$msg" '.assembled/0001-a.md')"            
 check "it does not claim untouched" \
   "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')" "0"
 
+echo "T124: the quarantine's filesystem is re-checked at the final gate"
+W="$ROOT/t124"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The same-filesystem check ran once, at startup, and startup answers only for
+# startup (Codex #1863 r44). A mount arriving on `.assembled/` afterwards turns
+# every set-aside from a rename into copy-then-unlink — the loss the quarantine
+# exists to prevent — and the run found out after publishing. Type and
+# writability were already re-asked at the gate; this third property was not.
+#
+# `stat` reports a different device for the quarantine only once the flush has
+# run, which is the window the finding names: `_persist` is the long operation
+# sitting between the startup check and the rename.
+REAL_STAT="$(command -v stat)"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+: > "$W/mounted"
+exit 0
+SHIM
+cat > "$W/fakebin/stat" <<SHIM
+#!/bin/sh
+# Only the device question, only about the quarantine, and only after the
+# flush. Every other stat -- mode, owner, group -- must go through untouched
+# or the run fails for an unrelated reason and the case proves nothing.
+if [ "\$1" = "-c" ] && [ "\$2" = "%d" ] && [ -f "$W/mounted" ]; then
+  case "\$3" in *.assembled) echo 999999; exit 0 ;; esac
+fi
+exec "$REAL_STAT" "\$@"
+SHIM
+chmod +x "$W/fakebin/sync" "$W/fakebin/stat"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "the run stops"          "$?"                                              "1"
+check "it names the boundary"  "$(says "$msg" 'not on the same filesystem')"      "1"
+check "nothing was consumed"   "$(says "$msg" 'Nothing has been consumed')"       "1"
+check "the fragment is still pending" "$(pending "$W")"                           "2"
+check "no dated file was written" \
+  "$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo 1 || echo 0)"               "0"
+
+echo "T125: a failed publication rename speaks the script's own contract"
+W="$ROOT/t125"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The ERR trap was disarmed one line BEFORE the rename, which left the single
+# command this whole script exists to perform as the only unguarded one in it
+# (Codex #1863 r44). `set +E` stops ERR being INHERITED; it does not turn off
+# errexit -- so a failing `mv` exited carrying mv's own diagnostic and nothing
+# about the fragments, which are all still pending and the thing the operator
+# needs told.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/mv" <<SHIM
+#!/bin/sh
+# Only the publication rename: its source is inside the run's temp directory.
+# The set-aside moves must still work, or this measures a different failure.
+case "\$1" in *.assemble-*) exit 1 ;; esac
+exec /bin/mv "\$@"
+SHIM
+chmod +x "$W/fakebin/mv"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+# The middle three are the demonstration -- all three were silent before the
+# fix. The exit code and the pending count held either way (errexit stopped the
+# run at the same command), so they are regression guards, not evidence.
+check "the run stops"         "$?"                                               "1"
+check "it says what failed"   "$(says "$msg" 'could not put the assembled file in place')" "1"
+check "it says the file is untouched" "$(says "$msg" 'is untouched')"             "1"
+check "the reporter ran"      "$(says "$msg" 'Nothing has been consumed')"        "1"
+check "the fragment is still pending" "$(pending "$W")"                           "2"
+
+echo "T126: a post-publication failure does not contradict itself"
+W="$ROOT/t126"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The clearing loop after the rename tracked what it had removed in a list of
+# its own, while the reporter it ends by calling read the two lists everything
+# BEFORE the rename maintains (Codex #1863 r44). So a failure there printed the
+# names it had already cleared and then, three lines later, "Nothing has been
+# consumed and no fragment has been touched" -- one message contradicting
+# itself about the only question being asked.
+#
+# Both fragments are taken, the first clears, and the second's set-aside fails.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/mv" <<SHIM
+#!/bin/sh
+case "\$*" in
+  */.assembled/*)
+    if [ -f "$W/fired" ]; then exit 1; fi
+    : > "$W/fired"
+    ;;
+esac
+exec /bin/mv "\$@"
+SHIM
+chmod +x "$W/fakebin/mv"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+# The last three are the demonstration. The first two, and "it names the
+# fragment", held before the fix as well -- the old handler's own list said the
+# name; what it could not do was stop the reporter denying it a moment later.
+# Regression guards, kept for the shape of the message, not counted as proof.
+check "the run stops"          "$?"                                              "1"
+check "it says the file was written" "$(says "$msg" 'HAS ALREADY BEEN WRITTEN')"  "1"
+check "it names what already went"   "$(says "$msg" 'Already removed before this')" "1"
+check "it names the fragment"        "$(says "$msg" '0001-a.md')"                 "1"
+check "it does not contradict itself" \
+  "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')"   "0"
+# And the reassurance is the one that fits this side of the rename: the dated
+# file on disk is the file this run wrote.
+check "it says the content is safe"  "$(says "$msg" 'Nothing needs recovering')"  "1"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

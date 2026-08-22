@@ -389,6 +389,40 @@ It now picks a locale that exists, *verifies that this locale really does count
 characters*, and says plainly that it skipped if none is available. A test whose
 premise silently evaporates is worse than no test, because it reports a pass.
 
+### Three fixes that each stopped one step short
+
+The last round found nothing new in the design. It found three places where a
+fix already made had been applied to almost the whole of what it covers.
+
+The gate before publication re-asks everything about the set-aside directory
+that was settled at startup, because startup only answers for startup — is it
+still a directory, can entries still be created and removed in it. It asks two
+of the three questions. The third, *is it still on the same disk as the notes*,
+was left at startup, and it is the one whose failure is worst: a disk mounted
+there part-way through turns setting a note aside from an instant rename into a
+copy followed by a delete, which is exactly the loss that mechanism exists to
+prevent. The two properties that were re-checked and the one that was not are
+the same directory, in the same gate, for the same reason.
+
+The second is smaller to describe and harder to have noticed. Everything the run
+does before it swaps the finished file into place is covered by a catch-all that
+reports what happened if any step fails. It was switched off one line early — so
+the swap itself, the single act the whole script exists to perform, was the only
+unguarded step in it. A failure there exited with the operating system's one-line
+complaint and nothing about the notes, which are all still safely pending and
+precisely what the operator needs to be told. The comment above that line said it
+was switched off *after* the swap. The comment was describing the right design.
+
+The third produced a message that contradicted itself. The steps that run after
+the file is published kept their own list of what they had cleared, while the
+report they end by printing reads the lists that everything *before* publication
+maintains. So a failure at that point named the notes already folded in and then,
+three lines later, announced that nothing had been consumed and no note had been
+touched — in one message, about the only question being asked. The fix is not a
+better-worded report; it is having one list instead of two. Two records of the
+same fact disagree eventually, and the second one is always the one nobody
+remembers to update.
+
 ### What this is protecting against, and what it is not
 
 Worth saying plainly, because it is the difference between a long list of fixes

@@ -234,6 +234,39 @@ if [ -k "$UNREL" ]; then STICKY_POOL=1; fi
 # unlinked while the copy keeps the older text (Codex #1863 r26). That
 # is precisely the loss the quarantine exists to prevent, so it is
 # refused rather than accepted quietly.
+#
+# Asked as a QUESTION rather than answered inline, because it is asked
+# twice (Codex #1863 r44). The startup call answers for startup, and a
+# mount landing on `.assembled/` during `_persist` — which is slow by
+# design — leaves the set-aside move degrading to copy-then-unlink after
+# publication, the exact loss this check exists to refuse. The two
+# callers need different consequences, so they share the comparison and
+# not the reaction: startup refuses with `exit 1` and nothing done, the
+# final gate routes through the reporter.
+QDIR_DEVICE=unknown
+qdir_device_state() {
+  local a b
+  a="$(stat -c '%d' "$UNREL" 2>/dev/null || stat -f '%d' "$UNREL" 2>/dev/null)" || a=""
+  b="$(stat -c '%d' "$QDIR"  2>/dev/null || stat -f '%d' "$QDIR"  2>/dev/null)" || b=""
+  if [ -z "$a" ] || [ -z "$b" ]; then
+    QDIR_DEVICE=unknown
+  elif [ "$a" != "$b" ]; then
+    QDIR_DEVICE=different
+  else
+    QDIR_DEVICE=same
+  fi
+}
+
+qdir_device_complaint() {
+  echo "Error: $QDIR is not on the same filesystem as $UNREL." >&2
+  echo "" >&2
+  echo "Refusing to assemble: setting a fragment aside relies on the move" >&2
+  echo "being a rename. Across a filesystem boundary it becomes a copy" >&2
+  echo "followed by a delete, and anything writing to the original path in" >&2
+  echo "between has its text deleted while the copy keeps the older" >&2
+  echo "version — the loss setting aside exists to prevent." >&2
+}
+
 _ensure_qdir() {
   if [ -L "$QDIR" ] || { [ -e "$QDIR" ] && [ ! -d "$QDIR" ]; }; then
     echo "Error: $QDIR exists and is not a directory." >&2
@@ -287,10 +320,8 @@ _ensure_qdir() {
     exit 1
   fi
   PROBE=""
-  local a b
-  a="$(stat -c '%d' "$UNREL" 2>/dev/null || stat -f '%d' "$UNREL" 2>/dev/null)" || a=""
-  b="$(stat -c '%d' "$QDIR"  2>/dev/null || stat -f '%d' "$QDIR"  2>/dev/null)" || b=""
-  if [ -z "$a" ] || [ -z "$b" ]; then
+  qdir_device_state
+  if [ "$QDIR_DEVICE" = unknown ]; then
     # "Cannot tell" is not "is wrong". Refusing here would make a working
     # `stat` a hard dependency of assembling release notes, for a check
     # guarding an arrangement nobody has: this directory is created
@@ -300,14 +331,8 @@ _ensure_qdir() {
     echo "pool. If it is a mount point, setting a fragment aside is a copy" >&2
     echo "and delete rather than a rename, and a concurrent write to the" >&2
     echo "original could be lost." >&2
-  elif [ "$a" != "$b" ]; then
-    echo "Error: $QDIR is not on the same filesystem as $UNREL." >&2
-    echo "" >&2
-    echo "Refusing to assemble: setting a fragment aside relies on the move" >&2
-    echo "being a rename. Across a filesystem boundary it becomes a copy" >&2
-    echo "followed by a delete, and anything writing to the original path in" >&2
-    echo "between has its text deleted while the copy keeps the older" >&2
-    echo "version — the loss setting aside exists to prevent." >&2
+  elif [ "$QDIR_DEVICE" = different ]; then
+    qdir_device_complaint
     exit 1
   fi
 }
@@ -1417,8 +1442,18 @@ _refuse_reporting_consumed() {
     echo "Already removed before this was noticed:" >&2
     printf '  %s\n' "${CONSUMED[@]}" >&2
     echo "" >&2
-    echo "Their text was in $(basename "$OUT") when they went. If the change" >&2
-    echo "above removed it, recover them from git." >&2
+    # Same list, and the reassurance differs by which side of the rename
+    # it was removed on (Codex #1863 r44). Before publication, "their
+    # text was in $OUT" is a claim about a file this run had not yet
+    # replaced and may now have lost. After it, the dated file on disk is
+    # the one this run wrote, so their text is simply there.
+    if (( PUBLISHED )); then
+      echo "Their content is in $(basename "$OUT"), which this run wrote and" >&2
+      echo "verified. Nothing needs recovering for these." >&2
+    else
+      echo "Their text was in $(basename "$OUT") when they went. If the change" >&2
+      echo "above removed it, recover them from git." >&2
+    fi
   elif (( ${#QUARANTINED[@]} == 0 )); then
     echo "Nothing has been consumed and no fragment has been touched." >&2
   fi
@@ -2380,18 +2415,21 @@ done
 # telling the operator nothing about the dated file already being
 # written. A handler that only works after the second failure is not a
 # handler. Moved up so every caller is downstream of it.
-_cleared=()
+# ONE record of what happened to the fragments, not two (Codex #1863
+# r44). This handler kept its own `_cleared` list while the reporter it
+# ends by calling read `CONSUMED` and `QUARANTINED` — which the loop
+# after publication never touched. So a failure there printed the
+# cleared names and then, three lines later, "Nothing has been consumed
+# and no fragment has been touched", contradicting itself in one message
+# about the one question the operator is asking. Two lists describing the
+# same thing will disagree eventually; the fix is to stop having two.
+PUBLISHED=0
 _abort_after_write() {
   echo "" >&2
   echo "Error: $1." >&2
   echo "" >&2
   echo "$(basename "$OUT") HAS ALREADY BEEN WRITTEN — this failure is in the" >&2
   echo "clearing step that follows it, so the run is half done." >&2
-  if (( ${#_cleared[@]} > 0 )); then
-    echo "" >&2
-    echo "Already cleared (their content is in the dated file):" >&2
-    printf '  %s\n' "${_cleared[@]}" >&2
-  fi
   echo "" >&2
   echo "Everything still in $UNREL is either uncleared or set aside. Re-running" >&2
   echo "is safe: the markers in the dated file are how the next run recognises" >&2
@@ -2456,6 +2494,24 @@ _final_gate() {
     _refuse_reporting_consumed
   fi
   PROBE=""
+  # And still on the SAME FILESYSTEM (Codex #1863 r44). The startup check
+  # was the only one, so a mount arriving on `.assembled/` after it —
+  # `_persist` is deliberately slow, and the whole point of this gate is
+  # that startup answers for startup — turns every set-aside into
+  # copy-then-unlink, after publication. Type and writability were
+  # re-asked here already; this is the third property of the same
+  # directory and it had been left behind.
+  #
+  # A `stat` that stopped working mid-run is not evidence of a mount, and
+  # this is the wrong moment to start refusing on "cannot tell": startup
+  # already warned about it, and nothing has been consumed yet only
+  # because the gate has not fallen through. Unknown passes here for the
+  # same reason it passes there.
+  qdir_device_state
+  if [ "$QDIR_DEVICE" = different ]; then
+    qdir_device_complaint
+    _refuse_reporting_consumed
+  fi
   for _f in "${frags[@]}"; do
     # The type is re-checked here as well as at the snapshot (Codex #1863
     # r32). The earlier check is one moment near the start; a writer
@@ -2650,12 +2706,33 @@ _final_gate
 # $OUT itself — a shell script cannot, and claiming the window is closed
 # rather than minimised would be overstating it.
 
+# The rename is still ON THIS side of the boundary (Codex #1863 r44).
+# Disarming before it left the one command the whole script exists to
+# perform as the only unguarded command in it: a failing `mv` exited on
+# `errexit` — which `set +E` does not turn off, it only stops ERR being
+# inherited — carrying `mv`'s own one-line diagnostic and nothing about
+# the fragments still sitting in the pool. My own comment said "cleared
+# after the rename" while the code cleared it before; the comment was
+# describing the right design.
+#
+# Failing here means NOT published, so the pre-publication reporter is
+# the correct one — the dated file is untouched and every fragment is
+# still pending. The explicit branch is what speaks; the trap behind it
+# is the backstop for anything I have not enumerated, which is the whole
+# reason it exists.
+if ! mv "$WORK" "$OUT"; then
+  echo "Error: could not put the assembled file in place." >&2
+  echo "" >&2
+  echo "$(basename "$OUT") is untouched — the replacement was built beside" >&2
+  echo "it and never installed." >&2
+  _refuse_reporting_consumed
+fi
+
 # Past this line the contract is different: the file is published, and
 # `_abort_after_write` is the handler that says so.
+PUBLISHED=1
 trap - ERR
 set +E
-
-mv "$WORK" "$OUT"
 
 # What was just published, recorded so the removals below can check it is
 # still there (Codex #1863 r20). Every check up to this point asked "is
@@ -2760,6 +2837,11 @@ for f in "${frags[@]}"; do
     _abort_after_write "a set-aside file already exists at $(basename "$_q")"
   fi
   mv "$f" "$_q" || _abort_after_write "could not set aside ${FRAG_NAME[$f]}"
+  # Recorded at the move, as the pre-publication loop already did (Codex
+  # #1863 r44). From here the fragment exists only under `.assembled/`,
+  # and every abort below routes through the reporter that reads this
+  # list — which was being told nothing on this side of the rename.
+  QUARANTINED+=("${FRAG_NAME[$f]} -> .assembled/$_q_name")
   # NOT `run_checked`: its message is the generic pre-publication one, and
   # by here $OUT is already replaced and this fragment already moved
   # (Codex #1863 r15). A failure has to speak the half-done contract or
@@ -2808,7 +2890,12 @@ for f in "${frags[@]}"; do
       continue
     fi
     rm "$_q" || _abort_after_write "could not remove ${FRAG_NAME[$f]}"
-    _cleared+=("${FRAG_NAME[$f]}")
+    CONSUMED+=("${FRAG_NAME[$f]}")
+    # Consumed now, not merely moved: drop it from the touched list. The
+    # entry is the last one because it was appended above and every path
+    # between here and there either aborts or `continue`s past this.
+    unset 'QUARANTINED[-1]'
+    QUARANTINED=(${QUARANTINED[@]+"${QUARANTINED[@]}"})
   else
     # Deliberately NOT moved back: the editor may already have written a
     # new file at the original path, and restoring over it would destroy
