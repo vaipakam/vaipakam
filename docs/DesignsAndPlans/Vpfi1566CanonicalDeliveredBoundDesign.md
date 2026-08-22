@@ -232,10 +232,22 @@ value then never sits in the shared balance at all, so it cannot be drawn from
 borrower custody and cannot be double-spent by a legacy path — the emission
 schedule bounds it, which is a bound that already exists.
 
-*Cost:* it changes the supply story (tokens exist only once claimed), it does not
-by itself cover the RECYCLED half, which really is held value, and mirrors still
-need the delivered bound they already have. It also needs the same expiry-predicate
+*Cost:* it changes the supply story (tokens exist only once claimed); it does not
+by itself cover the RECYCLED half, which really is held value; mirrors still need
+the delivered bound they already have; and it needs the same expiry-predicate
 reconciliation as everything else.
+
+**Two things it CANNOT be built out of, both worth stating before anyone starts.**
+It cannot use `TreasuryFacet.mintVPFI` from a claim: both claim entry points
+already hold the shared `nonReentrant` guard and that function re-enters it, so
+every pull would revert. Option E requires a claim-callable mint primitive —
+guard-compatible and authorised for the claim path specifically — not a reuse of
+the admin one. And the emission schedule is not the only ceiling: the token
+carries a global supply cap, and other ADMIN-authorised allocation mints can
+consume its remaining headroom before a delayed reward is claimed, so a payout
+the 69M schedule authorises can still revert at the cap. Headroom has to be
+reserved for unclaimed entitlements, or the option converts a custody problem
+into a mint-failure one.
 
 **This note does not pick between the four.** **B** establishes
 "bounded by what was set aside" inside the shared balance, at the cost of a new

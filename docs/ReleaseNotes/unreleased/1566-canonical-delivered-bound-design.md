@@ -26,14 +26,18 @@ construction, and an attempt at it was reverted for creating a fresh way to lose
 user value: it left expiry clocks running on entitlements whose claims had begun
 to fail.
 
-Four options are set out with what each promises a claimant, and the choice is
-left to the owner rather than made in passing. Three of them keep the money in
-one shared pot and differ only in how carefully they reason about who owns what;
-the fourth keeps the reward money somewhere else entirely, so the question of who
-owns a given token stops arising. That fourth one is the largest change and the
-only one that removes the problem rather than tracking it — and it was missing
-from the first drafts because the search was for a better way to count, not for
-a different arrangement. A first draft of this note did
+Five options are set out with what each promises a claimant, and the choice is
+left to the owner rather than made in passing. Some of them keep the money in one
+shared pot and differ only in how carefully they reason about who owns what. Two
+do something else: one keeps the reward money somewhere separate, and one does
+not hold it at all until the moment someone claims it — in both, the question of
+who owns a given token stops arising rather than being answered more carefully.
+
+Both of those arrived from review rather than from the drafting, and for the same
+reason: the search had been for a better way to COUNT a shared pot, so anything
+that changed the arrangement instead was outside the frame being searched. For a
+document whose whole job is to lay out the choices, that is the failure worth
+recording. A first draft of this note did
 recommend one of them as a cheap first step; review established that it does not
 actually set any money aside — it limits what a day may price, which is a
 different question — so the recommendation was withdrawn rather than softened.
