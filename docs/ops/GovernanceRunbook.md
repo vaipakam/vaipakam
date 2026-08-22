@@ -688,9 +688,12 @@ exist on those chains at all — so 3a, 3b's mirror half, 3b-i, 3e and 3f are M3
 items and are not preconditions there. Do not treat them as blocking on the dark
 branch: requiring a clean commitment-report tail or a mesh-watcher tick over
 ledgers that were never deployed makes the ceremony unreachable on a branch Gate
-B explicitly permits. What still applies on the dark branch: `KEEPER_ROLE` on
-Base (3b's canonical half), Base funding (3d), the RL-4 readback (3f-bis), and
-`KEEPER_ENABLED` with its tail confirmation. **NOT 3c** — there is no Base→mirror
+B explicitly permits. What still applies on the dark branch: `KEEPER_ROLE` on Base (3b's canonical
+half) **and on every dark mirror the Worker still resolves** — `KEEPER_ENABLED`
+runs the liquidity-confidence pass on each of them and submits the role-gated
+`setKeeperTier`, so a dark mirror without the role has its risk-tier updates
+reverting; Base funding (3d); the RL-4 readback (3f-bis); and `KEEPER_ENABLED`
+with its tail confirmation. **NOT 3c** — there is no Base→mirror
 remittance to authorize — and **not** `REWARD_COMMIT_ENABLED` or
 `REWARD_REMIT_ENABLED`, whose passes have no mirrors to serve.
 
@@ -747,6 +750,13 @@ So, against **this** Diamond's mesh:
 containment test above validates only ids already present, and the mirror-set
 comparison looks at the mirror subset — so a list that OMITS Base passes all of
 them while the mesh has no canonical member.
+
+**Check every mirror's Base-era binding here, not only at promotion.** If an
+active mirror's `baseRewardDeployment` is unset or names an earlier Base Diamond,
+the V3 ingress rejects the clock-bearing propagation broadcast with
+`BroadcastEraUnauthenticated` — and on the initial ceremony that rejection
+surfaces only AFTER Base has executed its one-shot arm. Read the binding back on
+every mirror before the arm, not when a promotion goes wrong.
 
 **And check both ends of every reward channel.** Matching chain ids, Diamond
 addresses and lane limiter states all pass with a missing or stale messenger
@@ -826,6 +836,12 @@ A Base send can consume the outbound side and then be rejected or delayed by the
 mirror's inbound limiter, and Step 5 is waiting on `RewardBudgetReceived` against
 an immutable `D*`. Read both states, both directions, per lane, and check present
 `tokens` as well as configured capacity.
+
+**A DISABLED limiter is not a failure — it is unlimited.** The rate limiter
+returns immediately when the bucket is disabled, and the config validator
+requires a disabled bucket to be fully zeroed. So `isEnabled == false` with zero
+capacity is a correctly configured no-limit lane, not a blocked one; treating it
+as blocked would stall a ceremony over a healthy configuration.
 
 **3f. Deploy `ops/mesh-watcher` AND verify it runs clean.** It reads every
 reward chain's recycled ledger and alerts on the commitment invariants, and it is
@@ -986,6 +1002,12 @@ forced — which delivers that day to every destination. Any active mirror that 
 not already applied it, and has a non-zero slice for it, gets its claim gate
 opened unfunded. Choose a day every other destination has already applied, or
 remit their slices before the fan-out.
+
+**And the promoted mirror is not exempt from that either.** If it has accrued
+local pre-`D*` entries, it prices the day from `halfPoolForDay` — its own local
+pool — not from the zero slice it was allotted, so the no-remit bootstrap opens
+it against a day it was never funded for. Where the mirror holds local entries,
+fund it before the broadcast rather than relying on the absent slice.
 
 Confirm the day predates `D*` and has fully ELAPSED. **A lapse clock is NOT
 required here**: on a deployment armed before the V3 upgrade every pre-`D*` day
