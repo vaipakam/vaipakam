@@ -826,6 +826,13 @@ gaps — before Step 4. Arming behind a watcher that has never completed a tick 
 arming with no invariant coverage at all, which is the state this step exists to
 prevent.
 
+**3f-bis. Read back the RL-4 allocation weights** — the dormant posture is
+`[keeper 0, reserve 10000]`, the register is consulted from the FIRST armed-day
+finalization, and a rehearsed Diamond can carry a stale non-zero
+`recycleRegisterKeeperBps` that silently earmarks user-reward runway. Step 6
+describes the posture; this is where it gets checked, because Step 6 may be
+deferred past `D*`.
+
 **3g. Set and CONFIRM the master flags NOW, before the arm — they are not a
 step 5 item.** `KEEPER_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_REMIT_ENABLED`.
 These are secrets, and **secrets cannot be read back** — the API returns names
@@ -908,6 +915,16 @@ already-applied day exits through the idempotency branch without installing the
 value.
 
 ### Step 5 — DRIVE the propagation and verify it (M3 / active-mirror branch only)
+
+**Promoting a dark mirror later needs its own gate, and this runbook does not
+otherwise provide one.** Once Base is armed, EVERY subsequent broadcast carries
+its stored `armedFromDay`, and a mirror sitting at zero installs it on first
+application — so a mirror brought up after M3 lands cuts over the moment it
+receives any broadcast, at a `D*` that may be long past. Before promoting one:
+confirm PR-2, PR-5c, PR-6 and the #1566 fix are live on it, its clock agrees with
+Base, and its `armedFromDay` reads zero; then expect it to arm on its first
+broadcast rather than on a day you choose. There is no second cutover to
+schedule.
 
 **On the Base-only / dark-mirror branch, skip this step entirely.** There is no
 mirror to propagate `D*` to, and the remit, receipt and broadcast surfaces this
@@ -1010,7 +1027,14 @@ ceremony that stops at Step 5 leaves it that way — which is a coherent state,
 but an operator who marks recycling "activated" without noticing will believe
 RL-3 is live when nothing sweeps.
 
-**Read back the RL-4 allocation weights first.** The required dormant posture is
+**Read back the RL-4 allocation weights — and do it BEFORE Step 4, not here.**
+The register is consulted during armed-day finalization independently of the
+horizon knob, so on a deployment that defers Step 6 this check never runs before
+`D*` and a stale non-zero split quietly earmarks user-reward runway from the
+first armed day. It is described here because it belongs to M7.2's posture; it
+must be PERFORMED alongside the other pre-arm readbacks in Step 3.
+
+The requirement: The required dormant posture is
 `[keeper 0, reserve 10000]`. On a Diamond that was upgraded or rehearsed,
 `recycleRegisterKeeperBps` may already be non-zero, and nothing in this ceremony
 restores it — once armed-day finalizations run, the register earmarks part of the

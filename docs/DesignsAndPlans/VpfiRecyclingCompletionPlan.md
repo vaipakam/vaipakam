@@ -1414,7 +1414,7 @@ GovernanceRunbook gains a recycling section, executed in order:
    above exist to guarantee. Deferred out of #1497 after three in-flight
    alignment attempts were each subtly wrong (all with green suites);
    the fix is one shared derivation across the three sites plus a
-   property-test matrix, and should land with #1498.
+   property-test matrix, and should land with **#1566** (#1498 is its auto-closed predecessor — see §M7 step 0; sending this matrix to #1498 files it against a closed card).
 3. **RL-4 weights** — stay `[keeper 0, reserve 10000]` absent a keeper
    funding need.
 4. **`feeEntitlementEnabled`** — only at the M2 joint-cutover gate,
