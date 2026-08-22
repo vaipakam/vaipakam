@@ -186,42 +186,6 @@ contract OfferPreviewFacet {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleLoanNotActive;
                 return preview;
             }
-            // #1835 (Codex #1891 F1) — the accept refuses a vehicle whose
-            // behavioural terms disagree with the live loan. Classified here so
-            // the card can disable "Accept" instead of letting the buyer
-            // discover it by burning gas.
-            //
-            // Position is load-bearing for first-failure parity, which is this
-            // chain's whole point, and it mirrors `_acceptOffer` exactly: that
-            // function orders the same comparison AFTER its expiry gate and its
-            // non-Active gate and BEFORE its maturity gate, so this one sits
-            // after `OfferExpired` (above, outside this branch) and
-            // `SaleLoanNotActive`, and before `SaleLoanPastMaturity`.
-            //
-            // The comparison deliberately does NOT live in the accept's term
-            // binding with the other term checks: the binding runs before every
-            // one of those gates, so a stale listing that is also expired, or
-            // whose position has been repaid, would revert on staleness while
-            // this surface reported the expiry or the dead position. Both
-            // populations are reachable — finite sale expiry shipped in #1772
-            // and mirroring in #1779 — which is why the ordering is structural
-            // on both sides rather than a list of conditions to skip.
-            {
-                LibVaipakam.Offer storage _saleVehicle = s.offers[offerId];
-                if (
-                    _saleVehicle.allowsPartialRepay !=
-                    _saleLoanM.allowsPartialRepay ||
-                    _saleVehicle.allowsPrepayListing !=
-                    _saleLoanM.allowsPrepayListing ||
-                    _saleVehicle.periodicInterestCadence !=
-                    _saleLoanM.periodicInterestCadence
-                ) {
-                    preview.errorCode = OfferAcceptFacet
-                        .AcceptError
-                        .SaleListingTermsStale;
-                    return preview;
-                }
-            }
             if (
                 block.timestamp >=
                 uint256(_saleLoanM.startTime) +
@@ -230,6 +194,51 @@ contract OfferPreviewFacet {
                 preview.errorCode =
                     OfferAcceptFacet.AcceptError.SaleLoanPastMaturity;
                 return preview;
+            }
+            // #1835 (Codex #1891 F1) — the accept refuses a vehicle whose
+            // behavioural terms disagree with the live loan. Classified here so
+            // the card can disable "Accept" instead of letting the buyer
+            // discover it by burning gas.
+            //
+            // Position is load-bearing for first-failure parity, which is this
+            // chain's whole point, and it mirrors `_acceptOffer` exactly: that
+            // function orders the same comparison AFTER its expiry gate, its
+            // non-Active gate and its maturity gate. So this one sits after
+            // `OfferExpired` (above, outside this branch), `SaleLoanNotActive`
+            // and `SaleLoanPastMaturity`.
+            //
+            // The comparison deliberately does NOT live in the accept's term
+            // binding with the other term checks: the binding runs before every
+            // one of those gates, so a stale listing that is also expired, or
+            // whose position is repaid, or which has crossed maturity in its
+            // grace window, would revert on staleness while this surface
+            // reported the real reason. Each of those is also ACTIONABLE where
+            // staleness is not — a matured or terminal loan cannot be relisted,
+            // so "relist" would be advice the seller cannot take.
+            //
+            // All three populations are reachable: finite sale expiry shipped
+            // in #1772 and mirroring in #1779, and a GTC vehicle
+            // (`expiresAt == 0`) never expires at all. That is why the ordering
+            // is structural on both sides rather than a list of conditions to
+            // skip — it arrived as three separate review findings, one gate at
+            // a time.
+            {
+                LibVaipakam.Offer storage _saleVehicle = s.offers[offerId];
+                if (
+                    _saleVehicle.allowsPartialRepay !=
+                    _saleLoanM.allowsPartialRepay ||
+                    _saleVehicle.allowsPrepayListing !=
+                    _saleLoanM.allowsPrepayListing ||
+                    _saleVehicle.useFullTermInterest !=
+                    _saleLoanM.useFullTermInterest ||
+                    _saleVehicle.periodicInterestCadence !=
+                    _saleLoanM.periodicInterestCadence
+                ) {
+                    preview.errorCode = OfferAcceptFacet
+                        .AcceptError
+                        .SaleListingTermsStale;
+                    return preview;
+                }
             }
             // #1503 PR-E (design item 11) — mirror the accept-time solvency
             // admission floor. Classified rather than reverted so the buyer

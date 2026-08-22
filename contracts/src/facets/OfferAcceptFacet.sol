@@ -857,6 +857,11 @@ contract OfferAcceptFacet is
                 if (saleLoan.status != LibVaipakam.LoanStatus.Active) {
                     revert InvalidOffer();
                 }
+                if (
+                    block.timestamp >=
+                    uint256(saleLoan.startTime) +
+                        uint256(saleLoan.durationDays) * 1 days
+                ) revert SaleLoanPastMaturity();
                 // #1835 (Codex #1891 F3/F4) — the vehicle must MIRROR the
                 // position it sells. A listing created before #1779 taught
                 // `_buildSaleParams` to copy these three behavioural terms
@@ -871,34 +876,42 @@ contract OfferAcceptFacet is
                 // sale. Vehicle-vs-LOAN is the one pairing no signature check
                 // can stand in for.
                 //
-                // ORDERED HERE, not in `_bindTermsToOffer` where the other term
-                // checks live, and the placement is the whole point. The
-                // binding runs at `acceptOffer` step 5 — before this function's
-                // expiry gate, its status gate, and every other offer-state
-                // gate — so a comparison living there answers "stale listing"
-                // for offers that are expired, or whose position has been
-                // repaid / defaulted / liquidated, masking the refusal that
-                // names the real problem and disagreeing with `previewAccept`,
-                // which reports those first. Gating on each such condition in
-                // turn would fix them one at a time and silently miss the next
-                // gate someone adds. Sitting AFTER expiry and status and BEFORE
-                // maturity orders it against all of them by construction, and
-                // `previewAccept`'s classifier mirrors exactly this position.
+                // ORDERED LAST among the sale gates, not in `_bindTermsToOffer`
+                // where the other term checks live, and the placement is the
+                // whole point. The binding runs at `acceptOffer` step 5 —
+                // before this function's expiry gate, its status gate and its
+                // maturity gate — so a comparison living there answers "stale
+                // listing, relist" for offers that are expired, whose position
+                // has been repaid / defaulted / liquidated, or which have
+                // crossed maturity inside the grace window. Each of those is
+                // both more structural AND actionable where this one is not:
+                // `_boundListingExpiry` refuses to relist a matured loan, and a
+                // terminal loan cannot be relisted at all, so the advice could
+                // not be followed. Every one also disagrees with
+                // `previewAccept`, which reports them first.
                 //
-                // `useFullTermInterest` (17) is excluded on purpose: mirrored
-                // since #408/#410/#413, long before any listing this can still
-                // see, so it has no stale population to catch.
+                // Gating on each condition in turn fixes them one at a time and
+                // misses the next gate someone adds — which is exactly how this
+                // arrived, as three separate review findings. Sitting after ALL
+                // of them orders it by construction instead, and
+                // `previewAccept`'s classifier mirrors this position.
+                //
+                // `useFullTermInterest` (17) is INCLUDED. An earlier revision
+                // excluded it, reasoning that its mirroring predates any listing
+                // still live — but that is false for a GTC vehicle
+                // (`expiresAt == 0`), the same pre-upgrade shape the expiry gate
+                // above exists for: it never expires, loans run 365 days by
+                // default and can be configured longer, so a listing predating
+                // that fix can still be bought today. It stores the old `false`
+                // while its loan may run the full-term model — a materially
+                // different interest settlement, decided against the buyer.
                 if (
                     offer.allowsPartialRepay != saleLoan.allowsPartialRepay ||
                     offer.allowsPrepayListing != saleLoan.allowsPrepayListing ||
+                    offer.useFullTermInterest != saleLoan.useFullTermInterest ||
                     offer.periodicInterestCadence !=
                     saleLoan.periodicInterestCadence
                 ) revert SaleListingTermsStale();
-                if (
-                    block.timestamp >=
-                    uint256(saleLoan.startTime) +
-                        uint256(saleLoan.durationDays) * 1 days
-                ) revert SaleLoanPastMaturity();
                 // #1503 PR-E (design item 11) — the BINDING solvency
                 // admission floor. `createLoanSaleOffer` checks it too, but
                 // a listing rests while the position keeps moving: only the

@@ -2352,6 +2352,77 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #1835 (Codex #1891 F5) — a MATURED loan's stale listing must report
+    ///      the maturity, on both surfaces.
+    ///
+    ///      The third instance of the same ordering, and the one that finally
+    ///      moved the comparison behind every sale gate rather than in front of
+    ///      one more. A loan can cross maturity and stay `Active` through the
+    ///      grace window, so this is not covered by the terminal-loan case; and
+    ///      it is the sharper of the two, because `_boundListingExpiry` refuses
+    ///      to relist a matured loan — so "relist" is advice the seller cannot
+    ///      take.
+    function test_item23_maturedLoanOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // Past the loan's own maturity, still `Active` in its grace window.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        vm.warp(
+            uint256(ld.startTime) + uint256(ld.durationDays) * 1 days + 1
+        );
+        assertEq(
+            uint8(LoanFacet(address(diamond)).getLoanDetails(activeLoanId).status),
+            uint8(LibVaipakam.LoanStatus.Active),
+            "fixture must be matured-but-Active, not terminal"
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "maturedStaleBuyer");
+
+        vm.expectRevert(OfferAcceptFacet.SaleLoanPastMaturity.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 (Codex #1891 F6) — `useFullTermInterest` is the FOURTH
+    ///      behavioural term and is checked like the rest.
+    ///
+    ///      An earlier revision excluded it, on the reasoning that its
+    ///      mirroring predates any listing still live. That is false for a GTC
+    ///      vehicle (`expiresAt == 0`) — the same pre-upgrade shape the expiry
+    ///      gate exists for. It never expires, and loans run 365 days by default
+    ///      and can be configured longer, so such a listing can still be bought
+    ///      today while storing the old `false` against a loan running the
+    ///      full-term model: a materially different interest settlement, decided
+    ///      against the buyer.
+    function test_item23_staleOnFullTermInterestAloneIsRefused() public {
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.allowsPartialRepay = true;
+        ld.allowsPrepayListing = true;
+        ld.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Quarterly;
+        ld.useFullTermInterest = true;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        uint256 saleOfferId = _listSaleOffer();
+
+        // Only field 17 goes stale; the other three keep mirroring.
+        LibVaipakam.Offer memory vehicle =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        vehicle.useFullTermInterest = false;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, vehicle);
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "staleFullTermOnly");
+
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
     /// @dev #1835 (Codex #1891 F1) — the preview must classify a stale listing,
     ///      or the card enables "Accept", the buyer signs, and the transaction
     ///      reverts. That preview/accept divergence is what #1503 exists to
