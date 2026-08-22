@@ -72,10 +72,16 @@
 #     then did not close it, while claiming it had. The loop still
 #     wrote each file as it went. Staging is the part that actually
 #     closes it, and the guarantee is bounded: it removes the
-#     partial publish caused by an EXPORT FAILURE. It does not make
-#     publication atomic in general — a signal during the publish
-#     loop still leaves a mixed directory, because shell cannot swap
-#     N files as one operation.
+#     partial publish caused by an EXPORT FAILURE, and no individual
+#     file can be left truncated. It does NOT make publication
+#     atomic as a set — a signal during the publish loop can still
+#     mix generations, because shell cannot rename N files as one
+#     operation.
+#
+#     Staging happens BESIDE each destination (`<facet>.json.tmp` in
+#     OUT_DIR), never in $TMPDIR: a temp dir is routinely on another
+#     filesystem, which downgrades every publish `mv` to
+#     copy-and-delete and reintroduces truncation as a failure mode.
 #
 #     `--skip test` (not a bare `forge build`) is deliberate: the
 #     test-inclusive compilation unit trips the viaIR stack ceiling
@@ -329,14 +335,29 @@ FACETS=(
 # Note this is not the same as the build gate above — the build succeeds fine in
 # this scenario. It is specifically a stale FACETS entry.
 #
+# Staged BESIDE each destination as `<facet>.json.tmp`, NOT in a $TMPDIR
+# directory (Codex #1897 r2). A temp dir is very often on a different
+# filesystem from a mounted workspace, which turns every publish-time `mv` into
+# copy-and-delete — so an interruption or a full disk mid-copy can leave an
+# individual JSON TRUNCATED. That would be a worse failure than the mixed
+# bundle this staging exists to prevent, and it would be a regression: the
+# original `$out.tmp` sat beside its destination, so each replacement was an
+# atomic same-filesystem rename.
+#
+# Staging in OUT_DIR keeps that atomicity by construction and still defers
+# every rename until all inspects have succeeded, so both properties hold at
+# once.
+#
 # Scope of the guarantee, stated precisely because an earlier revision of this
-# very commit overclaimed it: staging removes the partial publish caused by an
-# EXPORT FAILURE, which is the reachable case. It does not make publication
-# atomic in general — a signal during the publish loop below still leaves a mixed
-# directory, since shell cannot swap N files as one operation.
-STAGE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/vaipakam-abis.XXXXXX")"
-# shellcheck disable=SC2064  # expand STAGE_DIR now, not at trap time
-trap "rm -rf '$STAGE_DIR'" EXIT
+# very commit overclaimed it: this removes the partial publish caused by an
+# EXPORT FAILURE, which is the reachable case, and no individual file can be
+# left truncated. It does NOT make publication atomic as a set — a signal
+# during the publish loop below can still mix generations, because shell
+# cannot rename N files as one operation.
+_cleanup_tmp() { rm -f "$OUT_DIR"/*.json.tmp; }
+trap _cleanup_tmp EXIT
+# Any `.json.tmp` here is debris from an earlier interrupted run, never input.
+_cleanup_tmp
 
 echo "Exporting ABIs to $OUT_DIR"
 fail=0
@@ -346,9 +367,9 @@ for facet in "${FACETS[@]}"; do
   # diagnostic thrown away. The build above has already succeeded by the
   # time we get here, so a failure now means the NAME is wrong — a contract
   # renamed or deleted while its entry stayed in FACETS — and forge says so.
-  if ! forge inspect "$facet" abi --json > "$STAGE_DIR/$facet.json"; then
+  if ! forge inspect "$facet" abi --json > "$OUT_DIR/$facet.json.tmp"; then
     echo "  ✗ $facet — forge inspect failed (renamed or removed? check the FACETS list)" >&2
-    rm -f "$STAGE_DIR/$facet.json"
+    rm -f "$OUT_DIR/$facet.json.tmp"
     fail=1
     # Deliberately `continue` rather than `break`: one run should name EVERY
     # bad entry, not just the first. Nothing has been published yet, so there
@@ -365,9 +386,10 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-# Every inspect succeeded; publish the complete set.
+# Every inspect succeeded; publish the complete set. Same directory, so each
+# rename is atomic and no reader can observe a half-written file.
 for facet in "${FACETS[@]}"; do
-  mv "$STAGE_DIR/$facet.json" "$OUT_DIR/$facet.json"
+  mv "$OUT_DIR/$facet.json.tmp" "$OUT_DIR/$facet.json"
 done
 
 # Stamp output dir with the monorepo commit so a frontend build can
