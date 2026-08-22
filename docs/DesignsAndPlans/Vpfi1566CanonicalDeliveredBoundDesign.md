@@ -267,8 +267,11 @@ fund-safety property unmet is worse than one that recommends nothing.
 
 What the options need before a choice is possible:
 
-1. **Option B costed properly** — its true scope is canonical writers for the
-   paid side, a `received` side tied to VPFI the programme actually holds rather
+1. **Option B costed properly** — its true scope is canonical writers for every
+   OUTFLOW — not only the five existing counter assignments, but
+   `remitRewardBudget` and the compensation dispatches, which move earmarked
+   tokens off Base with no claimant involved and would otherwise leave the
+   earmark reusable after its tokens have gone — a `received` side tied to VPFI the programme actually holds rather
    than to an allocation entry, and a migration answer for a deployment that has
    already paid rewards under the old rule.
 2. **Option C's boundary re-drawn to all FOUR user-owned classes** —
