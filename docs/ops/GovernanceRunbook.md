@@ -674,11 +674,28 @@ wrangler d1 migrations apply vaipakam-archive --remote
 
 covering `0043_keeper_commitment_scan.sql` and `0044_keeper_remit_ack.sql`.
 
-**3b. Grant `KEEPER_ROLE` to the keeper EOA on EVERY mirror Diamond.**
-`submitCommitmentBatch` is mirror-only (`_assertMirror`) and role-gated. Granting
-on Base alone, or missing one mirror, leaves that mirror's commitment pass
-reverting forever: its report never completes and the remit gate stalls that
-chain's funding.
+**3b. Grant `KEEPER_ROLE` to the keeper EOA on EVERY chain — every mirror AND
+canonical Base.** `submitCommitmentBatch` is mirror-only (`_assertMirror`) and
+role-gated, so granting on Base alone, or missing one mirror, leaves that
+mirror's commitment pass reverting forever: its report never completes and the
+remit gate stalls that chain's funding.
+
+Base is not optional even though the commitment batch never runs there. Step 5
+turns on the Worker-wide `KEEPER_ENABLED`, and the liquidity-confidence pass
+iterates **every configured chain** and submits the `KEEPER_ROLE`-gated
+`ConfigFacet.setKeeperTier`. Without the role on Base those risk-tier updates
+revert, and loan-init LTV confidence can go stale during a degradation — a
+failure with nothing to do with recycling, triggered by this ceremony.
+
+**3b-i. Read back that the keeper can SEE every reward chain.** The Worker
+builds its chain list from whatever RPC secrets and deployment artifacts
+resolve, and **silently skips a chain whose RPC secret or deployment entry is
+missing** — no error, no warning. A mirror absent from that list never submits
+its armed-day commitment report, Base's remit gate waits on a report that will
+never arrive, and that chain's claims stay unfunded with nothing anywhere
+reporting a fault. Compare the keeper's resolved chain IDs against the intended
+reward-chain set, and confirm each resolved endpoint's `eth_chainId` matches the
+id it is filed under, BEFORE the arm.
 
 **3c. Authorize the Base remittance signer — a SEPARATE authorization, and easy
 to miss.** `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
@@ -720,7 +737,14 @@ and alerts on the commitment invariants, and it is code-complete but
 its README. Do this before arming, not after: arming is when the invariants it
 watches start moving.
 
-Leave the master flags OFF for now — they are step 5.
+**Do NOT switch off flags that are already running.** If this deployment is on
+Gate B's active-mirror branch, `REWARD_REMIT_ENABLED` and `KEEPER_ENABLED` may
+already be funding ordinary pre-`D*` mirror claims — the reward-budget remit pass
+processes finalized days whether or not the program is armed. This ceremony spans
+Timelock delays and a propagation window, so turning them off "until step 5"
+starves live mirror claims for days over a cutover that has not happened yet.
+Step 5 is about arming the set for the FIRST time, or completing it; it is not an
+instruction to disable a running one.
 
 ### Step 4 — arm, sized from EXECUTION time
 
@@ -751,9 +775,23 @@ finalized day's broadcast reaches it after arming — a replay of an
 already-applied day exits through the idempotency branch without installing the
 value.
 
-### Step 5 — verify propagation, then arm the worker flags
+### Step 5 — DRIVE the propagation, verify it, then complete the flags
 
-Read `D*` back on every mirror, with days to spare:
+**Arming sends nothing, and nothing sends it for you.** The setter writes Base
+storage and emits its event; mirrors learn `D*` only from a day broadcast. On the
+documented operating path there is **no deployed daemon that finalizes a day and
+broadcasts it** — that cycle is operator-driven, and the testnet finalization
+script does not broadcast either. So an operator who arms and then waits for
+mirrors to show `D*` can wait until the cutover day arrives with every mirror
+still unarmed.
+
+After arming, drive the cycle explicitly: finalize a day that has not yet been
+applied on the mirrors, then call the payable `broadcastGlobal` (or
+`broadcastGlobalTo` per destination) and pay the transport fee. A replay of an
+already-applied day exits through the idempotency branch **without** installing
+`D*`, so the day you broadcast has to be one the mirrors have not seen.
+
+Then read `D*` back on every mirror, with days to spare:
 
 ```
 RewardAggregatorFacet.getGovernorCommitState()   # → (armedFromDay, outstandingFresh, outstandingRecycled, paidOutRecycled)
@@ -764,9 +802,11 @@ the contingency written down before you arm: a mirror that misses the day keeps
 its claims halted until CCIP delivery recovery or manual re-execution restores
 the broadcast.
 
-Then arm the master flags **together** — `KEEPER_ENABLED`,
-`REWARD_COMMIT_ENABLED`, `REWARD_REMIT_ENABLED`. Arming a chain without all three
-leaves reports and acks inert and stalls multi-chain funding.
+Then complete the master flags — `KEEPER_ENABLED`, `REWARD_COMMIT_ENABLED`,
+`REWARD_REMIT_ENABLED` — so all three are on **together**. A chain running
+without all three leaves reports and acks inert and stalls multi-chain funding.
+On a deployment where some were already on (see step 3), this step adds the
+missing ones; it never involves turning an existing one off and back on.
 
 
 ## Testnet rehearsal
@@ -776,7 +816,8 @@ Before mainnet:
 - Deploy all three Safes on Sepolia / Base Sepolia / Arb Sepolia /
   OP Sepolia / BNB Testnet / Polygon zkEVM Cardona at the same address
   as the intended mainnet ones (via CreateCall).
-- Walk steps 1–6 end-to-end against each testnet Diamond with
+- Walk the **per-chain handover** steps 1–6 above (Deploy the Timelock →
+  Readback verification) end-to-end against each testnet Diamond with
   `TIMELOCK_MIN_DELAY=3600` (1h) to compress the rehearsal.
 - Confirm `GovernanceHandover.t.sol` passes against each testnet fork
   before re-deploying with the 48h mainnet delay.
