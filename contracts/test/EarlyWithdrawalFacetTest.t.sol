@@ -2588,6 +2588,44 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #1835 (Codex #1891 F25) — the EXITING SELLER previewing their own
+    ///      stale listing gets the self-trade refusal, not the staleness.
+    ///
+    ///      Distinct from `test_item23_staleTermsOutrankLinkedBorrowerSelfBuy`,
+    ///      and the distinction is the finding: that one is the linked LOAN's
+    ///      current borrower (`SaleSelfBuy`), this is the offer's own CREATOR
+    ///      (`SelfTrade`). `previewAccept` had no generic self-trade classifier
+    ///      at all, so the seller was told to relist — and a relisted offer
+    ///      still cannot be self-filled, which is the unactionable-advice shape
+    ///      the whole ordering rule exists to avoid.
+    ///
+    ///      Staged on a listing that IS stale, so this asserts precedence
+    ///      rather than mere detection.
+    function test_item23_sellerSelfTradeOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // Control: a third-party buyer still sees the staleness on this listing.
+        OfferAcceptFacet.AcceptPreview memory other =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(other.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleListingTermsStale),
+            "fixture must be stale for a normal buyer, or this proves nothing"
+        );
+
+        // The seller (the sale offer's creator) previewing their own listing.
+        address seller = OfferCancelFacet(address(diamond)).getOffer(saleOfferId).creator;
+        OfferAcceptFacet.AcceptPreview memory own =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, seller);
+        assertEq(
+            uint8(own.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SelfTrade),
+            "the seller cannot self-fill; relisting does not change that"
+        );
+    }
+
     /// @dev #1835 (Codex #1891 F21) — a paused preview still carries a
     ///      truthful quote.
     ///

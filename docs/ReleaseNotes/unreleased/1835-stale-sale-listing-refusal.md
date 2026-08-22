@@ -43,6 +43,16 @@ seeing. The preview shown on the card and the refusal from the transaction
 itself agree on which one that is, so the card never offers a purchase the
 transaction then rejects for a different stated reason.
 
+There is one deliberate exception, and it follows the same reasoning rather than
+breaking it. If the person trying to buy is the **borrower of the very loan
+being sold**, they are told the listing is out of date first, even though they
+also could not buy it for that separate reason. That is because relisting does
+genuinely help here — the seller can put up a correct listing, and everyone
+except that one person can buy it. Everywhere else the refusal is ordered last
+precisely because relisting would not help; here it would, so it is worth
+saying. Someone who is simply trying to buy back **their own listing** is told
+that directly, since no relisting changes it.
+
 Sellers and buyers on current listings notice nothing: an accurate listing
 satisfies the check by construction, and a normal purchase is unaffected.
 

@@ -564,7 +564,8 @@ regimes are distinguished from the record's own state, needing no migration.
 ## Sale listing vs live position — behavioural terms (#1503 item 23)
 
 The spec says a lender-sale listing carries the position's behavioural terms —
-partial-repay permission, prepay-listing permission and periodic cadence — and
+partial-repay permission, prepay-listing permission, the interest model
+(`useFullTermInterest`) and periodic cadence — and
 that a listing whose terms disagree with its position "does not describe what it
 sells" and ought to be refused at purchase.
 
@@ -572,20 +573,35 @@ sells" and ought to be refused at purchase.
 the record of how the gap was carried and closed.**
 
 The copying half went live first: a listing built from that point on takes all
-three from the position, so it describes what it sells, and the buyer's
+FOUR from the position, so it describes what it sells, and the buyer's
 signature binds against the listing rather than needing to read the position.
-That is sound permanently, not just at listing time, because the three are
+That is sound permanently, not just at listing time, because all four are
 written once at loan initiation and never again.
+
+**The interest model is in scope and must stay in scope.** An earlier revision
+of this entry listed only three terms, and that omission is load-bearing in the
+wrong direction: a maintainer reading this record as the invariant could delete
+the `useFullTermInterest` comparison as out of scope and recreate exactly the
+legacy full-term-interest mismatch the refusal exists to catch. The shipped
+guard compares all four.
 
 The refusal half was **deferred for one release, deliberately**, and the reason
 is worth keeping. A listing created before the copying rule holds the empty
 defaults while its position holds the truth, so it could still be bought on a
-false description. The check was written and tested and costs 164 bytes;
+false description. The PROTOTYPE was written and tested and cost 164 bytes;
 `OfferAcceptFacet` had exactly 164 bytes of EIP-170 headroom, so landing it
 would have left that facet on the ceiling and made the next correction to it
 undeployable — passing CI green while removing the ability to fix anything
-further on the accept path. The facet was split first (#1888, giving 3,505
-bytes), and the refusal landed immediately after, at the measured 164 bytes.
+further on the accept path. The facet was split first (#1888), and the refusal
+landed immediately after.
+
+**Do not read 164 as the shipped cost** — that figure measured the prototype
+and is kept only because it is what justified the deferral. Review added the
+fourth term and moved the comparison, so **as shipped the guard costs 448
+bytes** against the post-split baseline of 21,071, leaving `OfferAcceptFacet`
+at 21,519 with 3,057 free. Anyone sizing a future change against EIP-170 should
+use those numbers; the prototype figure understates the consumption by 284
+bytes.
 
 Two things about the shape are load-bearing and should survive future edits.
 The comparison is listing-against-POSITION: the accept-time checks compare the

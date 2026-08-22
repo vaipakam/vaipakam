@@ -2008,7 +2008,18 @@ contract OfferAcceptFacet is
         // point at `upgradeUserVault` — NOT that the listing is stale, which
         // advises a relist the same floor blocks (`OfferCreateFacet` resolves a
         // vault too). APPENDED — prior values stay stable.
-        VaultUpgradeRequired
+        VaultUpgradeRequired,
+        // #1835 (Codex #1891 F25) — the acceptor IS the offer's creator, so
+        // `_acceptOffer` resolves `lender == borrower` and reverts
+        // `SelfTradeForbidden`. This surface had NO generic self-trade
+        // classifier at all: `SaleSelfBuy` covers the DIFFERENT case of the
+        // linked loan's current borrower buying the vehicle. So the exiting
+        // seller previewing their own stale listing was told to relist, when a
+        // relisted offer still cannot be self-filled.
+        //
+        // Ordered where `_acceptOffer` orders it — after KYC, before the vault
+        // floor and the stale comparison. APPENDED; prior values stay stable.
+        SelfTrade
     }
 
     /// @notice Projection of the loan that would land if the supplied

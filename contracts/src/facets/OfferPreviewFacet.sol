@@ -345,6 +345,27 @@ contract OfferPreviewFacet {
             }
         }
 
+        // #1835 (Codex #1891 F25) — the GENERIC self-trade refusal, which this
+        // surface was missing entirely. `_acceptOffer` resolves roles and
+        // reverts `SelfTradeForbidden` when `lender == borrower` (`:1111`);
+        // since one side is always the creator and the other the acceptor, that
+        // collapses to `acceptor == offer.creator`.
+        //
+        // Distinct from `SaleSelfBuy` below, and the distinction is the whole
+        // finding: that one is the linked LOAN's current borrower buying the
+        // vehicle, this one is the EXITING SELLER accepting their own offer. On
+        // a stale listing the seller previewed `SaleListingTermsStale` and was
+        // told to relist — but a relisted offer still cannot be self-filled, so
+        // the advice was unactionable in the same way every other misordering on
+        // this PR was.
+        //
+        // Positioned exactly where the accept raises it: after KYC, before the
+        // vault floor and the stale comparison.
+        if (acceptor == offer.creator) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.SelfTrade;
+            return preview;
+        }
+
         // #951 v2 (Codex #959 bind-to-live) — sale-vehicle structural blockers,
         // mirroring `LoanFacet.initiateLoan`'s sale-vehicle reverts so the UI can
         // disable "Accept" without a revert. Placed last: `initiateLoan` runs
