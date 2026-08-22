@@ -1084,10 +1084,20 @@ GovernanceRunbook gains a recycling section, executed in order:
    funded VPFI payroll streams (plus the grandfathered LIF term; the Full
    tariff's `C*` is covered since it credits the bucket). **Two of those are USER COLLATERAL**, which makes
    this a fund-safety item rather than an accounting one — a reward payout
-   drawing on them spends a borrower's collateral. **#1498 stays OPEN for that half**, re-pointed: its
-   root is shared with #1434 prerequisite 1 (payout bounded by un-earmarked
-   BALANCE rather than by funding DELIVERED FOR REWARDS), and the delivered
-   bound closes both. #1555 landed the other half — collapsing the three
+   drawing on them spends a borrower's collateral. **That half is now #1566, and it is OPEN.**
+   #1498 reads `closed / completed` and is NOT evidence of anything: it was
+   auto-closed by #1555's `Closes #1498` when #1555 landed only the
+   de-duplication half, and #1498's own last comment records that close as wrong
+   and re-files the fund-safety half as #1566 — a successor rather than a reopen,
+   because #1498's title names a remedy review refuted (a
+   `borrowerLifCustodyTotal` aggregate cannot be built; every surviving write to
+   `borrowerLifRebate[...].vpfiHeld` assigns zero, so it could only ever count
+   zero). Its root is shared with #1434 prerequisite 1 (payout bounded by
+   un-earmarked BALANCE rather than by funding DELIVERED FOR REWARDS), and the
+   delivered bound closes both. **Anyone checking this gate by opening the card
+   this row used to name will read a green label over an open fund-safety
+   defect** — which is why the pointer is corrected here rather than left to be
+   rediscovered. #1555 landed the other half — collapsing the three
    inlined copies of the headroom arithmetic into the one definition the
    owning library exports, since the copies agreed on the arithmetic and had
    drifted on the prose, which is what produced the stale claim.
