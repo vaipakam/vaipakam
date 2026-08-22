@@ -26,6 +26,21 @@ nothing wrong, so telling them their terms don't match would send them to sign
 the same wrong listing again. Relisting produces a correct listing, because
 listings have described their positions accurately since the earlier change.
 
+One thing about that refusal took most of the work to get right: it is only
+ever the answer when nothing else is. "The listing is out of date, ask the
+seller to relist" is useful advice, but only where relisting is actually
+possible — and often it isn't. A position that has already been repaid,
+defaulted or liquidated cannot be relisted at all. Neither can one that has
+passed its due date, or one whose seller has since been placed under
+sanctions, or one holding an asset the platform has paused. In each of those
+cases the platform has a reason that the person reading it can act on, and
+answering "relist" instead would have buried it behind advice that cannot be
+followed. So the out-of-date refusal now speaks last, after every other reason
+a purchase can be turned down, and the buyer sees the reason that is worth
+seeing. The preview shown on the card and the refusal from the transaction
+itself agree on which one that is, so the card never offers a purchase the
+transaction then rejects for a different stated reason.
+
 Sellers and buyers on current listings notice nothing: an accurate listing
 satisfies the check by construction, and a normal purchase is unaffected.
 
