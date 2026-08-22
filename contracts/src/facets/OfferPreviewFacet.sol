@@ -186,6 +186,38 @@ contract OfferPreviewFacet {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleLoanNotActive;
                 return preview;
             }
+            // #1835 (Codex #1891 F1) — the accept refuses a vehicle whose
+            // behavioural terms disagree with the live loan. Classified here so
+            // the card can disable "Accept" instead of letting the buyer
+            // discover it by burning gas.
+            //
+            // Position is load-bearing for first-failure parity, which is this
+            // chain's whole point. On the accept side the comparison lives in
+            // the TERM BINDING, which runs before `_acceptOffer` reaches its
+            // maturity gate — so a stale listing whose loan is also past
+            // maturity reverts `SaleListingTermsStale`, not
+            // `SaleLoanPastMaturity`. Hence: after the status gate (the accept
+            // skips the comparison entirely for a non-Active loan, so
+            // `SaleLoanNotActive` still wins there) and BEFORE the maturity
+            // gate. Moving it below maturity would make the two surfaces
+            // disagree on exactly the legacy GTC vehicle this chain was
+            // reordered for.
+            {
+                LibVaipakam.Offer storage _saleVehicle = s.offers[offerId];
+                if (
+                    _saleVehicle.allowsPartialRepay !=
+                    _saleLoanM.allowsPartialRepay ||
+                    _saleVehicle.allowsPrepayListing !=
+                    _saleLoanM.allowsPrepayListing ||
+                    _saleVehicle.periodicInterestCadence !=
+                    _saleLoanM.periodicInterestCadence
+                ) {
+                    preview.errorCode = OfferAcceptFacet
+                        .AcceptError
+                        .SaleListingTermsStale;
+                    return preview;
+                }
+            }
             if (
                 block.timestamp >=
                 uint256(_saleLoanM.startTime) +

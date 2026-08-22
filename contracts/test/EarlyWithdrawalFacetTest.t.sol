@@ -2277,6 +2277,98 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
+    /// @dev #1835 (Codex #1891 F3) — a TERMINAL loan's stale listing must still
+    ///      report the terminal loan, not the stale terms.
+    ///
+    ///      The comparison lives in the term binding, which runs before
+    ///      `_acceptOffer` reaches its non-Active check — so ungated it would
+    ///      answer "this listing is stale, relist", advice that cannot be
+    ///      followed, because a repaid / defaulted / liquidated loan cannot be
+    ///      relisted at all. Worse, it would mask the refusal that names the
+    ///      real problem. This is the same ordering the status check itself
+    ///      already carries a note about, from when a torn-down listing
+    ///      previewed as a health shortfall on a position that no longer
+    ///      existed.
+    function test_item23_terminalLoanOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // The position ends after listing but before the buyer arrives, and the
+        // permissionless teardown has not run yet — the window this guards.
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.status = LibVaipakam.LoanStatus.Repaid;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "terminalStaleBuyer");
+
+        // `InvalidOffer`, NOT `SaleListingTermsStale`.
+        vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 (Codex #1891 F1) — the preview must classify a stale listing,
+    ///      or the card enables "Accept", the buyer signs, and the transaction
+    ///      reverts. That preview/accept divergence is what #1503 exists to
+    ///      remove, and an accept-time refusal with no preview counterpart
+    ///      re-creates it.
+    function test_item23_previewClassifiesAStaleListing() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleListingTermsStale),
+            "preview must name the stale listing, not quote it as fillable"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F1) — companion: the classifier reports
+    ///      staleness, not sales. A preview that returned this code for every
+    ///      listing would satisfy the test above while disabling every buy.
+    function test_item23_previewDoesNotFlagAFreshListing() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            true, true, LibVaipakam.PeriodicInterestCadence.Quarterly
+        );
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertTrue(
+            p.errorCode != OfferAcceptFacet.AcceptError.SaleListingTermsStale,
+            "a mirroring listing must never be reported stale"
+        );
+    }
+
+    /// @dev #1835 (Codex #1891 F1/F3) — first-failure parity on the case that
+    ///      pins the classifier's POSITION in the preview chain. A terminal
+    ///      loan whose listing is also stale must preview `SaleLoanNotActive`,
+    ///      matching the accept, which skips the stale comparison entirely for
+    ///      a non-Active loan. Placing the classifier above the status gate
+    ///      would break exactly this.
+    function test_item23_previewTerminalLoanOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+        LibVaipakam.Loan memory ld =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        ld.status = LibVaipakam.LoanStatus.Repaid;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, ld);
+
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SaleLoanNotActive),
+            "the terminal loan is the structural reason; it outranks stale terms"
+        );
+    }
+
     /// @dev #951 (Codex #959 round-6, P1) — the linked loan's OWN borrower cannot
     ///      buy the lender position of their own debt (it would leave an Active
     ///      loan with lender == borrower). The generic self-trade check only

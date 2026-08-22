@@ -613,10 +613,25 @@ contract OfferAcceptFacet is
             // `useFullTermInterest` (17) is excluded on purpose: it has been
             // mirrored since #408/#410/#413, long before any listing this guard
             // could still see, so it has no stale population to catch.
+            //
+            // GATED ON A LIVE LOAN (Codex #1891 F3). This binding runs before
+            // `_acceptOffer` reaches its non-Active linked-loan check, so an
+            // ungated comparison would answer "this listing is stale, relist"
+            // for a position that has since been repaid, defaulted or
+            // liquidated — advice that cannot be followed, since a terminal
+            // loan cannot be relisted, and it would mask the `InvalidOffer`
+            // that names the real problem. That is the same ordering mistake
+            // recorded at the status check itself (a torn-down listing once
+            // reported a health shortfall for a position that no longer
+            // existed), so skip the comparison here and let the status check
+            // speak. Where several reasons apply at once, the most structural
+            // is the one stated.
             if (
-                o.allowsPartialRepay != saleLoan.allowsPartialRepay ||
-                o.allowsPrepayListing != saleLoan.allowsPrepayListing ||
-                o.periodicInterestCadence != saleLoan.periodicInterestCadence
+                saleLoan.status == LibVaipakam.LoanStatus.Active &&
+                (o.allowsPartialRepay != saleLoan.allowsPartialRepay ||
+                    o.allowsPrepayListing != saleLoan.allowsPrepayListing ||
+                    o.periodicInterestCadence !=
+                    saleLoan.periodicInterestCadence)
             ) revert SaleListingTermsStale();
         } else {
             if (t.amount != roleAmount) revert OfferTermsMismatch(6);
@@ -1910,7 +1925,21 @@ contract OfferAcceptFacet is
         // Distinct from the floor code so a surface never tells a buyer their
         // health factor is short when it is not, and never quotes a figure for
         // a position that has none. APPENDED — prior values stay stable.
-        SaleAdmissionBlocked
+        SaleAdmissionBlocked,
+        // #1835 (Codex #1891 F1) — the sale vehicle's behavioural terms
+        // disagree with the live loan it sells, so acceptance reverts
+        // `SaleListingTermsStale`. Classified rather than left to the revert
+        // because this surface exists to keep the preview and the accept
+        // agreeing on FIRST FAILURE: without it a pre-#1779 listing previews as
+        // fillable, the buyer signs, and the transaction reverts — the
+        // preview/accept divergence #1503 exists to remove.
+        //
+        // A surface built on this code must say the LISTING is out of date and
+        // the seller should relist. It must never tell the buyer their terms
+        // are wrong: they signed the listing faithfully, and re-signing
+        // reproduces the same wrong vehicle. APPENDED — prior values stay
+        // stable.
+        SaleListingTermsStale
     }
 
     /// @notice Projection of the loan that would land if the supplied
