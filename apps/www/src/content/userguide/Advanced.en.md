@@ -2107,11 +2107,14 @@ Dashboard surfaces a "Push my tier to mirrors now" button.
 Clicking it triggers `pokeMyTier()` — permissionless, fires a
 fresh CCIP broadcast at the protocol's cost.
 
-**A stale cache is NOT one of those cases.** The push only
-sends when your `(tier, bps, expiry, version)` tuple has
-changed; a cache that merely aged out on an unchanged tier is
-skipped and nothing is broadcast. See the staleness threshold
-below for what does restore it.
+**A cache stale by AGE is not one of those cases.** The push
+only sends when your `(tier, bps, expiry, version)` tuple has
+changed. A version-mismatched cache is covered — that is the
+governance-bump case above, where the version field differs
+and the push does send. But a cache that merely aged out
+while your tier stayed put is skipped, and nothing is
+broadcast. See the staleness threshold below for what does
+restore that one.
 
 ### Consent toggle
 
@@ -2197,10 +2200,12 @@ button and `pokeMyTier()` only send when your
 `(tier, bps, expiry, version)` tuple has actually changed —
 an unchanged tuple is skipped, and nothing is broadcast. So
 an expired cache on a tier that hasn't moved is not something
-pressing the button fixes: the discount returns when a later
-broadcast carries an eligible changed tier, whether from your
-own next tier change or from any vault mutation that triggers
-a fresh rollup.
+pressing the button fixes, and neither is a same-tier deposit
+or withdrawal — a rollup that produces the same tuple de-dups
+exactly as the button does. What restores it is a broadcast
+carrying a genuinely DIFFERENT tuple: your tier actually
+changing, your consent flag moving, or a governance table
+bump raising the version.
 
 There is deliberately no supported way to force a refresh
 otherwise. Repeatedly toggling a value to manufacture
