@@ -1,8 +1,11 @@
 # Release Notes — 2026-08-22
 
-A day of corrections rather than changes. Two of the three entries below fix
-what the project SAID about itself, and the third fixes a tool that writes those
-records — nothing here alters how the platform behaves for anyone using it.
+Two kinds of work today. Most of it is corrections — entries that fix what the
+project SAID about itself, plus the tool that writes those records. The last two
+entries are different: they change the platform, and one of them changes what a
+buyer can do.
+
+The corrections come first, then the design note, then the two contract changes.
 
 The first: a cross-chain pause on reward claims was lifted some time ago, and the
 documentation went on describing it as standing — across the specification, the
@@ -26,6 +29,17 @@ the later rounds were spent on errors introduced by the earlier fixes rather tha
 on the original mistake. Replacing a claim that is too general with another claim
 that is too general is not progress, and it is what happened here twice before it
 was noticed.
+
+After those, a design note re-scopes a reward-payout safety gap: the part that
+looked closed turns out to be evadable, so what remains is differently shaped
+rather than smaller. It is worth reading for what it decided NOT to do.
+
+The two contract entries close the day. The first makes the accept path
+changeable again: it had reached its size limit, and splitting it was a
+prerequisite rather than an improvement in itself. The second is the only entry
+here that a user can notice — a sale listing that no longer describes the
+position it sells is now refused at purchase instead of completing, and the
+reason given is the one that can actually be acted on.
 
 ## The documentation caught up with a pause that had already been lifted (#1222)
 
@@ -699,3 +713,184 @@ paragraph is told it was corrected, and a reader who reads to the end is
 told what the correction says — neither is quietly rewritten out of what
 was actually published.
 <!-- assembled-fragment: 1879-short-lapse-formula-correction.md sha256=24f65ee99363b82cc76922bf0e752fe03b01d253aa8fd12a526415d9033b4032 -->
+
+## A reward-payout safety gap was re-scoped, not reduced (#1566)
+
+A known fund-safety issue has been open since early August: a reward payout is
+limited by whatever spare balance the platform happens to be holding, rather
+than by the money actually set aside for rewards. That spare balance is not
+spare — it also holds two kinds of user collateral, so a reward payout can in
+principle be paid out of a borrower's collateral.
+
+Re-reading that issue against the platform as it stands today changed the
+picture — but it moved the boundary rather than shrinking the gap. Separate work
+two days earlier looked like it had limited part of it: on a chain that RECEIVES
+its reward funding, a payout for a day inside the new programme is limited to
+what actually arrived. That limit holds only where such a day is the only thing
+being claimed, and the note's own conclusion is that what remains is DIFFERENT in
+shape, not smaller. What is open: the chain rewards originate on, where nothing
+arrives and so the limit has to be defined rather than copied across; older
+entitlements on the receiving chains, which are paid by a route the new limit
+never sees and never records, so a single person holding both kinds can spend
+twice against one balance — which is what makes the limit evadable rather than
+merely partial; and a chain that has been detached from the group, which ends up
+limited by nothing at all because it is no longer recognised as either kind.
+
+That distinction is now written down, along with why the obvious repair — keep a
+list of everything else the balance is holding and subtract it — is the one
+approach with evidence against it here. The list grew in every review round it
+was declared finished, two of its members are invisible to that repair by
+construction, and an attempt at it was reverted for creating a fresh way to lose
+user value: it left expiry clocks running on entitlements whose claims had begun
+to fail.
+
+Five options are set out with what each promises a claimant, but only four are
+candidates: the first is kept on the page as an analysed-and-rejected step,
+because it cannot deliver the property the card asks for, and putting it back on
+the menu would offer the owner something that does not close the issue. The
+four-way choice is left to the owner rather than made in passing. Some of them
+keep the money in one shared pot and differ only in how carefully they reason
+about who owns what. Two do something else: one keeps the reward money somewhere
+separate, and one does not hold it at all until the moment someone claims it —
+in both, the question of who owns a given token stops arising rather than being
+answered more carefully.
+The second of those is narrower than it sounds and the note says so: it applies
+to freshly created reward value only, and leaves the recycled half — which is
+already held — still to be answered.
+
+Both of those arrived from review rather than from the drafting, and for the same
+reason: the search had been for a better way to COUNT a shared pot, so anything
+that changed the arrangement instead was outside the frame being searched. For a
+document whose whole job is to lay out the choices, that is the failure worth
+recording. A first draft of this note did
+recommend one of the shared-pot approaches as a cheap first step; review
+established that it does not actually set any money aside — it limits what a day may price, which is a
+different question — so the recommendation was withdrawn rather than softened.
+A note on a fund-safety question whose recommended step leaves the property
+unmet is worse than one that recommends nothing. The reward programme stays
+un-armed until this closes, which is unchanged and deliberate.
+<!-- assembled-fragment: 1566-canonical-delivered-bound-design.md sha256=d96a330397d52db1a6ffa75356c0ef557bce598fec043f0802b28b73b6c14ee1 -->
+
+## Contracts — the accept path can be changed again (#1888)
+
+`OfferAcceptFacet` had reached 24,412 bytes against the 24,576-byte on-chain
+limit. The 164 bytes left were less than one cross-facet call costs, so the
+accept path had stopped being editable: any change to it — including the
+pre-mirroring sale-listing refusal this unblocks — compiled fine and then
+could not be deployed. This is the same wall `EarlyWithdrawalFacet` hit at 30
+bytes, and the fix is the same shape: move a piece of the work to its own
+facet rather than trim behaviour to fit.
+
+The piece that moved is the borrower's Loan Initiation Fee charge and the
+delivery of the net principal — the fee-and-disbursement step of an acceptance.
+(Not its last money movement: the borrower's collateral is locked afterwards,
+and a Full-tariff acceptance moves VPFI later still.) It was chosen because the
+acceptance **already** ran it in a separate execution
+context: the accept had long reached it through an internal self-call, so that
+the fee work's own depth would not be charged to the accept's call frame.
+Moving it means the step now lives at a different address on the far side of a
+boundary the code was already crossing. That boundary is reached on a fresh
+cash-loan acceptance and only there: a purchase of an existing position skips
+the fee entirely, because the position paid it when it was first created, and an
+NFT rental takes its own path. Nothing about the observable sequence changes on
+the accepts that do reach it — same order, same shared state, same single
+transaction, and a failure anywhere past the boundary still unwinds the whole
+acceptance. Callers see no difference at all: they still send one transaction
+to the one platform address, and the function's on-chain identity is unchanged
+by the move.
+
+Deployment shape is what changed. The platform now installs one more facet, so
+every place that enumerates facets — the deploy script and the two refresh
+scripts, the deploy-time guardrails, and the deployment record consumers read
+— names it. The two halves must always be installed and refreshed **together**:
+they are one behaviour separated by a call, so a partial refresh would leave an
+acceptance running new code on one side of that call and old code on the
+other. The refresh scripts carry both for exactly that reason, and the one
+curated script that reinstalls the accept path re-points the moved step onto
+its new host, so a platform upgraded from before this change does not strand it
+on the old one.
+
+Resulting sizes: 21,071 bytes for the accept facet (3,505 free, up from 164)
+and 4,390 for the new one. `OfferAcceptFeeFacet.chargeBorrowerLifAndDeliver` —
+the new home; the old facet no longer contains it — is
+not a surface any app called — it rejects every caller except the platform
+itself — so no application-facing behaviour is affected.
+
+Closes #1835's blocking prerequisite; the refusal itself follows in its own
+change.
+<!-- assembled-fragment: 1835-offer-accept-facet-split.md sha256=acb7c81a0c9b8287730a17108901780449a908dc6ab238e899c222c8def51688 -->
+
+## Buying a position: an out-of-date listing is now refused instead of sold
+
+A position put up for sale is advertised through a listing that states what the
+position permits — whether the borrower may repay it in instalments, whether
+they may raise money against it by listing a prepayment, which interest model
+the loan runs under, and whether interest falls due periodically. Those four
+things decide what the borrower can do to whoever buys the position, and how
+that buyer is paid, so a buyer chooses on them.
+
+Listings created from a recent change onwards copy those terms off the live
+position, so they describe it accurately. Listings created **before** that
+change carried only the interest model, which had been copied for some time
+already; the other three took their blank defaults, so such a listing says the
+borrower may do none of those things while the position itself may permit all of
+them. (A listing older still, from before the interest model was copied either,
+can be wrong about all four — which is why the check compares all four rather
+than the three that the most recent gap left behind.) Nothing caught this, and the reason is worth stating plainly.
+When a buyer commits, the platform checks that what the buyer signed matches
+what the listing said — and on an out-of-date listing those two agree
+perfectly. The buyer read the listing, signed exactly what it advertised, and
+every application shows the same thing. The mismatch is not between the buyer
+and the listing; it is between the listing and the position, and nothing was
+comparing those two.
+
+That comparison now happens at the moment of purchase. If a listing's terms
+disagree with the position it sells, the purchase is refused before any of the
+buyer's money moves, and the refusal says what it actually is: the listing is
+out of date and the seller needs to relist. That wording matters — the buyer did
+nothing wrong, so telling them their terms don't match would send them to sign
+the same wrong listing again. Relisting produces a correct listing, because
+listings have described their positions accurately since the earlier change.
+
+One thing about that refusal took most of the work to get right: it is only
+ever the answer when nothing else is. "The listing is out of date, ask the
+seller to relist" is useful advice, but only where relisting is actually
+possible — and often it isn't. A position that has already been repaid,
+defaulted or liquidated cannot be relisted at all. Neither can one that has
+passed its due date, or one whose seller has since been placed under
+sanctions, or one holding an asset the platform has paused — and while the
+platform as a whole is paused, nothing can be listed or bought at all. In each
+of those cases the platform has a reason that the person reading it can act on
+(even if only by waiting), and answering "relist" instead would have buried it
+behind advice that cannot be followed. So the out-of-date refusal now speaks
+last among the reasons the platform checks before it starts moving money, and
+the buyer sees the reason that is worth seeing. (A purchase can still fail after
+that point for the ordinary reasons any transaction can — a transfer that does
+not go through, a position that no longer clears its safety margin — but those
+are failures rather than reasons the listing itself was refused.) The preview shown on the card and the refusal from the transaction
+itself agree on which one that is. That agreement is a property of the platform,
+not yet of any screen: no app currently reads the preview's verdict, so a card
+can still offer a purchase that the transaction then refuses. Wiring the verdict
+into the card is tracked separately (#1645); what shipped here is the preview
+being correct and consistent for whoever reads it next.
+
+There is one deliberate exception, and it follows the same reasoning rather than
+breaking it. If the person trying to buy is the **borrower of the very loan
+being sold**, they are told the listing is out of date first, even though they
+also could not buy it for that separate reason. That is because relisting does
+genuinely help here — the seller can put up a correct listing, and everyone
+except that one person can buy it. Everywhere else the refusal is ordered last
+precisely because relisting would not help; here it would, so it is worth
+saying. Someone who is simply trying to buy back **their own listing** is told
+that directly, since no relisting changes it.
+
+Sellers and buyers on current listings notice nothing: an accurate listing
+satisfies the check by construction, and a normal purchase is unaffected.
+
+This closes a gap that had been recorded but left open, because the change
+needed room the accept path did not have until the facet carrying it was split
+in the preceding release. As shipped the check costs 448 bytes, and the facet it
+lives in now stands 3,057 bytes below the size limit. Before the split there
+were 164 bytes free — not enough for even the smaller prototype this grew from,
+and nothing at all for whatever came next.
+<!-- assembled-fragment: 1835-stale-sale-listing-refusal.md sha256=86fe3b957a86ec592a4a332826ae344dbb24a9cb19f448f32a21e785a6cf085e -->
