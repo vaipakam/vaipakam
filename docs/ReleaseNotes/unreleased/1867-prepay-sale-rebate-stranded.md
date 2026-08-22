@@ -17,8 +17,13 @@ refund was calculated for — the original borrower, who paid the fee. Sale
 proceeds still follow whoever holds the position; a refund follows whoever paid.
 Keeping those two apart is what makes the amount and the recipient agree, and it
 holds even when the borrower is someone the platform is required to screen: the
-money is their own, so it reaches their own vault, and the sale is never refused
-over it. That keeps the promise the route is
+money is their own, so it reaches them either way.
+
+The sale is never refused over this. That cuts both ways and the second half is
+easy to miss: a refund that cannot be delivered — because the borrower's vault
+is waiting on a required upgrade, or does not exist yet — is handed to them
+directly instead of stopping the sale. A completed sale should not depend on
+anything about a small refund attached to it. That keeps the promise the route is
 built on — everything settled at once, nothing left to collect — rather than
 carving an exception into the collection path to accommodate a state that should
 not exist.

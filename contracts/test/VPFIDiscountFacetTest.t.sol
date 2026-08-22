@@ -1175,6 +1175,77 @@ contract VPFIDiscountFacetTest is SetupTest {
         );
     }
 
+    /// @dev #1867 (Codex #1906 r3) — the invariant this whole PR rests on is
+    ///      that the refund must never REFUSE the close, and a delivery that
+    ///      reverts breaks it just as surely as the screen that used to. A
+    ///      pending mandatory vault upgrade is the concrete case: vault
+    ///      resolution reverts `VaultUpgradeRequired` for a borrower whose
+    ///      vault sits below the floor, and the sale had nothing to do with
+    ///      that.
+    ///
+    ///      The RL-1 delivery shape absorbs it — vault when the vault can take
+    ///      it, wallet when it cannot, close either way. The same fallback
+    ///      covers the other two revert paths the primitive documents (a
+    ///      broadcast failure, and a vault that does not exist yet).
+    function testPrepaySaleFallsBackToWalletWhenTheVaultIsGated() public {
+        uint256 principal = 10_000 ether;
+
+        vpfiToken.transfer(borrower, 5_000 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToVault(500 ether);
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days);
+
+        uint256 offerId = _createLenderErc20Offer(principal);
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
+        vm.prank(borrower);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+
+        uint256 held = 20 ether;
+        TestMutatorFacet(address(diamond)).setBorrowerLifVpfiHeldRaw(loanId, held);
+        vm.warp(block.timestamp + 30 days);
+
+        address executor = address(0xE9EC);
+        vm.prank(owner);
+        PrepayListingFacet(address(diamond)).setCollateralListingExecutor(executor);
+
+        address borrowerVault = _buyerVault(borrower);
+        uint256 vaultBefore = vpfiToken.balanceOf(borrowerVault);
+        uint256 walletBefore = vpfiToken.balanceOf(borrower);
+
+        // Put the borrower's vault below the mandatory floor.
+        TestMutatorFacet(address(diamond)).setMandatoryVaultVersionRaw(
+            type(uint256).max
+        );
+
+        vm.prank(executor);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId);
+
+        (uint256 rebateAfter, uint256 heldAfter) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+        assertEq(heldAfter, 0, "custody drained at settlement");
+        assertEq(rebateAfter, 0, "#1867 - delivered, not stranded on a Settled loan");
+
+        uint256 expectedRebate = (held * 1000) / 10_000;
+        uint256 treasuryShare = held - expectedRebate;
+        uint256 expectedMatcherCut =
+            (treasuryShare * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
+
+        assertEq(
+            vpfiToken.balanceOf(borrowerVault) - vaultBefore,
+            0,
+            "the gated vault was left untouched"
+        );
+        assertEq(
+            vpfiToken.balanceOf(borrower) - walletBefore,
+            expectedRebate + expectedMatcherCut,
+            "the refund fell back to the wallet, alongside the matcher cut"
+        );
+    }
+
     /// @dev #1867 — the SAME close with the borrower FLAGGED. Two properties,
     ///      and the second is the one a bare screen gets wrong.
     ///
