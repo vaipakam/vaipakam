@@ -1,10 +1,11 @@
 ## Buying a position: an out-of-date listing is now refused instead of sold
 
 A position put up for sale is advertised through a listing that states what the
-position permits — in particular whether the borrower may repay it in
-instalments, whether they may raise money against it by listing a prepayment,
-and whether interest falls due periodically. Those three things decide what the
-borrower can do to whoever buys the position, so a buyer chooses on them.
+position permits — whether the borrower may repay it in instalments, whether
+they may raise money against it by listing a prepayment, which interest model
+the loan runs under, and whether interest falls due periodically. Those four
+things decide what the borrower can do to whoever buys the position, and how
+that buyer is paid, so a buyer chooses on them.
 
 Listings created from a recent change onwards copy those terms off the live
 position, so they describe it accurately. Listings created **before** that

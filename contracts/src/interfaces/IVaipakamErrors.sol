@@ -1058,12 +1058,24 @@ interface IVaipakamErrors {
     /// @notice #1835 — the sale listing's behavioural terms disagree with the
     ///         live loan it sells, so the listing describes a position that is
     ///         not the one on offer.
-    /// @dev    Raised at ACCEPT, by `OfferAcceptFacet._bindTermsToOffer`'s sale
+    /// @dev    Raised at ACCEPT, by `OfferAcceptFacet._acceptOffer`'s sale
     ///         branch, comparing the VEHICLE against the LOAN. That pairing is
     ///         the point: the accept-time signature checks compare the buyer's
     ///         terms against the vehicle, so a vehicle that disagrees with its
     ///         loan passes all of them — the buyer signed honestly and it is the
     ///         listing that is wrong.
+    ///
+    ///         ORDERED AFTER the expiry gate, the non-Active linked-loan gate
+    ///         and the maturity gate, and NOT in `_bindTermsToOffer` where the
+    ///         other term checks live — the binding runs before all three, so a
+    ///         comparison there answers "stale listing, relist" for offers that
+    ///         are expired, whose position is terminal, or which have crossed
+    ///         maturity in the grace window. Each of those is more structural
+    ///         AND actionable where this one is not (a matured or terminal loan
+    ///         cannot be relisted at all), and each disagrees with
+    ///         `previewAccept`, which reports them first. Moving this back into
+    ///         the binding reintroduces all three misclassifications — they
+    ///         arrived as three separate review findings on #1891.
     ///
     ///         Deliberately parameterless, and deliberately NOT
     ///         `OfferTermsMismatch`: the buyer cannot cure this by re-signing,
