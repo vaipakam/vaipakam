@@ -914,10 +914,12 @@ library LibInteractionRewards {
     ///      brick a correctly-remitted claim or cannibalise the mirror's own
     ///      local recycled balance.
     ///
-    ///      **B2-d4 attempted to lift this halt and the attempt was
-    ///      WITHDRAWN — the halt STAYS. Do not remove it without the two
-    ///      prerequisites below** (design record §2g; follow-up card filed off
-    ///      #1433 r2). B2-d5 discharged the ONE precondition named above (the
+    ///      **B2-d4's FIRST attempt to lift this halt was WITHDRAWN because
+    ///      the two prerequisites below were unmet; #1434 met them — the
+    ///      zeroed-day ladder in P2-w3, the delivered-fresh bound in P1-b —
+    ///      and the halt is now GONE** (design record §2g; follow-up card filed
+    ///      off #1433 r2). The history is retained because it records what
+    ///      any future change here must still satisfy. B2-d5 discharged the ONE precondition named above (the
     ///      arriving recycled share now credits the mirror's bucket as
     ///      relocated custody), and the recycled leg is separately safe because
     ///      the ShareOfPool walk budgets it against the live bucket and DEFERS
@@ -969,9 +971,12 @@ library LibInteractionRewards {
     ///                      advancing. Since #1434 P1-b this means ONE thing —
     ///                      no funding stamp yet. The blanket mirror arm is
     ///                      gone; a mirror that is merely under-funded now
-    ///                      defers through the delivered bound instead, which
-    ///                      is a per-day, self-clearing wait rather than a
-    ///                      chain-wide stop.
+    ///                      defers through the delivered bound instead. That
+    ///                      still holds up this day and every later one for
+    ///                      every user on the chain (days settle oldest-first)
+    ///                      — the difference from the blanket arm is that it
+    ///                      CLEARS when the funding lands, not that it blocks
+    ///                      less.
     function _dayPoolHalves(
         LibVaipakam.Storage storage s,
         LibVaipakam.RewardSide side,
@@ -1330,7 +1335,13 @@ library LibInteractionRewards {
     ///         {advanceCumLenderThrough} exactly — stamp halves → per-side
     ///         daily (floored) → summed — so the commitment's `rawPay`
     ///         (`perDayNumeraire18 × Δ_d / 1e18`) equals what the claim path
-    ///         will pay if and when the halt is lifted. Keep the two in lockstep:
+    ///         is ENTITLED to for that day — the halt WAS lifted (#1434 P1-b),
+    ///         so this is a statement about the live path, not a future one.
+    ///         Entitlement, not payout: this deliberately ignores the
+    ///         delivered bound, so on an underfunded mirror day the report
+    ///         states a non-zero figure while {processUserSideDay} applies
+    ///         that bound and defers without paying. The report is what the
+    ///         chain OWES, which is its whole purpose. Keep the two in lockstep:
     ///         any change to {_dayPoolHalves}'s halves or to
     ///         {advanceCumLenderThrough}'s per-day math must land here too.
     ///         `priceable == false` ⇒ the day is unarmed or this chain's stamp

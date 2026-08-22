@@ -131,10 +131,12 @@ So:
   is kept, unchanged) and applies without a clock — healed the same way.
   Nothing is rejected, so nothing wedges (12b's "reject → halt forever"
   horn never opens).
-- The **halt-lift ordering** makes this safe globally: `_dayPoolHalves`
-  halts every armed mirror day today (`LibInteractionRewards.sol:966`), and
-  P1-b lifts it only after P2 ships, so no armed day is priced or retired
-  anywhere before the clock machinery exists. There is no pre-V3 armed-day
+- The **halt-lift ordering** made this safe globally: `_dayPoolHalves` halted
+  every armed mirror day while it stood, and P1-b was to lift it only after P2
+  shipped, so no armed day could be priced or retired anywhere before the clock
+  machinery existed. That ordering HELD — P2-w3's ladder landed first and P1-b
+  then lifted the halt — so this is now a record of why the sequence mattered,
+  not a pending constraint. There is no pre-V3 armed-day
   damage to migrate — the gate only has to hold going forward.
 
 ### 1.2 R5 — the versioned lapse schedule (copy the tier-table pattern)
@@ -698,9 +700,11 @@ This is the #1574 r11 four-way check: the watcher's `bucket-composition` and
 backing views (`getRecycleBackingSnapshot`,
 `InteractionRewardsLensFacet.sol:775-788`) publish the reservation so a
 fresh claim spending recovery-reserved tokens alarms. **This slice, plus
-§2.2's claim-exclusion, is the piece that must land before the halt lifts**
-(§3.6a ⛔ SEQUENCING); it rides the remit ingress and needs no return
-channel.
+§2.2's claim-exclusion, was the piece that had to land before the halt
+lifted** (§3.6a ⛔ SEQUENCING); it rides the remit ingress and needs no
+return channel. Both landed — the reservation is written on the remit path
+and published by the backing view above — and #1434 P1-b then lifted the
+halt, so the sequencing this clause guards is discharged.
 
 ### 4.2 The return, settlement, and the recovery position
 

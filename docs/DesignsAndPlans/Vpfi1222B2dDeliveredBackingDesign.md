@@ -29,7 +29,7 @@ reviewable PR. The pieces, and why they couple:
 | **P2 Mirror commitment-on-arrival + two-sided netting** *(this row said "consume-on-arrival / mirror debits its own bucket" while the slice was being planned; §2e.1 superseded that before implementation — recorded here because a planning table that outlives its own correction reads as shipped behaviour)* | mirror RESERVES the locally-funded slice into its own `outstandingCommitRecycled`; the bucket drains later, pro-rata, at claim/remit. Base books `chainConsumedRecycled` / `chainOutstandingRecycledCommit`; `_stampOne` splits local vs Base top-up | must be gated by delivered backing (P4) or it cannibalises the mirror bucket |
 | **P3 Σcommitments remittance clamp** | `chainRewardBudgetForDay = min(uncappedSlice, Σcommitments − remitted − pending)`, 3 sites | needs P1's reported total + P4's ledgers |
 | **P4 Delivered-backing ledger** | `pendingRemitted` reservation at dispatch → authenticated ack → `loanSideRewardRemitted`; bounded reconciliation | **greenfield** — no ack channel exists in any direction today |
-| **P5 Mirror armed-day pricing ON** — **ATTEMPTED, WITHDRAWN (#1434); the halt STAYS** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | P2+P4 back the RECYCLED halves (done), but the halt ALSO guards the unbounded FRESH side and deliberately-zeroed days — see §2g for why, and **§2h for the zeroed-day scope** (the fresh side's receipt half shipped as #1556) |
+| **P5 Mirror armed-day pricing ON** — **DELIVERED by #1434 P1-b (`83483149e`); first attempt withdrawn, see §2g** | remove the `_dayPoolHalves` mirror halt so mirrors price their own delivered-backed stamp | Historically: P2+P4 backed the RECYCLED halves (done), but the halt ALSO guarded the then-unbounded FRESH side and deliberately-zeroed days — both since addressed, which is what allowed its removal — see §2g for why, and **§2h for the zeroed-day scope** (the fresh side's receipt half shipped as #1556) |
 | **P6 Third credit class (#1331)** | Ā-**excluded** custody-credit for remitted-recycled forfeit/expiry; provenance tag at remit arrival; `VpfiRecycled` discriminator | needs P4's provenance signal |
 | **P7 Keeper + indexer** | keeper drives the mirror→Base report send; out-of-window reconciled-day rediscovery via the `CommitmentRemitEligibilityReconciled` hook; indexer handlers + D1 | needs P1/P4 to exist first |
 
@@ -81,14 +81,15 @@ that legitimately lights it up):
   `LibVpfiRecycle.consume(recycleConsume)`. §2e.1 superseded it before
   implementation: consuming at arrival would debit the same tokens twice,
   because claims already debit as they pay.)*
-- **B2-d4 — Mirror armed-day pricing ON. ⚠️ ATTEMPTED AND WITHDRAWN — the halt
-  STAYS; see §2g and #1434.** P5. The intent was to remove the
+- **B2-d4 — Mirror armed-day pricing ON. ✅ DELIVERED by #1434 P1-b
+  (`83483149e`); #1434 is closed.** P5. The rest of this entry is HISTORY: it
+  records why the FIRST attempt was withdrawn. The intent was to remove the
   `_dayPoolHalves` mirror halt and keep only the genuine `!stamped` wait.
-  Review (#1433 r2) showed that is not yet safe: the halt also guards the
-  FRESH side, which has no delivered-funding bound on a mirror, and stops
+  Review (#1433 r2) found that was not yet safe: the halt also guarded the
+  FRESH side, which had no delivered-funding bound on a mirror, and stopped
   deliberately-zeroed (`remitIneligible`) days from advancing the cursor and
-  retiring their entries for zero. **Both prerequisites are tracked on #1434
-  and both must land before this slice can be retried.**
+  retiring their entries for zero. **Both prerequisites were tracked on #1434
+  and both landed before the slice was retried and delivered.**
   - The ordering gate below is now HISTORICAL — d5 shipped first (#1432) and
     discharged the precondition it names. It is kept because it records why
     the two were sequenced that way. **Original gate (Codex #1430 r3): d4 MUST
@@ -112,8 +113,10 @@ that legitimately lights it up):
   remit-arrival credit is what gives a mirror's bucket real backing for the
   Base-funded recycled share, so that mirror claims cannot inflate
   `paidOutRecycled` → the derived `creditedCumulative` → phantom
-  availability. Until d5 lands, mirror armed-day claims stay HALTED, which
-  is what keeps that hazard unreachable today.
+  availability. Until d5 landed, mirror armed-day claims stayed HALTED, which
+  is what kept that hazard unreachable at the time. d5 shipped (#1432) and the
+  halt itself was lifted by #1434 P1-b, so the backing this entry describes is
+  now what holds the hazard closed.
 - **Keeper/indexer (P7)** rides d1 (send pass) + a small follow-up for the
   out-of-window reconcile rediscovery (indexer event handler + D1 table + keeper
   read), landing alongside d2.
@@ -652,12 +655,82 @@ following either literally now would reintroduce an over-statement.
    **Future wire evolutions take a NEW tag, never another rung on the
    offset ladder.**
 
-## 2g. d4 pins — the halt STAYS; two prerequisites remain (#1434)
+## 2g. d4 pins — why the FIRST attempt was withdrawn (halt since lifted, #1434 P1-b)
 
 §1 scopes d4 as "remove the `_dayPoolHalves` halt; keep the genuine `!stamped`
 wait". **That scope turned out to be incomplete, and d4 was WITHDRAWN** (owner
 decision after Codex #1433 r2: defer, keep the halt fail-closed, file a
-follow-up). The halt remains in the tree. This section records why, and the two
+follow-up). **#1434 later discharged both prerequisites and removed the halt** — P2-w3 met
+the zeroed-day one, P1-b (`83483149e`) met the delivered-fresh one and then
+lifted the halt. `_dayPoolHalves` itself now halts only on an unstamped
+day; a stamped day can still WAIT, via the separate `_p2DayDeltas`
+zeroed-and-open state that defers a compensable day rather than retiring it for
+zero. Both are per-day waits, but they end on different things. The unstamped one
+ends on the stamp arriving. That is NOT the same as ending on funding, and the
+difference decides who can clear it: where the canonical chain already finalized
+the day and only the message failed to land, the stamp can be rebuilt from
+canonical state by ANY caller paying the transport fee — no reward budget
+changes hands. That makes the wait RECOVERABLE where the day was finalized upstream — it does
+not make it bounded. Nobody is obliged to resend; the transport can be paused,
+and deliveries can fail repeatedly. A recoverable wait with no one to recover it
+lasts exactly as long as an unrecoverable one, and where the day was never
+finalized upstream there is nothing to resend at all. The zeroed-and-open one has four exits. Its quote may complete at
+genuinely zero on both sides, in which case the day is resolved-zero and crosses
+immediately — no compensation, no deadline, nothing owed. Otherwise: its
+compensation becoming both funded AND settled (a fully funded compensation still defers while
+its quote is undispatched or its credit provisional), or one of the two permissionless lapse
+terminals — which do not share a clock and do NOT settle alike. The
+uncompensated terminal runs on the day's FROZEN expiry, a fixed offset from
+finalization. The short-compensated one cannot use that clock at all: it arms on the first
+CONFIRMED compensation and waits on a rolling window that each qualifying top-up
+extends, capped at three windows from that arming. Confirmed, not merely
+received — a credit that overtakes its day record arrives provisional and stamps
+no clock at all; the clock starts when the record lands and confirms it. Reading
+"first receipt" for "first confirmation" moves the deadline earlier by the whole
+receipt-to-confirmation gap and sends an operator to a call that reverts. One
+exception, and it moves the deadline the other way: a compensation confirmed
+before the w4 clocks existed has no stamp to inherit, and its clock starts when
+someone makes the permissionless arming call — not when the compensation was
+confirmed, which may be long past. For those legacy days the deadline is
+measured from the arming, so an operator who dates it from confirmation will
+reach the terminal too early. So
+passing the frozen expiry does not make the short terminal callable, and an
+operator reading one deadline for both will reach for a terminal that reverts. `lapseZeroedDay` crosses an uncompensated day at zero: nothing was
+backed, nothing pays. `lapseShortCompensatedDay` takes a confirmed-but-
+underfunded day and pays the BACKED portion before the cursor advances, so the
+entries retire against what actually arrived rather than against nothing. The
+scale is not simply `pool / quoted`: the covering-entry count is shaved off the
+pool first, so the factor is `(pool − entryCount) / quoted` and a pool at or
+below that count yields zero. A short lapse therefore pays the backed portion
+where there is one and can still cross at zero when the shortfall is deep enough
+— which is why "the short lapse pays" is a description of its intent, not a
+guarantee about any particular day.
+
+Two things follow that matter operationally. Neither wait is the exclusive
+property of whoever holds the funding, so an operator is not the only party who
+can clear either — but WHICH third-party exit applies depends on the day's
+state, and naming the wrong one sends an operator to a call that reverts. The
+unstamped wait exits by the permissionless resend above. The zeroed-and-open
+wait exits by whichever lapse terminal it is eligible for — and a PROVISIONAL
+credit is eligible for neither, since the full lapse rejects any compensated day
+and the short lapse rejects an unconfirmed one. That state's third-party exit is
+the resend as well: an accepted delivery of the day's record settles the
+provisional credit — but the two settlements do not leave the day in the same
+place. A CONFIRMED credit opens the ordinary route or the short terminal ONCE the
+day's figure has also been sent — and for a credit that overtook its record,
+it will not have been, because the marker the figure is sent against was not
+yet there to send it against. So confirmation alone still leaves ordinary
+pricing deferring and the short terminal reverting for a missing figure; the
+local send is a second step, not a consequence of the first. A
+DEMOTED one removes the compensation and its clocks together, leaving an
+uncompensated day: the short terminal then rejects it for want of a
+compensation, ordinary pricing keeps deferring, and what remains is a
+replacement compensation after the recovery, or the full lapse if that day is
+eligible for it. Naming the confirm outcome for both is how an operator ends up
+at a second reverting call. And ending it is not
+uniformly a write-off: on the short-funded path the lapse is how the backed
+value gets paid at all. This
+section is retained as the record of why, and of the two
 approaches tried and dropped along the way, so neither is repeated.
 
 **What d5 DID discharge.** The halt's originally-documented cause was that a
@@ -671,9 +744,16 @@ reading only the consume site makes it look absent, and why my first cut
 invented a hazard that did not exist.
 
 **What d5 did NOT discharge — the two prerequisites (Codex #1433 r2, both P1).**
+**BOTH WERE LATER DISCHARGED, and not by the same slice** — prerequisite 2 by
+P2-w3's zeroed-day pricing ladder, prerequisite 1 by P1-b's delivered-fresh
+bound, after which P1-b removed the halt. The analysis below is the state at the
+time of the withdrawal and its reasoning is retained because it constrains any
+future change here. Each prerequisite carries a note saying what met it.
 
-1. **The FRESH side has no delivered-funding bound on a mirror.** Fresh is
-   entirely Base-funded and arrives with the remit, but the walk bounds it only
+1. **The FRESH side had no delivered-funding bound on a mirror.** *(Met by
+   `PoolBudget.deliveredFresh`, carried as its own term so its shortfall DEFERS
+   — see the fix-shape note below, which anticipated exactly this.)* Fresh is
+   entirely Base-funded and arrives with the remit, but the walk bounded it only
    by `poolRemaining()` — on a mirror that is the GLOBAL 69M cap less LOCAL
    payouts, not what has been received. Lifting the halt would let a mirror pay
    fresh before its remit lands, out of VPFI the Diamond holds for other
@@ -790,7 +870,10 @@ invented a hazard that did not exist.
      operator-driven path into pricing and needs the same evidence discipline
      as the rest of d2's manual vehicle.
 
-   Until BOTH exist, a zeroed day must stay unpriced rather than be walked.
+   Until BOTH existed, a zeroed day had to stay unpriced rather than be
+   walked. *(Both now exist: the zeroed-day pricing ladder supplies the
+   mirror-observable signal and the per-side figures, so a compensated day is
+   priceable without rewriting the ordinary funding stamp.)*
 
 **The withdrawn approach, and why it was worse than the problem** (Codex #1433
 r1 — 4×P1 + 1×P2 on one mechanism). I gated pricing on a per-day
@@ -821,9 +904,11 @@ r1 — 4×P1 + 1×P2 on one mechanism). I gated pricing on a per-day
   every declared day fully backed.
 
 **Pin: no arrival-marker gate.** An arrival EVENT is the wrong proxy for a
-backing VALUE. When the halt does eventually lift (#1434), the fresh-side
-prerequisite must be met with a delivered-funding BUDGET in `PoolBudget.fresh`,
-matching the recycled side's existing shape — not with a per-day flag.
+backing VALUE. When the halt lifted (#1434 P1-b), the fresh-side prerequisite
+was met with a delivered-funding BUDGET as this pin required — carried as
+`PoolBudget.deliveredFresh` rather than by overloading `PoolBudget.fresh`,
+because the fresh path truncates terminally and a growing budget must DEFER.
+Not a per-day flag, which is what this pin exists to rule out.
 
 **Pin: a backing refusal must be a pool-budget DEFERRAL, never a
 `_dayPoolHalves` halt.** Both stop at the offending day — `processUserSideDay`
@@ -2235,9 +2320,12 @@ running sums land as new append-only tail fields.
 
 - **Fail-closed until lit:** every slice before d1 keeps `.complete` unset; d1
   is the sole `.complete` writer; and the mirror pricing halt is removed by
-  exactly one slice — **which is still outstanding.** d4 attempted it and was
-  withdrawn, so the halt REMAINS in the tree and its two prerequisites are
-  tracked on #1434 (§2g). None of this may be reordered.
+  exactly one slice — **which #1434 P1-b (`83483149e`) delivered.** d4's first
+  attempt was withdrawn with the halt left fail-closed; P2-w3 discharged the
+  zeroed-day prerequisite and P1-b the delivered-fresh one (§2g), after which
+  P1-b removed the halt. `_dayPoolHalves` itself now halts only
+  on an unstamped day; a stamped `remitIneligible` day still defers through
+  `_p2DayDeltas`'s zeroed-and-open state. None of this may be reordered.
 - **Per-chain commitment bound** (becomes real in d3): stated in governor
   §7 #6 and **not reproduced here** — a copy is what let this line carry the
   bare `chainConsumedRecycled[c] ≤ chainReportedRecycled[c]` long after B3's
@@ -2299,9 +2387,11 @@ bound (subtraction-first — a test written from the bare `consumed ≤ reported
 rejects healthy post-B3 states),
 one-bucket-one-ledger, netting sum identity, idempotent
 commitment-on-arrival (a RESERVATION, not a bucket debit — §2e.1).
-**d4 (withdrawn): the halt is PINNED instead** — a mirror armed day prices
-nothing, with a canonical control proving the mirror flags are what stop it;
-when #1434 revives the slice, add "mirror prices its own stamp; `!stamped` still
-waits", plus a delivered-FRESH bound and a zeroed-day repricing case. d5: Ā-excluded credit
+**d4 (first attempt withdrawn; DELIVERED by #1434 P1-b)** — while the halt was
+pinned, a mirror armed day priced nothing, with a canonical control proving the
+mirror flags were what stopped it. P1-b then delivered the slice: a mirror
+prices its own stamp, `!stamped` still waits, and the coverage this line
+anticipated landed across two slices: the delivered-FRESH bound with P1-b, the
+zeroed-day repricing case with P2-w3. d5: Ā-excluded credit
 advances cumulative but not the day-bucket; 3-way forfeit/expiry classify;
 no-recycle→budget→expiry→bucket Ā inflation (the geometric-inflation guard).

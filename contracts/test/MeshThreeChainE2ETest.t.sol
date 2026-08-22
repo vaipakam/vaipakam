@@ -1137,23 +1137,27 @@ contract MeshThreeChainE2ETest is Test {
     }
 
     /**
-     * @notice The #1434 coupling, which only a three-chain e2e can show:
-     *         with arming ON but mirror settlement still blocked, Base's
-     *         per-chain reservation for a mirror GROWS with every armed day
-     *         and its modelled availability FALLS — while that mirror's own
-     *         bucket is untouched and its settlement totals stay at zero.
+     * @notice The #1434 coupling, which only a three-chain e2e could show:
+     *         with arming ON while mirror settlement was still blocked,
+     *         Base's per-chain reservation for a mirror GREW with every armed
+     *         day and its modelled availability FELL — while that mirror's own
+     *         bucket stayed untouched and its settlement totals stayed at
+     *         zero. P1-b lifted that block; the test pins the coupling this
+     *         fixture still reproduces by holding funding back.
      *
      * @dev    **The operational consequence, which is the point.** Arming
      *         (`setGovernorCommitArmedFromDay`, the one-shot irreversible D*
      *         cutover) is the single switch that starts creating mirror
-     *         reservations. While mirror armed-day pricing stays halted
-     *         (#1434), those reservations accumulate with nothing retiring
-     *         them, so Base progressively under-uses mirror-local funding and
-     *         over-funds from its own bucket — the exact waste B3 removed
+     *         reservations. While mirror armed-day pricing STOOD halted
+     *         (before #1434 P1-b lifted it — see below), those reservations
+     *         accumulated with nothing retiring them, so Base progressively
+     *         under-used mirror-local funding and over-funded from its own
+     *         bucket — the exact waste B3 removed
      *         from Base's own books, re-entering through the mirror end. It
-     *         is recoverable (the totals are cumulative, so settlements after
-     *         the halt lifts close the backlog) but D* cannot be walked back,
-     *         so **#1434 lands before D* is chosen**.
+     *         was recoverable (the totals are cumulative, so settlements
+     *         after the halt lifted close the backlog) but D* cannot be
+     *         walked back, so **#1434 had to land before D* was chosen** —
+     *         it did, and the card is closed, so this gate is DISCHARGED.
      *
      *         **What this test does and does NOT establish (Codex #1439 r1,
      *         P1 — a correct finding, recorded rather than papered over).**
@@ -1171,9 +1175,9 @@ contract MeshThreeChainE2ETest is Test {
      *         and is established elsewhere.** This note used to say it was
      *         not, because the armed-day mirror claim path had never been
      *         reachable and #1434's own prerequisites were exactly what would
-     *         make it pay. P1-b shipped them (zeroed-day repricing landed in
-     *         w3; the delivered-fresh bound and its deferral semantics in
-     *         P1-b), so causation is now demonstrable by holding the fixture
+     *         make it pay. Both have since landed — zeroed-day repricing in
+     *         P2-w3, the delivered-fresh bound and its deferral semantics in
+     *         P1-b — so causation is now demonstrable by holding the fixture
      *         fixed and varying ONLY the delivered funding.
      *         `ShareOfPoolClaimWalkTest.test_P1b_MirrorArmedDayDefersUntilDelivered`
      *         does exactly that across three phases — unfunded pays zero with

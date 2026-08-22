@@ -294,9 +294,27 @@ contract RewardCommitmentFacet is DiamondAccessControl, IVaipakamErrors {
      *      manual-budget path, designed WITH the delivered-backing ledger —
      *      a manual send that bypassed the pendingRemitted reservation + ack
      *      would be exactly the unbacked-remit class that ledger exists to
-     *      prevent. Until d2 lands, a zeroed chain-day's compensation stays
-     *      the pre-mesh out-of-band governance posture
-     *      ({RewardAggregatorFacet.forceFinalizeDay}'s documented recovery).
+     *      prevent. That vehicle HAS landed —
+     *      {RewardCompensationDispatchFacet.remitManualBudget} — so a zeroed
+     *      chain-day's compensation no longer falls back to the pre-mesh
+     *      out-of-band governance posture
+     *      ({RewardAggregatorFacet.forceFinalizeDay}'s documented recovery)
+     *      for any day that HAS a lapse clock. That posture is NOT merely
+     *      historical: a pre-w1 zeroed day with no clock cannot use the
+     *      evidenced vehicle at all (`_remitManualBudget` reverts
+     *      {CompensationDayHasNoClock}, `broadcastGlobalTo` rejects it, and
+     *      `broadcastGlobal` falls back to the clockless wire permanently),
+     *      and {stampLegacyCompensation} only migrates a receipt already
+     *      delivered — so it cannot fund a day that never was. For that
+     *      legacy state the out-of-band posture remains the supported
+     *      route.
+     *
+     *      ORDERING IS LOAD-BEARING: send the manual compensation BEFORE
+     *      clearing `remitIneligible`. The flag is the vehicle's on-chain
+     *      evidence anchor — `_remitManualBudget` reverts
+     *      `RemitDayNotManualEligible` once it is unset — so clearing first
+     *      records the reconciliation and leaves nothing fundable for that
+     *      day.
      *      With the B2-d1 report in place, an armed day whose chains all
      *      deliver their interest reports never reaches this path — only a
      *      chain zeroed out of the denominator does.

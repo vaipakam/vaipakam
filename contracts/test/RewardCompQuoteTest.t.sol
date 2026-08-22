@@ -28,8 +28,10 @@ import {LibInteractionRewards} from "../src/libraries/LibInteractionRewards.sol"
 ///         constraint-17 `G_s == 0` day, which prices under the purely-local
 ///         denominator (the §8 slice-3 proof). The fold's funding gate is
 ///         keyed on the AMOUNT present (pool ≥ side quote), never a message
-///         arrival, and the blanket armed-mirror halt is untouched for
-///         unflagged days.
+///         arrival. The blanket armed-mirror halt this note was written
+///         against was lifted for unflagged days by #1434 P1-b; the ladder
+///         described here is unaffected either way, since it governs only
+///         deliberately-zeroed days.
 ///
 ///         BASE side — the kind-11 ingress gates (messenger-only, canonical,
 ///         finalized, ineligible-or-refresh). The funded-day interaction and

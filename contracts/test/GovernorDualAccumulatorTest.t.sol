@@ -1920,16 +1920,24 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertEq(armed, 7, "arming day travels in-band");
     }
 
-    /// Codex #1417 r7 — a MIRROR must fail-closed on armed-day pricing until
-    /// B2-d arms mirror consumption. If it priced the V2 stamp's recycled
+    /// Codex #1417 r7 — a MIRROR had to fail-closed on armed-day pricing
+    /// until B2-d armed mirror consumption; B2-d has since shipped and the
+    /// halt was lifted by #1434 P1-b, so what protects the bucket now is its
+    /// own budget term rather than a refusal to price. If it priced the V2 stamp's recycled
     /// equivalents and then debited the LOCAL bucket at claim (canonical
     /// `consume` semantics), a remittance-funded reward would cannibalise
-    /// the mirror's own recycled balance — the exact mirror consumption the
-    /// re-slice defers. The armed day HALTS, so a mirror claim never touches
-    /// its bucket. (Base never arms a mirror until B2-d ships, so this is a
-    /// safety backstop; the test forces the armed state to prove the code
-    /// invariant.)
-    function testMirrorArmedDayHaltsAndNeverDebitsBucket() public {
+    /// the mirror's own recycled balance — the exact mirror consumption that
+    /// is now bounded rather than forbidden. Note WHICH bound does it: the
+    /// recycled leg is capped by `PoolBudget.recycled`, seeded from the live
+    /// `recycleBucket`, so the bucket cannot be overdrawn. P1-b's
+    /// `deliveredFresh` bounds the FRESH leg only — it is what releases this
+    /// test's deferral, not what protects the bucket, and on a day with little
+    /// fresh liability it protects nothing here at all. An UNFUNDED armed day defers, so a mirror claim
+    /// never touches its bucket. Before #1434 P1-b this held for a different
+    /// reason — the blanket halt meant armed mirror days never priced at all
+    /// — and the funded half below is what distinguishes the two; see its
+    /// note. (The test forces the armed state to prove the code invariant.)
+    function testMirrorArmedDayUnfundedDefersAndNeverDebitsBucket() public {
         vm.chainId(CHAIN_ARB);
         _rep().setBaseChainId(CHAIN_BASE);
         _rep().setIsCanonicalRewardChain(false);
