@@ -585,6 +585,684 @@ the current Governance Safe:
    against every 2-step contract. Wait 48h. Execute.
 5. Retire the old Timelock address from `<CHAIN>_TIMELOCK_ADDRESS`.
 
+## VPFI recycling — activation ceremony (M7)
+
+One-time, cross-chain, and **partly irreversible**. Read the gates before
+scheduling anything: the arming call cannot be undone, cannot be repeated, and
+cannot be postponed once the day it names arrives.
+
+Sourced from `docs/DesignsAndPlans/VpfiRecyclingCompletionPlan.md` §M7 and
+verified against the contracts. Where the two disagreed, the contracts won.
+
+**Order matters, and it is not the order the plan reads in.** Every keeper-side
+prerequisite comes BEFORE the arming call. Arming is a one-shot write that names
+a future day; if a role grant, a balance, or a lane limit turns out to be wrong
+afterwards, governance cannot move `D*` and the affected mirrors' claims stay
+halted until the setup is repaired. Nothing below the arm is recoverable by
+re-arming, so nothing that can fail belongs after it.
+
+### Gate A — backing separation (NOT yet discharged)
+
+Reward payouts must be bounded by funding **delivered for rewards**, not by the
+Diamond's un-earmarked VPFI **balance**. Two of that balance's other claimants
+are user collateral — a live swap-to-repay intent's `custodialCollateral`, and
+liquidation `fallbackSnapshot` custody — so a payout drawing on the balance can
+spend a borrower's collateral. This is a fund-safety gate, not an accounting one.
+
+- **#1460 is closed and fixed.** `RewardClaimFacet` reverts
+  `InteractionRewardBackingShort(payableFresh, backingRoom)` when a claim's fresh
+  components will not fit the un-earmarked balance. It **reverts rather than
+  truncating** on purpose: `backingRoom` rises when a remit lands, so truncating
+  would delete value that was about to become payable.
+- **The fund-safety half is #1566, and it is OPEN.** Do not arm until it closes
+  — and **not until the fix is DEPLOYED on every Diamond you are arming.** Issue
+  closure is not an on-chain safeguard: the arming setter checks authorization,
+  canonical role, one-shot state and the future day, and nothing about which
+  implementation is routed. A merged fix on an un-refreshed Diamond leaves the
+  vulnerable claim path live. Assert the deployment, per chain, the same way the
+  other code-slice gates in this section are asserted.
+
+> **#1498 is not the card to check.** It reads `closed / completed` and was the
+> original number for this work; #1555's `Closes #1498` fired when only the
+> de-duplication half landed, and the fund-safety half was re-filed as #1566.
+> The completion plan and `LibVpfiRecycle`'s natspec both name #1566 now. If you
+> arrive at #1498 from an older document, its green label is an artifact of that
+> mis-scoped close, not evidence.
+
+### Gate B — arming preconditions
+
+M1b live (absorption has a live feed) **AND** one of:
+
+- reward claims are Base-only / dark on every mirror, **or**
+- M3 (Phase B′) complete **AND** #1434 has made mirror settlement reachable.
+
+The dark-mirror branch does not require #1434. Only the M3 branch carries the
+settlement-reachability condition. Gate A constrains **both** branches.
+
+### Step 1 — enable the fee entitlement (chain-side, before the scan)
+
+**Prove two code slices are live on THIS Diamond first.** The setter does not
+enforce them and will enable happily without them: the loan-side reward cap
+(PR-5c) and the settlement sweep that honours the lender Full stamp (PR-6).
+Without the cap, a Full loan enters the uncapped reward path; without the sweep,
+a user can pay `C*` for a discount settlement then ignores. This bites on partial
+or stacked upgrades, where a Diamond can have M1b live and still be missing
+either. Read back the deploy assertions for both before scheduling anything.
+
+```
+ConfigFacet.setFeeEntitlementEnabled(true)      # ADMIN_ROLE
+```
+
+Post-handover this is a Timelock action: Safe schedules, wait the delay, execute.
+
+While it is off, plain canonical originations skip Full-tariff stamping, so any
+loan accepted between a clean unstamped-scan and enablement rejoins the unstamped
+class and invalidates the scan. Enabling first means every subsequent origination
+stamps itself and the scan result cannot be overtaken by new loans.
+
+### Step 2 — zero the unstamped reward-eligible canonical loans
+
+On armed days the legacy cap retires and the loan-side cap deliberately skips an
+**unstamped** loan, so any reward-eligible canonical loan still open and unstamped
+at `D*` earns **uncapped**. Enumerate open reward-eligible canonical loans with
+`openDays == 0`, resolve each, and read back **zero unresolved**.
+
+**There is no backfill surface.** Stamping runs only at origination —
+`chargeFullTariff` is `address(this)`-gated with `OfferAcceptFacet` its only
+caller — and no admin or migration path stamps an existing loan. The supported
+resolutions are the enable-first ordering above (which prevents new members of
+the class) and **waiting for close**, or a voluntary close and re-open, for
+existing ones. A true backfill needs a migration card that does not yet exist.
+
+On a pre-live mainnet genesis, enabling and arming together makes this set empty
+by construction. The readback is still the gate; any testnet rehearsal or
+post-launch `D*` will have such loans.
+
+### Step 3 — complete EVERY keeper prerequisite (still before the arm)
+
+**Which of these apply depends on which Gate B branch you took, and the split is
+not cosmetic — items that do not apply must be SKIPPED, not performed anyway.** On the
+**M3 / active-mirror** branch, all of it applies. On the **Base-only /
+dark-mirror** branch, the commitment-report and recycled-ledger surfaces need not
+exist on those chains at all — so 3a, 3b's mirror half, 3b-i, 3e and 3f are M3
+items and are not preconditions there. Do not treat them as blocking on the dark
+branch: requiring a clean commitment-report tail or a mesh-watcher tick over
+ledgers that were never deployed makes the ceremony unreachable on a branch Gate
+B explicitly permits. What still applies on the dark branch: `KEEPER_ROLE` on Base (3b's canonical
+half) **and on every dark mirror the Worker still resolves** — `KEEPER_ENABLED`
+runs the liquidity-confidence pass on each of them and submits the role-gated
+`setKeeperTier`, so a dark mirror without the role has its risk-tier updates
+reverting; Base funding (3d) **and native gas on every dark mirror the Worker resolves**,
+since the liquidity-confidence pass signs `setKeeperTier` there and an unfunded
+signer leaves those writes failing; the RL-4 readback (3f-bis); and
+`KEEPER_ENABLED` with its tail confirmation. **NOT 3c** — there is no Base→mirror
+remittance to authorize — and **not** `REWARD_COMMIT_ENABLED` or
+`REWARD_REMIT_ENABLED`, whose passes have no mirrors to serve.
+
+**3a. Apply the D1 migrations** — from `apps/indexer/`:
+
+```
+wrangler d1 migrations apply vaipakam-archive --remote
+```
+
+covering `0043_keeper_commitment_scan.sql` and `0044_keeper_remit_ack.sql`.
+
+**3b. Grant `KEEPER_ROLE` to the keeper EOA on EVERY chain — every mirror AND
+canonical Base.** `submitCommitmentBatch` is mirror-only (`_assertMirror`) and
+role-gated, so granting on Base alone, or missing one mirror, leaves that
+mirror's commitment pass reverting forever: its report never completes and the
+remit gate stalls that chain's funding.
+
+Base is not optional even though the commitment batch never runs there. Step 5
+turns on the Worker-wide `KEEPER_ENABLED`, and the liquidity-confidence pass
+iterates **every configured chain** and submits the `KEEPER_ROLE`-gated
+`ConfigFacet.setKeeperTier`. Without the role on Base those risk-tier updates
+revert, and loan-init LTV confidence can go stale during a degradation — a
+failure with nothing to do with recycling, triggered by this ceremony.
+
+**3b-i. Read back that the keeper can SEE every reward chain.** The Worker
+builds its chain list from whatever RPC secrets and deployment artifacts
+resolve, and **silently skips a chain whose RPC secret or deployment entry is
+missing** — no error, no warning. A mirror absent from that list never submits
+its armed-day commitment report, Base's remit gate waits on a report that will
+never arrive, and that chain's claims stay unfunded with nothing anywhere
+reporting a fault. Compare the keeper's resolved chain IDs against the **live on-chain
+topology, not against your own inventory**. An "intended set" written down by
+whoever maintains the deployment artifacts can be missing the same chain the
+keeper is missing, and then the preflight passes while Base waits for a report
+from a chain nobody has noticed is absent.
+
+**Check CONTAINMENT, not equality, and check it in one direction only.** The
+defect is a chain the keeper cannot see; an extra chain it can see is harmless.
+Equality fails on correct configurations for two independent reasons — the two
+getters cover different sets (`getExpectedSourceChainIds()` is the full
+reward-chain list, the messenger's `getBroadcastDestinations()` holds **mirrors
+only**, canonical filtered out), and the Worker binds both mainnet and testnet
+RPC families, so a correctly configured keeper legitimately resolves chains
+outside this Diamond's mesh.
+
+So, against **this** Diamond's mesh:
+
+- every id in `getExpectedSourceChainIds()` must be **present** in the keeper's
+  resolved set;
+- every id in `getBroadcastDestinations()` must be **present** there too;
+- and each of those resolved endpoints must return a matching `eth_chainId`.
+
+**Check that canonical Base is IN the expected-source list**, explicitly. Every
+containment test above validates only ids already present, and the mirror-set
+comparison looks at the mirror subset — so a list that OMITS Base passes all of
+them while the mesh has no canonical member.
+
+**Check every rotated mirror's clock requirement HERE, not in Step 5.** A mirror
+with `rewardEraRotated == true` rejects the legacy V2 wire, so a clockless
+propagation day cannot reach it — and Step 5 is after the one-shot arm has
+already executed. If any destination has rotated, confirm now that a
+clock-bearing pre-`D*` day exists for it.
+
+**Check every mirror's Base-era binding here, not only at promotion.** If an
+active mirror's `baseRewardDeployment` is unset or names an earlier Base Diamond,
+the V3 ingress rejects the clock-bearing propagation broadcast with
+`BroadcastEraUnauthenticated` — and on the initial ceremony that rejection
+surfaces only AFTER Base has executed its one-shot arm. Read the binding back on
+every mirror before the arm, not when a promotion goes wrong.
+
+**And check both ends of every reward channel.** Matching chain ids, Diamond
+addresses and lane limiter states all pass with a missing or stale messenger
+peer: `setBroadcastDestinations` validates neither `remoteMessengerOf` nor the
+channel peer. Read both directions of each pairing before the arm — a broadcast
+that cannot authenticate is a `D*` that never lands.
+
+**And compare the two getters to EACH OTHER, not only to the keeper.** A mirror
+present in `getExpectedSourceChainIds()` but absent from
+`getBroadcastDestinations()` passes both checks above as long as the keeper
+resolves it — and then never receives `D*`, because `broadcastGlobal` enumerates
+only the messenger's destination list. Base waits for a chain that was never
+told. Require the expected-source mirrors and the broadcast destinations to
+describe the same set before the arm.
+
+A missing chain is the defect. **An extra one is not automatically harmless,
+though — and that is a consequence of step 3g.** Both the remit and the
+commitment-report passes iterate the FULL `getChainConfigs(env)` result, so
+turning the Worker-wide flags on for THIS ceremony also starts fund-moving and
+reporting passes against every other resolved mesh, testnet included. Either
+scope the Worker to one mesh for the ceremony, or run the same role, remitter,
+balance, migration and lane checks against every mesh the flags will reach. Do
+not read "extra chains are fine" as "extra chains can be ignored".
+
+**And the chain ID is not enough to identify the right Diamond.** A deployment
+artifact pointing at an OBSOLETE Diamond on the correct chain passes every check
+above: the id is in both live lists, the keeper reports it, and the RPC agrees.
+The keeper then reads the old Diamond, whose `armedFromDay` stays zero, and
+submits nothing while Base waits for the live mirror. Compare the artifact's
+Diamond ADDRESS per chain against the address governance actually administers.
+
+All of this BEFORE the arm.
+
+**3c. Authorize the Base remittance signer — a SEPARATE authorization, and easy
+to miss.** *(M3 / active-mirror branch ONLY — on the dark branch skip 3c
+entirely, and see 3g for which flags apply there: the reward passes perform
+Base→mirror remittance, mirror commitment reporting and acknowledgements, none of
+which exist on the dark branch.)* `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
+`_checkRemitter` admits only an `ADMIN_ROLE` holder or the address stored as
+`rewardRemittanceKeeper`. A least-privilege keeper EOA is neither by default, and
+the mirror-side `KEEPER_ROLE` grants of 3b do **not** cover it:
+
+```
+RewardRemittanceFacet.setRewardRemittanceKeeper(<keeper EOA>)   # ADMIN_ROLE, on Base
+```
+
+Read the value back before proceeding. Skip this and commitment reports complete
+normally while **every** Base→mirror remit reverts `NotRewardRemitter`, so mirror
+claims stay unfunded — a failure that looks like a funding problem and is a
+permissions one.
+
+**3d. Fund the keeper EOA on every mirror AND on Base.** Mirrors need gas for
+`submitCommitmentBatch` plus the quoted native CCIP fee for
+`sendCommitmentReport` / `sendRemitAck`. **Base needs gas and the CCIP
+`msg.value` fee for every Base→mirror `remitRewardBudget` send** — the remit is
+submitted from the canonical chain, so an unfunded Base EOA lets commitment
+reports complete while every reward-budget send fails. Read balances back per
+chain, **including Base**.
+
+**3e. Raise BOTH capacity limits, and understand that only one of them is the
+keeper's.** The keeper excludes a day whose eligible slice exceeds
+`REWARD_REMIT_LANE_CAP` — its own configured value — and logs that exclusion.
+**It does not read the on-chain CCIP token-bucket capacity at all.** So a lane
+cap configured above the live bucket capacity does not produce an exclusion: the
+oversized send is planned, dispatched, and **rejected by the rate limiter
+on-chain**. The two limits must be raised together, and the 50,000-VPFI default
+bucket capacity can sit below an early high-concentration daily slice. Read back
+each destination's bucket capacity *and* the keeper lane cap against the largest
+supported single-day slice (#918).
+
+**Capacity alone is not the check.** A lane has SEPARATE outbound and inbound
+rate-limiter states, each with its own `capacity`, `rate`, `isEnabled` and
+current `tokens`. A configured capacity that looks adequate can still fail
+delivery — because the two directions are configured differently, or
+because a bucket is currently DEPLETED and has not refilled.
+A Base send can consume the outbound side and then be rejected or delayed by the
+mirror's inbound limiter, and Step 5 is waiting on `RewardBudgetReceived` against
+an immutable `D*`. Read both states, both directions, per lane, and check present
+`tokens` as well as configured capacity.
+
+**And check the BATCH, not only the largest day.** The keeper greedily combines
+several individually-valid days into one send, so a lane cap above either enabled
+bucket lets a batch of legal days exceed the bucket that only per-day checking
+said was fine. Bound the keeper's cap by the live bucket capacities, not by the
+largest single-day slice.
+
+**Verify the WIRING, not the components — as one pass, because they fail the
+same way.** Every check above inspects a component you believe is in use. The
+protocol dispatches through what is actually STORED and REGISTERED, and a
+`ConfigureCcip` or `ConfigureRewardReporter` that stopped partway leaves those
+disagreeing while each component reads back healthy on its own. Before the arm,
+read back on every chain:
+
+- **each Diamond's reward-chain ROLE** — `isCanonicalRewardChain`, and
+  `baseChainId` non-zero and correct on every mirror. A partial reporter config
+  can leave a mirror flagged canonical, or pointed at the wrong Base id, and the
+  topology checks above still pass because they validate RPC and artifact
+  identity rather than the Diamond's own belief about what it is;
+- **the Diamond's OWN stored messenger addresses** — Base's cross-chain
+  messenger and each mirror's reward messenger. `remitRewardBudget` dispatches
+  through the stored value, so a stale or zero one reverts or takes an
+  uninspected lane after the arm;
+- **the remittance RECEIVER wiring on each mirror** — a redeployed
+  `RewardRemittanceReceiver`, or a config that stopped before the reward-budget
+  wiring, leaves an inbound delivery with nowhere to land while every outbound
+  check passes;
+- **each live pool through the CCIP token registry** — `getPool` for the token,
+  not the pool address you configured. If CCT registration was skipped because
+  the configuring account did not own the token, or a pool was redeployed, you
+  will have inspected a healthy pool that is not the one CCIP will use;
+- **and that the whole path is UNPAUSED.** Every cross-chain contract carries a
+  guardian pause, the remit is `whenNotPaused`, and the arming setter checks none
+  of it — so an emergency pause left on after a partial recovery passes every
+  wiring readback and then stops the propagation the arm depends on.
+
+**And verify the mirror token's live minting pool.** Messenger peers and rate
+limiters can all read back correctly against the intended pool while the mirror
+token still points at a redeployed or unset one — `setTokenPool` is a separate
+step that `ConfigureCcip` may not have completed. Read the token's pool back on
+each mirror and confirm it is the pool whose limits you just checked.
+
+**A DISABLED limiter is not a failure — it is unlimited.** The rate limiter
+returns immediately when the bucket is disabled, and the config validator
+requires a disabled bucket to be fully zeroed. So `isEnabled == false` with zero
+capacity is a correctly configured no-limit lane, not a blocked one; treating it
+as blocked would stall a ceremony over a healthy configuration.
+
+**3f. Deploy `ops/mesh-watcher` AND verify it runs clean.** It reads every
+reward chain's recycled ledger and alerts on the commitment invariants, and it is
+code-complete but **undeployed** — D1 creation, secrets and the first deploy are
+operator steps in its README. Do this before arming, not after: arming is when
+the invariants it watches start moving.
+
+**Deploying is not verifying.** A Worker deploys successfully with a wrong RPC, a
+missing deployment stanza or a bad alert credential, and a cron that has not
+fired yet looks exactly like one that is broken. Trigger the authenticated
+`POST /run` and require a clean health result — delivery succeeded, no coverage
+gaps — before Step 4. Arming behind a watcher that has never completed a tick is
+arming with no invariant coverage at all, which is the state this step exists to
+prevent.
+
+**3f-bis. Read back the RL-4 allocation weights** — the dormant posture is
+`[keeper 0, reserve 10000]`, the register is consulted from the FIRST armed-day
+finalization, and a rehearsed Diamond can carry a stale non-zero
+`recycleRegisterKeeperBps` that silently earmarks user-reward runway. Step 6
+describes the posture; this is where it gets checked, because Step 6 may be
+deferred past `D*`.
+
+**3g. Set and CONFIRM the master flags NOW, before the arm — they are not a
+step 5 item.** **`KEEPER_ENABLED` is not a reward flag**: turning it on resumes
+the matcher, the liquidator, the liquidity-confidence pass and the rest of the
+keeper's jobs on every resolved chain. If it is currently off — on a fresh
+deployment, or because of an incident — validate ALL of those passes before
+flipping it, not only the reward ones. This ceremony must not be the thing that
+silently restarts an unrelated subsystem. `KEEPER_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_REMIT_ENABLED`.
+These are secrets, and **secrets cannot be read back** — the API returns names
+only, so an unset, mis-cased or malformed value is indistinguishable from a
+correct one until a pass actually runs. One `wrangler tail` cycle is the
+confirmation: watch each gated pass log its start. Discovering a bad flag after
+the arm means discovering it when `D*` can no longer be moved.
+
+**Do NOT switch off flags that are already running.** If this deployment is on
+Gate B's active-mirror branch, `REWARD_REMIT_ENABLED` and `KEEPER_ENABLED` may
+already be funding ordinary pre-`D*` mirror claims — the reward-budget remit pass
+processes finalized days whether or not the program is armed. This ceremony spans
+Timelock delays and a propagation window, so turning them off "until step 5"
+starves live mirror claims for days over a cutover that has not happened yet.
+On such a deployment 3g confirms what is already on and adds only what is
+missing; it is never an instruction to disable a running one.
+
+### Step 4 — arm, sized from EXECUTION time
+
+```
+RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)   # ADMIN_ROLE, canonical only
+```
+
+**Read back that the D1 share-of-pool cap (M2 PR-2) is live on every Diamond
+this arm will actually reach.** On the **M3 / active-mirror** branch that is Base
+AND every mirror, not only the one you are calling: arming propagates, each
+mirror installs `D*` from the broadcast and switches to ShareOfPool on its own
+schedule, so a partially upgraded mirror makes that switch without the
+`(user, side, day)` concentration bound even though Base is fine.
+
+On the **dark-mirror** branch it is **Base only**. Nothing propagates there, so a
+dark mirror may legitimately lack PR-2 under Gate B and requiring it would block
+a cutover the gate permits. The same scoping applies to the per-chain clock
+readback below. The setter checks authorization, canonical role, one-shot state and a
+future day — and nothing else. At `D*` the reward path switches to ShareOfPool,
+and on a partial or stacked Diamond that has the PR-3c setter but not PR-2, that
+switch happens with the required `(user, side, day)` cap absent. The joint
+cutover gate is PR-2 **and** PR-5c; step 1 covers PR-5c and PR-6, this covers
+PR-2.
+
+This single Base call **is** the `D*` cutover. It is:
+
+- **one-shot** — a second call reverts `GovernorAlreadyArmed`;
+- **future-day-only** — `dayId <= today` reverts `GovernorArmingDayNotFuture`;
+- **canonical-only** — there is no per-chain `D*` administration, and a call on a
+  mirror reverts.
+
+**First confirm the reward clock is actually RUNNING.** On a fresh Diamond
+`interactionLaunchTimestamp` is zero and the current day reads zero too, so a
+"the clocks agree" check passes vacuously — every chain agreeing at zero — and
+the setter then accepts any non-zero `D*` because the current day is zero as
+well. Require a NON-ZERO launch timestamp and a non-zero current day on every
+chain before comparing them. A check that cannot fail on the state you are
+guarding against is not a check.
+
+**Then confirm every target mirror is still UNARMED.** Both ingress paths
+install the incoming `armedFromDay` only while the local value is zero
+(`armedFromDay != 0 && s.governorCommitArmedFromDay == 0`), so a mirror carrying
+a non-zero value from a rehearsal, a previous Base deployment or a partial
+cutover **silently keeps its old `D*`** and ignores the new one. Nothing reverts,
+nothing warns, and the Base setter is one-shot. Read
+`getGovernorCommitState().armedFromDay` on every target mirror and require zero
+before calling it.
+
+**Then confirm every chain shares a reward-day clock.** The day index derives
+from each Diamond's own `interactionLaunchTimestamp`, and the mirror ingress
+stores `armedFromDay` **directly** — it does not repeat the future-day check the
+setter applies against BASE's local day. So if launch timestamps differ, one
+numeric `D*` is not one instant: an earlier mirror can cut over the moment the
+broadcast lands, while a later one cannot yet report the Base armed day and
+stalls its remittance. Read `interactionLaunchTimestamp` and the current reward
+day back on every chain and confirm they agree before choosing `D*`.
+
+**`D*` must be measured from when the call EXECUTES, not from when you schedule
+it.** Post-handover this is an `ADMIN_ROLE` action and therefore goes through the
+Timelock: Safe schedules, the delay elapses, then someone executes. The contract
+evaluates `dayId <= today` **at execution**. So a `D*` chosen a few broadcast
+cycles from the scheduling moment either reverts on execution because the day has
+already arrived, or lands with most of its propagation buffer already spent.
+
+Pick `D*` several broadcast cycles beyond the **expected execution time**, and
+schedule/wait/execute as for any other Timelock action.
+
+**Re-run the volatile preflights immediately before EXECUTING, not only before
+scheduling — and that includes Steps 1 and 2.** `setFeeEntitlementEnabled(false)`
+executing after Step 2's scan lets subsequent canonical originations skip
+stamping again, so the clean scan goes stale and those loans enter `D*`
+uncapped. Re-read the entitlement flag and re-run the unstamped scan at
+execution, not only the balances and endpoints. The delay is long enough for the state Step 3 checked to move:
+keeper balances drain, an RPC or deployment artifact can be re-pointed, lane
+buckets deplete, the watcher can start failing, and a Worker flag can be changed
+by anyone with secret access. Balances, endpoint-and-Diamond identity, both
+rate-limiter states, watcher health and the three flags are all point-in-time
+readings — take them again at execution, because the call they gate cannot be
+undone.
+
+**Re-check `D*` itself, not only the preflights.** The day is encoded when the
+action is scheduled, so an execution later than planned can leave a `D*` that is
+merely `today + 1` — the setter still succeeds, and the several-cycle propagation
+buffer the choice existed to provide is simply gone. If the buffer has eroded,
+cancel and re-schedule with a later `D*` rather than executing.
+
+The setter writes Base storage and emits `GovernorCommitArmed`. **It sends
+nothing itself.** A mirror learns `D*` in-band, when the first *not-yet-applied*
+finalized day's broadcast reaches it after arming — a replay of an
+already-applied day exits through the idempotency branch without installing the
+value.
+
+### Step 5 — DRIVE the propagation and verify it (M3 / active-mirror branch only)
+
+**Promoting a dark mirror later needs its own gate, and this runbook does not
+otherwise provide one.** Once Base is armed, EVERY subsequent broadcast carries
+its stored `armedFromDay`, and a mirror sitting at zero installs it on first
+application — so a mirror brought up after M3 lands cuts over the moment it
+receives any broadcast, at a `D*` that may be long past. **Check the mirror's Base-era binding FIRST — a wrong one makes propagation
+impossible, not merely slow.** If `baseRewardDeployment` is unset or still names
+an earlier Base Diamond, the clock-bearing broadcast is rejected outright
+(`BroadcastEraUnauthenticated`) and `D*` cannot install by any route. And if the
+mirror previously followed a Base rotation, `rewardEraRotated` stays permanently
+true, which closes the clockless V2 fallback too — so a rotated mirror needs BOTH
+a correct era binding and a clock-bearing day, and the clockless bootstrap below
+does not apply to it.
+
+**Promotion is a full Step 3 for that chain, not a short checklist.** Run the
+whole active-mirror preflight against it — `KEEPER_ROLE`, keeper funding, the
+deployment artifact's Diamond address, both lane rate-limiter states, watcher
+coverage — plus PR-2, PR-5c, PR-6 and the #1566 fix live on it, its clock
+agreeing with Base, and its `armedFromDay` reading zero. A mirror bootstrapped
+without those arms into a mesh that cannot report, fund or observe it; then expect it to arm on its first
+broadcast rather than on a day you choose. There is no second cutover to
+schedule.
+
+**And it cannot be bootstrapped with an ordinary current-day broadcast** — the
+same deadlock as the original propagation, arriving by a different door. The
+keeper's report returns while the mirror's `armedFromDay` is zero, while
+`_planDay` declines an armed-day remit until that report completes; and after
+`D*` has passed, every current day IS an armed day. Bootstrapping it is harder than Step 5's case and may not be possible with a
+remit at all: a mirror that was genuinely dark until after M3 has **no report in
+any historical finalization**, so it is not an included chain for any pre-`D*`
+day and `_planDay` produces no budget for it — the remit reverts
+`NothingToRemit`. Use a pre-`D*` day the mirror has not applied and broadcast it
+WITHOUT a remit; the day carries no budget for that mirror, so there is nothing
+to strand, and the mirror installs `D*` and can report from then on.
+
+**Check what the FAN-OUT does to the OTHER mirrors first.** The dark mirror has
+no day standing, so `broadcastGlobalTo` cannot target it and the fan-out form is
+forced — which delivers that day to every destination. Any active mirror that has
+not already applied it, and has a non-zero slice for it, gets its claim gate
+opened unfunded. Choose a day every other destination has already applied, or
+remit their slices before the fan-out.
+
+**And the promoted mirror is not exempt from that either.** If it has accrued
+local pre-`D*` entries, it prices the day from `halfPoolForDay` — its own local
+pool — not from the zero slice it was allotted, so the no-remit bootstrap opens
+it against a day it was never funded for. Where the mirror holds local entries,
+fund it before the broadcast rather than relying on the absent slice.
+
+**If the promoted mirror holds local pre-`D*` entries, there is no safe day to
+bootstrap it with, and you must fund it first.** It was excluded from every
+historical finalization, so no pre-`D*` day carries a slice for it, and a
+zero-slice destination cannot be remitted at all — the plan returns before
+setting a close and the remit reverts. Credit the mirror's local pool by the
+normal funding route BEFORE broadcasting the bootstrap day, or promote it only
+after its local entries have settled. Broadcasting first is the case this whole
+section exists to prevent.
+
+Confirm the day predates `D*` and has fully ELAPSED. **A lapse clock is NOT required here, UNLESS a destination has
+followed a Base rotation** — a rotated mirror rejects the legacy V2 wire the
+clockless fan-out falls back to, so for those the propagation day must carry a
+clock, and that applies to initially-active rotated mirrors on the FIRST ceremony
+too, not only to promotions. Otherwise: on a deployment armed before the V3 upgrade every pre-`D*` day
+may have `finalizedAt == 0`, and demanding one would leave no eligible day and no
+way to promote the mirror at all. The fan-out falls back to the clockless wire —
+it is the per-destination form that needs the clock, and this case uses the
+fan-out anyway.
+
+**On the Base-only / dark-mirror branch, skip this step entirely.** There is no
+mirror to propagate `D*` to, and the remit, receipt and broadcast surfaces this
+step drives are the M3 surfaces Step 3 already established need not exist on that
+branch. Arming Base is the cutover there; go to Step 6.
+
+(For the RL-3 horizon knob that completes M7, see Step 6 — it is deliberately
+separate and separately gated.)
+
+**Arming sends nothing, and nothing sends it for you.** The setter writes Base
+storage and emits its event; mirrors learn `D*` only from a day broadcast. On the
+documented operating path there is **no deployed daemon that finalizes a day and
+broadcasts it** — that cycle is operator-driven, and the testnet finalization
+script does not broadcast either. So an operator who arms and then waits for
+mirrors to show `D*` can wait until the cutover day arrives with every mirror
+still unarmed.
+
+After arming, drive the cycle explicitly: finalize a day that has not yet been
+applied on the mirrors, **remit that day to every destination and wait for each
+mirror to CONFIRM receipt**, and only then call the payable `broadcastGlobal` (or
+`broadcastGlobalTo` per destination) and pay the transport fee.
+
+**The broadcast is permissionless, so your ordering is not enforced.** Anyone
+willing to pay the CCIP fee can broadcast a newly finalized day between your
+remit submission and its arrival, opening the mirror's claim gate early. You
+cannot prevent that — you can only shrink the window by finalizing and remitting
+close together and confirming receipts promptly — so treat the order as your
+intent rather than a guarantee.
+
+**The propagation day must have fully ELAPSED, not merely be numerically below
+`D*`.** The force-finalization path does not check the reward clock, so "a day
+before `D*`" admits today or a future day; finalizing one of those publishes a
+day whose activity is still accruing. Require `day < currentRewardDay` as well as
+`day < D*`.
+
+**The per-destination form is not always available.** It also reverts
+`DayHasNoLapseClock` on a day finalized before the V3 lapse-clock upgrade, whose
+`dayLapseClock.finalizedAt` is zero — likely for exactly the old pre-`D*` days
+this step reaches for. Check the clock before choosing the per-destination form. If the chosen pre-`D*` day
+was grace- or force-finalized without a particular mirror's daily report, that
+mirror has no day standing for it — and being pre-cutover, it has no armed-day
+zeroed marker either — so `broadcastGlobalTo` reverts
+`DestinationHasNoDayStanding`. Use the fan-out form for such a day, or pick a day for
+which every destination has a NON-ZERO remittable slice — inclusion alone is not
+enough, since a destination that submitted a ZERO-VALUED report is included and
+still budgets to zero, which exits the plan without a close and reverts the remit
+exactly as exclusion does.
+
+**That first propagation day must be strictly BEFORE `D*`, or the ceremony
+deadlocks — after the irreversible arm.** An armed-day remit is refused until
+that mirror's commitment report is complete; the keeper's report returns early
+while the mirror's `armedFromDay` is still zero; and the mirror learns `D*` only
+from the broadcast this step performs after remitting. Remit waits on the
+report, the report waits on `D*`, `D*` waits on the broadcast, the broadcast
+waits on the remit. Choosing a pre-`D*` day breaks the cycle, because a pre-`D*`
+remit does not need the report. **Confirm such a day will still be available
+when you execute** — this is another reason `D*` needs a real buffer beyond
+execution.
+
+**Source order is not delivery order.** The messenger sets
+`allowOutOfOrderExecution: true`, so sending the remit first does not guarantee
+it ARRIVES first — and it is the arrival that funds the mirror, while the
+broadcast opens its claim gate. Wait for each mirror's `RewardBudgetReceived`
+before broadcasting to it, rather than treating the send order as sufficient.
+
+**One exception, and without it the wait never ends.** If the chosen day
+allocates zero budget to a destination, `remitRewardBudget` closes it locally,
+emits `RewardBudgetRemitted` with a zero message id and returns **without sending
+a CCIP payload** — so that mirror will never emit `RewardBudgetReceived`. Waiting
+for one there burns the propagation window and can run past an immutable `D*`.
+A THIRD case sits between those two, and the fan-out advice above does not
+reach it: if the chosen pre-`D*` day was grace- or force-finalized without a
+mirror's report, `_planDay` sees no included-chain budget, returns no close at
+all, and `remitRewardBudget` reverts `NothingToRemit` — so there is neither a
+receipt nor a zero-message close to observe. **Do not read that revert as permission to broadcast.** `NothingToRemit` means
+the day carries no budget FOR THAT DESTINATION — not that opening its gate is
+harmless. Before `D*` a mirror prices the day from its own local pool rather than
+from the per-destination slice, so an active mirror holding local entries will
+pay against a day it was never funded for. **Choose a day every destination was
+included in.** That is the only safe resolution, and it also avoids the
+`broadcastGlobalTo` restriction below.
+
+**A pre-`D*` day cannot produce a zero-total close at all** — the plan returns
+before setting one and the remit reverts, so there is nothing to observe and
+nothing to treat as satisfied. That is why the propagation day must give every
+destination a NON-ZERO remittable slice: there is no benign zero case here to
+fall back on. The zero-close exception below applies to ARMED days only: its
+stamped payable budget is zero, so opening its gate funds nothing and strands
+nobody. Confirm the zero-total close in the emitted event rather than assuming
+it.
+
+The remit-first order is not a preference. The broadcast **opens the mirror's
+claim gate**, and it does so independently of the keeper's remittance cron — so a
+day broadcast before its budget lands leaves users hitting an empty-balance
+revert until funding arrives. The keeper narrows that gap on a best-effort basis
+and does not close it, which is exactly why a MANUAL broadcast has to remit
+first. A replay of an
+already-applied day exits through the idempotency branch **without** installing
+`D*`, so the day you broadcast has to be one the mirrors have not seen.
+
+Then read `D*` back on every mirror, with days to spare:
+
+```
+RewardAggregatorFacet.getGovernorCommitState()   # → (armedFromDay, outstandingFresh, outstandingRecycled, paidOutRecycled)
+```
+
+`armedFromDay` is `0` while unarmed. Governance **cannot postpone `D*`**, so have
+the contingency written down before you arm: a mirror that misses the day keeps
+its claims halted until CCIP delivery recovery or manual re-execution restores
+the broadcast.
+
+The flags were set and tail-confirmed in step 3g, deliberately: a chain running
+without all three leaves reports and acks inert and stalls multi-chain funding,
+and that is not something to discover once `D*` is immutable. Re-check the tail
+here only to confirm the armed-day passes are running against the new state.
+
+
+### Step 6 — the RL-3 horizon knob (M7.2), separately gated
+
+```
+ConfigFacet.setRewardClaimHorizonDays(<days>)      # ADMIN_ROLE
+```
+
+**It defaults to zero, and zero means the expiry/sweep path is dark.** A
+ceremony that stops at Step 5 leaves it that way — which is a coherent state,
+but an operator who marks recycling "activated" without noticing will believe
+RL-3 is live when nothing sweeps.
+
+**Read back the RL-4 allocation weights — and do it BEFORE Step 4, not here.**
+The register is consulted during armed-day finalization independently of the
+horizon knob, so on a deployment that defers Step 6 this check never runs before
+`D*` and a stale non-zero split quietly earmarks user-reward runway from the
+first armed day. It is described here because it belongs to M7.2's posture; it
+must be PERFORMED alongside the other pre-arm readbacks in Step 3.
+
+The requirement: The required dormant posture is
+`[keeper 0, reserve 10000]`. On a Diamond that was upgraded or rehearsed,
+`recycleRegisterKeeperBps` may already be non-zero, and nothing in this ceremony
+restores it — once armed-day finalizations run, the register earmarks part of the
+realized margin into the keeper budget, removing it from fundable user rewards
+while the operator believes the default allocation is in force. Read it back, and
+ratify explicitly if it is not zero.
+
+It is separate from Steps 1-5 on purpose: it carries **its own** preconditions,
+and setting it ad hoc later is how those get skipped. All of them must be
+verified live first:
+
+- **both** ratified RL-3 UX safeguards — the free-channel pre-expiry notice in
+  the in-app notification centre **and** the claim-centre countdown surface.
+  Notice alone does not satisfy the ratified safeguard: a user has to be able to
+  see when claimable rewards become terminally sweepable;
+- the **same mesh gate as arming** — rewards Base-only / dark on mirrors, OR M3
+  complete. Mirror expiry credits land in local buckets Base can neither count
+  nor consume until B′, so activating across an incomplete mesh strands them;
+- **#1499 CLOSED, and its fix deployed on every reward chain** — not merely
+  "the shared definition exists". While the expiry predicate and the claim gate
+  measure different quantities, executable time accrues for claims that currently
+  revert, so restored funding lets the next sweep expire entitlements on stale
+  elapsed time. Assert the deployed code slice per chain, as Steps 1 and 4 do.
+
+The setter range-checks a non-zero value against the configured minimum, so a
+too-short horizon reverts rather than silently truncating a user's window.
+
+**It is a LOCAL write with no broadcast.** Unlike `D*`, nothing propagates this:
+the setter writes the calling Diamond's storage and emits. Setting it on Base
+alone leaves every mirror at the zero/dark default, so mirror entries never
+accrue toward expiry and never sweep — while the ceremony looks complete.
+Schedule it through the Timelock **on every reward chain**, and read
+`getRewardClaimHorizonDays` back on each.
+
 ## Testnet rehearsal
 
 Before mainnet:
@@ -592,7 +1270,8 @@ Before mainnet:
 - Deploy all three Safes on Sepolia / Base Sepolia / Arb Sepolia /
   OP Sepolia / BNB Testnet / Polygon zkEVM Cardona at the same address
   as the intended mainnet ones (via CreateCall).
-- Walk steps 1–6 end-to-end against each testnet Diamond with
+- Walk the **per-chain handover** steps 1–6 above (Deploy the Timelock →
+  Readback verification) end-to-end against each testnet Diamond with
   `TIMELOCK_MIN_DELAY=3600` (1h) to compress the rehearsal.
 - Confirm `GovernanceHandover.t.sol` passes against each testnet fork
   before re-deploying with the 48h mainnet delay.

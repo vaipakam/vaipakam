@@ -409,7 +409,9 @@ library LibVpfiRecycle {
      *         because a reviewer went looking in surfaces nobody had thought
      *         to check (payroll streams, buyback allocations). Do NOT infer that an owner absent
      *         from this list does not exist. **A systematic audit of every
-     *         VPFI custody surface is #1498's job**, and its finding will be
+     *         VPFI custody surface was #1498's job, and is now #1566's**
+     *         (#1498 reads closed: auto-closed by #1555's `Closes` when only the
+     *         de-duplication half landed), and its finding will be
      *         that the enumeration approach cannot be completed — which is
      *         why the remedy is the delivered-funding bound, not a longer
      *         table. Entries here are illustrative evidence for that
@@ -439,7 +441,8 @@ library LibVpfiRecycle {
      *         a missed one is silent. The durable fix is to bound payout by
      *         funding DELIVERED FOR REWARDS instead, which needs no list —
      *         tracked on
-     *         #1498, shared root with #1434 prerequisite 1. Anyone adding a
+     *         **#1566** (NOT #1498, which was auto-closed mid-scope), shared
+     *         root with #1434 prerequisite 1. Anyone adding a
      *         new VPFI custody class must land THAT BOUND — not another
      *         subtraction here. (An earlier revision offered the two as
      *         alternatives, which contradicted the "do NOT add a sixth
@@ -454,7 +457,11 @@ library LibVpfiRecycle {
      *         the upgrade sits inside this figure, a reward claim or the RL-3
      *         sweep can spend or relabel it, and the borrower's later
      *         settlement then reverts or leaves them unpaid. **That exposure
-     *         is real and is NOT closed here — #1498 stays open for it.** Its
+     *         is real and is NOT closed here — #1566 stays open for it.**
+     *         (#1498 was the original card and now reads closed; #1555's
+     *         `Closes #1498` fired on the de-duplication half alone, and the
+     *         fund-safety half was re-filed. Do not read that green label as
+     *         this exposure being handled.) Its
      *         root is shared with #1434 prerequisite 1: reward payout is
      *         bounded by un-earmarked BALANCE rather than by funding
      *         DELIVERED FOR REWARDS, and only the delivered bound fixes both.
@@ -497,8 +504,8 @@ library LibVpfiRecycle {
      *         deployment.** Other owners of this balance are known and
      *         unsubtracted — see the table above for which, and the body for
      *         why enumerating them was abandoned and what replaces it
-     *         (#1498). Do not read a healthy value here as "these tokens are
-     *         free to pay out".
+     *         (#1566; #1498 is its auto-closed predecessor). Do not read a
+     *         healthy value here as "these tokens are free to pay out".
      *
      *         **No count is given here deliberately.** This sentence has
      *         carried a stale number in three consecutive review rounds —
@@ -552,7 +559,8 @@ library LibVpfiRecycle {
         // the signal to stop patching (#1499 tracks that divergence).
         //
         // So the remaining claimants stay KNOWN-UNRESERVED and are recorded
-        // as such rather than half-fixed. #1498 carries the durable remedy:
+        // as such rather than half-fixed. #1566 carries the durable remedy
+        // (#1498 was auto-closed over the de-duplication half only):
         // bound a reward payout by funding DELIVERED FOR REWARDS, which needs
         // no enumeration and closes every owner at once — the same bound
         // #1434 prerequisite 1 needs for the cross-chain axis.
