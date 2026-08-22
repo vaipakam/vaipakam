@@ -2033,6 +2033,40 @@ contract GovernorDualAccumulatorTest is SetupTest {
     // less retirement than it performed, and the error compounds daily on a
     // cutover that cannot be reversed.
 
+    /// @dev The mirror fixture's local recycle balance. A named constant
+    ///      because two places asserted the literal `100 ether` and a third
+    ///      sized a reservation against it by eye — which is how the second
+    ///      release ended up sitting exactly on `releaseCommitment`'s floor
+    ///      (Codex #1907 r5).
+    uint256 internal constant MIRROR_BUCKET = 400 ether;
+
+    /// @dev The instructed reservation. Sized deliberately ABOVE everything a
+    ///      day can draw — one consumption OR two releases — because
+    ///      `consume` and `releaseCommitment` both FLOOR their retirement at
+    ///      the outstanding sum. At the old `100 ether` the second forfeit
+    ///      landed exactly on that floor, so an over-large second request
+    ///      would have decremented by the remaining balance and passed every
+    ///      cumulative check (Codex #1907 r5). Each test asserts the residual
+    ///      is non-zero, which is what says the floor stayed out of the way.
+    uint256 internal constant MIRROR_RESERVE = 300 ether;
+
+    /// @dev `_seedEntry` with an explicit per-day contribution, so two users
+    ///      can split one day's side and each claim SEPARATELY — which is the
+    ///      only way to get two live `consume` calls out of one armed day
+    ///      (Codex #1907 r5).
+    function _seedEntryPerDay(
+        address user,
+        uint64 loanId,
+        uint256 perDay,
+        uint32 startDay,
+        uint32 endDayExcl
+    ) internal returns (uint256 id) {
+        id = _mut().pushRewardEntry(
+            user, loanId, LibVaipakam.RewardSide.Lender, perDay, startDay
+        );
+        _mut().closeRewardEntryRaw(id, endDayExcl);
+    }
+
     /// @dev Stand this diamond up as a MIRROR (`!isCanonical && baseChainId`).
     function _standUpMirror() internal {
         vm.chainId(CHAIN_ARB);
@@ -2053,7 +2087,7 @@ contract GovernorDualAccumulatorTest is SetupTest {
     function _mirrorArmedDay5(uint256 reserve) internal {
         _seedPriorDays(5);
         _mut().setGovernorCommitArmedFromDayRaw(5);
-        _mut().setRecycleBucketRaw(100 ether);
+        _mut().setRecycleBucketRaw(MIRROR_BUCKET);
         messenger.deliverBroadcastV2(
             RewardBroadcastV2({
                 dayId: 5,
@@ -2102,7 +2136,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // encumbers `reserve`". Each entry would then retire part of a
         // commitment nobody made, leaving wrong fresh headroom.
         assertEq(outstandingFresh, 0, "and encumbered nothing on the fresh side");
-        assertEq(_cfg().getRecycleBucket(), 100 ether, "and debited nothing");
+        assertEq(
+            _cfg().getRecycleBucket(), MIRROR_BUCKET, "and debited nothing"
+        );
         assertEq(retired, 0, "a reservation retires nothing");
         assertEq(released, 0, "a reservation releases nothing");
         assertEq(paid, 0, "a reservation pays nobody");
@@ -2123,10 +2159,10 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///         from — entirely unpinned.
     function testMirrorReservedCommitIsRetiredByALiveClaim() public {
         _standUpMirror();
-        _mirrorArmedDay5(100 ether);
+        _mirrorArmedDay5(MIRROR_RESERVE);
 
         (uint256 today, ) = _lens().getInteractionCurrentDay();
-        _assertReservationOnlyEncumbers(100 ether, today);
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
 
         (, , uint256 outBefore, uint256 paidBefore) =
             _agg().getGovernorCommitState();
@@ -2145,7 +2181,15 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _agg().getChainDayRecycledFunding(5, uint32(CHAIN_ARB));
         uint256 expectLenderShare = funding.lenderHalfEquiv;
 
-        _seedEntry(alice, 90, 5, 6);
+        // Codex #1907 r5 — TWO claimants split the day's lender side, so the
+        // fixture performs two live consumptions. With one, a `consume` that
+        // OVERWROTE `recycleCommitRetiredCumulative` (and `paidOutRecycled`)
+        // with the latest claim instead of accumulating would pass every
+        // assertion, and Base would receive only the last claim as this
+        // mirror's lifetime retirement.
+        address bob = makeAddr("mirror-bob");
+        _seedEntryPerDay(alice, 90, G_LENDER / 2, 5, 6);
+        _seedEntryPerDay(bob, 93, G_LENDER / 2, 5, 6);
         // P1-b: the FRESH leg needs a delivered bound before the armed day
         // prices at all. Without it the day defers and nothing is consumed —
         // which is the neighbouring test's subject, not this one's.
@@ -2175,20 +2219,22 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         uint256 consumed = bucketBefore - _cfg().getRecycleBucket();
         assertGt(consumed, 0, "the funded armed day consumed from the bucket");
-        // The entry sweeps the WHOLE lender side of day 5, so the expected
-        // draw is that side's half of the day's recycled budget. Dust tolerance
+        // The two entries split the lender side of day 5, so this claim's
+        // expected draw is HALF that side's recycled budget. Dust tolerance
         // covers the per-side integer division, nothing more.
         assertApproxEqAbs(
             consumed,
-            expectLenderShare,
+            expectLenderShare / 2,
             1e6,
-            "consumed exactly the lender side's recycled share, ONCE"
+            "consumed exactly this claimant's recycled share, ONCE"
         );
 
         (, , uint256 outAfter, uint256 paidAfter) =
             _agg().getGovernorCommitState();
         (uint256 retiredAfter, uint256 releasedAfter) =
             _agg().getLocalRecycledCommitRetirement();
+
+        uint256 bucketAfterFirst = _cfg().getRecycleBucket();
 
         // The floor did NOT bind, so the equalities below are the retirement
         // identity rather than two exhausted counters agreeing at zero.
@@ -2219,6 +2265,43 @@ contract GovernorDualAccumulatorTest is SetupTest {
             releasedBefore,
             "a claim SPENDS; it must never report a release"
         );
+
+        // ── The SECOND live consumption (Codex #1907 r5) ────────────────────
+        vm.prank(bob);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
+            LibVaipakam.RewardDelivery.Wallet
+        );
+
+        uint256 consumed2 = bucketAfterFirst - _cfg().getRecycleBucket();
+        assertApproxEqAbs(
+            consumed2,
+            expectLenderShare / 2,
+            1e6,
+            "the second claimant drew their OWN share, not a remainder"
+        );
+
+        (, , uint256 outEnd, uint256 paidEnd) = _agg().getGovernorCommitState();
+        (uint256 retiredEnd, ) = _agg().getLocalRecycledCommitRetirement();
+        // Same fixture property on the claim side (Codex #1907 r5): the two
+        // claimants together draw the whole lender-side share, so the
+        // reservation must exceed it for `consume`'s floor to stay out of the
+        // way.
+        assertGt(
+            MIRROR_RESERVE,
+            2 * (expectLenderShare / 2),
+            "reservation must exceed BOTH claims, or the floor is in play"
+        );
+        assertGt(outEnd, 0, "and a residual survives both");
+        assertEq(
+            retiredEnd - retiredBefore,
+            consumed + consumed2,
+            "the retired cumulative CONTAINS both claims, it is not the last"
+        );
+        assertEq(
+            paidEnd - paidBefore,
+            consumed + consumed2,
+            "and so does paidOutRecycled"
+        );
         // Same class, predicted rather than reported: spending the bucket is
         // not ABSORBING into it. `credited[D]` feeds the trailing average that
         // sizes future budgets, so a consumption that credited it would let a
@@ -2240,10 +2323,10 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///         through a live entry point before.
     function testMirrorReservedCommitIsReleasedByAForfeit() public {
         _standUpMirror();
-        _mirrorArmedDay5(100 ether);
+        _mirrorArmedDay5(MIRROR_RESERVE);
 
         (uint256 today, ) = _lens().getInteractionCurrentDay();
-        _assertReservationOnlyEncumbers(100 ether, today);
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
 
         _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
         uint256 id = _seedEntry(alice, 91, 5, 6);
@@ -2371,6 +2454,31 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _agg().getLocalRecycledCommitRetirement();
         uint256 released2 = outMid - outEnd;
         assertGt(released2, 0, "the second forfeit released as well");
+        // Codex #1907 r5 — anchored like the first. `released2` is derived
+        // from the outstanding delta, so a second sweep that released 1 wei,
+        // marked the entry processed and advanced both cumulatives by that
+        // same wei would satisfy every sum below while leaving the second
+        // entry's entitlement outstanding forever.
+        assertApproxEqAbs(
+            released2,
+            funding.lenderHalfEquiv,
+            1e6,
+            "the second release is its own WHOLE share, not a remainder"
+        );
+        // Codex #1907 r5 — the floor could not have bound, and this is the
+        // assertion that says so. `assertGt(outEnd, 0)` was NOT enough: at the
+        // old 100 ether reservation the two 50-ether releases left ~40 wei, so
+        // a positive residual passed while the second release sat exactly on
+        // `releaseCommitment`'s floor. What has to hold is a property of the
+        // FIXTURE — the reservation strictly exceeds everything the day can
+        // release — so a later edit that shrinks it fails here rather than
+        // silently re-arming the trap.
+        assertGt(
+            MIRROR_RESERVE,
+            2 * funding.lenderHalfEquiv,
+            "reservation must exceed BOTH releases, or the floor is in play"
+        );
+        assertGt(outEnd, 0, "and a residual survives both");
         assertEq(
             releasedEnd - releasedBefore,
             released + released2,
