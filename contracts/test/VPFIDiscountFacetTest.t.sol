@@ -1149,6 +1149,77 @@ contract VPFIDiscountFacetTest is SetupTest {
         );
     }
 
+    /// @dev #1867 S10 Invariant B — the SAME close, with the position holder
+    ///      flagged. The rebate must neither be paid raw nor left on the
+    ///      `Settled` loan (the claim path refuses that state, so it would be
+    ///      stranded exactly as before the fix): it parks into the flagged
+    ///      holder's vault with a registered frozen claimant, recoverable
+    ///      through the release ceremony.
+    ///
+    ///      And the sale still closes. That is the half a bare
+    ///      `assertRecipientNotBarred` gets wrong: it reverts, so one
+    ///      grandfathered rebate would take the whole prepay-sale settlement
+    ///      down with it.
+    function testPrepaySaleParksGrandfatheredLifRebateForAFlaggedHolder()
+        public
+    {
+        uint256 principal = 10_000 ether;
+
+        vpfiToken.transfer(borrower, 5_000 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToVault(500 ether);
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days);
+
+        uint256 offerId = _createLenderErc20Offer(principal);
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
+        vm.prank(borrower);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+
+        uint256 held = 20 ether;
+        TestMutatorFacet(address(diamond)).setBorrowerLifVpfiHeldRaw(loanId, held);
+        vm.warp(block.timestamp + 30 days);
+
+        // Resolve the vault BEFORE flagging: `getOrCreateUserVault` is itself
+        // a Tier-1 entry point and refuses a flagged caller's subject.
+        address vault = _buyerVault(borrower);
+
+        // Flag AFTER origination: the loan is already open, and a Tier-2
+        // close-out must stay available to the counterparty.
+        MockSanctionsList oracle = new MockSanctionsList();
+        oracle.setFlagged(borrower, true);
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+
+        address executor = address(0xE9EC);
+        vm.prank(owner);
+        PrepayListingFacet(address(diamond)).setCollateralListingExecutor(executor);
+
+        uint256 vaultBefore = vpfiToken.balanceOf(vault);
+
+        vm.prank(executor);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId);
+
+        (uint256 rebateAfter, uint256 heldAfter) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+        assertEq(heldAfter, 0, "custody drained at settlement");
+        assertEq(
+            rebateAfter,
+            0,
+            "#1867 - parked, not left claimable on a Settled loan"
+        );
+
+        uint256 expectedRebate = (held * 1000) / 10_000;
+        assertEq(
+            vpfiToken.balanceOf(vault) - vaultBefore,
+            expectedRebate,
+            "#1867 - the rebate parked into the flagged holder's vault"
+        );
+    }
+
     function testBorrowerLifRebateCreditedOnProperRepayLongHold() public {
         uint256 principal = 10_000 ether;
 

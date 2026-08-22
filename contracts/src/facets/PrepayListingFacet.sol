@@ -12,6 +12,7 @@ import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol"
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -215,8 +216,35 @@ contract PrepayListingFacet is
             address lifRecipient = VaipakamNFTFacet(address(this)).ownerOf(
                 loan.borrowerTokenId
             );
-            LibVaipakam.assertRecipientNotBarred(lifRecipient);
-            LibVPFIDiscount.payBorrowerLifRebateDirect(loan, lifRecipient);
+            // S10 Invariant B — PARK-OR-PAY, not a bare screen. A resolved
+            // holder paid raw must be freeze-routed, and this rebate is a
+            // resolved-holder payout like any other. `assertRecipientNotBarred`
+            // is the wrong instrument twice over: it is FAIL-OPEN (an oracle
+            // outage pays a previously-confirmed-flagged holder), and it
+            // REVERTS, which on this path would strand the whole prepay-sale
+            // close over one grandfathered rebate rather than settling the
+            // sale and holding the rebate.
+            //
+            // `mustFreezeParty` decides fail-closed; a frozen holder's rebate
+            // parks into their vault behind the sanctions deposit exemption
+            // with a registered frozen claimant, so it stays recoverable via
+            // the release ceremony. That is the whole point of the register —
+            // and it is exactly what leaving the rebate on a `Settled` loan
+            // would NOT give, since the claim path refuses that state.
+            uint256 parked = s.borrowerLifRebate[loanId].rebateAmount;
+            address vpfiToken = s.vpfiToken;
+            if (vpfiToken != address(0) &&
+                LibSanctionedLock.mustFreezeParty(s, lifRecipient)) {
+                s.borrowerLifRebate[loanId].rebateAmount = 0;
+                LibSanctionedLock.depositLocked(
+                    s, lifRecipient, loanId, vpfiToken, parked
+                );
+                LibSanctionedLock.recordFrozenClaimant(
+                    s, loanId, false, lifRecipient
+                );
+            } else {
+                LibVPFIDiscount.payBorrowerLifRebateDirect(loan, lifRecipient);
+            }
         }
         // #1067 — DURABLE terminal reward close: a prepay-sale finalize is a
         // proper close, so shrink both reward entries' active windows to

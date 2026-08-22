@@ -13,7 +13,10 @@ design. Nobody could retrieve it: not the borrower, not the buyer, not an
 operator.
 
 It is now paid out in that same transaction, to the same party that route
-already pays the borrower's remainder to. That keeps the promise the route is
+already pays the borrower's remainder to. Where that party is one the platform
+is required to freeze, the rebate is held for them in their own vault instead
+of being paid — recoverable later through the normal release process, and
+without the sale itself being refused over it. That keeps the promise the route is
 built on — everything settled at once, nothing left to collect — rather than
 carving an exception into the collection path to accommodate a state that should
 not exist.

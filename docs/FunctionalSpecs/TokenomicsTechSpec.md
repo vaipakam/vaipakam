@@ -610,7 +610,14 @@ Borrower rules (Phase 5 and later):
 > is paid out in that same transaction, to the party that close pays the
 > borrower's remainder to. A close that declares "nothing to claim" while
 > holding a rebate has stranded it: the claim path refuses that state by
-> design, so nobody can retrieve it — and `100%` principal delivery once the VPFI
+> design, so nobody can retrieve it. Reaching the holder is subject to the
+> standing sanctions rule and is not weakened by it: where the holder must be
+> frozen, the rebate is **parked to their vault against a registered frozen
+> claimant** rather than paid, which keeps it recoverable through the release
+> ceremony. What is never acceptable on this route is refusing the close — one
+> grandfathered rebate must not take a settled sale down with it — nor leaving
+> the rebate on a position the claim path will not serve, which is the same
+> stranding under another name — and `100%` principal delivery once the VPFI
 > LIF is satisfied. They are **grandfather-only** (open custody-path loans
 > with `vpfiHeld > 0`). For **new** loans the borrower model is HoldOnly /
 > Full per §6b (HoldOnly moves no VPFI and charges the LIF in the lending
