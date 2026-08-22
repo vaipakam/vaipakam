@@ -959,11 +959,15 @@ and discarded the verdict, so the only way a buyer learned about a blocker was
 a rejected transaction they had signed and paid for.
 
 The accept flow now consults that verdict and stops there, before the wallet
-prompt rather than after it. The reason it shows is the protocol's own, in
+prompt rather than after it — on any deployment that offers the check. Where the
+preview is not routed, which some supported older deployments do not, the flow
+deliberately proceeds as before rather than refusing on a missing answer; the
+improvement reaches those users only once their deployment does. The reason it shows is the protocol's own, in
 plain words: the offer expired, the listing is out of date and the seller needs
 to relist, one of the assets is paused, the vault on one side needs upgrading,
-the protocol itself is paused. All twenty reasons the platform can give are
-covered, not only the out-of-date-listing one whose arrival made this visible.
+the protocol itself is paused. All nineteen refusal reasons the platform can give
+are covered, not only the out-of-date-listing one whose arrival made this
+visible.
 
 Three details are worth stating because they are the difference between a check
 that helps and one that misleads:
