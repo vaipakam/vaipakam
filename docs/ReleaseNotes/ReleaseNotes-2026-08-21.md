@@ -760,10 +760,17 @@ illiquid default hands the entire basket to the lender and creates no borrower
 claim — there, "nothing" is exactly right and always will be. The whole basket also goes where the protocol CAN price the
 collateral but the position's ratio has passed the collapse threshold — pricing
 is not the discriminator, and a borrower on a collapsed position gets no claim
-either. Priceable is not the same as saleable, either: an asset with a good price feed
-but no market deep enough to absorb the protocol's test trade is treated as
-unpriceable for this purpose and takes the same whole-basket path. Where the
-protocol prices it, a deep enough market exists, the ratio has not collapsed, and
+either. The condition is not a list a page can carry. What decides it is the protocol's
+own judgement, at the moment of the default, of whether the collateral can be
+sold at all — and that judgement can come out negative for reasons that have
+nothing to do with the asset being obscure: no market deep enough to absorb the
+protocol's test trade, a price feed that has gone stale, the chain's own
+sequencer being unhealthy. Any of those, and the whole basket goes. This note has
+now named that condition wrongly four times by trying to enumerate it, so it will
+not try a fifth: the rule is that the borrower gets a claim only where the
+protocol judged the collateral saleable AND the position had not collapsed, and
+the reasons it might not have are more numerous than a release note should
+pretend to list. Where it did so judge, the ratio has not collapsed, and
 the waterfall takes only what it needs — the liquidator, the
 lender, the treasury — any remainder is recorded as the borrower's claim,
 waiting in their vault until they withdraw it, and THAT is the case a page
