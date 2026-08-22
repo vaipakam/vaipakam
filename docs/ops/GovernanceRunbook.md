@@ -767,7 +767,8 @@ Diamond ADDRESS per chain against the address governance actually administers.
 All of this BEFORE the arm.
 
 **3c. Authorize the Base remittance signer — a SEPARATE authorization, and easy
-to miss.** *(M3 / active-mirror branch only: the reward passes perform
+to miss.** *(M3 / active-mirror branch ONLY — on the dark branch skip 3c
+entirely, and see 3g for which flags apply there: the reward passes perform
 Base→mirror remittance, mirror commitment reporting and acknowledgements, none of
 which exist on the dark branch.)* `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
 `_checkRemitter` admits only an `ADMIN_ROLE` holder or the address stored as
@@ -908,6 +909,15 @@ already arrived, or lands with most of its propagation buffer already spent.
 Pick `D*` several broadcast cycles beyond the **expected execution time**, and
 schedule/wait/execute as for any other Timelock action.
 
+**Re-run the volatile preflights immediately before EXECUTING, not only before
+scheduling.** The delay is long enough for the state Step 3 checked to move:
+keeper balances drain, an RPC or deployment artifact can be re-pointed, lane
+buckets deplete, the watcher can start failing, and a Worker flag can be changed
+by anyone with secret access. Balances, endpoint-and-Diamond identity, both
+rate-limiter states, watcher health and the three flags are all point-in-time
+readings — take them again at execution, because the call they gate cannot be
+undone.
+
 The setter writes Base storage and emits `GovernorCommitArmed`. **It sends
 nothing itself.** A mirror learns `D*` in-band, when the first *not-yet-applied*
 finalized day's broadcast reaches it after arming — a replay of an
@@ -925,6 +935,15 @@ confirm PR-2, PR-5c, PR-6 and the #1566 fix are live on it, its clock agrees wit
 Base, and its `armedFromDay` reads zero; then expect it to arm on its first
 broadcast rather than on a day you choose. There is no second cutover to
 schedule.
+
+**And it cannot be bootstrapped with an ordinary current-day broadcast** — the
+same deadlock as the original propagation, arriving by a different door. The
+keeper's report returns while the mirror's `armedFromDay` is zero, while
+`_planDay` declines an armed-day remit until that report completes; and after
+`D*` has passed, every current day IS an armed day. Bootstrap it the way Step 5
+bootstraps the mesh: pick a day BEFORE `D*` that the mirror has not applied,
+remit it (a pre-`D*` remit needs no report), then broadcast that day. The mirror
+installs `D*` from it and can report from then on.
 
 **On the Base-only / dark-mirror branch, skip this step entirely.** There is no
 mirror to propagate `D*` to, and the remit, receipt and broadcast surfaces this
@@ -946,6 +965,13 @@ After arming, drive the cycle explicitly: finalize a day that has not yet been
 applied on the mirrors, **remit that day to every destination and wait for each
 mirror to CONFIRM receipt**, and only then call the payable `broadcastGlobal` (or
 `broadcastGlobalTo` per destination) and pay the transport fee.
+
+**The broadcast is permissionless, so your ordering is not enforced.** Anyone
+willing to pay the CCIP fee can broadcast a newly finalized day between your
+remit submission and its arrival, opening the mirror's claim gate early. You
+cannot prevent that — you can only shrink the window by finalizing and remitting
+close together and confirming receipts promptly — so treat the order as your
+intent rather than a guarantee.
 
 **The per-destination form is not always available.** If the chosen pre-`D*` day
 was grace- or force-finalized without a particular mirror's daily report, that
