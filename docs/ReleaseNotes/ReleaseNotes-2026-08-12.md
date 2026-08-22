@@ -9105,7 +9105,8 @@ correction a reader can see beats a silent edit they cannot.
 
 The same wrong formula was live in the functional specification — in a
 passage seven hundred lines from the one under review at the time — and
-survived eleven review rounds there because no finding pointed at it. That
-was corrected separately.
+survived eleven review rounds there because no finding pointed at it. Its
+correction carried the same day-wide overgeneralization this note did, and
+both are now scoped per side.
 
 Tracked as #1879.
