@@ -882,7 +882,12 @@ finalized day's broadcast reaches it after arming — a replay of an
 already-applied day exits through the idempotency branch without installing the
 value.
 
-### Step 5 — DRIVE the propagation and verify it
+### Step 5 — DRIVE the propagation and verify it (M3 / active-mirror branch only)
+
+**On the Base-only / dark-mirror branch, skip this step entirely.** There is no
+mirror to propagate `D*` to, and the remit, receipt and broadcast surfaces this
+step drives are the M3 surfaces Step 3 already established need not exist on that
+branch. Arming Base is the cutover there; go to Step 6.
 
 (For the RL-3 horizon knob that completes M7, see Step 6 — it is deliberately
 separate and separately gated.)
