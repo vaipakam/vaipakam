@@ -862,9 +862,12 @@ sanctions, or one holding an asset the platform has paused — and while the
 platform as a whole is paused, nothing can be listed or bought at all. In each
 of those cases the platform has a reason that the person reading it can act on
 (even if only by waiting), and answering "relist" instead would have buried it
-behind advice that cannot be followed. So the out-of-date refusal now speaks last, after every other reason
-a purchase can be turned down, and the buyer sees the reason that is worth
-seeing. The preview shown on the card and the refusal from the transaction
+behind advice that cannot be followed. So the out-of-date refusal now speaks
+last among the reasons the platform checks before it starts moving money, and
+the buyer sees the reason that is worth seeing. (A purchase can still fail after
+that point for the ordinary reasons any transaction can — a transfer that does
+not go through, a position that no longer clears its safety margin — but those
+are failures rather than reasons the listing itself was refused.) The preview shown on the card and the refusal from the transaction
 itself agree on which one that is. That agreement is a property of the platform,
 not yet of any screen: no app currently reads the preview's verdict, so a card
 can still offer a purchase that the transaction then refuses. Wiring the verdict
