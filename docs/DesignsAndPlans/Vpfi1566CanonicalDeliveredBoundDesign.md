@@ -26,8 +26,9 @@ modes it never modelled are added in §2. The scope is DIFFERENT, not smaller:
 | three drifted copies of the headroom arithmetic (#1499) | **collapsed by #1555.** All enforcement sites call `LibVpfiRecycle.backingPosition` |
 | the fix must cover every claim path | **partly, and NOT "all enforcement sites"** — #1555 collapsed the PAYOUT and SWEEP gates onto `backingPosition`; `_entryExecutableNow` never used it and still measures `balanceOf` directly on canonical. Searching that helper's callers finds three of four |
 
-So the remaining defect is **narrower and more precisely locatable** than the
-card describes. It is worth stating exactly.
+So the remaining defect is **differently shaped and more precisely locatable**
+than the card describes — two pieces already built, two failure modes it never
+modelled. Not narrower. It is worth stating exactly.
 
 ## 2. The defect, scoped by chain role
 
@@ -67,9 +68,10 @@ which is how it arose.
 **On canonical Base, there is no bound at all** from that function either, so the
 claim gate falls through to `backingPosition`'s un-earmarked figure —
 `balanceOf − recycleBucket − strandedRecoveryReserved − recovered-position`.
-That figure still contains every other owner of the Diamond's VPFI, and **two
-of them are user collateral**: a live swap-to-repay intent's
-`custodialCollateral`, and liquidation `fallbackSnapshot` custody. A reward
+That figure still contains every other owner of the Diamond's VPFI, and **four
+of them are user-owned**: a live swap-to-repay intent's `custodialCollateral`,
+liquidation `fallbackSnapshot` custody, and — on a Diamond upgraded from
+pre-#1352 — `borrowerLifRebate`'s held and settled-but-unclaimed forms (§4). A reward
 payout drawing on those spends a borrower's collateral.
 
 **So the axis split is not clean, and an earlier revision of this note said it
@@ -176,8 +178,11 @@ Diamond it cannot find what it is meant to protect.** `fallbackSnapshot` and
 new counter cannot discover existing `vpfiHeld`, `rebateAmount` or fallback
 custody on-chain. Writers started at upgrade time reserve **zero** for precisely
 the grandfathered balances this option exists to protect. Any costing must
-include an aggregation mechanism — an off-chain enumeration seeded at upgrade
-BEFORE payouts are enabled, or a lazy per-loan reservation on first touch. **The
+include an aggregation mechanism — an off-chain enumeration seeded ATOMICALLY WITH the
+upgrade — not merely before payouts are enabled, because a loan can open a
+swap-to-repay intent or take a fallback snapshot between the snapshot being taken
+and the aggregate writers being installed, leaving real custody absent from both
+the seed and every later delta — or a lazy per-loan reservation on first touch. **The
 lazy variant does not work on its own**: an untouched grandfathered loan stays
 absent from the aggregate until something touches it, so an intervening reward
 claim consumes exactly the tokens it was meant to reserve. Seeding has to precede
@@ -248,8 +253,12 @@ What the options need before a choice is possible:
    ownership question instead of accounting for it, and no revision of this note
    before r3 considered it.
 4. **Whichever is chosen, three closures are required, not one:**
-   the canonical bound; the **legacy mirror payout**, which today spends without
-   recording and so lets one claimant reuse the delivered allowance; and the
+   the canonical bound; the **legacy settlement paths** — not only a claimant's
+   pre-`D*` payout, which spends without recording and lets one claimant reuse
+   the delivered allowance, but the pre-cutover branches of the expiry sweep and
+   the forfeit chunk, which move legacy value into the recycle bucket without
+   charging the delivered ledger either, so a keeper can drain the allowance's
+   backing with no claimant involved; and the
    **detached "neither" role**, which is bounded and recorded by nothing.
    Closing only the canonical side leaves two live custody-drain paths and does
    not unblock arming.
