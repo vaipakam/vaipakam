@@ -235,5 +235,14 @@ Worth knowing:
 throwaway repositories with fragments committed at chosen UTC timestamps;
 run it after any change to the assembler.
 
+Some of its cases stage a fault by taking a permission away and some by
+handing a file to another owner, so no single run can set up both. Run
+as an ordinary user it does the first set; run with full privileges it
+does the second and then repeats itself as an ordinary account to cover
+the first as well. Either way it counts what it could not stage and says
+so at the end — **a skipped case is unmeasured, not passing**, and
+reading it as a pass is how two of them stayed broken for several
+rounds.
+
 See [`feedback_post_merge_definition_of_done`] in agent memory and the
 "Release notes" section of `CLAUDE.md` for the surrounding workflow.
