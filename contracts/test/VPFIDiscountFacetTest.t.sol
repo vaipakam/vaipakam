@@ -21,6 +21,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -1067,6 +1068,257 @@ contract VPFIDiscountFacetTest is SetupTest {
     ///         tier-1 borrower who holds through the full loan window: the
     ///         rebate at settlement is the tier-1 percentage (10%) of the held
     ///         VPFI, with the remainder split 99/1 treasury/matcher.
+    /// @notice #1867 — a prepay-collateral sale that settles a GRANDFATHERED
+    ///         LIF rebate must PAY it, not park it for a claim the terminal
+    ///         can never serve.
+    /// @dev    `LibLifecycle`'s `Active -> Settled` edge is documented on the
+    ///         premise that the Seaport fill distributes everything atomically
+    ///         and there is therefore no separate claim step. Before #1867,
+    ///         `settleBorrowerLifProper` broke that premise by writing a
+    ///         non-zero `rebateAmount` on a loan that had just become
+    ///         `Settled` — a state every other site constructs to mean "the
+    ///         borrower has nothing left to claim" — while
+    ///         `ClaimFacet.claimAsBorrower` rejects `Settled` outright. The
+    ///         rebate was unreachable by anyone.
+    ///
+    ///         NOT VACUOUS: the custody is seeded and the tier is stamped, so
+    ///         the settlement produces a non-zero rebate. Revert the direct-pay
+    ///         call in `PrepayListingFacet` and this fails on
+    ///         `assertGt(borrowerDelta, 0)` — the rebate stays in the Diamond
+    ///         with `rebateAmount != 0` and no way out.
+    function testPrepaySaleSettlesAndPaysGrandfatheredLifRebate() public {
+        uint256 principal = 10_000 ether;
+
+        // Same tier-1 seeding as the repay twin: drives a non-zero avgBps at
+        // settlement, which is what makes the rebate non-zero and this test
+        // non-vacuous.
+        vpfiToken.transfer(borrower, 5_000 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToVault(500 ether);
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days);
+
+        uint256 offerId = _createLenderErc20Offer(principal);
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
+        vm.prank(borrower);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+
+        // Grandfathered custody (a pre-#1352 origination): the only way to
+        // reach the still-live settlement helper on an open loan.
+        uint256 held = 20 ether;
+        TestMutatorFacet(address(diamond)).setBorrowerLifVpfiHeldRaw(loanId, held);
+        vm.warp(block.timestamp + 30 days);
+
+        address executor = address(0xE9EC);
+        vm.prank(owner);
+        PrepayListingFacet(address(diamond)).setCollateralListingExecutor(executor);
+
+        uint256 borrowerVpfiBefore = vpfiToken.balanceOf(borrower);
+        address borrowerVault = _buyerVault(borrower);
+        uint256 vaultVpfiBefore = vpfiToken.balanceOf(borrowerVault);
+
+        vm.prank(executor);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId);
+
+        (uint256 rebateAfter, uint256 heldAfter) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+
+        assertEq(heldAfter, 0, "custody drained at settlement");
+        assertEq(
+            rebateAfter,
+            0,
+            "#1867 - nothing parked: a Settled loan must hold no claimable rebate"
+        );
+
+        // Tier 1 = 1000 bps => the rebate is 10% of held. Two legs settle
+        // here and they land in DIFFERENT places, which is why they are
+        // asserted separately (Codex #1906 r2): the REFUND is credited to the
+        // fee payer's vault, while the 1% Range-Orders matcher kickback on the
+        // treasury share is a wallet transfer to the recorded matcher --
+        // `msg.sender` at accept, i.e. the borrower in this fixture. Asserting
+        // one combined balance delta, as the first cut did, would let either
+        // leg cover for the other's absence.
+        uint256 expectedRebate = (held * 1000) / 10_000;
+        uint256 treasuryShare = held - expectedRebate;
+        uint256 expectedMatcherCut =
+            (treasuryShare * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
+
+        uint256 vaultDelta = vpfiToken.balanceOf(borrowerVault) - vaultVpfiBefore;
+        assertGt(vaultDelta, 0, "#1867 - the rebate was actually delivered");
+        assertEq(
+            vaultDelta,
+            expectedRebate,
+            "the tier-1 refund reached the fee payer's vault"
+        );
+        assertEq(
+            vpfiToken.balanceOf(borrower) - borrowerVpfiBefore,
+            expectedMatcherCut,
+            "the wallet leg is the matcher kickback ONLY, not the refund"
+        );
+
+        // Codex #1906 r2 — a protocol-driven vault movement must RESTAMP the
+        // discount accumulator at the post-mutation balance, at the moment of
+        // movement. Without it the credited refund stays outside the
+        // borrower's tier history until some unrelated vault movement happens
+        // to checkpoint them -- invisible to every assertion above, because
+        // the tokens still arrive. The ring buffer's close-of-day balance is
+        // where that stamp lands.
+        (, , uint120 dayClose, ) = TestMutatorFacet(address(diamond))
+            .getStakeRollupStateRaw(borrower);
+        assertEq(
+            uint256(dayClose),
+            vpfiToken.balanceOf(borrowerVault),
+            "the accumulator was restamped at the post-credit balance"
+        );
+    }
+
+    /// @dev #1867 (Codex #1906 r3) — the invariant this whole PR rests on is
+    ///      that the refund must never REFUSE the close, and a delivery that
+    ///      reverts breaks it just as surely as the screen that used to. A
+    ///      pending mandatory vault upgrade is the concrete case: vault
+    ///      resolution reverts `VaultUpgradeRequired` for a borrower whose
+    ///      vault sits below the floor, and the sale had nothing to do with
+    ///      that.
+    ///
+    ///      The RL-1 delivery shape absorbs it — vault when the vault can take
+    ///      it, wallet when it cannot, close either way. The same fallback
+    ///      covers the other two revert paths the primitive documents (a
+    ///      broadcast failure, and a vault that does not exist yet).
+    function testPrepaySaleFallsBackToWalletWhenTheVaultIsGated() public {
+        uint256 principal = 10_000 ether;
+
+        vpfiToken.transfer(borrower, 5_000 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToVault(500 ether);
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days);
+
+        uint256 offerId = _createLenderErc20Offer(principal);
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
+        vm.prank(borrower);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+
+        uint256 held = 20 ether;
+        TestMutatorFacet(address(diamond)).setBorrowerLifVpfiHeldRaw(loanId, held);
+        vm.warp(block.timestamp + 30 days);
+
+        address executor = address(0xE9EC);
+        vm.prank(owner);
+        PrepayListingFacet(address(diamond)).setCollateralListingExecutor(executor);
+
+        address borrowerVault = _buyerVault(borrower);
+        uint256 vaultBefore = vpfiToken.balanceOf(borrowerVault);
+        uint256 walletBefore = vpfiToken.balanceOf(borrower);
+
+        // Put the borrower's vault below the mandatory floor.
+        TestMutatorFacet(address(diamond)).setMandatoryVaultVersionRaw(
+            type(uint256).max
+        );
+
+        vm.prank(executor);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId);
+
+        (uint256 rebateAfter, uint256 heldAfter) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+        assertEq(heldAfter, 0, "custody drained at settlement");
+        assertEq(rebateAfter, 0, "#1867 - delivered, not stranded on a Settled loan");
+
+        uint256 expectedRebate = (held * 1000) / 10_000;
+        uint256 treasuryShare = held - expectedRebate;
+        uint256 expectedMatcherCut =
+            (treasuryShare * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
+
+        assertEq(
+            vpfiToken.balanceOf(borrowerVault) - vaultBefore,
+            0,
+            "the gated vault was left untouched"
+        );
+        assertEq(
+            vpfiToken.balanceOf(borrower) - walletBefore,
+            expectedRebate + expectedMatcherCut,
+            "the refund fell back to the wallet, alongside the matcher cut"
+        );
+    }
+
+    /// @dev #1867 — the SAME close with the borrower FLAGGED. Two properties,
+    ///      and the second is the one a bare screen gets wrong.
+    ///
+    ///      The refund still reaches the borrower's own vault. It is their own
+    ///      money, priced from their own tier, and an ordinary vault deposit
+    ///      to a flagged user is refused — so the delivery has to go through
+    ///      the sanctions deposit exemption or it silently does not happen.
+    ///
+    ///      And the sale still closes. `assertRecipientNotBarred` REVERTS, so
+    ///      one grandfathered rebate would have taken the whole prepay-sale
+    ///      settlement down with it; leaving the rebate on the `Settled` loan
+    ///      instead would strand it exactly as before the fix, since the claim
+    ///      path refuses that state.
+    function testPrepaySaleCreditsAFlaggedBorrowersOwnRefundToTheirVault()
+        public
+    {
+        uint256 principal = 10_000 ether;
+
+        vpfiToken.transfer(borrower, 5_000 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToVault(500 ether);
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days);
+
+        uint256 offerId = _createLenderErc20Offer(principal);
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
+        vm.prank(borrower);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+
+        uint256 held = 20 ether;
+        TestMutatorFacet(address(diamond)).setBorrowerLifVpfiHeldRaw(loanId, held);
+        vm.warp(block.timestamp + 30 days);
+
+        // Resolve the vault BEFORE flagging: `getOrCreateUserVault` is itself
+        // a Tier-1 entry point and refuses a flagged caller's subject.
+        address vault = _buyerVault(borrower);
+
+        // Flag AFTER origination: the loan is already open, and a Tier-2
+        // close-out must stay available to the counterparty.
+        MockSanctionsList oracle = new MockSanctionsList();
+        oracle.setFlagged(borrower, true);
+        vm.prank(owner);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(oracle));
+
+        address executor = address(0xE9EC);
+        vm.prank(owner);
+        PrepayListingFacet(address(diamond)).setCollateralListingExecutor(executor);
+
+        uint256 vaultBefore = vpfiToken.balanceOf(vault);
+
+        vm.prank(executor);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId);
+
+        (uint256 rebateAfter, uint256 heldAfter) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+        assertEq(heldAfter, 0, "custody drained at settlement");
+        assertEq(
+            rebateAfter,
+            0,
+            "#1867 - delivered, not left claimable on a Settled loan"
+        );
+
+        uint256 expectedRebate = (held * 1000) / 10_000;
+        assertEq(
+            vpfiToken.balanceOf(vault) - vaultBefore,
+            expectedRebate,
+            "#1867 - a flagged borrower's own refund still reaches their vault"
+        );
+    }
+
     function testBorrowerLifRebateCreditedOnProperRepayLongHold() public {
         uint256 principal = 10_000 ether;
 

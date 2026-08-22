@@ -979,6 +979,117 @@ library LibVPFIDiscount {
      *      settlement helpers on default/liquidation paths invoke this
      *      unconditionally to drain any Diamond-held VPFI for the loan.
      */
+    /// @notice Same signature as {ClaimFacet.BorrowerLifRebateClaimed} on
+    ///         purpose — identical topic0, so the existing indexer handler
+    ///         and every downstream consumer see one event for "the rebate
+    ///         reached the borrower side", however it got there.
+    event BorrowerLifRebateClaimed(
+        uint256 indexed loanId,
+        address indexed claimant,
+        uint256 amount,
+        uint256 newVaultVpfiBalance
+    );
+
+    /// @notice Credit a just-settled borrower LIF rebate to the borrower's
+    ///         vault, instead of leaving it in custody for a later claim.
+    /// @dev    #1867. The prepay-collateral-sale terminal takes
+    ///         `LibLifecycle`'s `Active -> Settled` edge, whose documented
+    ///         premise is that the Seaport fill distributes everything
+    ///         atomically and there is therefore NO separate claim step.
+    ///         `settleBorrowerLifProper` breaks that premise when it writes a
+    ///         non-zero `rebateAmount`: the loan is then `Settled` — a state
+    ///         every other site constructs to mean "the borrower has nothing
+    ///         left to claim" — while holding something claimable, and
+    ///         `ClaimFacet.claimAsBorrower` rejects `Settled` outright, so the
+    ///         rebate is stranded.
+    ///
+    ///         Paying it here RESTORES the premise rather than working around
+    ///         it: no lifecycle edge changes, no observable status changes, and
+    ///         the claim gate keeps both of its independent barriers.
+    ///
+    ///         The recipient is `loan.borrower` — the party
+    ///         `settleBorrowerLifProper` PRICED the rebate from — and delivery
+    ///         is {VaultFactoryFacet.vaultCreditFromDiamondERC20} behind a
+    ///         revert-isolated self-call with a wallet fallback, so no
+    ///         delivery failure can refuse the close. See the inline note in
+    ///         the body for both decisions.
+    ///
+    ///         **No-op on any deployment originated from current source.**
+    ///         #1352 retired the peg-custody path and every surviving write to
+    ///         `vpfiHeld` in `src/` assigns zero, so `settleBorrowerLifProper`
+    ///         returns without writing a rebate and this returns 0. Only a
+    ///         Diamond upgraded from pre-#1352, carrying loans opened on the
+    ///         retired path, can reach a non-zero payout.
+    /// @param  loan the just-settled loan (call AFTER
+    ///              `settleBorrowerLifProper`).
+    /// @return paid the amount credited; 0 when nothing was owed.
+    function creditBorrowerLifRebateToVault(
+        LibVaipakam.Loan storage loan
+    ) internal returns (uint256 paid) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        paid = s.borrowerLifRebate[loan.id].rebateAmount;
+        if (paid == 0) return 0;
+        address vpfi = s.vpfiToken;
+        s.borrowerLifRebate[loan.id].rebateAmount = 0;
+        if (vpfi == address(0)) return 0;
+
+        // Codex #1906 r2 — the rebate goes to `loan.borrower`, and that is a
+        // deliberate answer rather than a convenience.
+        //
+        // PAYEE. `settleBorrowerLifProper` prices this from `loan.borrower`'s
+        // effective tier. Paying a different party a figure computed from this
+        // one's tier is a mispricing; making payee and pricing anchor the same
+        // party removes it, and does so WITHOUT diverging from every other
+        // close path (moving the pricing instead would). The principle the two
+        // halves of a prepay sale now follow: sale PROCEEDS follow the
+        // position, a fee REFUND follows the fee payer.
+        //
+        // NO `ownerOf`. Resolving a position holder and paying them raw is the
+        // S10 Invariant B shape, and it forced a choice between a fail-open
+        // screen, a freeze with no release path (`claimAsBorrower` never runs
+        // on a `Settled` loan, so a recorded frozen claimant and an
+        // encumbrance would both be inert — one silently, one permanently),
+        // and refusing the close. Not resolving a holder at all dissolves the
+        // question instead of answering it badly.
+        //
+        // DELIVERY is {VaultFactoryFacet.vaultCreditFromDiamondERC20} behind a
+        // revert-isolated self-call with a wallet fallback — the RL-1 shape,
+        // and its natspec is the design note for this case (Codex #1906 r3).
+        // A settlement credit must never be able to REFUSE the close, and
+        // three separate paths could:
+        //
+        //   * the BROADCASTING rollup bubbles anything the CCIP tier push
+        //     raises, `ProtocolBudgetExhausted` included, on any deployment
+        //     with a messenger configured. That primitive restamps with the
+        //     broadcast-free local variant instead; the next broadcasting
+        //     mutation carries the push.
+        //   * a pending MANDATORY VAULT UPGRADE reverts vault resolution. There
+        //     it is a fallback trigger rather than a hard failure.
+        //   * resolving a vault that does not exist would MINT one as a side
+        //     effect of a payout. That primitive resolves READ-ONLY and
+        //     reverts `NoVault`, which the fallback also absorbs.
+        //
+        // So the refund lands in the borrower's vault whenever the vault can
+        // take it, in their wallet when it cannot, and the sale closes either
+        // way. Both destinations are equally reachable by the borrower, so the
+        // fallback is a delivery detail rather than a policy difference.
+        // slither-disable-next-line low-level-calls
+        (bool ok, ) = address(this).call(
+            abi.encodeWithSignature(
+                "vaultCreditFromDiamondERC20(address,address,uint256)",
+                loan.borrower,
+                vpfi,
+                paid
+            )
+        );
+        if (!ok) {
+            SafeERC20.safeTransfer(IERC20(vpfi), loan.borrower, paid);
+        }
+        emit BorrowerLifRebateClaimed(
+            loan.id, loan.borrower, paid, vaultVpfiBalance(loan.borrower)
+        );
+    }
+
     function forfeitBorrowerLif(LibVaipakam.Loan storage loan) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.BorrowerLifRebate storage r = s.borrowerLifRebate[loan.id];

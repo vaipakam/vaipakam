@@ -198,6 +198,21 @@ contract PrepayListingFacet is
         LibLifecycle.transition(loan, LibVaipakam.LoanStatus.Active, LibVaipakam.LoanStatus.Settled);
         LibERC721._unlock(loan.borrowerTokenId);
         LibVPFIDiscount.settleBorrowerLifProper(loan);
+        // #1867 — and PAY it, rather than leaving it in custody for a claim
+        // this terminal can never serve. `Settled` is the state every other
+        // site constructs to mean "the borrower has nothing left to claim",
+        // and `claimAsBorrower` rejects it outright; a stored rebate here is
+        // stranded. Paying restores this edge's documented premise (the fill
+        // distributes everything atomically, so there IS no claim step)
+        // instead of weakening the claim gate to accommodate the exception.
+        // Codex #1906 r2 — no `ownerOf` here. The rebate is credited to
+        // `loan.borrower`'s vault: the party it was PRICED from, and the same
+        // anchor this whole vehicle uses (the signed Seaport offerer is
+        // `loan.borrower`'s vault). See the rationale on
+        // {LibVPFIDiscount.creditBorrowerLifRebateToVault} for why resolving a
+        // holder here was the wrong shape rather than a wrong guard.
+        // No-op unless the loan is grandfathered from pre-#1352 custody.
+        LibVPFIDiscount.creditBorrowerLifRebateToVault(loan);
         // #1067 — DURABLE terminal reward close: a prepay-sale finalize is a
         // proper close, so shrink both reward entries' active windows to
         // today and re-anchor each open side to the live NFT holder here.
@@ -571,6 +586,15 @@ contract PrepayListingFacet is
         );
         LibERC721._unlock(loan.borrowerTokenId);
         LibVPFIDiscount.settleBorrowerLifProper(loan);
+        // #1867 — pay it here too, to the same holder this function already
+        // pays the borrower remainder to. Same reasoning as the loan-keyed
+        // twin: a `Settled` loan holding a claimable rebate is stranded,
+        // because the claim gate rejects `Settled` by design.
+        // Codex #1906 r2 — the remainder above follows the POSITION
+        // (`remainderRecipient`); this refund follows the FEE PAYER, because
+        // that is who it was priced from. Same primitive as the loan-keyed
+        // twin, so the two prepay-sale routes cannot drift.
+        LibVPFIDiscount.creditBorrowerLifRebateToVault(loan);
         // #1067 — DURABLE terminal reward close (offer-keyed parallel-sale
         // twin of executorFinalizePrepaySale). Proper close, so shrink both
         // reward entries to today and re-anchor each open side to the live
