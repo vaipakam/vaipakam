@@ -2402,6 +2402,52 @@ contract EarlyWithdrawalFacetTest is Test {
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
 
+    /// @dev #1835 (Codex #1891 F10) — a listing that is BOTH stale and no
+    ///      longer sale-admissible must report the admission failure.
+    ///
+    ///      The fourth and last instance of the same ordering. `createLoanSaleOffer`
+    ///      re-runs this very solvency guard, so it would refuse the relist —
+    ///      making "your listing is stale, relist" advice the seller cannot
+    ///      take, while hiding the reason they could act on.
+    ///
+    ///      This case is why the comparison is now LAST in the sale branch
+    ///      rather than merely behind whichever gate a finding named: three
+    ///      earlier fixes each moved it behind one gate and left the next ahead
+    ///      of it. Staleness is the lowest-priority sale refusal, so it speaks
+    ///      only when nothing else has.
+    function test_item23_solvencyFailureOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // Below the admission floor, still above the liquidation trigger —
+        // the shared fixture the direct-sale solvency tests use.
+        (uint256 hf, uint256 floor) = _sinkBelowFloorButSolvent();
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "insolventStaleBuyer");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SalePositionBelowSolvencyFloor.selector,
+                activeLoanId,
+                hf,
+                floor
+            )
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview agrees, which is the parity the ordering exists for.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SalePositionBelowSolvencyFloor),
+            "the admission failure is the actionable reason; it outranks staleness"
+        );
+    }
+
     /// @dev #1835 (Codex #1891 F6) — `useFullTermInterest` is the FOURTH
     ///      behavioural term and is checked like the rest.
     ///

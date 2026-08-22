@@ -862,6 +862,15 @@ contract OfferAcceptFacet is
                     uint256(saleLoan.startTime) +
                         uint256(saleLoan.durationDays) * 1 days
                 ) revert SaleLoanPastMaturity();
+                // #1503 PR-E (design item 11) — the BINDING solvency
+                // admission floor. `createLoanSaleOffer` checks it too, but
+                // a listing rests while the position keeps moving: only the
+                // read at the moment the buyer's value commits governs what
+                // they actually inherit. Enforced HERE, alongside maturity
+                // and for the same reason — before any buyer value moves,
+                // never at `completeLoanSale`, where a revert would strand a
+                // buyer whose principal has already settled.
+                LibSaleSolvency.assertSaleSolvent(saleLoanId);
                 // #1835 (Codex #1891 F3/F4) — the vehicle must MIRROR the
                 // position it sells. A listing created before #1779 taught
                 // `_buildSaleParams` to copy these three behavioural terms
@@ -876,25 +885,32 @@ contract OfferAcceptFacet is
                 // sale. Vehicle-vs-LOAN is the one pairing no signature check
                 // can stand in for.
                 //
-                // ORDERED LAST among the sale gates, not in `_bindTermsToOffer`
-                // where the other term checks live, and the placement is the
-                // whole point. The binding runs at `acceptOffer` step 5 —
-                // before this function's expiry gate, its status gate and its
-                // maturity gate — so a comparison living there answers "stale
-                // listing, relist" for offers that are expired, whose position
-                // has been repaid / defaulted / liquidated, or which have
-                // crossed maturity inside the grace window. Each of those is
-                // both more structural AND actionable where this one is not:
-                // `_boundListingExpiry` refuses to relist a matured loan, and a
-                // terminal loan cannot be relisted at all, so the advice could
-                // not be followed. Every one also disagrees with
-                // `previewAccept`, which reports them first.
+                // ORDERED LAST IN THIS BRANCH, deliberately and by principle:
+                // **staleness is the lowest-priority sale refusal there is**, so
+                // it speaks only when nothing else has. Every other gate here —
+                // expiry, non-Active, maturity, solvency admission — is both
+                // more structural AND actionable where this one is not. This
+                // error tells the seller to relist, and `_boundListingExpiry`
+                // refuses to relist a matured loan, `createLoanSaleOffer` runs
+                // the same solvency guard that would refuse the new listing, and
+                // a terminal loan cannot be relisted at all. Answering "relist"
+                // in any of those states is advice that cannot be taken, and it
+                // hides the reason that could be.
                 //
-                // Gating on each condition in turn fixes them one at a time and
-                // misses the next gate someone adds — which is exactly how this
-                // arrived, as three separate review findings. Sitting after ALL
-                // of them orders it by construction instead, and
-                // `previewAccept`'s classifier mirrors this position.
+                // State the RULE, not the position, because the position is
+                // what kept being wrong: this arrived as FOUR separate review
+                // findings (#1891 F3/F4/F5/F10 — status, expiry, maturity,
+                // solvency), each fixed by moving the comparison behind the one
+                // gate that finding named, and each time the next gate was
+                // still ahead of it. Last-in-branch is the only placement that
+                // does not need re-deriving when a gate is added; a new gate
+                // belongs ABOVE this one unless it is genuinely less actionable
+                // than "your listing is out of date".
+                //
+                // It is also not in `_bindTermsToOffer` where the other term
+                // checks live: the binding runs at `acceptOffer` step 5, before
+                // every gate in this function. `previewAccept` mirrors this
+                // ordering for the same reason.
                 //
                 // `useFullTermInterest` (17) is INCLUDED. An earlier revision
                 // excluded it, reasoning that its mirroring predates any listing
@@ -912,15 +928,6 @@ contract OfferAcceptFacet is
                     offer.periodicInterestCadence !=
                     saleLoan.periodicInterestCadence
                 ) revert SaleListingTermsStale();
-                // #1503 PR-E (design item 11) — the BINDING solvency
-                // admission floor. `createLoanSaleOffer` checks it too, but
-                // a listing rests while the position keeps moving: only the
-                // read at the moment the buyer's value commits governs what
-                // they actually inherit. Enforced HERE, alongside maturity
-                // and for the same reason — before any buyer value moves,
-                // never at `completeLoanSale`, where a revert would strand a
-                // buyer whose principal has already settled.
-                LibSaleSolvency.assertSaleSolvent(saleLoanId);
             }
         }
 
