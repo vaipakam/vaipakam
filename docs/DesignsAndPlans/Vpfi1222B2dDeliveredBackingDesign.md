@@ -716,7 +716,12 @@ credit is eligible for neither, since the full lapse rejects any compensated day
 and the short lapse rejects an unconfirmed one. That state's third-party exit is
 the resend as well: an accepted delivery of the day's record settles the
 provisional credit — but the two settlements do not leave the day in the same
-place. A CONFIRMED credit opens the ordinary route or the short terminal. A
+place. A CONFIRMED credit opens the ordinary route or the short terminal ONCE the
+day's figure has also been sent — and for a credit that overtook its record,
+it will not have been, because the marker the figure is sent against was not
+yet there to send it against. So confirmation alone still leaves ordinary
+pricing deferring and the short terminal reverting for a missing figure; the
+local send is a second step, not a consequence of the first. A
 DEMOTED one removes the compensation and its clocks together, leaving an
 uncompensated day: the short terminal then rejects it for want of a
 compensation, ordinary pricing keeps deferring, and what remains is a
