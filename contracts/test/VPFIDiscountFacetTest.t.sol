@@ -1117,6 +1117,8 @@ contract VPFIDiscountFacetTest is SetupTest {
         PrepayListingFacet(address(diamond)).setCollateralListingExecutor(executor);
 
         uint256 borrowerVpfiBefore = vpfiToken.balanceOf(borrower);
+        address borrowerVault = _buyerVault(borrower);
+        uint256 vaultVpfiBefore = vpfiToken.balanceOf(borrowerVault);
 
         vm.prank(executor);
         PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId);
@@ -1131,36 +1133,62 @@ contract VPFIDiscountFacetTest is SetupTest {
             "#1867 - nothing parked: a Settled loan must hold no claimable rebate"
         );
 
-        // Tier 1 = 1000 bps ⇒ the rebate is 10% of held. The borrower also
-        // receives the 1% Range-Orders matcher kickback on the treasury share
-        // in VPFI, because msg.sender at accept was the borrower — the same
-        // arithmetic the proper-repay twin above asserts. Both legs land in
-        // one balance, so the delta is rebate + matcher cut.
+        // Tier 1 = 1000 bps => the rebate is 10% of held. Two legs settle
+        // here and they land in DIFFERENT places, which is why they are
+        // asserted separately (Codex #1906 r2): the REFUND is credited to the
+        // fee payer's vault, while the 1% Range-Orders matcher kickback on the
+        // treasury share is a wallet transfer to the recorded matcher --
+        // `msg.sender` at accept, i.e. the borrower in this fixture. Asserting
+        // one combined balance delta, as the first cut did, would let either
+        // leg cover for the other's absence.
         uint256 expectedRebate = (held * 1000) / 10_000;
         uint256 treasuryShare = held - expectedRebate;
         uint256 expectedMatcherCut =
             (treasuryShare * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
-        uint256 borrowerDelta = vpfiToken.balanceOf(borrower) - borrowerVpfiBefore;
-        assertGt(borrowerDelta, 0, "#1867 - the rebate was actually paid out");
+
+        uint256 vaultDelta = vpfiToken.balanceOf(borrowerVault) - vaultVpfiBefore;
+        assertGt(vaultDelta, 0, "#1867 - the rebate was actually delivered");
         assertEq(
-            borrowerDelta,
-            expectedRebate + expectedMatcherCut,
-            "borrower received the tier-1 rebate plus the matcher kickback"
+            vaultDelta,
+            expectedRebate,
+            "the tier-1 refund reached the fee payer's vault"
+        );
+        assertEq(
+            vpfiToken.balanceOf(borrower) - borrowerVpfiBefore,
+            expectedMatcherCut,
+            "the wallet leg is the matcher kickback ONLY, not the refund"
+        );
+
+        // Codex #1906 r2 — a protocol-driven vault movement must RESTAMP the
+        // discount accumulator at the post-mutation balance, at the moment of
+        // movement. Without it the credited refund stays outside the
+        // borrower's tier history until some unrelated vault movement happens
+        // to checkpoint them -- invisible to every assertion above, because
+        // the tokens still arrive. The ring buffer's close-of-day balance is
+        // where that stamp lands.
+        (, , uint120 dayClose, ) = TestMutatorFacet(address(diamond))
+            .getStakeRollupStateRaw(borrower);
+        assertEq(
+            uint256(dayClose),
+            vpfiToken.balanceOf(borrowerVault),
+            "the accumulator was restamped at the post-credit balance"
         );
     }
 
-    /// @dev #1867 S10 Invariant B — the SAME close, with the position holder
-    ///      flagged. The rebate must neither be paid raw nor left on the
-    ///      `Settled` loan (the claim path refuses that state, so it would be
-    ///      stranded exactly as before the fix): it parks into the flagged
-    ///      holder's vault with a registered frozen claimant, recoverable
-    ///      through the release ceremony.
+    /// @dev #1867 — the SAME close with the borrower FLAGGED. Two properties,
+    ///      and the second is the one a bare screen gets wrong.
     ///
-    ///      And the sale still closes. That is the half a bare
-    ///      `assertRecipientNotBarred` gets wrong: it reverts, so one
-    ///      grandfathered rebate would take the whole prepay-sale settlement
-    ///      down with it.
-    function testPrepaySaleParksGrandfatheredLifRebateForAFlaggedHolder()
+    ///      The refund still reaches the borrower's own vault. It is their own
+    ///      money, priced from their own tier, and an ordinary vault deposit
+    ///      to a flagged user is refused — so the delivery has to go through
+    ///      the sanctions deposit exemption or it silently does not happen.
+    ///
+    ///      And the sale still closes. `assertRecipientNotBarred` REVERTS, so
+    ///      one grandfathered rebate would have taken the whole prepay-sale
+    ///      settlement down with it; leaving the rebate on the `Settled` loan
+    ///      instead would strand it exactly as before the fix, since the claim
+    ///      path refuses that state.
+    function testPrepaySaleCreditsAFlaggedBorrowersOwnRefundToTheirVault()
         public
     {
         uint256 principal = 10_000 ether;
@@ -1209,14 +1237,14 @@ contract VPFIDiscountFacetTest is SetupTest {
         assertEq(
             rebateAfter,
             0,
-            "#1867 - parked, not left claimable on a Settled loan"
+            "#1867 - delivered, not left claimable on a Settled loan"
         );
 
         uint256 expectedRebate = (held * 1000) / 10_000;
         assertEq(
             vpfiToken.balanceOf(vault) - vaultBefore,
             expectedRebate,
-            "#1867 - the rebate parked into the flagged holder's vault"
+            "#1867 - a flagged borrower's own refund still reaches their vault"
         );
     }
 

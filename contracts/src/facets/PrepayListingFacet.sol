@@ -12,7 +12,6 @@ import {LibCollateralSettlement} from "../libraries/LibCollateralSettlement.sol"
 import {LibLifecycle} from "../libraries/LibLifecycle.sol";
 import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
-import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibAccessControl, DiamondAccessControl} from "../libraries/LibAccessControl.sol";
 import {DiamondPausable} from "../libraries/LibPausable.sol";
 import {IVaipakamErrors} from "../interfaces/IVaipakamErrors.sol";
@@ -206,46 +205,14 @@ contract PrepayListingFacet is
         // stranded. Paying restores this edge's documented premise (the fill
         // distributes everything atomically, so there IS no claim step)
         // instead of weakening the claim gate to accommodate the exception.
+        // Codex #1906 r2 — no `ownerOf` here. The rebate is credited to
+        // `loan.borrower`'s vault: the party it was PRICED from, and the same
+        // anchor this whole vehicle uses (the signed Seaport offerer is
+        // `loan.borrower`'s vault). See the rationale on
+        // {LibVPFIDiscount.creditBorrowerLifRebateToVault} for why resolving a
+        // holder here was the wrong shape rather than a wrong guard.
         // No-op unless the loan is grandfathered from pre-#1352 custody.
-        // Resolve the recipient ONLY when there is something to pay. A loan
-        // that took no custody (every origination from current source) leaves
-        // `rebateAmount` zero, and `ownerOf` on an unminted position id would
-        // revert — so an unconditional lookup would turn a no-op into a
-        // failed close.
-        if (s.borrowerLifRebate[loanId].rebateAmount != 0) {
-            address lifRecipient = VaipakamNFTFacet(address(this)).ownerOf(
-                loan.borrowerTokenId
-            );
-            // S10 Invariant B — PARK-OR-PAY, not a bare screen. A resolved
-            // holder paid raw must be freeze-routed, and this rebate is a
-            // resolved-holder payout like any other. `assertRecipientNotBarred`
-            // is the wrong instrument twice over: it is FAIL-OPEN (an oracle
-            // outage pays a previously-confirmed-flagged holder), and it
-            // REVERTS, which on this path would strand the whole prepay-sale
-            // close over one grandfathered rebate rather than settling the
-            // sale and holding the rebate.
-            //
-            // `mustFreezeParty` decides fail-closed; a frozen holder's rebate
-            // parks into their vault behind the sanctions deposit exemption
-            // with a registered frozen claimant, so it stays recoverable via
-            // the release ceremony. That is the whole point of the register —
-            // and it is exactly what leaving the rebate on a `Settled` loan
-            // would NOT give, since the claim path refuses that state.
-            uint256 parked = s.borrowerLifRebate[loanId].rebateAmount;
-            address vpfiToken = s.vpfiToken;
-            if (vpfiToken != address(0) &&
-                LibSanctionedLock.mustFreezeParty(s, lifRecipient)) {
-                s.borrowerLifRebate[loanId].rebateAmount = 0;
-                LibSanctionedLock.depositLocked(
-                    s, lifRecipient, loanId, vpfiToken, parked
-                );
-                LibSanctionedLock.recordFrozenClaimant(
-                    s, loanId, false, lifRecipient
-                );
-            } else {
-                LibVPFIDiscount.payBorrowerLifRebateDirect(loan, lifRecipient);
-            }
-        }
+        LibVPFIDiscount.creditBorrowerLifRebateToVault(loan);
         // #1067 — DURABLE terminal reward close: a prepay-sale finalize is a
         // proper close, so shrink both reward entries' active windows to
         // today and re-anchor each open side to the live NFT holder here.
@@ -623,7 +590,11 @@ contract PrepayListingFacet is
         // pays the borrower remainder to. Same reasoning as the loan-keyed
         // twin: a `Settled` loan holding a claimable rebate is stranded,
         // because the claim gate rejects `Settled` by design.
-        LibVPFIDiscount.payBorrowerLifRebateDirect(loan, remainderRecipient);
+        // Codex #1906 r2 — the remainder above follows the POSITION
+        // (`remainderRecipient`); this refund follows the FEE PAYER, because
+        // that is who it was priced from. Same primitive as the loan-keyed
+        // twin, so the two prepay-sale routes cannot drift.
+        LibVPFIDiscount.creditBorrowerLifRebateToVault(loan);
         // #1067 — DURABLE terminal reward close (offer-keyed parallel-sale
         // twin of executorFinalizePrepaySale). Proper close, so shrink both
         // reward entries to today and re-anchor each open side to the live

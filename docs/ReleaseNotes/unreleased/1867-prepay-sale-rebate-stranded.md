@@ -12,11 +12,13 @@ for collection anyway, onto a loan the collection path refuses to serve by
 design. Nobody could retrieve it: not the borrower, not the buyer, not an
 operator.
 
-It is now paid out in that same transaction, to the same party that route
-already pays the borrower's remainder to. Where that party is one the platform
-is required to freeze, the rebate is held for them in their own vault instead
-of being paid — recoverable later through the normal release process, and
-without the sale itself being refused over it. That keeps the promise the route is
+It is now delivered in that same transaction, into the vault of the party the
+refund was calculated for — the original borrower, who paid the fee. Sale
+proceeds still follow whoever holds the position; a refund follows whoever paid.
+Keeping those two apart is what makes the amount and the recipient agree, and it
+holds even when the borrower is someone the platform is required to screen: the
+money is their own, so it reaches their own vault, and the sale is never refused
+over it. That keeps the promise the route is
 built on — everything settled at once, nothing left to collect — rather than
 carving an exception into the collection path to accommodate a state that should
 not exist.
