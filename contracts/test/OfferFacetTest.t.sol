@@ -8,6 +8,7 @@ import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {LibUserVault} from "../src/libraries/LibUserVault.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -131,7 +132,7 @@ contract OfferFacetTest is Test {
         HelperTest helperTest = new HelperTest();
 
         // Prepare cuts for required facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](12);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](13);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(new OfferCreateFacet()),
             action: IDiamondCut.FacetCutAction.Add,
@@ -141,6 +142,15 @@ contract OfferFacetTest is Test {
             facetAddress: address(new OfferAcceptFacet()),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: getOfferAcceptFacetSelectors()
+        });
+        // #1835 — `chargeBorrowerLifAndDeliver` now lives on its own host, so
+        // it needs its own cut. It is still the same selector and still
+        // mandatory: `_acceptOffer` self-calls it, so an ERC-20 accept on a
+        // Diamond missing this cut reverts `FunctionDoesNotExist`.
+        cuts[12] = IDiamondCut.FacetCut({
+            facetAddress: address(new OfferAcceptFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: getOfferAcceptFeeFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({
             facetAddress: address(new ProfileFacet()),
@@ -321,7 +331,7 @@ contract OfferFacetTest is Test {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](2);
+        selectors = new bytes4[](1);
         // #662 anti-phishing accept binding — the public entry now takes the
         // EIP-712-signed `AcceptTerms` struct + signature. Cut the new 3-arg
         // selector so the typed accept calls route through the diamond. The
@@ -329,11 +339,23 @@ contract OfferFacetTest is Test {
         // `hashAcceptTerms` view was removed for EIP-170 headroom (#730), and the
         // direct-path offerKey is likewise client-side.
         selectors[0] = OfferAcceptFacet.acceptOffer.selector;
+        return selectors;
+    }
+
+    /// @dev #1835 — `chargeBorrowerLifAndDeliver` split off OfferAcceptFacet
+    ///      onto `OfferAcceptFeeFacet` for EIP-170 headroom. The selector is
+    ///      unchanged by the move; only its host is.
+    function getOfferAcceptFeeFacetSelectors()
+        internal
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
         // #1352 HoldOnly LIF — `_acceptOffer` cross-facet-calls this internal
         // charge+deliver entry (an `address(this).call` boundary), so it must
         // be routed on the diamond or the ERC-20 accept path reverts
         // FunctionDoesNotExist.
-        selectors[1] = OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector;
+        selectors[0] = OfferAcceptFeeFacet.chargeBorrowerLifAndDeliver.selector;
         return selectors;
     }
 

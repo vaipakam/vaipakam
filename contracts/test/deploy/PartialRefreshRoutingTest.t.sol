@@ -286,11 +286,110 @@ contract PartialRefreshRoutingTest is Test {
         _assertSingleHost(surface.oracleAdminSelectors(), "OracleAdminFacet");
         _assertSingleHost(surface.offerCreateSelectors(), "OfferCreateFacet");
         _assertSingleHost(surface.offerAcceptSelectors(), "OfferAcceptFacet");
+        _assertSingleHost(
+            surface.offerAcceptFeeSelectors(),
+            "OfferAcceptFeeFacet"
+        );
         _assertSingleHost(surface.oracleSelectors(), "OracleFacet");
         _assertSingleHost(surface.vaultFactorySelectors(), "VaultFactoryFacet");
         _assertSingleHost(surface.numeraireConfigSelectors(), "NumeraireConfigFacet");
         _assertSingleHost(surface.riskPreviewSelectors(), "RiskPreviewFacet");
         _assertSingleHost(surface.offerPreviewSelectors(), "OfferPreviewFacet");
+    }
+
+    // ─── 6. The #1835 split migrates on an already-deployed Diamond ───
+
+    /// @dev Put the Diamond back into its PRE-split shape: the borrower-LIF
+    ///      charge co-hosted on `OfferAcceptFacet`, which is where every
+    ///      Diamond deployed before #1835 still routes it. A `Replace` onto an
+    ///      address that no longer implements the selector is exactly what the
+    ///      field state is — the route is stale, not absent, which is why it
+    ///      cannot be found by looking for reverts at cut time.
+    function _coHostFeeSelectorOnAcceptFacet()
+        internal
+        returns (address preSplitHost)
+    {
+        SelectorSurfaceHarness surface = new SelectorSurfaceHarness();
+        bytes4[] memory fee = surface.offerAcceptFeeSelectors();
+        preSplitHost = IDiamondLoupe(diamond).facetAddress(
+            surface.offerAcceptSelectors()[0]
+        );
+
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](1);
+        cuts[0] = IDiamondCut.FacetCut({
+            facetAddress: preSplitHost,
+            action: IDiamondCut.FacetCutAction.Replace,
+            functionSelectors: fee
+        });
+
+        vm.prank(deployer);
+        IDiamondCut(diamond).diamondCut(cuts, address(0), "");
+    }
+
+    /// @notice The fixture really does reproduce the pre-split shape.
+    /// @dev    Same discipline as `test_PreRefreshFixture_ReproducesTheBreak`
+    ///         above: without this, the migration test below could pass against
+    ///         a Diamond that was already correct and prove nothing.
+    function test_PreSplitFixture_CoHostsTheFeeSelector() public {
+        SelectorSurfaceHarness surface = new SelectorSurfaceHarness();
+        bytes4 fee = surface.offerAcceptFeeSelectors()[0];
+        bytes4 accept = surface.offerAcceptSelectors()[0];
+
+        assertTrue(
+            IDiamondLoupe(diamond).facetAddress(fee)
+                != IDiamondLoupe(diamond).facetAddress(accept),
+            "a freshly deployed Diamond must already have the two split apart"
+        );
+
+        _coHostFeeSelectorOnAcceptFacet();
+
+        assertEq(
+            IDiamondLoupe(diamond).facetAddress(fee),
+            IDiamondLoupe(diamond).facetAddress(accept),
+            "fixture must leave both selectors on one host"
+        );
+    }
+
+    /// @notice `ReplaceStaleFacets` must re-point the borrower-LIF charge onto
+    ///         its own facet when it meets a Diamond that predates #1835.
+    ///
+    /// @dev    #1835 moved `chargeBorrowerLifAndDeliver` off `OfferAcceptFacet`,
+    ///         so it left that facet's selector list. A refresh re-points only
+    ///         what it names — so had the script not gained a cut for the new
+    ///         host, the selector would keep resolving to the OLD
+    ///         `OfferAcceptFacet` address while every other accept selector
+    ///         moved to the new one. The accept would then run new bytecode up
+    ///         to its self-call and pre-split bytecode after it: one logical
+    ///         facet serving one transaction from two builds, with the script
+    ///         reporting success. That is the #778/#779 failure arriving by the
+    ///         opposite door — a selector DROPPED from a list rather than
+    ///         omitted from one — and no accept test can see it, because on a
+    ///         Diamond this test's fixture reproduces, the stale route still
+    ///         answers.
+    function test_ReplaceStaleFacets_MigratesTheFeeSelector_OnPreSplitDiamond()
+        public
+    {
+        SelectorSurfaceHarness surface = new SelectorSurfaceHarness();
+        bytes4 fee = surface.offerAcceptFeeSelectors()[0];
+
+        address stale = _coHostFeeSelectorOnAcceptFacet();
+
+        ReplaceStaleFacets script = new ReplaceStaleFacets();
+        script.runWith(diamond, DEPLOYER_KEY);
+
+        address host = IDiamondLoupe(diamond).facetAddress(fee);
+        assertTrue(host != address(0), "fee selector must stay routed");
+        assertTrue(
+            host != stale,
+            "fee selector still on the pre-split OfferAcceptFacet address"
+        );
+        assertTrue(
+            host
+                != IDiamondLoupe(diamond).facetAddress(
+                    surface.offerAcceptSelectors()[0]
+                ),
+            "fee selector must not be re-co-hosted on the refreshed accept facet"
+        );
     }
 
     /// @dev Guards the guard: if the authoritative surfaces were ever reduced to
@@ -407,6 +506,10 @@ contract SelectorSurfaceHarness is ReplaceStaleFacets {
 
     function offerAcceptSelectors() external pure returns (bytes4[] memory) {
         return _getOfferAcceptSelectors();
+    }
+
+    function offerAcceptFeeSelectors() external pure returns (bytes4[] memory) {
+        return _getOfferAcceptFeeSelectors();
     }
 
     function oracleSelectors() external pure returns (bytes4[] memory) {

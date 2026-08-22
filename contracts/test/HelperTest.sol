@@ -5,6 +5,7 @@ pragma solidity ^0.8.29;
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -545,7 +546,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](6);
+        selectors = new bytes4[](5);
         // #662 — `acceptOffer(uint256,AcceptTerms,bytes)` now binds the
         // acceptor's EIP-712-signed terms to every loan-affecting offer field
         // (anti-phishing; OfferAcceptTermBindingDesign.md).
@@ -565,8 +566,24 @@ contract HelperTest {
         // `hashAcceptTerms` view was removed for EIP-170 headroom, #730; the test
         // signer uses `LibAcceptTerms.digestFor`.)
         selectors[4] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        // #1835 — `chargeBorrowerLifAndDeliver` moved to OfferAcceptFeeFacet
+        // (`getOfferAcceptFeeFacetSelectors`) for EIP-170 headroom.
+        return selectors;
+    }
+
+    /// @dev #1835 — `OfferAcceptFeeFacet`, split out of OfferAcceptFacet for
+    ///      EIP-170 headroom. Cut separately, but it is one behaviour with the
+    ///      accept path: `_acceptOffer` reaches this selector through
+    ///      `crossFacetCall`, so a Diamond that routes one and not the other
+    ///      reverts every ERC-20 accept.
+    function getOfferAcceptFeeFacetSelectors()
+        public
+        pure
+        returns (bytes4[] memory selectors)
+    {
+        selectors = new bytes4[](1);
         // #1352 — diamond-internal borrower LIF charge, `crossFacetCall`-routed.
-        selectors[5] = OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector;
+        selectors[0] = OfferAcceptFeeFacet.chargeBorrowerLifAndDeliver.selector;
         return selectors;
     }
 

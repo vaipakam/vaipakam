@@ -59,7 +59,8 @@ Cross-facet calls use `address(this).call(abi.encodeWithSelector(...))` — this
 | Facet                  | Role                                                                        |
 | ---------------------- | --------------------------------------------------------------------------- |
 | **OfferCreateFacet**   | Create lending & borrowing offers (cancellation → OfferCancelFacet, range-matching → OfferMatchFacet) |
-| **OfferAcceptFacet**   | Accept an offer → initiate the loan                                         |
+| **OfferAcceptFacet**   | Accept an offer → initiate the loan. **`chargeBorrowerLifAndDeliver` is NOT here** — #1835 moved it to `OfferAcceptFeeFacet` below, so a grep of this facet for the LIF charge comes back empty |
+| **OfferAcceptFeeFacet** | The borrower-LIF charge + net-principal delivery `_acceptOffer` reaches via `crossFacetCall`. Split out of `OfferAcceptFacet` in #1835, which had reached 24,412 bytes — 164 under EIP-170, less than one cross-facet call, so every queued accept-path change was undeployable (the #1780 condition again). The seam was ALREADY a Diamond boundary: the charge has been `external` + `address(this)`-gated since it was written, run behind a self-call so its stack depth stays out of `_acceptOffer`'s at-budget viaIR frame. Selector unchanged by the move. **The two must be refreshed together** — one behaviour across a self-call, so refreshing either alone runs half the accept on pre-split code |
 | **LoanFacet**          | Initiate loans, enforce HF >= 1.5 and LTV constraints                       |
 | **RepayFacet**         | Full/partial repayment, NFT daily deductions, late fees                     |
 | **DefaultedFacet**     | Time-based defaults (grace period expired)                                  |

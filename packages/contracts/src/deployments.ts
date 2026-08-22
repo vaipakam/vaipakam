@@ -67,6 +67,10 @@ export interface DeploymentFacets {
   loanFacet?: HexAddress;
   metricsFacet?: HexAddress;
   offerAcceptFacet?: HexAddress;
+  /** #1835 — the borrower-LIF charge + net delivery, split off
+   *  `offerAcceptFacet` for EIP-170 headroom. The two halves are one
+   *  behaviour across a cross-facet call, so they refresh together. */
+  offerAcceptFeeFacet?: HexAddress;
   offerCreateFacet?: HexAddress;
   /** Pre-#67 deploys carried a single `offerFacet`; post-#67 deploys
    *  write `offerCreateFacet` + `offerAcceptFacet` instead. Kept so the

@@ -13,6 +13,7 @@ import {VaipakamNFTFacet} from "../../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../../src/facets/OfferAcceptFacet.sol";
+import {OfferAcceptFeeFacet} from "../../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../../src/facets/OfferCancelFacet.sol";
 import {LoanFacet} from "../../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../../src/facets/ProfileFacet.sol";
@@ -126,7 +127,7 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](23);
         // #1503 item 12 — the reward-migration hook is ATOMIC with the sale
         // settlement now, so `transferLenderRewardEntry` must resolve here;
         // unrouted it would bubble as the deploy-drift failure and revert
@@ -137,6 +138,15 @@ contract Scenario7_LenderEarlyWithdrawal is Test {
             facetAddress: address(offerAcceptFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferAcceptFacetSelectors()
+        });
+        // #1835 — the borrower-LIF charge `_acceptOffer` self-calls, split off
+        // OfferAcceptFacet for EIP-170 headroom. Same selector, its own host:
+        // cut it or every ERC-20 accept reverts FunctionDoesNotExist at the
+        // self-call, with the accept facet itself looking perfectly fine.
+        cuts[22] = IDiamondCut.FacetCut({
+            facetAddress: address(new OfferAcceptFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFeeFacetSelectors()
         });
         cuts[1]  = IDiamondCut.FacetCut({facetAddress: address(profileFacet),       action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2]  = IDiamondCut.FacetCut({facetAddress: address(oracleFacet),        action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});
