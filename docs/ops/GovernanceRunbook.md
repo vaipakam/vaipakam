@@ -674,6 +674,17 @@ post-launch `D*` will have such loans.
 
 ### Step 3 — complete EVERY keeper prerequisite (still before the arm)
 
+**Which of these apply depends on which Gate B branch you took.** On the
+**M3 / active-mirror** branch, all of it applies. On the **Base-only /
+dark-mirror** branch, the commitment-report and recycled-ledger surfaces need not
+exist on those chains at all — so 3a, 3b's mirror half, 3b-i, 3e and 3f are M3
+items and are not preconditions there. Do not treat them as blocking on the dark
+branch: requiring a clean commitment-report tail or a mesh-watcher tick over
+ledgers that were never deployed makes the ceremony unreachable on a branch Gate
+B explicitly permits. What still applies on the dark branch: `KEEPER_ROLE` on
+Base (3b's canonical half), the Base remittance signer (3c), Base funding (3d),
+and the flags with their tail confirmation (3g).
+
 **3a. Apply the D1 migrations** — from `apps/indexer/`:
 
 ```
@@ -702,13 +713,23 @@ missing** — no error, no warning. A mirror absent from that list never submits
 its armed-day commitment report, Base's remit gate waits on a report that will
 never arrive, and that chain's claims stay unfunded with nothing anywhere
 reporting a fault. Compare the keeper's resolved chain IDs against the **live on-chain
-topology, not against your own inventory** — `getExpectedSourceChainIds()` on
-Base and the messenger's `getBroadcastDestinations()`. An "intended set" written
-down by whoever maintains the deployment artifacts can be missing the same chain
-the keeper is missing, and then the preflight passes while Base waits for a
-report from a chain nobody has noticed is absent. Require equality with both
-getters, and confirm each resolved endpoint's `eth_chainId` matches the id it is
-filed under. BEFORE the arm.
+topology, not against your own inventory**. An "intended set" written down by
+whoever maintains the deployment artifacts can be missing the same chain the
+keeper is missing, and then the preflight passes while Base waits for a report
+from a chain nobody has noticed is absent.
+
+**The two getters cover different sets, and comparing against both as one list
+can never pass.** The keeper resolves Base *and* the mirrors;
+`getExpectedSourceChainIds()` on Base is the full reward-chain list, while the
+messenger's `getBroadcastDestinations()` holds **mirrors only** — canonical is
+filtered out when it is configured. So:
+
+- the keeper's **full** resolved set must equal `getExpectedSourceChainIds()`;
+- the keeper's resolved set **minus canonical Base** must equal
+  `getBroadcastDestinations()`.
+
+Then confirm each resolved endpoint's `eth_chainId` matches the id it is filed
+under. All of this BEFORE the arm.
 
 **3c. Authorize the Base remittance signer — a SEPARATE authorization, and easy
 to miss.** `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
@@ -815,8 +836,16 @@ mirrors to show `D*` can wait until the cutover day arrives with every mirror
 still unarmed.
 
 After arming, drive the cycle explicitly: finalize a day that has not yet been
-applied on the mirrors, then call the payable `broadcastGlobal` (or
-`broadcastGlobalTo` per destination) and pay the transport fee. A replay of an
+applied on the mirrors, **remit that day to every destination first**, and only
+then call the payable `broadcastGlobal` (or `broadcastGlobalTo` per destination)
+and pay the transport fee.
+
+The remit-first order is not a preference. The broadcast **opens the mirror's
+claim gate**, and it does so independently of the keeper's remittance cron — so a
+day broadcast before its budget lands leaves users hitting an empty-balance
+revert until funding arrives. The keeper narrows that gap on a best-effort basis
+and does not close it, which is exactly why a MANUAL broadcast has to remit
+first. A replay of an
 already-applied day exits through the idempotency branch **without** installing
 `D*`, so the day you broadcast has to be one the mirrors have not seen.
 
