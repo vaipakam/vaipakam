@@ -3914,8 +3914,8 @@ deadline takes the SHORT lapse: pricing switches from
 defer-on-shortfall to a pool-scaled delta, so every settlement path
 pays proportionally within delivered funding and the cursor advances.
 **[Corrected 2026-08-22 — see "Correction" at the end of this file: the
-scaling is not a plain proportion, and a short-lapsed day can pay
-nothing despite funding having arrived.]**
+scaling is not a plain proportion, and a side of a short-lapsed day can
+pay nothing despite funding having arrived.]**
 The deadline is absolutely bounded — a rolling window that only a
 quarter-of-the-shortfall top-up extends, under a hard three-window
 cap — so neither operator silence nor dust top-ups can park a day
@@ -9076,9 +9076,15 @@ settlement path pays proportionally within delivered funding."*
 
 **What is true.** The scaling is not a plain funded-over-quoted
 proportion. A per-entry allowance is taken off the funded pool before the
-ratio is formed, so a day whose funding does not exceed that allowance
+ratio is formed, so a side whose funding does not exceed that allowance
 pays **nothing** — even though funding arrived. "Every settlement path
 pays proportionally" denies exactly that case.
+
+This is decided **per side, not per day.** The lender and borrower halves
+each carry their own pool and their own entry count, and the terminal can
+fire while only one of them is short. So the outcome is not "the day pays
+proportionally" or "the day pays nothing": one side can price at zero
+while the other pays in full or in proportion, on the same day.
 
 **Why this is corrected rather than left standing.** A dated release note
 is normally a record of what was true when written, and stale entries are

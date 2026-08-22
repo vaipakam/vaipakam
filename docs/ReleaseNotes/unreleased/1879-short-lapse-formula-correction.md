@@ -4,13 +4,15 @@ A release note from earlier this month described how a compensated-but-
 underfunded reward day pays out when its deadline passes, and said that
 every settlement path pays proportionally within the funding that
 arrived. That is not what the platform does. A per-entry allowance comes
-off the funded pool before the proportion is worked out, so a day whose
+off the funded pool before the proportion is worked out, so a side whose
 funding does not clear that allowance pays nothing at all — even though
-funding did arrive.
+funding did arrive. And it is settled per side rather than per day: the
+lender and borrower halves each have their own pool and their own
+allowance, so one of them can pay nothing while the other pays in full.
 
 Dated release notes are normally left as they were written, on the
 grounds that they record what was believed at the time. That rule does
-not cover this one. The allowance was already in the platform two days
+not cover this one. The allowance was already in the platform six days
 before the note was written, so the paragraph was not true-then-stale; it
 was wrong when it was published.
 
