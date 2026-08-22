@@ -979,6 +979,69 @@ library LibVPFIDiscount {
      *      settlement helpers on default/liquidation paths invoke this
      *      unconditionally to drain any Diamond-held VPFI for the loan.
      */
+    /// @notice Same signature as {ClaimFacet.BorrowerLifRebateClaimed} on
+    ///         purpose — identical topic0, so the existing indexer handler
+    ///         and every downstream consumer see one event for "the rebate
+    ///         reached the borrower side", however it got there.
+    event BorrowerLifRebateClaimed(
+        uint256 indexed loanId,
+        address indexed claimant,
+        uint256 amount,
+        uint256 newVaultVpfiBalance
+    );
+
+    /// @notice Pay a just-settled borrower LIF rebate DIRECTLY, instead of
+    ///         leaving it in custody for a later claim.
+    /// @dev    #1867. The prepay-collateral-sale terminal takes
+    ///         `LibLifecycle`'s `Active -> Settled` edge, whose documented
+    ///         premise is that the Seaport fill distributes everything
+    ///         atomically and there is therefore NO separate claim step.
+    ///         `settleBorrowerLifProper` breaks that premise when it writes a
+    ///         non-zero `rebateAmount`: the loan is then `Settled` — a state
+    ///         every other site constructs to mean "the borrower has nothing
+    ///         left to claim" — while holding something claimable, and
+    ///         `ClaimFacet.claimAsBorrower` rejects `Settled` outright, so the
+    ///         rebate is stranded.
+    ///
+    ///         Paying it here RESTORES the premise rather than working around
+    ///         it: no lifecycle edge changes, no observable status changes, and
+    ///         the claim gate keeps both of its independent barriers. The
+    ///         recipient is the live borrower-position NFT holder, which is
+    ///         already who this path pays the borrower residual to in the same
+    ///         transaction.
+    ///
+    ///         **No-op on any deployment originated from current source.**
+    ///         #1352 retired the peg-custody path and every surviving write to
+    ///         `vpfiHeld` in `src/` assigns zero, so `settleBorrowerLifProper`
+    ///         returns without writing a rebate and this returns 0. Only a
+    ///         Diamond upgraded from pre-#1352, carrying loans opened on the
+    ///         retired path, can reach a non-zero payout.
+    /// @param  loan      the just-settled loan (call AFTER
+    ///                   `settleBorrowerLifProper`).
+    /// @param  recipient the live borrower-position NFT holder.
+    /// @return paid      the amount transferred; 0 when nothing was owed.
+    function payBorrowerLifRebateDirect(
+        LibVaipakam.Loan storage loan,
+        address recipient
+    ) internal returns (uint256 paid) {
+        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        paid = s.borrowerLifRebate[loan.id].rebateAmount;
+        if (paid == 0) return 0;
+        address vpfi = s.vpfiToken;
+        // Mirrors the claim leg: zero FIRST, then transfer. If the token is
+        // unset the rebate is unpayable either way, and leaving it non-zero
+        // would keep a `Settled` loan holding a claim nothing can service.
+        s.borrowerLifRebate[loan.id].rebateAmount = 0;
+        if (vpfi == address(0)) return 0;
+        SafeERC20.safeTransfer(IERC20(vpfi), recipient, paid);
+        emit BorrowerLifRebateClaimed(
+            loan.id,
+            recipient,
+            paid,
+            vaultVpfiBalance(recipient)
+        );
+    }
+
     function forfeitBorrowerLif(LibVaipakam.Loan storage loan) internal {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.BorrowerLifRebate storage r = s.borrowerLifRebate[loan.id];

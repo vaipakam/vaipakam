@@ -21,6 +21,7 @@ import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
 import {RepayFacet} from "../src/facets/RepayFacet.sol";
 import {PrecloseFacet} from "../src/facets/PrecloseFacet.sol";
 import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
@@ -1067,6 +1068,87 @@ contract VPFIDiscountFacetTest is SetupTest {
     ///         tier-1 borrower who holds through the full loan window: the
     ///         rebate at settlement is the tier-1 percentage (10%) of the held
     ///         VPFI, with the remainder split 99/1 treasury/matcher.
+    /// @notice #1867 — a prepay-collateral sale that settles a GRANDFATHERED
+    ///         LIF rebate must PAY it, not park it for a claim the terminal
+    ///         can never serve.
+    /// @dev    `LibLifecycle`'s `Active -> Settled` edge is documented on the
+    ///         premise that the Seaport fill distributes everything atomically
+    ///         and there is therefore no separate claim step. Before #1867,
+    ///         `settleBorrowerLifProper` broke that premise by writing a
+    ///         non-zero `rebateAmount` on a loan that had just become
+    ///         `Settled` — a state every other site constructs to mean "the
+    ///         borrower has nothing left to claim" — while
+    ///         `ClaimFacet.claimAsBorrower` rejects `Settled` outright. The
+    ///         rebate was unreachable by anyone.
+    ///
+    ///         NOT VACUOUS: the custody is seeded and the tier is stamped, so
+    ///         the settlement produces a non-zero rebate. Revert the direct-pay
+    ///         call in `PrepayListingFacet` and this fails on
+    ///         `assertGt(borrowerDelta, 0)` — the rebate stays in the Diamond
+    ///         with `rebateAmount != 0` and no way out.
+    function testPrepaySaleSettlesAndPaysGrandfatheredLifRebate() public {
+        uint256 principal = 10_000 ether;
+
+        // Same tier-1 seeding as the repay twin: drives a non-zero avgBps at
+        // settlement, which is what makes the rebate non-zero and this test
+        // non-vacuous.
+        vpfiToken.transfer(borrower, 5_000 ether);
+        vm.startPrank(borrower);
+        vpfiToken.approve(address(diamond), 5_000 ether);
+        _facet().depositVPFIToVault(500 ether);
+        _facet().setVPFIDiscountConsent(true);
+        vm.stopPrank();
+        vm.warp(block.timestamp + 4 days);
+
+        uint256 offerId = _createLenderErc20Offer(principal);
+        ERC20Mock(mockCollateralERC20).mint(borrower, principal * 2);
+        vm.prank(borrower);
+        IERC20(mockCollateralERC20).approve(address(diamond), principal * 2);
+        uint256 loanId = _signAndAcceptOffer(borrower, borrowerPk, offerId);
+
+        // Grandfathered custody (a pre-#1352 origination): the only way to
+        // reach the still-live settlement helper on an open loan.
+        uint256 held = 20 ether;
+        TestMutatorFacet(address(diamond)).setBorrowerLifVpfiHeldRaw(loanId, held);
+        vm.warp(block.timestamp + 30 days);
+
+        address executor = address(0xE9EC);
+        vm.prank(owner);
+        PrepayListingFacet(address(diamond)).setCollateralListingExecutor(executor);
+
+        uint256 borrowerVpfiBefore = vpfiToken.balanceOf(borrower);
+
+        vm.prank(executor);
+        PrepayListingFacet(address(diamond)).executorFinalizePrepaySale(loanId);
+
+        (uint256 rebateAfter, uint256 heldAfter) = ClaimFacet(address(diamond))
+            .getBorrowerLifRebate(loanId);
+
+        assertEq(heldAfter, 0, "custody drained at settlement");
+        assertEq(
+            rebateAfter,
+            0,
+            "#1867 - nothing parked: a Settled loan must hold no claimable rebate"
+        );
+
+        // Tier 1 = 1000 bps ⇒ the rebate is 10% of held. The borrower also
+        // receives the 1% Range-Orders matcher kickback on the treasury share
+        // in VPFI, because msg.sender at accept was the borrower — the same
+        // arithmetic the proper-repay twin above asserts. Both legs land in
+        // one balance, so the delta is rebate + matcher cut.
+        uint256 expectedRebate = (held * 1000) / 10_000;
+        uint256 treasuryShare = held - expectedRebate;
+        uint256 expectedMatcherCut =
+            (treasuryShare * LibVaipakam.LIF_MATCHER_FEE_BPS) / 10_000;
+        uint256 borrowerDelta = vpfiToken.balanceOf(borrower) - borrowerVpfiBefore;
+        assertGt(borrowerDelta, 0, "#1867 - the rebate was actually paid out");
+        assertEq(
+            borrowerDelta,
+            expectedRebate + expectedMatcherCut,
+            "borrower received the tier-1 rebate plus the matcher kickback"
+        );
+    }
+
     function testBorrowerLifRebateCreditedOnProperRepayLongHold() public {
         uint256 principal = 10_000 ether;
 

@@ -602,7 +602,15 @@ Borrower rules (Phase 5 and later):
 > **M2 PR-1 supersession (D1 (b); see §6 banner + §6b).** The borrower
 > rules below describe the **legacy peg-custody path** — full `0.1%` LIF
 > paid up front in VPFI → Diamond custody (`vpfiHeld`) → rebate at proper
-> close / forfeit on default, and `100%` principal delivery once the VPFI
+> close / forfeit on default — **and the rebate must REACH the borrower on
+> every proper close, by whichever route that close makes available.** Where a
+> close leaves the position claimable, the rebate waits there for the holder to
+> take. Where a close settles everything in one transaction and declares nothing
+> left to claim — the prepay-collateral-sale terminal is the case — the rebate
+> is paid out in that same transaction, to the party that close pays the
+> borrower's remainder to. A close that declares "nothing to claim" while
+> holding a rebate has stranded it: the claim path refuses that state by
+> design, so nobody can retrieve it — and `100%` principal delivery once the VPFI
 > LIF is satisfied. They are **grandfather-only** (open custody-path loans
 > with `vpfiHeld > 0`). For **new** loans the borrower model is HoldOnly /
 > Full per §6b (HoldOnly moves no VPFI and charges the LIF in the lending
