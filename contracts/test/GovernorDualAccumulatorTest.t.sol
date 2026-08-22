@@ -2091,11 +2091,17 @@ contract GovernorDualAccumulatorTest is SetupTest {
         internal
         view
     {
-        (, , uint256 outstanding, uint256 paid) =
+        (, uint256 outstandingFresh, uint256 outstanding, uint256 paid) =
             _agg().getGovernorCommitState();
         (uint256 retired, uint256 released) =
             _agg().getLocalRecycledCommitRetirement();
         assertEq(outstanding, reserve, "the instruction encumbered locally");
+        // Codex #1907 r4 — and encumbered NOTHING on the fresh side. The tuple
+        // carries both, and discarding the fresh one let a phantom fresh
+        // reservation hide behind a helper whose whole claim is "only
+        // encumbers `reserve`". Each entry would then retire part of a
+        // commitment nobody made, leaving wrong fresh headroom.
+        assertEq(outstandingFresh, 0, "and encumbered nothing on the fresh side");
         assertEq(_cfg().getRecycleBucket(), 100 ether, "and debited nothing");
         assertEq(retired, 0, "a reservation retires nothing");
         assertEq(released, 0, "a reservation releases nothing");
@@ -2145,9 +2151,26 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // which is the neighbouring test's subject, not this one's.
         _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
 
+        // Codex #1907 r4, predicted sibling of the forfeit's custody check:
+        // the ledger says the bucket was debited, and only a balance
+        // comparison says the tokens actually went to the CLAIMANT rather
+        // than somewhere else. A consumption moves tokens; a release does not.
+        uint256 custodyBefore = vpfi.balanceOf(address(diamond));
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+
         vm.prank(alice);
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        assertEq(
+            vpfi.balanceOf(alice) - aliceBefore,
+            paid,
+            "the claimant received what the claim reported paying"
+        );
+        assertEq(
+            custodyBefore - vpfi.balanceOf(address(diamond)),
+            paid,
+            "and the Diamond parted with exactly that, nothing leaked"
         );
 
         uint256 consumed = bucketBefore - _cfg().getRecycleBucket();
@@ -2233,6 +2256,13 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _agg().getLocalRecycledCommitRetirement();
         uint256 bucketBefore = _cfg().getRecycleBucket();
         uint256 creditedBefore = _cfg().getRecycledCreditedByDay(today);
+        // Codex #1907 r4 — the ledger deltas below are all satisfied by a
+        // sweep that moves the recycled share OUT of the Diamond while
+        // leaving `recycleBucket` untouched: the bucket would then be
+        // ledger-correct and physically unbacked, and the next recycled claim
+        // either fails or spends unrelated custody. A release moves no
+        // tokens, so the Diamond's balance cannot fall.
+        uint256 custodyBefore = vpfi.balanceOf(address(diamond));
 
         // Codex #1907 r3 — the same independent anchor the claim test uses,
         // on the site I should have swept when I added it there. `released`
@@ -2311,6 +2341,45 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _cfg().getRecycledCreditedByDay(today) - creditedBefore,
             swept - released,
             "credited[D] carries the fresh share only"
+        );
+        // Caveat, recorded because proving this check found it: this fixture's
+        // treasury IS the Diamond, so value moved to TREASURY is invisible
+        // here. The check catches value leaving the Diamond entirely, which is
+        // the regression it is aimed at; a deployment with an external
+        // treasury would need the treasury balance watched too.
+        assertGe(
+            vpfi.balanceOf(address(diamond)),
+            custodyBefore,
+            "a release moves no tokens: the bucket stays physically backed"
+        );
+
+        // Codex #1907 r4 — a SECOND forfeit, because one cannot tell a
+        // cumulative counter from a last-write one. Swapping `+=` for `=` in
+        // the release path satisfies every assertion above; Base would then
+        // see only the latest retirement and never restore availability for
+        // the earlier one.
+        uint256 id2 = _seedEntry(alice, 92, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(id2);
+        _mut().setLoanActiveLenderEntryId(92, id2);
+
+        (, , uint256 outMid, ) = _agg().getGovernorCommitState();
+        vm.prank(makeAddr("mirror-keeper"));
+        _facet().sweepForfeitedInteractionRewards(92);
+
+        (, , uint256 outEnd, ) = _agg().getGovernorCommitState();
+        (uint256 retiredEnd, uint256 releasedEnd) =
+            _agg().getLocalRecycledCommitRetirement();
+        uint256 released2 = outMid - outEnd;
+        assertGt(released2, 0, "the second forfeit released as well");
+        assertEq(
+            releasedEnd - releasedBefore,
+            released + released2,
+            "the released cumulative CONTAINS both, it does not track the last"
+        );
+        assertEq(
+            retiredEnd - retiredBefore,
+            released + released2,
+            "and so does the shared retirement total"
         );
     }
 
