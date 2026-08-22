@@ -275,7 +275,12 @@ happened to visit than about the problem.
 Switching off the wallet kits' built-in reporting was verified, when it shipped,
 only by the compiler accepting the settings. That confirms the settings exist;
 it says nothing about whether the reporting actually stopped. A committed check
-now answers the second question against the deployed sites.
+now answers the second question against the deployed sites — for the wallet SDK
+that actually loads with the page. The other one is not built on a first visit
+and would be silent whether or not it were disabled, so the check says so per
+host instead of reporting one combined verdict; exercising it needs prepared
+returning-visitor state, which is tracked separately and deliberately not faked
+here.
 
 It loads each connected app with no wallet installed, never touches the connect
 dialog, and watches for any request to the vendors' reporting addresses. That is
@@ -441,8 +446,10 @@ taken in VPFI up front, held for the life of the loan, and partly returned at
 settlement.
 
 That stopped being true when the fee model changed. A loan opened today, where
-the lending asset passes the protocol's liquidity test — a price alone is not
-enough, the market for it has to be deep enough too — has the discount applied
+the lending asset passes the protocol's liquidity test — for most assets a price
+alone is not enough, the market for it has to be deep enough too; wrapped ETH is
+the exception and qualifies on a fresh ETH price with no depth test, since there
+is no ETH-against-ETH market to measure — has the discount applied
 **directly to the fee it pays in the lending asset**, at the moment the loan is
 accepted; where it cannot, the full fee is charged and there is no discount to
 apply. No VPFI is taken to pay it, nothing is held, and
