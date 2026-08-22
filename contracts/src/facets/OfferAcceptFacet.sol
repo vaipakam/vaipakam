@@ -1070,16 +1070,26 @@ contract OfferAcceptFacet is
         address lender;
         address borrower;
 
+        // Role resolution ONLY — vault creation is deliberately NOT here
+        // (#1835, Codex #1891 F19). `LibUserVault.getOrCreate` deploys an
+        // `ERC1967Proxy` for a first-time party, and it used to run in both
+        // branches BEFORE the two refusals below. A revert rolls the deployment
+        // back but cannot refund the gas already burned executing it, so a
+        // first-time buyer met a stale legacy listing — the exact case this
+        // guard exists to reject cheaply — only after paying for a proxy
+        // deployment. Self-trade had the same shape.
+        //
+        // The vaults are not read until the settlement block far below, so
+        // deferring them costs nothing and removes the duplicated pair. The
+        // sanctions screen inside `getOrCreateUserVault` is not what protects
+        // this path — `_acceptOffer` screens both parties explicitly further
+        // up — so nothing is skipped by creating the vaults later.
         if (offer.offerType == LibVaipakam.OfferType.Lender) {
             lender = offer.creator;
             borrower = acceptor;
-            lenderVault = LibUserVault.getOrCreate(lender);
-            borrowerVault = LibUserVault.getOrCreate(borrower);
         } else {
             lender = acceptor;
             borrower = offer.creator;
-            lenderVault = LibUserVault.getOrCreate(lender);
-            borrowerVault = LibUserVault.getOrCreate(borrower);
         }
 
         // #194 — self-trade prevention. A user filling their own
@@ -1143,6 +1153,13 @@ contract OfferAcceptFacet is
                 offer.periodicInterestCadence != _staleChk.periodicInterestCadence
             ) revert SaleListingTermsStale();
         }
+
+        // Vaults, now that the listing and the parties are both known to be
+        // admissible (#1891 F19). Every refusal above this line costs the
+        // caller no proxy deployment; the first read of either vault is in the
+        // settlement block below.
+        lenderVault = LibUserVault.getOrCreate(lender);
+        borrowerVault = LibUserVault.getOrCreate(borrower);
 
         // `effectivePrincipal` was computed earlier (before KYC) so the
         // value is available for KYC, LIF math, principal transfer, and

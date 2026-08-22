@@ -56,6 +56,30 @@ contract OfferPreviewFacet {
         view
         returns (OfferAcceptFacet.AcceptPreview memory preview)
     {
+        // #1835 (Codex #1891 F15 → F18) — the protocol-wide pause, ahead of
+        // the offer lookup itself. `whenNotPaused` on both accept entry points
+        // runs before ANY of the function body, offer validation included, so a
+        // stale or malformed cached id previewed while paused must answer
+        // `ProtocolPaused` — not `InvalidOffer`, which is what this surface did
+        // when the classifier sat merely at the top of the precondition chain.
+        //
+        // F15 moved this to the top of that chain and the comment claimed it
+        // "outranks every classifier". It did not: the `InvalidOffer` revert
+        // above the chain still won. Same lesson as F3-F11, one level further
+        // out — a check placed at the top of a list is not at the top of the
+        // FUNCTION.
+        //
+        // The trade-off is deliberate: returning here leaves the happy-path
+        // projections zeroed for a paused preview, where the doc-block promises
+        // them "for recoverable error cases". A pause is not recoverable by the
+        // caller and no accept can be attempted while it holds, so there is no
+        // quote to render — a surface on this code shows the paused state, not
+        // numbers.
+        if (LibPausable.paused()) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.ProtocolPaused;
+            return preview;
+        }
+
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
         if (offer.creator == address(0)) revert InvalidOffer();
@@ -146,25 +170,12 @@ contract OfferPreviewFacet {
         // Order mirrors `_acceptOffer`. First failing check sets `errorCode`;
         // subsequent checks are short-circuited via the sentinel return.
 
-        // #1835 (Codex #1891 F15) — the protocol-wide pause, FIRST, because it
-        // is the only refusal that does not live in `_acceptOffer` at all:
-        // `acceptOffer` and `acceptOfferWithPermit` both carry `whenNotPaused`,
-        // so while paused the function body never executes and EVERY classifier
-        // below is unreachable in the transaction the preview is predicting.
-        //
-        // The finding that produced this asked for the pause to be classified
-        // "before the stale-terms block". That would have been the same
-        // half-fix F3-F11 kept re-finding: the pause outranks the whole chain,
-        // not the one check a finding happens to be looking at, so putting it
-        // anywhere but the top leaves the identical defect in front of every
-        // classifier above the insertion point.
-        //
-        // Note this is NOT the per-asset pause (`AssetPaused`, further down and
-        // inside the chain). Both are pauses; only this one is a modifier.
-        if (LibPausable.paused()) {
-            preview.errorCode = OfferAcceptFacet.AcceptError.ProtocolPaused;
-            return preview;
-        }
+        // (The protocol-wide pause is classified at the very TOP of this
+        // function, ahead of the offer lookup — see #1891 F15/F18 there. It is
+        // not in this chain because `whenNotPaused` is a modifier and outranks
+        // the whole body, offer validation included. The per-asset pause
+        // (`AssetPaused`) IS in this chain, further down, because it is an
+        // ordinary check inside `_acceptOffer`.)
         if (offer.accepted) {
             preview.errorCode = OfferAcceptFacet.AcceptError.OfferAlreadyAccepted;
             return preview;

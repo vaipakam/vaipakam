@@ -2543,6 +2543,35 @@ contract EarlyWithdrawalFacetTest is Test {
         AdminFacet(address(diamond)).unpause();
     }
 
+    /// @dev #1835 (Codex #1891 F18) — the pause outranks the OFFER LOOKUP too,
+    ///      not merely the precondition chain.
+    ///
+    ///      F15's classifier sat at the top of the chain, which is still below
+    ///      `previewAccept`'s `InvalidOffer` revert. So a client previewing a
+    ///      stale or malformed cached id during a pause got `InvalidOffer`
+    ///      while the accept would have given `EnforcedPause` — the modifier
+    ///      runs ahead of the whole body, offer validation included.
+    ///
+    ///      The unpaused leg is the control: the SAME id still reverts
+    ///      `InvalidOffer`, so the paused answer comes from the pause and not
+    ///      from the id having become valid.
+    function test_item23_protocolPauseOutranksTheOfferLookup() public {
+        uint256 unknownOfferId = type(uint256).max;
+
+        AdminFacet(address(diamond)).pause();
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(unknownOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.ProtocolPaused),
+            "a paused preview must answer the pause even for an unknown offer"
+        );
+        AdminFacet(address(diamond)).unpause();
+
+        vm.expectRevert(OfferPreviewFacet.InvalidOffer.selector);
+        OfferPreviewFacet(address(diamond)).previewAccept(unknownOfferId, newLender);
+    }
+
     /// @dev #1835 (Codex #1891 F14) — the linked borrower buying a STALE
     ///      listing gets the staleness, on both surfaces.
     ///
