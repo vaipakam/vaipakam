@@ -2074,6 +2074,39 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// @dev Codex #1907 r1+r2 — every baseline in these tests is read AFTER the
+    ///      broadcast, so a reservation with side effects hides inside the
+    ///      baseline itself and every later delta-comparison still passes.
+    ///      Round 1 named the retirement counters, round 2 named `credited[D]`;
+    ///      the RULE is the whole post-broadcast state, so it is asserted in
+    ///      one place both tests call rather than as a growing list of the
+    ///      fields somebody has thought of.
+    ///
+    ///      What it says: an instruction COMMITS and does nothing else. It
+    ///      encumbers `reserve`, and it must not debit the bucket (the double
+    ///      charge `reserveMirrorCommit`'s own note exists to prevent), report
+    ///      a retirement or release, pay anyone, or feed the absorption
+    ///      average that sizes future budgets.
+    function _assertReservationOnlyEncumbers(uint256 reserve, uint256 today)
+        internal
+        view
+    {
+        (, , uint256 outstanding, uint256 paid) =
+            _agg().getGovernorCommitState();
+        (uint256 retired, uint256 released) =
+            _agg().getLocalRecycledCommitRetirement();
+        assertEq(outstanding, reserve, "the instruction encumbered locally");
+        assertEq(_cfg().getRecycleBucket(), 100 ether, "and debited nothing");
+        assertEq(retired, 0, "a reservation retires nothing");
+        assertEq(released, 0, "a reservation releases nothing");
+        assertEq(paid, 0, "a reservation pays nobody");
+        assertEq(
+            _cfg().getRecycledCreditedByDay(today),
+            0,
+            "an encumbrance is not absorption: credited[D] untouched"
+        );
+    }
+
     /// @notice #1878 — a live mirror CLAIM retires the commitment it consumed.
     ///
     ///         The four figures must move by ONE number: the bucket debit, the
@@ -2086,30 +2119,25 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _standUpMirror();
         _mirrorArmedDay5(100 ether);
 
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(100 ether, today);
+
         (, , uint256 outBefore, uint256 paidBefore) =
             _agg().getGovernorCommitState();
-        assertEq(
-            outBefore,
-            100 ether,
-            "the broadcast's instruction reserved against the local bucket"
-        );
         (uint256 retiredBefore, uint256 releasedBefore) =
             _agg().getLocalRecycledCommitRetirement();
         uint256 bucketBefore = _cfg().getRecycleBucket();
-
-        // Codex #1907 r1 — the baselines above are read AFTER the broadcast, so
-        // on their own they cannot see a `reserveMirrorCommit` that ALSO moved a
-        // retirement counter: every later assertion compares claim-time deltas,
-        // and the outstanding assertion would still read 100 ether. Pin the
-        // reservation's own footprint here. A reservation encumbers and nothing
-        // else -- reporting a commitment retired before any claim or forfeit
-        // happened would tell Base the mirror had spent what it had only
-        // promised.
-        assertEq(retiredBefore, 0, "a reservation retires nothing");
-        assertEq(releasedBefore, 0, "a reservation releases nothing");
-        assertEq(paidBefore, 0, "a reservation pays nobody");
-        (uint256 today, ) = _lens().getInteractionCurrentDay();
         uint256 creditedBefore = _cfg().getRecycledCreditedByDay(today);
+
+        // The day's own recycled budget, read from the stamp the MIRROR stored
+        // from the broadcast — an anchor independent of anything the claim
+        // does. `consumed` below is derived from the bucket delta, so it is a
+        // reference point, not a check: a claim that consumed the same share
+        // TWICE would move all four ledger figures together and satisfy every
+        // identity (Codex #1907 r2). Only an outside expectation catches it.
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(5, uint32(CHAIN_ARB));
+        uint256 expectLenderShare = funding.lenderHalfEquiv;
 
         _seedEntry(alice, 90, 5, 6);
         // P1-b: the FRESH leg needs a delivered bound before the armed day
@@ -2124,6 +2152,15 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         uint256 consumed = bucketBefore - _cfg().getRecycleBucket();
         assertGt(consumed, 0, "the funded armed day consumed from the bucket");
+        // The entry sweeps the WHOLE lender side of day 5, so the expected
+        // draw is that side's half of the day's recycled budget. Dust tolerance
+        // covers the per-side integer division, nothing more.
+        assertApproxEqAbs(
+            consumed,
+            expectLenderShare,
+            1e6,
+            "consumed exactly the lender side's recycled share, ONCE"
+        );
 
         (, , uint256 outAfter, uint256 paidAfter) =
             _agg().getGovernorCommitState();
@@ -2181,8 +2218,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
     function testMirrorReservedCommitIsReleasedByAForfeit() public {
         _standUpMirror();
         _mirrorArmedDay5(100 ether);
-        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
 
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(100 ether, today);
+
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
         uint256 id = _seedEntry(alice, 91, 5, 6);
         _mut().setRewardEntryForfeitedRaw(id);
         _mut().setLoanActiveLenderEntryId(91, id);
@@ -2192,7 +2232,6 @@ contract GovernorDualAccumulatorTest is SetupTest {
         (uint256 retiredBefore, uint256 releasedBefore) =
             _agg().getLocalRecycledCommitRetirement();
         uint256 bucketBefore = _cfg().getRecycleBucket();
-        (uint256 today, ) = _lens().getInteractionCurrentDay();
         uint256 creditedBefore = _cfg().getRecycledCreditedByDay(today);
 
         vm.prank(makeAddr("mirror-keeper"));
