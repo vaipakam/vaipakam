@@ -70,6 +70,31 @@ import { addressOf, blockedSync, launch, SITE, visit } from './driver.mjs';
 /** The two endpoints #1836 turned off. Watched for the whole session. */
 const TELEMETRY_HOSTS = ['cca-lite.coinbase.com', 'pulse.walletconnect.org'];
 
+/** WalletConnect's relay, matched the same exact way. */
+const WC_RELAY_HOST = 'relay.walletconnect.org';
+
+/**
+ * The HOSTNAME of a URL, lowercased — or `''` if it will not parse.
+ *
+ * Every host test in this file goes through here rather than
+ * `url.includes(host)` (Codex #1894 r2, CodeQL 1940/1941). A substring
+ * test matches anywhere in the URL, so `wss://relay.walletconnect.org.evil/`
+ * and `https://evil.test/?r=cca-lite.coinbase.com` both satisfy it. On
+ * the relay assertion that means a spoofed endpoint is reported as the
+ * real WalletConnect rail initializing; on the telemetry assertions it
+ * means an unrelated host can be counted as a beacon, or a real beacon
+ * to a lookalike subdomain missed. The driver already parses the
+ * Coinbase popup URL and compares its host exactly — this is the same
+ * rule applied to every other host in the file.
+ */
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
 /** How long to let the SDK talk after it is selected. The calibration
  *  run had all six beacons within ~4 s; 9 s is slack, not a guess. */
 const SDK_SETTLE_MS = 9_000;
@@ -90,7 +115,8 @@ function step(name, verdict, detail) {
 function watch(target, label) {
   target.on('request', (r) => {
     const url = r.url();
-    if (TELEMETRY_HOSTS.some((h) => url.includes(h))) {
+    const host = hostOf(url);
+    if (TELEMETRY_HOSTS.includes(host)) {
       beacons.push({ phase, label, method: r.method(), url });
     }
   });
@@ -261,7 +287,7 @@ try {
   // a listener attached now would miss it and report a working rail as
   // broken, which is what the first run of this step did.
   const relayOpened = sockets.some(
-    (s) => s.url.includes('relay.walletconnect.org') && s.framed && !s.errored,
+    (s) => hostOf(s.url) === WC_RELAY_HOST && s.framed && !s.errored,
   );
 
   step(
@@ -273,32 +299,8 @@ try {
   );
   if (!relayOpened) failed = true;
 
-  const wcBeacons = beacons.filter(
-    (b) => b.phase === 'walletconnect-selected' && b.url.includes('pulse.walletconnect.org'),
-  ).length;
-  // OBSERVED, never PASS. The same probe records zero with
-  // `telemetryEnabled: true`, so a zero here is not evidence the flag
-  // works — see the header. Reported so the number is on the record
-  // without pretending it settles anything.
-  // ASYMMETRIC on purpose (Codex #1894 r2). The missing calibration is
-  // what makes a ZERO inconclusive — the same probe reads zero with the
-  // flag on. It says nothing about a POSITIVE count, which is direct
-  // evidence that telemetry a build claims to have disabled phoned home.
-  // Treating both alike let that evidence exit 0.
-  if (wcBeacons > 0) {
-    step(
-      'WalletConnect telemetry',
-      'FAIL',
-      `${wcBeacons} beacon(s) to pulse.walletconnect.org — telemetryEnabled:false did not hold`,
-    );
-    failed = true;
-  } else {
-    step(
-      'WalletConnect telemetry (NOT calibrated — observation only)',
-      'OBSERVED',
-      '0 beacons; this probe reads zero with the flag ON too, so zero cannot prove the flag',
-    );
-  }
+  // The WalletConnect telemetry count is taken at the END of the run,
+  // over the whole session, next to the Coinbase one — see there.
   void wcBefore;
 
   await page.keyboard.press('Escape').catch(() => {});
@@ -319,30 +321,55 @@ try {
     .click({ timeout: 8_000 })
     .catch(() => {});
   const account = addressOf('lender');
-  const fragment = account.slice(2, 6).toLowerCase();
+  // THE WHOLE RENDERED SHORT ADDRESS, inside the connect button (Codex
+  // #1894 r2). The previous check searched the entire page body for the
+  // address's first four hex digits — sixteen bits, which any unrelated
+  // address, token id or hash on the page can carry, so both this poll
+  // and the reload check below could pass with the wallet never
+  // connected. `shortAddress` in apps/alpha02/src/lib/format.ts renders
+  // `0x` + the first four digits + U+2026 + the last four, and that
+  // exact string is what the button shows.
+  const shortAccount = `${account.slice(0, 6)}\u2026${account.slice(-4)}`.toLowerCase();
+  // Scoped to the button, not the body: the same string appearing
+  // somewhere else on the page is not evidence the header chip renders
+  // it. `.connect-addr` is the span the button puts the account in, and
+  // it exists only while ConnectKit reports a connected account.
+  const accountChip = page.locator('.connect-btn .connect-addr').first();
+  const chipShowsAccount = async () => {
+    try {
+      const text = (await accountChip.innerText({ timeout: 1_000 })).trim().toLowerCase();
+      // An ENS reverse name renders INSTEAD of the short address
+      // (`AddressName`), and it is still a connected account — so a
+      // non-empty chip that is not the short address is reported as
+      // connected, with what it actually said, rather than failed.
+      return { connected: text.length > 0, exact: text === shortAccount, text };
+    } catch {
+      return { connected: false, exact: false, text: '' };
+    }
+  };
   // NOT `precondition` (Codex #1894 r2). If the page crashes or closes
-  // during this poll, `innerText` throws and precondition exits 2 —
+  // during this poll, the read throws and precondition exits 2 —
   // BLOCKED, "nothing could be observed" — discarding every Coinbase and
   // WalletConnect step already recorded above. A crash here is a failed
   // connection, which is a finding, so it stays in the verdict.
-  let connected = false;
+  let seen = { connected: false, exact: false, text: '' };
   {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
-      let body = '';
-      try {
-        body = (await page.locator('body').innerText()).toLowerCase();
-      } catch {
-        break;
-      }
-      if (body.includes(fragment)) { connected = true; break; }
+      seen = await chipShowsAccount();
+      if (seen.connected) break;
       await page.waitForTimeout(1_000);
     }
   }
+  const connected = seen.connected;
   step(
     'connect completes and renders the account',
     connected ? 'PASS' : 'FAIL',
-    connected ? `…${fragment}…` : 'the account never appeared',
+    connected
+      ? seen.exact
+        ? `the button renders ${shortAccount}`
+        : `the button renders "${seen.text}" (an ENS name, not the short address)`
+      : 'the account never appeared in the connect button',
   );
   if (!connected) failed = true;
 
@@ -352,13 +379,25 @@ try {
   phase = 'reload';
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForTimeout(5_000);
-  const stillConnected = (await page.locator('body').innerText())
-    .toLowerCase()
-    .includes(fragment);
+  // Polled, not sampled once: reconnecting a stored session takes a
+  // variable moment, and a single read 5 s in would report a slow
+  // restore as a lost one.
+  let after = { connected: false, exact: false, text: '' };
+  {
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      after = await chipShowsAccount();
+      if (after.connected) break;
+      await page.waitForTimeout(1_000);
+    }
+  }
+  const stillConnected = after.connected;
   step(
     'the session survives a reload',
     stillConnected ? 'PASS' : 'FAIL',
-    stillConnected ? 'returning visitor stays connected' : 'the session was lost',
+    stillConnected
+      ? `returning visitor stays connected — the button renders "${after.text}"`
+      : 'the session was lost: the connect button shows no account',
   );
   if (!stillConnected) failed = true;
 
@@ -367,8 +406,8 @@ try {
   // or simply after a window closed — landed in no step's count, and the
   // run could print "0 beacons" having seen one. The Coinbase half IS
   // calibrated, so any count at all is a failure.
-  const coinbaseTotal = beacons.filter((b) =>
-    b.url.includes('cca-lite.coinbase.com'),
+  const coinbaseTotal = beacons.filter(
+    (b) => hostOf(b.url) === 'cca-lite.coinbase.com',
   ).length;
   step(
     'no Coinbase telemetry at any point in the session',
@@ -376,6 +415,39 @@ try {
     `${coinbaseTotal} beacon(s) across every phase`,
   );
   if (coinbaseTotal !== 0) failed = true;
+
+  // WHOLE SESSION for WalletConnect too (Codex #1894 r2). This used to
+  // be sampled during the walletconnect-selected phase, which left a
+  // window nothing covered: a beacon arriving after that snapshot — while
+  // Escape and the settle wait ran — still carried that phase, so it was
+  // excluded here, and it was excluded from `afterConnect` as well
+  // because `before` is sampled afterwards. Only Coinbase got a recount,
+  // so the run could exit 0 printing "0 beacons" having observed one.
+  const wcTotal = beacons.filter(
+    (b) => hostOf(b.url) === 'pulse.walletconnect.org',
+  ).length;
+  // ASYMMETRIC on purpose (Codex #1894 r1). The missing calibration is
+  // what makes a ZERO inconclusive — the same probe reads zero with the
+  // flag ON, twice, including with the real project id. It says nothing
+  // about a POSITIVE count, which is direct evidence that telemetry a
+  // build claims to have disabled phoned home. Treating both alike let
+  // that evidence exit 0.
+  if (wcTotal > 0) {
+    step(
+      'WalletConnect telemetry',
+      'FAIL',
+      `${wcTotal} beacon(s) to pulse.walletconnect.org across every phase — ` +
+        `telemetryEnabled:false did not hold`,
+    );
+    failed = true;
+  } else {
+    step(
+      'WalletConnect telemetry (NOT calibrated — observation only)',
+      'OBSERVED',
+      '0 beacons across every phase; this probe reads zero with the flag ON too, ' +
+        'so zero cannot prove the flag',
+    );
+  }
 
   const afterConnect = beacons.length - before;
   step(
