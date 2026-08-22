@@ -423,6 +423,23 @@ better-worded report; it is having one list instead of two. Two records of the
 same fact disagree eventually, and the second one is always the one nobody
 remembers to update.
 
+### The last check on the finished file was made after replacing it
+
+The step before publication had grown into a careful list: is the finished file
+still an ordinary file, does it still carry the permissions this run chose, does
+it still belong to the right group. It did not ask whether it still says what
+the run wrote — and that is the thing the other three exist to protect.
+
+The content *was* compared, against a fingerprint taken before the disk flush,
+one step after the swap. Which is the one place the comparison cannot help: the
+previous day's notes have been overwritten by then, so the run's careful refusal
+arrives having already destroyed the thing it was refusing to destroy. Asked a
+moment earlier it costs one fingerprint and the earlier file is untouched.
+
+Both comparisons are kept, because they answer different questions — whether
+the file about to be installed is the one this run built, and whether the swap
+put those bytes where they were meant to go.
+
 ### Sorting the notes could lose one, quietly
 
 The step that puts the notes in order read its result in a way that cannot tell

@@ -3123,7 +3123,15 @@ SHIM
 chmod +x "$W/fakebin/sync"
 msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
 check "the run fails"          "$?"                                          "1"
-check "it says what is wrong"  "$(says "$msg" 'does not hold the bytes')"      "1"
+# r46 moved the catch EARLIER, and this assertion moved with it. The gate now
+# compares the replacement's content before the rename, so this substitution is
+# refused with the dated file untouched rather than caught by the post-rename
+# digest with the previous file already overwritten. The post-rename comparison
+# stays as the backstop for the rename itself; nothing reaches it from here any
+# more, which is the improvement.
+check "it says what is wrong"  "$(says "$msg" "replacement's content changed")" "1"
+check "nothing was published" \
+  "$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"      "none"
 check "the fragment survives" \
   "$(grep -rl '0001-a' "$W/docs/ReleaseNotes/unreleased" 2>/dev/null | wc -l | tr -d ' ')" "1"
 
@@ -3622,6 +3630,42 @@ check "it says the count changed" \
 check "both fragments are still pending" "$(pending "$W")"                       "2"
 check "nothing was published" \
   "$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"       "none"
+
+echo "T129: a replacement altered during the flush is refused, not published"
+W="$ROOT/t129"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The gate had grown checks on the replacement's type, mode and group and none
+# on its CONTENT (Codex #1863 r46). `EXPECTED_ID` is taken before `_persist` and
+# was compared only AFTER the rename -- the one place it cannot help, since the
+# previous dated file is overwritten by then. The refusal arrived having already
+# destroyed what it was refusing to destroy.
+#
+# A dated file with text worth losing, so the case can tell "refused" from
+# "overwritten and then complained".
+printf '# Release Notes — 2026-08-16\n\nPRE-EXISTING LINE\n' \
+  > "$out/ReleaseNotes-2026-08-16.md"
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sync" <<SHIM
+#!/bin/sh
+# The flush is the long step the finding names: alter the replacement while it
+# runs. \$1 is the file being persisted.
+if [ -f "\$1" ]; then printf 'INJECTED\n' >> "\$1"; fi
+exit 0
+SHIM
+chmod +x "$W/fakebin/sync"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"           "$?"                                            "1"
+check "it says the content changed" \
+  "$(says "$msg" "replacement's content changed")"                              "1"
+# The earlier text surviving is a regression guard, not evidence: the
+# replacement is a COPY of the dated file with sections appended, so the old
+# line came through even on the broken version. What discriminates is whether
+# the un-built bytes reached the published file -- and they did.
+check "the earlier text is still there" \
+  "$(grep -c 'PRE-EXISTING LINE' "$out/ReleaseNotes-2026-08-16.md")"             "1"
+check "nothing was injected into it" \
+  "$(grep -c 'INJECTED' "$out/ReleaseNotes-2026-08-16.md")"                      "0"
+check "both fragments are still pending" "$(pending "$W")"                       "2"
 
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"

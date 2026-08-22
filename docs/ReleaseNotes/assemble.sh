@@ -2641,6 +2641,34 @@ _final_gate() {
     echo "approve." >&2
     _refuse_reporting_consumed
   fi
+  # And its CONTENT (Codex #1863 r46). This gate had grown checks on the
+  # replacement's type, its mode and its group, and none on the thing
+  # those three exist to protect. `EXPECTED_ID` is taken BEFORE `_persist`
+  # — deliberately, so it records what this run built rather than whatever
+  # is there afterwards — and it was compared only AFTER the rename, which
+  # is the one place the comparison cannot help: the previous dated file
+  # has been overwritten by then, and the run's careful refusal arrives
+  # having already destroyed what it was refusing to destroy.
+  #
+  # Checked here it costs one hash and refuses with $OUT untouched. The
+  # post-rename comparison stays: it answers a different question, whether
+  # the rename put the right bytes in place, and it is the baseline every
+  # removal below is checked against.
+  local _w_rc=0 _w_now=""
+  _w_now="$(frag_hash "$WORK")" || _w_rc=$?
+  if (( _w_rc != 0 )); then
+    echo "Error: could not re-read the replacement before publishing it." >&2
+    _refuse_reporting_consumed
+  fi
+  if [ "$_w_now" != "$EXPECTED_ID" ]; then
+    echo "Error: the replacement's content changed while this run was" >&2
+    echo "preparing it." >&2
+    echo "" >&2
+    echo "Refusing to assemble: publishing it would replace" >&2
+    echo "$(basename "$OUT") with bytes this run did not build, and the" >&2
+    echo "fragments would then be removed on the strength of them." >&2
+    _refuse_reporting_consumed
+  fi
   # The SOURCE directory as well (Codex #1863 r36). A rename removes the
   # source entry, so `mv` needs write permission on BOTH directories —
   # $UNREL turning read-only during `_persist` leaves the destination
