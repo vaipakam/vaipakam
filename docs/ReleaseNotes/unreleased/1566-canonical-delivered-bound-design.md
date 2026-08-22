@@ -38,8 +38,8 @@ reason: the search had been for a better way to COUNT a shared pot, so anything
 that changed the arrangement instead was outside the frame being searched. For a
 document whose whole job is to lay out the choices, that is the failure worth
 recording. A first draft of this note did
-recommend one of them as a cheap first step; review established that it does not
-actually set any money aside — it limits what a day may price, which is a
+recommend one of the shared-pot approaches as a cheap first step; review
+established that it does not actually set any money aside — it limits what a day may price, which is a
 different question — so the recommendation was withdrawn rather than softened.
 A note on a fund-safety question whose recommended step leaves the property
 unmet is worse than one that recommends nothing. The reward programme stays

@@ -305,10 +305,15 @@ What the options need before a choice is possible:
    `rebateAmount` — plus an aggregation mechanism for grandfathered balances that
    loan-keyed mappings cannot enumerate, plus an explicit decision that
    operational over-draw is acceptable.
-3. **Option D evaluated at all** — a segregated reward escrow removes the
+3. **Option E costed** — it needs a CLAIM-CALLABLE mint primitive (the admin one
+   re-enters the shared reentrancy guard, so a pull through it reverts) and
+   reserved supply-cap headroom for unclaimed entitlements (the emission schedule
+   is not the token's only ceiling), plus an answer for the recycled half, which
+   it does not address.
+4. **Option D evaluated at all** — a segregated reward escrow removes the
    ownership question instead of accounting for it, and no revision of this note
    before r3 considered it.
-4. **Whichever is chosen, three closures are required, not one:**
+5. **Whichever is chosen, three closures are required, not one:**
    the canonical bound; the **legacy settlement paths** — not only a claimant's
    pre-`D*` payout, which spends without recording and lets one claimant reuse
    the delivered allowance, but the pre-cutover branches of the expiry sweep and
@@ -318,7 +323,7 @@ What the options need before a choice is possible:
    **detached "neither" role**, which is bounded and recorded by nothing.
    Closing only the canonical side leaves two live custody-drain paths and does
    not unblock arming.
-5. **Either way, the expiry predicates change WITH the claim gate** — including
+6. **Either way, the expiry predicates change WITH the claim gate** — including
    `_entryExecutableNow`, which does not go through `backingPosition`.
 
 What should NOT happen is a sixth subtraction. That is the one path with
