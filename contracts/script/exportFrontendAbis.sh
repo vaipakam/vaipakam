@@ -388,6 +388,20 @@ FACETS=(
 #
 # `--` guards a staging path that starts with a dash; the `-n` guard covers
 # `mktemp` failing before STAGE_DIR is ever set, since the trap is armed first.
+# Cleared BEFORE the trap is armed (Codex #1897 r5, P1). The `-n` guard below
+# was added so arming the trap before `mktemp` would be safe — but
+# `${STAGE_DIR:-}` reads an INHERITED export, so if the caller had `STAGE_DIR`
+# in the environment and the script died before the assignment (a signal while
+# `mktemp` blocks on a slow filesystem, or `mktemp` failing under `set -e`), the
+# trap ran `rm -rf` on the CALLER'S directory.
+#
+# That is the guard creating the hazard it was written to prevent, and it is
+# strictly worse than anything this script did before this PR: an arbitrary
+# directory deletion, in a script whose documented `CONTRACTS_PKG_DIR` override
+# already invites unusual environments. Clearing it first makes the guard mean
+# what the comment always claimed — "not created yet" — rather than "whatever
+# the environment says".
+STAGE_DIR=''
 _cleanup_stage() {
   if [ -n "${STAGE_DIR:-}" ]; then
     rm -rf -- "$STAGE_DIR"
