@@ -566,6 +566,27 @@ contract OfferCancelFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamE
         uint256 saleOfferId = s.loanToSaleOfferId[loanId];
         // No live listing, or a mid-completion (accepted) sale that settles via
         // completeLoanSale — nothing stale for this entry to clean up.
+        //
+        // #1851 — skipping ACCEPTED offers here looks, on its own, like it
+        // pairs with `_completeLoanSaleImpl`'s non-Active rejection to strand a
+        // listing that can neither complete nor tear down. It cannot, and the
+        // reason is deliberately recorded here because it lives in three other
+        // files and two readers have now had to reassemble it:
+        //
+        //   * `_acceptOffer` auto-completes a linked sale in the SAME
+        //     transaction as the accept, and a completion that cannot succeed
+        //     reverts the whole acceptance — so `accepted` and "completed" are
+        //     set together or not at all.
+        //   * The one path that flips `accepted` without that block is the
+        //     deferred partial-fill flip, which requires `matchOverride.active`;
+        //     a sale vehicle is unmatchable (`LibOfferMatch` reverts
+        //     `SaleVehicleNotMatchable`), so it can never take that path.
+        //   * A terminal linked loan is refused at accept with `InvalidOffer`
+        //     before any value moves, leaving the listing un-accepted and this
+        //     teardown available.
+        //
+        // Pinned by `test_item1851_terminalLinkedLoan_cannotStrandAnAccepted
+        // Listing`. If that test is ever deleted, this reasoning is unguarded.
         if (saleOfferId == 0 || s.offers[saleOfferId].accepted) {
             revert NoStaleSaleListing();
         }

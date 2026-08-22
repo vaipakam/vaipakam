@@ -7307,4 +7307,68 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.prank(buyer);
         OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
     }
+
+    // ─── #1851 — the "accepted but uncompletable" state, tested ────────────────
+
+    /// @dev #1851 asked whether a sale listing can be ACCEPTED but never
+    ///      COMPLETED, leaving a `loanToSaleOfferId` link that neither
+    ///      completes (`_completeLoanSaleImpl` rejects a non-Active loan) nor
+    ///      tears down (`teardownStaleSaleListing` skips accepted offers). It
+    ///      was filed on a static reading of those two EXIT guards, which are
+    ///      both real — but a state with no exit only matters if something can
+    ///      ENTER it, and that was never checked.
+    ///
+    ///      Nothing can. This pins the entrance the issue is about: a listing
+    ///      whose loan reaches a terminal status is refused at accept
+    ///      (`InvalidOffer`, raised at the top of `_acceptOffer` before any
+    ///      buyer value moves), so the offer never becomes `accepted` and the
+    ///      permissionless teardown stays available. The two guards #1851 pairs
+    ///      can therefore never both apply to the same listing.
+    ///
+    ///      Note the assertion is not merely "the accept reverts" — a revert
+    ///      that still flipped `accepted` would produce exactly the stuck
+    ///      listing. Both halves are asserted: the flag stays false, and the
+    ///      escape hatch actually runs.
+    function test_item1851_terminalLinkedLoan_cannotStrandAnAcceptedListing()
+        public
+    {
+        uint256 saleOfferId = _listSaleOffer();
+        // Control — the fixture really is the shape the issue describes: a live
+        // listing, not yet accepted, linked to the loan.
+        assertFalse(
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId).accepted,
+            "control: listing starts un-accepted"
+        );
+
+        // The loan terminates while the listing still stands.
+        _setLoanStatus(activeLoanId, LibVaipakam.LoanStatus.Repaid);
+
+        (address buyer, uint256 buyerPk) = makeAddrAndKey("item1851Buyer");
+        LibAcceptTerms.AcceptTerms memory t = LibAcceptTestSigner.buildSaleTerms(
+            address(diamond), buyer, saleOfferId, true, activeLoanId
+        );
+        bytes memory sig = LibAcceptTestSigner.sign(address(diamond), t, buyerPk);
+        // Same `InvalidOffer` LoanFacet uses for a dead position, raised before
+        // solvency, maturity or any fund movement.
+        vm.expectRevert(OfferAcceptFacet.InvalidOffer.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // The refused accept left NOTHING half-done: the listing is still
+        // un-accepted, which is the precondition teardown needs.
+        assertFalse(
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId).accepted,
+            "a refused accept must not mark the listing accepted"
+        );
+
+        // And the escape #1851 feared was unreachable is in fact reachable:
+        // the permissionless teardown clears the link on the terminal loan.
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+
+        // Idempotence check that doubles as proof the link is GONE rather than
+        // merely skipped: a second teardown finds nothing to clean up.
+        vm.expectRevert(OfferCancelFacet.NoStaleSaleListing.selector);
+        OfferCancelFacet(address(diamond)).teardownStaleSaleListing(activeLoanId);
+    }
+
 }
