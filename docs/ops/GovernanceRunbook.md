@@ -792,6 +792,16 @@ bucket capacity can sit below an early high-concentration daily slice. Read back
 each destination's bucket capacity *and* the keeper lane cap against the largest
 supported single-day slice (#918).
 
+**Capacity alone is not the check.** A lane has SEPARATE outbound and inbound
+rate-limiter states, each with its own `capacity`, `rate`, `isEnabled` and
+current `tokens`. A configured capacity that looks adequate can still fail
+delivery — because the two directions are configured differently, because either
+side is disabled, or because a bucket is currently DEPLETED and has not refilled.
+A Base send can consume the outbound side and then be rejected or delayed by the
+mirror's inbound limiter, and Step 5 is waiting on `RewardBudgetReceived` against
+an immutable `D*`. Read both states, both directions, per lane, and check present
+`tokens` as well as configured capacity.
+
 **3f. Deploy `ops/mesh-watcher` AND verify it runs clean.** It reads every
 reward chain's recycled ledger and alerts on the commitment invariants, and it is
 code-complete but **undeployed** — D1 creation, secrets and the first deploy are
@@ -846,6 +856,15 @@ This single Base call **is** the `D*` cutover. It is:
 - **future-day-only** — `dayId <= today` reverts `GovernorArmingDayNotFuture`;
 - **canonical-only** — there is no per-chain `D*` administration, and a call on a
   mirror reverts.
+
+**First confirm every chain shares a reward-day clock.** The day index derives
+from each Diamond's own `interactionLaunchTimestamp`, and the mirror ingress
+stores `armedFromDay` **directly** — it does not repeat the future-day check the
+setter applies against BASE's local day. So if launch timestamps differ, one
+numeric `D*` is not one instant: an earlier mirror can cut over the moment the
+broadcast lands, while a later one cannot yet report the Base armed day and
+stalls its remittance. Read `interactionLaunchTimestamp` and the current reward
+day back on every chain and confirm they agree before choosing `D*`.
 
 **`D*` must be measured from when the call EXECUTES, not from when you schedule
 it.** Post-handover this is an `ADMIN_ROLE` action and therefore goes through the
@@ -945,6 +964,14 @@ ceremony that stops at Step 5 leaves it that way — which is a coherent state,
 but an operator who marks recycling "activated" without noticing will believe
 RL-3 is live when nothing sweeps.
 
+**Read back the RL-4 allocation weights first.** The required dormant posture is
+`[keeper 0, reserve 10000]`. On a Diamond that was upgraded or rehearsed,
+`recycleRegisterKeeperBps` may already be non-zero, and nothing in this ceremony
+restores it — once armed-day finalizations run, the register earmarks part of the
+realized margin into the keeper budget, removing it from fundable user rewards
+while the operator believes the default allocation is in force. Read it back, and
+ratify explicitly if it is not zero.
+
 It is separate from Steps 1-5 on purpose: it carries **its own** preconditions,
 and setting it ad hoc later is how those get skipped. All of them must be
 verified live first:
@@ -956,8 +983,11 @@ verified live first:
 - the **same mesh gate as arming** — rewards Base-only / dark on mirrors, OR M3
   complete. Mirror expiry credits land in local buckets Base can neither count
   nor consume until B′, so activating across an incomplete mesh strands them;
-- **#1499's shared definition**, which is why the sweep and the claim gate must
-  measure the same quantity — see Gate A.
+- **#1499 CLOSED, and its fix deployed on every reward chain** — not merely
+  "the shared definition exists". While the expiry predicate and the claim gate
+  measure different quantities, executable time accrues for claims that currently
+  revert, so restored funding lets the next sweep expire entitlements on stale
+  elapsed time. Assert the deployed code slice per chain, as Steps 1 and 4 do.
 
 The setter range-checks a non-zero value against the configured minimum, so a
 too-short horizon reverts rather than silently truncating a user's window.
