@@ -423,6 +423,24 @@ better-worded report; it is having one list instead of two. Two records of the
 same fact disagree eventually, and the second one is always the one nobody
 remembers to update.
 
+### Sorting the notes could lose one, quietly
+
+The step that puts the notes in order read its result in a way that cannot tell
+whether the ordering worked. If the sort printed one of two names and then
+failed — a locale it cannot load, a disk that filled — the shorter list was
+taken for the whole pool. One note was folded in, the other was neither folded
+in nor removed, and the run finished by printing the usual "here is how to
+commit this" without a word about the one it had dropped.
+
+Both halves are now checked, and they catch different things: whether the sort
+failed, and whether the number of notes coming out matches the number that went
+in. Ordering rearranges a pile, it does not shrink one, so a different count is
+wrong whatever the exit code claimed.
+
+Doing less than asked and reporting success is the specific failure this whole
+piece of work exists to make impossible, so having it sitting in the ordering
+step was worth the round it took to find.
+
 ### A green test run that was not measuring thirteen of its own cases
 
 This one was not found by review. It was found by reading the automated checks

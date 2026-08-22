@@ -3566,6 +3566,53 @@ check "it does not contradict itself" \
 # file on disk is the file this run wrote.
 check "it says the content is safe"  "$(says "$msg" 'Nothing needs recovering')"  "1"
 
+echo "T127: a sort that truncates the pool stops the run"
+W="$ROOT/t127"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The ordering step read its input through a process substitution, whose exit
+# status never reaches this shell -- so `errexit` and `pipefail` had nothing to
+# act on and `mapfile` reported only on its own success (Codex #1863 r45). A
+# sorter printing one of two paths and failing left a SHORTER pool that every
+# later stage took for the whole of it: the missing fragment was neither
+# assembled nor removed, and the run printed the commit instructions.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sort" <<'SHIM'
+#!/bin/sh
+# One line of the input, then fail -- the shape the finding describes.
+head -n 1
+exit 2
+SHIM
+chmod +x "$W/fakebin/sort"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                             "1"
+check "it says ordering failed" "$(says "$msg" 'ordering the fragments failed')" "1"
+check "both fragments are still pending" "$(pending "$W")"                       "2"
+check "nothing was published" \
+  "$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"       "none"
+# It must NOT report success -- that is the whole complaint.
+check "no commit instructions" "$(says "$msg" 'git commit -m')"                  "0"
+
+echo "T128: a sort that drops a path while succeeding stops the run"
+W="$ROOT/t128"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The status check alone does not cover this: a sorter can exit 0 having lost a
+# line. Sorting is a permutation, so a different count is wrong whatever the
+# exit code claimed, and the count is what catches it.
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/sort" <<'SHIM'
+#!/bin/sh
+head -n 1
+exit 0
+SHIM
+chmod +x "$W/fakebin/sort"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                             "1"
+check "it says the count changed" \
+  "$(says "$msg" 'changed how many there are')"                                  "1"
+check "both fragments are still pending" "$(pending "$W")"                       "2"
+check "nothing was published" \
+  "$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"       "none"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"

@@ -812,7 +812,45 @@ done
 # VANISHES from the list. It is then neither assembled nor removed, while the
 # run still reports success and a count that silently excludes it. `mapfile`
 # does neither expansion.
-mapfile -t frags < <(printf '%s\n' "${frags[@]}" | sort)
+#
+# And the sort's OUTCOME is checked, which reading it through a process
+# substitution cannot do (Codex #1863 r45). `mapfile` reports on its own
+# success at filling the array; the pipeline feeding it runs in a subshell
+# whose status never reaches this shell, so `errexit` and `pipefail` both
+# have nothing to act on. A `sort` that printed one of two paths and exited
+# nonzero — a locale it cannot load, a write that failed part way — left a
+# SHORTER list that every later stage then treated as the whole pool: the
+# missing fragment was neither assembled nor removed, and the run finished
+# reporting success and printed the commit instructions.
+#
+# Silently doing less than asked, and saying it did it all, is the failure
+# this script is most concerned with everywhere else.
+#
+# Both halves are checked, because they catch different things. The status
+# catches a sorter that fails; the count catches one that exits 0 having
+# dropped a line. Sorting is a permutation, so anything other than the same
+# number of paths back is wrong by definition, whatever the exit code said.
+_pre_sort_count="${#frags[@]}"
+_sort_rc=0
+_sorted="$(printf '%s\n' "${frags[@]}" | sort)" || _sort_rc=$?
+if (( _sort_rc != 0 )); then
+  echo "Error: ordering the fragments failed (exit $_sort_rc)." >&2
+  echo "" >&2
+  echo "Refusing to assemble: the order decides what gets folded in, and a" >&2
+  echo "partial answer here would assemble part of the pool while reporting" >&2
+  echo "success. Nothing has been touched." >&2
+  exit 1
+fi
+mapfile -t frags <<< "$_sorted"
+if (( ${#frags[@]} != _pre_sort_count )); then
+  echo "Error: ordering the fragments changed how many there are" >&2
+  echo "($_pre_sort_count -> ${#frags[@]})." >&2
+  echo "" >&2
+  echo "Refusing to assemble: sorting rearranges the pool, it does not add to" >&2
+  echo "or remove from it, so this run cannot tell which fragments it is" >&2
+  echo "holding. Nothing has been touched." >&2
+  exit 1
+fi
 
 # ── UTC-day selection ────────────────────────────────────────────────────────
 # A fragment belongs to the day its PR merged, measured in UTC — the same clock
