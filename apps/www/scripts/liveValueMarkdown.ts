@@ -40,9 +40,14 @@ import {
   formatKnob,
   resolveLiveValue,
   LIVE_VALUE_TOKEN_RE,
+  type KnobConfigSource,
 } from '../src/lib/liveValueKnobs';
 
-export function substituteLiveValuesInMarkdown(markdown: string, locale: string): string {
+export function substituteLiveValuesInMarkdown(
+  markdown: string,
+  locale: string,
+  config: KnobConfigSource | null = null,
+): string {
   const tree = unified().use(remarkParse).parse(markdown);
 
   const edits: { start: number; end: number; text: string }[] = [];
@@ -51,10 +56,19 @@ export function substituteLiveValuesInMarkdown(markdown: string, locale: string)
     const match = LIVE_VALUE_TOKEN_RE.exec(node.value);
     if (!match) return;
 
-    // Build-time: no config snapshot exists, so `null` resolves every
-    // token from compile-time defaults and marks nothing live. That is
-    // the honest answer for an artifact written before any fetch.
-    const r = resolveLiveValue(match[1], null);
+    // The snapshot the BUILD fetched, threaded in by the generator
+    // (#1664 item 3). Passing `null` here — which this did until then —
+    // wrote compile-time defaults into `/docs/*.md` and `llms-full.txt`
+    // permanently: those artifacts are static files, so after a
+    // governance retune they served the old rates indefinitely, even
+    // across rebuilds, while the rendered page beside them showed the
+    // new one under a `published` badge.
+    //
+    // `null` remains the honest answer when there is genuinely no
+    // snapshot, and stays the default so unit tests and any other
+    // caller keep the old behaviour rather than acquiring a network
+    // dependency by accident.
+    const r = resolveLiveValue(match[1], config);
     // An unregistered token is left exactly as written — same rule the
     // rendered pages follow, so an authoring typo stays visible on the
     // page instead of becoming a confidently wrong number.

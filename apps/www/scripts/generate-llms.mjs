@@ -34,6 +34,9 @@ import { fileURLToPath } from 'node:url';
 // pages cannot disagree about what a `{liveValue:...}` token means.
 // This script therefore runs under `tsx`, not bare node (#1606 review).
 import { substituteLiveValuesInMarkdown } from './liveValueMarkdown.ts';
+// The SAME decode + freshness rule the rendered pages apply, not a
+// second opinion about the same rail (#1664 item 3).
+import { fetchProtocolConfigSnapshot } from '../src/lib/protocolConfigSnapshot.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(__dirname, '..', 'src', 'content');
@@ -65,6 +68,75 @@ const DOCS_CONFIG_CHAIN_ID = process.env.VITE_DOCS_CONFIG_CHAIN_ID ?? '84532';
 const INDEXER_ORIGIN = (
   process.env.VITE_INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com'
 ).replace(/\/+$/, '');
+
+/**
+ * Longer than the browser's 4 s. A reader waiting on a page is the
+ * reason that one is short; a build is not, and one slow response
+ * should not be the difference between live figures and a refused
+ * build.
+ */
+const CONFIG_TIMEOUT_MS = 20_000;
+
+/**
+ * Fetch the published snapshot these exports will quote, and REFUSE to
+ * write them if it cannot be had (#1664 item 3).
+ *
+ * Failing closed is the point. `/docs/*.md` and `llms-full.txt` are
+ * static artifacts served until the next deploy — nothing re-fetches
+ * them the way a page does — so a build that quietly fell back to
+ * compile-time defaults would publish stale rates to AI crawlers
+ * indefinitely, with no signal anywhere that it had happened. The
+ * rendered pages can degrade gracefully because they retry on every
+ * load and label what they are showing; a file cannot do either.
+ *
+ * `ALLOW_STALE_EXPORTS=1` is the escape hatch, and it is not silent: it
+ * says so on stderr and the artifacts are stamped as build-time
+ * defaults rather than published values, so the fallback is legible in
+ * the output itself and not just in a CI log nobody keeps. Same shape
+ * as the existing `REQUIRE_INDEXER_ORIGIN` gate in alpha02's deploy
+ * script — a deliberate override, announced.
+ */
+async function loadPublishedConfig() {
+  const snap = await fetchProtocolConfigSnapshot({
+    origin: INDEXER_ORIGIN,
+    chainId: Number(DOCS_CONFIG_CHAIN_ID),
+    timeoutMs: CONFIG_TIMEOUT_MS,
+  });
+  if (snap) {
+    console.log(
+      `[generate-llms] published config: ${INDEXER_ORIGIN}/config/${DOCS_CONFIG_CHAIN_ID}` +
+        ` (updatedAt ${new Date(snap.updatedAt * 1000).toISOString()})`,
+    );
+    return snap;
+  }
+  if (process.env.ALLOW_STALE_EXPORTS === '1') {
+    console.error(
+      '[generate-llms] WARNING: no published config could be read from ' +
+        `${INDEXER_ORIGIN}/config/${DOCS_CONFIG_CHAIN_ID}.\n` +
+        '  ALLOW_STALE_EXPORTS=1 is set, so the exports are being written ' +
+        'from BUILD-TIME DEFAULTS.\n' +
+        '  They will not reflect a governance retune until a later build ' +
+        'reads a live snapshot.',
+    );
+    return null;
+  }
+  console.error(
+    `[generate-llms] Could not read a published config from ` +
+      `${INDEXER_ORIGIN}/config/${DOCS_CONFIG_CHAIN_ID}.\n` +
+      '\n' +
+      '  Refusing to write the machine-readable exports: they are static\n' +
+      '  files served until the next deploy, so falling back to build-time\n' +
+      '  defaults would publish figures that silently stop matching the\n' +
+      '  rendered pages after any governance retune.\n' +
+      '\n' +
+      '  Either make the indexer reachable, or re-run with\n' +
+      '  ALLOW_STALE_EXPORTS=1 to publish build-time defaults deliberately\n' +
+      '  (the artifacts then say so).',
+  );
+  process.exit(1);
+}
+
+const publishedConfig = await loadPublishedConfig();
 
 /** content subdir → public URL slug. Locale suffixes carry over
  *  (`Overview.ta.md` → `overview.ta.md`). */
@@ -99,7 +171,11 @@ for (const set of DOC_SETS) {
     // locale, matching what a reader of the same page sees.
     writeFileSync(
       resolve(DOCS_OUT, outName),
-      substituteLiveValuesInMarkdown(readFileSync(resolve(srcDir, file), 'utf8'), locale),
+      substituteLiveValuesInMarkdown(
+        readFileSync(resolve(srcDir, file), 'utf8'),
+        locale,
+        publishedConfig?.config ?? null,
+      ),
     );
     published.push({ slug: set.slug, locale, url: `${ORIGIN}/docs/${outName}` });
   }
@@ -126,6 +202,21 @@ Key facts:
 - NFT rental (ERC-4907) with prepaid fees; renters get use rights, never ownership.
 - VPFI is an optional fee-discount token — never required to lend, borrow, or rent.
 - No KYC; wallets are screened against an on-chain sanctions oracle only.
+
+${
+  publishedConfig
+    ? `The protocol figures in these documents (fees, VPFI tier thresholds and
+discounts) were read from the published configuration of chain
+${DOCS_CONFIG_CHAIN_ID} at ${new Date(publishedConfig.updatedAt * 1000).toISOString()},
+and are current as of this build. Each deployment is independently
+tunable — for another chain, or for figures newer than this build, read
+${INDEXER_ORIGIN}/config/:chainId.`
+    : `NOTE: the protocol figures in these documents (fees, VPFI tier
+thresholds and discounts) are BUILD-TIME DEFAULTS. The published
+configuration could not be read when this build ran, so these figures do
+not reflect any later governance retune. For current values read
+${INDEXER_ORIGIN}/config/${DOCS_CONFIG_CHAIN_ID}.`
+}
 
 ## Docs
 
