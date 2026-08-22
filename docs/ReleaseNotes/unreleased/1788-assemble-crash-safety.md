@@ -423,6 +423,42 @@ better-worded report; it is having one list instead of two. Two records of the
 same fact disagree eventually, and the second one is always the one nobody
 remembers to update.
 
+### A green test run that was not measuring thirteen of its own cases
+
+This one was not found by review. It was found by reading the automated checks
+after a push, which is a thing I had not been doing for this suite because the
+check is marked non-blocking — and "non-blocking" had quietly become "not my
+problem", while what it was actually running was these tests.
+
+Thirteen cases stage their fault by taking a permission away: a note that cannot
+be read, a directory that cannot be written to, a file belonging to somebody
+else. The account doing the work here has no permissions to take away, so those
+cases cannot be set up and they stood down — printing a cheerful line that
+looked exactly like a pass. A full run reported every case passing. Two of the
+thirteen had been **failing** for at least three rounds, in the only place they
+ever ran.
+
+Neither failure was a real defect. Both were assertions pinned to the exact
+wording of a message that had since changed — one of them changed *because* an
+earlier round added a stricter check that now refuses sooner, correctly, in
+different words. Which is the point: the tests were right to be checking, and
+nobody was reading the answer.
+
+Three things changed. The two assertions now check what the case is about —
+that an unreadable file is refused rather than read as having no records, that
+an unwritable directory is refused *before* anything is published — instead of
+quoting a sentence that any later improvement will move. A stood-down case now
+says **SKIP**, is counted, and the count is stated at the end, because a skip
+printed as a pass is how this lasted. And a run that holds every permission now
+does the work **twice**: once as itself, then again as an ordinary account, so
+the cases it cannot stage are staged after all and their result is part of the
+verdict rather than something only a distant machine ever sees.
+
+The second half of that matters as much as the first. Some cases need the
+permissions and some need the lack of them, and no single run covers both — so
+dropping privileges outright would have cured this blindness by creating the
+mirror image of it.
+
 ### What this is protecting against, and what it is not
 
 Worth saying plainly, because it is the difference between a long list of fixes

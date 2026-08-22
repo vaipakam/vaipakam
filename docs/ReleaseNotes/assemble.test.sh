@@ -20,11 +20,77 @@ set -uo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="$DIR/assemble.sh"
+
+# ── Cases that need a privilege, and cases that need the lack of one ─────────
+# Some cases stage a fault by TAKING A PERMISSION AWAY — an unreadable file, an
+# unwritable directory. Root walks through all of it, so under root they cannot
+# be staged. Others stage one by handing a file to ANOTHER OWNER or setting the
+# set-group-ID bit, which needs root. No single run covers both sets.
+#
+# That was fine as a fact and disastrous as a habit. Whichever set could not run
+# printed "ok — skipped", a full run reported every case passing, and the
+# permission-staged half ran only in CI — where two of them had been RED for at
+# least three commits while I read a green local run and believed it. A case
+# nobody reads the result of is not a case.
+#
+# So a root run now does BOTH: its own pass, then a second pass as an ordinary
+# account for the cases it cannot stage. `_second_pass` at the bottom runs it,
+# after the first pass has reported, and its result is part of the verdict.
+# Where no such account can be reached the old behaviour stands, said out loud
+# at the end rather than as a column of cheerful "ok" lines.
+#
+# CI runs unprivileged, so it gets the permission-staged set and skips the
+# root-staged one — unchanged, and now visible in its own output.
+DROP_UID=""
+DROP_GID=""
+if [ "$(id -u)" = "0" ] && [ "${ASSEMBLE_TEST_NESTED:-}" != "1" ] \
+   && command -v setpriv >/dev/null 2>&1; then
+  for _u in nobody nfsnobody daemon games; do
+    if _ent="$(getent passwd "$_u" 2>/dev/null)"; then
+      _uid="$(printf '%s' "$_ent" | cut -d: -f3)"
+      _gid="$(printf '%s' "$_ent" | cut -d: -f4)"
+      # Checked BEFORE committing to it: the account has to be able to read this
+      # suite and the script under test. A second pass that cannot open its own
+      # argument fails in a way that reads like the tests failing.
+      #
+      # Somewhere to WRITE is not checked, it is provided. `$TMPDIR` was the
+      # obvious candidate and it is not reliably usable — /tmp is 0755 on this
+      # container, so the pre-check declined and the second pass silently never
+      # ran, which is the same blindness in a new place. The pass gets a
+      # directory made for it instead, inside the one this suite already
+      # cleans up.
+      if setpriv --reuid="$_uid" --regid="$_gid" --clear-groups \
+           test -r "$0" -a -r "$SRC" 2>/dev/null; then
+        DROP_UID="$_uid"; DROP_GID="$_gid"
+        break
+      fi
+    fi
+  done
+fi
+
+_second_pass() {
+  [ -n "$DROP_UID" ] || return 0
+  echo ""
+  echo "── second pass as uid $DROP_UID — the cases root cannot stage ──"
+  local _tmp="$ROOT/unprivileged"
+  # Traversable, not writable: the second pass writes only inside the directory
+  # made for it, which is sticky like /tmp. Both go with $ROOT on exit.
+  mkdir -p "$_tmp" || return 1
+  chmod o+rx "$ROOT" || return 1
+  chmod 1777 "$_tmp" || return 1
+  setpriv --reuid="$DROP_UID" --regid="$DROP_GID" --clear-groups \
+    env ASSEMBLE_TEST_NESTED=1 HOME="$_tmp" TMPDIR="$_tmp" bash "$0" "$@"
+}
+
 ROOT="$(mktemp -d)"
 trap 'rm -rf "$ROOT"' EXIT
 
 FAILED=0
+SKIPPED=0
 ok()   { echo "  ok   — $1"; }
+# A skipped case is not a passing case, and printing it as one is how thirteen
+# of them went unread. It is counted, and the count is stated at the end.
+skip() { echo "  SKIP — $1"; SKIPPED=$((SKIPPED + 1)); }
 fail() { echo "  FAIL — $1" >&2; FAILED=1; }
 check() {  # check <condition-description> <actual> <expected>
   if [ "$2" = "$3" ]; then ok "$1"; else fail "$1 (got '$2', want '$3')"; fi
@@ -744,17 +810,21 @@ rc=$?
 chmod 644 "$out/ReleaseNotes-2026-08-16.md"
 if [ "$(id -u)" = "0" ]; then
   # root reads through mode 000, so the case cannot be staged this way.
-  ok "skipped — running as root, chmod 000 does not deny reads (CI runs it)"
+  skip "running as root, chmod 000 does not deny reads (CI runs it)"
 else
   check "the run stops"               "$rc"                        "1"
-  # Asserted against what `run_checked` actually prints. The earlier
-  # wording ("incomplete") belonged to the bespoke message this scan had
-  # before it moved onto the shared helper — and because this case SKIPS
-  # under root, the stale assertion could not fail in the container it
-  # was edited in. CI, which runs unprivileged, is the only place the
-  # chmod-000 cases are exercised at all.
-  check "it names the scan that failed" \
-    "$(says "$msg" 'for assembly markers failed')" "1"
+  # Asserted on the PROPERTY, not on one downstream message. Twice now this
+  # case has pinned the exact words of whichever check happened to fire — and
+  # twice a stricter check was added upstream of it, so the run refused
+  # earlier, correctly, with different words, and the assertion failed while
+  # the behaviour was right. Today the mode read refuses first.
+  #
+  # What matters is that an unreadable dated file is REFUSED rather than read
+  # as markerless: the file is named, the run says it is refusing, and no
+  # fragment is consumed. The last of those is the discriminating one — a run
+  # scanning it as markerless appends 0001-a a second time and consumes it.
+  check "it names the file"           "$(says "$msg" 'ReleaseNotes-2026-08-16.md')" "1"
+  check "it refuses"                  "$(says "$msg" 'Refusing to assemble')"       "1"
   check "no fragment was consumed"    "$(pending "$W")"            "2"
 fi
 
@@ -784,7 +854,7 @@ elif command -v gtimeout >/dev/null 2>&1; then TMO=gtimeout
 fi
 mkfifo "$out/ReleaseNotes-2026-01-01.md"
 if [ -z "$TMO" ]; then
-  ok "skipped — no timeout(1) or gtimeout(1); cannot bound a hang safely"
+  skip "no timeout(1) or gtimeout(1); cannot bound a hang safely"
 else
   "$TMO" 20 bash "$out/assemble.sh" 2026-08-16 >/dev/null 2>&1
   rc=$?
@@ -1227,7 +1297,7 @@ printf '## later note\n' > "$W/docs/ReleaseNotes/unreleased/0014-later.md"
 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
 rc=$?
 if [ "$(id -u)" = "0" ]; then
-  ok "skipped — running as root, mode bits do not deny writes (CI runs it)"
+  skip "running as root, mode bits do not deny writes (CI runs it)"
 else
   check "the run succeeds"        "$rc"                                          "0"
   check "the mode is preserved"   "$(mode_of "$out/ReleaseNotes-2026-08-16.md")"  "460"
@@ -1243,7 +1313,7 @@ printf '## later note\n' > "$W/docs/ReleaseNotes/unreleased/0015-later.md"
 # the runner, so a shared dated file changes hands silently (Codex #1863 r14).
 # Only root can stage this by chowning to another uid.
 if [ "$(id -u)" != "0" ]; then
-  ok "skipped — cannot chown to another user unprivileged (CI runs as non-root; staged here)"
+  skip "cannot chown to another user unprivileged (CI runs as non-root; staged here)"
 else
   chown 65534 "$out/ReleaseNotes-2026-08-16.md"
   msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
@@ -1504,7 +1574,7 @@ W="$ROOT/t50"; build "$W"
 out="$W/docs/ReleaseNotes"
 printf '# Release Notes — 2026-08-16\n\n## pre-existing\n' > "$out/ReleaseNotes-2026-08-16.md"
 if [ "$(id -u)" != "0" ]; then
-  check "skipped — chown needs root (CI runs it)" "1" "1"
+  skip "chown needs root (CI runs it)"
 else
   # The rename installs a NEW inode owned by whoever ran the script, so a
   # concurrent `chown` is undone by it — content unchanged, so no content
@@ -1940,7 +2010,7 @@ for cand in C.utf8 C.UTF-8 en_US.utf8 en_US.UTF-8; do
   if locale -a 2>/dev/null | grep -qxF "$cand"; then utf8="$cand"; break; fi
 done
 if [ -z "$utf8" ]; then
-  check "skipped — no UTF-8 locale installed, byte/char cannot differ" "1" "1"
+  skip "no UTF-8 locale installed, byte/char cannot differ"
 else
   # Confirm the chosen locale really does make ${#} count characters, so a
   # locale that exists but behaves like C cannot make this vacuous either.
@@ -2259,7 +2329,7 @@ echo "T77: the group compared is the one a NEW file here would take"
 W="$ROOT/t77"; build "$W"
 out="$W/docs/ReleaseNotes"
 if [ "$(id -u)" != "0" ]; then
-  check "skipped — setgid + chgrp need root (CI runs it)" "1" "1"
+  skip "setgid + chgrp need root (CI runs it)"
 else
   # In a setgid directory mktemp inherits the DIRECTORY's group, not the
   # runner's. Comparing the output against `id -g` therefore compared the wrong
@@ -2340,7 +2410,7 @@ if [ "$(id -u)" = "0" ]; then
   check "ownership is unchanged" \
     "$(stat -c '%u' "$out/ReleaseNotes-2026-08-16.md")"                  "65534"
 else
-  check "skipped — chown needs root (CI runs it)" "1" "1"
+  skip "chown needs root (CI runs it)"
 fi
 
 echo "T82: a marker seen only in the copy cannot authorise a deletion"
@@ -2424,13 +2494,21 @@ out="$W/docs/ReleaseNotes"
 mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
 chmod 0555 "$W/docs/ReleaseNotes/unreleased/.assembled"
 if [ "$(id -u)" = "0" ]; then
-  check "skipped — root writes through mode bits (CI runs it)" "1" "1"
+  skip "root writes through mode bits (CI runs it)"
 else
   msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"        "$?"                                       "1"
   check "nothing was published" \
     "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)" "none"
-  check "it says why"          "$(says "$msg" 'is not writable')"          "1"
+  # The wording moved with the check itself: r28 replaced a `-w` test with a
+  # create-and-remove probe, because `-w` passes on a directory whose entries
+  # cannot actually be added. The message became "entries cannot be created and
+  # removed", and this assertion kept asking for the old one — invisibly, since
+  # the case skips under root.
+  check "it says why" \
+    "$(says "$msg" 'entries cannot be created and removed')"                 "1"
+  check "it says when it would have failed" \
+    "$(says "$msg" 'after the dated file was written')"                      "1"
 fi
 chmod 0755 "$W/docs/ReleaseNotes/unreleased/.assembled"
 
@@ -2553,7 +2631,7 @@ mkdir -p "$W/docs/ReleaseNotes/unreleased/.assembled"
 chmod 0666 "$W/docs/ReleaseNotes/unreleased/.assembled/.probe"
 chmod 0555 "$W/docs/ReleaseNotes/unreleased/.assembled"
 if [ "$(id -u)" = "0" ]; then
-  check "skipped — root writes through mode bits (CI runs it)" "1" "1"
+  skip "root writes through mode bits (CI runs it)"
 else
   msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"         "$?"                                       "1"
@@ -2858,7 +2936,7 @@ exit \$_rc
 SHIM
 chmod +x "$W/fakebin/rm"
 if [ "$(id -u)" = "0" ]; then
-  check "skipped — root reads through mode 000 (CI runs it)" "1" "1"
+  skip "root reads through mode 000 (CI runs it)"
 else
   msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"          "$?"                                             "1"
@@ -2917,7 +2995,7 @@ exit 0
 SHIM
 chmod +x "$W/fakebin/sync"
 if [ "$(id -u)" = "0" ]; then
-  check "skipped — root writes through mode bits (CI runs it)" "1" "1"
+  skip "root writes through mode bits (CI runs it)"
 else
   msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"          "$?"                                        "1"
@@ -2957,7 +3035,7 @@ for cand in C.utf8 C.UTF-8 en_US.utf8; do
   if locale -a 2>/dev/null | grep -qxF "$cand"; then utf8="$cand"; break; fi
 done
 if [ -z "$utf8" ]; then
-  check "skipped — no UTF-8 locale installed" "1" "1"
+  skip "no UTF-8 locale installed"
 else
   LC_ALL=$utf8 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
   # Restore it, as an interrupted run would leave it, and re-run.
@@ -3059,7 +3137,7 @@ exit 0
 SHIM
 chmod +x "$W/fakebin/sync"
 if [ "$(id -u)" = "0" ]; then
-  check "skipped — root writes through mode bits (CI runs it)" "1" "1"
+  skip "root writes through mode bits (CI runs it)"
 else
   msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   check "the run stops"         "$?"                                        "1"
@@ -3158,7 +3236,7 @@ chmod +x "$W/fakebin/sync"
 # `gtimeout` may not be, and the case then fails for the harness rather than
 # for the behaviour it names.
 if [ -z "$TMO" ]; then
-  check "skipped — no timeout(1) available, and this case can hang" "1" "1"
+  skip "no timeout(1) available, and this case can hang"
 else
   msg="$(PATH="$W/fakebin:$PATH" "$TMO" 60 bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
   rc=$?
@@ -3209,7 +3287,7 @@ check "no work directory is left" \
 if [ "$(id -u)" != "0" ]; then
   check "the directory denies others" "1" "1"
 else
-  check "skipped — mode check needs an unprivileged reader (CI runs it)" "1" "1"
+  skip "mode check needs an unprivileged reader (CI runs it)"
 fi
 
 echo "T117: a brand-new dated file has its group pinned too"
@@ -3243,7 +3321,7 @@ if [ "$(id -u)" = "0" ]; then
   check "nothing was published" \
     "$([ -f "$out/ReleaseNotes-2026-08-16.md" ] && echo wrote || echo none)"  "none"
 else
-  check "skipped — chgrp needs privilege (CI runs it)" "1" "1"
+  skip "chgrp needs privilege (CI runs it)"
 fi
 
 echo "T118: a failed recovery removal still reports what already went"
@@ -3497,5 +3575,28 @@ bash "$S" 20260816            >/dev/null 2>&1; check "bad date format refused" "
 bash -n "$SRC"                >/dev/null 2>&1; check "assemble.sh parses"    "$?" "0"
 
 echo ""
-if (( FAILED )); then echo "assemble.test.sh: FAILURES above ^^^" >&2; exit 1; fi
-echo "assemble.test.sh: all cases pass"
+if (( SKIPPED > 0 )); then
+  echo "assemble.test.sh: $SKIPPED case(s) SKIPPED in this pass (uid $(id -u))."
+  if [ -z "$DROP_UID" ] && [ "${ASSEMBLE_TEST_NESTED:-}" != "1" ] && [ "$(id -u)" = "0" ]; then
+    echo "  No unprivileged account was reachable, so the permission-staged" >&2
+    echo "  cases did not run anywhere in this invocation. They are not" >&2
+    echo "  passing — they are unmeasured." >&2
+  fi
+fi
+_pass_rc=0
+if (( FAILED )); then echo "assemble.test.sh: FAILURES above ^^^" >&2; _pass_rc=1; fi
+if (( ! FAILED )) && [ -z "$DROP_UID" ]; then echo "assemble.test.sh: all cases pass"; fi
+
+# The second pass is part of the verdict, not an appendix to it: a failure
+# there fails the suite exactly as one here does.
+if [ -n "$DROP_UID" ]; then
+  if (( ! FAILED )); then echo "assemble.test.sh: first pass clean"; fi
+  if ! _second_pass "$@"; then _pass_rc=1; fi
+  echo ""
+  if (( _pass_rc )); then
+    echo "assemble.test.sh: FAILURES in one or both passes ^^^" >&2
+  else
+    echo "assemble.test.sh: all cases pass (both passes)"
+  fi
+fi
+exit "$_pass_rc"
