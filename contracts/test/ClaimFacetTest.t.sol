@@ -8,6 +8,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -145,12 +146,21 @@ contract ClaimFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut all facets
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](19);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
         cuts[0] = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[15] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferAcceptFacetSelectors()
+        });
+        // #1835 — the borrower-LIF charge `_acceptOffer` self-calls, split off
+        // OfferAcceptFacet for EIP-170 headroom. Same selector, its own host:
+        // cut it or every ERC-20 accept reverts FunctionDoesNotExist at the
+        // self-call, with the accept facet itself looking perfectly fine.
+        cuts[19] = IDiamondCut.FacetCut({
+            facetAddress: address(new OfferAcceptFeeFacet()),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFeeFacetSelectors()
         });
         cuts[1] = IDiamondCut.FacetCut({facetAddress: address(profileFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getProfileFacetSelectors()});
         cuts[2] = IDiamondCut.FacetCut({facetAddress: address(oracleFacet), action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOracleFacetSelectors()});

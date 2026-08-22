@@ -9,6 +9,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -230,6 +231,7 @@ contract SetupTest is Test {
     OfferCreateFacet offerCreateFacet;
     OfferParallelSaleFacet offerParallelSaleFacet;
     OfferAcceptFacet offerAcceptFacet;
+    OfferAcceptFeeFacet offerAcceptFeeFacet;
     OfferPreviewFacet offerPreviewFacet;
     OfferCancelFacet offerCancelFacet;
     // OfferMatchFacet — Range Orders Phase 1 matching surface (#46).
@@ -367,6 +369,7 @@ contract SetupTest is Test {
         offerCreateFacet = new OfferCreateFacet();
         offerParallelSaleFacet = new OfferParallelSaleFacet();
         offerAcceptFacet = new OfferAcceptFacet();
+        offerAcceptFeeFacet = new OfferAcceptFeeFacet();
         offerPreviewFacet = new OfferPreviewFacet();
         offerCancelFacet = new OfferCancelFacet();
         offerMatchFacet = new OfferMatchFacet();
@@ -470,7 +473,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](75);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](76);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -480,6 +483,15 @@ contract SetupTest is Test {
             facetAddress: address(offerAcceptFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getOfferAcceptFacetSelectors()
+        });
+        // #1835 — OfferAcceptFeeFacet (the borrower-LIF charge + net delivery
+        // split out of OfferAcceptFacet for EIP-170 headroom). `_acceptOffer`
+        // reaches it through `crossFacetCall`, so every ERC-20 accept in the
+        // suite depends on this cut being present.
+        cuts[75] = IDiamondCut.FacetCut({
+            facetAddress: address(offerAcceptFeeFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getOfferAcceptFeeFacetSelectors()
         });
         // #980 — OfferPreviewFacet (previewAccept split out of OfferAcceptFacet).
         cuts[63] = IDiamondCut.FacetCut({

@@ -54,6 +54,7 @@ import {MetricsDashboardFacet} from "../src/facets/MetricsDashboardFacet.sol";
 import {PayrollFacet} from "../src/facets/PayrollFacet.sol";
 import {RiskMatchLiquidationFacet} from "../src/facets/RiskMatchLiquidationFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferMutateFacet} from "../src/facets/OfferMutateFacet.sol";
 import {PrepayListingFacet} from "../src/facets/PrepayListingFacet.sol";
 import {NFTPrepayListingFacet} from "../src/facets/NFTPrepayListingFacet.sol";
@@ -207,7 +208,9 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // refresh script must not import test code to check itself.
     // 73 -> 74: EarlyWithdrawalDirectFacet (#1780) + RewardHorizonSweepFacet
     // (#1434) landed on either side of one merge.
-    uint256 public constant EXPECTED_FACETS = 74;
+    // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
+    // off OfferAcceptFacet, which was 164 bytes under EIP-170.
+    uint256 public constant EXPECTED_FACETS = 75;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1029,6 +1032,16 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             _getRiskMatchLiquidationSelectors()
         );
         items[35] = Item("offerAcceptFacet", address(new OfferAcceptFacet()), _getOfferAcceptSelectors());
+        // #1835 — the accept path's borrower-LIF charge on its own host. It
+        // must refresh IN THE SAME RUN as `offerAcceptFacet`: the two halves
+        // are one behaviour split across a `crossFacetCall`, so refreshing
+        // either alone leaves the other on pre-split code (the hazard #1780's
+        // EarlyWithdrawal split records for its own pair).
+        items[74] = Item(
+            "offerAcceptFeeFacet",
+            address(new OfferAcceptFeeFacet()),
+            _getOfferAcceptFeeSelectors()
+        );
         items[36] = Item("offerMutateFacet", address(new OfferMutateFacet()), _getOfferMutateSelectors());
         items[37] = Item("prepayListingFacet", address(new PrepayListingFacet()), _getPrepayListingSelectors());
         items[38] = Item(

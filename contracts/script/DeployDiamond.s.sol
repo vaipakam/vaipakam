@@ -19,6 +19,7 @@ import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferParallelSaleFacet} from "../src/facets/OfferParallelSaleFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferPreviewFacet} from "../src/facets/OfferPreviewFacet.sol";
 import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
@@ -152,6 +153,9 @@ contract DeployDiamond is Script {
         // (carved off OfferCreateFacet — see _getOfferParallelSaleSelectors).
         OfferParallelSaleFacet offerParallelSaleFacet = new OfferParallelSaleFacet();
         OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
+        // #1835 — the borrower-LIF charge + net delivery, split out of
+        // OfferAcceptFacet for EIP-170 headroom (24,412 of 24,576 bytes used).
+        OfferAcceptFeeFacet offerAcceptFeeFacet = new OfferAcceptFeeFacet();
         OfferPreviewFacet offerPreviewFacet = new OfferPreviewFacet();
         // Range Orders Phase 1 EIP-170 split: matchOffers + previewMatch
         // live on a separate facet to keep OfferFacet under the
@@ -290,7 +294,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](74);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](75);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -364,6 +368,15 @@ contract DeployDiamond is Script {
         cuts[35] = _buildCut(
             address(offerAcceptFacet),
             _getOfferAcceptSelectors()
+        );
+        // #1835 — OfferAcceptFeeFacet: the borrower-LIF charge + net delivery
+        // `_acceptOffer` already reached through `crossFacetCall`, moved to its
+        // own host for EIP-170 headroom. The selector is UNCHANGED by the move
+        // (a selector is derived from the signature, not the host), so this cut
+        // simply routes it to the new address.
+        cuts[74] = _buildCut(
+            address(offerAcceptFeeFacet),
+            _getOfferAcceptFeeSelectors()
         );
         // #980 — OfferPreviewFacet (the `previewAccept` view split out of
         // OfferAcceptFacet for EIP-170 headroom).
@@ -890,6 +903,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("offerCreateFacet",        address(offerCreateFacet));
         Deployments.writeFacet("offerParallelSaleFacet",  address(offerParallelSaleFacet));
         Deployments.writeFacet("offerAcceptFacet",        address(offerAcceptFacet));
+        Deployments.writeFacet("offerAcceptFeeFacet",     address(offerAcceptFeeFacet));
         Deployments.writeFacet("offerMatchFacet",         address(offerMatchFacet));
         Deployments.writeFacet("offerCancelFacet",        address(offerCancelFacet));
         // #193 / Codex round-2 — persist OfferMutateFacet for explorer
@@ -1004,6 +1018,7 @@ contract DeployDiamond is Script {
         console.log("OfferCreateFacet:     ", address(offerCreateFacet));
         console.log("OfferParallelSaleFacet:", address(offerParallelSaleFacet));
         console.log("OfferAcceptFacet:     ", address(offerAcceptFacet));
+        console.log("OfferAcceptFeeFacet:  ", address(offerAcceptFeeFacet));
         console.log("OfferMatchFacet:      ", address(offerMatchFacet));
         console.log("OfferCancelFacet:     ", address(offerCancelFacet));
         console.log("OfferMutateFacet:     ", address(offerMutateFacet));
@@ -1446,7 +1461,7 @@ contract DeployDiamond is Script {
     }
 
     function _getOfferAcceptSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](6);
+        s = new bytes4[](5);
         s[0] = OfferAcceptFacet.acceptOffer.selector;
         // Phase 8b.1 Permit2 addition.
         s[1] = OfferAcceptFacet.acceptOfferWithPermit.selector;
@@ -1470,14 +1485,29 @@ contract DeployDiamond is Script {
         // The direct-path offerKey (`keccak256(abi.encode(offerId))`) is likewise
         // client-side.
         s[4] = OfferAcceptFacet.verifyAndBindAccept.selector;
+        // #1835 — `chargeBorrowerLifAndDeliver` moved to `OfferAcceptFeeFacet`
+        // (`_getOfferAcceptFeeSelectors`) for EIP-170 headroom. It is still
+        // routed, just to a different host; the selector itself is unchanged.
+        // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
+        // `getOfferDetails` live on `OfferCancelFacet` — see
+        // `_getOfferCancelSelectors`.
+    }
+
+    /// @dev #1835 — `OfferAcceptFeeFacet`, split out of OfferAcceptFacet for
+    ///      EIP-170 headroom (the facet was at 24,412 of 24,576 bytes, less
+    ///      than one cross-facet call from the ceiling, which made every
+    ///      queued accept-path change undeployable).
+    function _getOfferAcceptFeeSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](1);
         // #1352 — diamond-internal (`address(this)`-only) borrower LIF charge,
         // invoked by `_acceptOffer` via `crossFacetCall` so the HoldOnly-LIF
         // work runs in a fresh stack frame (viaIR budget). Must be routed for
         // that self-call to reach it.
-        s[5] = OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector;
-        // `cancelOffer`, `getCompatibleOffers`, `getOffer`, and
-        // `getOfferDetails` live on `OfferCancelFacet` — see
-        // `_getOfferCancelSelectors`.
+        s[0] = OfferAcceptFeeFacet.chargeBorrowerLifAndDeliver.selector;
     }
 
     /// @dev #980 — `OfferPreviewFacet.previewAccept`, split out of

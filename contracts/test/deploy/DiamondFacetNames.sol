@@ -56,8 +56,12 @@ abstract contract DiamondFacetNames {
     ///      73 → 74 in #1434 with `RewardHorizonSweepFacet` (the
     ///      permissionless claim-horizon sweep — expiry shares the
     ///      ShareOfPool day engine, and neither reward facet had the
-    ///      EIP-170 headroom to carry the ~12.8 KB it costs).)
-    function cutFacetNames() internal pure returns (string[74] memory) {
+    ///      EIP-170 headroom to carry the ~12.8 KB it costs);
+    ///      74 → 75 in #1835 with `OfferAcceptFeeFacet` (the borrower-LIF
+    ///      charge + net delivery split off `OfferAcceptFacet`, which had
+    ///      164 bytes of EIP-170 headroom left — again less than one
+    ///      cross-facet call, the same condition as #1780 above).)
+    function cutFacetNames() internal pure returns (string[75] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -80,6 +84,9 @@ abstract contract DiamondFacetNames {
             "MetricsDashboardFacet",
             "MetricsFacet",
             "OfferAcceptFacet",
+            // #1835 — the borrower-LIF charge + net delivery, split off
+            // OfferAcceptFacet for EIP-170 headroom.
+            "OfferAcceptFeeFacet",
             "OfferPreviewFacet",
             "OfferCancelFacet",
             "OfferCreateFacet",

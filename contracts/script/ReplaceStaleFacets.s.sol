@@ -16,6 +16,7 @@ import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {IDiamondLoupe} from "@diamond-3/interfaces/IDiamondLoupe.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
+import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
@@ -83,6 +84,11 @@ contract ReplaceStaleFacets is DeployDiamond {
 
         OfferCreateFacet offerCreateFacet = new OfferCreateFacet();
         OfferAcceptFacet offerAcceptFacet = new OfferAcceptFacet();
+        // #1835 — the accept path's borrower-LIF charge now lives on its own
+        // host. Deployed alongside because the two are one behaviour across a
+        // `crossFacetCall`; see the cut below for why omitting it splits the
+        // accept across two builds.
+        OfferAcceptFeeFacet offerAcceptFeeFacet = new OfferAcceptFeeFacet();
         OracleFacet oracleFacet = new OracleFacet();
         VaultFactoryFacet vaultFactoryFacet = new VaultFactoryFacet();
         ConfigFacet configFacet = new ConfigFacet();
@@ -108,6 +114,8 @@ contract ReplaceStaleFacets is DeployDiamond {
         OfferPreviewFacet offerPreviewFacet = new OfferPreviewFacet();
 
         console.log("OfferFacet:          ", address(offerCreateFacet));
+        console.log("OfferAcceptFacet:    ", address(offerAcceptFacet));
+        console.log("OfferAcceptFeeFacet: ", address(offerAcceptFeeFacet));
         console.log("OracleFacet:         ", address(oracleFacet));
         console.log("VaultFactoryFacet:  ", address(vaultFactoryFacet));
         console.log("ConfigFacet:         ", address(configFacet));
@@ -144,10 +152,10 @@ contract ReplaceStaleFacets is DeployDiamond {
         // the inherited `DeployDiamond` getter that defines what the Diamond
         // routes, so the surface cannot be partial (#778/#779).
         //
-        // Nine facets, so at most two cuts each; empty partitions are skipped
+        // Ten facets, so at most two cuts each; empty partitions are skipped
         // and the staging array is trimmed to what was actually used (a
         // zero-selector cut reverts).
-        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](18);
+        IDiamondCut.FacetCut[] memory staging = new IDiamondCut.FacetCut[](20);
         uint256 n;
         n = _appendPartitioned(
             staging, n, diamond, address(offerCreateFacet), _getOfferCreateSelectors()
@@ -169,11 +177,27 @@ contract ReplaceStaleFacets is DeployDiamond {
         );
         // #1352 (Codex P2) — this facet's surface mixes long-routed selectors
         // (`calculateTransactionValueNumeraire` / `verifyAndBindAccept`, live
-        // since #627/#662) with newer ones (`chargeBorrowerLifAndDeliver`, the
-        // HoldOnly LIF self-call target), which is exactly what the partition
+        // since #627/#662) with newer ones, which is exactly what the partition
         // sorts out — no hand-kept "existing vs missing" split needed.
         n = _appendPartitioned(
             staging, n, diamond, address(offerAcceptFacet), _getOfferAcceptSelectors()
+        );
+        // #1835 — `chargeBorrowerLifAndDeliver` moved off `OfferAcceptFacet`
+        // to its own host, so it is no longer in the list above. It must be
+        // re-pointed HERE or the refresh leaves it on the OLD OfferAcceptFacet
+        // address: the accept path would then self-call pre-split bytecode
+        // while the rest of the accept ran the new build — one logical facet
+        // across two versions, the #778/#779 failure this script exists to
+        // prevent, arriving by the opposite door. The partition handles both
+        // Diamonds: on a pre-split one the selector is routed (to the old
+        // OfferAcceptFacet) so it emits a Replace onto the fee facet; on a
+        // post-split one it is already here and the Replace is a no-op refresh.
+        n = _appendPartitioned(
+            staging,
+            n,
+            diamond,
+            address(offerAcceptFeeFacet),
+            _getOfferAcceptFeeSelectors()
         );
         // #394 (Codex #647 round-3) — the carved-out numeraire/PAD/periodic
         // selectors go to the NumeraireConfigFacet address, NOT ConfigFacet's:

@@ -31,6 +31,7 @@ import {PrecloseFacet} from "./PrecloseFacet.sol";
 import {FeeEntitlementFacet} from "./FeeEntitlementFacet.sol";
 import {LibFeeEntitlement} from "../libraries/LibFeeEntitlement.sol";
 import {LibUserVault} from "../libraries/LibUserVault.sol";
+import {OfferAcceptFeeFacet} from "./OfferAcceptFeeFacet.sol";
 
 /**
  * @title OfferAcceptFacet
@@ -1247,7 +1248,7 @@ contract OfferAcceptFacet is
                     VaultWithdrawFailed.selector
                 );
                 // Inlined rather than held in a local: this viaIR frame is already
-                // at its stack budget (see `chargeBorrowerLifAndDeliver` below).
+                // at its stack budget (see {OfferAcceptFeeFacet}).
                 s.saleProceedsEscrow[
                     s.saleOfferToLoanId[offerId]
                 ] = effectivePrincipal;
@@ -1264,13 +1265,16 @@ contract OfferAcceptFacet is
                 // unchanged: the fee is a borrower cash haircut sourced from the
                 // lender's funded principal; borrower debt stays the full
                 // `effectivePrincipal`. The whole charge + net delivery runs
-                // through a cross-facet call to {chargeBorrowerLifAndDeliver}
-                // (an `address(this).call` boundary) so NONE of its locals (the
+                // through a cross-facet call to
+                // {OfferAcceptFeeFacet.chargeBorrowerLifAndDeliver} (an
+                // `address(this).call` boundary) so NONE of its locals (the
                 // fee, matcherCut/treasuryCut, discount staticcall, net) land in
                 // this already-at-budget viaIR frame.
                 LibFacet.crossFacetCall(
                     abi.encodeWithSelector(
-                        OfferAcceptFacet.chargeBorrowerLifAndDeliver.selector,
+                        OfferAcceptFeeFacet
+                            .chargeBorrowerLifAndDeliver
+                            .selector,
                         offerId,
                         offer.lendingAsset,
                         lender,
@@ -1643,147 +1647,14 @@ contract OfferAcceptFacet is
 
     // Internal helpers
 
-    // Internal: Calculate transaction value in the active numeraire for KYC (liquid parts only)
-    /// @dev Value = (lent amount if liquid * price) + (collateral amount if liquid * price). For NFTs, rental value = amount * durationDays if liquid (but NFTs illiquid, ≡ 0).
-    ///      Scaled to 1e18 for threshold comparison. Prices come from
-    ///      `OracleFacet.getAssetPrice` which returns numeraire-quoted truth
-    ///      (USD by post-deploy default; whatever governance has rotated to
-    ///      otherwise) — see Numeraire generalization (b1) release notes.
-    ///
-    /// @dev #183 (Canonical Limit-Order Phase 2) — `lendingAmount` is
-    ///      the actual loan principal (role-aware for direct-accept,
-    ///      matcher-midpoint under matchOffers), NOT the raw
-    ///      `offer.amount` (which under Phase 2 is the lender's
-    ///      `minPartialFillAmount` for lender offers, NOT the lent
-    ///      amount). KYC must gate on real value at risk.
-    /// @notice Diamond-internal: the full borrower LIF charge + net delivery
-    ///         for a NEW (non-sale) ERC-20 loan (#1352).
-    /// @dev    Deliberately an EXTERNAL, `msg.sender == address(this)`-gated
-    ///         method invoked by {_acceptOffer} through
-    ///         `LibFacet.crossFacetCall` — the `address(this).call` boundary
-    ///         runs this entire charge (the HoldOnly discount staticcall + the
-    ///         three vault withdraws) in a FRESH stack frame, so none of its
-    ///         depth lands in `_acceptOffer` / the permit entry, which sit at
-    ///         the viaIR stack-too-deep budget. Same trust model as the
-    ///         `vaultWithdrawERC20` cross-facet calls it wraps. Computes the
-    ///         HoldOnly-discounted lending-asset LIF (§F3, consent-gated
-    ///         hold-tier direct reduction — no VPFI moved), charges it from the
-    ///         lender's funded principal split 99/1 treasury/matcher, and
-    ///         delivers `principal − fee` to the borrower. Matcher resolves to
-    ///         the matchOverride bot / injected signed-offer filler /
-    ///         msg.sender — read at the ORIGINAL call's context via the stored
-    ///         match/signed-offer slots (this method's own `msg.sender` is the
-    ///         diamond).
-    /// @param  lendingAsset       The ERC-20 principal asset.
-    /// @param  lender             The offer's lender (funds the principal + fee).
-    /// @param  borrower           The borrowing party (LIF discount + net recipient).
-    /// @param  effectivePrincipal The loan principal in lending-asset wei.
-    /// @param originalCaller The ORIGINAL accept caller (`msg.sender` in
-    ///        `_acceptOffer`). It is threaded in because this method runs
-    ///        behind an `address(this).call`, so its own `msg.sender` is the
-    ///        diamond — using that as the direct-path matcher would send the
-    ///        1% LIF kickback to the diamond instead of the caller who brought
-    ///        the fill on-chain.
-    function chargeBorrowerLifAndDeliver(
-        uint256 offerId,
-        address lendingAsset,
-        address lender,
-        address borrower,
-        uint256 effectivePrincipal,
-        bool isLiquid,
-        address originalCaller
-    ) external {
-        if (msg.sender != address(this)) {
-            revert UnauthorizedCrossFacetCall();
-        }
-        LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        // #1347 — resolve whether the BORROWER's per-party Full opt-in will
-        // confirm at this instant (dark ⇒ always false ⇒ byte-identical to the
-        // pre-#1347 charge). Party-scoped auth: on a Lender offer the borrower is
-        // the acceptor (transient accept binding, gated on `acceptAckActive` so a
-        // matcher fill can't inherit a stale opt-in); on a Borrower offer the
-        // borrower is the creator (auth on the offer). A confirmed opt-in bumps
-        // the own-side LIF discount `+10%` in lockstep with the post-mint `C*`
-        // charge — {LibFeeEntitlement.fullOptInConfirmed} is the shared verdict
-        // {FeeEntitlementFacet.chargeFullTariff} re-derives against the same
-        // (same-tx, unchanged) storage, so the bump is never granted without the
-        // tariff being taken.
-        LibVaipakam.Offer storage offer = s.offers[offerId];
-        bool isLenderOffer = offer.offerType == LibVaipakam.OfferType.Lender;
-        bool borrowerFull = LibFeeEntitlement.fullOptInConfirmed(
-            borrower,
-            isLenderOffer
-                ? (s.acceptAckActive && s.acceptAckAcceptorFull)
-                : offer.creatorFull,
-            isLenderOffer
-                ? s.acceptAckAcceptorMaxCStar
-                : offer.creatorMaxCStar,
-            lendingAsset,
-            effectivePrincipal,
-            offer.durationDays,
-            // Accept-time liquidity — the same value `holdOnlyBorrowerLif` gates
-            // the +10% bump on, so the pre-mint confirm agrees with the post-mint
-            // charge (Full requires a liquid principal, not just a priceable one).
-            isLiquid
-        );
-        // #1347 (Codex #1366 r5) — snapshot the borrower's PRE-MINT free VPFI
-        // (the same balance `fullOptInConfirmed` just gated the +10% bump on) so
-        // the post-mint `chargeFullTariff` charges Full against THIS value, not
-        // the post-lien-release balance. Runs before the offer-collateral lien
-        // release, so a borrower whose VPFI collateral is freed at accept can't
-        // have Full charged post-mint without the paired pre-mint discount.
-        s.acceptAckBorrowerPreFreeVpfi = LibFeeEntitlement.freeVpfiBalance(borrower);
-        uint256 initiationFee = LibVPFIDiscount.holdOnlyBorrowerLif(
-            borrower,
-            effectivePrincipal,
-            isLiquid,
-            borrowerFull
-        );
-
-        if (initiationFee > 0) {
-            uint256 matcherCut = LibOfferMatch.matcherShareOf(initiationFee);
-            uint256 treasuryCut = initiationFee - matcherCut;
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    lender,
-                    lendingAsset,
-                    LibFacet.getTreasury(),
-                    treasuryCut
-                ),
-                TreasuryTransferFailed.selector
-            );
-            LibFacet.recordTreasuryAccrual(lendingAsset, treasuryCut);
-            if (matcherCut > 0) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        VaultFactoryFacet.vaultWithdrawERC20.selector,
-                        lender,
-                        lendingAsset,
-                        s.matchOverride.active
-                            ? s.matchOverride.matcher
-                            : (s.signedOfferAcceptor != address(0)
-                                ? s.signedOfferAcceptor
-                                : originalCaller),
-                        matcherCut
-                    ),
-                    VaultWithdrawFailed.selector
-                );
-            }
-        }
-
-        // Deliver the net principal (principal − fee) to the borrower.
-        LibFacet.crossFacetCall(
-            abi.encodeWithSelector(
-                VaultFactoryFacet.vaultWithdrawERC20.selector,
-                lender,
-                lendingAsset,
-                borrower,
-                effectivePrincipal - initiationFee
-            ),
-            VaultWithdrawFailed.selector
-        );
-    }
+    // The borrower LIF charge and net delivery live in
+    // {OfferAcceptFeeFacet}. They were ALREADY behind an `address(this)`
+    // boundary — `_acceptOffer` invokes the charge through
+    // `LibFacet.crossFacetCall` so it runs in a fresh stack frame — so the
+    // split moved an implementation across a boundary that already
+    // existed. The 4-byte selector is unchanged, being derived from the
+    // signature and not from the host contract, so the Diamond routes the
+    // same selector to a different address and every caller is untouched.
 
     /// @dev Whether the post-mint Full VPFI tariff cross-facet call should run
     ///      for `offerId`. Only ERC-20 originations bear a tariff (a rental pays
@@ -1864,6 +1735,19 @@ contract OfferAcceptFacet is
         return (amount * price * 1e18) / (10 ** feedDecimals) / (10 ** tokenDecimals);
     }
 
+    // Internal: Calculate transaction value in the active numeraire for KYC (liquid parts only)
+    /// @dev Value = (lent amount if liquid * price) + (collateral amount if liquid * price). For NFTs, rental value = amount * durationDays if liquid (but NFTs illiquid, ≡ 0).
+    ///      Scaled to 1e18 for threshold comparison. Prices come from
+    ///      `OracleFacet.getAssetPrice` which returns numeraire-quoted truth
+    ///      (USD by post-deploy default; whatever governance has rotated to
+    ///      otherwise) — see Numeraire generalization (b1) release notes.
+    ///
+    /// @dev #183 (Canonical Limit-Order Phase 2) — `lendingAmount` is
+    ///      the actual loan principal (role-aware for direct-accept,
+    ///      matcher-midpoint under matchOffers), NOT the raw
+    ///      `offer.amount` (which under Phase 2 is the lender's
+    ///      `minPartialFillAmount` for lender offers, NOT the lent
+    ///      amount). KYC must gate on real value at risk.
     function _calculateTransactionValueNumeraire(
         LibVaipakam.Offer storage offer,
         uint256 lendingAmount
