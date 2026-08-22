@@ -219,20 +219,34 @@ question rather than answering it**, and it was absent from the first two
 revisions of this note because I was looking for a better bound rather than for a
 different arrangement.
 
-**The decision is between B, C and D.** Option A is retained above as an
+**The decision is between B, C, D and E.** Option A is retained above as an
 analysed-and-rejected step, not as a candidate: it does not satisfy the
 fund-safety invariant, so presenting it as one of the choices would offer an
 owner something that cannot close the card.
 
-**This note does not pick between the three.** **B** establishes
+**Option E — mint on use.** Anticipated by `TreasuryFacet.mintVPFI`'s own
+natspec and materially different from all of the above: for canonical FRESH
+emissions, mint at the moment a user pulls, and mint to the Diamond only when
+remitting to a mirror or converting expired/forfeited fresh value. Fresh reward
+value then never sits in the shared balance at all, so it cannot be drawn from
+borrower custody and cannot be double-spent by a legacy path — the emission
+schedule bounds it, which is a bound that already exists.
+
+*Cost:* it changes the supply story (tokens exist only once claimed), it does not
+by itself cover the RECYCLED half, which really is held value, and mirrors still
+need the delivered bound they already have. It also needs the same expiry-predicate
+reconciliation as everything else.
+
+**This note does not pick between the four.** **B** establishes
 "bounded by what was set aside" inside the shared balance, at the cost of a new
 invariant, five writers to reconcile and a migration. **C** narrows the goal to
 the user-owned classes and accepts an operational — and, on a Diamond-as-treasury
 deployment, a payroll — exposure, at the cost of an aggregation it cannot perform
 without a frozen migration. **D** removes the ownership question entirely by
 holding reward funding outside the shared balance, at the cost of being the
-largest change and having to re-home remittance, expiry and forfeit routing. That
-is an owner call, and it is a three-way one.
+largest change and having to re-home remittance, expiry and forfeit routing. **E** takes fresh emissions out of the shared balance entirely by minting
+only on use, at the cost of changing the supply story and leaving the recycled
+half still to solve. That is an owner call, and it is a four-way one.
 
 ## 5. What is true regardless of the option
 
