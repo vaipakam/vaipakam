@@ -1851,7 +1851,29 @@
       "saleListingTooCloseToMaturity": "A este préstamo le queda menos de una hora para su vencimiento: demasiado cerca para que un anuncio cumpla su ventana mínima, así que ya no puede ponerse en venta. No se envió nada; la reclamación normal al vencimiento no se ve afectada.",
       "saleRelistCooldownActive": "Un anuncio de este préstamo terminó hace poco, y volver a anunciarlo está pausado durante la ventana de actuación de un día del prestatario. Esta posición podrá anunciarse de nuevo después de {{time}}. No se envió nada.",
       "refinanceNotOriginalBorrower": "Esta posición cambió de manos desde que empezó el préstamo, así que su garantía no puede pasar a una refinanciación — no se envió nada. Pagar o cerrar antes sigue disponible.",
-      "lenderBlockedPartial": "La billetera del prestamista no puede recibir un pago parcial directo ahora mismo (marca de cumplimiento). Pagar el préstamo completo sigue abierto — esa ruta retiene los fondos para un reclamo revisado."
+      "lenderBlockedPartial": "La billetera del prestamista no puede recibir un pago parcial directo ahora mismo (marca de cumplimiento). Pagar el préstamo completo sigue abierto — esa ruta retiene los fondos para un reclamo revisado.",
+      "acceptBlocked": {
+        "alreadyAccepted": "Alguien ya ha aceptado esta oferta. No se ha enviado nada: actualiza para ver lo que sigue abierto.",
+        "flaggedAcceptor": "Tu billetera está marcada por cumplimiento, así que las posiciones nuevas están bloqueadas. Los préstamos existentes se pueden seguir pagando o cerrando.",
+        "flaggedCreator": "La billetera que creó esta oferta está marcada por cumplimiento, así que no se puede aceptar. No se ha enviado nada.",
+        "assetPaused": "Uno de los activos de esta oferta está pausado por el protocolo en este momento, así que la transacción sería rechazada. No se ha enviado nada.",
+        "countryBlocked": "Las reglas de negociación de este despliegue no permiten que estas dos billeteras operen entre sí. No se ha enviado nada.",
+        "consentRequired": "Esta oferta necesita tu consentimiento de riesgos y términos antes de poder aceptarse. Da tu consentimiento e inténtalo de nuevo.",
+        "kycBlocked": "Las reglas de verificación de identidad de este despliegue no cubren a una de las partes de esta oferta por este valor. No se ha enviado nada.",
+        "expired": "Esta oferta ha caducado y no se puede reactivar. Quien la creó tendría que publicar una nueva.",
+        "partiallyFilled": "Esta oferta está parcialmente cubierta, así que solo puede avanzar mediante emparejamiento, no aceptándola directamente. No se ha enviado nada.",
+        "cancelled": "Esta oferta ha sido cancelada. No se ha enviado nada.",
+        "saleLoanNotActive": "El préstamo contra el que se vendió esta posición ya se ha cerrado, así que la posición ya no existe. No se ha enviado nada.",
+        "saleSelfBuy": "Eres el prestatario del préstamo al que presta esta posición, así que no puedes comprar el lado prestamista de tu propia deuda. No se ha enviado nada.",
+        "saleLoanPastMaturity": "El préstamo que respalda esta posición ha superado su fecha de vencimiento, así que la posición ya no puede cambiar de manos. No se ha enviado nada.",
+        "saleBelowFloor": "Esta posición ya no cumple el margen de seguridad que exigía su venta, así que comprarla sería rechazado. No se ha enviado nada.",
+        "saleAdmissionBlocked": "Esta posición no cumple actualmente las condiciones del protocolo para cambiar de manos. No se ha enviado nada.",
+        "saleListingStale": "Este anuncio está desactualizado: ya no coincide con la posición que vende, así que la venta se rechazó antes de mover nada. Tú no has hecho nada mal; quien vende tiene que volver a publicarlo.",
+        "protocolPaused": "El protocolo está pausado en este momento, así que no se pueden abrir ni aceptar posiciones. No se ha enviado nada: inténtalo de nuevo cuando se reanude.",
+        "vaultUpgradeRequired": "Una de las partes de esta operación usa una versión antigua del vault y necesita actualizarla antes de poder operar. No se ha enviado nada.",
+        "selfTrade": "Esta es tu propia oferta, así que no puedes aceptarla. Cancélala si quieres retirarla del libro.",
+        "unknown": "El protocolo no acepta esta oferta en este momento. No se ha enviado nada: actualiza e inténtalo de nuevo, o vuelve dentro de un rato."
+      }
     },
     "fees": {
       "borrowerLIF": "Vaipakam cobra una comisión de iniciación de préstamo de {{pct}} sobre el importe prestado.",

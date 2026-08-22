@@ -1851,7 +1851,29 @@
       "saleListingTooCloseToMaturity": "यह loan अपनी due date से एक घंटे से भी कम दूर है — इतना पास कि कोई listing अपनी न्यूनतम अवधि पूरी नहीं कर सकती, इसलिए इसे अब बिक्री के लिए list नहीं किया जा सकता। कुछ भी send नहीं हुआ; maturity पर सामान्य claim पर कोई असर नहीं।",
       "saleRelistCooldownActive": "इस loan की एक listing हाल ही में ख़त्म हुई है, और Borrower की एक दिन की कार्रवाई-अवधि के लिए दोबारा list करना रोका गया है। इस position को {{time}} के बाद दोबारा list किया जा सकता है। कुछ भी send नहीं हुआ।",
       "refinanceNotOriginalBorrower": "Loan शुरू होने के बाद यह position हाथ बदल चुकी है, इसलिए इसकी collateral refinance में carry over नहीं हो सकती — कुछ भेजा नहीं गया। Repaying या early closing available रहता है।",
-      "lenderBlockedPartial": "Lender का wallet direct partial payment receive नहीं कर सकता अभी (compliance flag)। Loan full repay करना open रहता है — वह path screened claim के लिए funds hold करता है।"
+      "lenderBlockedPartial": "Lender का wallet direct partial payment receive नहीं कर सकता अभी (compliance flag)। Loan full repay करना open रहता है — वह path screened claim के लिए funds hold करता है।",
+      "acceptBlocked": {
+        "alreadyAccepted": "यह offer कोई और पहले ही ले चुका है। कुछ भी send नहीं हुआ — refresh करके देखें कि क्या अब भी खुला है।",
+        "flaggedAcceptor": "आपका wallet compliance-flagged है, इसलिए नई positions blocked हैं। मौजूदा loans अब भी repay या close किए जा सकते हैं।",
+        "flaggedCreator": "जिस wallet ने यह offer बनाया है वह compliance-flagged है, इसलिए इसे लिया नहीं जा सकता। कुछ भी send नहीं हुआ।",
+        "assetPaused": "इस offer का एक asset अभी protocol द्वारा paused है, इसलिए transaction reject हो जाता। कुछ भी send नहीं हुआ।",
+        "countryBlocked": "इस deployment के trading rules इन दोनों wallets को आपस में trade करने की अनुमति नहीं देते। कुछ भी send नहीं हुआ।",
+        "consentRequired": "यह offer लेने से पहले आपकी risk-and-terms consent ज़रूरी है। Consent दें, फिर दोबारा कोशिश करें।",
+        "kycBlocked": "इस deployment के identity-verification rules इस value पर इस offer के एक पक्ष को cover नहीं करते। कुछ भी send नहीं हुआ।",
+        "expired": "यह offer expire हो चुका है और इसे वापस नहीं लाया जा सकता। बनाने वाले को नया offer डालना होगा।",
+        "partiallyFilled": "यह offer आंशिक रूप से भर चुका है, इसलिए यह सिर्फ़ matching से आगे बढ़ सकता है — सीधे लिया नहीं जा सकता। कुछ भी send नहीं हुआ।",
+        "cancelled": "यह offer cancel कर दिया गया है। कुछ भी send नहीं हुआ।",
+        "saleLoanNotActive": "जिस loan के against यह position बेची गई थी वह पहले ही close हो चुका है, इसलिए position अब मौजूद नहीं है। कुछ भी send नहीं हुआ।",
+        "saleSelfBuy": "जिस loan को यह position lend करती है उसके borrower आप ही हैं, इसलिए आप अपने ही debt का lender side नहीं खरीद सकते। कुछ भी send नहीं हुआ।",
+        "saleLoanPastMaturity": "इस position के पीछे का loan अपनी due date पार कर चुका है, इसलिए position अब हाथ नहीं बदल सकती। कुछ भी send नहीं हुआ।",
+        "saleBelowFloor": "यह position अब उस safety margin पर खरी नहीं उतरती जो इसकी sale के लिए ज़रूरी थी, इसलिए इसे खरीदना reject हो जाता। कुछ भी send नहीं हुआ।",
+        "saleAdmissionBlocked": "यह position फ़िलहाल हाथ बदलने के लिए protocol की शर्तें पूरी नहीं करती। कुछ भी send नहीं हुआ।",
+        "saleListingStale": "यह listing पुरानी पड़ चुकी है — यह अब उस position से मेल नहीं खाती जिसे यह बेच रही है, इसलिए कुछ भी move होने से पहले ही sale refuse कर दी गई। इसमें आपकी कोई ग़लती नहीं है; seller को इसे दोबारा list करना होगा।",
+        "protocolPaused": "Protocol अभी paused है, इसलिए कोई position न खोली जा सकती है न ली जा सकती है। कुछ भी send नहीं हुआ — resume होने पर दोबारा कोशिश करें।",
+        "vaultUpgradeRequired": "इस trade का एक पक्ष पुराने vault version पर है और trade करने से पहले उसे upgrade करना होगा। कुछ भी send नहीं हुआ।",
+        "selfTrade": "यह आपका ही offer है, इसलिए आप इसे नहीं ले सकते। Book से हटाना है तो इसे cancel करें।",
+        "unknown": "Protocol अभी यह offer स्वीकार नहीं कर रहा। कुछ भी send नहीं हुआ — refresh करके दोबारा कोशिश करें, या थोड़ी देर बाद देखें।"
+      }
     },
     "fees": {
       "borrowerLIF": "Vaipakam borrowed amount पर {{pct}} loan initiation fee charge करता है।",

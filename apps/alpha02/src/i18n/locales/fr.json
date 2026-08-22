@@ -1851,7 +1851,29 @@
       "saleListingTooCloseToMaturity": "Ce prêt est à moins d'une heure de son échéance — trop près pour qu'une annonce tienne sa fenêtre minimale, il ne peut donc plus être mis en vente. Rien n'a été envoyé ; la réclamation normale à l'échéance n'est pas affectée.",
       "saleRelistCooldownActive": "Une annonce sur ce prêt s'est terminée récemment, et une nouvelle mise en vente est suspendue pendant la fenêtre d'action d'un jour de l'emprunteur. Cette position pourra être remise en vente après {{time}}. Rien n'a été envoyé.",
       "refinanceNotOriginalBorrower": "Cette position a changé de mains depuis le début du prêt, sa garantie ne peut donc pas être reportée dans un refinancement — rien n'a été envoyé. Rembourser ou clôturer tôt reste disponible.",
-      "lenderBlockedPartial": "Le portefeuille du prêteur ne peut pas recevoir de paiement partiel direct pour le moment (marque de conformité). Rembourser intégralement le prêt reste ouvert — ce chemin conserve les fonds pour un retrait filtré."
+      "lenderBlockedPartial": "Le portefeuille du prêteur ne peut pas recevoir de paiement partiel direct pour le moment (marque de conformité). Rembourser intégralement le prêt reste ouvert — ce chemin conserve les fonds pour un retrait filtré.",
+      "acceptBlocked": {
+        "alreadyAccepted": "Quelqu’un a déjà accepté cette offre. Rien n’a été envoyé — actualisez pour voir ce qui reste ouvert.",
+        "flaggedAcceptor": "Votre wallet est signalé pour conformité, les nouvelles positions sont donc bloquées. Les prêts existants peuvent toujours être remboursés ou clôturés.",
+        "flaggedCreator": "Le wallet qui a créé cette offre est signalé pour conformité, elle ne peut donc pas être acceptée. Rien n’a été envoyé.",
+        "assetPaused": "L’un des actifs de cette offre est actuellement suspendu par le protocole, la transaction serait donc rejetée. Rien n’a été envoyé.",
+        "countryBlocked": "Les règles de négociation de ce déploiement n’autorisent pas ces deux wallets à traiter entre eux. Rien n’a été envoyé.",
+        "consentRequired": "Cette offre nécessite votre consentement aux risques et conditions avant de pouvoir être acceptée. Donnez votre consentement, puis réessayez.",
+        "kycBlocked": "Les règles de vérification d’identité de ce déploiement ne couvrent pas l’une des parties de cette offre à cette valeur. Rien n’a été envoyé.",
+        "expired": "Cette offre a expiré et ne peut pas être réactivée. Son auteur devrait en publier une nouvelle.",
+        "partiallyFilled": "Cette offre est partiellement remplie : elle ne peut avancer que par appariement, pas par acceptation directe. Rien n’a été envoyé.",
+        "cancelled": "Cette offre a été annulée. Rien n’a été envoyé.",
+        "saleLoanNotActive": "Le prêt contre lequel cette position a été vendue est déjà clôturé, la position n’existe donc plus. Rien n’a été envoyé.",
+        "saleSelfBuy": "Vous êtes l’emprunteur du prêt auquel cette position prête : vous ne pouvez pas acheter le côté prêteur de votre propre dette. Rien n’a été envoyé.",
+        "saleLoanPastMaturity": "Le prêt derrière cette position a dépassé son échéance, la position ne peut donc plus changer de mains. Rien n’a été envoyé.",
+        "saleBelowFloor": "Cette position ne respecte plus la marge de sécurité exigée par sa vente ; l’acheter serait donc rejeté. Rien n’a été envoyé.",
+        "saleAdmissionBlocked": "Cette position ne remplit pas actuellement les conditions du protocole pour changer de mains. Rien n’a été envoyé.",
+        "saleListingStale": "Cette annonce n’est plus à jour — elle ne correspond plus à la position qu’elle vend, la vente a donc été refusée avant tout mouvement. Vous n’avez rien fait de mal ; c’est au vendeur de la republier.",
+        "protocolPaused": "Le protocole est actuellement en pause : aucune position ne peut être ouverte ni acceptée. Rien n’a été envoyé — réessayez une fois qu’il reprend.",
+        "vaultUpgradeRequired": "L’une des parties de cette opération utilise une ancienne version du vault et doit la mettre à jour avant de pouvoir négocier. Rien n’a été envoyé.",
+        "selfTrade": "C’est votre propre offre, vous ne pouvez donc pas l’accepter. Annulez-la si vous voulez la retirer du carnet.",
+        "unknown": "Le protocole n’accepte pas cette offre pour le moment. Rien n’a été envoyé — actualisez et réessayez, ou revenez un peu plus tard."
+      }
     },
     "fees": {
       "borrowerLIF": "Vaipakam facture des frais d’initialisation de prêt de {{pct}} sur le montant emprunté.",

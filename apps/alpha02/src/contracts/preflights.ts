@@ -22,6 +22,7 @@ import {
 } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { copy } from '../content/copy';
+import { acceptBlockReason } from './acceptErrors';
 import { defaultGraceSeconds } from '../lib/grace';
 import { formatTokenAmount } from '../lib/format';
 
@@ -567,4 +568,81 @@ export async function assertRowActionStillValid(opts: {
         err.walk((e) => e instanceof ContractFunctionZeroDataError) !== null);
     if (revertLike) throw err;
   }
+}
+
+/**
+ * #1645 — refuse an acceptance the CONTRACT would refuse, before the
+ * AcceptTerms signature and the approval.
+ *
+ * `OfferPreviewFacet.previewAccept` already classifies every blocker
+ * `_acceptOffer` reverts on, in the same order the accept applies them,
+ * so its `errorCode` is the transaction's own verdict delivered without
+ * gas. Until now no surface read it: the app took `lifEstimate` and
+ * dropped the code, so a buyer could sign, submit and learn about a
+ * blocker from a revert they had paid for. The #1835 stale-listing work
+ * made that concrete — a pre-#1779 listing previewed as fillable — but
+ * it was never specific to that code, and this reads all of them.
+ *
+ * FIRST-FAILURE PARITY IS THE POINT. The classifier is ordered to match
+ * `_acceptOffer` exactly, so whatever it names is what the transaction
+ * would have hit first. Do not reorder, filter or "improve" the reason
+ * here — a surface that shows a different blocker than the one the
+ * chain would raise is the divergence this exists to remove.
+ *
+ * Fail postures, matching the KYC preflight above rather than the
+ * pause one, because this runs before a SIGNATURE:
+ *   - a clear code (`None`): pass.
+ *   - any other known code: BLOCK, with that code's words.
+ *   - an out-of-range code: BLOCK generically. The app can be older
+ *     than the Diamond, and the enum grows by appending, so an
+ *     unrecognised code is a refusal we lack words for — never an
+ *     all-clear.
+ *   - the selector not routed (an older deploy without the view, which
+ *     the Diamond answers with `FunctionDoesNotExist`): PASS. The
+ *     contract still enforces; refusing here would block every accept
+ *     on a deploy that simply predates the preview.
+ *   - anything else (transport trouble, or the view itself reverting):
+ *     FAIL CLOSED with a retry. Retrying a read is free; a wasted
+ *     signature and approval is not.
+ */
+const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
+
+export async function assertAcceptPreviewClearLive(opts: {
+  publicClient: PublicClient;
+  diamondAddress: `0x${string}`;
+  offerId: bigint;
+  acceptor: `0x${string}`;
+}): Promise<void> {
+  let preview: { errorCode: number };
+  try {
+    preview = (await opts.publicClient.readContract({
+      address: opts.diamondAddress,
+      abi: DIAMOND_ABI_VIEM,
+      functionName: 'previewAccept',
+      args: [opts.offerId, opts.acceptor],
+    })) as { errorCode: number };
+  } catch (err) {
+    // An unrouted selector is NOT a failed check — it is a deploy
+    // without this view. The Diamond's fallback reverts
+    // `FunctionDoesNotExist()`, which is declared on VaipakamDiamond
+    // and therefore absent from the exported facet ABIs, so viem
+    // cannot name it: match the raw 4-byte selector instead of
+    // guessing from the message text.
+    const reverted =
+      err instanceof BaseError
+        ? (err.walk((e) => e instanceof ContractFunctionRevertedError) as
+            | ContractFunctionRevertedError
+            | null)
+        : null;
+    // `signature` is the 4-byte selector viem keeps when it CANNOT
+    // decode the error — which is exactly this case, so it is the
+    // field that carries the answer; `raw` is the fallback for the
+    // full revert data. `data` is the DECODED form and is necessarily
+    // undefined here, so reading it would always miss.
+    const raw = reverted?.signature ?? reverted?.raw ?? '';
+    if (raw.startsWith(FUNCTION_DOES_NOT_EXIST_SELECTOR)) return;
+    throw new Error(copy.errors.checkRetry);
+  }
+  const reason = acceptBlockReason(Number(preview.errorCode));
+  if (reason !== null) throw new Error(reason);
 }

@@ -1851,7 +1851,29 @@
       "saleListingTooCloseToMaturity": "Dieser Kredit ist weniger als eine Stunde von seinem Fälligkeitsdatum entfernt — zu nah, als dass ein Verkaufsangebot seinen Mindestzeitraum einhalten könnte, daher kann er nicht mehr zum Verkauf angeboten werden. Es wurde nichts gesendet; der normale Anspruch bei Fälligkeit bleibt davon unberührt.",
       "saleRelistCooldownActive": "Ein Verkaufsangebot für diesen Kredit ist kürzlich beendet worden, und ein erneutes Inserieren pausiert für das eintägige Handlungsfenster des Kreditnehmers. Diese Position kann nach {{time}} wieder inseriert werden. Es wurde nichts gesendet.",
       "refinanceNotOriginalBorrower": "Diese Position hat seit Kreditbeginn den Besitzer gewechselt, daher können ihre Sicherheiten nicht in eine Refinanzierung übernommen werden — es wurde nichts gesendet. Zurückzahlen oder vorzeitig schließen bleibt weiterhin möglich.",
-      "lenderBlockedPartial": "Die Wallet des Kreditgebers kann gerade keine direkte Teilzahlung empfangen (Compliance-Markierung). Die vollständige Rückzahlung des Kredits bleibt möglich — auf diesem Weg werden die Mittel stattdessen für eine geprüfte Auszahlung verwahrt."
+      "lenderBlockedPartial": "Die Wallet des Kreditgebers kann gerade keine direkte Teilzahlung empfangen (Compliance-Markierung). Die vollständige Rückzahlung des Kredits bleibt möglich — auf diesem Weg werden die Mittel stattdessen für eine geprüfte Auszahlung verwahrt.",
+      "acceptBlocked": {
+        "alreadyAccepted": "Jemand hat dieses Angebot bereits angenommen. Es wurde nichts gesendet — aktualisieren Sie, um zu sehen, was noch offen ist.",
+        "flaggedAcceptor": "Ihre Wallet ist compliance-markiert, daher sind neue Positionen gesperrt. Bestehende Kredite können weiterhin zurückgezahlt oder geschlossen werden.",
+        "flaggedCreator": "Die Wallet, die dieses Angebot erstellt hat, ist compliance-markiert, daher kann es nicht angenommen werden. Es wurde nichts gesendet.",
+        "assetPaused": "Einer der Vermögenswerte dieses Angebots ist derzeit vom Protokoll pausiert, die Transaktion würde also abgelehnt. Es wurde nichts gesendet.",
+        "countryBlocked": "Die Handelsregeln dieses Deployments erlauben diesen beiden Wallets nicht, miteinander zu handeln. Es wurde nichts gesendet.",
+        "consentRequired": "Dieses Angebot erfordert Ihre Zustimmung zu Risiken und Bedingungen, bevor es angenommen werden kann. Stimmen Sie zu und versuchen Sie es erneut.",
+        "kycBlocked": "Die Identitätsprüfungsregeln dieses Deployments decken eine Seite dieses Angebots bei diesem Wert nicht ab. Es wurde nichts gesendet.",
+        "expired": "Dieses Angebot ist abgelaufen und kann nicht reaktiviert werden. Der Ersteller müsste ein neues einstellen.",
+        "partiallyFilled": "Dieses Angebot ist teilweise gefüllt und kann daher nur über Matching weitergeführt werden, nicht durch direkte Annahme. Es wurde nichts gesendet.",
+        "cancelled": "Dieses Angebot wurde storniert. Es wurde nichts gesendet.",
+        "saleLoanNotActive": "Der Kredit, gegen den diese Position verkauft wurde, ist bereits geschlossen — die Position existiert nicht mehr. Es wurde nichts gesendet.",
+        "saleSelfBuy": "Sie sind der Kreditnehmer des Kredits, an den diese Position verleiht, und können daher die Kreditgeberseite Ihrer eigenen Schuld nicht kaufen. Es wurde nichts gesendet.",
+        "saleLoanPastMaturity": "Der Kredit hinter dieser Position hat seine Fälligkeit überschritten, die Position kann daher nicht mehr den Besitzer wechseln. Es wurde nichts gesendet.",
+        "saleBelowFloor": "Diese Position erfüllt die für ihren Verkauf erforderliche Sicherheitsmarge nicht mehr, ein Kauf würde daher abgelehnt. Es wurde nichts gesendet.",
+        "saleAdmissionBlocked": "Diese Position erfüllt derzeit nicht die Bedingungen des Protokolls für einen Besitzerwechsel. Es wurde nichts gesendet.",
+        "saleListingStale": "Dieses Inserat ist veraltet — es passt nicht mehr zu der Position, die es verkauft, daher wurde der Verkauf abgelehnt, bevor etwas bewegt wurde. Sie haben nichts falsch gemacht; der Verkäufer muss es neu einstellen.",
+        "protocolPaused": "Das Protokoll ist derzeit pausiert, es können keine Positionen eröffnet oder angenommen werden. Es wurde nichts gesendet — versuchen Sie es erneut, sobald es fortgesetzt wird.",
+        "vaultUpgradeRequired": "Eine Seite dieses Handels nutzt eine alte Vault-Version und muss sie aktualisieren, bevor gehandelt werden kann. Es wurde nichts gesendet.",
+        "selfTrade": "Das ist Ihr eigenes Angebot, Sie können es daher nicht annehmen. Stornieren Sie es stattdessen, wenn Sie es vom Buch nehmen möchten.",
+        "unknown": "Das Protokoll nimmt dieses Angebot derzeit nicht an. Es wurde nichts gesendet — aktualisieren und erneut versuchen oder später noch einmal vorbeischauen."
+      }
     },
     "fees": {
       "borrowerLIF": "Vaipakam berechnet eine Kreditinitialisierungsgebühr von {{pct}} auf den geliehenen Betrag.",

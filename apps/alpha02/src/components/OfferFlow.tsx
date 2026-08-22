@@ -55,6 +55,7 @@ import { useProtocolFees, readLiveProtocolFees } from '../data/fees';
 import { useGraceLabel } from '../data/protocol';
 import { assertWalletNotSanctionedLive } from '../data/sanctions';
 import {
+  assertAcceptPreviewClearLive,
   assertAssetNotPausedLive,
   assertErc20BalanceLive,
   isAssetIlliquidLive,
@@ -1852,6 +1853,24 @@ export function OfferFlow({ side }: { side: Side }) {
           }
         }
       }
+      // #1645 — ask the contract whether it would accept this at all,
+      // BEFORE the wallet prompt. `previewAccept` classifies every
+      // blocker `_acceptOffer` reverts on, in the accept's own order,
+      // so the reason it names is the one the transaction would hit
+      // first. Placed here rather than after the signature for the
+      // reason the KYC preflight gives: re-reading is free, a wasted
+      // signature and approval is not.
+      //
+      // It is deliberately the LAST gate before signing. The checks
+      // above are ones this app enforces itself (reviewed consent, the
+      // token-security fingerprint); this one is the chain's own
+      // verdict, so anything it reports has already survived them.
+      await assertAcceptPreviewClearLive({
+        publicClient,
+        diamondAddress: walletChain.diamondAddress,
+        offerId: BigInt(selected.offerId),
+        acceptor: address,
+      });
       stepper.next('sign');
       signed = await signAcceptTerms({
         offerId: BigInt(selected.offerId),
