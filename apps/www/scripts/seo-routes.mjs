@@ -21,6 +21,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readViteEnv } from './viteEnv.mjs';
 
 export const LOCALES = [
   'en',
@@ -49,24 +50,9 @@ export const LOCALES = [
  *  hidden console back to public (Codex #1309 r2 P2). Read the same
  *  files here, in Vite's production precedence (later wins), with a
  *  real process.env value overriding all files. */
-function readViteEnvFlag(name) {
-  if (process.env[name] !== undefined) return process.env[name];
-  const appDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  let value;
-  for (const file of ['.env', '.env.local', '.env.production', '.env.production.local']) {
-    const p = resolve(appDir, file);
-    if (!existsSync(p)) continue;
-    for (const line of readFileSync(p, 'utf8').split('\n')) {
-      const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
-      if (!m || m[1] !== name) continue;
-      value = m[2].replace(/^["']|["']$/g, '');
-    }
-  }
-  return value;
-}
 
 const PROTOCOL_CONSOLE_PUBLIC =
-  (readViteEnvFlag('VITE_ADMIN_DASHBOARD_PUBLIC') ?? '').toLowerCase() !==
+  (readViteEnv('VITE_ADMIN_DASHBOARD_PUBLIC') ?? '').toLowerCase() !==
   'false';
 
 export const ROUTES = [

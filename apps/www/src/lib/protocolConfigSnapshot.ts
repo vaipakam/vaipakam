@@ -232,6 +232,17 @@ export async function fetchProtocolConfigSnapshot(opts: {
     ) {
       return null;
     }
+    // The response says which chain it describes; compare it (Codex
+    // #1895 r1). Every deployment is independently tunable, so a routing
+    // slip, a shared cache, or a misconfigured origin answering for a
+    // different chain hands back a perfectly valid, perfectly fresh
+    // snapshot of SOMEBODY ELSE'S rates — which the caller then stamps
+    // with the chain id it asked for. Asking is free; the provenance
+    // stamp is worthless without it.
+    const answered = (body as { chainId?: unknown }).chainId;
+    if (typeof answered !== 'number' || answered !== chainId) {
+      return null;
+    }
     const config = decodeMarketingConfig((body as { bundle?: unknown }).bundle);
     if (config === null) return null;
     return { config, updatedAt: (body as { updatedAt: number }).updatedAt };

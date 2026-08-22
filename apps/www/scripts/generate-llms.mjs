@@ -37,6 +37,10 @@ import { substituteLiveValuesInMarkdown } from './liveValueMarkdown.ts';
 // The SAME decode + freshness rule the rendered pages apply, not a
 // second opinion about the same rail (#1664 item 3).
 import { fetchProtocolConfigSnapshot } from '../src/lib/protocolConfigSnapshot.ts';
+// Read the same `.env*` files Vite gives the bundle (Codex #1895 r1).
+// A process.env-only read here published one deployment's figures while
+// the rendered pages consulted another, with nothing saying so.
+import { readViteEnv } from './viteEnv.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(__dirname, '..', 'src', 'content');
@@ -44,7 +48,7 @@ const PUBLIC = resolve(__dirname, '..', 'public');
 const DOCS_OUT = resolve(PUBLIC, 'docs');
 
 const ORIGIN = (
-  process.env.VITE_WWW_PUBLIC_ORIGIN ?? 'https://vaipakam.com'
+  readViteEnv('VITE_WWW_PUBLIC_ORIGIN') ?? 'https://vaipakam.com'
 ).replace(/\/+$/, '');
 
 /**
@@ -55,7 +59,7 @@ const ORIGIN = (
  * would hand it correct-looking figures for someone else's deployment
  * (#1664 items 3 + 4).
  */
-const DOCS_CONFIG_CHAIN_ID = process.env.VITE_DOCS_CONFIG_CHAIN_ID ?? '84532';
+const DOCS_CONFIG_CHAIN_ID = readViteEnv('VITE_DOCS_CONFIG_CHAIN_ID') ?? '84532';
 
 /**
  * The indexer this build's pages actually read — same env var, default
@@ -66,7 +70,7 @@ const DOCS_CONFIG_CHAIN_ID = process.env.VITE_DOCS_CONFIG_CHAIN_ID ?? '84532';
  * someone else's deployment" failure the chain pin exists to prevent.
  */
 const INDEXER_ORIGIN = (
-  process.env.VITE_INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com'
+  readViteEnv('VITE_INDEXER_ORIGIN') ?? 'https://indexer.vaipakam.com'
 ).replace(/\/+$/, '');
 
 /**
@@ -269,7 +273,11 @@ ${INDEXER_ORIGIN} — fetch these instead of scraping the app:
 - [GET /offers/markets](${INDEXER_ORIGIN}/offers/markets): quotable (pair, tenor) markets
 - [GET /loans/stats](${INDEXER_ORIGIN}/loans/stats): loan counts by status
 - [GET /loans/timeseries](${INDEXER_ORIGIN}/loans/timeseries): historical loan activity
-- [GET /config/{chainId}](${INDEXER_ORIGIN}/config/${DOCS_CONFIG_CHAIN_ID}): the live protocol configuration — fee rates, discount tiers, thresholds — under a name-keyed \`values\` object. **The docs above carry the protocol's compiled starting rates, which do not follow a governance retune; read this endpoint for the current figures.** Check \`updatedAt\` (unix seconds) before treating them as current, and skip a response flagged \`stale\` — that means the indexer knows the row predates a governance change it has not yet re-read. These are the RAW configured values: a per-party fee discount is additionally capped at 5000 BPS (50%) when applied, so a \`tierDiscountBps\` above that ceiling is not what any user receives. Each chain runs an independently tunable deployment, so the figures are per-chain; the link points at the one the docs describe
+- [GET /config/{chainId}](${INDEXER_ORIGIN}/config/${DOCS_CONFIG_CHAIN_ID}): the live protocol configuration — fee rates, discount tiers, thresholds — under a name-keyed \`values\` object. ${
+  publishedConfig
+    ? `**The docs above carry the published configuration as it stood at the moment named near the top of this file; read this endpoint for anything newer.**`
+    : `**The docs above carry the protocol's compiled starting rates, which do not follow a governance retune; read this endpoint for the current figures.**`
+} Check \`updatedAt\` (unix seconds) before treating them as current, and skip a response flagged \`stale\` — that means the indexer knows the row predates a governance change it has not yet re-read. These are the RAW configured values: a per-party fee discount is additionally capped at 5000 BPS (50%) when applied, so a \`tierDiscountBps\` above that ceiling is not what any user receives. Each chain runs an independently tunable deployment, so the figures are per-chain; the link points at the one the docs describe
 - [GET /](${INDEXER_ORIGIN}/): self-describing index of every public endpoint
 
 ## Apps
@@ -291,6 +299,13 @@ const fullParts = [
   '# Vaipakam — full documentation bundle',
   '',
   `Generated from the canonical docs on ${ORIGIN}. See ${ORIGIN}/llms.txt for the index.`,
+  '',
+  // The bundle states its own provenance too (Codex #1895 r1). Each
+  // document embedded below already carries one, but this is the first
+  // thing a reader of llms-full.txt meets, and on the fallback path it
+  // is the difference between "defaults, and it says so" and a file of
+  // undated figures.
+  figureProvenanceNote().trim(),
   '',
 ];
 for (const slug of FULL_ORDER) {
