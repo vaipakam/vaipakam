@@ -2010,6 +2010,182 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    // ─── 5b. #1878 — the MIRROR's reserve → consume → release lifecycle ──────
+    //
+    // `LibVpfiRecycle.reserveMirrorCommit`'s own natspec states the contract
+    // this section tests: a mirror reserves its instructed commit and then gets
+    // "the identical reserve → consume → release lifecycle Base already runs,
+    // with no new primitives: claims retire it via {consume}, forfeits/expiries
+    // via {releaseCommitment}."
+    //
+    // That was a promise with no test. Section 1 and 2 above prove consume and
+    // release on the CANONICAL chain, and every mirror-side retirement figure
+    // elsewhere in the tree is written by `consumeRecycleRaw` — a mutator that
+    // writes the outcome directly, and therefore cannot tell a working
+    // retirement from an absent one. The nearest mirror test
+    // (`testMirrorArmedDayUnfundedDefersAndNeverDebitsBucket`) broadcasts
+    // `recycleConsume: 0`, so the mirror reserves NOTHING and its funded half
+    // debits a bucket against no commitment at all.
+    //
+    // Why it matters before `D*` (#1878): what a mirror ships to Base is
+    // `getLocalRecycledCommitRetirement`, and Base sizes the next day's
+    // instruction from it. A mirror that consumes but under-retires reports
+    // less retirement than it performed, and the error compounds daily on a
+    // cutover that cannot be reversed.
+
+    /// @dev Stand this diamond up as a MIRROR (`!isCanonical && baseChainId`).
+    function _standUpMirror() internal {
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _rep().setRewardMessenger(address(messenger));
+    }
+
+    /// @dev An armed day 5 delivered the way a mirror really learns one — in
+    ///      band, from Base's broadcast — carrying a non-zero `recycleConsume`
+    ///      so the mirror actually RESERVES against its local bucket.
+    ///
+    ///      `reserve` is deliberately sized well above anything the day can
+    ///      consume: `consume` FLOORS its retirement at the outstanding sum, so
+    ///      a reservation smaller than the payout would make the retirement
+    ///      identity below hold for the wrong reason (both sides pinned at the
+    ///      floor). The tests assert the floor did not bind.
+    function _mirrorArmedDay5(uint256 reserve) internal {
+        _seedPriorDays(5);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _mut().setRecycleBucketRaw(100 ether);
+        messenger.deliverBroadcastV2(
+            RewardBroadcastV2({
+                dayId: 5,
+                globalLenderNumeraire18: G_LENDER,
+                globalBorrowerNumeraire18: 15e18,
+                capMode: 1,
+                capPayloadLender: type(uint256).max,
+                capPayloadBorrower: type(uint256).max,
+                armedFromDay: 5,
+                freshLenderHalf: 100 ether,
+                freshBorrowerHalf: 100 ether,
+                recycledLenderHalfEquiv: 50 ether,
+                recycledBorrowerHalfEquiv: 50 ether,
+                recycleConsume: reserve,
+                keeperAllocate: 0,
+                destChainId: CHAIN_ARB
+            })
+        );
+    }
+
+    /// @notice #1878 — a live mirror CLAIM retires the commitment it consumed.
+    ///
+    ///         The four figures must move by ONE number: the bucket debit, the
+    ///         outstanding decrement, the retired cumulative Base reads, and
+    ///         the `paidOutRecycled` transparency counter. Asserting only that
+    ///         the bucket fell (the strongest mirror assertion in the tree
+    ///         before this) leaves the reporting half — the half `D*` is sized
+    ///         from — entirely unpinned.
+    function testMirrorReservedCommitIsRetiredByALiveClaim() public {
+        _standUpMirror();
+        _mirrorArmedDay5(100 ether);
+
+        (, , uint256 outBefore, uint256 paidBefore) =
+            _agg().getGovernorCommitState();
+        assertEq(
+            outBefore,
+            100 ether,
+            "the broadcast's instruction reserved against the local bucket"
+        );
+        (uint256 retiredBefore, ) = _agg().getLocalRecycledCommitRetirement();
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+
+        _seedEntry(alice, 90, 5, 6);
+        // P1-b: the FRESH leg needs a delivered bound before the armed day
+        // prices at all. Without it the day defers and nothing is consumed —
+        // which is the neighbouring test's subject, not this one's.
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+
+        vm.prank(alice);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
+            LibVaipakam.RewardDelivery.Wallet
+        );
+
+        uint256 consumed = bucketBefore - _cfg().getRecycleBucket();
+        assertGt(consumed, 0, "the funded armed day consumed from the bucket");
+
+        (, , uint256 outAfter, uint256 paidAfter) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredAfter, ) = _agg().getLocalRecycledCommitRetirement();
+
+        // The floor did NOT bind, so the equalities below are the retirement
+        // identity rather than two exhausted counters agreeing at zero.
+        assertGt(outAfter, 0, "reservation outlived the claim (floor unbound)");
+
+        assertEq(
+            outBefore - outAfter,
+            consumed,
+            "outstanding retired by exactly what the claim consumed"
+        );
+        assertEq(
+            retiredAfter - retiredBefore,
+            consumed,
+            "the cumulative this mirror REPORTS to Base moved by the same"
+        );
+        assertEq(
+            paidAfter - paidBefore,
+            consumed,
+            "paidOutRecycled moved by the same"
+        );
+    }
+
+    /// @notice #1878 — a live mirror FORFEIT releases the commitment instead of
+    ///         consuming it: outstanding falls and the RELEASED cumulative
+    ///         rises, while the bucket keeps the tokens and `paidOutRecycled`
+    ///         does not move (nothing was paid to anyone).
+    ///
+    ///         The canonical twin is `testRecycledForfeitReleasesWithoutCredit`;
+    ///         this is the mirror side of the same rule, which nothing drove
+    ///         through a live entry point before.
+    function testMirrorReservedCommitIsReleasedByAForfeit() public {
+        _standUpMirror();
+        _mirrorArmedDay5(100 ether);
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+
+        uint256 id = _seedEntry(alice, 91, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(91, id);
+
+        (, , uint256 outBefore, uint256 paidBefore) =
+            _agg().getGovernorCommitState();
+        (, uint256 releasedBefore) = _agg().getLocalRecycledCommitRetirement();
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+
+        vm.prank(makeAddr("mirror-keeper"));
+        _facet().sweepForfeitedInteractionRewards(91);
+
+        (, , uint256 outAfter, uint256 paidAfter) =
+            _agg().getGovernorCommitState();
+        (, uint256 releasedAfter) = _agg().getLocalRecycledCommitRetirement();
+
+        uint256 released = outBefore - outAfter;
+        assertGt(released, 0, "the forfeit released a recycled commitment");
+        assertGt(outAfter, 0, "reservation outlived the forfeit (floor unbound)");
+        assertEq(
+            releasedAfter - releasedBefore,
+            released,
+            "the RELEASED cumulative carries it, not the retired one"
+        );
+        assertEq(
+            paidAfter,
+            paidBefore,
+            "a release pays nobody, so paidOutRecycled must not move"
+        );
+        // The recycled tokens never left, so the bucket cannot have fallen.
+        // (It may RISE: the forfeit's FRESH share is genuine absorption.)
+        assertGe(
+            _cfg().getRecycleBucket(),
+            bucketBefore,
+            "released tokens stay in the bucket"
+        );
+    }
+
     // ─── 6. Arming guards ────────────────────────────────────────────────────
 
     function testArmingIsFutureOnlyAndOneShot() public {
