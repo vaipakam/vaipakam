@@ -2202,15 +2202,23 @@ an unchanged tuple is skipped, and nothing is broadcast. So
 an expired cache on a tier that hasn't moved is not something
 pressing the button fixes, and neither is a same-tier deposit
 or withdrawal — a rollup that produces the same tuple de-dups
-exactly as the button does. What restores it is a broadcast
-carrying a changed tuple that ALSO names an eligible non-zero
-tier. A changed tuple is not enough on its own — withdrawing
-below Tier 1, or turning consent off, broadcasts a genuinely
-different tuple carrying `(0, 0)`, and the mirror correctly
-goes on treating you as no discount. What works is a change
-that leaves you eligible: crossing back up a tier, turning
-consent back on, or a governance table bump raising the
-version while you still qualify.
+exactly as the button does. Restoring it takes two things, and both are needed:
+
+1. your current `(tier, bps, expiry, version)` must DIFFER
+   from the one last pushed to that mirror, and must name an
+   eligible non-zero tier. A different tuple alone is not
+   enough — withdrawing below Tier 1, or turning consent off,
+   sends a genuinely different tuple carrying `(0, 0)`, and
+   the mirror correctly goes on treating you as no discount;
+2. something must then BROADCAST it. Changing the state does
+   not send anything by itself: turning consent back on
+   writes the flag, and a governance table bump moves the
+   version, but neither pushes. You still need the button or
+   a rollup-bearing Base action to carry the new tuple.
+
+A governance version bump is the case where an unchanged tier
+still works — the version field alone makes the tuple differ,
+so any subsequent push sends.
 
 There is deliberately no supported way to force a refresh
 otherwise. Repeatedly toggling a value to manufacture

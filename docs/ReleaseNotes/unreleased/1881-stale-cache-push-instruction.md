@@ -11,12 +11,14 @@ silently, nothing is broadcast, and the reader is left where they started while
 believing they have fixed it.
 
 The passage now says so directly: an expired cache on a tier that has not moved
-is not something the button fixes, and the discount returns only when a later
-broadcast carries a tier that has both CHANGED and still qualifies for a
-discount. Neither half is enough alone: an unchanged tier is skipped and sent
-nowhere, so an ordinary same-size deposit does nothing; and a change that drops
-you below the lowest tier, or switches the discount off, is broadcast faithfully
-and leaves you exactly where you were.
+is not something the button fixes, and restoring it takes two separate things.
+Your standing with the protocol has to differ from whatever was last sent to that
+chain — and still be good enough to earn a discount, since dropping below the
+lowest band or switching the discount off is a difference that gets sent
+faithfully and leaves you no better off. And then something has to actually send
+it: changing your standing does not broadcast anything on its own, so a push is
+still required to carry it. Note that a governance change to the tier table
+counts as a difference even when nothing about you has moved.
 
 It also says plainly that there is no supported way to force a refresh
 otherwise, and why: manufacturing broadcasts by toggling a value back and forth
