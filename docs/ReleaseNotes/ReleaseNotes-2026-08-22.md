@@ -14,11 +14,13 @@ uncomfortable: in each case the later rounds of review were spent on errors
 introduced by the earlier fixes, not on the original mistake. Replacing a claim
 that is too general with another claim that is too general is not progress.
 
-**Changes to the platform.** Two contract entries, one of which changes what a
-buyer can do, plus an app change that stops asking people to sign before it knows the answer —
-where the deployment can tell it. Older Diamonds that do not route the preview
-call are deliberately allowed through unchanged, so the improvement is real but
-not universal.
+**Changes to the platform.** Contract changes covering what a buyer can do, what
+the accept path can be changed to next, and a fee refund that could be settled
+onto a closed position and then be unreachable by anyone. Alongside them, an app
+change that stops asking people to sign before it knows the answer — where the
+deployment can tell it. Older Diamonds that do not route the preview call are
+deliberately allowed through unchanged, so that improvement is real but not
+universal.
 
 **Work written down rather than shipped.** A design note that re-scopes a
 reward-payout safety gap without closing it, and the activation ceremony for the
@@ -1096,3 +1098,40 @@ than searching for a phrase, every guide in every language was checked for what
 it says about this one situation. Seven of the ten advanced guides were already
 right, which is exactly the pattern that makes a phrase-search report success.
 <!-- assembled-fragment: 1880-full-basket-rule-locales.md sha256=50bc515cc76d6b9a32f025f4d6e640f8b1c9f99f2100a25944d2dff8f4c3155c -->
+
+## A fee rebate could be settled onto a closed loan and then be unreachable (#1867)
+
+Loans opened under the retired VPFI fee arrangement hold a small amount of the
+borrower's VPFI, and give part of it back when the loan closes properly. That
+give-back normally waits on the closed position for the holder to collect.
+
+One closing route does not work that way. When collateral is sold through the
+marketplace, everything owed is distributed in the same transaction and the loan
+is marked as having nothing left to collect — which is what makes that route
+safe to mark closed immediately. The rebate was being calculated and set aside
+for collection anyway, onto a loan the collection path refuses to serve by
+design. Nobody could retrieve it: not the borrower, not the buyer, not an
+operator.
+
+It is now delivered in that same transaction, into the vault of the party the
+refund was calculated for — the original borrower, who paid the fee. Sale
+proceeds still follow whoever holds the position; a refund follows whoever paid.
+Keeping those two apart is what makes the amount and the recipient agree, and it
+holds even when the borrower is someone the platform is required to screen: the
+money is their own, so it reaches them either way.
+
+The sale is never refused over this. That cuts both ways and the second half is
+easy to miss: a refund that cannot be delivered — because the borrower's vault
+is waiting on a required upgrade, or does not exist yet — is handed to them
+directly instead of stopping the sale. A completed sale should not depend on
+anything about a small refund attached to it. That keeps the promise the route is
+built on — everything settled at once, nothing left to collect — rather than
+carving an exception into the collection path to accommodate a state that should
+not exist.
+
+Only loans opened under the retired arrangement can be affected, so a platform
+started fresh never had money at risk here. What was worth fixing regardless is
+the contradiction: one closing route was declaring "nothing left" while creating
+something, and that is the kind of inconsistency that invites the wrong repair
+later.
+<!-- assembled-fragment: 1867-prepay-sale-rebate-stranded.md sha256=d3140164ec2172be212f04911f0e902ab601fb7b2e163fc7f62dfdacf2158703 -->
