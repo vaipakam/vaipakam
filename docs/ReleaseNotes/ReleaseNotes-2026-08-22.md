@@ -1,13 +1,32 @@
 # Release Notes — 2026-08-22
 
-Two kinds of work today. Most of it is corrections — entries that fix what the
-project SAID about itself, plus the tool that writes those records. The last two
-entries are different: they change the platform, and one of them changes what a
-buyer can do.
+A long day, and the entries fall into four kinds rather than a sequence — this
+summary names the kinds, because an intro that counts entries or points at "the
+last two" goes stale the moment another one lands, which has already happened to
+this file twice.
 
-The corrections come first, then the design note, then the two contract changes.
+**Corrections to what the project said about itself.** Several entries fix
+documentation that had drifted from the platform: a cross-chain pause described
+as standing long after it was lifted, a published payout formula that was never
+right, and a user guide that told people to press a button which does nothing in
+the situation it was offered for. A recurring lesson runs through them, and it is
+uncomfortable: in each case the later rounds of review were spent on errors
+introduced by the earlier fixes, not on the original mistake. Replacing a claim
+that is too general with another claim that is too general is not progress.
 
-The first: a cross-chain pause on reward claims was lifted some time ago, and the
+**Changes to the platform.** Two contract entries, one of which changes what a
+buyer can do, plus an app change that stops asking people to sign before it knows
+the answer.
+
+**Work written down rather than shipped.** A design note that re-scopes a
+reward-payout safety gap without closing it, and the activation ceremony for the
+recycling programme, which existed only as scattered prose until now.
+
+**And one investigation that ended in nothing being wrong** — a reported stuck
+state turned out to be unreachable. Worth publishing, since "we looked and it
+cannot happen" is a result.
+
+On the first of those corrections: a cross-chain pause on reward claims was lifted some time ago, and the
 documentation went on describing it as standing — across the specification, the
 design records, the test suite and the contract comments. The specification is
 the document the platform's behaviour is meant to be checked against, so a reader
@@ -894,3 +913,174 @@ lives in now stands 3,057 bytes below the size limit. Before the split there
 were 164 bytes free — not enough for even the smaller prototype this grew from,
 and nothing at all for whatever came next.
 <!-- assembled-fragment: 1835-stale-sale-listing-refusal.md sha256=86fe3b957a86ec592a4a332826ae344dbb24a9cb19f448f32a21e785a6cf085e -->
+
+## The recycling activation ceremony is written down (#1349 M7)
+
+Turning on the cross-chain VPFI recycling loop is a one-time sequence that spans
+every chain, and until now it existed only as prose scattered across a planning
+document. It is now a section of the governance runbook, in the order it has to
+be performed, with the reasons each step comes where it does.
+
+Three of those reasons are the kind that are only obvious in hindsight. The fee
+entitlement has to be switched on **first**, because any loan opened between a
+clean scan and that switch rejoins the class the scan was checking for — so
+scanning first and enabling second means the scan result can be overtaken by
+ordinary business. There is no way to fix such a loan afterwards: the stamp is
+written when the loan opens and nothing can add it later, so the only remedies
+are the ordering above and waiting for the loan to close. And where the platform is running
+across several chains, the arming call is a single transaction on one chain that
+commits all of them — it cannot be repeated, cannot be undone, and cannot be
+postponed once the day it names arrives. (On the simpler arrangement where only
+the main chain pays rewards, that call commits only that chain and nothing has to
+be told; the runbook now separates the two, because a step that cannot be
+completed on the simpler arrangement was previously demanded of it.) — so the day chosen has to leave room for every other chain to hear
+about it, and each one has to be checked before that day, not after.
+
+**A gate that reads as closed is not.** The plan pointed at a card for the
+fund-safety half of the backing separation — reward payouts being bounded by the
+platform's spare balance rather than by what was actually delivered for rewards,
+where some of that balance is borrower collateral. That card shows as completed.
+It was closed automatically when a different, smaller piece of work merged
+mentioning it, and the real remaining half was re-filed under a new number. The
+runbook, the plan and the library comments now all name the open card, and say
+why the closed one is not evidence. Anyone verifying this gate by opening the
+card the documents used to name would have read a green label over an open
+fund-safety defect.
+
+**Review then found three ways the first draft would have stranded an
+operator mid-ceremony**, all of them about order rather than fact. Every piece
+of keeper preparation now comes before the irreversible step, because none of it
+can be redone afterwards — the day being switched on cannot be moved once it is
+named. One authorization was missing outright: the address that sends funding
+from the main chain has to be approved for that specifically, and the approvals
+covering the other chains do not include it, so an operator following the first
+draft would have finished the ceremony and then watched every funding send be
+refused. And the day chosen has to be counted from when the switch-on actually
+happens, not from when it is requested — on a live deployment those are two days
+apart by design, which was enough to consume the whole safety margin the step
+exists to provide.
+
+Nothing about how the platform behaves changed here.
+<!-- assembled-fragment: 1349-governance-runbook-recycling.md sha256=68a0f5f7186fee423d1e104d06c6ab49f4f31ebef1715a017ead242c2473cf34 -->
+
+## The app now asks before it makes you sign (#1645)
+
+Before this, the connected app could walk someone into a transaction the
+protocol had already decided to refuse. The platform has carried a preview for
+some time that answers, without charging anything, whether an offer can be
+taken right now and — if not — which reason applies. No screen read that
+answer. The one place that called the preview took the fee estimate out of it
+and discarded the verdict, so the only way a buyer learned about a blocker was
+a rejected transaction they had signed and paid for.
+
+The accept flow now consults that verdict and stops there, before the wallet
+prompt rather than after it. The reason it shows is the protocol's own, in
+plain words: the offer expired, the listing is out of date and the seller needs
+to relist, one of the assets is paused, the vault on one side needs upgrading,
+the protocol itself is paused. All twenty reasons the platform can give are
+covered, not only the out-of-date-listing one whose arrival made this visible.
+
+Three details are worth stating because they are the difference between a check
+that helps and one that misleads:
+
+**It reports the first refusal, not a refusal.** The preview applies its checks
+in the same order the transaction does, so whatever it names is what the buyer
+would actually have hit first. That ordering is the point of the whole
+mechanism, and the app deliberately does not re-rank, filter, or improve on it.
+
+**A reason it does not recognise stops the transaction.** The app can be older
+than the platform it is talking to, and this vocabulary grows over time. An
+unrecognised answer is a refusal nobody has written words for yet — never an
+all-clear — so it blocks with a general message rather than waving the buyer
+through into the revert this exists to prevent.
+
+**It does not quote a number it never measured.** One refusal concerns a
+position that has fallen below the safety margin its sale required. The obvious
+thing to show is the shortfall, and the preview does not carry one — so the
+message states the condition without a figure. An earlier round of this work on
+the platform side established that showing a health figure for a position that
+was never measured is worse than showing none.
+
+Two limits are deliberate and worth knowing. The signed-order fill path is
+untouched: a signed order has no offer to preview until it materialises, so
+this check cannot apply there and the separate protections that path already
+has remain what covers it. And on the current testnet deployment the four
+newest reasons will not appear until the preview component is refreshed —
+before that refresh, a review can honestly confirm only the older reasons and
+the clear path.
+
+Closes #1645.
+<!-- assembled-fragment: 1645-accept-preview-gate.md sha256=13a347cbcec744acdcd466d7b3be12f1716cd8b7bf7fa38fb5bd324758b0567c -->
+
+## A reported stuck-listing state turned out to be unreachable (#1851)
+
+A review of an unrelated design document raised a worrying pairing in the
+position-sale code: a listing that has been taken but not yet finished cannot
+be finished once the underlying loan ends, and the permissionless cleanup that
+clears dangling listings deliberately skips listings that have been taken. Put
+together, those two rules would leave a listing that could neither complete nor
+be cleared.
+
+Both rules are real. The question nobody had asked was whether anything can
+actually put a listing into that state, and the answer is no — a state with no
+way out only matters if there is a way in.
+
+Taking a listing finishes the sale in the same transaction, and a finish that
+cannot succeed undoes the whole purchase, so "taken" and "finished" are set
+together or not at all. The one route that could mark a listing taken without
+that step is the partial-fill matcher, and a position sale cannot be matched at
+all — it is an all-or-nothing transfer that only direct acceptance can take. And
+if the loan behind a listing has already ended, the purchase is refused outright,
+before any of the buyer's money moves, leaving the listing untaken and the
+cleanup available.
+
+Nothing about how the platform behaves changes here. What changes is that the
+reasoning is now written down where it is needed and enforced by a test: the
+cleanup's own code carries the explanation of why skipping taken listings is
+safe, and a test drives the exact scenario that was reported — list a position,
+let its loan end, attempt the purchase — and checks both halves of the claim,
+that the purchase is refused *and* that the listing stays clearable afterwards.
+
+The intended behaviour was already recorded correctly in the platform
+specification, which states that no buyer can be harmed by a dangling listing
+because a purchase against an ended loan is already refused. That is worth
+noting: the specification is written from the design documents rather than read
+back off the code, so it stood as an independent statement of the same property
+the code turns out to have.
+
+Closes #1851.
+<!-- assembled-fragment: 1851-sale-listing-reachability.md sha256=e36029d7b1c04575a698d78f87fbe45a1605e803ae2d8d9dc5b534152113b290 -->
+
+## The guide told users to press a button that does nothing in the state it was offered for (#1881)
+
+The Advanced guide explained that a discount cached on another chain goes stale
+after a couple of months, and that it comes back "until a fresh push lands" —
+read alongside the two places the same guide offers a button to push your tier to
+other chains, that reads as an instruction: your discount lapsed, press this.
+
+Pressing it does nothing in exactly that situation. The push only sends when
+something about your tier has actually changed; an unchanged tier is skipped
+silently, nothing is broadcast, and the reader is left where they started while
+believing they have fixed it.
+
+The passage now says so directly: an expired cache on a tier that has not moved
+is not something the button fixes, and restoring it takes two separate things.
+Your standing with the protocol has to differ from whatever you last sent
+ANYWHERE — the check is one per person, not one per chain, so a chain that was
+added later or that missed a delivery will not get a replacement copy just
+because it is behind — and it has to still be good enough to earn a discount, since dropping below the
+lowest band or switching the discount off is a difference that gets sent
+faithfully and leaves you no better off. And then something has to actually send
+it: changing your standing does not broadcast anything on its own, so a push is
+still required to carry it. Note that a governance change to the tier table
+counts as a difference even when nothing about you has moved.
+
+It also says plainly that there is no supported way to force a refresh
+otherwise, and why: manufacturing broadcasts by toggling a value back and forth
+drains a protocol-funded budget, and once that runs out legitimate broadcasts
+fail for everyone. A workaround that is harmless once and harmful at scale does
+not belong on a page anyone can read.
+
+The button's other two uses — a newly activated tier, and crossing into a higher
+one — are correct and unchanged. Only the stale-cache case was wrong.
+<!-- assembled-fragment: 1881-stale-cache-push-instruction.md sha256=71c2965652a69f6b2d3d3ce7de99ae7e3de8a6d9fd1fa5b52cd08dea74cd3bd2 -->
