@@ -23,9 +23,14 @@ can do — at the cost of delivery only, not of the funding — whenever the rec
 was already settled centrally and only its delivery failed. What changed is that each wait is now
 attached to a specific missing input, which can be seen, chased and supplied,
 and that one case — a day deliberately recorded as zero and awaiting
-compensation — also carries a deadline after which it can be settled by anyone,
-provided the compensation is not still sitting in a provisional state, which
-holds that route open too. The stop
+compensation — also carries a deadline after which it can be settled by anyone.
+There are two such deadlines, not one, and they are not interchangeable: a day
+that never drew compensation is closed out on a clock fixed at the day's
+freezing, while a day compensated below what it owed is closed out on a separate
+clock that starts at its first compensation and stretches with each qualifying
+top-up. Passing the first does not open the second. And a compensation still
+sitting in a provisional state opens NEITHER — that day's way out is the record
+being re-sent, which confirms the figure, and anyone can do that. The stop
 they replaced had neither: nothing to supply, and no ending. A day waits until everything it needs is in place, and
 the things it can be waiting for are given as examples rather than as a complete
 set — deliberately, because every earlier attempt to close that list was

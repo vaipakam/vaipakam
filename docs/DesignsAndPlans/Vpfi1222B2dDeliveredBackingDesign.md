@@ -697,9 +697,16 @@ where there is one and can still cross at zero when the shortfall is deep enough
 guarantee about any particular day.
 
 Two things follow that matter operationally. Neither wait is the exclusive
-property of whoever holds the funding — the zeroed-and-open one through its two
-lapse terminals, the unstamped one through the permissionless resend above —
-so an operator is not the only party who can clear either. And ending it is not
+property of whoever holds the funding, so an operator is not the only party who
+can clear either — but WHICH third-party exit applies depends on the day's
+state, and naming the wrong one sends an operator to a call that reverts. The
+unstamped wait exits by the permissionless resend above. The zeroed-and-open
+wait exits by whichever lapse terminal it is eligible for — and a PROVISIONAL
+credit is eligible for neither, since the full lapse rejects any compensated day
+and the short lapse rejects an unconfirmed one. That state's third-party exit is
+the resend as well: an accepted delivery of the day's record confirms or demotes
+the provisional credit, after which the ordinary route or the short terminal
+becomes available. And ending it is not
 uniformly a write-off: on the short-funded path the lapse is how the backed
 value gets paid at all. This
 section is retained as the record of why, and of the two
