@@ -16,9 +16,9 @@ a reward claimant.
 roles, and names its remaining dependency as *"#1434 P1-b — the paid side"*.
 
 **P1-b merged on 2026-08-20**, sixteen days later. The card has not been re-read
-against the tree since. Doing that first changes the shape of the work
-substantially, and the changes are all in the direction of *less* remaining
-work than the card implies:
+against the tree since. Doing that first changes the shape of the work substantially — but **not simply
+in the direction of less**. Two pieces of the card are already built; two failure
+modes it never modelled are added in §2. The scope is DIFFERENT, not smaller:
 
 | Card's claim (2026-08-04) | Tree today |
 | --- | --- |
@@ -129,9 +129,16 @@ VPFI** out of the Diamond (`_deliverReward` → `safeTransfer`), while minting i
 separate admin operation (`TreasuryFacet.mintVPFI`). So a counter incremented at
 allocation time is accounting with no funding behind it, and the allowance it
 authorises can still be paid out of borrower custody. The credit must be tied to
-tokens the programme actually holds. The existing paid counter cannot simply
-be reused: all three of its writers — the claim walk, the expiry sweep and the
-forfeit sweep — are guarded by `isMirrorRewardChain`, and its storage docs define
+tokens the programme actually holds. **The canonical writers must also see EVERY payout, legacy included** — adding
+canonical versions of the existing writers is not enough, because pre-`D*`
+payouts run through `_processEntry` before the armed walk and none of those
+writers sees them, so a canonical claimant holding both spends the earmark twice:
+the evasion §2 documents on mirrors, ported along with the shape. The existing
+paid counter also cannot simply be reused: its writers are **five, not three** —
+the claim walk, the expiry sweep, the forfeit sweep, a role-change residual
+retirement assigning `paid = received`, and an ADMIN-gated `seedArmedFreshPaid`
+that increments with **no** `isMirrorRewardChain` guard at all. The first three
+are guarded by `isMirrorRewardChain`, and its storage docs define
 it as mirror-era delivered spending. Add a Base `received` analogue without
 changing them and canonical payouts never decrement the allowance, so every later
 payout reuses the whole earmark. `rewardEmissionsBudget` already exists but is a
@@ -169,8 +176,12 @@ Diamond it cannot find what it is meant to protect.** `fallbackSnapshot` and
 new counter cannot discover existing `vpfiHeld`, `rebateAmount` or fallback
 custody on-chain. Writers started at upgrade time reserve **zero** for precisely
 the grandfathered balances this option exists to protect. Any costing must
-include an aggregation mechanism — an off-chain enumeration seeded at upgrade,
-or a lazy per-loan reservation on first touch — and neither is free.
+include an aggregation mechanism — an off-chain enumeration seeded at upgrade
+BEFORE payouts are enabled, or a lazy per-loan reservation on first touch. **The
+lazy variant does not work on its own**: an untouched grandfathered loan stays
+absent from the aggregate until something touches it, so an intervening reward
+claim consumes exactly the tokens it was meant to reserve. Seeding has to precede
+enabling, whichever mechanism carries it.
 
 **Option D — segregate the funding physically.** All three options above leave
 reward funding in the shared Diamond balance and differ only in how they *reason*
