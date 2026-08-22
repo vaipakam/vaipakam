@@ -635,6 +635,14 @@ settlement-reachability condition. Gate A constrains **both** branches.
 
 ### Step 1 — enable the fee entitlement (chain-side, before the scan)
 
+**Prove two code slices are live on THIS Diamond first.** The setter does not
+enforce them and will enable happily without them: the loan-side reward cap
+(PR-5c) and the settlement sweep that honours the lender Full stamp (PR-6).
+Without the cap, a Full loan enters the uncapped reward path; without the sweep,
+a user can pay `C*` for a discount settlement then ignores. This bites on partial
+or stacked upgrades, where a Diamond can have M1b live and still be missing
+either. Read back the deploy assertions for both before scheduling anything.
+
 ```
 ConfigFacet.setFeeEntitlementEnabled(true)      # ADMIN_ROLE
 ```
@@ -693,9 +701,14 @@ resolve, and **silently skips a chain whose RPC secret or deployment entry is
 missing** — no error, no warning. A mirror absent from that list never submits
 its armed-day commitment report, Base's remit gate waits on a report that will
 never arrive, and that chain's claims stay unfunded with nothing anywhere
-reporting a fault. Compare the keeper's resolved chain IDs against the intended
-reward-chain set, and confirm each resolved endpoint's `eth_chainId` matches the
-id it is filed under, BEFORE the arm.
+reporting a fault. Compare the keeper's resolved chain IDs against the **live on-chain
+topology, not against your own inventory** — `getExpectedSourceChainIds()` on
+Base and the messenger's `getBroadcastDestinations()`. An "intended set" written
+down by whoever maintains the deployment artifacts can be missing the same chain
+the keeper is missing, and then the preflight passes while Base waits for a
+report from a chain nobody has noticed is absent. Require equality with both
+getters, and confirm each resolved endpoint's `eth_chainId` matches the id it is
+filed under. BEFORE the arm.
 
 **3c. Authorize the Base remittance signer — a SEPARATE authorization, and easy
 to miss.** `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
@@ -731,11 +744,27 @@ bucket capacity can sit below an early high-concentration daily slice. Read back
 each destination's bucket capacity *and* the keeper lane cap against the largest
 supported single-day slice (#918).
 
-**3f. Deploy `ops/mesh-watcher`.** It reads every reward chain's recycled ledger
-and alerts on the commitment invariants, and it is code-complete but
-**undeployed** — D1 creation, secrets and the first deploy are operator steps in
-its README. Do this before arming, not after: arming is when the invariants it
-watches start moving.
+**3f. Deploy `ops/mesh-watcher` AND verify it runs clean.** It reads every
+reward chain's recycled ledger and alerts on the commitment invariants, and it is
+code-complete but **undeployed** — D1 creation, secrets and the first deploy are
+operator steps in its README. Do this before arming, not after: arming is when
+the invariants it watches start moving.
+
+**Deploying is not verifying.** A Worker deploys successfully with a wrong RPC, a
+missing deployment stanza or a bad alert credential, and a cron that has not
+fired yet looks exactly like one that is broken. Trigger the authenticated
+`POST /run` and require a clean health result — delivery succeeded, no coverage
+gaps — before Step 4. Arming behind a watcher that has never completed a tick is
+arming with no invariant coverage at all, which is the state this step exists to
+prevent.
+
+**3g. Set and CONFIRM the master flags NOW, before the arm — they are not a
+step 5 item.** `KEEPER_ENABLED`, `REWARD_COMMIT_ENABLED`, `REWARD_REMIT_ENABLED`.
+These are secrets, and **secrets cannot be read back** — the API returns names
+only, so an unset, mis-cased or malformed value is indistinguishable from a
+correct one until a pass actually runs. One `wrangler tail` cycle is the
+confirmation: watch each gated pass log its start. Discovering a bad flag after
+the arm means discovering it when `D*` can no longer be moved.
 
 **Do NOT switch off flags that are already running.** If this deployment is on
 Gate B's active-mirror branch, `REWARD_REMIT_ENABLED` and `KEEPER_ENABLED` may
@@ -743,8 +772,8 @@ already be funding ordinary pre-`D*` mirror claims — the reward-budget remit p
 processes finalized days whether or not the program is armed. This ceremony spans
 Timelock delays and a propagation window, so turning them off "until step 5"
 starves live mirror claims for days over a cutover that has not happened yet.
-Step 5 is about arming the set for the FIRST time, or completing it; it is not an
-instruction to disable a running one.
+On such a deployment 3g confirms what is already on and adds only what is
+missing; it is never an instruction to disable a running one.
 
 ### Step 4 — arm, sized from EXECUTION time
 
@@ -775,7 +804,7 @@ finalized day's broadcast reaches it after arming — a replay of an
 already-applied day exits through the idempotency branch without installing the
 value.
 
-### Step 5 — DRIVE the propagation, verify it, then complete the flags
+### Step 5 — DRIVE the propagation and verify it
 
 **Arming sends nothing, and nothing sends it for you.** The setter writes Base
 storage and emits its event; mirrors learn `D*` only from a day broadcast. On the
@@ -802,11 +831,10 @@ the contingency written down before you arm: a mirror that misses the day keeps
 its claims halted until CCIP delivery recovery or manual re-execution restores
 the broadcast.
 
-Then complete the master flags — `KEEPER_ENABLED`, `REWARD_COMMIT_ENABLED`,
-`REWARD_REMIT_ENABLED` — so all three are on **together**. A chain running
-without all three leaves reports and acks inert and stalls multi-chain funding.
-On a deployment where some were already on (see step 3), this step adds the
-missing ones; it never involves turning an existing one off and back on.
+The flags were set and tail-confirmed in step 3g, deliberately: a chain running
+without all three leaves reports and acks inert and stalls multi-chain funding,
+and that is not something to discover once `D*` is immutable. Re-check the tail
+here only to confirm the armed-day passes are running against the new state.
 
 
 ## Testnet rehearsal
