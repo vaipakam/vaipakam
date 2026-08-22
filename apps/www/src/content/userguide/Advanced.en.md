@@ -2205,16 +2205,22 @@ or withdrawal — a rollup that produces the same tuple de-dups
 exactly as the button does. Restoring it takes two things, and both are needed:
 
 1. your current `(tier, bps, expiry, version)` must DIFFER
-   from the one last pushed to that mirror, and must name an
-   eligible non-zero tier. A different tuple alone is not
-   enough — withdrawing below Tier 1, or turning consent off,
-   sends a genuinely different tuple carrying `(0, 0)`, and
-   the mirror correctly goes on treating you as no discount;
+   from the last tuple you pushed ANYWHERE, and must name an
+   eligible non-zero tier. The de-dup is global per user, not
+   per mirror — so a mirror added after your last push, or one
+   whose delivery failed, stays behind until your tuple changes
+   for some other reason; no amount of pushing catches it up on
+   its own. And a different tuple alone is not enough:
+   dropping below Tier 1 leaves you at `(0, 0)`, which the
+   mirror correctly reads as no discount;
 2. something must then BROADCAST it. Changing the state does
-   not send anything by itself: turning consent back on
-   writes the flag, and a governance table bump moves the
-   version, but neither pushes. You still need the button or
-   a rollup-bearing Base action to carry the new tuple.
+   not send anything by itself — turning consent EITHER WAY
+   writes the flag and emits, and a governance table bump
+   moves the version, but none of them push. You still need
+   the button or a rollup-bearing Base action to carry the new
+   tuple. (This cuts both ways: disabling consent does not
+   clear a mirror's cached discount until something
+   broadcasts the change either.)
 
 A governance version bump is the case where an unchanged tier
 still works — the version field alone makes the tuple differ,
