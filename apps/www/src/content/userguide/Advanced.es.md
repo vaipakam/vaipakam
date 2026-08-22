@@ -808,8 +808,8 @@ liquidó el préstamo:
   parcial no es un cierre en absoluto — el préstamo sigue abierto
   y no se crea ninguna reclamación. Consulta la reclamación en
   lugar de suponer cuál tienes. En un default sobre un activo ilíquido suele irse la
-  canasta entera y no queda nada — pero eso es un resultado, no
-  una regla. Que el reembolso vuelva depende de cómo terminó el préstamo: en un
+  canasta entera y no queda nada — y en esa vía es la regla, no un
+  resultado desafortunado. Que el reembolso vuelva depende de cómo terminó el préstamo: en un
   préstamo que siga en la vía de comisión VPFI retirada, el VPFI
   retenido contra la comisión de inicio **se pierde en favor del
   tesoro** en un incumplimiento o una liquidación. Un cierre

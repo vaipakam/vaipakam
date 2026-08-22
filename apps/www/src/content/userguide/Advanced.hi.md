@@ -759,8 +759,8 @@ Borrower claim इस आधार पर return करता है कि loan
   है, इसलिए वह हमेशा collateral ही छोड़ता है। आंशिक liquidation तो बंद होना है ही नहीं —
   loan खुला रहता है और कोई claim बनता ही नहीं। अनुमान लगाने के बजाय
   claim देखें। Illiquid asset के default में आम तौर पर पूरी
-  basket चली जाती है और कुछ नहीं बचता — पर वह एक परिणाम है, नियम
-  नहीं। rebate वापस आएगा या नहीं यह इस पर निर्भर है कि loan कैसे ख़त्म हुआ: बंद किए गए VPFI fee रास्ते
+  basket चली जाती है और कुछ नहीं बचता — इस रास्ते पर यही नियम है, कोई दुर्भाग्यपूर्ण
+  नतीजा नहीं। rebate वापस आएगा या नहीं यह इस पर निर्भर है कि loan कैसे ख़त्म हुआ: बंद किए गए VPFI fee रास्ते
   वाले loan में initiation fee के बदले रखा गया VPFI default या
   liquidation पर **treasury को ज़ब्त** हो जाता है। Proper close
   पर उसके बजाय rebate settle होता है — जो शून्य भी

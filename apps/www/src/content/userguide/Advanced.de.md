@@ -809,7 +809,7 @@ Der Borrower-Claim gibt je nach Settlement des Loans zurück:
   offen und es entsteht kein Claim. Sieh in den Claim, statt zu
   raten. Bei
   einem Default auf ein illiquides Asset geht meist der ganze Korb
-  weg, dann bleibt nichts — das ist ein Ergebnis, keine Regel.
+  weg, dann bleibt nichts — das ist auf diesem Weg die Regel, kein unglücklicher Ausgang.
   Ob das Rebate zurückkommt, hängt vom Abschluss ab: bei einem Loan auf dem
   eingestellten VPFI-Gebührenweg wird das gegen die Initiation-Fee
   verwahrte VPFI bei einem Default oder einer Liquidation **an die
