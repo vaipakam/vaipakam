@@ -851,6 +851,16 @@ bucket lets a batch of legal days exceed the bucket that only per-day checking
 said was fine. Bound the keeper's cap by the live bucket capacities, not by the
 largest single-day slice.
 
+**And verify the Diamond's OWN stored messenger addresses.** Every check above
+inspects the adapter you believe is in use; the Diamond dispatches through what
+it has STORED. If `ConfigureCcip` only partly completed, or an adapter was
+redeployed, Base can hold a stale or zero cross-chain messenger while every pool,
+limiter, peer and token-pool readback passes against the intended one — and then
+the pre-`D*` remit reverts or takes an uninspected lane after the one-shot arm,
+so Step 5 never sees a receipt. Read the stored messenger back on Base (and the
+reward messenger on each mirror) and require it to be the adapter whose lane you
+just inspected.
+
 **And verify the mirror token's live minting pool.** Messenger peers and rate
 limiters can all read back correctly against the intended pool while the mirror
 token still points at a redeployed or unset one — `setTokenPool` is a separate
