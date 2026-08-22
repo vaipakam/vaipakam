@@ -1835,7 +1835,7 @@
         "flaggedCreator": "The wallet that created this offer is compliance-flagged, so it can’t be taken. Nothing was sent.",
         "assetPaused": "One of this offer’s assets is paused by the protocol right now, so the transaction would be rejected. Nothing was sent.",
         "countryBlocked": "This deployment’s trading rules don’t allow these two wallets to trade with each other. Nothing was sent.",
-        "consentRequired": "This offer needs your risk-and-terms consent before it can be taken. Give consent, then try again.",
+        "consentRequired": "The wallet that created this offer hasn’t recorded the risk-and-terms agreement the protocol requires, so it can’t be taken. Nothing was sent.",
         "kycBlocked": "This deployment’s identity-verification rules don’t cover one side of this offer at this value. Nothing was sent.",
         "expired": "This offer has expired and can’t be revived. The creator would need to post a new one.",
         "partiallyFilled": "This offer is partly filled, so it can only be advanced by matching — not taken directly. Nothing was sent.",

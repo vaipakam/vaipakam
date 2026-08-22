@@ -3423,8 +3423,14 @@ const copySource = {
       // (never on this retail deploy, where the check is unconditional).
       countryBlocked:
         'This deployment’s trading rules don’t allow these two wallets to trade with each other. Nothing was sent.',
+      // The CREATOR's consent, not the reader's. `previewAccept` checks
+      // only `offer.creatorRiskAndTermsConsent` — the acceptor's own
+      // consent travels inside the accept call, so the preview cannot
+      // see it and deliberately does not test it. Telling the reader to
+      // give consent would send them to fix something that is not theirs
+      // and is already given.
       consentRequired:
-        'This offer needs your risk-and-terms consent before it can be taken. Give consent, then try again.',
+        'The wallet that created this offer hasn’t recorded the risk-and-terms agreement the protocol requires, so it can’t be taken. Nothing was sent.',
       // Shown only on deploys with tiered identity verification enforced
       // (never on this retail deploy, where enforcement is off).
       kycBlocked:

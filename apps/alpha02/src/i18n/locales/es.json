@@ -1858,7 +1858,7 @@
         "flaggedCreator": "La billetera que creó esta oferta está marcada por cumplimiento, así que no se puede aceptar. No se ha enviado nada.",
         "assetPaused": "Uno de los activos de esta oferta está pausado por el protocolo en este momento, así que la transacción sería rechazada. No se ha enviado nada.",
         "countryBlocked": "Las reglas de negociación de este despliegue no permiten que estas dos billeteras operen entre sí. No se ha enviado nada.",
-        "consentRequired": "Esta oferta necesita tu consentimiento de riesgos y términos antes de poder aceptarse. Da tu consentimiento e inténtalo de nuevo.",
+        "consentRequired": "La billetera que creó esta oferta no ha registrado el acuerdo de riesgos y términos que exige el protocolo, así que no se puede aceptar. No se ha enviado nada.",
         "kycBlocked": "Las reglas de verificación de identidad de este despliegue no cubren a una de las partes de esta oferta por este valor. No se ha enviado nada.",
         "expired": "Esta oferta ha caducado y no se puede reactivar. Quien la creó tendría que publicar una nueva.",
         "partiallyFilled": "Esta oferta está parcialmente cubierta, así que solo puede avanzar mediante emparejamiento, no aceptándola directamente. No se ha enviado nada.",

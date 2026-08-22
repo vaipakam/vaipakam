@@ -1858,7 +1858,7 @@
         "flaggedCreator": "जिस wallet ने यह offer बनाया है वह compliance-flagged है, इसलिए इसे लिया नहीं जा सकता। कुछ भी send नहीं हुआ।",
         "assetPaused": "इस offer का एक asset अभी protocol द्वारा paused है, इसलिए transaction reject हो जाता। कुछ भी send नहीं हुआ।",
         "countryBlocked": "इस deployment के trading rules इन दोनों wallets को आपस में trade करने की अनुमति नहीं देते। कुछ भी send नहीं हुआ।",
-        "consentRequired": "यह offer लेने से पहले आपकी risk-and-terms consent ज़रूरी है। Consent दें, फिर दोबारा कोशिश करें।",
+        "consentRequired": "जिस wallet ने यह offer बनाया है उसने protocol द्वारा ज़रूरी risk-and-terms agreement record नहीं किया है, इसलिए इसे लिया नहीं जा सकता। कुछ भी send नहीं हुआ।",
         "kycBlocked": "इस deployment के identity-verification rules इस value पर इस offer के एक पक्ष को cover नहीं करते। कुछ भी send नहीं हुआ।",
         "expired": "यह offer expire हो चुका है और इसे वापस नहीं लाया जा सकता। बनाने वाले को नया offer डालना होगा।",
         "partiallyFilled": "यह offer आंशिक रूप से भर चुका है, इसलिए यह सिर्फ़ matching से आगे बढ़ सकता है — सीधे लिया नहीं जा सकता। कुछ भी send नहीं हुआ।",

@@ -1858,7 +1858,7 @@
         "flaggedCreator": "Die Wallet, die dieses Angebot erstellt hat, ist compliance-markiert, daher kann es nicht angenommen werden. Es wurde nichts gesendet.",
         "assetPaused": "Einer der Vermögenswerte dieses Angebots ist derzeit vom Protokoll pausiert, die Transaktion würde also abgelehnt. Es wurde nichts gesendet.",
         "countryBlocked": "Die Handelsregeln dieses Deployments erlauben diesen beiden Wallets nicht, miteinander zu handeln. Es wurde nichts gesendet.",
-        "consentRequired": "Dieses Angebot erfordert Ihre Zustimmung zu Risiken und Bedingungen, bevor es angenommen werden kann. Stimmen Sie zu und versuchen Sie es erneut.",
+        "consentRequired": "Die Wallet, die dieses Angebot erstellt hat, hat die vom Protokoll geforderte Risiko- und Bedingungszustimmung nicht hinterlegt, daher kann es nicht angenommen werden. Es wurde nichts gesendet.",
         "kycBlocked": "Die Identitätsprüfungsregeln dieses Deployments decken eine Seite dieses Angebots bei diesem Wert nicht ab. Es wurde nichts gesendet.",
         "expired": "Dieses Angebot ist abgelaufen und kann nicht reaktiviert werden. Der Ersteller müsste ein neues einstellen.",
         "partiallyFilled": "Dieses Angebot ist teilweise gefüllt und kann daher nur über Matching weitergeführt werden, nicht durch direkte Annahme. Es wurde nichts gesendet.",

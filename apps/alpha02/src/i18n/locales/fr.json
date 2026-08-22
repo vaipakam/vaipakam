@@ -1858,7 +1858,7 @@
         "flaggedCreator": "Le wallet qui a créé cette offre est signalé pour conformité, elle ne peut donc pas être acceptée. Rien n’a été envoyé.",
         "assetPaused": "L’un des actifs de cette offre est actuellement suspendu par le protocole, la transaction serait donc rejetée. Rien n’a été envoyé.",
         "countryBlocked": "Les règles de négociation de ce déploiement n’autorisent pas ces deux wallets à traiter entre eux. Rien n’a été envoyé.",
-        "consentRequired": "Cette offre nécessite votre consentement aux risques et conditions avant de pouvoir être acceptée. Donnez votre consentement, puis réessayez.",
+        "consentRequired": "Le wallet qui a créé cette offre n’a pas enregistré l’accord sur les risques et conditions exigé par le protocole ; elle ne peut donc pas être acceptée. Rien n’a été envoyé.",
         "kycBlocked": "Les règles de vérification d’identité de ce déploiement ne couvrent pas l’une des parties de cette offre à cette valeur. Rien n’a été envoyé.",
         "expired": "Cette offre a expiré et ne peut pas être réactivée. Son auteur devrait en publier une nouvelle.",
         "partiallyFilled": "Cette offre est partiellement remplie : elle ne peut avancer que par appariement, pas par acceptation directe. Rien n’a été envoyé.",
