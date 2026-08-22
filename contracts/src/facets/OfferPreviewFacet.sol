@@ -69,20 +69,31 @@ contract OfferPreviewFacet {
         // out — a check placed at the top of a list is not at the top of the
         // FUNCTION.
         //
-        // The trade-off is deliberate: returning here leaves the happy-path
-        // projections zeroed for a paused preview, where the doc-block promises
-        // them "for recoverable error cases". A pause is not recoverable by the
-        // caller and no accept can be attempted while it holds, so there is no
-        // quote to render — a surface on this code shows the paused state, not
-        // numbers.
-        if (LibPausable.paused()) {
-            preview.errorCode = OfferAcceptFacet.AcceptError.ProtocolPaused;
-            return preview;
-        }
+        // F18's first fix returned IMMEDIATELY here, which zeroed the
+        // happy-path projections for a paused preview. That was a real defect,
+        // not the harmless trade-off the comment claimed (Codex #1891 F21):
+        // a consumer reading `lifEstimate` alone sees 0 and renders it as a
+        // fee WAIVER, and that false quote can outlive the pause and precede an
+        // acceptance that charges the normal fee. "No accept is possible while
+        // paused" does not mean the quote goes unread.
+        //
+        // So the pause is split in two, which is what satisfies both findings
+        // at once:
+        //   - here, only for an offer that does not exist — nothing to quote,
+        //     and the accept would answer `EnforcedPause` rather than
+        //     `InvalidOffer` (F18);
+        //   - below, after the projections are populated (F21).
+        bool _paused = LibPausable.paused();
 
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         LibVaipakam.Offer storage offer = s.offers[offerId];
-        if (offer.creator == address(0)) revert InvalidOffer();
+        if (offer.creator == address(0)) {
+            if (_paused) {
+                preview.errorCode = OfferAcceptFacet.AcceptError.ProtocolPaused;
+                return preview;
+            }
+            revert InvalidOffer();
+        }
 
         // ─── Happy-path projections (populated unconditionally) ─────
         bool _isErc20 = offer.assetType == LibVaipakam.AssetType.ERC20;
@@ -170,12 +181,21 @@ contract OfferPreviewFacet {
         // Order mirrors `_acceptOffer`. First failing check sets `errorCode`;
         // subsequent checks are short-circuited via the sentinel return.
 
-        // (The protocol-wide pause is classified at the very TOP of this
-        // function, ahead of the offer lookup — see #1891 F15/F18 there. It is
-        // not in this chain because `whenNotPaused` is a modifier and outranks
-        // the whole body, offer validation included. The per-asset pause
-        // (`AssetPaused`) IS in this chain, further down, because it is an
-        // ordinary check inside `_acceptOffer`.)
+        // The protocol-wide pause, ahead of every classifier below, because
+        // `whenNotPaused` is a MODIFIER on both accept entry points — while it
+        // holds the function body never runs, so nothing below can be the
+        // transaction's real first failure (#1891 F15/F18). It sits here rather
+        // than before the projections so a paused preview still carries a
+        // truthful quote instead of a zeroed one a consumer would read as a fee
+        // waiver (F21).
+        //
+        // Not to be confused with the per-asset pause (`AssetPaused`), further
+        // down and genuinely part of this chain — that one is an ordinary check
+        // inside `_acceptOffer`.
+        if (_paused) {
+            preview.errorCode = OfferAcceptFacet.AcceptError.ProtocolPaused;
+            return preview;
+        }
         if (offer.accepted) {
             preview.errorCode = OfferAcceptFacet.AcceptError.OfferAlreadyAccepted;
             return preview;

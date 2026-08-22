@@ -2543,6 +2543,78 @@ contract EarlyWithdrawalFacetTest is Test {
         AdminFacet(address(diamond)).unpause();
     }
 
+    /// @dev #1835 (Codex #1891 F20) — the mandatory vault-version floor
+    ///      outranks staleness, even though F19 moved vault CREATION below it.
+    ///
+    ///      `getOrCreateUserVault` does two jobs: deploy a proxy for a
+    ///      first-time party, and enforce this floor for a party who already
+    ///      has one. F19 deferred the deployment cost and took the floor check
+    ///      with it by accident, so an outdated vault reported
+    ///      `SaleListingTermsStale` — and the relist that advises is blocked by
+    ///      the same floor, since `OfferCreateFacet` resolves a vault too.
+    ///      Advice that cannot be taken, hiding the reason that can: exactly the
+    ///      rule this PR's ordering rests on.
+    function test_item23_vaultUpgradeOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "vaultFloorStaleBuyer");
+
+        // Control: without the floor this listing answers staleness.
+        vm.expectRevert(IVaipakamErrors.SaleListingTermsStale.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // Governance raises the floor above the seller's existing vault.
+        (uint256 sellerVersion,,,) =
+            VaultFactoryFacet(address(diamond)).getVaultVersionInfo(lender);
+        VaultFactoryFacet(address(diamond)).setMandatoryVaultUpgrade(sellerVersion + 1);
+
+        vm.expectRevert(VaultFactoryFacet.VaultUpgradeRequired.selector);
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+    }
+
+    /// @dev #1835 (Codex #1891 F21) — a paused preview still carries a
+    ///      truthful quote.
+    ///
+    ///      F18's first fix returned the pause classifier before the
+    ///      projections ran, zeroing them. A consumer reading `lifEstimate`
+    ///      alone reads 0 as a fee WAIVER, and that false quote can outlive the
+    ///      pause. So the projections must be populated even when the answer is
+    ///      `ProtocolPaused`.
+    ///
+    ///      Uses `buyOfferId` — a plain ERC-20 lender offer, NOT a sale
+    ///      vehicle. The sale path skips the LIF entirely, so a sale fixture
+    ///      could not detect a zeroed one.
+    function test_item23_pausedPreviewStillQuotesTruthfully() public {
+        OfferAcceptFacet.AcceptPreview memory live =
+            OfferPreviewFacet(address(diamond)).previewAccept(buyOfferId, borrower);
+        assertTrue(
+            live.errorCode != OfferAcceptFacet.AcceptError.ProtocolPaused,
+            "control: not paused to begin with"
+        );
+        assertGt(live.effectivePrincipal, 0, "control: a real quote exists to be preserved");
+
+        AdminFacet(address(diamond)).pause();
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(buyOfferId, borrower);
+        AdminFacet(address(diamond)).unpause();
+
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.ProtocolPaused),
+            "the pause is still the first failure"
+        );
+        // The point of the test: the quote survives the classification.
+        assertEq(p.effectivePrincipal, live.effectivePrincipal, "principal must not zero out under a pause");
+        assertEq(p.interestRateBps, live.interestRateBps, "rate must not zero out under a pause");
+        assertEq(p.collateralAmount, live.collateralAmount, "collateral must not zero out under a pause");
+        assertEq(p.lifEstimate, live.lifEstimate, "a zeroed LIF reads as a fee waiver");
+    }
+
     /// @dev #1835 (Codex #1891 F18) — the pause outranks the OFFER LOOKUP too,
     ///      not merely the precondition chain.
     ///
