@@ -30,8 +30,9 @@ on the original mistake. Replacing a claim that is too general with another clai
 that is too general is not progress, and it is what happened here twice before it
 was noticed.
 
-After those, a design note records that a reward-payout safety gap was already
-half-closed — worth reading for what it decided NOT to do.
+After those, a design note re-scopes a reward-payout safety gap: the part that
+looked closed turns out to be evadable, so what remains is differently shaped
+rather than smaller. It is worth reading for what it decided NOT to do.
 
 The two contract entries close the day. The first makes the accept path
 changeable again: it had reached its size limit, and splitting it was a
@@ -713,7 +714,7 @@ told what the correction says — neither is quietly rewritten out of what
 was actually published.
 <!-- assembled-fragment: 1879-short-lapse-formula-correction.md sha256=24f65ee99363b82cc76922bf0e752fe03b01d253aa8fd12a526415d9033b4032 -->
 
-## The reward-payout safety gap turned out to be half-closed already (#1566)
+## A reward-payout safety gap was re-scoped, not reduced (#1566)
 
 A known fund-safety issue has been open since early August: a reward payout is
 limited by whatever spare balance the platform happens to be holding, rather
@@ -722,16 +723,18 @@ spare — it also holds two kinds of user collateral, so a reward payout can in
 principle be paid out of a borrower's collateral.
 
 Re-reading that issue against the platform as it stands today changed the
-picture, though not as cleanly as a first pass suggested. Separate work two days
-earlier had already limited part of it: on a chain that RECEIVES its reward
-funding, a payout for a day inside the new programme is limited to what actually
-arrived. That leaves more open than a first pass suggested, not less: the chain rewards
-originate on, where nothing arrives and so the limit has to be defined rather
-than copied across; older entitlements on the receiving chains, which are paid by
-a route the new limit never sees and never records, so a single person holding
-both kinds can spend twice against one balance; and a chain that has been
-detached from the group, which ends up limited by nothing at all because it is
-no longer recognised as either kind.
+picture — but it moved the boundary rather than shrinking the gap. Separate work
+two days earlier looked like it had limited part of it: on a chain that RECEIVES
+its reward funding, a payout for a day inside the new programme is limited to
+what actually arrived. That limit holds only where such a day is the only thing
+being claimed, and the note's own conclusion is that what remains is DIFFERENT in
+shape, not smaller. What is open: the chain rewards originate on, where nothing
+arrives and so the limit has to be defined rather than copied across; older
+entitlements on the receiving chains, which are paid by a route the new limit
+never sees and never records, so a single person holding both kinds can spend
+twice against one balance — which is what makes the limit evadable rather than
+merely partial; and a chain that has been detached from the group, which ends up
+limited by nothing at all because it is no longer recognised as either kind.
 
 That distinction is now written down, along with why the obvious repair — keep a
 list of everything else the balance is holding and subtract it — is the one
@@ -741,12 +744,16 @@ construction, and an attempt at it was reverted for creating a fresh way to lose
 user value: it left expiry clocks running on entitlements whose claims had begun
 to fail.
 
-Five options are set out with what each promises a claimant, and the choice is
-left to the owner rather than made in passing. Some of them keep the money in one
-shared pot and differ only in how carefully they reason about who owns what. Two
-do something else: one keeps the reward money somewhere separate, and one does
-not hold it at all until the moment someone claims it — in both, the question of
-who owns a given token stops arising rather than being answered more carefully.
+Five options are set out with what each promises a claimant, but only four are
+candidates: the first is kept on the page as an analysed-and-rejected step,
+because it cannot deliver the property the card asks for, and putting it back on
+the menu would offer the owner something that does not close the issue. The
+four-way choice is left to the owner rather than made in passing. Some of them
+keep the money in one shared pot and differ only in how carefully they reason
+about who owns what. Two do something else: one keeps the reward money somewhere
+separate, and one does not hold it at all until the moment someone claims it —
+in both, the question of who owns a given token stops arising rather than being
+answered more carefully.
 The second of those is narrower than it sounds and the note says so: it applies
 to freshly created reward value only, and leaves the recycled half — which is
 already held — still to be answered.
@@ -777,13 +784,16 @@ facet rather than trim behaviour to fit.
 The piece that moved is the borrower's Loan Initiation Fee charge and the
 delivery of the net principal — the fee-and-disbursement step of an acceptance.
 (Not its last money movement: the borrower's collateral is locked afterwards,
-and a Full-tariff acceptance moves VPFI later still.) It
-was chosen because the acceptance **already** ran it in a separate execution
+and a Full-tariff acceptance moves VPFI later still.) It was chosen because the
+acceptance **already** ran it in a separate execution
 context: the accept had long reached it through an internal self-call, so that
 the fee work's own depth would not be charged to the accept's call frame.
 Moving it means the step now lives at a different address on the far side of a
-boundary the code was already crossing on every accept. Nothing about the
-observable sequence changes — same order, same shared state, same single
+boundary the code was already crossing. That boundary is reached on a fresh
+cash-loan acceptance and only there: a purchase of an existing position skips
+the fee entirely, because the position paid it when it was first created, and an
+NFT rental takes its own path. Nothing about the observable sequence changes on
+the accepts that do reach it — same order, same shared state, same single
 transaction, and a failure anywhere past the boundary still unwinds the whole
 acceptance. Callers see no difference at all: they still send one transaction
 to the one platform address, and the function's on-chain identity is unchanged
