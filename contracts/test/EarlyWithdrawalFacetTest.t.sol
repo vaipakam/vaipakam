@@ -2362,10 +2362,25 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      it is the sharper of the two, because `_boundListingExpiry` refuses
     ///      to relist a matured loan — so "relist" is advice the seller cannot
     ///      take.
+    ///      The fixture must be a GTC vehicle (`expiresAt == 0`), and that is
+    ///      not incidental — it is the only shape that reaches this state.
+    ///      `_boundListingExpiry` clamps a normal listing's expiry at maturity,
+    ///      so a listing with a finite window is always EXPIRED by the time its
+    ///      loan matures, and the expiry gate answers first. A first attempt at
+    ///      this test used the ordinary 7-day listing and got
+    ///      `OfferExpired` — correct behaviour, wrong fixture. Which is also
+    ///      why the guard's reachable population here is precisely the
+    ///      pre-upgrade GTC vehicle the expiry gate above exists for.
     function test_item23_maturedLoanOutranksStaleTerms() public {
         uint256 saleOfferId = _stagePreMirroringListing(
             false, false, LibVaipakam.PeriodicInterestCadence.None
         );
+
+        // The pre-upgrade GTC shape: never expires, so it survives to maturity.
+        LibVaipakam.Offer memory gtc =
+            OfferCancelFacet(address(diamond)).getOffer(saleOfferId);
+        gtc.expiresAt = 0;
+        TestMutatorFacet(address(diamond)).setOffer(saleOfferId, gtc);
 
         // Past the loan's own maturity, still `Active` in its grace window.
         LibVaipakam.Loan memory ld =
