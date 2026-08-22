@@ -3913,6 +3913,9 @@ A compensated day still funded below its quote after a bounded
 deadline takes the SHORT lapse: pricing switches from
 defer-on-shortfall to a pool-scaled delta, so every settlement path
 pays proportionally within delivered funding and the cursor advances.
+**[Corrected 2026-08-22 — see "Correction" at the end of this file: the
+scaling is not a plain proportion, and a side of a short-lapsed day can
+pay nothing despite funding having arrived.]**
 The deadline is absolutely bounded — a rolling window that only a
 quarter-of-the-shortfall top-up extends, under a hard three-window
 cap — so neither operator silence nor dust top-ups can park a day
@@ -9062,3 +9065,48 @@ change. They are years of newer categories — reward-governor,
 reward-compensation, buyback-intent and a dozen more — that were used in
 the contracts without being added to either the specification or the
 allow-list. That is a real reconciliation and is not attempted here.
+
+---
+
+## Correction — 2026-08-22
+
+**What this file said.** In the lapse-terminals entry above: *"pricing
+switches from defer-on-shortfall to a pool-scaled delta, so every
+settlement path pays proportionally within delivered funding."*
+
+**What is true.** The scaling is not a plain funded-over-quoted
+proportion. A per-entry allowance is taken off the funded pool before the
+ratio is formed, so a side whose funding does not exceed that allowance
+pays **nothing** — even though funding arrived. "Every settlement path
+pays proportionally" denies exactly that case.
+
+This is decided **per side, not per day.** The lender and borrower halves
+each carry their own pool and their own entry count, and the terminal can
+fire while only one of them is short. So the outcome is not "the day pays
+proportionally" or "the day pays nothing": one side can price at zero
+while the other pays in full or in proportion, on the same day.
+
+**Why this is corrected rather than left standing.** A dated release note
+is normally a record of what was true when written, and stale entries are
+left alone on that basis. This one does not qualify. The per-entry
+allowance shipped on 2026-08-10, in the same change that introduced the
+lapse terminals; this note was written on 2026-08-16. It was not
+true-then-stale — it was wrong on arrival, six days after the behaviour it
+describes existed.
+
+The distinction matters because of who is harmed. A stale status claim
+misleads a reader about where the project stands. A wrong formula gives a
+reader a number, and someone sizing an expected payout from this paragraph
+would have computed one the contract will not pay.
+
+The published wording is left in place above, flagged, rather than
+rewritten: the record of what was published is worth keeping, and a
+correction a reader can see beats a silent edit they cannot.
+
+The same wrong formula was live in the functional specification — in a
+passage seven hundred lines from the one under review at the time — and
+survived eleven review rounds there because no finding pointed at it. Its
+correction carried the same day-wide overgeneralization this note did, and
+both are now scoped per side.
+
+Tracked as #1879.
