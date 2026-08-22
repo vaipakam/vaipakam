@@ -860,3 +860,199 @@ enumerate these surfaces has found one more. Four rounds, four additions.
 The claim display itself needed no change: it reads each loan's actual held amount
 and shows a rebate only where one exists, which was already correct for both old
 and new loans. The wording around it was the only thing making a promise.
+
+## The lender chooser's live review stops guessing at what it cannot see
+
+The post-deploy review for the lender exit chooser drives the real page against
+the live chain: it finds a wallet that actually holds lender positions, opens
+each one, checks that the chooser card renders with all three of its options
+explained, then switches the page into Advanced mode and exercises every jump
+button the card offers.
+
+Most of the work in this change is about a single question the review kept
+answering badly: what does it mean when the card offers no way through to the
+sale tools? That happens for two completely different reasons — the card is
+still waiting on a read it needs, or there is genuinely nothing to jump to — and
+from outside the card those look identical. The review used to wait forty-five
+seconds and then assume the second one. On a chain where nearly every lender
+position is past its due date, which is the situation today, that was both slow
+and unsound: a real regression that hid the Advanced-mode switch would have
+looked exactly like the ordinary, correct case.
+
+The card now states its own answer, and the review reads it instead of
+inferring. Where the card says it has settled and has a row worth jumping to,
+but offers no way to reach it, that contradiction is reported as a product
+failure — the check this review was always supposed to make and could not. Where
+the card says it is still working, the review keeps waiting rather than
+concluding. Where a read the card depends on stopped without answering, the run
+ends as "could not observe" rather than "observed nothing wrong". And where the
+deployed page is an older build that publishes no answer at all, the previous
+behaviour is kept unchanged, so a deployment lagging behind a merge is never
+reported as a defect.
+
+### Measuring the jumps instead of trusting them
+
+The other substantive change is to how the jump buttons are checked. The review
+used to confirm that the anchor each row *should* lead to existed somewhere on
+the page. That passes in exactly the situations worth catching: with both
+targets present — the normal case — the two buttons could lead to each other's
+destination, or to nothing at all, and the check would still be satisfied.
+
+Each button is now clicked, and where it actually took the reader is recorded
+and compared against where that row promised to go. A button that lands
+somewhere else is named along with where it went, rather than being reported as
+a missing element the reader would then fail to find. Buttons are counted
+individually rather than per row, so a duplicate control cannot hide behind its
+neighbour.
+
+### What the review refuses to call a pass
+
+Several outcomes that used to end a run cleanly now end it as an
+unfinished observation, which is the more honest verdict and the one this
+project keeps having to relearn:
+
+- The reviewed position moved while the review was watching — sold, repaid,
+  matured, or the status briefly left Active and returned. A card correctly
+  withdrawing its options during that window is not a regression, and the review
+  now samples the chain during its own wait so it can tell the difference.
+- The card belongs to a wallet that no longer holds the position. It stays on
+  screen for up to a minute after ownership moves, so a successful-looking
+  review can be a review of somebody else's position.
+- The card was seen and then vanished. Nothing in a before-and-after comparison
+  can detect a change that reversed inside the window; only the disappearance
+  itself can.
+
+### A note on how the defects were found
+
+The comparison the whole Advanced verdict rests on had shipped through four
+review rounds without ever running, because the live chain never presents the
+state that reaches it — every "re-ran live, clean" had skipped the code being
+changed. Moving that logic into its own module with its own tests found, on the
+first run, that it could never have worked. The rules added since — what a
+missing switch means, when a mid-review transition explains an outcome — live in
+that same tested module for the same reason, rather than as assertions inside a
+driver that cannot be exercised.
+
+The reporting layer that decides which observations become failures still has no
+such seam, and remains the place where defects are found by reading rather than
+by running. That is tracked separately (#1861).
+
+Closes #1853.
+
+## The live review's own verdict rules can now be tested
+
+The post-deploy review of the lender position page decides three things about
+each page it looks at: what counts as a product failure, what counts as
+something it could not observe, and what is merely worth printing. That decision
+sat inside the reporting loop with no way in from outside, so nothing could hand
+it a made-up observation and check the answer.
+
+Every defect found in those rules so far was found by reading them. One of them
+hid a genuine dead button whenever an unfamiliar row appeared beside it. Another
+sent a reader looking for a control that had never been rendered. A third was
+keyed on a sentence the review itself writes, so rewording that sentence would
+have quietly switched the rule off. None of the three could have been caught by
+running the review, because the live chain never produces the situations they
+describe — the same reason an earlier comparison in this review shipped through
+four rounds having never once executed.
+
+The rules now live in their own module with tests that construct the
+observations directly, which is all they ever needed: an observation is a plain
+record, so none of this required a browser or a chain. The order in which the
+two verdicts are ranked stays where it was, in the review itself.
+
+Writing the tests turned up one defect immediately, and it was introduced by the
+extraction rather than inherited: the reason a page is unobservable is now the
+verdict itself rather than a note printed alongside it, so a page blocked for no
+stated reason would have read as not blocked at all. It cannot now be silent.
+
+## A review that could not look no longer reports that it looked
+
+The post-deploy review of the lender position page asks the chooser card a
+direct question: have you finished deciding, and is there anything worth jumping
+to? Three quite different things used to produce the same answer — the card is
+not on the page, the card is from an older build that does not publish an answer,
+and the review's own attempt to read the card failed outright.
+
+Only the middle one deserved the response all three were getting. An older build
+that says nothing is a build the review has to judge by what it can see rendered,
+and treating rendered controls as the evidence is correct there. Applying that to
+a read that simply fell over is the opposite: it turns a failure to observe into
+a positive instruction to trust what is on screen, which is the one outcome this
+review has spent its whole life learning to refuse. A run that could not look
+should say so, not report that it looked and found nothing wrong.
+
+A failed read now ends the run as an unfinished observation, with a reason that
+says whose failure it was. It deliberately does not borrow the existing wording
+for a read the *card* reports as failed — that message names an attribute the
+page publishes, and in this case the page published nothing and the fault was on
+the reviewing side. Sending a reader to inspect a page for a problem that is not
+there costs them the trip before they find out.
+
+The remaining case — the card genuinely absent — still answers as before. It is
+not wrong, only slow: the review waits out its full window before the separate
+card-went-missing handling takes over. That is recorded rather than changed here.
+
+## The guides no longer tell borrowers who repaid in full that their rebate is gone (#882)
+
+On loans still using the retired VPFI fee path, a loan that ends properly
+**settles** the rebate on the VPFI held against the Loan
+Initiation Fee. A default or a liquidation forfeits the whole amount outright.
+
+Ending properly covers more routes than the three the guides used to name: a
+full repayment, an early close, a refinance, **and also the sale-based closes** —
+selling the collateral to settle the loan, and the swap-to-repay routes. Six
+distinct paths settle the rebate, and copy that lists only three tells the
+borrower using a fourth that theirs is not a proper close.
+
+The sale routes are listed separately rather than folded in with the others,
+because what they return is different — and they differ from each other too. A
+prepay sale hands the collateral to the buyer and pays the borrower the sale
+price less the lender's entitlement, the treasury cut, and any seller fees the
+listing carried; swap-to-repay sells collateral up to a ceiling the borrower
+sets — a generous ceiling can consume more than the debt strictly needed —
+returns whatever is left unconsumed, and normally pays any surplus straight to
+the borrower rather than leaving it as a claim, the exception being a holder
+under a sanctions freeze, whose surplus is held as a claim instead. Grouping any of them under "your
+collateral back" would trade one wrong expectation for another.
+
+**One route deliberately promises nothing.** On a prepay sale the rebate is
+calculated at settlement and then cannot be collected, because the loan is moved
+to a state the borrower claim refuses. That is a contract defect rather than a
+wording one and is filed separately; until it is resolved the guides say plainly
+not to count on a rebate there, which is the only honest thing to print.
+
+Settling is not the same as paying out. The rebate is sized by the discount
+standing at the moment of settlement — not by an average over the loan — so a
+borrower who held no VPFI, or has dropped below the first tier by then, can
+settle properly and still receive nothing, and the whole held amount is
+forfeited. (Where the loan was matched, part of that goes to the matcher rather
+than to treasury; from the borrower's side it is gone either way.) What is wrong is telling every borrower it
+never comes back; what would be equally wrong is telling them it always does.
+
+Both user guides said otherwise. The Claim Center section of every Basic guide
+stated flatly that the fee rebate is what never comes back, two sentences after
+telling a borrower who repaid in full what their claim returns. The Advanced
+guides went further and contradicted themselves inside a single sentence: the
+rebate is "always lost", followed immediately by the clause saying it comes back
+on a proper close.
+
+**Why it matters more than a wording slip.** It is on the page a reader visits
+to find out what they can collect, and the error points the wrong way — it tells
+them the answer is always nothing, when the answer depends on how their loan
+ended. A borrower who believed it would simply never look.
+
+**Corrected in all twenty editions** — both guides, ten languages — so no reader
+is told one thing in their language and another in English. The sentence now
+says plainly that whether the rebate comes back depends on how the loan ended,
+and names which endings settle it — while saying that what is settled can itself
+be nothing, because the amount is sized by the discount the borrower holds at
+the moment it settles.
+
+**How it was missed.** An earlier pass in the same effort corrected this exact
+claim in the guides' action summaries and did not carry it into the Claim Center
+sections those summaries point at — so the summary and the section it referred
+readers to disagreed. The Advanced editions had their tail clause corrected
+while the opening clause kept the old assertion, which is how one sentence came
+to state both. Fixing where an error is reported rather than everywhere the
+claim appears is what leaves this shape behind.
