@@ -59,7 +59,10 @@ it is **evadable** by any claimant with entitlements on both sides of `D*`.
 `isMirrorRewardChain` is `!isCanonicalRewardChain && baseChainId != 0`, so
 detaching a former mirror with `setBaseChainId(0)` leaves a deployment that is
 neither canonical nor a mirror. In that state `deliveredFreshBound` returns
-`type(uint256).max` **and** every paid-counter writer stops recording — while
+`type(uint256).max` while the three chain-role-guarded paid writers stop
+recording (the administrative two do not: the role change itself can retire the
+residual by assigning `paid = received`, and the unguarded seeder stays callable)
+— while
 persisted armed-day stamps stay claimable. An armed claim there is bounded by
 nothing but the balance, and nothing even tracks what it spent. Any fix must
 decide what this role does rather than inheriting the mirror check's negation,
@@ -178,11 +181,13 @@ Diamond it cannot find what it is meant to protect.** `fallbackSnapshot` and
 new counter cannot discover existing `vpfiHeld`, `rebateAmount` or fallback
 custody on-chain. Writers started at upgrade time reserve **zero** for precisely
 the grandfathered balances this option exists to protect. Any costing must
-include an aggregation mechanism — an off-chain enumeration seeded ATOMICALLY WITH the
-upgrade — not merely before payouts are enabled, because a loan can open a
-swap-to-repay intent or take a fallback snapshot between the snapshot being taken
-and the aggregate writers being installed, leaving real custody absent from both
-the seed and every later delta — or a lazy per-loan reservation on first touch. **The
+include an aggregation mechanism — an off-chain enumeration whose PRODUCERS ARE
+FROZEN across it — pausing intent creation and fallback snapshotting from before
+the enumeration's block until the writers are live. Atomicity with the upgrade is
+not sufficient on its own: the enumeration necessarily observes an earlier block,
+so a loan can open an intent or take a snapshot between that block and the
+writers going in, and that custody is absent from both the seed and every later
+delta. Only freezing the producers closes the window — or a lazy per-loan reservation on first touch. **The
 lazy variant does not work on its own**: an untouched grandfathered loan stays
 absent from the aggregate until something touches it, so an intervening reward
 claim consumes exactly the tokens it was meant to reserve. Seeding has to precede
@@ -204,7 +209,12 @@ question rather than answering it**, and it was absent from the first two
 revisions of this note because I was looking for a better bound rather than for a
 different arrangement.
 
-**This note does not pick one.** A and B differ in what the platform promises;
+**The decision is between B, C and D.** Option A is retained above as an
+analysed-and-rejected step, not as a candidate: it does not satisfy the
+fund-safety invariant, so presenting it as one of the choices would offer an
+owner something that cannot close the card.
+
+**This note does not pick between the three.** A and B differ in what the platform promises;
 C narrows the goal. That is an owner call.
 
 ## 5. What is true regardless of the option
