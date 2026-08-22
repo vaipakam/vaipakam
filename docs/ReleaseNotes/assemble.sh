@@ -1848,7 +1848,16 @@ if (( ${#already[@]} > 0 )); then
       _changed+=("${FRAG_NAME[$f]} -> .assembled/$_q_name")
       continue
     fi
-    rm "$_q"
+    # Guarded, like every other failure reachable here (Codex #1863 r41).
+    # A bare `rm` failing under `set -e` exits with the tool's own
+    # diagnostic and nothing else — no list of what an earlier iteration
+    # already removed, no word that the pool is partly cleared. Fourth
+    # place this same routing was missing; the reporter exists so the
+    # answer is uniform, and a bare command silently opts out of it.
+    if ! rm "$_q"; then
+      echo "Error: could not remove ${FRAG_NAME[$f]} from the quarantine." >&2
+      _refuse_reporting_consumed
+    fi
     CONSUMED+=("${FRAG_NAME[$f]}")
   done
   if (( ${#_changed[@]} > 0 )); then

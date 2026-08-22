@@ -3233,6 +3233,35 @@ else
   check "skipped — chgrp needs privilege (CI runs it)" "1" "1"
 fi
 
+echo "T118: a failed recovery removal still reports what already went"
+W="$ROOT/t118"; build "$W"
+out="$W/docs/ReleaseNotes"
+# A bare `rm` failing under `set -e` exits with the tool's own diagnostic and
+# nothing else — no list of what an earlier iteration already removed, no word
+# that the pool is partly cleared (Codex #1863 r41). Both fragments take the
+# recovery path; the second removal fails.
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -- docs/ReleaseNotes/unreleased/
+mkdir -p "$W/fakebin"
+cat > "$W/fakebin/rm" <<SHIM
+#!/bin/sh
+case "\$*" in *.probe*) exec /bin/rm "\$@" ;; esac
+case "\$*" in
+  */.assembled/*)
+    if [ -f "$W/once" ]; then exit 1; fi
+    : > "$W/once"
+    ;;
+esac
+exec /bin/rm "\$@"
+SHIM
+chmod +x "$W/fakebin/rm"
+msg="$(PATH="$W/fakebin:$PATH" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"          "$?"                                             "1"
+check "it says which one"      "$(says "$msg" 'could not remove')"               "1"
+check "it names what already went" "$(says "$msg" 'Already removed before this')" "1"
+check "it does not claim nothing went" \
+  "$(says "$msg" 'Nothing has been consumed and no fragment has been touched')"  "0"
+
 echo "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
