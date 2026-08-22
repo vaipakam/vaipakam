@@ -2203,9 +2203,14 @@ an expired cache on a tier that hasn't moved is not something
 pressing the button fixes, and neither is a same-tier deposit
 or withdrawal — a rollup that produces the same tuple de-dups
 exactly as the button does. What restores it is a broadcast
-carrying a genuinely DIFFERENT tuple: your tier actually
-changing, your consent flag moving, or a governance table
-bump raising the version.
+carrying a changed tuple that ALSO names an eligible non-zero
+tier. A changed tuple is not enough on its own — withdrawing
+below Tier 1, or turning consent off, broadcasts a genuinely
+different tuple carrying `(0, 0)`, and the mirror correctly
+goes on treating you as no discount. What works is a change
+that leaves you eligible: crossing back up a tier, turning
+consent back on, or a governance table bump raising the
+version while you still qualify.
 
 There is deliberately no supported way to force a refresh
 otherwise. Repeatedly toggling a value to manufacture

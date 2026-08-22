@@ -11,9 +11,12 @@ silently, nothing is broadcast, and the reader is left where they started while
 believing they have fixed it.
 
 The passage now says so directly: an expired cache on a tier that has not moved
-is not something the button fixes, and the discount returns when a later
-broadcast carries a genuinely changed tier — either from your own next tier
-change or from any vault action that triggers a fresh sync.
+is not something the button fixes, and the discount returns only when a later
+broadcast carries a tier that has both CHANGED and still qualifies for a
+discount. Neither half is enough alone: an unchanged tier is skipped and sent
+nowhere, so an ordinary same-size deposit does nothing; and a change that drops
+you below the lowest tier, or switches the discount off, is broadcast faithfully
+and leaves you exactly where you were.
 
 It also says plainly that there is no supported way to force a refresh
 otherwise, and why: manufacturing broadcasts by toggling a value back and forth
