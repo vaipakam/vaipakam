@@ -832,8 +832,8 @@ supported single-day slice (#918).
 **Capacity alone is not the check.** A lane has SEPARATE outbound and inbound
 rate-limiter states, each with its own `capacity`, `rate`, `isEnabled` and
 current `tokens`. A configured capacity that looks adequate can still fail
-delivery — because the two directions are configured differently, because either
-side is disabled, or because a bucket is currently DEPLETED and has not refilled.
+delivery — because the two directions are configured differently, or
+because a bucket is currently DEPLETED and has not refilled.
 A Base send can consume the outbound side and then be rejected or delayed by the
 mirror's inbound limiter, and Step 5 is waiting on `RewardBudgetReceived` against
 an immutable `D*`. Read both states, both directions, per lane, and check present
@@ -1029,8 +1029,11 @@ normal funding route BEFORE broadcasting the bootstrap day, or promote it only
 after its local entries have settled. Broadcasting first is the case this whole
 section exists to prevent.
 
-Confirm the day predates `D*` and has fully ELAPSED. **A lapse clock is NOT
-required here**: on a deployment armed before the V3 upgrade every pre-`D*` day
+Confirm the day predates `D*` and has fully ELAPSED. **A lapse clock is NOT required here, UNLESS a destination has
+followed a Base rotation** — a rotated mirror rejects the legacy V2 wire the
+clockless fan-out falls back to, so for those the propagation day must carry a
+clock, and that applies to initially-active rotated mirrors on the FIRST ceremony
+too, not only to promotions. Otherwise: on a deployment armed before the V3 upgrade every pre-`D*` day
 may have `finalizedAt == 0`, and demanding one would leave no eligible day and no
 way to promote the mirror at all. The fan-out falls back to the clockless wire —
 it is the per-destination form that needs the clock, and this case uses the
@@ -1077,8 +1080,11 @@ this step reaches for. Check the clock before choosing the per-destination form.
 was grace- or force-finalized without a particular mirror's daily report, that
 mirror has no day standing for it — and being pre-cutover, it has no armed-day
 zeroed marker either — so `broadcastGlobalTo` reverts
-`DestinationHasNoDayStanding`. Use the fan-out form for such a day, or pick a day
-every destination was included in.
+`DestinationHasNoDayStanding`. Use the fan-out form for such a day, or pick a day for
+which every destination has a NON-ZERO remittable slice — inclusion alone is not
+enough, since a destination that submitted a ZERO-VALUED report is included and
+still budgets to zero, which exits the plan without a close and reverts the remit
+exactly as exclusion does.
 
 **That first propagation day must be strictly BEFORE `D*`, or the ceremony
 deadlocks — after the irreversible arm.** An armed-day remit is refused until
