@@ -215,17 +215,30 @@ def checked(what: str, fn, *args, **kwargs):
 _HOOK_DIR = os.environ.get("ASSEMBLE_TEST_HOOK_DIR", "")
 
 
-def test_hook(phase: str, **paths: str) -> bool:
-    """Run the hook for `phase` if one exists. False means it failed."""
+def test_hook(phase: str, **paths: str) -> None:
+    """Run the hook for `phase` if one exists.
+
+    A non-zero exit means the phase failed, and it is RAISED rather than
+    returned (Codex #1898 r1). Returning a bool left it to each call
+    site to check, four of them did not, and a migrated case could then
+    stop injecting the failure it claimed to cover while still passing —
+    the seam quietly not checking, which is the failure this whole
+    suite is about.
+    """
     if not _HOOK_DIR:
-        return True
+        return
     script = os.path.join(_HOOK_DIR, phase)
     if not os.path.isfile(script) or not os.access(script, os.X_OK):
-        return True
+        return
     env = dict(os.environ)
+    # The run's own pid, so a case can signal it at a known moment —
+    # which is the only way to test that a signal arriving mid-run
+    # still reaches the cleanup path.
+    env["ASSEMBLE_PID"] = str(os.getpid())
     for key, value in paths.items():
         env[f"ASSEMBLE_{key.upper()}"] = value
-    return subprocess.run([script], env=env).returncode == 0
+    if subprocess.run([script], env=env).returncode != 0:
+        raise StepFailed(f"the {phase} phase")
 
 
 # ── The run ──────────────────────────────────────────────────────────────────
@@ -794,7 +807,7 @@ class Assembly:
         """A fragment must not supply a marker record of its own."""
         with open(snap, "rb") as fh:
             data = fh.read()
-        prefix = MARKER_PREFIX.encode()
+        prefix = os.fsencode(MARKER_PREFIX)
         for raw in data.split(b"\n"):
             if not raw.startswith(prefix):
                 continue
@@ -806,7 +819,7 @@ class Assembly:
                 err("every later run would then refuse to read that file — leaving")
                 err("assembly stuck on something this script had produced itself.")
                 raise SystemExit(1)
-            text = raw.decode("utf-8", errors="replace")
+            text = os.fsdecode(raw)
             if MARKER_RE.match(text):
                 err(f"Error: {name} contains a line that is itself an assembly")
                 err("marker:")
@@ -882,7 +895,7 @@ class Assembly:
                 lambda: open(copy, "rb").read(),
             )
             checked(f"scanning {base} for assembly markers", lambda: None)
-            prefix = MARKER_PREFIX.encode()
+            prefix = os.fsencode(MARKER_PREFIX)
             for raw in data.split(b"\n"):
                 if not raw.startswith(prefix):
                     continue
@@ -896,7 +909,13 @@ class Assembly:
                     err("")
                     err("Nothing has been consumed. Repair the file by hand.")
                     raise SystemExit(1)
-                m = MARKER_RE.match(raw.decode("utf-8", errors="replace"))
+                # SURROGATEESCAPE, not "replace" (Codex #1898 r1).
+                # `os.listdir` hands back an undecodable byte as a
+                # surrogate; decoding the marker with replacement turns
+                # it into U+FFFD, so the name read back could never
+                # compare equal to the name on disk and the fragment
+                # was folded in again on every run.
+                m = MARKER_RE.match(os.fsdecode(raw))
                 if not m:
                     continue
                 name, digest = m.group(1), m.group(2)
@@ -904,10 +923,7 @@ class Assembly:
                 marker_where.setdefault(digest, []).append(
                     f"{name} in {os.path.basename(dated)}"
                 )
-        if not test_hook("scan", out=self.out):
-            err("Error: scanning for assembly markers failed.")
-            err("Refusing to assemble: an incomplete index is worse than none.")
-            raise SystemExit(1)
+        test_hook("scan", out=self.out)
         return marker_seen, marker_where
 
     # ── revalidation ─────────────────────────────────────────────────────
@@ -1027,7 +1043,13 @@ class Assembly:
             raise SystemExit(1)
 
         if ambiguous:
-            pending.extend(ambiguous)
+            # In DISCOVERY order, not appended after the rest (Codex
+            # #1898 r1). Concatenating the classifications emitted a
+            # forced 0001-a after a new 0002-b, contradicting the
+            # task-id ordering the pool is sorted by and the README
+            # documents.
+            forced = set(ambiguous)
+            pending = [f for f in self.frags if f in forced or f in set(pending)]
         return already, pending
 
     def assert_section_present(self, f: str) -> None:
@@ -1047,14 +1069,32 @@ class Assembly:
         the cheap approximation; reconstruction is the sound one without
         the format change, because the assembler owns the transform.
         """
+        # The EXACT bytes `build()` appended, marker line included
+        # (Codex #1898 r1). Stripping the trailing newline made the
+        # original body a PREFIX: a fragment ending `body\n` matched a
+        # dated file whose section had been edited to `body extended\n`,
+        # so the marker still authorised the deletion while the command
+        # claimed the content was there byte for byte. A prefix is not
+        # the thing; reconstruct what was written and look for that.
         with open(self.frag_snap[f], "rb") as fh:
             body = self.rewrite_links(fh.read())
-        body = body.rstrip(b"\n")
-        if not body:
+        if not body.strip():
             return
+        appended = body if body.endswith(b"\n") else body + b"\n"
+        appended += os.fsencode(
+            f"{MARKER_PREFIX}{self.frag_name[f]} "
+            f"sha256={self.frag_hash[f]} -->\n"
+        )
         with open(self.out_copy or self.out, "rb") as fh:
             haystack = fh.read()
-        if body in haystack:
+        # Line endings normalised on BOTH sides before comparing. The
+        # marker scanner already accepts a CRLF-terminated record
+        # (`MARKER_RE` ends `\r?$`), so requiring the LF form here made a
+        # CRLF dated file look as though its section were missing — and
+        # this check refuses on that. Normalising keeps the exact-bytes
+        # intent, which is about not matching a PREFIX, while tolerating
+        # the same ending difference everything else does.
+        if appended.replace(b"\r\n", b"\n") in haystack.replace(b"\r\n", b"\n"):
             return
         name = self.frag_name[f]
         err(f"Error: {os.path.basename(self.out)} carries the marker for {name},")
@@ -1255,12 +1295,7 @@ class Assembly:
             self.final_mode = format(0o666 & ~umask, "o")
             self.approved_gid = os.stat(self.work).st_gid
 
-        if not test_hook("build", work=self.work or "", out=self.out):
-            err("Error: building the replacement failed.")
-            err("Refusing to assemble: this run replaces a published file and deletes")
-            err("the fragments it consumed, so it must not continue on the strength of")
-            err("a result it did not get.")
-            self.refuse_reporting_consumed()
+        test_hook("build", work=self.work or "", out=self.out)
 
         with open(self.work, "ab") as fh:
             for f in self.frags:
@@ -1273,9 +1308,14 @@ class Assembly:
                 fh.write(body)
                 if not body.endswith(b"\n"):
                     fh.write(b"\n")
+                # os.fsencode, not .encode(): a name carrying a
+                # surrogate from an undecodable byte raises on the
+                # latter, aborting with a traceback before publication.
                 fh.write(
-                    f"{MARKER_PREFIX}{self.frag_name[f]} "
-                    f"sha256={self.frag_hash[f]} -->\n".encode()
+                    os.fsencode(
+                        f"{MARKER_PREFIX}{self.frag_name[f]} "
+                        f"sha256={self.frag_hash[f]} -->\n"
+                    )
                 )
 
     # ── the gate ─────────────────────────────────────────────────────────
@@ -1415,6 +1455,22 @@ class Assembly:
             self.refuse_reporting_consumed()
         self.work = None
         self.published = True
+        # The DIRECTORY ENTRY, not just the file (Codex #1898 r1).
+        # fsyncing the replacement makes its bytes durable; it says
+        # nothing about the rename that put them at $OUT. After a power
+        # cut the fragment unlinks could survive while the publication
+        # did not — the text gone from both places, which is the one
+        # outcome this whole script exists to prevent. Best-effort, like
+        # the file flush: it narrows a window and cannot corrupt
+        # anything by not happening.
+        try:
+            dfd = os.open(self.dir, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        except OSError:
+            pass
         self.published_id = frag_hash(self.out)
         if self.published_id != self.expected_id:
             self.abort_after_write(
@@ -1430,7 +1486,16 @@ class Assembly:
         kept: list[str] = []
         for f in self.frags:
             name = self.frag_name[f]
-            if frag_hash(self.out) != self.published_id:
+            # A failed READ is the same news as a mismatch, and reaches
+            # the operator through the same door (Codex #1898 r1).
+            # Letting the OSError escape sent them a generic error rather
+            # than being told which fragments had already gone and that
+            # the published file is the thing now missing.
+            try:
+                still = frag_hash(self.out)
+            except OSError:
+                still = None
+            if still != self.published_id:
                 self.abort_after_write(
                     f"{os.path.basename(self.out)} is gone or altered since it was written"
                 )
@@ -1537,6 +1602,21 @@ class Assembly:
         out_line(f"  - git commit -m 'docs: release notes {self.date}'")
 
 
+class Terminated(Exception):
+    """SIGTERM arrived. Raised so the cleanup path runs."""
+
+
+def _on_sigterm(_signum, _frame):
+    # MASKING IS NOT HANDLING (Codex #1898 r1). `HoldSignals` defers
+    # SIGTERM across the two-step windows, but with no handler installed
+    # Python restores the DEFAULT disposition when the mask lifts — the
+    # process dies immediately, `finally` never runs, and the lock and
+    # working directories are left behind for every later run to refuse
+    # over. The shell version had a trap for exactly this and the port
+    # dropped it, keeping only the half that defers.
+    raise Terminated()
+
+
 def main(argv: list[str]) -> int:
     date = ""
     allow_mixed = force = False
@@ -1560,6 +1640,8 @@ def main(argv: list[str]) -> int:
         err(f"Error: date must be YYYY-MM-DD (got '{date}')")
         return 1
 
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
     directory = os.path.dirname(os.path.realpath(__file__))
     run = Assembly(directory, date, allow_mixed, force)
     try:
@@ -1568,6 +1650,8 @@ def main(argv: list[str]) -> int:
         return int(e.code or 0)
     except KeyboardInterrupt:
         return 130
+    except Terminated:
+        return 143
     except StepFailed as sf:
         # ONE renderer for every named step, which is the whole point of
         # having the wrapper: the shell version read the same way at

@@ -3998,6 +3998,67 @@ check "the other edit survives" \
   "$(grep -c 'edited by someone else' "$out/ReleaseNotes-2026-08-16.md")"          "1"
 check "nothing was consumed"   "$(pending "$W")"                                   "2"
 
+
+case_start "T208: SIGTERM releases the lock instead of stranding it"
+W="$ROOT/t208"; build "$W"
+out="$W/docs/ReleaseNotes"
+mkdir -p "$W/hooks"
+# Without a SIGTERM handler, Python restores the DEFAULT disposition when
+# the mask lifts: the process dies, `finally` never runs, and the lock is
+# left for every later run to refuse over (Codex #1898 r1).
+cat > "$W/hooks/flush" <<SHIM
+#!/bin/sh
+kill -TERM \$ASSEMBLE_PID 2>/dev/null
+sleep 2
+exit 0
+SHIM
+chmod +x "$W/hooks/flush"
+ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "the lock is not left behind" \
+  "$([ -e "$W/docs/ReleaseNotes/unreleased/.assemble.lock" ] && echo stranded || echo released)" "released"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+check "a later run is not blocked" "$?" "0"
+
+case_start "T209: a marker cannot authorise a deletion on a PREFIX match"
+W="$ROOT/t209"; build "$W"
+out="$W/docs/ReleaseNotes"
+bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+git -C "$W" checkout -q -- docs/ReleaseNotes/unreleased/
+# Extend the section's final line, leaving the marker. The original body
+# is now a PREFIX of what is there, which a substring test accepts — and
+# the fragment would be deleted while the run claimed byte-for-byte.
+python3 - "$out/ReleaseNotes-2026-08-16.md" <<'PYEOF'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+open(p, 'w').write(s.replace('## 0001-a\n', '## 0001-a extended\n', 1))
+PYEOF
+msg="$(bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates 2>&1)"
+check "the run stops"        "$?"                                                "1"
+check "it says the section is missing" \
+  "$(says "$msg" 'but not the section it stands for')"                            "1"
+check "the fragment is NOT deleted" \
+  "$(ls "$W/docs/ReleaseNotes/unreleased/0001-a.md" >/dev/null 2>&1 && echo kept || echo gone)" "kept"
+
+case_start "T210: a hook failing means the phase failed, at every phase"
+W="$ROOT/t210"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The seam's contract is that a non-zero hook exit fails the phase. Four
+# call sites ignored the answer, so a migrated case could stop injecting
+# its failure and still pass (Codex #1898 r1).
+_phases=0; _enforced=0
+for phase in snapshot scan build flush; do
+  _phases=$(( _phases + 1 ))
+  git -C "$W" checkout -q -- docs/ReleaseNotes/unreleased/ 2>/dev/null
+  rm -rf "$W/hooks" "$out/ReleaseNotes-2026-08-16.md"; mkdir -p "$W/hooks"
+  printf '#!/bin/sh\nexit 9\n' > "$W/hooks/$phase"; chmod +x "$W/hooks/$phase"
+  ASSEMBLE_TEST_HOOK_DIR="$W/hooks" bash "$out/assemble.sh" 2026-08-16 --allow-mixed-dates >/dev/null 2>&1
+  rc=$?
+  published="$([ -e "$out/ReleaseNotes-2026-08-16.md" ] && echo yes || echo no)"
+  if [ "$rc" != "0" ] && [ "$published" = "no" ]; then _enforced=$(( _enforced + 1 )); fi
+done
+check "every phase enforces a failing hook" "$_enforced" "$_phases"
+
 case_start "T11: argument handling"
 W="$ROOT/t11"; build "$W"
 S="$W/docs/ReleaseNotes/assemble.sh"
