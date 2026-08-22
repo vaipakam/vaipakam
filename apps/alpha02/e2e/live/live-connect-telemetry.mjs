@@ -37,15 +37,28 @@
 //     needs a real wallet and a human; the drive stops at the popup.
 //     Nothing beyond SDK initialization is claimed.
 //
-//   NOT APPLICABLE HERE — WalletConnect. alpha02 builds that connector
-//     only when `WC_PROJECT_ID` is set, and it is not set on this
-//     deploy: the connect modal offers Coinbase, MetaMask and the
-//     injected test wallet only, and NO shipped chunk references
-//     `pulse.walletconnect.org`. The drive asserts that absence rather
-//     than quietly passing a check with nothing behind it — if a
-//     project id is ever configured, this assert fails and tells the
-//     next person to extend the drive instead of letting an
-//     unexercised connector reach production.
+//   PROVEN — WalletConnect's relay really initializes. A project id was
+//     configured on 2026-08-22, so the connector now ships; ConnectKit
+//     surfaces it as "Other Wallets", NOT as the string "WalletConnect"
+//     (that is its label whenever `showQrModal: false`, and keying on
+//     the product name found nothing while the connector was plainly
+//     there). Selecting it opens `wss://relay.walletconnect.org`, which
+//     is how this drive knows the SDK started rather than assuming it.
+//
+//   NOT PROVEN, AND SAID SO — that `telemetryEnabled: false` works.
+//     The zero this drive records for `pulse.walletconnect.org` is
+//     reported as OBSERVED, never as a pass, because the same probe
+//     against `telemetryEnabled: true` ALSO records zero. Calibrated
+//     twice on 2026-08-22: once with a dummy project id (relay auth
+//     retried four times) and once with the REAL id (single clean relay
+//     connection, so the id was genuinely valid) — no beacons either
+//     way. WalletConnect Core evidently emits on later session
+//     lifecycle, not on initialization, and reaching that needs a human
+//     scanning the QR with a real wallet.
+//
+//     A negative that has never been seen failing is decoration. This
+//     one is labelled rather than counted, and the gap is real work
+//     still owed, not a box ticked.
 //
 // Usage:
 //   node e2e/live/live-connect-telemetry.mjs
@@ -60,6 +73,9 @@ const TELEMETRY_HOSTS = ['cca-lite.coinbase.com', 'pulse.walletconnect.org'];
 /** How long to let the SDK talk after it is selected. The calibration
  *  run had all six beacons within ~4 s; 9 s is slack, not a guess. */
 const SDK_SETTLE_MS = 9_000;
+
+/** WalletConnect's relay handshake, measured at ~2 s on the live deploy. */
+const WC_SETTLE_MS = 10_000;
 
 const beacons = [];
 const steps = [];
@@ -98,6 +114,12 @@ watch(context, 'page');
 // The SDK opens its own window; its requests are not the main page's.
 context.on('page', (p) => watch(p, 'popup'));
 
+/** Every socket the session opens, collected from launch. WalletConnect's
+ *  relay can be opened while the modal is first built, so a listener
+ *  attached at the WC step would miss it. */
+const sockets = [];
+page.on('websocket', (ws) => sockets.push(ws.url()));
+
 let failed = false;
 try {
   console.log(`live-connect-telemetry — ${SITE}`);
@@ -127,15 +149,19 @@ try {
   if (!offersCoinbase) {
     blockedSync('the connect modal offers no Coinbase connector; nothing to initialize');
   }
-  const offersWalletConnect = /walletconnect/i.test(modalText);
+  // "Other Wallets" IS the WalletConnect entry — ConnectKit labels it
+  // that way whenever `showQrModal: false`. Keying on the product name
+  // reported it missing while the connector was plainly in the bundle.
+  const wcEntry = page.getByRole('button', { name: /other wallets/i }).first();
+  const offersWalletConnect = await wcEntry.isVisible().catch(() => false);
   step(
-    'WalletConnect is absent, as this deploy expects',
-    offersWalletConnect ? 'FAIL' : 'PASS',
+    'WalletConnect is offered',
+    offersWalletConnect ? 'PASS' : 'FAIL',
     offersWalletConnect
-      ? 'a WalletConnect connector is now offered — this drive does not exercise it; extend it before shipping'
-      : 'no WC_PROJECT_ID configured',
+      ? 'as "Other Wallets"'
+      : 'no WC entry — VITE_WALLETCONNECT_PROJECT_ID is unset in the BUILD (it is a Vite compile-time value; a Worker variable cannot supply it)',
   );
-  if (offersWalletConnect) failed = true;
+  if (!offersWalletConnect) failed = true;
 
   const modalBeacons = beacons.length - loadBeacons;
   step('opening the modal sends no telemetry', modalBeacons === 0 ? 'PASS' : 'FAIL', `${modalBeacons} beacon(s)`);
@@ -177,6 +203,48 @@ try {
   if (sdkBeacons !== 0) failed = true;
 
   await popup.close().catch(() => {});
+  await page.keyboard.press('Escape').catch(() => {});
+  await page.waitForTimeout(1_000);
+
+  // ── 3b. WalletConnect: initialization proven, telemetry NOT ───────
+  phase = 'walletconnect-selected';
+  const wcBefore = beacons.length;
+  const cta2 = page.getByRole('button', { name: /connect wallet/i }).first();
+  if (await cta2.isVisible().catch(() => false)) await cta2.click();
+  await page.waitForTimeout(1_500);
+  await page
+    .getByRole('button', { name: /other wallets/i })
+    .first()
+    .click({ timeout: 8_000 })
+    .catch(() => {});
+  await page.waitForTimeout(WC_SETTLE_MS);
+  // Collected from launch, not awaited here: ConnectKit can open the
+  // relay while the modal is first built, which is BEFORE this step —
+  // a listener attached now would miss it and report a working rail as
+  // broken, which is what the first run of this step did.
+  const relayOpened = sockets.some((u) => u.includes('relay.walletconnect.org'));
+
+  step(
+    'WalletConnect relay initializes',
+    relayOpened ? 'PASS' : 'FAIL',
+    relayOpened ? 'wss://relay.walletconnect.org opened' : 'the relay socket never opened',
+  );
+  if (!relayOpened) failed = true;
+
+  const wcBeacons = beacons.filter(
+    (b) => b.phase === 'walletconnect-selected' && b.url.includes('pulse.walletconnect.org'),
+  ).length;
+  // OBSERVED, never PASS. The same probe records zero with
+  // `telemetryEnabled: true`, so a zero here is not evidence the flag
+  // works — see the header. Reported so the number is on the record
+  // without pretending it settles anything.
+  step(
+    'WalletConnect telemetry (NOT calibrated — observation only)',
+    'OBSERVED',
+    `${wcBeacons} beacon(s) to pulse.walletconnect.org; this probe reads zero with the flag ON too, so it cannot prove the flag`,
+  );
+  void wcBefore;
+
   await page.keyboard.press('Escape').catch(() => {});
   await page.waitForTimeout(1_000);
 

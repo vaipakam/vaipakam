@@ -18,6 +18,20 @@
 # constraints); tightening to nonces is a follow-up hardening pass —
 # do not loosen further without review.
 #
+# `static.cloudflareinsights.com` is deliberately ABSENT (#1592). Until
+# 2026-08-22 Cloudflare Web Analytics auto-injected its beacon here and
+# this policy refused it on every page load — so it collected nothing
+# while filling the console with violations that every live review then
+# had to read past. The injection was zone-wide: ONE Web Analytics site
+# record on `vaipakam.com` covered every subdomain, which is why there
+# was no alpha02 entry to find and why all three hosts served the same
+# beacon token. It is now disabled at that record ("Manage site" → RUM
+# → Disable), verified 0 on all three.
+#
+# Do not add the host back to re-enable it. If analytics is ever wanted
+# here, that is a decision to take deliberately — this file's whole
+# premise is that alpha02 carries no third-party script origins.
+#
 # Safe-App embed support: `frame-ancestors` allows Safe's dapp-browser
 # origins (alpha02 registers the Safe connector). `X-Frame-Options` is
 # deliberately omitted — it can't express an allowlist; modern browsers
