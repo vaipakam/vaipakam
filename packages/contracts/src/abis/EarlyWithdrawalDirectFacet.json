@@ -2009,6 +2009,11 @@
   },
   {
     "type": "error",
+    "name": "SaleListingTermsStale",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SaleLtvAboveAdmissionCap",
     "inputs": [
       {
