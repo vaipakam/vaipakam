@@ -37,8 +37,42 @@
 #   - Doesn't commit anything. The script only writes files; review
 #     the diff with `git diff packages/contracts/src/abis/` and
 #     commit alongside the contract change.
-#   - Doesn't run `forge build` first. Assumes you've run
-#     `forge build` in `contracts/` since the last edit.
+#   - Doesn't commit anything — the build below is run for you, but
+#     reviewing and committing the diff is still yours.
+#
+# What it DOES do, and what it does NOT claim to fix (#1893):
+#   - Runs `forge build --skip test` itself, from `contracts/`, and
+#     aborts before touching the bundle if that fails.
+#
+#     This is a FAIL-FAST + DIAGNOSTICS fix, not a correctness one,
+#     and the distinction is worth recording because #1893 originally
+#     claimed the latter and was wrong. The claim was that a failed
+#     or absent build let this script export STALE artifacts under a
+#     `Done.` message. It cannot: `forge inspect` compiles on demand,
+#     so on a broken tree it exits non-zero and writes nothing, the
+#     loop below sets `fail=1`, and the script exits 1. Verified by
+#     appending a syntax error to a shared interface and running
+#     `forge inspect` directly — exit 1, zero bytes out.
+#
+#     What was genuinely wrong is what the operator SEES. Each
+#     inspect discards the compiler's stderr (`2>/dev/null`), so a
+#     compile error surfaced 74 times as
+#     "✗ <Facet> — forge inspect failed (missing artifact? run
+#     'forge build' first)" — a hint pointing at the wrong cause,
+#     with every actual diagnostic thrown away. Building once, up
+#     front, with stderr intact, reports the real error once.
+#
+#     It also closes a narrow partial-write window: the loop `mv`s
+#     each file as it goes, so a failure part-way (a renamed or
+#     deleted contract still listed in FACETS) leaves the earlier
+#     facets rewritten while the `_source.json` stamp — written only
+#     after the loop — still names the previous export.
+#
+#     `--skip test` (not a bare `forge build`) is deliberate: the
+#     test-inclusive compilation unit trips the viaIR stack ceiling
+#     (#601/#603), and `forge inspect` only ever needs `src/`.
+#     An already-built tree makes this a no-op, so the deploy
+#     scripts that call this after their own build pay nothing.
 #   - Doesn't touch `index.ts` (the re-export barrel). If you add a
 #     brand-new facet, add it to FACETS below AND wire it into
 #     `packages/contracts/src/abis/index.ts` manually.
@@ -125,6 +159,34 @@ cd "$CONTRACTS_DIR"
 
 if ! command -v forge >/dev/null 2>&1; then
   echo "Error: forge not in PATH. Install Foundry: https://book.getfoundry.sh/getting-started/installation" >&2
+  exit 1
+fi
+
+# ── Build once, up front, with diagnostics intact (#1893) ────────────────────
+# `forge inspect` already compiles on demand and already fails loudly, so this
+# is NOT what stands between the bundle and stale artifacts — the per-facet
+# `fail=1` path below is. What this fixes is the operator's view: the loop
+# discards each inspect's stderr, so a compile error arrived as 74 copies of a
+# hint naming the wrong cause and not one line of the actual error. Building
+# here surfaces it once, in full, before anything is written.
+#
+# Runs from CONTRACTS_DIR — guaranteed by the `cd` above regardless of the
+# caller's working directory, which matters because remappings live in
+# `contracts/remappings.txt` and a build from the repo root dies on the
+# vendored `@openzeppelin` / `@chainlink` imports.
+#
+# `--skip test` compiles `src/` + `script/` only. A bare `forge build` compiles
+# the test-inclusive unit and can fail on the viaIR whole-unit stack ceiling
+# ("Variable size N too deep") even when every file is correct — which would
+# turn this step into a new way for a correct tree to fail.
+#
+# Deliberately NOT overridable: a SKIP_BUILD flag would reintroduce exactly the
+# path this exists to remove, and an already-built tree costs nothing anyway.
+echo "Building contracts (forge build --skip test) …"
+if ! forge build --skip test; then
+  echo "" >&2
+  echo "Error: forge build failed — see the compiler output above." >&2
+  echo "The bundle in $OUT_DIR has NOT been modified." >&2
   exit 1
 fi
 
@@ -253,8 +315,13 @@ echo "Exporting ABIs to $OUT_DIR"
 fail=0
 for facet in "${FACETS[@]}"; do
   out="$OUT_DIR/$facet.json"
-  if ! forge inspect "$facet" abi --json > "$out.tmp" 2>/dev/null; then
-    echo "  ✗ $facet — forge inspect failed (missing artifact? run 'forge build' first)" >&2
+  # stderr is NOT discarded (#1893). It used to be, which turned every
+  # failure into the same "run 'forge build' first" hint with the real
+  # diagnostic thrown away. The build above has already succeeded by the
+  # time we get here, so a failure now means the NAME is wrong — a contract
+  # renamed or deleted while its entry stayed in FACETS — and forge says so.
+  if ! forge inspect "$facet" abi --json > "$out.tmp"; then
+    echo "  ✗ $facet — forge inspect failed (renamed or removed? check the FACETS list)" >&2
     rm -f "$out.tmp"
     fail=1
     continue
