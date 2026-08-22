@@ -373,9 +373,28 @@ FACETS=(
 # fire. That is inert untracked debris rather than a corrupt bundle, and
 # sweeping it automatically is exactly what caused this finding, so it stays a
 # manual cleanup.
+# The trap runs a FUNCTION NAME, never a string with the path interpolated into
+# it (Codex #1897 r4). `trap "rm -rf '$STAGE_DIR'" EXIT` embeds the path in
+# shell SOURCE, so a `CONTRACTS_PKG_DIR` containing a single quote — which the
+# documented arbitrary-absolute-path override permits — either breaks the trap's
+# syntax (exit 2, staging left behind, after a `Done.`) or injects commands into
+# it. A function name is a fixed token; the path is only ever a quoted variable
+# expansion inside the body, so nothing in it is ever parsed as code.
+#
+# The previous revision silenced SC2064 here to say "expand now, not at trap
+# time". That reasoning was about WHEN the value is substituted and missed that
+# substituting it at all is the hazard. Reading the variable at trap time is
+# both safer and what we actually want.
+#
+# `--` guards a staging path that starts with a dash; the `-n` guard covers
+# `mktemp` failing before STAGE_DIR is ever set, since the trap is armed first.
+_cleanup_stage() {
+  if [ -n "${STAGE_DIR:-}" ]; then
+    rm -rf -- "$STAGE_DIR"
+  fi
+}
+trap _cleanup_stage EXIT
 STAGE_DIR="$(mktemp -d "$OUT_DIR/.stage.XXXXXX")"
-# shellcheck disable=SC2064  # expand STAGE_DIR now, not at trap time
-trap "rm -rf '$STAGE_DIR'" EXIT
 
 echo "Exporting ABIs to $OUT_DIR"
 fail=0
