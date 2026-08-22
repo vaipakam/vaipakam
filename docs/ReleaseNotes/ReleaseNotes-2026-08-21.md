@@ -26,6 +26,20 @@ that shows what selling early would cost and treats waiting as a real choice,
 now able to say whether it has finished deciding, plus three fixes that stop the
 wallet-analytics checks from passing without having looked at what shipped.
 
+Four entries were folded in after the rest of the day was written, and they
+carry the same theme from a different angle. Three concern the review that
+checks the lender's exit card on the deployed site, and what they have in common
+is a review vouching for more than it had established — though each in a
+different way, which is worth separating rather than blurring. One comparison
+had genuinely never run, because the live chain does not produce the situation
+that reaches it. A second set of rules ran on every review but could only ever
+be checked by reading them, never by handing them a made-up observation and
+seeing what they answered. The third ran, and answered confidently: a read that
+failed was treated as permission to trust what was on screen. The fourth entry
+returns to the rebate correction above and widens it — proper closes turn out to
+number six routes rather than the three the guides named, so a borrower using a
+fourth was being told theirs did not count.
+
 
 ## Lenders can now see what their options are — including doing nothing
 
