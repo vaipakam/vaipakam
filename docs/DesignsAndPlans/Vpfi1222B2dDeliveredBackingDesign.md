@@ -687,7 +687,13 @@ extends, capped at three windows from that arming. Confirmed, not merely
 received — a credit that overtakes its day record arrives provisional and stamps
 no clock at all; the clock starts when the record lands and confirms it. Reading
 "first receipt" for "first confirmation" moves the deadline earlier by the whole
-receipt-to-confirmation gap and sends an operator to a call that reverts. So
+receipt-to-confirmation gap and sends an operator to a call that reverts. One
+exception, and it moves the deadline the other way: a compensation confirmed
+before the w4 clocks existed has no stamp to inherit, and its clock starts when
+someone makes the permissionless arming call — not when the compensation was
+confirmed, which may be long past. For those legacy days the deadline is
+measured from the arming, so an operator who dates it from confirmation will
+reach the terminal too early. So
 passing the frozen expiry does not make the short terminal callable, and an
 operator reading one deadline for both will reach for a terminal that reverts. `lapseZeroedDay` crosses an uncompensated day at zero: nothing was
 backed, nothing pays. `lapseShortCompensatedDay` takes a confirmed-but-
@@ -708,9 +714,15 @@ unstamped wait exits by the permissionless resend above. The zeroed-and-open
 wait exits by whichever lapse terminal it is eligible for — and a PROVISIONAL
 credit is eligible for neither, since the full lapse rejects any compensated day
 and the short lapse rejects an unconfirmed one. That state's third-party exit is
-the resend as well: an accepted delivery of the day's record confirms or demotes
-the provisional credit, after which the ordinary route or the short terminal
-becomes available. And ending it is not
+the resend as well: an accepted delivery of the day's record settles the
+provisional credit — but the two settlements do not leave the day in the same
+place. A CONFIRMED credit opens the ordinary route or the short terminal. A
+DEMOTED one removes the compensation and its clocks together, leaving an
+uncompensated day: the short terminal then rejects it for want of a
+compensation, ordinary pricing keeps deferring, and what remains is a
+replacement compensation after the recovery, or the full lapse if that day is
+eligible for it. Naming the confirm outcome for both is how an operator ends up
+at a second reverting call. And ending it is not
 uniformly a write-off: on the short-funded path the lapse is how the backed
 value gets paid at all. This
 section is retained as the record of why, and of the two

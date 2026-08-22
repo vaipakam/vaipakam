@@ -29,7 +29,9 @@ that never drew compensation is closed out on a clock fixed at the day's
 freezing, while a day compensated below what it owed is closed out on a separate
 clock that starts when its compensation is SETTLED — at arrival where the
 record was already there to settle it, at settlement time where the money
-overtook the record — and stretches with each qualifying top-up. Passing the
+overtook the record, and, for compensations settled before this clock existed,
+at the moment anyone first starts it — and stretches with each qualifying
+top-up. Passing the
 first deadline does not open the second. And a compensation still sitting
 unsettled opens NEITHER, nor has its clock begun: that day's way out is the
 record being re-sent, which anyone can do. Re-sending settles the figure — it
