@@ -767,7 +767,9 @@ Diamond ADDRESS per chain against the address governance actually administers.
 All of this BEFORE the arm.
 
 **3c. Authorize the Base remittance signer — a SEPARATE authorization, and easy
-to miss.** `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
+to miss.** *(M3 / active-mirror branch only: the reward passes perform
+Base→mirror remittance, mirror commitment reporting and acknowledgements, none of
+which exist on the dark branch.)* `remitRewardBudget` is `onlyCanonical onlyRemitter`, and
 `_checkRemitter` admits only an `ADMIN_ROLE` holder or the address stored as
 `rewardRemittanceKeeper`. A least-privilege keeper EOA is neither by default, and
 the mirror-side `KEEPER_ROLE` grants of 3b do **not** cover it:
@@ -871,7 +873,16 @@ This single Base call **is** the `D*` cutover. It is:
 - **canonical-only** — there is no per-chain `D*` administration, and a call on a
   mirror reverts.
 
-**First confirm every chain shares a reward-day clock.** The day index derives
+**First confirm every target mirror is still UNARMED.** Both ingress paths
+install the incoming `armedFromDay` only while the local value is zero
+(`armedFromDay != 0 && s.governorCommitArmedFromDay == 0`), so a mirror carrying
+a non-zero value from a rehearsal, a previous Base deployment or a partial
+cutover **silently keeps its old `D*`** and ignores the new one. Nothing reverts,
+nothing warns, and the Base setter is one-shot. Read
+`getGovernorCommitState().armedFromDay` on every target mirror and require zero
+before calling it.
+
+**Then confirm every chain shares a reward-day clock.** The day index derives
 from each Diamond's own `interactionLaunchTimestamp`, and the mirror ingress
 stores `armedFromDay` **directly** — it does not repeat the future-day check the
 setter applies against BASE's local day. So if launch timestamps differ, one
@@ -948,6 +959,15 @@ allocates zero budget to a destination, `remitRewardBudget` closes it locally,
 emits `RewardBudgetRemitted` with a zero message id and returns **without sending
 a CCIP payload** — so that mirror will never emit `RewardBudgetReceived`. Waiting
 for one there burns the propagation window and can run past an immutable `D*`.
+A THIRD case sits between those two, and the fan-out advice above does not
+reach it: if the chosen pre-`D*` day was grace- or force-finalized without a
+mirror's report, `_planDay` sees no included-chain budget, returns no close at
+all, and `remitRewardBudget` reverts `NothingToRemit` — so there is neither a
+receipt nor a zero-message close to observe. That mirror simply has nothing owed
+for that day; record the revert as the evidence and broadcast to it. Better still,
+prefer a day every destination was included in, which avoids this and the
+`broadcastGlobalTo` restriction below at the same time.
+
 Treat a zero-total close as satisfying the wait for that destination: its
 stamped payable budget is zero, so opening its gate funds nothing and strands
 nobody. Confirm the zero-total close in the emitted event rather than assuming
