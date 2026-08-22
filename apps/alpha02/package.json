@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "typecheck": "tsc -b --noEmit && eslint . && node scripts/check-hardcoded-strings.mjs && tsx scripts/check-locale-coverage.ts",
+    "typecheck": "tsc -b --noEmit && eslint . && node scripts/check-hardcoded-strings.mjs && node scripts/check-accept-errors.mjs && tsx scripts/check-locale-coverage.ts",
     "i18n:check": "node scripts/check-hardcoded-strings.mjs",
     "prebuild": "node scripts/generate-seo.mjs",
     "build": "tsc -b tsconfig.build.json && vite build",

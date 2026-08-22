@@ -3401,6 +3401,87 @@ const copySource = {
       'That covers the loan’s whole remaining principal. Use “Repay this loan” instead — it settles the loan properly and releases your collateral.',
     notAToken:
       'That address doesn’t look like a token on this network. Double-check it or pick a suggested asset.',
+    // #1645 — what `OfferPreviewFacet.previewAccept` answers, in words.
+    // The contract prescribes the wording for several of these because
+    // the obvious phrasing sends the reader somewhere that cannot help
+    // them; those notes are repeated on the entries that carry them.
+    // Read `src/contracts/acceptErrors.ts` before rewording any of it.
+    acceptBlocked: {
+      alreadyAccepted:
+        'Someone has already taken this offer. Nothing was sent — refresh to see what’s still open.',
+      // Compliance wording follows the catalog's existing convention
+      // ("compliance-flagged", not the oracle's name). Close-outs stay
+      // available for a flagged wallet, which is the part worth saying:
+      // it is the difference between "blocked" and "stuck".
+      flaggedAcceptor:
+        'Your wallet is compliance-flagged, so new positions are blocked. Existing loans can still be repaid or closed.',
+      flaggedCreator:
+        'The wallet that created this offer is compliance-flagged, so it can’t be taken. Nothing was sent.',
+      assetPaused:
+        'One of this offer’s assets is paused by the protocol right now, so the transaction would be rejected. Nothing was sent.',
+      // Shown only on deploys with country-pair trading rules enabled
+      // (never on this retail deploy, where the check is unconditional).
+      countryBlocked:
+        'This deployment’s trading rules don’t allow these two wallets to trade with each other. Nothing was sent.',
+      // The CREATOR's consent, not the reader's. `previewAccept` checks
+      // only `offer.creatorRiskAndTermsConsent` — the acceptor's own
+      // consent travels inside the accept call, so the preview cannot
+      // see it and deliberately does not test it. Telling the reader to
+      // give consent would send them to fix something that is not theirs
+      // and is already given.
+      consentRequired:
+        'The wallet that created this offer hasn’t recorded the risk-and-terms agreement the protocol requires, so it can’t be taken. Nothing was sent.',
+      // Shown only on deploys with tiered identity verification enforced
+      // (never on this retail deploy, where enforcement is off).
+      kycBlocked:
+        'This deployment’s identity-verification rules don’t cover one side of this offer at this value. Nothing was sent.',
+      expired:
+        'This offer has expired and can’t be revived. The creator would need to post a new one.',
+      partiallyFilled:
+        'This offer is partly filled, so it can only be advanced by matching — not taken directly. Nothing was sent.',
+      cancelled: 'This offer has been cancelled. Nothing was sent.',
+      saleLoanNotActive:
+        'The loan this position was sold against has already closed, so the position no longer exists. Nothing was sent.',
+      // The buyer here is the linked loan's CURRENT borrower — a
+      // different case from taking your own offer, and worth naming
+      // precisely so they don't go looking for a mistake in the listing.
+      saleSelfBuy:
+        'You’re the borrower of the loan this position lends against, so you can’t buy the lender’s side of your own debt. Nothing was sent.',
+      saleLoanPastMaturity:
+        'The loan behind this position has passed its due date, so the position can’t change hands now. Nothing was sent.',
+      // NO figure is quoted, deliberately: `previewAccept` returns no
+      // health values, and a number this call never measured would be
+      // worse than none. See the header note in acceptErrors.ts.
+      saleBelowFloor:
+        'This position no longer meets the safety margin its sale required, so buying it would be rejected. Nothing was sent.',
+      // Must NOT read as a health shortfall — this code is every
+      // non-floor admission refusal, including one the protocol could
+      // not measure at all.
+      saleAdmissionBlocked:
+        'This position doesn’t currently meet the protocol’s conditions for changing hands. Nothing was sent.',
+      // Contract directive: blame the LISTING, never the buyer's terms.
+      // They signed the listing faithfully; re-signing reproduces the
+      // same out-of-date vehicle, so the only useful next step is the
+      // seller's.
+      saleListingStale:
+        'This listing is out of date — it no longer matches the position it sells, so the sale was refused before anything moved. You did nothing wrong here; the seller needs to list it again.',
+      // Contract directive: no listing-, offer- or buyer-specific
+      // reason. While the protocol is paused none of them are
+      // actionable, relisting included.
+      protocolPaused:
+        'The protocol is paused right now, so no positions can be opened or taken. Nothing was sent — try again once it resumes.',
+      // Contract directive: point at the vault upgrade, NOT at a
+      // relist, which the same floor would block.
+      vaultUpgradeRequired:
+        'One side of this trade is on an old vault version and needs to upgrade before it can trade. Nothing was sent.',
+      selfTrade:
+        'This is your own offer, so you can’t take it. Cancel it instead if you want it off the book.',
+      // A refusal we have no words for — the app can be older than the
+      // deployment it is talking to, and this vocabulary grows by
+      // appending. Says only what is certainly true.
+      unknown:
+        'The protocol won’t accept this offer right now. Nothing was sent — refresh and try again, or check back shortly.',
+    },
     // Pre-submit guard errors (thrown by the contract hooks when a
     // precondition the UI normally enforces is somehow unmet). Routed
     // through the catalog so they translate wherever a flow surfaces

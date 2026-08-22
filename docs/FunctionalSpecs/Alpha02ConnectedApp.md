@@ -168,6 +168,20 @@ progress.
 - Once an action transaction has been submitted to the wallet, the app avoids
   silent retry paths that could create ambiguity about whether the action may
   still confirm.
+- Before asking for the acceptance signature on an offer, the app asks the
+  platform whether that acceptance would be refused, and stops without a wallet
+  prompt if it would. The reason shown is the platform's own first refusal —
+  the same one the transaction would have raised — stated in words the reader
+  can act on, and never re-ranked or reworded into a different reason by the
+  app.
+- A refusal the app does not recognise still stops the acceptance. The app can
+  be older than the deployment it is connected to, so an unfamiliar answer is
+  treated as a refusal it has no words for, never as permission to proceed.
+- The app does not attach a measured figure to a refusal unless the platform
+  supplied one for that refusal.
+- Where a deployment predates a given refusal reason, the app proceeds as it did
+  before that reason existed rather than blocking; the platform still enforces
+  it at transaction time.
 
 ## Borrowing and Lending
 
