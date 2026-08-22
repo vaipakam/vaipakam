@@ -747,6 +747,9 @@ shared pot and differ only in how carefully they reason about who owns what. Two
 do something else: one keeps the reward money somewhere separate, and one does
 not hold it at all until the moment someone claims it — in both, the question of
 who owns a given token stops arising rather than being answered more carefully.
+The second of those is narrower than it sounds and the note says so: it applies
+to freshly created reward value only, and leaves the recycled half — which is
+already held — still to be answered.
 
 Both of those arrived from review rather than from the drafting, and for the same
 reason: the search had been for a better way to COUNT a shared pot, so anything
@@ -761,7 +764,7 @@ unmet is worse than one that recommends nothing. The reward programme stays
 un-armed until this closes, which is unchanged and deliberate.
 <!-- assembled-fragment: 1566-canonical-delivered-bound-design.md sha256=d96a330397d52db1a6ffa75356c0ef557bce598fec043f0802b28b73b6c14ee1 -->
 
-## Contracts — the accept path can be changed again (PR #1836)
+## Contracts — the accept path can be changed again (#1888)
 
 `OfferAcceptFacet` had reached 24,412 bytes against the 24,576-byte on-chain
 limit. The 164 bytes left were less than one cross-facet call costs, so the
@@ -772,7 +775,9 @@ bytes, and the fix is the same shape: move a piece of the work to its own
 facet rather than trim behaviour to fit.
 
 The piece that moved is the borrower's Loan Initiation Fee charge and the
-delivery of the net principal — the last money movement of an acceptance. It
+delivery of the net principal — the fee-and-disbursement step of an acceptance.
+(Not its last money movement: the borrower's collateral is locked afterwards,
+and a Full-tariff acceptance moves VPFI later still.) It
 was chosen because the acceptance **already** ran it in a separate execution
 context: the accept had long reached it through an internal self-call, so that
 the fee work's own depth would not be charged to the accept's call frame.
@@ -796,7 +801,8 @@ its new host, so a platform upgraded from before this change does not strand it
 on the old one.
 
 Resulting sizes: 21,071 bytes for the accept facet (3,505 free, up from 164)
-and 4,390 for the new one. `OfferAcceptFacet.chargeBorrowerLifAndDeliver` is
+and 4,390 for the new one. `OfferAcceptFeeFacet.chargeBorrowerLifAndDeliver` —
+the new home; the old facet no longer contains it — is
 not a surface any app called — it rejects every caller except the platform
 itself — so no application-facing behaviour is affected.
 
@@ -815,8 +821,12 @@ that buyer is paid, so a buyer chooses on them.
 
 Listings created from a recent change onwards copy those terms off the live
 position, so they describe it accurately. Listings created **before** that
-change did not: they still say "none of the above" while the position itself may
-permit all of it. Nothing caught this, and the reason is worth stating plainly.
+change carried only the interest model, which had been copied for some time
+already; the other three took their blank defaults, so such a listing says the
+borrower may do none of those things while the position itself may permit all of
+them. (A listing older still, from before the interest model was copied either,
+can be wrong about all four — which is why the check compares all four rather
+than the three that the most recent gap left behind.) Nothing caught this, and the reason is worth stating plainly.
 When a buyer commits, the platform checks that what the buyer signed matches
 what the listing said — and on an out-of-date listing those two agree
 perfectly. The buyer read the listing, signed exactly what it advertised, and
@@ -845,8 +855,11 @@ of those cases the platform has a reason that the person reading it can act on
 behind advice that cannot be followed. So the out-of-date refusal now speaks last, after every other reason
 a purchase can be turned down, and the buyer sees the reason that is worth
 seeing. The preview shown on the card and the refusal from the transaction
-itself agree on which one that is, so the card never offers a purchase the
-transaction then rejects for a different stated reason.
+itself agree on which one that is. That agreement is a property of the platform,
+not yet of any screen: no app currently reads the preview's verdict, so a card
+can still offer a purchase that the transaction then refuses. Wiring the verdict
+into the card is tracked separately (#1645); what shipped here is the preview
+being correct and consistent for whoever reads it next.
 
 There is one deliberate exception, and it follows the same reasoning rather than
 breaking it. If the person trying to buy is the **borrower of the very loan
