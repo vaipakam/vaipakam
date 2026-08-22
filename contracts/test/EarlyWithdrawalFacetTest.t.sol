@@ -2448,6 +2448,48 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #1835 (Codex #1891 F11) — a SANCTIONED seller's stale listing must
+    ///      report the sanction.
+    ///
+    ///      The fifth and final instance, and the one that showed the rule was
+    ///      being stated but not kept: "staleness speaks only when nothing else
+    ///      has" was written while sanctions, asset-pause, country, KYC and
+    ///      self-trade all still ran AFTER it, because those live outside the
+    ///      sale branch the check had been moved to the end of. `OfferCreateFacet`
+    ///      refuses a sanctioned creator, so "relist" is once more a remedy the
+    ///      seller cannot perform.
+    ///
+    ///      The check now sits after every refusal that moves no value, which is
+    ///      what the rule always claimed.
+    function test_item23_sanctionedSellerOutranksStaleTerms() public {
+        uint256 saleOfferId = _stagePreMirroringListing(
+            false, false, LibVaipakam.PeriodicInterestCadence.None
+        );
+
+        // The seller is flagged after listing — the vehicle is still stale.
+        MockSanctionsList m = new MockSanctionsList();
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(m));
+        m.setFlagged(lender, true);
+
+        (LibAcceptTerms.AcceptTerms memory t, bytes memory sig, address buyer) =
+            _honestBuyerFor(saleOfferId, "sanctionedSellerStaleBuyer");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(LibVaipakam.SanctionedAddress.selector, lender)
+        );
+        vm.prank(buyer);
+        OfferAcceptFacet(address(diamond)).acceptOffer(saleOfferId, t, sig);
+
+        // …and the preview agrees.
+        OfferAcceptFacet.AcceptPreview memory p =
+            OfferPreviewFacet(address(diamond)).previewAccept(saleOfferId, newLender);
+        assertEq(
+            uint8(p.errorCode),
+            uint8(OfferAcceptFacet.AcceptError.SanctionedCreator),
+            "the compliance refusal is actionable; it outranks staleness"
+        );
+    }
+
     /// @dev #1835 (Codex #1891 F6) — `useFullTermInterest` is the FOURTH
     ///      behavioural term and is checked like the rest.
     ///

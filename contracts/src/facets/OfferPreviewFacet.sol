@@ -224,43 +224,6 @@ contract OfferPreviewFacet {
             // the card can disable "Accept" instead of letting the buyer
             // discover it by burning gas.
             //
-            // ORDERED LAST IN THIS BRANCH, mirroring `_acceptOffer`, and by
-            // the same principle: **staleness is the lowest-priority sale
-            // refusal there is**, so it speaks only when nothing else has.
-            // Every classifier above — `OfferExpired` (outside this branch),
-            // `SaleLoanNotActive`, `SaleLoanPastMaturity`,
-            // `SalePositionBelowSolvencyFloor`, `SaleAdmissionBlocked` — is
-            // both more structural AND actionable, where this one is not: it
-            // tells the seller to relist, and a matured or terminal loan cannot
-            // be relisted while `createLoanSaleOffer` re-runs the same solvency
-            // guard that would refuse the new listing.
-            //
-            // State the RULE, not the position: this arrived as FOUR review
-            // findings (#1891 F3/F4/F5/F10), each moving the check behind the
-            // one gate that finding named while the next stayed ahead of it.
-            // A new classifier belongs ABOVE this one unless it is genuinely
-            // less actionable than "your listing is out of date".
-            //
-            // The accept's comparison is likewise NOT in its term binding,
-            // which runs before every gate in `_acceptOffer`.
-            {
-                LibVaipakam.Offer storage _saleVehicle = s.offers[offerId];
-                if (
-                    _saleVehicle.allowsPartialRepay !=
-                    _saleLoanM.allowsPartialRepay ||
-                    _saleVehicle.allowsPrepayListing !=
-                    _saleLoanM.allowsPrepayListing ||
-                    _saleVehicle.useFullTermInterest !=
-                    _saleLoanM.useFullTermInterest ||
-                    _saleVehicle.periodicInterestCadence !=
-                    _saleLoanM.periodicInterestCadence
-                ) {
-                    preview.errorCode = OfferAcceptFacet
-                        .AcceptError
-                        .SaleListingTermsStale;
-                    return preview;
-                }
-            }
         }
         if (LibVaipakam.isSanctionedAddress(acceptor)) {
             preview.errorCode = OfferAcceptFacet.AcceptError.SanctionedAcceptor;
@@ -347,6 +310,41 @@ contract OfferPreviewFacet {
             // that used to be here unreachable.)
             if (acceptor == LibERC721.ownerOf(_saleLoan.borrowerTokenId)) {
                 preview.errorCode = OfferAcceptFacet.AcceptError.SaleSelfBuy;
+                return preview;
+            }
+        }
+
+        // #1835 (Codex #1891 F1/F10/F11) — the accept refuses a vehicle whose
+        // four behavioural terms disagree with the live loan. Classified so the
+        // card can disable "Accept" rather than letting the buyer discover it
+        // by burning gas.
+        //
+        // ORDERED LAST, mirroring `_acceptOffer`, and by the same rule:
+        // **staleness is the lowest-priority refusal there is, so it speaks
+        // only when nothing else has.** Every classifier above — expiry, the
+        // sale branch's status / maturity / solvency, sanctions, asset-pause,
+        // country, risk-consent, KYC, self-buy — is both more structural AND
+        // actionable, where this one is not: it tells the seller to relist, and
+        // `_boundListingExpiry`, `createLoanSaleOffer` and `OfferCreateFacet`
+        // each refuse that remedy in the states they describe.
+        //
+        // State the rule rather than the position: this arrived as FIVE review
+        // findings (#1891 F3/F4/F5/F10/F11), each moving the check behind the
+        // one gate that finding named while the next stayed ahead of it. A new
+        // classifier belongs ABOVE this one unless it is genuinely less
+        // actionable than "your listing is out of date".
+        if (_saleLoanId != 0) {
+            LibVaipakam.Offer storage _vehicle = s.offers[offerId];
+            LibVaipakam.Loan storage _staleChk = s.loans[_saleLoanId];
+            if (
+                _vehicle.allowsPartialRepay != _staleChk.allowsPartialRepay ||
+                _vehicle.allowsPrepayListing != _staleChk.allowsPrepayListing ||
+                _vehicle.useFullTermInterest != _staleChk.useFullTermInterest ||
+                _vehicle.periodicInterestCadence != _staleChk.periodicInterestCadence
+            ) {
+                preview.errorCode = OfferAcceptFacet
+                    .AcceptError
+                    .SaleListingTermsStale;
                 return preview;
             }
         }

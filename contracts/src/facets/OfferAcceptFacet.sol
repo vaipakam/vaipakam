@@ -871,63 +871,6 @@ contract OfferAcceptFacet is
                 // never at `completeLoanSale`, where a revert would strand a
                 // buyer whose principal has already settled.
                 LibSaleSolvency.assertSaleSolvent(saleLoanId);
-                // #1835 (Codex #1891 F3/F4) — the vehicle must MIRROR the
-                // position it sells. A listing created before #1779 taught
-                // `_buildSaleParams` to copy these three behavioural terms
-                // holds the struct defaults (false / false / None) while its
-                // loan holds the real values, and that gap is invisible to the
-                // accept-time checks at 18/19/23: those compare the buyer's
-                // SIGNATURE against the VEHICLE, and on a stale listing the two
-                // agree perfectly. The buyer signs honestly, every client reads
-                // the same wrong vehicle, and the position they receive permits
-                // what they were told it forbids — these being exactly the terms
-                // that decide what the borrower may do to the buyer after the
-                // sale. Vehicle-vs-LOAN is the one pairing no signature check
-                // can stand in for.
-                //
-                // ORDERED LAST IN THIS BRANCH, deliberately and by principle:
-                // **staleness is the lowest-priority sale refusal there is**, so
-                // it speaks only when nothing else has. Every other gate here —
-                // expiry, non-Active, maturity, solvency admission — is both
-                // more structural AND actionable where this one is not. This
-                // error tells the seller to relist, and `_boundListingExpiry`
-                // refuses to relist a matured loan, `createLoanSaleOffer` runs
-                // the same solvency guard that would refuse the new listing, and
-                // a terminal loan cannot be relisted at all. Answering "relist"
-                // in any of those states is advice that cannot be taken, and it
-                // hides the reason that could be.
-                //
-                // State the RULE, not the position, because the position is
-                // what kept being wrong: this arrived as FOUR separate review
-                // findings (#1891 F3/F4/F5/F10 — status, expiry, maturity,
-                // solvency), each fixed by moving the comparison behind the one
-                // gate that finding named, and each time the next gate was
-                // still ahead of it. Last-in-branch is the only placement that
-                // does not need re-deriving when a gate is added; a new gate
-                // belongs ABOVE this one unless it is genuinely less actionable
-                // than "your listing is out of date".
-                //
-                // It is also not in `_bindTermsToOffer` where the other term
-                // checks live: the binding runs at `acceptOffer` step 5, before
-                // every gate in this function. `previewAccept` mirrors this
-                // ordering for the same reason.
-                //
-                // `useFullTermInterest` (17) is INCLUDED. An earlier revision
-                // excluded it, reasoning that its mirroring predates any listing
-                // still live — but that is false for a GTC vehicle
-                // (`expiresAt == 0`), the same pre-upgrade shape the expiry gate
-                // above exists for: it never expires, loans run 365 days by
-                // default and can be configured longer, so a listing predating
-                // that fix can still be bought today. It stores the old `false`
-                // while its loan may run the full-term model — a materially
-                // different interest settlement, decided against the buyer.
-                if (
-                    offer.allowsPartialRepay != saleLoan.allowsPartialRepay ||
-                    offer.allowsPrepayListing != saleLoan.allowsPrepayListing ||
-                    offer.useFullTermInterest != saleLoan.useFullTermInterest ||
-                    offer.periodicInterestCadence !=
-                    saleLoan.periodicInterestCadence
-                ) revert SaleListingTermsStale();
             }
         }
 
@@ -1156,6 +1099,50 @@ contract OfferAcceptFacet is
         // submitting; the load-bearing revert is here (every match
         // routes through `_acceptOffer` via `acceptOfferInternal`).
         if (lender == borrower) revert SelfTradeForbidden(lender);
+
+        // #1835 (Codex #1891 F3/F4/F5/F10/F11) — the sale VEHICLE must MIRROR
+        // the position it sells. A listing created before #1779 taught
+        // `_buildSaleParams` to copy these four behavioural terms holds the
+        // struct defaults while its loan holds the real values, and that gap is
+        // invisible to the accept-time checks at 17/18/19/23: those compare the
+        // buyer's SIGNATURE against the VEHICLE, and on a stale listing the two
+        // agree perfectly. The buyer signs honestly, every client reads the same
+        // wrong vehicle, and the position they receive permits what they were
+        // told it forbids. Vehicle-vs-LOAN is the one pairing no signature check
+        // can stand in for.
+        //
+        // ORDERED LAST AMONG EVERY REFUSAL THAT MOVES NO VALUE — after the sale
+        // branch's expiry / status / maturity / solvency gates, after sanctions,
+        // asset-pause, country, risk-consent and KYC, and after the self-trade
+        // check directly above; the next statement begins moving funds.
+        //
+        // The RULE, which is what to preserve: **staleness is the lowest-priority
+        // refusal there is, so it speaks only when nothing else has.** This error
+        // tells the seller to relist, and every gate above refuses that remedy —
+        // `_boundListingExpiry` will not relist a matured loan, `createLoanSaleOffer`
+        // re-runs the same solvency guard, `OfferCreateFacet` refuses a sanctioned
+        // creator or a paused asset, and a terminal loan cannot be relisted at
+        // all. Answering "relist" in any of those states is advice that cannot be
+        // taken, and it hides the reason that could be acted on.
+        //
+        // State the rule rather than the position, because the POSITION is what
+        // kept being wrong: this arrived as FIVE review findings (F3 status, F4
+        // expiry, F5 maturity, F10 solvency, F11 sanctions/pause), each fixed by
+        // moving the check behind the one gate that finding named while the next
+        // stayed ahead of it. A new refusal belongs ABOVE this one unless it is
+        // genuinely less actionable than "your listing is out of date".
+        //
+        // Reads `_saleLoanId`, already resolved above for the principal, so this
+        // adds no local to an at-budget viaIR frame.
+        if (_saleLoanId != 0) {
+            LibVaipakam.Loan storage _staleChk = s.loans[_saleLoanId];
+            if (
+                offer.allowsPartialRepay != _staleChk.allowsPartialRepay ||
+                offer.allowsPrepayListing != _staleChk.allowsPrepayListing ||
+                offer.useFullTermInterest != _staleChk.useFullTermInterest ||
+                offer.periodicInterestCadence != _staleChk.periodicInterestCadence
+            ) revert SaleListingTermsStale();
+        }
 
         // `effectivePrincipal` was computed earlier (before KYC) so the
         // value is available for KYC, LIF math, principal transfer, and
