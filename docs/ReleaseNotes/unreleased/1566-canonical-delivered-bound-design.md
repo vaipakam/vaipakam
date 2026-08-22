@@ -26,8 +26,14 @@ construction, and an attempt at it was reverted for creating a fresh way to lose
 user value: it left expiry clocks running on entitlements whose claims had begun
 to fail.
 
-Three options are set out with what each promises a claimant, and the choice is
-left to the owner rather than made in passing. A first draft of this note did
+Four options are set out with what each promises a claimant, and the choice is
+left to the owner rather than made in passing. Three of them keep the money in
+one shared pot and differ only in how carefully they reason about who owns what;
+the fourth keeps the reward money somewhere else entirely, so the question of who
+owns a given token stops arising. That fourth one is the largest change and the
+only one that removes the problem rather than tracking it — and it was missing
+from the first drafts because the search was for a better way to count, not for
+a different arrangement. A first draft of this note did
 recommend one of them as a cheap first step; review established that it does not
 actually set any money aside — it limits what a day may price, which is a
 different question — so the recommendation was withdrawn rather than softened.
