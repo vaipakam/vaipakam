@@ -32,10 +32,16 @@ features, but that is a requirement for contributors changing the
 assembler, not for anyone folding fragments. Both operator documents have
 been corrected — they previously stated the opposite in both directions.
 
-Behaviour is otherwise unchanged, and that is the claim the test suite
-exists to support: it drives the command line rather than any internal, so
-it moved across intact and its assertions are what shows the behaviour did
-not move with it.
+Behaviour is otherwise unchanged, and the test suite is what supports that
+claim — but it should be stated more carefully than "the tests still pass",
+because the suite itself changed a great deal. It drives the command line
+rather than any internal, so the CONTRACT it checks carried over unaltered.
+The suite around that contract did not: it grew by roughly a thousand lines
+and lost four hundred, and it currently records 41 whole cases and 29
+individual assertions as retired. What survived unchanged is the external
+behaviour each case describes; what was rewritten is how the fault gets
+produced. That is weaker evidence than "the same tests pass against the new
+implementation", and it is the honest description of it.
 
 ## The suite now checks its own retirements
 
@@ -47,6 +53,8 @@ cases were retired as covered elsewhere when they were not covered at all
 and still worked perfectly, and sixteen more simply passed. All nineteen
 were restored, and the suite now proves each remaining retirement by
 lifting it and requiring the case to fail. A retirement that cannot be
-demonstrated is no longer allowed to stand.
+demonstrated is no longer allowed to stand — which is the only reason the
+41 that remain retired can be read as a considered decision rather than a
+convenience.
 
 Closes #1877. Closes #1886.

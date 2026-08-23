@@ -1163,8 +1163,13 @@ work and never lag behind a merge.
   fragments whose add-commit resolves to the boundary itself are refused,
   by name — one added after the boundary has a real add-commit and is
   dated normally, so CI's shallow checkouts are fine and the override is
-  not the answer to them. The script needs Bash 4+. `docs/ReleaseNotes/assemble.test.sh`
-  covers all of it — run it after touching the assembler.
+  not the answer to them. **The assembler is
+  [`assemble.py`](docs/ReleaseNotes/assemble.py) and needs Python 3.10+**
+  (#1877); `assemble.sh` is a thin entry point that picks an interpreter and
+  passes the arguments through, and it uses no Bash-4 feature, so stock macOS
+  Bash 3.2 runs it. `docs/ReleaseNotes/assemble.test.sh` covers all of it and
+  DOES still want Bash 4 — a contributor requirement, not an operator one —
+  run it after touching the assembler.
 - A non-blocking CI check (`.github/workflows/release-notes-drift.yml`)
   warns in the Actions tab if a merge to `main` changed `contracts/src/`
   or `apps/` but added no `docs/ReleaseNotes/` entry.
