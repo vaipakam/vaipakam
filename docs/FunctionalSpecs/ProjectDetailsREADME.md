@@ -1778,6 +1778,12 @@ The distinction is worth stating explicitly because the instant lender-sale rout
 
 A loan may have at most **one live offsetting offer at a time**: a second offset attempt while an earlier one is still outstanding is rejected, so Liam can never be prepaid twice by stacking offers. The single live offer is cleared when it completes or is cancelled.
 
+**An offsetting offer must not be able to outlive the loan it offsets.** Because the refusals above last for as long as the offer stays linked, an offsetting offer with no deadline would give Alice an unbounded veto over Liam's early exit — and one that survives the loan itself, since an offset can no longer complete once the original loan has matured (its replacement term would have to run past the original maturity, which is refused). The offer would then be permanently unfillable *and*, as an offer nobody can declare expired, permanently clearable only by Alice. So an offsetting offer always carries a deadline, and that deadline is the original loan's own maturity: the vehicle stops being offerable at the same moment it stops being completable, and never advertises an exit that could not settle.
+
+The deadline is what bounds the veto, because it makes the offsetting offer an ordinary expired offer that **anyone** may clear once it lapses — releasing the borrower-position lock, dropping the offset link, and returning Alice's own posted capital to Alice, exactly as her own cancellation would. Liam does not have to wait on Alice to regain his exit routes, and no third party gains anything by clearing it. Alice keeps her unconditional right to cancel at any time before then.
+
+This deadline is a bound on the *offer*, and deliberately not a second enforcement of the replacement-term rule. Whether a replacement loan's term would run past the original maturity is decided when the offsetting offer is accepted, against the moment the replacement actually starts — the deadline neither substitutes for that check nor tightens it. Setting the deadline from the term rule instead of from the loan's maturity would refuse a legitimate offset posted at the very start of a loan for its full remaining term, which is a valid lender-swap.
+
 #### Required Settlement Result
 
 When the offset completes, Liam must have a valid claim path for the full value owed under the old loan, including:

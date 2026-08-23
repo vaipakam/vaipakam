@@ -1363,6 +1363,108 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    // ─── #1814: the offset vehicle cannot outlive the loan it offsets ───────
+
+    /// @dev Drives a REAL `offsetWithNewOffer` (no `createOfferInternal` mock,
+    ///      unlike the tests above) so the posted vehicle actually reaches
+    ///      storage and its stamped `expiresAt` can be read back.
+    function _postRealOffset(uint256 durationDays) internal returns (uint256 newOfferId) {
+        vm.prank(borrower);
+        newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            activeLoanId, 500, durationDays, mockCollateralERC20, COLLATERAL, true, mockERC20
+        );
+    }
+
+    function _originalMaturity() internal view returns (uint256) {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        return uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+    }
+
+    /// @dev #1814 — a posted offset vehicle is stamped with the ORIGINAL loan's
+    ///      maturity, not left GTC. Left GTC it is cancellable only by its
+    ///      creator (`isOfferExpired` short-circuits false on the `0` sentinel
+    ///      forever) while holding `loanToOffsetOfferId`, which both lender
+    ///      exits refuse to cross — an unbounded borrower veto.
+    function test_1814_offsetVehicleExpiryIsStampedAtOriginalMaturity() public {
+        uint256 newOfferId = _postRealOffset(25);
+
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(newOfferId);
+        assertTrue(o.expiresAt != 0, "offset vehicle must not be posted GTC");
+        assertEq(
+            uint256(o.expiresAt),
+            _originalMaturity(),
+            "offset vehicle expires exactly at the original loan's maturity"
+        );
+    }
+
+    /// @dev #1814 — the regression #1032 (Codex #1069 rounds 1-2) was protecting
+    ///      against, and the reason that attempt was abandoned. A legitimate
+    ///      SAME-TERM-AT-START offset — `durationDays == the loan's own duration`
+    ///      with zero elapsed — is valid and must stay creatable. Bounding by the
+    ///      anti-drift deadline would stamp `expiresAt == block.timestamp` here
+    ///      (which `createOffer` rejects); bounding by MATURITY cannot, because
+    ///      `_validateOffsetRequest` has already required
+    ///      `now + durationDays·1day <= maturity`, so the stamp is a full term out.
+    function test_1814_sameTermAtStartOffsetStaysCreatableAndIsNotStampedAtNow() public {
+        // No warp: elapsed is 0, so `durationDays == remaining` — the exact
+        // degenerate shape that collapsed the earlier bound.
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(uint256(l.startTime), block.timestamp, "fixture must start at elapsed 0");
+
+        uint256 newOfferId = _postRealOffset(l.durationDays);
+
+        LibVaipakam.Offer memory o = OfferCancelFacet(address(diamond)).getOffer(newOfferId);
+        assertGt(
+            uint256(o.expiresAt),
+            block.timestamp,
+            "a same-term-at-start offset must not be stamped at (or before) now"
+        );
+        assertEq(
+            uint256(o.expiresAt),
+            block.timestamp + l.durationDays * 1 days,
+            "the stamp is a full original term out, not the drift deadline"
+        );
+    }
+
+    /// @dev #1814 — the payoff. Stamping a real expiry opts the vehicle back into
+    ///      the ordinary offer lifecycle, where `cancelOffer` already lets ANY
+    ///      caller clear an expired offer. No separate teardown entry point is
+    ///      needed: the existing permissionless branch drops both link mappings,
+    ///      which is what releases the lender's exits.
+    ///
+    ///      The before/after pair is the point — the same stranger, the same
+    ///      call, refused while the vehicle is live and accepted once it has
+    ///      expired. Under the GTC sentinel the second half could never happen.
+    function test_1814_expiredOffsetVehicleIsClearableByAnyone() public {
+        uint256 newOfferId = _postRealOffset(25);
+        address stranger = makeAddr("offset-cleaner");
+
+        assertEq(
+            OfferCancelFacet(address(diamond)).getOfferLinkedLoanId(newOfferId),
+            activeLoanId,
+            "vehicle starts linked to the loan"
+        );
+
+        // While live, the veto holds: only the borrower may clear it.
+        vm.prank(stranger);
+        vm.expectRevert();
+        OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
+
+        // Past the original maturity the vehicle is permanently unfillable
+        // (the `_completeOffsetImpl` anti-drift guard can never be satisfied
+        // again), and now it is also expired — so anyone may clear it.
+        vm.warp(_originalMaturity() + 1);
+
+        vm.prank(stranger);
+        OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
+
+        assertEq(
+            OfferCancelFacet(address(diamond)).getOfferLinkedLoanId(newOfferId),
+            0,
+            "clearing the expired vehicle drops the offset link that gated both lender exits"
+        );
+    }
+
     // ─── completeOffset reverts ─────────────────────────────────────────────
 
     function testCompleteOffsetRevertsLoanNotActive() public {
