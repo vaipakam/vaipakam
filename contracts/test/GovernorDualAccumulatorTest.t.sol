@@ -2010,6 +2010,1135 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    // ─── 5b. #1878 — the MIRROR's reserve → consume → release lifecycle ──────
+    //
+    // `LibVpfiRecycle.reserveMirrorCommit`'s own natspec states the contract
+    // this section tests: a mirror reserves its instructed commit and then gets
+    // "the identical reserve → consume → release lifecycle Base already runs,
+    // with no new primitives: claims retire it via {consume}, forfeits/expiries
+    // via {releaseCommitment}."
+    //
+    // That was a promise with no test. Section 1 and 2 above prove consume and
+    // release on the CANONICAL chain, and every mirror-side retirement figure
+    // elsewhere in the tree is written by `consumeRecycleRaw` — a mutator that
+    // writes the outcome directly, and therefore cannot tell a working
+    // retirement from an absent one. The nearest mirror test
+    // (`testMirrorArmedDayUnfundedDefersAndNeverDebitsBucket`) broadcasts
+    // `recycleConsume: 0`, so the mirror reserves NOTHING and its funded half
+    // debits a bucket against no commitment at all.
+    //
+    // Why it matters before `D*` (#1878): what a mirror ships to Base is
+    // `getLocalRecycledCommitRetirement`, and Base sizes the next day's
+    // instruction from it. A mirror that consumes but under-retires reports
+    // less retirement than it performed, and the error compounds daily on a
+    // cutover that cannot be reversed.
+
+    /// @dev The mirror fixture's local recycle balance. A named constant
+    ///      because two places asserted the literal `100 ether` and a third
+    ///      sized a reservation against it by eye — which is how the second
+    ///      release ended up sitting exactly on `releaseCommitment`'s floor
+    ///      (Codex #1907 r5).
+    /// @dev The day the mirror fixture's broadcast carries. NOT the same as
+    ///      `getInteractionCurrentDay()` — setUp warps six days — which is
+    ///      exactly the gap that let a credit to the armed day hide (Codex
+    ///      #1907 r6).
+    uint256 internal constant MIRROR_DAY = 5;
+
+    uint256 internal constant MIRROR_BUCKET = 400 ether;
+
+    /// @dev The instructed reservation. Sized deliberately ABOVE everything a
+    ///      day can draw — one consumption OR two releases — because
+    ///      `consume` and `releaseCommitment` both FLOOR their retirement at
+    ///      the outstanding sum. At the old `100 ether` the second forfeit
+    ///      landed exactly on that floor, so an over-large second request
+    ///      would have decremented by the remaining balance and passed every
+    ///      cumulative check (Codex #1907 r5). Each test asserts the residual
+    ///      is non-zero, which is what says the floor stayed out of the way.
+    uint256 internal constant MIRROR_RESERVE = 300 ether;
+
+    /// @dev `_seedEntry` with an explicit per-day contribution, so two users
+    ///      can split one day's side and each claim SEPARATELY — which is the
+    ///      only way to get two live `consume` calls out of one armed day
+    ///      (Codex #1907 r5).
+    function _seedEntryPerDay(
+        address user,
+        uint64 loanId,
+        uint256 perDay,
+        uint32 startDay,
+        uint32 endDayExcl
+    ) internal returns (uint256 id) {
+        id = _mut().pushRewardEntry(
+            user, loanId, LibVaipakam.RewardSide.Lender, perDay, startDay
+        );
+        _mut().closeRewardEntryRaw(id, endDayExcl);
+    }
+
+    /// @dev The WHOLE mirror-side ledger in one value. Three rounds running,
+    ///      the finding has been "a leg was added and inherited only some of
+    ///      the checks its twin has" — so the check-set stops being a list
+    ///      each leg re-derives and becomes one snapshot plus one delta rule
+    ///      per operation class. A new leg then gets the full set by
+    ///      construction rather than by whoever wrote it remembering.
+    struct MirrorLedger {
+        uint256 outFresh;
+        uint256 outRecycled;
+        uint256 paidOut;
+        uint256 retired;
+        uint256 released;
+        uint256 bucket;
+        uint256 credited;
+        uint256 creditedDay;
+        uint256 custody;
+        uint256 freshPaid;
+        uint256 freshRemaining;
+    }
+
+    function _snapMirror(uint256 today)
+        internal
+        view
+        returns (MirrorLedger memory m)
+    {
+        (, m.outFresh, m.outRecycled, m.paidOut) =
+            _agg().getGovernorCommitState();
+        (m.retired, m.released) = _agg().getLocalRecycledCommitRetirement();
+        m.bucket = _cfg().getRecycleBucket();
+        m.credited = _cfg().getRecycledCreditedByDay(today);
+        m.creditedDay = _cfg().getRecycledCreditedByDay(MIRROR_DAY);
+        m.custody = vpfi.balanceOf(address(diamond));
+        (m.freshPaid, m.freshRemaining) =
+            RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
+    }
+
+    /// @dev An instruction COMMITS and does nothing else — asserted as a
+    ///      DELTA so it holds for a later instruction arriving into non-zero
+    ///      state, not only for the first one into a zeroed ledger.
+    function _assertOnlyReserved(
+        MirrorLedger memory b,
+        MirrorLedger memory a,
+        uint256 amount
+    ) internal pure {
+        assertGe(a.outRecycled, b.outRecycled, "a reservation never SHRINKS the outstanding sum");
+        assertEq(a.outRecycled - b.outRecycled, amount, "it encumbers exactly the instruction");
+        assertEq(a.outFresh, b.outFresh, "and nothing on the fresh side");
+        assertEq(a.bucket, b.bucket, "it debits no bucket");
+        assertEq(a.retired, b.retired, "retires nothing");
+        assertEq(a.released, b.released, "releases nothing");
+        assertEq(a.paidOut, b.paidOut, "pays nobody");
+        assertEq(a.credited, b.credited, "credits no absorption");
+        assertEq(a.creditedDay, b.creditedDay, "not on the delivered day either");
+        assertEq(a.custody, b.custody, "and moves no tokens");
+        assertEq(a.freshPaid, b.freshPaid, "spends no delivered fresh");
+        assertEq(a.freshRemaining, b.freshRemaining, "and delivers none");
+    }
+
+    /// @dev A RELEASE returns a commitment without spending: the recycled half
+    ///      stays in the bucket, the fresh half credits it as genuine
+    ///      absorption, and no tokens leave.
+    function _assertReleased(
+        MirrorLedger memory b,
+        MirrorLedger memory a,
+        uint256 released,
+        uint256 swept
+    ) internal pure {
+        assertEq(b.outRecycled - a.outRecycled, released, "outstanding fell by the release");
+        assertEq(a.retired - b.retired, released, "the SHARED retirement total carries it");
+        assertEq(a.released - b.released, released, "and so does the release subset");
+        assertEq(a.paidOut, b.paidOut, "a release pays nobody");
+        assertEq(a.bucket - b.bucket, swept - released, "the bucket gains the FRESH share only");
+        assertEq(a.credited - b.credited, swept - released, "credited[D] carries that same share");
+        assertGe(a.custody, b.custody, "and the released tokens never left custody");
+    }
+
+    /// @dev Stand this diamond up as a MIRROR (`!isCanonical && baseChainId`).
+    function _standUpMirror() internal {
+        vm.chainId(CHAIN_ARB);
+        _rep().setBaseChainId(CHAIN_BASE);
+        _rep().setIsCanonicalRewardChain(false);
+        _rep().setRewardMessenger(address(messenger));
+    }
+
+    /// @dev An armed day 5 delivered the way a mirror really learns one — in
+    ///      band, from Base's broadcast — carrying a non-zero `recycleConsume`
+    ///      so the mirror actually RESERVES against its local bucket.
+    ///
+    ///      `reserve` is deliberately sized well above anything the day can
+    ///      consume: `consume` FLOORS its retirement at the outstanding sum, so
+    ///      a reservation smaller than the payout would make the retirement
+    ///      identity below hold for the wrong reason (both sides pinned at the
+    ///      floor). The tests assert the floor did not bind.
+    function _mirrorArmedDay5(uint256 reserve) internal {
+        _seedPriorDays(5);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+        _mut().setRecycleBucketRaw(MIRROR_BUCKET);
+        _mirrorBroadcast(MIRROR_DAY, reserve);
+    }
+
+    /// @dev One armed-day broadcast, separable so a test can deliver a SECOND
+    ///      instruction into non-zero commitment state (Codex #1907 r7).
+    ///
+    ///      Asserts the delivery moves NO tokens, and the snapshot is taken
+    ///      BEFORE it: every other custody baseline in these tests is read
+    ///      after delivery, so a reservation that transferred VPFI out of the
+    ///      Diamond without touching the bucket or `paidOutRecycled` would
+    ///      have been folded into those baselines and every later custody
+    ///      assertion would still have passed.
+    function _mirrorBroadcast(uint256 dayId, uint256 reserve) internal {
+        uint256 custodyBefore = vpfi.balanceOf(address(diamond));
+        messenger.deliverBroadcastV2(
+            RewardBroadcastV2({
+                dayId: dayId,
+                globalLenderNumeraire18: G_LENDER,
+                globalBorrowerNumeraire18: 15e18,
+                capMode: 1,
+                capPayloadLender: type(uint256).max,
+                capPayloadBorrower: type(uint256).max,
+                armedFromDay: 5,
+                freshLenderHalf: 100 ether,
+                freshBorrowerHalf: 60 ether,
+                recycledLenderHalfEquiv: 50 ether,
+                recycledBorrowerHalfEquiv: 30 ether,
+                recycleConsume: reserve,
+                keeperAllocate: 0,
+                destChainId: CHAIN_ARB
+            })
+        );
+        assertEq(
+            vpfi.balanceOf(address(diamond)),
+            custodyBefore,
+            "the instruction moved no tokens: it COMMITS, it does not spend"
+        );
+    }
+
+    /// @dev Codex #1907 r1+r2 — every baseline in these tests is read AFTER the
+    ///      broadcast, so a reservation with side effects hides inside the
+    ///      baseline itself and every later delta-comparison still passes.
+    ///      Round 1 named the retirement counters, round 2 named `credited[D]`;
+    ///      the RULE is the whole post-broadcast state, so it is asserted in
+    ///      one place both tests call rather than as a growing list of the
+    ///      fields somebody has thought of.
+    ///
+    ///      What it says: an instruction COMMITS and does nothing else. It
+    ///      encumbers `reserve`, and it must not debit the bucket (the double
+    ///      charge `reserveMirrorCommit`'s own note exists to prevent), report
+    ///      a retirement or release, pay anyone, or feed the absorption
+    ///      average that sizes future budgets.
+    function _assertReservationOnlyEncumbers(uint256 reserve, uint256 today)
+        internal
+        view
+    {
+        // Codex #1907 r6 — `today` is NOT the delivered day. The fixture warps
+        // six days at setUp, so `getInteractionCurrentDay()` returns 6 while
+        // the broadcast carries day 5; a reservation that credited
+        // `recycledCreditedByDay[5]` inflated the ARMED day's absorption
+        // series and passed every check here. Both days are asserted now.
+        assertEq(
+            _cfg().getRecycledCreditedByDay(MIRROR_DAY),
+            0,
+            "the DELIVERED day's absorption series is untouched too"
+        );
+        // Codex #1907 r6 — and the broadcast must not have moved the
+        // delivered-fresh ledger. The tests install synthetic funding with
+        // `setArmedFreshLedgerRaw` immediately after this, which OVERWRITES
+        // both halves — so a broadcast that booked `freshLenderHalf` as
+        // received funding, or as already-paid, was erased before anything
+        // could observe it. On a mirror that is either spending against
+        // funding that never arrived or suppressing later headroom.
+        (uint256 freshPaid, uint256 freshRemaining) =
+            RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
+        assertEq(freshPaid, 0, "the broadcast paid no delivered fresh");
+        assertEq(freshRemaining, 0, "and delivered no fresh headroom");
+        (, uint256 outstandingFresh, uint256 outstanding, uint256 paid) =
+            _agg().getGovernorCommitState();
+        (uint256 retired, uint256 released) =
+            _agg().getLocalRecycledCommitRetirement();
+        assertEq(outstanding, reserve, "the instruction encumbered locally");
+        // Codex #1907 r4 — and encumbered NOTHING on the fresh side. The tuple
+        // carries both, and discarding the fresh one let a phantom fresh
+        // reservation hide behind a helper whose whole claim is "only
+        // encumbers `reserve`". Each entry would then retire part of a
+        // commitment nobody made, leaving wrong fresh headroom.
+        assertEq(outstandingFresh, 0, "and encumbered nothing on the fresh side");
+        assertEq(
+            _cfg().getRecycleBucket(), MIRROR_BUCKET, "and debited nothing"
+        );
+        assertEq(retired, 0, "a reservation retires nothing");
+        assertEq(released, 0, "a reservation releases nothing");
+        assertEq(paid, 0, "a reservation pays nobody");
+        assertEq(
+            _cfg().getRecycledCreditedByDay(today),
+            0,
+            "an encumbrance is not absorption: credited[D] untouched"
+        );
+    }
+
+    /// @notice #1878 — a live mirror CLAIM retires the commitment it consumed.
+    ///
+    ///         The four figures must move by ONE number: the bucket debit, the
+    ///         outstanding decrement, the retired cumulative Base reads, and
+    ///         the `paidOutRecycled` transparency counter. Asserting only that
+    ///         the bucket fell (the strongest mirror assertion in the tree
+    ///         before this) leaves the reporting half — the half `D*` is sized
+    ///         from — entirely unpinned.
+    function testMirrorReservedCommitIsRetiredByALiveClaim() public {
+        _standUpMirror();
+        _mirrorArmedDay5(MIRROR_RESERVE);
+
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
+
+        (, , uint256 outBefore, uint256 paidBefore) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredBefore, uint256 releasedBefore) =
+            _agg().getLocalRecycledCommitRetirement();
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+        uint256 creditedBefore = _cfg().getRecycledCreditedByDay(today);
+
+        // The day's own recycled budget, read from the stamp the MIRROR stored
+        // from the broadcast — an anchor independent of anything the claim
+        // does. `consumed` below is derived from the bucket delta, so it is a
+        // reference point, not a check: a claim that consumed the same share
+        // TWICE would move all four ledger figures together and satisfy every
+        // identity (Codex #1907 r2). Only an outside expectation catches it.
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(5, uint32(CHAIN_ARB));
+        uint256 expectLenderShare = funding.lenderHalfEquiv;
+
+        // Codex #1907 r5 — TWO claimants split the day's lender side, so the
+        // fixture performs two live consumptions. With one, a `consume` that
+        // OVERWROTE `recycleCommitRetiredCumulative` (and `paidOutRecycled`)
+        // with the latest claim instead of accumulating would pass every
+        // assertion, and Base would receive only the last claim as this
+        // mirror's lifetime retirement.
+        address bob = makeAddr("mirror-bob");
+        _seedEntryPerDay(alice, 90, G_LENDER / 2, 5, 6);
+        _seedEntryPerDay(bob, 93, G_LENDER / 2, 5, 6);
+        // P1-b: the FRESH leg needs a delivered bound before the armed day
+        // prices at all. Without it the day defers and nothing is consumed —
+        // which is the neighbouring test's subject, not this one's.
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+
+        // Codex #1907 r4, predicted sibling of the forfeit's custody check:
+        // the ledger says the bucket was debited, and only a balance
+        // comparison says the tokens actually went to the CLAIMANT rather
+        // than somewhere else. A consumption moves tokens; a release does not.
+        uint256 custodyBefore = vpfi.balanceOf(address(diamond));
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        // Codex #1907 r7 — anchor `paid` ITSELF. I declined this last round on
+        // the grounds that the fresh leg has its own coverage, and that reason
+        // does not survive the argument: `paid` is the custody REFERENCE here,
+        // so a payout that omitted the recycled or the fresh half would drag
+        // BOTH balance assertions down with it and pass. Each of the two
+        // claimants splits the day's lender side, so each is owed half of that
+        // side's fresh + recycled halves.
+        uint256 expectPayout =
+            (funding.freshLenderHalf + funding.lenderHalfEquiv) / 2;
+        assertApproxEqAbs(
+            paid, expectPayout, 1e6, "the claim paid this claimant's whole share"
+        );
+        assertEq(
+            vpfi.balanceOf(alice) - aliceBefore,
+            paid,
+            "the claimant received what the claim reported paying"
+        );
+        assertEq(
+            custodyBefore - vpfi.balanceOf(address(diamond)),
+            paid,
+            "and the Diamond parted with exactly that, nothing leaked"
+        );
+
+        uint256 consumed = bucketBefore - _cfg().getRecycleBucket();
+        assertGt(consumed, 0, "the funded armed day consumed from the bucket");
+        // The two entries split the lender side of day 5, so this claim's
+        // expected draw is HALF that side's recycled budget. Dust tolerance
+        // covers the per-side integer division, nothing more.
+        assertApproxEqAbs(
+            consumed,
+            expectLenderShare / 2,
+            1e6,
+            "consumed exactly this claimant's recycled share, ONCE"
+        );
+
+        (, , uint256 outAfter, uint256 paidAfter) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredAfter, uint256 releasedAfter) =
+            _agg().getLocalRecycledCommitRetirement();
+
+        uint256 bucketAfterFirst = _cfg().getRecycleBucket();
+
+        // The floor did NOT bind, so the equalities below are the retirement
+        // identity rather than two exhausted counters agreeing at zero.
+        assertGt(outAfter, 0, "reservation outlived the claim (floor unbound)");
+
+        assertEq(
+            outBefore - outAfter,
+            consumed,
+            "outstanding retired by exactly what the claim consumed"
+        );
+        assertEq(
+            retiredAfter - retiredBefore,
+            consumed,
+            "the cumulative this mirror REPORTS to Base moved by the same"
+        );
+        assertEq(
+            paidAfter - paidBefore,
+            consumed,
+            "paidOutRecycled moved by the same"
+        );
+        // Codex #1907 r1 — and the RELEASE cumulative must NOT move. The two
+        // cumulatives are not interchangeable on Base: a release restores the
+        // mirror's availability because the tokens stayed in the bucket, while
+        // a consumption spent them. A claim that reported its payout as a
+        // release would make already-spent tokens committable again.
+        assertEq(
+            releasedAfter,
+            releasedBefore,
+            "a claim SPENDS; it must never report a release"
+        );
+
+        // ── The SECOND live consumption (Codex #1907 r5) ────────────────────
+        //
+        // Self-review: the first claim carries a custody-conservation pair and
+        // the second was added without one. Same omission shape as the
+        // unanchored second RELEASE — an assertion that exists three lines
+        // away from where its twin belongs.
+        uint256 custodyMid = vpfi.balanceOf(address(diamond));
+        uint256 bobBefore = vpfi.balanceOf(bob);
+
+        vm.prank(bob);
+        (uint256 paid2, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        assertApproxEqAbs(
+            paid2,
+            expectPayout,
+            1e6,
+            "and the second claim paid the second claimant's whole share"
+        );
+        assertEq(
+            vpfi.balanceOf(bob) - bobBefore,
+            paid2,
+            "the second claimant received what their claim reported paying"
+        );
+        assertEq(
+            custodyMid - vpfi.balanceOf(address(diamond)),
+            paid2,
+            "and the Diamond parted with exactly that, nothing leaked"
+        );
+
+        uint256 consumed2 = bucketAfterFirst - _cfg().getRecycleBucket();
+        assertApproxEqAbs(
+            consumed2,
+            expectLenderShare / 2,
+            1e6,
+            "the second claimant drew their OWN share, not a remainder"
+        );
+
+        (, , uint256 outEnd, uint256 paidEnd) = _agg().getGovernorCommitState();
+        (uint256 retiredEnd, uint256 releasedEnd) =
+            _agg().getLocalRecycledCommitRetirement();
+
+        // Codex #1907 r6 — the aggregate outstanding decrement, and the
+        // release cumulative still standing still. Reading only the retired
+        // total let a second `consume` pass while leaving
+        // `outstandingCommitRecycled` untouched (an incomplete local
+        // reservation reported to Base) or while ALSO advancing the release
+        // cumulative (spent tokens made to look released).
+        assertEq(
+            outBefore - outEnd,
+            consumed + consumed2,
+            "outstanding fell by BOTH claims together"
+        );
+        assertEq(
+            releasedEnd,
+            releasedBefore,
+            "and neither claim reported a release"
+        );
+        // Same fixture property on the claim side (Codex #1907 r5): the two
+        // claimants together draw the whole lender-side share, so the
+        // reservation must exceed it for `consume`'s floor to stay out of the
+        // way.
+        assertGt(
+            MIRROR_RESERVE,
+            2 * (expectLenderShare / 2),
+            "reservation must exceed BOTH claims, or the floor is in play"
+        );
+        assertGt(outEnd, 0, "and a residual survives both");
+        assertEq(
+            retiredEnd - retiredBefore,
+            consumed + consumed2,
+            "the retired cumulative CONTAINS both claims, it is not the last"
+        );
+        assertEq(
+            paidEnd - paidBefore,
+            consumed + consumed2,
+            "and so does paidOutRecycled"
+        );
+        // Same class, predicted rather than reported: spending the bucket is
+        // not ABSORBING into it. `credited[D]` feeds the trailing average that
+        // sizes future budgets, so a consumption that credited it would let a
+        // mirror inflate tomorrow's runway with tokens it just paid away.
+        assertEq(
+            _cfg().getRecycledCreditedByDay(today),
+            creditedBefore,
+            "a claim credits nothing; consumption is not absorption"
+        );
+
+        // ── A SECOND instruction, into non-zero state (Codex #1907 r7) ──────
+        //
+        // Every fixture so far delivers one broadcast into zeroed commitment
+        // state, so replacing `reserveMirrorCommit`'s `+=` with `=` satisfied
+        // all of it. A mirror really does receive a later day's instruction
+        // while earlier claims are still outstanding; overwriting that
+        // residual would overstate local availability and lose the earlier
+        // commitment's reporting.
+        uint256 secondInstruction = 40 ether;
+        // Codex #1907 r9 — the FULL reservation-only delta, not just the
+        // recycled sum. This is the suite's only multi-reservation scenario,
+        // and a state-dependent regression that added the instruction
+        // correctly while also debiting the bucket, crediting day-6
+        // absorption, touching delivered-fresh state or creating a fresh
+        // commitment passed the narrower check.
+        MirrorLedger memory beforeSecond = _snapMirror(today);
+        _mirrorBroadcast(MIRROR_DAY + 1, secondInstruction);
+        MirrorLedger memory afterSecond = _snapMirror(today);
+        _assertOnlyReserved(beforeSecond, afterSecond, secondInstruction);
+
+        uint256 outAfterSecond = afterSecond.outRecycled;
+
+        // ── Consumption and release against ONE reservation (r7) ────────────
+        //
+        // The two lifecycle tests run in separate fresh fixtures, so the
+        // forfeit never starts with a consumed retirement and the claim never
+        // starts with a release. A primitive that overwrote the SHARED
+        // `recycleCommitRetiredCumulative` with its own operation-class
+        // subtotal would pass both — and erase previously reported retirement
+        // the moment a real mirror interleaved the two.
+        uint256 forfeitId = _seedEntryPerDay(alice, 94, G_LENDER / 2, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(forfeitId);
+        _mut().setLoanActiveLenderEntryId(94, forfeitId);
+
+        // Codex #1907 r9 — snapshot around it: the interleaved sweep discarded
+        // its own return and checked none of the bucket, absorption or custody
+        // deltas, so a stateful regression could release the right recycled
+        // half while omitting or miscrediting the fresh one.
+        MirrorLedger memory beforeForfeit = _snapMirror(today);
+        vm.prank(makeAddr("mirror-keeper"));
+        uint256 sweptHere = _facet().sweepForfeitedInteractionRewards(94);
+        MirrorLedger memory afterForfeit = _snapMirror(today);
+
+        uint256 outFinal = afterForfeit.outRecycled;
+        uint256 paidFinal = afterForfeit.paidOut;
+        uint256 retiredFinal = afterForfeit.retired;
+        uint256 releasedFinal = afterForfeit.released;
+        uint256 releasedHere = outAfterSecond - outFinal;
+        _assertReleased(beforeForfeit, afterForfeit, releasedHere, sweptHere);
+        assertGt(releasedHere, 0, "the interleaved forfeit released something");
+        // Codex #1907 r8 — anchored like the two standalone releases. Every
+        // cumulative expectation below is derived from `releasedHere`, so a
+        // release path that under-released only AFTER the prior claims and the
+        // second reservation — 1 wei, entry still marked processed — satisfied
+        // all three while stranding the remainder. Which is precisely the
+        // stateful case this leg was added to prove.
+        assertApproxEqAbs(
+            releasedHere,
+            funding.lenderHalfEquiv / 2,
+            1e6,
+            "the interleaved release is its own stamped share"
+        );
+
+        assertEq(
+            retiredFinal - retiredBefore,
+            consumed + consumed2 + releasedHere,
+            "shared retirement CONTAINS both operation classes"
+        );
+        assertEq(
+            releasedFinal - releasedBefore,
+            releasedHere,
+            "the release subset carries only the release"
+        );
+        assertEq(
+            paidFinal - paidBefore,
+            consumed + consumed2,
+            "and the payout counter only the consumptions"
+        );
+    }
+
+    /// @notice #1878 — a live mirror FORFEIT releases the commitment instead of
+    ///         consuming it: outstanding falls and the RELEASED cumulative
+    ///         rises, while the bucket keeps the tokens and `paidOutRecycled`
+    ///         does not move (nothing was paid to anyone).
+    ///
+    ///         The canonical twin is `testRecycledForfeitReleasesWithoutCredit`;
+    ///         this is the mirror side of the same rule, which nothing drove
+    ///         through a live entry point before.
+    function testMirrorReservedCommitIsReleasedByAForfeit() public {
+        _standUpMirror();
+        _mirrorArmedDay5(MIRROR_RESERVE);
+
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
+
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+        uint256 id = _seedEntry(alice, 91, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(id);
+        _mut().setLoanActiveLenderEntryId(91, id);
+
+        (, , uint256 outBefore, uint256 paidBefore) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredBefore, uint256 releasedBefore) =
+            _agg().getLocalRecycledCommitRetirement();
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+        uint256 creditedBefore = _cfg().getRecycledCreditedByDay(today);
+        // Codex #1907 r4 — the ledger deltas below are all satisfied by a
+        // sweep that moves the recycled share OUT of the Diamond while
+        // leaving `recycleBucket` untouched: the bucket would then be
+        // ledger-correct and physically unbacked, and the next recycled claim
+        // either fails or spends unrelated custody. A release moves no
+        // tokens, so the Diamond's balance cannot fall.
+        uint256 custodyBefore = vpfi.balanceOf(address(diamond));
+
+        // Codex #1907 r3 — the same independent anchor the claim test uses,
+        // on the site I should have swept when I added it there. `released`
+        // below is derived from the outstanding delta, so an UNDERSIZED
+        // recycled component satisfies every identity: both cumulatives move
+        // by that same smaller number, and `swept - released` is still exactly
+        // what the facet credited. The entry is processed either way, so the
+        // omitted entitlement stays outstanding forever and the mirror
+        // under-reports retirement to Base.
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(5, uint32(CHAIN_ARB));
+
+        vm.prank(makeAddr("mirror-keeper"));
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(91);
+
+        (, , uint256 outAfter, uint256 paidAfter) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredAfter, uint256 releasedAfter) =
+            _agg().getLocalRecycledCommitRetirement();
+
+        uint256 released = outBefore - outAfter;
+        assertGt(released, 0, "the forfeit released a recycled commitment");
+        assertApproxEqAbs(
+            released,
+            funding.lenderHalfEquiv,
+            1e6,
+            "released the lender side's WHOLE recycled share, not a slice"
+        );
+        // Predicted sibling: `swept` is the facet's own return, so the two
+        // assertions below that spend it would move WITH an undersized fresh
+        // leg. Anchor the sweep total on the stored funding record too, so
+        // both legs are pinned to something outside the engine.
+        assertApproxEqAbs(
+            swept,
+            funding.freshLenderHalf + funding.lenderHalfEquiv,
+            1e6,
+            "the sweep took the lender side's fresh AND recycled halves"
+        );
+        assertGt(outAfter, 0, "reservation outlived the forfeit (floor unbound)");
+        assertEq(
+            releasedAfter - releasedBefore,
+            released,
+            "the RELEASED cumulative carries it, not the retired one"
+        );
+        assertEq(
+            paidAfter,
+            paidBefore,
+            "a release pays nobody, so paidOutRecycled must not move"
+        );
+        // Codex #1907 r1 — the RETIRED cumulative rises too. `releaseCommitment`
+        // feeds both: the release-only subset AND the shared retirement total,
+        // and Base CLAMPS a reported release to the retired figure. A release
+        // that advanced only its own subset would break the
+        // `released <= retired` invariant and be clamped away on arrival --
+        // the mirror's availability would never be restored even though the
+        // local reservation had genuinely disappeared.
+        assertEq(
+            retiredAfter - retiredBefore,
+            released,
+            "a release advances the shared retirement total as well"
+        );
+
+        // Codex #1907 r1 — pin the bucket DELTA, not its direction. A mirror
+        // that credited the released share into the bucket on top of the
+        // legitimate fresh absorption would inflate its reported recycled
+        // availability for tokens that never left. The fresh portion is
+        // exactly what the sweep moved less what it released.
+        assertEq(
+            _cfg().getRecycleBucket() - bucketBefore,
+            swept - released,
+            "the bucket gains the FRESH share only, never the released one"
+        );
+        // Same rule one layer down: credited[D] feeds the trailing absorption
+        // average, so the released share must not reach it either.
+        assertEq(
+            _cfg().getRecycledCreditedByDay(today) - creditedBefore,
+            swept - released,
+            "credited[D] carries the fresh share only"
+        );
+        // Caveat, recorded because proving this check found it: this fixture's
+        // treasury IS the Diamond, so value moved to TREASURY is invisible
+        // here. The check catches value leaving the Diamond entirely, which is
+        // the regression it is aimed at; a deployment with an external
+        // treasury would need the treasury balance watched too.
+        assertGe(
+            vpfi.balanceOf(address(diamond)),
+            custodyBefore,
+            "a release moves no tokens: the bucket stays physically backed"
+        );
+
+        // Codex #1907 r4 — a SECOND forfeit, because one cannot tell a
+        // cumulative counter from a last-write one. Swapping `+=` for `=` in
+        // the release path satisfies every assertion above; Base would then
+        // see only the latest retirement and never restore availability for
+        // the earlier one.
+        uint256 id2 = _seedEntry(alice, 92, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(id2);
+        _mut().setLoanActiveLenderEntryId(92, id2);
+
+        (, , uint256 outMid, uint256 paidMid) = _agg().getGovernorCommitState();
+        uint256 bucketMid = _cfg().getRecycleBucket();
+        uint256 creditedMid = _cfg().getRecycledCreditedByDay(today);
+        uint256 custodyMid = vpfi.balanceOf(address(diamond));
+
+        vm.prank(makeAddr("mirror-keeper"));
+        uint256 swept2 = _facet().sweepForfeitedInteractionRewards(92);
+
+        (, , uint256 outEnd, uint256 paidEnd) = _agg().getGovernorCommitState();
+        (uint256 retiredEnd, uint256 releasedEnd) =
+            _agg().getLocalRecycledCommitRetirement();
+        uint256 released2 = outMid - outEnd;
+        assertGt(released2, 0, "the second forfeit released as well");
+        // Codex #1907 r5 — anchored like the first. `released2` is derived
+        // from the outstanding delta, so a second sweep that released 1 wei,
+        // marked the entry processed and advanced both cumulatives by that
+        // same wei would satisfy every sum below while leaving the second
+        // entry's entitlement outstanding forever.
+        assertApproxEqAbs(
+            released2,
+            funding.lenderHalfEquiv,
+            1e6,
+            "the second release is its own WHOLE share, not a remainder"
+        );
+        // Codex #1907 r5 — the floor could not have bound, and this is the
+        // assertion that says so. `assertGt(outEnd, 0)` was NOT enough: at the
+        // old 100 ether reservation the two 50-ether releases left ~40 wei, so
+        // a positive residual passed while the second release sat exactly on
+        // `releaseCommitment`'s floor. What has to hold is a property of the
+        // FIXTURE — the reservation strictly exceeds everything the day can
+        // release — so a later edit that shrinks it fails here rather than
+        // silently re-arming the trap.
+        assertGt(
+            MIRROR_RESERVE,
+            2 * funding.lenderHalfEquiv,
+            "reservation must exceed BOTH releases, or the floor is in play"
+        );
+        assertGt(outEnd, 0, "and a residual survives both");
+        assertEq(
+            releasedEnd - releasedBefore,
+            released + released2,
+            "the released cumulative CONTAINS both, it does not track the last"
+        );
+        assertEq(
+            retiredEnd - retiredBefore,
+            released + released2,
+            "and so does the shared retirement total"
+        );
+
+        // Codex #1907 r6 — the second sweep gets every check the first has.
+        // It was added to prove the release counters accumulate and then
+        // discarded its own `swept`, so a same-day state bug that released the
+        // recycled half correctly while omitting or miscrediting the SECOND
+        // fresh absorption — or moving tokens out — satisfied `released2` and
+        // both sums while corrupting the bucket and the absorption average.
+        assertApproxEqAbs(
+            swept2,
+            funding.freshLenderHalf + funding.lenderHalfEquiv,
+            1e6,
+            "the second sweep took its own fresh AND recycled halves"
+        );
+        assertEq(
+            _cfg().getRecycleBucket() - bucketMid,
+            swept2 - released2,
+            "the bucket gains the second FRESH share only"
+        );
+        assertEq(
+            _cfg().getRecycledCreditedByDay(today) - creditedMid,
+            swept2 - released2,
+            "and credited[D] carries that same fresh share"
+        );
+        assertEq(
+            paidEnd,
+            paidMid,
+            "a release pays nobody, on the second sweep as on the first"
+        );
+        assertGe(
+            vpfi.balanceOf(address(diamond)),
+            custodyMid,
+            "and the second release moves no tokens either"
+        );
+    }
+
+    /// @notice #1878 (Codex #1907 r8) — the BORROWER side of the same
+    ///         lifecycle. Every other fixture here creates `RewardSide.Lender`
+    ///         entries only, while the live pricing code carries separate
+    ///         borrower denominators and its own `freshBorrowerHalf` /
+    ///         `recycledBorrowerHalfEquiv` stamp fields.
+    ///
+    ///         The fixture's two sides are deliberately ASYMMETRIC. While they
+    ///         carried identical figures, a regression that routed a borrower
+    ///         claim through the LENDER fields was invisible by construction —
+    ///         the wrong number and the right number were the same number.
+    ///         This test anchors on the borrower stamp and asserts the sides
+    ///         differ, so reading the wrong one cannot pass.
+    function testMirrorBorrowerSideConsumesItsOwnStampedShare() public {
+        _standUpMirror();
+        _mirrorArmedDay5(MIRROR_RESERVE);
+
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
+
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(MIRROR_DAY, uint32(CHAIN_ARB));
+        // Non-vacuity: the whole point is that the two sides are distinct.
+        assertTrue(
+            funding.borrowerHalfEquiv != funding.lenderHalfEquiv,
+            "the fixture's sides must differ or this test proves nothing"
+        );
+        assertTrue(
+            funding.freshBorrowerHalf != funding.freshLenderHalf,
+            "and their fresh halves too"
+        );
+
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+
+        // TWO borrower-side entries splitting the borrower side: one claimed,
+        // one forfeited, so this fixture exercises BOTH operation classes on
+        // the borrower stamp (Codex #1907 r9 — every sweep in the suite used a
+        // lender entry, so a borrower forfeit routed through the lender stamp,
+        // or never releasing at all, left everything green).
+        uint256 id = _mut().pushRewardEntry(
+            alice, 95, LibVaipakam.RewardSide.Borrower, 15e18 / 2, 5
+        );
+        _mut().closeRewardEntryRaw(id, 6);
+        // The forfeited entry belongs to a DIFFERENT holder on purpose. A
+        // claim absorbs the CLAIMANT's own forfeited entries — the trace shows
+        // `RewardCommitmentReleased` firing inside `claimInteractionRewardsTo`
+        // — so an alice-owned forfeit would be settled by alice's claim and
+        // the keeper sweep would have nothing left to do.
+        uint256 forfeitId = _mut().pushRewardEntry(
+            makeAddr("mirror-carol"),
+            96,
+            LibVaipakam.RewardSide.Borrower,
+            15e18 / 2,
+            5
+        );
+        _mut().closeRewardEntryRaw(forfeitId, 6);
+        _mut().setRewardEntryForfeitedRaw(forfeitId);
+        _mut().setLoanBorrowerEntryId(96, forfeitId);
+
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+        (, , uint256 outBefore, uint256 paidBefore) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredBefore, ) = _agg().getLocalRecycledCommitRetirement();
+
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        uint256 consumed = bucketBefore - _cfg().getRecycleBucket();
+        assertApproxEqAbs(
+            consumed,
+            funding.borrowerHalfEquiv / 2,
+            1e6,
+            "consumed the BORROWER side's recycled share, not the lender's"
+        );
+        assertApproxEqAbs(
+            paid,
+            (funding.freshBorrowerHalf + funding.borrowerHalfEquiv) / 2,
+            1e6,
+            "and paid the borrower side's fresh + recycled halves"
+        );
+
+        (, , uint256 outAfter, uint256 paidAfter) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredAfter, ) = _agg().getLocalRecycledCommitRetirement();
+        assertEq(
+            outBefore - outAfter, consumed, "borrower-side retirement lands too"
+        );
+        assertEq(retiredAfter - retiredBefore, consumed, "and is reported");
+        assertEq(paidAfter - paidBefore, consumed, "and paid out");
+
+        // ── the borrower FORFEIT (Codex #1907 r9) ───────────────────────────
+        MirrorLedger memory beforeSweep = _snapMirror(today);
+        vm.prank(makeAddr("mirror-keeper"));
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(96);
+        MirrorLedger memory afterSweep = _snapMirror(today);
+
+        uint256 released = beforeSweep.outRecycled - afterSweep.outRecycled;
+        assertApproxEqAbs(
+            released,
+            funding.borrowerHalfEquiv / 2,
+            1e6,
+            "released the BORROWER side's recycled share, not the lender's"
+        );
+        assertApproxEqAbs(
+            swept,
+            (funding.freshBorrowerHalf + funding.borrowerHalfEquiv) / 2,
+            1e6,
+            "and swept the borrower side's fresh + recycled halves"
+        );
+        _assertReleased(beforeSweep, afterSweep, released, swept);
+    }
+
+    /// @notice #1878 (Codex #1907 r10) — the CLAIM path's own release leg.
+    ///
+    ///         `RewardClaimFacet` has a `forfeitRecycled -> releaseCommitment`
+    ///         call of its own, separate from the keeper facet's. The previous
+    ///         round moved the forfeited entry to another holder precisely so
+    ///         the keeper sweep would be observable — and in doing so removed
+    ///         the only case that exercised this leg. Remove or convert that
+    ///         call to a consumption and the entry still terminalises while its
+    ///         reservation is stranded or wrongly spent, with every other test
+    ///         here still green.
+    ///
+    ///         One claimant, one claim, both classes: the payable entry is
+    ///         CONSUMED, the forfeited one is RELEASED, and the three counters
+    ///         keep their respective subsets.
+    function testMirrorClaimReleasesTheClaimantsOwnForfeitedEntry() public {
+        _standUpMirror();
+        _mirrorArmedDay5(MIRROR_RESERVE);
+
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
+
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(MIRROR_DAY, uint32(CHAIN_ARB));
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+
+        // Codex #1907 r12 — a RELEASE lands FIRST, before any consumption.
+        // The only other mixed-operation fixture always claims before it
+        // forfeits, so it proves a release preserves earlier consumption but
+        // not the reverse: a `consume` that replaced the shared retirement
+        // total with its own class subtotal would pass that ordering and erase
+        // a previously reported release here.
+        uint256 preForfeited = _seedEntryPerDay(
+            makeAddr("mirror-eve"), 101, G_LENDER / 4, 5, 6
+        );
+        _mut().setRewardEntryForfeitedRaw(preForfeited);
+        _mut().setLoanActiveLenderEntryId(101, preForfeited);
+        vm.prank(makeAddr("mirror-keeper"));
+        _facet().sweepForfeitedInteractionRewards(101);
+        (uint256 retiredAfterPre, uint256 releasedAfterPre) =
+            _agg().getLocalRecycledCommitRetirement();
+        assertGt(releasedAfterPre, 0, "the pre-claim release landed");
+
+        // Same claimant, two entries splitting the lender side: one payable,
+        // one forfeited. A claim settles BOTH.
+        _seedEntryPerDay(alice, 97, G_LENDER / 2, 5, 6);
+        uint256 forfeited = _seedEntryPerDay(alice, 98, G_LENDER / 2, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(forfeited);
+        _mut().setLoanActiveLenderEntryId(98, forfeited);
+
+        MirrorLedger memory b = _snapMirror(today);
+
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        MirrorLedger memory a = _snapMirror(today);
+
+        // The two classes are read from the counters that distinguish them —
+        // NOT from the bucket, which moves in both directions here (a
+        // consumption debits it, the forfeit's FRESH share credits it).
+        uint256 consumed = a.paidOut - b.paidOut;
+        uint256 released = a.released - b.released;
+        uint256 expectHalf = funding.lenderHalfEquiv / 2;
+
+        assertApproxEqAbs(
+            consumed, expectHalf, 1e6, "the payable entry's share was CONSUMED"
+        );
+        assertApproxEqAbs(
+            released, expectHalf, 1e6, "the forfeited entry's share was RELEASED"
+        );
+        assertEq(
+            a.retired - b.retired,
+            consumed + released,
+            "shared retirement carries both, from ONE claim"
+        );
+        assertEq(
+            b.outRecycled - a.outRecycled,
+            consumed + released,
+            "and the reservation fell by both"
+        );
+        // Codex #1907 r12 — the earlier RELEASE survives this consumption.
+        assertEq(
+            a.released - releasedAfterPre,
+            released,
+            "the pre-claim release is still in the release subset"
+        );
+        assertEq(
+            a.retired - retiredAfterPre,
+            consumed + released,
+            "and the shared total grew on top of it, not over it"
+        );
+        // The release leg must not be quietly re-classified as a spend.
+        assertEq(
+            consumed, a.paidOut - b.paidOut, "the payout counter holds only the consumption"
+        );
+
+        // Codex #1907 r11 — the aggregation state's OTHER effects. Checking
+        // only the commitment counters let the claim fold the forfeited share
+        // into the user's payout, or credit the recycled forfeit as fresh
+        // absorption, and still pass. The isolated claim and forfeit fixtures
+        // never see this state.
+        uint256 payableShare =
+            (funding.freshLenderHalf + funding.lenderHalfEquiv) / 2;
+        assertApproxEqAbs(
+            paid,
+            payableShare,
+            1e6,
+            "the payout is the PAYABLE entry's share only, not the forfeited one"
+        );
+        assertEq(
+            vpfi.balanceOf(alice) - aliceBefore,
+            paid,
+            "and the claimant received exactly that"
+        );
+
+        // Absorption is the forfeited entry's FRESH half — the recycled half
+        // never left the bucket, so it must not appear here.
+        uint256 creditedDelta = a.credited - b.credited;
+        assertApproxEqAbs(
+            creditedDelta,
+            funding.freshLenderHalf / 2,
+            1e6,
+            "credited[D] carries the forfeit's FRESH share only"
+        );
+        // Net bucket movement: the consumption debits, the forfeit's fresh
+        // share credits. Both directions in one call, which is why the two
+        // classes are read from counters above rather than from this number.
+        assertEq(
+            a.bucket + consumed - b.bucket,
+            creditedDelta,
+            "bucket nets the consumption against the fresh absorption"
+        );
+        assertEq(
+            b.custody - a.custody,
+            paid,
+            "and custody fell by exactly what was paid out"
+        );
+
+        // Codex #1907 r12 — the delivered-fresh charge covers BOTH fresh legs,
+        // the user's and the treasury's. Charging only one half left the mirror
+        // with apparent headroom it had not earned, for later armed-day
+        // spending, while every payout, bucket, custody and commitment
+        // assertion above still passed.
+        // Dust tolerance, as everywhere else here: the side splits in two and
+        // each half loses a wei to integer division.
+        assertApproxEqAbs(
+            a.freshPaid - b.freshPaid,
+            funding.freshLenderHalf,
+            1e6,
+            "delivered fresh is charged for the payable AND forfeited legs"
+        );
+        assertEq(
+            b.freshRemaining - a.freshRemaining,
+            a.freshPaid - b.freshPaid,
+            "and the remaining bound falls by exactly what was charged"
+        );
+    }
+
+    /// @notice #1878 (Codex #1907 r10) — the EXPIRY release path, live, on a
+    ///         mirror. `reserveMirrorCommit`'s natspec names three ways a
+    ///         reservation retires — "claims retire it via {consume},
+    ///         forfeits/expiries via {releaseCommitment}" — and this card's
+    ///         scope says the same. Claim and forfeit were covered; RL-3
+    ///         expiry, served by its own facet with its own
+    ///         `releaseCommitment` call, was not.
+    function testMirrorExpiryReleasesTheReservedCommitment() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        _standUpMirror();
+        _mirrorArmedDay5(MIRROR_RESERVE);
+
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
+
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(MIRROR_DAY, uint32(CHAIN_ARB));
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+
+        // Codex #1907 r12 — TWO entries in ONE call, so the facet's batch
+        // accumulator is exercised. With a single entry, replacing the expiry
+        // loop's `t.recycled += ex.recycled` with an assignment passes: every
+        // entry is still marked processed, but only the LAST one's recycled
+        // share is released and the earlier reservations stay stranded.
+        uint256 id = _seedEntryPerDay(alice, 99, G_LENDER / 2, 5, 6);
+        uint256 id2 = _seedEntryPerDay(
+            makeAddr("mirror-dora"), 100, G_LENDER / 2, 5, 6
+        );
+        uint256[] memory ids = new uint256[](2);
+        ids[0] = id;
+        ids[1] = id2;
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+
+        // The absorption day is the day of the SWEEP, not `today` — this
+        // fixture warps roughly 270 days to reach the horizon, and snapshotting
+        // `credited[today]` across that warp reads a day the credit never
+        // touches. Same shape as the earlier `today`-vs-delivered-day miss, so
+        // the day is recomputed after the warp and BOTH snapshots use it.
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+        (uint256 sweepDay, ) = _lens().getInteractionCurrentDay();
+
+        MirrorLedger memory b = _snapMirror(sweepDay);
+        uint256 expiredTotal = _sweeper().sweepExpiredInteractionRewards(ids);
+        MirrorLedger memory a = _snapMirror(sweepDay);
+
+        uint256 released = b.outRecycled - a.outRecycled;
+        assertGt(released, 0, "the expiry released the reserved commitment");
+        assertApproxEqAbs(
+            released,
+            funding.lenderHalfEquiv,
+            1e6,
+            "and released the stamped recycled share, not a slice"
+        );
+        assertEq(
+            a.retired - b.retired, released, "the shared retirement total carries it"
+        );
+        assertEq(
+            a.released - b.released, released, "and so does the release subset"
+        );
+        assertEq(a.paidOut, b.paidOut, "an expiry pays nobody");
+
+        // Codex #1907 r11 — the expiry's FRESH effects, which the commitment
+        // counters alone cannot see. Same delta rule the other live release
+        // fixtures use, so a mirror-specific regression that released the
+        // right recycled share while under-crediting the expired fresh share
+        // or moving custody cannot pass.
+        assertApproxEqAbs(
+            expiredTotal,
+            funding.freshLenderHalf + funding.lenderHalfEquiv,
+            1e6,
+            "the sweep reaped the day's fresh AND recycled halves"
+        );
+        _assertReleased(b, a, released, expiredTotal);
+        // The delivered-fresh bound is CHARGED for the expired fresh share on
+        // a mirror — it is the one ledger a release does move, so it is
+        // asserted here rather than folded into the shared delta rule.
+        assertEq(
+            a.freshPaid - b.freshPaid,
+            expiredTotal - released,
+            "and the delivered-fresh bound was charged the fresh share"
+        );
+    }
+
     // ─── 6. Arming guards ────────────────────────────────────────────────────
 
     function testArmingIsFutureOnlyAndOneShot() public {
