@@ -2118,9 +2118,9 @@ contract GovernorDualAccumulatorTest is SetupTest {
                 capPayloadBorrower: type(uint256).max,
                 armedFromDay: 5,
                 freshLenderHalf: 100 ether,
-                freshBorrowerHalf: 100 ether,
+                freshBorrowerHalf: 60 ether,
                 recycledLenderHalfEquiv: 50 ether,
-                recycledBorrowerHalfEquiv: 50 ether,
+                recycledBorrowerHalfEquiv: 30 ether,
                 recycleConsume: reserve,
                 keeperAllocate: 0,
                 destChainId: CHAIN_ARB
@@ -2468,6 +2468,18 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _agg().getLocalRecycledCommitRetirement();
         uint256 releasedHere = outAfterSecond - outFinal;
         assertGt(releasedHere, 0, "the interleaved forfeit released something");
+        // Codex #1907 r8 — anchored like the two standalone releases. Every
+        // cumulative expectation below is derived from `releasedHere`, so a
+        // release path that under-released only AFTER the prior claims and the
+        // second reservation — 1 wei, entry still marked processed — satisfied
+        // all three while stranding the remainder. Which is precisely the
+        // stateful case this leg was added to prove.
+        assertApproxEqAbs(
+            releasedHere,
+            funding.lenderHalfEquiv / 2,
+            1e6,
+            "the interleaved release is its own stamped share"
+        );
 
         assertEq(
             retiredFinal - retiredBefore,
@@ -2699,6 +2711,79 @@ contract GovernorDualAccumulatorTest is SetupTest {
             custodyMid,
             "and the second release moves no tokens either"
         );
+    }
+
+    /// @notice #1878 (Codex #1907 r8) — the BORROWER side of the same
+    ///         lifecycle. Every other fixture here creates `RewardSide.Lender`
+    ///         entries only, while the live pricing code carries separate
+    ///         borrower denominators and its own `freshBorrowerHalf` /
+    ///         `recycledBorrowerHalfEquiv` stamp fields.
+    ///
+    ///         The fixture's two sides are deliberately ASYMMETRIC. While they
+    ///         carried identical figures, a regression that routed a borrower
+    ///         claim through the LENDER fields was invisible by construction —
+    ///         the wrong number and the right number were the same number.
+    ///         This test anchors on the borrower stamp and asserts the sides
+    ///         differ, so reading the wrong one cannot pass.
+    function testMirrorBorrowerSideConsumesItsOwnStampedShare() public {
+        _standUpMirror();
+        _mirrorArmedDay5(MIRROR_RESERVE);
+
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
+
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(MIRROR_DAY, uint32(CHAIN_ARB));
+        // Non-vacuity: the whole point is that the two sides are distinct.
+        assertTrue(
+            funding.borrowerHalfEquiv != funding.lenderHalfEquiv,
+            "the fixture's sides must differ or this test proves nothing"
+        );
+        assertTrue(
+            funding.freshBorrowerHalf != funding.freshLenderHalf,
+            "and their fresh halves too"
+        );
+
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+
+        // A BORROWER-side entry sweeping the whole borrower side: `perDay`
+        // equals the borrower global the broadcast carries.
+        uint256 id = _mut().pushRewardEntry(
+            alice, 95, LibVaipakam.RewardSide.Borrower, 15e18, 5
+        );
+        _mut().closeRewardEntryRaw(id, 6);
+
+        uint256 bucketBefore = _cfg().getRecycleBucket();
+        (, , uint256 outBefore, uint256 paidBefore) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredBefore, ) = _agg().getLocalRecycledCommitRetirement();
+
+        vm.prank(alice);
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
+
+        uint256 consumed = bucketBefore - _cfg().getRecycleBucket();
+        assertApproxEqAbs(
+            consumed,
+            funding.borrowerHalfEquiv,
+            1e6,
+            "consumed the BORROWER side's recycled share, not the lender's"
+        );
+        assertApproxEqAbs(
+            paid,
+            funding.freshBorrowerHalf + funding.borrowerHalfEquiv,
+            1e6,
+            "and paid the borrower side's fresh + recycled halves"
+        );
+
+        (, , uint256 outAfter, uint256 paidAfter) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredAfter, ) = _agg().getLocalRecycledCommitRetirement();
+        assertEq(
+            outBefore - outAfter, consumed, "borrower-side retirement lands too"
+        );
+        assertEq(retiredAfter - retiredBefore, consumed, "and is reported");
+        assertEq(paidAfter - paidBefore, consumed, "and paid out");
     }
 
     // ─── 6. Arming guards ────────────────────────────────────────────────────
