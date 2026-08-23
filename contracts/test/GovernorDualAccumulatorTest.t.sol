@@ -2073,6 +2073,82 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().closeRewardEntryRaw(id, endDayExcl);
     }
 
+    /// @dev The WHOLE mirror-side ledger in one value. Three rounds running,
+    ///      the finding has been "a leg was added and inherited only some of
+    ///      the checks its twin has" — so the check-set stops being a list
+    ///      each leg re-derives and becomes one snapshot plus one delta rule
+    ///      per operation class. A new leg then gets the full set by
+    ///      construction rather than by whoever wrote it remembering.
+    struct MirrorLedger {
+        uint256 outFresh;
+        uint256 outRecycled;
+        uint256 paidOut;
+        uint256 retired;
+        uint256 released;
+        uint256 bucket;
+        uint256 credited;
+        uint256 creditedDay;
+        uint256 custody;
+        uint256 freshPaid;
+        uint256 freshRemaining;
+    }
+
+    function _snapMirror(uint256 today)
+        internal
+        view
+        returns (MirrorLedger memory m)
+    {
+        (, m.outFresh, m.outRecycled, m.paidOut) =
+            _agg().getGovernorCommitState();
+        (m.retired, m.released) = _agg().getLocalRecycledCommitRetirement();
+        m.bucket = _cfg().getRecycleBucket();
+        m.credited = _cfg().getRecycledCreditedByDay(today);
+        m.creditedDay = _cfg().getRecycledCreditedByDay(MIRROR_DAY);
+        m.custody = vpfi.balanceOf(address(diamond));
+        (m.freshPaid, m.freshRemaining) =
+            RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
+    }
+
+    /// @dev An instruction COMMITS and does nothing else — asserted as a
+    ///      DELTA so it holds for a later instruction arriving into non-zero
+    ///      state, not only for the first one into a zeroed ledger.
+    function _assertOnlyReserved(
+        MirrorLedger memory b,
+        MirrorLedger memory a,
+        uint256 amount
+    ) internal pure {
+        assertGe(a.outRecycled, b.outRecycled, "a reservation never SHRINKS the outstanding sum");
+        assertEq(a.outRecycled - b.outRecycled, amount, "it encumbers exactly the instruction");
+        assertEq(a.outFresh, b.outFresh, "and nothing on the fresh side");
+        assertEq(a.bucket, b.bucket, "it debits no bucket");
+        assertEq(a.retired, b.retired, "retires nothing");
+        assertEq(a.released, b.released, "releases nothing");
+        assertEq(a.paidOut, b.paidOut, "pays nobody");
+        assertEq(a.credited, b.credited, "credits no absorption");
+        assertEq(a.creditedDay, b.creditedDay, "not on the delivered day either");
+        assertEq(a.custody, b.custody, "and moves no tokens");
+        assertEq(a.freshPaid, b.freshPaid, "spends no delivered fresh");
+        assertEq(a.freshRemaining, b.freshRemaining, "and delivers none");
+    }
+
+    /// @dev A RELEASE returns a commitment without spending: the recycled half
+    ///      stays in the bucket, the fresh half credits it as genuine
+    ///      absorption, and no tokens leave.
+    function _assertReleased(
+        MirrorLedger memory b,
+        MirrorLedger memory a,
+        uint256 released,
+        uint256 swept
+    ) internal pure {
+        assertEq(b.outRecycled - a.outRecycled, released, "outstanding fell by the release");
+        assertEq(a.retired - b.retired, released, "the SHARED retirement total carries it");
+        assertEq(a.released - b.released, released, "and so does the release subset");
+        assertEq(a.paidOut, b.paidOut, "a release pays nobody");
+        assertEq(a.bucket - b.bucket, swept - released, "the bucket gains the FRESH share only");
+        assertEq(a.credited - b.credited, swept - released, "credited[D] carries that same share");
+        assertGe(a.custody, b.custody, "and the released tokens never left custody");
+    }
+
     /// @dev Stand this diamond up as a MIRROR (`!isCanonical && baseChainId`).
     function _standUpMirror() internal {
         vm.chainId(CHAIN_ARB);
@@ -2421,31 +2497,18 @@ contract GovernorDualAccumulatorTest is SetupTest {
         // residual would overstate local availability and lose the earlier
         // commitment's reporting.
         uint256 secondInstruction = 40 ether;
+        // Codex #1907 r9 — the FULL reservation-only delta, not just the
+        // recycled sum. This is the suite's only multi-reservation scenario,
+        // and a state-dependent regression that added the instruction
+        // correctly while also debiting the bucket, crediting day-6
+        // absorption, touching delivered-fresh state or creating a fresh
+        // commitment passed the narrower check.
+        MirrorLedger memory beforeSecond = _snapMirror(today);
         _mirrorBroadcast(MIRROR_DAY + 1, secondInstruction);
+        MirrorLedger memory afterSecond = _snapMirror(today);
+        _assertOnlyReserved(beforeSecond, afterSecond, secondInstruction);
 
-        (, , uint256 outAfterSecond, uint256 paidAfterSecond) =
-            _agg().getGovernorCommitState();
-        (uint256 retiredAfterSecond, uint256 releasedAfterSecond) =
-            _agg().getLocalRecycledCommitRetirement();
-        // Ordered before the subtraction on purpose: under the regression this
-        // exists to catch (assignment instead of addition) the residual SHRINKS,
-        // and `outAfterSecond - outEnd` would panic on underflow — killing the
-        // test with `arithmetic underflow` instead of naming what broke.
-        assertGe(
-            outAfterSecond,
-            outEnd,
-            "a later instruction never SHRINKS the outstanding residual"
-        );
-        assertEq(
-            outAfterSecond - outEnd,
-            secondInstruction,
-            "the later instruction ADDS to the surviving residual"
-        );
-        assertEq(
-            retiredAfterSecond, retiredEnd, "and disturbs the retirement total"
-        );
-        assertEq(releasedAfterSecond, releasedEnd, "nor the release subset");
-        assertEq(paidAfterSecond, paidEnd, "nor the payout counter");
+        uint256 outAfterSecond = afterSecond.outRecycled;
 
         // ── Consumption and release against ONE reservation (r7) ────────────
         //
@@ -2459,14 +2522,21 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setRewardEntryForfeitedRaw(forfeitId);
         _mut().setLoanActiveLenderEntryId(94, forfeitId);
 
+        // Codex #1907 r9 — snapshot around it: the interleaved sweep discarded
+        // its own return and checked none of the bucket, absorption or custody
+        // deltas, so a stateful regression could release the right recycled
+        // half while omitting or miscrediting the fresh one.
+        MirrorLedger memory beforeForfeit = _snapMirror(today);
         vm.prank(makeAddr("mirror-keeper"));
-        _facet().sweepForfeitedInteractionRewards(94);
+        uint256 sweptHere = _facet().sweepForfeitedInteractionRewards(94);
+        MirrorLedger memory afterForfeit = _snapMirror(today);
 
-        (, , uint256 outFinal, uint256 paidFinal) =
-            _agg().getGovernorCommitState();
-        (uint256 retiredFinal, uint256 releasedFinal) =
-            _agg().getLocalRecycledCommitRetirement();
+        uint256 outFinal = afterForfeit.outRecycled;
+        uint256 paidFinal = afterForfeit.paidOut;
+        uint256 retiredFinal = afterForfeit.retired;
+        uint256 releasedFinal = afterForfeit.released;
         uint256 releasedHere = outAfterSecond - outFinal;
+        _assertReleased(beforeForfeit, afterForfeit, releasedHere, sweptHere);
         assertGt(releasedHere, 0, "the interleaved forfeit released something");
         // Codex #1907 r8 — anchored like the two standalone releases. Every
         // cumulative expectation below is derived from `releasedHere`, so a
@@ -2746,12 +2816,30 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
 
-        // A BORROWER-side entry sweeping the whole borrower side: `perDay`
-        // equals the borrower global the broadcast carries.
+        // TWO borrower-side entries splitting the borrower side: one claimed,
+        // one forfeited, so this fixture exercises BOTH operation classes on
+        // the borrower stamp (Codex #1907 r9 — every sweep in the suite used a
+        // lender entry, so a borrower forfeit routed through the lender stamp,
+        // or never releasing at all, left everything green).
         uint256 id = _mut().pushRewardEntry(
-            alice, 95, LibVaipakam.RewardSide.Borrower, 15e18, 5
+            alice, 95, LibVaipakam.RewardSide.Borrower, 15e18 / 2, 5
         );
         _mut().closeRewardEntryRaw(id, 6);
+        // The forfeited entry belongs to a DIFFERENT holder on purpose. A
+        // claim absorbs the CLAIMANT's own forfeited entries — the trace shows
+        // `RewardCommitmentReleased` firing inside `claimInteractionRewardsTo`
+        // — so an alice-owned forfeit would be settled by alice's claim and
+        // the keeper sweep would have nothing left to do.
+        uint256 forfeitId = _mut().pushRewardEntry(
+            makeAddr("mirror-carol"),
+            96,
+            LibVaipakam.RewardSide.Borrower,
+            15e18 / 2,
+            5
+        );
+        _mut().closeRewardEntryRaw(forfeitId, 6);
+        _mut().setRewardEntryForfeitedRaw(forfeitId);
+        _mut().setLoanBorrowerEntryId(96, forfeitId);
 
         uint256 bucketBefore = _cfg().getRecycleBucket();
         (, , uint256 outBefore, uint256 paidBefore) =
@@ -2765,13 +2853,13 @@ contract GovernorDualAccumulatorTest is SetupTest {
         uint256 consumed = bucketBefore - _cfg().getRecycleBucket();
         assertApproxEqAbs(
             consumed,
-            funding.borrowerHalfEquiv,
+            funding.borrowerHalfEquiv / 2,
             1e6,
             "consumed the BORROWER side's recycled share, not the lender's"
         );
         assertApproxEqAbs(
             paid,
-            funding.freshBorrowerHalf + funding.borrowerHalfEquiv,
+            (funding.freshBorrowerHalf + funding.borrowerHalfEquiv) / 2,
             1e6,
             "and paid the borrower side's fresh + recycled halves"
         );
@@ -2784,6 +2872,27 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
         assertEq(retiredAfter - retiredBefore, consumed, "and is reported");
         assertEq(paidAfter - paidBefore, consumed, "and paid out");
+
+        // ── the borrower FORFEIT (Codex #1907 r9) ───────────────────────────
+        MirrorLedger memory beforeSweep = _snapMirror(today);
+        vm.prank(makeAddr("mirror-keeper"));
+        uint256 swept = _facet().sweepForfeitedInteractionRewards(96);
+        MirrorLedger memory afterSweep = _snapMirror(today);
+
+        uint256 released = beforeSweep.outRecycled - afterSweep.outRecycled;
+        assertApproxEqAbs(
+            released,
+            funding.borrowerHalfEquiv / 2,
+            1e6,
+            "released the BORROWER side's recycled share, not the lender's"
+        );
+        assertApproxEqAbs(
+            swept,
+            (funding.freshBorrowerHalf + funding.borrowerHalfEquiv) / 2,
+            1e6,
+            "and swept the borrower side's fresh + recycled halves"
+        );
+        _assertReleased(beforeSweep, afterSweep, released, swept);
     }
 
     // ─── 6. Arming guards ────────────────────────────────────────────────────
