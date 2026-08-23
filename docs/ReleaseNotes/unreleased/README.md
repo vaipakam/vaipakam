@@ -168,7 +168,23 @@ timer. The error prints the exact command — `rmdir <path>` — and it is
 safe to run once you know no other assembly is in progress.
 
 **Leave the markers in place** when editing the assembled notes.
-Deleting one makes a re-run duplicate that fragment. If a dated file has
+Deleting one makes a re-run duplicate that fragment.
+
+**And do not delete the section a marker sits under** while leaving the
+marker itself. That is the inverse mistake, and it used to be the
+dangerous one: the marker attests to the SOURCE fragment, so on that
+evidence alone a re-run removed the still-pending fragment without
+re-appending it and reported the content already present "byte for
+byte" — deleting the only remaining copy of that text. A run now
+reconstructs the exact bytes it would have appended and refuses unless
+it finds them, so this is caught rather than acted on (#1886); the
+guidance stands anyway, because a refusal still means someone has to go
+and work out what happened.
+
+Editing a section's WORDING is fine and expected — that is what the
+review-and-add-an-intro step is for. What the check objects to is a
+section that is no longer there at all, or one edited before its
+fragment was consumed, which are the two shapes that lose text. If a dated file has
 no markers at all (it predates them) and already contains a pending
 fragment's heading, the script stops and asks rather than guessing —
 `--force-append` overrides it once you have checked (#1788).
