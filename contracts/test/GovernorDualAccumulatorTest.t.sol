@@ -2929,10 +2929,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
 
         MirrorLedger memory b = _snapMirror(today);
 
+        uint256 aliceBefore = vpfi.balanceOf(alice);
+
         vm.prank(alice);
-        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
-            LibVaipakam.RewardDelivery.Wallet
-        );
+        (uint256 paid, , ) = RewardClaimFacet(address(diamond))
+            .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
 
         MirrorLedger memory a = _snapMirror(today);
 
@@ -2963,6 +2964,48 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertEq(
             consumed, a.paidOut - b.paidOut, "the payout counter holds only the consumption"
         );
+
+        // Codex #1907 r11 — the aggregation state's OTHER effects. Checking
+        // only the commitment counters let the claim fold the forfeited share
+        // into the user's payout, or credit the recycled forfeit as fresh
+        // absorption, and still pass. The isolated claim and forfeit fixtures
+        // never see this state.
+        uint256 payableShare =
+            (funding.freshLenderHalf + funding.lenderHalfEquiv) / 2;
+        assertApproxEqAbs(
+            paid,
+            payableShare,
+            1e6,
+            "the payout is the PAYABLE entry's share only, not the forfeited one"
+        );
+        assertEq(
+            vpfi.balanceOf(alice) - aliceBefore,
+            paid,
+            "and the claimant received exactly that"
+        );
+
+        // Absorption is the forfeited entry's FRESH half — the recycled half
+        // never left the bucket, so it must not appear here.
+        uint256 creditedDelta = a.credited - b.credited;
+        assertApproxEqAbs(
+            creditedDelta,
+            funding.freshLenderHalf / 2,
+            1e6,
+            "credited[D] carries the forfeit's FRESH share only"
+        );
+        // Net bucket movement: the consumption debits, the forfeit's fresh
+        // share credits. Both directions in one call, which is why the two
+        // classes are read from counters above rather than from this number.
+        assertEq(
+            a.bucket + consumed - b.bucket,
+            creditedDelta,
+            "bucket nets the consumption against the fresh absorption"
+        );
+        assertEq(
+            b.custody - a.custody,
+            paid,
+            "and custody fell by exactly what was paid out"
+        );
     }
 
     /// @notice #1878 (Codex #1907 r10) — the EXPIRY release path, live, on a
@@ -2989,11 +3032,18 @@ contract GovernorDualAccumulatorTest is SetupTest {
         ids[0] = id;
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
 
-        MirrorLedger memory b = _snapMirror(today);
+        // The absorption day is the day of the SWEEP, not `today` — this
+        // fixture warps roughly 270 days to reach the horizon, and snapshotting
+        // `credited[today]` across that warp reads a day the credit never
+        // touches. Same shape as the earlier `today`-vs-delivered-day miss, so
+        // the day is recomputed after the warp and BOTH snapshots use it.
         _accrueExec(ids, 180 days + 90 days - 7 days);
         vm.warp(vm.getBlockTimestamp() + 7 days);
-        _sweeper().sweepExpiredInteractionRewards(ids);
-        MirrorLedger memory a = _snapMirror(today);
+        (uint256 sweepDay, ) = _lens().getInteractionCurrentDay();
+
+        MirrorLedger memory b = _snapMirror(sweepDay);
+        uint256 expiredTotal = _sweeper().sweepExpiredInteractionRewards(ids);
+        MirrorLedger memory a = _snapMirror(sweepDay);
 
         uint256 released = b.outRecycled - a.outRecycled;
         assertGt(released, 0, "the expiry released the reserved commitment");
@@ -3010,6 +3060,27 @@ contract GovernorDualAccumulatorTest is SetupTest {
             a.released - b.released, released, "and so does the release subset"
         );
         assertEq(a.paidOut, b.paidOut, "an expiry pays nobody");
+
+        // Codex #1907 r11 — the expiry's FRESH effects, which the commitment
+        // counters alone cannot see. Same delta rule the other live release
+        // fixtures use, so a mirror-specific regression that released the
+        // right recycled share while under-crediting the expired fresh share
+        // or moving custody cannot pass.
+        assertApproxEqAbs(
+            expiredTotal,
+            funding.freshLenderHalf + funding.lenderHalfEquiv,
+            1e6,
+            "the sweep reaped the day's fresh AND recycled halves"
+        );
+        _assertReleased(b, a, released, expiredTotal);
+        // The delivered-fresh bound is CHARGED for the expired fresh share on
+        // a mirror — it is the one ledger a release does move, so it is
+        // asserted here rather than folded into the shared delta rule.
+        assertEq(
+            a.freshPaid - b.freshPaid,
+            expiredTotal - released,
+            "and the delivered-fresh bound was charged the fresh share"
+        );
     }
 
     // ─── 6. Arming guards ────────────────────────────────────────────────────
