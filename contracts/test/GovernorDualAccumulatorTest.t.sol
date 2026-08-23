@@ -2895,6 +2895,123 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _assertReleased(beforeSweep, afterSweep, released, swept);
     }
 
+    /// @notice #1878 (Codex #1907 r10) — the CLAIM path's own release leg.
+    ///
+    ///         `RewardClaimFacet` has a `forfeitRecycled -> releaseCommitment`
+    ///         call of its own, separate from the keeper facet's. The previous
+    ///         round moved the forfeited entry to another holder precisely so
+    ///         the keeper sweep would be observable — and in doing so removed
+    ///         the only case that exercised this leg. Remove or convert that
+    ///         call to a consumption and the entry still terminalises while its
+    ///         reservation is stranded or wrongly spent, with every other test
+    ///         here still green.
+    ///
+    ///         One claimant, one claim, both classes: the payable entry is
+    ///         CONSUMED, the forfeited one is RELEASED, and the three counters
+    ///         keep their respective subsets.
+    function testMirrorClaimReleasesTheClaimantsOwnForfeitedEntry() public {
+        _standUpMirror();
+        _mirrorArmedDay5(MIRROR_RESERVE);
+
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
+
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(MIRROR_DAY, uint32(CHAIN_ARB));
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+
+        // Same claimant, two entries splitting the lender side: one payable,
+        // one forfeited. A claim settles BOTH.
+        _seedEntryPerDay(alice, 97, G_LENDER / 2, 5, 6);
+        uint256 forfeited = _seedEntryPerDay(alice, 98, G_LENDER / 2, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(forfeited);
+        _mut().setLoanActiveLenderEntryId(98, forfeited);
+
+        MirrorLedger memory b = _snapMirror(today);
+
+        vm.prank(alice);
+        RewardClaimFacet(address(diamond)).claimInteractionRewardsTo(
+            LibVaipakam.RewardDelivery.Wallet
+        );
+
+        MirrorLedger memory a = _snapMirror(today);
+
+        // The two classes are read from the counters that distinguish them —
+        // NOT from the bucket, which moves in both directions here (a
+        // consumption debits it, the forfeit's FRESH share credits it).
+        uint256 consumed = a.paidOut - b.paidOut;
+        uint256 released = a.released - b.released;
+        uint256 expectHalf = funding.lenderHalfEquiv / 2;
+
+        assertApproxEqAbs(
+            consumed, expectHalf, 1e6, "the payable entry's share was CONSUMED"
+        );
+        assertApproxEqAbs(
+            released, expectHalf, 1e6, "the forfeited entry's share was RELEASED"
+        );
+        assertEq(
+            a.retired - b.retired,
+            consumed + released,
+            "shared retirement carries both, from ONE claim"
+        );
+        assertEq(
+            b.outRecycled - a.outRecycled,
+            consumed + released,
+            "and the reservation fell by both"
+        );
+        // The release leg must not be quietly re-classified as a spend.
+        assertEq(
+            consumed, a.paidOut - b.paidOut, "the payout counter holds only the consumption"
+        );
+    }
+
+    /// @notice #1878 (Codex #1907 r10) — the EXPIRY release path, live, on a
+    ///         mirror. `reserveMirrorCommit`'s natspec names three ways a
+    ///         reservation retires — "claims retire it via {consume},
+    ///         forfeits/expiries via {releaseCommitment}" — and this card's
+    ///         scope says the same. Claim and forfeit were covered; RL-3
+    ///         expiry, served by its own facet with its own
+    ///         `releaseCommitment` call, was not.
+    function testMirrorExpiryReleasesTheReservedCommitment() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        _standUpMirror();
+        _mirrorArmedDay5(MIRROR_RESERVE);
+
+        (uint256 today, ) = _lens().getInteractionCurrentDay();
+        _assertReservationOnlyEncumbers(MIRROR_RESERVE, today);
+
+        LibVaipakam.ChainDayFunding memory funding =
+            _agg().getChainDayRecycledFunding(MIRROR_DAY, uint32(CHAIN_ARB));
+        _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
+
+        uint256 id = _seedEntryPerDay(alice, 99, G_LENDER, 5, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
+
+        MirrorLedger memory b = _snapMirror(today);
+        _accrueExec(ids, 180 days + 90 days - 7 days);
+        vm.warp(vm.getBlockTimestamp() + 7 days);
+        _sweeper().sweepExpiredInteractionRewards(ids);
+        MirrorLedger memory a = _snapMirror(today);
+
+        uint256 released = b.outRecycled - a.outRecycled;
+        assertGt(released, 0, "the expiry released the reserved commitment");
+        assertApproxEqAbs(
+            released,
+            funding.lenderHalfEquiv,
+            1e6,
+            "and released the stamped recycled share, not a slice"
+        );
+        assertEq(
+            a.retired - b.retired, released, "the shared retirement total carries it"
+        );
+        assertEq(
+            a.released - b.released, released, "and so does the release subset"
+        );
+        assertEq(a.paidOut, b.paidOut, "an expiry pays nobody");
+    }
+
     // ─── 6. Arming guards ────────────────────────────────────────────────────
 
     function testArmingIsFutureOnlyAndOneShot() public {
