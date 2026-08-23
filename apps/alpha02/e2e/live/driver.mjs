@@ -743,7 +743,27 @@ export async function launch({
     const req = route.request();
     const violation = readOnlyViolation(req);
     if (violation) {
-      blockedRequests.push({ reason: violation, url: req.url().slice(0, 300) });
+      // WHO asked, not only what was asked (Codex #1894 r5). A record
+      // carrying just destination and reason cannot distinguish the app
+      // POSTing to a third-party host from that third party's own page
+      // doing it, so any consumer that exempts a host is really
+      // exempting the destination for everybody — including the
+      // compromised or malfunctioning build this guard exists to catch.
+      // `frame()` is null for service-worker and some navigation
+      // requests, and can throw on a detached frame; an unknown
+      // initiator is recorded as such, and a consumer must treat unknown
+      // as "not exempt".
+      let initiator = '(unknown)';
+      try {
+        initiator = req.frame()?.url()?.slice(0, 300) || '(unknown)';
+      } catch {
+        /* detached frame — leave it unknown, which is the safe reading */
+      }
+      blockedRequests.push({
+        reason: violation,
+        url: req.url().slice(0, 300),
+        initiator,
+      });
       await route.abort('accessdenied').catch(() => {});
       return;
     }
@@ -799,6 +819,36 @@ export async function launch({
     'eth_signTransaction',
     'eth_sendRawTransaction',
   ]);
+  // Reads the app may legitimately need, forwarded to the chain RPC.
+  // Taken from `live-position-observe.mjs`'s ALLOWED_RPC — the same
+  // question was answered there, and a second independently-drifting
+  // copy of "which methods are reads" is how one of two guards ends up
+  // weaker than the other. Methods the switch above handles explicitly
+  // are not listed: they never reach the default branch.
+  const READ_METHODS = new Set([
+    'eth_blockNumber',
+    'eth_call',
+    'eth_estimateGas',
+    'eth_feeHistory',
+    'eth_gasPrice',
+    'eth_getBalance',
+    'eth_getBlockByHash',
+    'eth_getBlockByNumber',
+    'eth_getCode',
+    'eth_getLogs',
+    'eth_getProof',
+    'eth_getStorageAt',
+    'eth_getTransactionByHash',
+    'eth_getTransactionCount',
+    'eth_getTransactionReceipt',
+    'eth_maxPriorityFeePerGas',
+    'eth_syncing',
+    'eth_subscribe',
+    'eth_unsubscribe',
+    'web3_clientVersion',
+    'wallet_getPermissions',
+  ]);
+
   async function handle({ method, params }) {
     const { chain, rpc } = CHAINS[chainId];
     const pub = createPublicClient({ chain, transport: http(rpc) });
@@ -910,6 +960,35 @@ export async function launch({
         return hash;
       }
       default:
+        // ALLOWLIST under readOnly, not the denylist above (Codex #1894
+        // r5). `WRITE_METHODS` has to enumerate every write that will
+        // ever exist, and it already misses the ones the ecosystem added
+        // after it was written — `wallet_sendCalls`, `eth_sendUserOperation`.
+        // Those fell through to here unrecorded, so a page that
+        // attempted one and caught the error left a clean report: the
+        // guard's whole job is to notice the ATTEMPT, and it did not.
+        //
+        // `live-position-observe.mjs` already made this argument for the
+        // HTTP layer and shipped an allowlist there; this applies the
+        // same rule at the wallet, which was the one place still
+        // enumerating what to refuse instead of what to permit.
+        //
+        // A too-narrow allowlist is a real cost and is why the list is
+        // generous with reads — but it fails LOUDLY, as a refused read
+        // in a live drive, rather than silently the way a denylist gap
+        // does. That asymmetry is the reason to prefer it.
+        if (readOnly && !READ_METHODS.has(method)) {
+          blockedRequests.push({
+            reason: `wallet rpc ${method} (not a permitted read)`,
+            url: '(injected wallet)',
+            initiator: '(injected wallet)',
+          });
+          const unknown = new Error(
+            `read-only driver session: ${method} is not a permitted read`,
+          );
+          unknown.code = 4200; // EIP-1193 unsupported method
+          throw unknown;
+        }
         // All reads forward to the chain RPC.
         return pub.request({ method, params });
     }

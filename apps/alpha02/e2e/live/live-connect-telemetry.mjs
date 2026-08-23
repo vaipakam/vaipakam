@@ -540,8 +540,25 @@ try {
     'api.wallet.coinbase.com',
     'api.cdp.coinbase.com',
   ]);
-  const isPopupBackend = ({ reason, url }) => {
+  // The INITIATOR decides, not the destination (Codex #1894 r5). A
+  // host-only test exempts the destination for everybody: if alpha02
+  // itself POSTed to `as.coinbase.com`, that is an application-initiated
+  // mutation attempt — exactly what this guard is for — and it would
+  // have been filed as popup traffic and reported PASS. So the request
+  // must have come FROM a page Coinbase serves, and an unknown
+  // initiator is never exempt.
+  const isPopupBackend = ({ reason, url, initiator }) => {
     if (reason !== 'POST (non-RPC mutating request)') return false;
+    const fromPopup = (() => {
+      if (!initiator || initiator === '(unknown)') return false;
+      try {
+        const f = new URL(initiator);
+        return f.protocol === 'https:' && POPUP_BACKEND_HOSTS.has(f.hostname.toLowerCase());
+      } catch {
+        return false;
+      }
+    })();
+    if (!fromPopup) return false;
     try {
       const u = new URL(url);
       return u.protocol === 'https:' && POPUP_BACKEND_HOSTS.has(u.hostname.toLowerCase());
