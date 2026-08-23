@@ -30,9 +30,27 @@ tick, while the day's total dispatch count fell by 63% and every summary
 figure said the problem was solved.
 
 Each staggered pass now has its own minute within its cadence, so no two
-land together. The busiest tick went from ten passes to at most five, and
-a test asserts that ceiling directly rather than asserting the daily
-total, because the daily total was exactly the misleading number.
+land together. The busiest tick went from ten passes to six, and a test asserts that
+ceiling directly rather than asserting the daily total, because the
+daily total was exactly the misleading number.
+
+## One pass was slowed by mistake, and put back
+
+The liquidity-confidence pass was given a 30-minute cadence on the
+strength of an hour-long cache TTL in its own file. That TTL turned out
+to govern only the advisory data behind a *promotion* — the path that
+**demotes** an asset re-quotes the aggregators fresh on every run and
+lowers its tier the moment real liquidity degrades, with no waiting
+period at all, because that is the fail-safe direction.
+
+Slowing it therefore meant a degraded asset could keep a stale, generous
+tier for up to twenty-nine minutes, and new loans could be created
+against it at exactly the borrowing power the check exists to withdraw.
+That is a safety regression, not a saving, and the pass is back on every
+tick. Separating the cached promotion advisory from the per-tick
+demotion check would recover most of the cost, and is left as its own
+piece of work rather than folded in here — it changes what the pass
+does, not merely when it runs.
 
 ## Nothing goes quiet
 

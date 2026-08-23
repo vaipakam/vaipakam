@@ -92,11 +92,26 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
   },
   {
     name: 'liquidityConfidence',
-    // Its own advisory caches carry a 1h TTL, so a tick inside that hour
-    // re-reads the same cached answer and can change nothing.
-    cadenceMinutes: 30,
-    offsetMinutes: 9,
-    why: 'advisory caches hold a 1h TTL — a finer cadence re-reads the same answer',
+    // EVERY TICK, and the first cut of this table had it at 30m on a
+    // misreading (Codex #1913 r1 P1). The 1h TTL that was derived from
+    // covers only the off-chain ADVISORY caches, which gate a Tier-3
+    // PROMOTION. Demotion is a different path entirely: it re-quotes
+    // 0x/1inch fresh on every invocation and lowers `keeperTier` the
+    // moment realized liquidity degrades, with no window at all — the
+    // file calls it the fail-safe direction.
+    //
+    // A 30-minute cadence therefore delayed a safety demotion by up to
+    // 29 minutes, and while the on-chain single-hop approximation stayed
+    // optimistic, new loans could originate at an LTV the relay exists
+    // to revoke. That is a safety regression, not a saving.
+    //
+    // Splitting the cached promotion advisory from the per-tick demotion
+    // check is the better answer and would recover most of this CPU. It
+    // is deliberately NOT done here: it changes the pass's internals and
+    // deserves its own measurement, and growing this diff to reach it is
+    // how a scheduling change turns into a liquidity-relay change.
+    cadenceMinutes: 1,
+    why: 'demotion re-quotes fresh each tick and is the fail-safe direction',
     run: runLiquidityConfidence,
   },
   {

@@ -123,9 +123,17 @@ describe('the stagger reduces real dispatched work', () => {
         }
       }
     }
-    // Three always-on passes, plus at most one staggered pass, plus the
+    // Expressed against the table rather than as a magic number, so a
+    // future cadence change cannot quietly loosen the bound: every
+    // always-on pass, plus AT MOST one staggered pass, plus the
     // daily-window pass during its ten minutes.
-    expect(worst, `busiest tick was ${worstAt} with ${worst} passes`).toBeLessThanOrEqual(5);
+    const alwaysOn = KEEPER_PASSES.filter(
+      (p) => p.cadenceMinutes <= 1 && p.dailyWindow !== true,
+    ).length;
+    expect(
+      worst,
+      `busiest tick was ${worstAt} with ${worst} passes (${alwaysOn} always-on)`,
+    ).toBeLessThanOrEqual(alwaysOn + 2);
   });
 
   it('no two staggered passes share a minute', () => {
@@ -143,10 +151,15 @@ describe('the stagger reduces real dispatched work', () => {
 
   it('never skips the three latency-sensitive passes', () => {
     // watcher and liquidator are protocol-safety functions; matcher is
-    // the one users feel. If a future edit slows one of these, it should
-    // be a deliberate decision with a profile behind it, not a silent
-    // consequence of editing a table.
-    for (const name of ['watcher', 'liquidator', 'matcher']) {
+    // the one users feel; liquidityConfidence demotes a degraded asset's
+    // tier with no window, which is the same kind of safety. If a future
+    // edit slows one of these, it should be a deliberate decision with a
+    // profile behind it, not a silent consequence of editing a table.
+    //
+    // liquidityConfidence is here BECAUSE it was slowed by mistake once
+    // (Codex #1913 r1 P1) — the 30m cadence was derived from a TTL that
+    // governs promotion, not the per-tick demotion path.
+    for (const name of ['watcher', 'liquidator', 'matcher', 'liquidityConfidence']) {
       const pass = KEEPER_PASSES.find((p) => p.name === name);
       expect(pass, `${name} missing from the table`).toBeDefined();
       for (let m = 0; m < 60; m += 1) {
