@@ -217,7 +217,7 @@ contract EarlyWithdrawalDirectFacet is
             buyOffer.offerType != LibVaipakam.OfferType.Lender ||
             buyOffer.accepted
         ) revert InvalidSaleOffer();
-        // #1503 (design item 8) — GTT expiry. This path checked the offer's
+        // #1503 (design item 10) — GTT expiry. This path checked the offer's
         // TYPE and `accepted` flag but never its deadline, so a lender offer
         // past `expiresAt` and not yet permissionlessly cancelled stayed
         // consumable: the seller could withdraw the creator's still-vaulted
@@ -225,6 +225,15 @@ contract EarlyWithdrawalDirectFacet is
         // consented to had closed. Every fill / match path enforces this
         // lazily (the storage row outlives `expiresAt` — there is no keeper
         // sweep), and this one was the gap.
+        //
+        // NUMBERING — this comment said "item 8" until it was corrected.
+        // #1503 renumbered mid-thread on 2026-07-31: two instant-sell items
+        // were inserted as 6 and 7, pushing NFT-identity / duration / expiry
+        // to 8 / 9 / 10. Expiry is 10. The collateral-identity guard further
+        // down is the real item 8, so the stale label had one file using
+        // "item 8" for two different consent guards. The issue BODY still
+        // carries the pre-renumber numbers; the comments from 2026-07-31
+        // 09:44 onward carry these.
         //
         // Placed before the offset-vehicle check and every lien release or
         // vault movement below, so an expired offer costs the caller a cheap
