@@ -2920,6 +2920,23 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _agg().getChainDayRecycledFunding(MIRROR_DAY, uint32(CHAIN_ARB));
         _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
 
+        // Codex #1907 r12 — a RELEASE lands FIRST, before any consumption.
+        // The only other mixed-operation fixture always claims before it
+        // forfeits, so it proves a release preserves earlier consumption but
+        // not the reverse: a `consume` that replaced the shared retirement
+        // total with its own class subtotal would pass that ordering and erase
+        // a previously reported release here.
+        uint256 preForfeited = _seedEntryPerDay(
+            makeAddr("mirror-eve"), 101, G_LENDER / 4, 5, 6
+        );
+        _mut().setRewardEntryForfeitedRaw(preForfeited);
+        _mut().setLoanActiveLenderEntryId(101, preForfeited);
+        vm.prank(makeAddr("mirror-keeper"));
+        _facet().sweepForfeitedInteractionRewards(101);
+        (uint256 retiredAfterPre, uint256 releasedAfterPre) =
+            _agg().getLocalRecycledCommitRetirement();
+        assertGt(releasedAfterPre, 0, "the pre-claim release landed");
+
         // Same claimant, two entries splitting the lender side: one payable,
         // one forfeited. A claim settles BOTH.
         _seedEntryPerDay(alice, 97, G_LENDER / 2, 5, 6);
@@ -2959,6 +2976,17 @@ contract GovernorDualAccumulatorTest is SetupTest {
             b.outRecycled - a.outRecycled,
             consumed + released,
             "and the reservation fell by both"
+        );
+        // Codex #1907 r12 — the earlier RELEASE survives this consumption.
+        assertEq(
+            a.released - releasedAfterPre,
+            released,
+            "the pre-claim release is still in the release subset"
+        );
+        assertEq(
+            a.retired - retiredAfterPre,
+            consumed + released,
+            "and the shared total grew on top of it, not over it"
         );
         // The release leg must not be quietly re-classified as a spend.
         assertEq(
@@ -3006,6 +3034,25 @@ contract GovernorDualAccumulatorTest is SetupTest {
             paid,
             "and custody fell by exactly what was paid out"
         );
+
+        // Codex #1907 r12 — the delivered-fresh charge covers BOTH fresh legs,
+        // the user's and the treasury's. Charging only one half left the mirror
+        // with apparent headroom it had not earned, for later armed-day
+        // spending, while every payout, bucket, custody and commitment
+        // assertion above still passed.
+        // Dust tolerance, as everywhere else here: the side splits in two and
+        // each half loses a wei to integer division.
+        assertApproxEqAbs(
+            a.freshPaid - b.freshPaid,
+            funding.freshLenderHalf,
+            1e6,
+            "delivered fresh is charged for the payable AND forfeited legs"
+        );
+        assertEq(
+            b.freshRemaining - a.freshRemaining,
+            a.freshPaid - b.freshPaid,
+            "and the remaining bound falls by exactly what was charged"
+        );
     }
 
     /// @notice #1878 (Codex #1907 r10) — the EXPIRY release path, live, on a
@@ -3027,9 +3074,18 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _agg().getChainDayRecycledFunding(MIRROR_DAY, uint32(CHAIN_ARB));
         _mut().setArmedFreshLedgerRaw(1_000 ether, 0);
 
-        uint256 id = _seedEntryPerDay(alice, 99, G_LENDER, 5, 6);
-        uint256[] memory ids = new uint256[](1);
+        // Codex #1907 r12 — TWO entries in ONE call, so the facet's batch
+        // accumulator is exercised. With a single entry, replacing the expiry
+        // loop's `t.recycled += ex.recycled` with an assignment passes: every
+        // entry is still marked processed, but only the LAST one's recycled
+        // share is released and the earlier reservations stay stranded.
+        uint256 id = _seedEntryPerDay(alice, 99, G_LENDER / 2, 5, 6);
+        uint256 id2 = _seedEntryPerDay(
+            makeAddr("mirror-dora"), 100, G_LENDER / 2, 5, 6
+        );
+        uint256[] memory ids = new uint256[](2);
         ids[0] = id;
+        ids[1] = id2;
         _sweeper().sweepExpiredInteractionRewards(ids); // stamp the clock
 
         // The absorption day is the day of the SWEEP, not `today` — this
