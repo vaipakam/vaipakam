@@ -761,16 +761,61 @@ export async function launch({
     'eth_signTypedData_v4',
   ]);
   const blockedRequests = [];
+  // OUR OWN mutable surfaces — the site, and every Worker beside it
+  // (indexer, agent). The read exemption below never applies to these.
+  //
+  // Stated as "ours", not as "the RPC endpoints", because only one of
+  // those two is enumerable. The first attempt at this listed the
+  // driver's own `CHAINS[*].rpc` origins and exempted only those, and
+  // the live run refused every read alpha02 makes: the app talks to
+  // drpc (`lb.drpc.live`, `eth.drpc.org`), which the driver's table has
+  // never heard of, and no fixed list of third-party providers stays
+  // right. The surfaces that can actually be MUTATED by a request from
+  // this app are ours, and those we can name.
+  const siteHost = (() => {
+    try {
+      return new URL(SITE).hostname.toLowerCase();
+    } catch {
+      return '';
+    }
+  })();
+  function isFirstParty(rawUrl) {
+    try {
+      const h = new URL(rawUrl).hostname.toLowerCase();
+      return h === siteHost || h === 'vaipakam.com' || h.endsWith('.vaipakam.com');
+    } catch {
+      // Unparseable destination: treat as ours, so it cannot be
+      // exempted. Unknown means fatal.
+      return true;
+    }
+  }
+
   function readOnlyViolation(req) {
     if (!readOnly) return null;
     const method = req.method().toUpperCase();
     if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return null;
     const body = req.postData();
     if (body) {
+      // The exemption needs the DESTINATION and the VERB, not just a
+      // body that looks like JSON-RPC (Codex #1894 r7). Keying on the
+      // body alone means any endpoint can be reached by bolting
+      // `jsonrpc` and a read method onto its payload: a
+      // `PUT /thresholds` at the agent Worker parses fine, ignores the
+      // extra fields, and persists alert configuration — a real
+      // mutation, recorded as a permitted read.
+      //
+      // So: JSON-RPC is a POST, and it is never aimed at one of our own
+      // surfaces. The verb alone already refuses that `PUT`; the
+      // first-party check refuses the same trick sent as a POST to the
+      // indexer or the agent.
       try {
         const parsed = JSON.parse(body);
         const calls = Array.isArray(parsed) ? parsed : [parsed];
-        if (calls.every((c) => c && typeof c.jsonrpc === 'string')) {
+        if (
+          method === 'POST' &&
+          !isFirstParty(req.url()) &&
+          calls.every((c) => c && typeof c.jsonrpc === 'string')
+        ) {
           // Named write first, so the reason still says `json-rpc
           // eth_sendTransaction` for the cases that always worked and
           // the existing assertions keep reading the same way.
