@@ -92,14 +92,39 @@ describe('cadence arithmetic', () => {
 });
 
 describe('the stagger reduces real dispatched work', () => {
-  it('dispatches materially fewer passes per day than ten-every-minute', () => {
-    const baseline = KEEPER_PASSES.length * 60 * 24; // the behaviour this replaces
-    const actual = dispatchesPerHour();
-    expect(actual).toBeLessThan(baseline);
-    // Not a tight pin — the point is the order of the reduction, and a
-    // tight number would break on any future cadence retune without
-    // telling anyone anything useful.
-    expect(actual).toBeLessThan(baseline * 0.6);
+  it('dispatches fewer passes per day, though not by much', () => {
+    // Deliberately a weak assertion, and the weakness is the finding.
+    // An earlier version of this test demanded a 40% reduction and
+    // passed — but only while three passes were staggered that turn out
+    // not to be safe to stagger (Codex #1913 r1/r2). Once they went back
+    // to every tick the real figure was ~27%, and the honest response
+    // was to correct the claim rather than relax the threshold quietly
+    // until it went green again.
+    const baseline = KEEPER_PASSES.length * 60 * 24;
+    expect(dispatchesPerHour()).toBeLessThan(baseline);
+  });
+
+  it('records WHICH passes cannot be staggered — the durable finding', () => {
+    // The useful output of this work is not the saving, it is the list.
+    // Seven of ten passes cannot be slowed without a correctness or
+    // safety cost, each for a reason written in its own file, and three
+    // of those seven were found only after I had already slowed them.
+    // Pinning the set means a future edit that quietly re-slows one has
+    // to argue with this test.
+    const alwaysOn = KEEPER_PASSES.filter(
+      (p) => p.cadenceMinutes <= 1 && p.dailyWindow !== true,
+    ).map((p) => p.name);
+    expect(alwaysOn.sort()).toEqual(
+      [
+        'autoLifecycle', // bounded drain, no urgency ordering
+        'commitmentReport', // resumes a persisted frontier
+        'liquidator', // protocol safety
+        'liquidityConfidence', // demotes with no window
+        'matcher', // user-visible latency
+        'remitAck', // first-receipt discovery is unbounded by the re-send backoff
+        'watcher', // protocol safety
+      ].sort(),
+    );
   });
 
   it('BOUNDS THE PEAK TICK — the number the CPU limit actually charges', () => {
@@ -160,6 +185,7 @@ describe('the stagger reduces real dispatched work', () => {
     // (Codex #1913 r1 P1) — the 30m cadence was derived from a TTL that
     // governs promotion, not the per-tick demotion path.
     for (const name of ['watcher', 'liquidator', 'matcher', 'liquidityConfidence']) {
+      // (the full always-on set is pinned by its own test above)
       const pass = KEEPER_PASSES.find((p) => p.name === name);
       expect(pass, `${name} missing from the table`).toBeDefined();
       for (let m = 0; m < 60; m += 1) {
@@ -183,13 +209,19 @@ describe('the stagger reduces real dispatched work', () => {
 
 describe('a skip is never silent', () => {
   it('gives a reason naming the cadence and why it was chosen', () => {
-    const remitAck = KEEPER_PASSES.find((p) => p.name === 'remitAck')!;
-    const reason = cadenceSkipReason(remitAck, tick(3, 1));
+    const staggered = KEEPER_PASSES.find((p) => p.cadenceMinutes > 1)!;
+    // Picked from the table rather than named, so this cannot silently
+    // start testing an every-tick pass the way it did when `remitAck`
+    // was staggered and then correctly put back.
+    const notDue = [...Array(60).keys()]
+      .map((m) => tick(3, m))
+      .find((t) => cadenceSkipReason(staggered, t) !== null)!;
+    const reason = cadenceSkipReason(staggered, notDue);
     expect(reason).not.toBeNull();
     expect(reason).toContain('cadence');
     // The rationale travels with the skip, so an operator reading the
     // log does not have to open the source to learn why a pass is idle.
-    expect(reason).toContain(remitAck.why);
+    expect(reason).toContain(staggered.why);
   });
 
   it('names the window, not just "skipped", for the daily pass', () => {

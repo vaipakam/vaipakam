@@ -116,11 +116,16 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
   },
   {
     name: 'autoLifecycle',
-    // Auto-extend windows are measured in days and the pass carries a
-    // soft per-tick cap, so minute granularity buys nothing.
-    cadenceMinutes: 5,
-    offsetMinutes: 1,
-    why: 'extension windows are day-scale; per-tick cap makes minute granularity moot',
+    // EVERY TICK (Codex #1913 r2, by the same discriminator as the two
+    // below). It stops after MAX_EXTENDS_PER_TICK submissions and
+    // re-scans from zero next tick, and it does NOT order candidates by
+    // urgency — so a backlog drains at a fixed rate in scan order, and
+    // slowing the tick slows the drain proportionally against deadlines
+    // measured in days but enforced to the second. The liquidator's
+    // per-tick cap is safe because it sorts most-at-risk first; this
+    // one has no such ordering.
+    cadenceMinutes: 1,
+    why: 'bounded per-tick drain with no urgency ordering — slowing it slows the drain',
     run: runAutoLifecycle,
   },
   {
@@ -141,19 +146,29 @@ export const KEEPER_PASSES: readonly KeeperPass[] = [
   },
   {
     name: 'remitAck',
-    // Acks retry on a 15-minute backoff, so scanning every minute
-    // cannot make an ack land sooner than that backoff allows.
-    cadenceMinutes: 5,
-    offsetMinutes: 3,
-    why: 'ack retries use a 15m backoff; a finer scan cannot land one sooner',
+    // EVERY TICK (Codex #1913 r2 P2). The 15-minute backoff I derived a
+    // 5m cadence from is an ATTEMPT backoff governing re-sends. First
+    // discovery has no prior attempt, so nothing bounds it but this
+    // cadence: a delivery landing just after the offset stayed Pending
+    // on Base for the rest of the window.
+    cadenceMinutes: 1,
+    why: 'first-receipt discovery is unbounded by the re-send backoff',
     run: runRemitAck,
   },
   {
     name: 'commitmentReport',
-    // Reports per armed DAY, over a bounded recent-day window.
-    cadenceMinutes: 30,
-    offsetMinutes: 14,
-    why: 'reports per armed day over a bounded window',
+    // EVERY TICK (Codex #1913 r2 P1). It pauses after 20 pages or 8
+    // batches and resumes from a D1-persisted frontier on the NEXT
+    // tick, so a historical gap needs several invocations to drain. A
+    // 30-minute cadence turned each continuation from a one-minute wait
+    // into a thirty-minute one — and Base gates that chain's ShareOfPool
+    // remittance until the report completes.
+    //
+    // I derived the cadence from "reports are keyed by day", which is
+    // true and irrelevant: what matters is that the pass carries
+    // persisted work whose drain rate IS the tick rate.
+    cadenceMinutes: 1,
+    why: 'resumes a persisted frontier — the drain rate is the tick rate',
     run: runCommitmentReport,
   },
 ];
