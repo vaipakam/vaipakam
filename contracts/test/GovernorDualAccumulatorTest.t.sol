@@ -2038,6 +2038,12 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      sized a reservation against it by eye — which is how the second
     ///      release ended up sitting exactly on `releaseCommitment`'s floor
     ///      (Codex #1907 r5).
+    /// @dev The day the mirror fixture's broadcast carries. NOT the same as
+    ///      `getInteractionCurrentDay()` — setUp warps six days — which is
+    ///      exactly the gap that let a credit to the armed day hide (Codex
+    ///      #1907 r6).
+    uint256 internal constant MIRROR_DAY = 5;
+
     uint256 internal constant MIRROR_BUCKET = 400 ether;
 
     /// @dev The instructed reservation. Sized deliberately ABOVE everything a
@@ -2125,6 +2131,27 @@ contract GovernorDualAccumulatorTest is SetupTest {
         internal
         view
     {
+        // Codex #1907 r6 — `today` is NOT the delivered day. The fixture warps
+        // six days at setUp, so `getInteractionCurrentDay()` returns 6 while
+        // the broadcast carries day 5; a reservation that credited
+        // `recycledCreditedByDay[5]` inflated the ARMED day's absorption
+        // series and passed every check here. Both days are asserted now.
+        assertEq(
+            _cfg().getRecycledCreditedByDay(MIRROR_DAY),
+            0,
+            "the DELIVERED day's absorption series is untouched too"
+        );
+        // Codex #1907 r6 — and the broadcast must not have moved the
+        // delivered-fresh ledger. The tests install synthetic funding with
+        // `setArmedFreshLedgerRaw` immediately after this, which OVERWRITES
+        // both halves — so a broadcast that booked `freshLenderHalf` as
+        // received funding, or as already-paid, was erased before anything
+        // could observe it. On a mirror that is either spending against
+        // funding that never arrived or suppressing later headroom.
+        (uint256 freshPaid, uint256 freshRemaining) =
+            RewardRemittanceLensFacet(address(diamond)).getDeliveredFreshBound();
+        assertEq(freshPaid, 0, "the broadcast paid no delivered fresh");
+        assertEq(freshRemaining, 0, "and delivered no fresh headroom");
         (, uint256 outstandingFresh, uint256 outstanding, uint256 paid) =
             _agg().getGovernorCommitState();
         (uint256 retired, uint256 released) =
@@ -2299,7 +2326,25 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
 
         (, , uint256 outEnd, uint256 paidEnd) = _agg().getGovernorCommitState();
-        (uint256 retiredEnd, ) = _agg().getLocalRecycledCommitRetirement();
+        (uint256 retiredEnd, uint256 releasedEnd) =
+            _agg().getLocalRecycledCommitRetirement();
+
+        // Codex #1907 r6 — the aggregate outstanding decrement, and the
+        // release cumulative still standing still. Reading only the retired
+        // total let a second `consume` pass while leaving
+        // `outstandingCommitRecycled` untouched (an incomplete local
+        // reservation reported to Base) or while ALSO advancing the release
+        // cumulative (spent tokens made to look released).
+        assertEq(
+            outBefore - outEnd,
+            consumed + consumed2,
+            "outstanding fell by BOTH claims together"
+        );
+        assertEq(
+            releasedEnd,
+            releasedBefore,
+            "and neither claim reported a release"
+        );
         // Same fixture property on the claim side (Codex #1907 r5): the two
         // claimants together draw the whole lender-side share, so the
         // reservation must exceed it for `consume`'s floor to stay out of the
@@ -2463,11 +2508,15 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setRewardEntryForfeitedRaw(id2);
         _mut().setLoanActiveLenderEntryId(92, id2);
 
-        (, , uint256 outMid, ) = _agg().getGovernorCommitState();
-        vm.prank(makeAddr("mirror-keeper"));
-        _facet().sweepForfeitedInteractionRewards(92);
+        (, , uint256 outMid, uint256 paidMid) = _agg().getGovernorCommitState();
+        uint256 bucketMid = _cfg().getRecycleBucket();
+        uint256 creditedMid = _cfg().getRecycledCreditedByDay(today);
+        uint256 custodyMid = vpfi.balanceOf(address(diamond));
 
-        (, , uint256 outEnd, ) = _agg().getGovernorCommitState();
+        vm.prank(makeAddr("mirror-keeper"));
+        uint256 swept2 = _facet().sweepForfeitedInteractionRewards(92);
+
+        (, , uint256 outEnd, uint256 paidEnd) = _agg().getGovernorCommitState();
         (uint256 retiredEnd, uint256 releasedEnd) =
             _agg().getLocalRecycledCommitRetirement();
         uint256 released2 = outMid - outEnd;
@@ -2506,6 +2555,39 @@ contract GovernorDualAccumulatorTest is SetupTest {
             retiredEnd - retiredBefore,
             released + released2,
             "and so does the shared retirement total"
+        );
+
+        // Codex #1907 r6 — the second sweep gets every check the first has.
+        // It was added to prove the release counters accumulate and then
+        // discarded its own `swept`, so a same-day state bug that released the
+        // recycled half correctly while omitting or miscrediting the SECOND
+        // fresh absorption — or moving tokens out — satisfied `released2` and
+        // both sums while corrupting the bucket and the absorption average.
+        assertApproxEqAbs(
+            swept2,
+            funding.freshLenderHalf + funding.lenderHalfEquiv,
+            1e6,
+            "the second sweep took its own fresh AND recycled halves"
+        );
+        assertEq(
+            _cfg().getRecycleBucket() - bucketMid,
+            swept2 - released2,
+            "the bucket gains the second FRESH share only"
+        );
+        assertEq(
+            _cfg().getRecycledCreditedByDay(today) - creditedMid,
+            swept2 - released2,
+            "and credited[D] carries that same fresh share"
+        );
+        assertEq(
+            paidEnd,
+            paidMid,
+            "a release pays nobody, on the second sweep as on the first"
+        );
+        assertGe(
+            vpfi.balanceOf(address(diamond)),
+            custodyMid,
+            "and the second release moves no tokens either"
         );
     }
 
