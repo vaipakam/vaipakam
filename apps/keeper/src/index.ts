@@ -102,115 +102,77 @@
  */
 
 import { resolveEnv, type WorkerEnv } from './env';
-import { runWatcher } from './watcher';
-import { runDailyOracleSnapshot } from './dailyOracleSnapshot';
-import { runMatcher } from './matcher';
-import { runLiquidityConfidence } from './liquidityConfidence';
-import { runLiquidator } from './liquidator';
-import { runAutoLifecycle } from './autoLifecycle';
-import { runPreGraceWatcher } from './preGraceWatcher';
-import { runRewardBudgetRemit } from './rewardBudgetRemit';
-import { runCommitmentReport } from './commitmentReport';
-import { runRemitAck } from './remitAck';
+import { KEEPER_PASSES, cadenceSkipReason } from './passSchedule';
+
+/**
+ * Run one pass and report what it cost.
+ *
+ * The card's acceptance asks for per-pass CPU **attribution** rather
+ * than a guess about which pass is expensive, and asks that the numbers
+ * be recorded so nobody re-derives them. One line per pass per run is
+ * what makes that a read of `wrangler tail` instead of an
+ * investigation.
+ *
+ * This measures WALL time, and the distinction matters for how the
+ * numbers are read: a Worker's limit is CPU time, which excludes
+ * waiting on I/O, so a pass that spends its time on RPC round-trips
+ * will look expensive here and cost little against the limit. Wall time
+ * is still the right thing to log — it is available without a profiler,
+ * it bounds CPU from above, and a pass that is cheap here cannot be the
+ * one blowing the budget. Read it to EXCLUDE suspects; use the
+ * dashboard's per-invocation CPU to confirm the culprit.
+ */
+async function timedPass(name: string, run: () => Promise<void>): Promise<void> {
+  const startedAt = Date.now();
+  try {
+    await run();
+    // eslint-disable-next-line no-console
+    console.log(`[keeper] ${name} done in ${Date.now() - startedAt}ms`);
+  } catch (err) {
+    // Still reports its cost: a pass that fails slowly is a finding,
+    // and the old code logged the error without any notion of how long
+    // it had been running first.
+    // eslint-disable-next-line no-console
+    console.error(
+      `[keeper] ${name} pass failed after ${Date.now() - startedAt}ms:`,
+      err,
+    );
+  }
+}
 
 export default {
   async scheduled(
-    _controller: ScheduledController,
+    controller: ScheduledController,
     env: WorkerEnv,
     ctx: ExecutionContext,
   ): Promise<void> {
     // T-078 — resolve the Secrets Store bindings once, here at the
     // entry point; every scheduled pass gets the plain resolved env.
     const resolved = await resolveEnv(env);
-    // Each pass wrapped so a transient RPC / D1 hiccup on one
-    // can't wedge the next. Each pass also has its own per-chain
-    // try/catch boundary inside; these outer guards are a final
-    // safety net.
-    ctx.waitUntil(
-      runWatcher(resolved).catch((err) => {
+
+    // ONE loop over the declared table (#1896), rather than ten
+    // hand-written blocks. Each pass still gets its own `waitUntil` and
+    // its own `.catch`, so a transient failure in one cannot wedge the
+    // next — that property is now structural instead of being repeated
+    // ten times and relied upon to stay repeated.
+    //
+    // `controller.scheduledTime` is the tick's SCHEDULED epoch, not the
+    // moment it ran, so a late delivery cannot make a `% n` cadence
+    // skip its minute. It was previously ignored entirely (`_controller`).
+    const scheduledTimeMs: number | undefined = controller?.scheduledTime;
+
+    for (const pass of KEEPER_PASSES) {
+      const skip = cadenceSkipReason(pass, scheduledTimeMs);
+      if (skip !== null) {
+        // Legible, not silent — the contract `passIsArmed` established
+        // for arming (#1475), extended to cadence. A pass that is idle
+        // because it is not due and a pass that is idle because it is
+        // wedged must never look the same in `wrangler tail`.
         // eslint-disable-next-line no-console
-        console.error('[keeper] runWatcher pass failed:', err);
-      }),
-    );
-    ctx.waitUntil(
-      runDailyOracleSnapshot(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[keeper] runDailyOracleSnapshot pass failed:', err);
-      }),
-    );
-    ctx.waitUntil(
-      runMatcher(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[keeper] runMatcher pass failed:', err);
-      }),
-    );
-    ctx.waitUntil(
-      runLiquidityConfidence(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[keeper] runLiquidityConfidence pass failed:', err);
-      }),
-    );
-    ctx.waitUntil(
-      runLiquidator(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[keeper] runLiquidator pass failed:', err);
-      }),
-    );
-    // T-092 #512 — auto-extend pass. Discovers loans with both-
-    // side `autoExtendCaps.enabled` and submits `extendLoanInPlace`
-    // within the consent intersection. Skipped chain-by-chain when
-    // `AdminFacet.getAutoExtendEnabled()` is false. Auto-refinance
-    // composition with the matcher is a follow-up.
-    ctx.waitUntil(
-      runAutoLifecycle(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[keeper] runAutoLifecycle pass failed:', err);
-      }),
-    );
-    // T-092-C (#532) — pre-grace warning. For each loan with
-    // autoRefinanceCaps.enabled approaching its grace boundary,
-    // notify the borrower via Telegram + Push so they can repay
-    // manually if no compatible offer is in the book. Closes the
-    // "auto-refinance is best-effort" UX gap.
-    ctx.waitUntil(
-      runPreGraceWatcher(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[keeper] runPreGraceWatcher pass failed:', err);
-      }),
-    );
-    // #925 — reward-budget remittance. On Base only, funds each mirror's
-    // interaction-reward VPFI budget on demand (RewardRemittanceFacet). Dark
-    // until KEEPER_ENABLED + REWARD_REMIT_ENABLED are both set and the keeper
-    // EOA is authorized on-chain (setRewardRemittanceKeeper / ADMIN).
-    ctx.waitUntil(
-      runRewardBudgetRemit(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[keeper] runRewardBudgetRemit pass failed:', err);
-      }),
-    );
-    // #1222 M3 B2-d1 — mirror→Base commitment report. On mirrors only: walks
-    // the chain's own reward-entry id sequence, batches each armed day's
-    // covering entries into the Diamond, and dispatches the per-side
-    // liability report once demand conservation completes (Base's
-    // ShareOfPool remit gate waits for it). Dark until KEEPER_ENABLED +
-    // REWARD_COMMIT_ENABLED are both set and the keeper EOA holds
-    // KEEPER_ROLE on-chain.
-    ctx.waitUntil(
-      runCommitmentReport(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[keeper] runCommitmentReport pass failed:', err);
-      }),
-    );
-    // #1222 M3 B2-d2 — delivered-backing remit ACK. Scans Base's dense
-    // reservation ledger from a D1 frontier, and for each Pending
-    // reservation whose CCIP delivery has landed on the mirror (receipt
-    // record present) sends the mirror→Base ack that finalizes it. Same
-    // arming as the remit pass (KEEPER_ENABLED + REWARD_REMIT_ENABLED).
-    ctx.waitUntil(
-      runRemitAck(resolved).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.error('[keeper] runRemitAck pass failed:', err);
-      }),
-    );
+        console.log(`[keeper] ${pass.name} skipped: ${skip}`);
+        continue;
+      }
+      ctx.waitUntil(timedPass(pass.name, () => pass.run(resolved)));
+    }
   },
 } satisfies ExportedHandler<WorkerEnv>;

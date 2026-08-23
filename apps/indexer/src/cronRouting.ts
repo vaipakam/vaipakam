@@ -26,6 +26,8 @@
 // (chainIngestDO.ts) MUST match the DO path's effective 5-minute
 // cadence — clients size rail-health windows from the reported value.
 
+import { isTickDue } from '@vaipakam/lib/cronCadence';
+
 /** Effective DO-path cadence in minutes — the modulo the router applies
  *  and the source of EXPECTED_SCAN_CADENCE_SEC's 300s. */
 export const DO_PATH_CADENCE_MINUTES = 5;
@@ -39,10 +41,11 @@ export function shouldRunCronTick(
   doPathEnabled: boolean,
 ): boolean {
   if (!doPathEnabled) return true; // legacy: every minute
-  if (typeof scheduledTimeMs !== 'number' || !Number.isFinite(scheduledTimeMs)) {
-    return true; // fail-open — see header
-  }
-  return (
-    new Date(scheduledTimeMs).getUTCMinutes() % DO_PATH_CADENCE_MINUTES === 0
-  );
+  // The modulo, the scheduled-time reading and the fail-open all moved
+  // to `@vaipakam/lib/cronCadence` when apps/keeper needed the same
+  // discriminator (#1896). Two copies of "is this minute due" is how one
+  // of them ends up subtly different from the other; this keeps the
+  // routing DECISION here — which is indexer-specific, because of the
+  // legacy bypass above — while the arithmetic lives in one place.
+  return isTickDue(scheduledTimeMs, DO_PATH_CADENCE_MINUTES);
 }

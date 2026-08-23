@@ -13,7 +13,11 @@
       "types": "./src/address.ts",
       "default": "./src/address.ts"
     },
-    "./multicall": {
+    "./cronCadence": {
+   "types": "./src/cronCadence.ts",
+   "default": "./src/cronCadence.ts"
+  },
+  "./multicall": {
       "types": "./src/multicall.ts",
       "default": "./src/multicall.ts"
     },
