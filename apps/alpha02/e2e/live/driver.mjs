@@ -774,7 +774,19 @@ export async function launch({
   // this app are ours, and those we can name.
   const hostOf = (raw) => {
     try {
-      return new URL(raw).hostname.toLowerCase();
+      // The ROOT DOT comes off (Codex #1894 r9). `https://host.example.`
+      // is the same host as `https://host.example`, but `URL.hostname`
+      // keeps the terminal dot, so every suffix and equality test below
+      // reads it as a different host — a build could spell our own
+      // Worker that way and be classified third-party. Verified in Node:
+      // `new URL('https://a.workers.dev./x').hostname` is
+      // `'a.workers.dev.'`, and `.endsWith('.workers.dev')` is false.
+      //
+      // Normalised HERE rather than at each test, because it defeats all
+      // of them — the `SITE` equality and the `.vaipakam.com` suffix as
+      // much as the `.workers.dev` one — and a per-test fix would leave
+      // whichever branch nobody thought about.
+      return new URL(raw).hostname.toLowerCase().replace(/\.$/, '');
     } catch {
       return '';
     }

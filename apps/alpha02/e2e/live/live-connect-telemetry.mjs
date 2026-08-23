@@ -90,7 +90,11 @@ const WC_RELAY_HOST = 'relay.walletconnect.org';
  */
 function hostOf(url) {
   try {
-    return new URL(url).hostname.toLowerCase();
+    // Trailing root dot stripped, same as the driver (Codex #1894 r9).
+    // It matters in BOTH directions here and one of them is unsafe: a
+    // beacon to `cca-lite.coinbase.com.` would not be counted as
+    // telemetry at all, so the run would report zero having seen one.
+    return new URL(url).hostname.toLowerCase().replace(/\.$/, '');
   } catch {
     return '';
   }
