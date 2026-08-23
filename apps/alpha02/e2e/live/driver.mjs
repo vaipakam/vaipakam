@@ -772,22 +772,45 @@ export async function launch({
   // never heard of, and no fixed list of third-party providers stays
   // right. The surfaces that can actually be MUTATED by a request from
   // this app are ours, and those we can name.
-  const siteHost = (() => {
+  const hostOf = (raw) => {
     try {
-      return new URL(SITE).hostname.toLowerCase();
+      return new URL(raw).hostname.toLowerCase();
     } catch {
       return '';
     }
-  })();
+  };
+  // Origins a drive was pointed at explicitly, so a staging or preview
+  // run on some other domain still classifies its own Workers as ours.
+  const CONFIGURED_HOSTS = new Set(
+    [SITE, process.env.INDEXER_ORIGIN, process.env.AGENT_ORIGIN]
+      .map((o) => (o ? hostOf(o) : ''))
+      .filter(Boolean),
+  );
   function isFirstParty(rawUrl) {
-    try {
-      const h = new URL(rawUrl).hostname.toLowerCase();
-      return h === siteHost || h === 'vaipakam.com' || h.endsWith('.vaipakam.com');
-    } catch {
-      // Unparseable destination: treat as ours, so it cannot be
-      // exempted. Unknown means fatal.
-      return true;
-    }
+    const h = hostOf(rawUrl);
+    // Unparseable destination: treat as ours, so it cannot be exempted.
+    // Unknown means fatal.
+    if (!h) return true;
+    if (CONFIGURED_HOSTS.has(h)) return true;
+    if (h === 'vaipakam.com' || h.endsWith('.vaipakam.com')) return true;
+    // EVERY `*.workers.dev`, not an enumerated list of ours (Codex #1894
+    // r8). Before the zone cutover our agent and indexer are reachable
+    // ONLY on those aliases — `docs/ops/OffChainRestore.md` requires
+    // them for every pre-cutover build and check — so a drive against a
+    // staging build was sending POSTs to our own Workers and having them
+    // classified as third-party, which meant a write handler could
+    // mutate D1 with no finding recorded.
+    //
+    // Blanket rather than enumerated because the deployed names carry
+    // the account subdomain (`agent-production.<account>.workers.dev`),
+    // which is not in the repository and varies per environment — a list
+    // here would be wrong the first time anyone deployed. The cost of
+    // the blanket rule is refusing a read-shaped POST to somebody
+    // else's workers.dev; no RPC provider we use runs there, and that
+    // failure is a loud refusal in a live drive rather than a silent
+    // pass, which is the direction this guard errs in everywhere else.
+    if (h === 'workers.dev' || h.endsWith('.workers.dev')) return true;
+    return false;
   }
 
   function readOnlyViolation(req) {
