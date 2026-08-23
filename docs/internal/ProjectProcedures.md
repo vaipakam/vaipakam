@@ -606,9 +606,17 @@ by running the script once per day.
 
 Behaviours to know:
 
-- **Bash 4+ is required** — the script refuses on line one otherwise, naming
-  the version it found. Stock macOS ships Bash 3.2, which lacks `mapfile` and
-  associative arrays; `brew install bash` and invoke that binary.
+- **Python 3.10+ is required.** The assembler itself is
+  [`assemble.py`](../ReleaseNotes/assemble.py); `assemble.sh` is a thin entry
+  point that finds an interpreter and hands the arguments straight through
+  (#1877). It asks each of `python3` and `python` its version rather than
+  trusting the name — a `python` that is still Python 2 is refused rather than
+  run into a syntax error — and if neither is 3.10 or newer it says so and
+  stops. **Bash 4 is no longer needed**: the entry point uses no Bash-4
+  feature — no `mapfile`, no associative arrays — so stock macOS Bash 3.2 runs
+  it and there is no `brew install bash` step. (The suite,
+  `assemble.test.sh`, does still want Bash 4 — that is a contributor
+  requirement, not an operator one.)
 - `--allow-mixed-dates` takes every pending fragment regardless of day,
   for when folding them together is deliberate.
 - A fragment that has never been committed is always taken — it was

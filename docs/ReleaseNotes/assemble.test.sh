@@ -4060,6 +4060,59 @@ for phase in snapshot scan build flush; do
 done
 check "every phase enforces a failing hook" "$_enforced" "$_phases"
 
+case_start "T215: a tree with no git EXECUTABLE still assembles"
+W="$ROOT/t215"; build "$W"; rm -rf "$W/.git"
+out="$W/docs/ReleaseNotes"
+# A genuine export or tarball on a machine with Python but no git raised
+# FileNotFoundError out of the very first probe, so the non-git fallback
+# T6 documents was never reached and the run exited 1 having written
+# nothing (Codex #1898 r3). Verified against the pre-fix file.
+#
+# A PATH FARM rather than a shim: prepending a directory cannot make git
+# absent, only shadow it, and the fault under test is the executable not
+# existing at all.
+_farm="$ROOT/t215bin"; mkdir -p "$_farm"
+for _d in /usr/bin /bin /usr/local/bin; do
+  [ -d "$_d" ] || continue
+  for _f in "$_d"/*; do
+    _n="$(basename "$_f")"
+    [ "$_n" = git ] && continue
+    [ -e "$_farm/$_n" ] || ln -s "$_f" "$_farm/$_n" 2>/dev/null
+  done
+done
+if PATH="$_farm" command -v git >/dev/null 2>&1 || ! PATH="$_farm" command -v python3 >/dev/null 2>&1; then
+  skip "could not build a PATH with python3 and without git"
+else
+  msg="$(PATH="$_farm" bash "$out/assemble.sh" 2026-08-17 2>&1)"
+  check "succeeds"              "$?"                                        "0"
+  check "says git is missing"   "$(says "$msg" 'no git executable')"        "1"
+  check "everything folded"     "$(sections "$out/ReleaseNotes-2026-08-17.md")" "2"
+  check "nothing left pending"  "$(pending "$W")"                           "0"
+fi
+
+case_start "T216: an unreadable repository root aborts"
+W="$ROOT/t216"; build "$W"
+out="$W/docs/ReleaseNotes"
+# The root lookup ignored its return code and used empty stdout, so every
+# later relpath/ls-tree addressed nowhere (Codex #1898 r3). Pre-fix this
+# refused with a MISLEADING "cannot read HEAD" — the downstream guard
+# catching it is incidental to the working directory, which is exactly
+# why the root cause needs its own check rather than a second guard's
+# luck.
+_fake="$ROOT/t216bin"; mkdir -p "$_fake"
+_real_git="$(command -v git)"
+cat > "$_fake/git" <<EOF216
+#!/bin/sh
+for a in "\$@"; do [ "\$a" = "--show-toplevel" ] && exit 9; done
+exec "$_real_git" "\$@"
+EOF216
+chmod +x "$_fake/git"
+msg="$(PATH="$_fake:$PATH" bash "$out/assemble.sh" 2026-08-16 2>&1)"
+check "aborts"                "$?"                                              "1"
+check "names the root lookup" "$(says "$msg" 'could not determine the repository root')" "1"
+check "not the HEAD message"  "$(says "$msg" 'cannot read HEAD')"                "0"
+check "nothing consumed"      "$(pending "$W")"                                 "2"
+
 case_start "T213: an ASCII stdio encoding does not turn a run into a traceback"
 W="$ROOT/t213"; build "$W"
 out="$W/docs/ReleaseNotes"
@@ -4137,7 +4190,13 @@ case_start "T211: every retirement in the table is real"
 # reports every one of them as a bogus retirement. T117 was the proof --
 # it failed this guard on its first run for exactly that reason, not
 # because its retirement was unjustified.
-if [ "${ASSEMBLE_TEST_AUDIT:-}" != "1" ]; then
+# Not in the NESTED pass either (Codex #1898 r3). Under root the parent's
+# audit already runs both privilege levels, so re-running it as the
+# unprivileged pass repeats hundreds of fixture builds and measures
+# nothing the parent did not. When the suite is invoked unprivileged to
+# begin with there is no nested pass, so the audit still runs — this
+# suppresses a DUPLICATE, never the only copy.
+if [ "${ASSEMBLE_TEST_AUDIT:-}" != "1" ] && [ "${ASSEMBLE_TEST_NESTED:-}" != "1" ]; then
   _audit_out="$ROOT/audit.log"
   ASSEMBLE_TEST_AUDIT=1 bash "$0" > "$_audit_out" 2>&1 || true
   # Attribute each FAIL to the case_start line above it, which is what

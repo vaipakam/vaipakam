@@ -650,12 +650,27 @@ class Assembly:
         # filesystem encoding uses round-trips those bytes through
         # `os.fsencode` when the name is written back out, which is what
         # the marker line and the set-aside rename already do.
-        return subprocess.run(
-            ["git", "-C", cwd or self.dir, *args],
-            capture_output=True,
-            text=True,
-            errors="surrogateescape",
-        )
+        try:
+            return subprocess.run(
+                ["git", "-C", cwd or self.dir, *args],
+                capture_output=True,
+                text=True,
+                errors="surrogateescape",
+            )
+        except (FileNotFoundError, NotADirectoryError):
+            # NO GIT AT ALL is a different answer from git failing, and
+            # the difference matters here (Codex #1898 r3). A genuine
+            # export or tarball on a machine with Python but no `git`
+            # raised out of the very first probe, so the non-git fallback
+            # below — the documented, T6-tested contract that such a tree
+            # assembles everything pending — was never reached, and the
+            # run exited 1 having written nothing. Reported as a failed
+            # probe so the CALLER decides: the work-tree probe reads it as
+            # "not a work tree" and consults the filesystem for `.git`,
+            # which keeps the refusal for a damaged checkout intact.
+            return subprocess.CompletedProcess(
+                args=list(args), returncode=127, stdout="", stderr="git: not found"
+            )
 
     def select_by_day(self) -> None:
         """Keep only the fragments belonging to the day being assembled.
@@ -667,7 +682,8 @@ class Assembly:
         if self.allow_mixed:
             return
 
-        if self.git("rev-parse", "--is-inside-work-tree").returncode != 0:
+        probe = self.git("rev-parse", "--is-inside-work-tree")
+        if probe.returncode != 0:
             # A .git that exists but cannot be read is damage, not "no
             # repository" — assembling anyway would date every fragment
             # to nothing and then delete it.
@@ -681,12 +697,25 @@ class Assembly:
                     break
                 d = os.path.dirname(d)
             if damaged:
-                err("Error: a .git entry exists but git cannot read this work tree.")
-                err("Fragment dates are unavailable, and assembling would consume every")
-                err("pending fragment under a date nothing verified. Repair the checkout,")
-                err("or pass --allow-mixed-dates to assemble without dating.")
+                # Still a refusal — a repository we cannot read cannot
+                # date anything — but say WHICH of the two it is, or an
+                # operator whose only problem is a missing package goes
+                # looking for a corrupt checkout.
+                if probe.returncode == 127:
+                    err("Error: this is a git checkout, but no git executable was found.")
+                    err("Fragment dates come from git, so assembling would consume every")
+                    err("pending fragment under a date nothing verified. Install git, or")
+                    err("pass --allow-mixed-dates to assemble without dating.")
+                else:
+                    err("Error: a .git entry exists but git cannot read this work tree.")
+                    err("Fragment dates are unavailable, and assembling would consume every")
+                    err("pending fragment under a date nothing verified. Repair the checkout,")
+                    err("or pass --allow-mixed-dates to assemble without dating.")
                 raise SystemExit(1)
-            err("note: not a git work tree — cannot date fragments, assembling all pending.")
+            if probe.returncode == 127:
+                err("note: no git executable — cannot date fragments, assembling all pending.")
+            else:
+                err("note: not a git work tree — cannot date fragments, assembling all pending.")
             return
 
         # Only the RECORD TERMINATOR comes off, not arbitrary whitespace
@@ -695,7 +724,26 @@ class Assembly:
         # `os.path.relpath` and `git -C` addressed a directory that does
         # not exist and the run refused every tracked fragment with a
         # misleading unreadable-HEAD error.
-        root = git_path(self.git("rev-parse", "--show-toplevel").stdout)
+        top = self.git("rev-parse", "--show-toplevel")
+        if top.returncode != 0:
+            # CHECKED, like every neighbouring probe (Codex #1898 r3).
+            # Ignoring it left `root` as the empty string, so every
+            # `relpath`/`ls-tree` lookup addressed nowhere and reported
+            # each TRACKED fragment as untracked — which means "written
+            # today", so the whole backlog was assembled under whatever
+            # date was asked for and then deleted. Codex reproduced a
+            # tracked fragment consumed into ReleaseNotes-1999-01-01.md.
+            err("Error: could not determine the repository root")
+            err(f"(git rev-parse --show-toplevel exited {top.returncode}).")
+            err("")
+            err("Without it a tracked fragment cannot be distinguished from one")
+            err("written today, so every pending fragment would be filed under the")
+            err("requested date and then removed. Refusing instead.")
+            err("")
+            err("Repair the checkout, or pass --allow-mixed-dates to assemble without")
+            err("dating.")
+            raise SystemExit(1)
+        root = git_path(top.stdout)
 
         shallow_boundary: set[str] = set()
         r = self.git("rev-parse", "--is-shallow-repository")

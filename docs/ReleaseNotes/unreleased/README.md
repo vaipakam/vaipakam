@@ -225,11 +225,21 @@ Worth knowing:
   keyed by path, so an assembled-and-deleted `123-task.md` keeps its
   add-commit forever. A new fragment reusing that name is dated as new.
 
-- **Bash 4 or newer is required**, and the script says so on line one rather
-  than failing partway through. Stock macOS ships Bash 3.2, which has neither
-  `mapfile` nor associative arrays — both load-bearing here. `brew install bash`
-  and run it with that. Two other scripts in the repo already need Bash 4 the
-  same way; what was missing was anyone saying so.
+- **Python 3.10 or newer is required**, and the script says so before doing
+  anything rather than failing partway through. The work moved out of shell
+  into [`assemble.py`](../assemble.py) (#1877); `assemble.sh` stays as the
+  entry point every caller and CI job already uses, and only picks the
+  interpreter. It asks each candidate its version instead of trusting its
+  name, so a `python` that is still Python 2 is refused with a real message
+  rather than reaching a syntax error, and a `python3` older than 3.10 is
+  caught the same way.
+
+  **Bash 4 is no longer a requirement for running the assembler** — the entry
+  point uses no Bash-4 feature (neither `mapfile` nor associative arrays, which
+  were the two load-bearing ones), so stock macOS Bash 3.2 is fine and there is
+  no `brew install bash` step. `assemble.test.sh` does still use Bash 4
+  features, but that is a requirement for contributors changing the assembler,
+  not for operators folding fragments.
 
 [`assemble.test.sh`](../assemble.test.sh) covers all of this against
 throwaway repositories with fragments committed at chosen UTC timestamps;
