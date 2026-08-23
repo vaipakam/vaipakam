@@ -66,6 +66,7 @@
 //
 // Exit: 0 pass, 1 fail, 2 blocked (setup/precondition, nothing observed).
 import { addressOf, blockedSync, launch, SITE, visit } from './driver.mjs';
+import { splitBlocked } from './readOnlyFindings.mjs';
 
 /** The two endpoints #1836 turned off. Watched for the whole session. */
 const TELEMETRY_HOSTS = ['cca-lite.coinbase.com', 'pulse.walletconnect.org'];
@@ -122,7 +123,7 @@ function watch(target, label) {
   });
 }
 
-const { page, done } = await launch({
+const { page, done, blockedRequests } = await launch({
   role: 'lender',
   startChainId: 84532,
   // A REAL first visit: `eth_accounts` answers [] until the page asks.
@@ -499,6 +500,74 @@ try {
     for (const b of beacons) console.log(`  [${b.phase}/${b.label}] ${b.method} ${b.url}`);
     console.log('');
   }
+  // THE READ-ONLY GUARD'S FINDINGS ARE PART OF THE VERDICT (Codex #1894
+  // r4). The drive sets `readOnly: true` and then discarded what that
+  // produced: a blocked `personal_sign` or `eth_sendTransaction` was
+  // appended to `blockedRequests` and never read, so the run could print
+  // PASS having watched the page attempt a signature or a broadcast
+  // against a FUNDED live wallet. A guard whose findings nothing reads
+  // is not a guard.
+  //
+  // Through the shared classifier rather than a fresh predicate: the
+  // Cloudflare edge injects a `POST /cdn-cgi/rum` beacon that the guard
+  // blocks correctly and which says nothing about the application, and
+  // getting that exemption tight took four rounds in #1576. A second
+  // copy would start from the finished shape and drift.
+  const { telemetry: edgeBeacons, violations } = splitBlocked(blockedRequests, [SITE]);
+  if (edgeBeacons.length > 0) {
+    console.log(`(${edgeBeacons.length} Cloudflare edge beacon(s) blocked — expected, not a finding)`);
+  }
+
+  // This drive is the ONE that deliberately opens a third-party wallet
+  // popup, so it is the one that sees that popup's own backend traffic.
+  // The first run of this assertion recorded 37 blocked POSTs, every one
+  // of them from `keys.coinbase.com` and its siblings — Coinbase's own
+  // application talking to Coinbase's own backend inside a window
+  // Coinbase serves. That is not alpha02 attempting a mutation, and
+  // failing on it would make the assertion mean "a Coinbase popup was
+  // opened", which is what the drive is FOR.
+  //
+  // Narrow on purpose, and it does not touch the thing the guard exists
+  // for. `wallet rpc *` and `json-rpc *` are the signing and broadcast
+  // attempts against the funded live wallet, and they stay fatal from
+  // ANY origin including these — the exemption is only for the plain
+  // non-RPC POST shape. Any other host, and any request to SITE itself,
+  // stays fatal too: unknown means fatal, which is the only safe
+  // direction for a guard.
+  const POPUP_BACKEND_HOSTS = new Set([
+    'keys.coinbase.com',
+    'as.coinbase.com',
+    'api.wallet.coinbase.com',
+    'api.cdp.coinbase.com',
+  ]);
+  const isPopupBackend = ({ reason, url }) => {
+    if (reason !== 'POST (non-RPC mutating request)') return false;
+    try {
+      const u = new URL(url);
+      return u.protocol === 'https:' && POPUP_BACKEND_HOSTS.has(u.hostname.toLowerCase());
+    } catch {
+      return false;
+    }
+  };
+  const popupBackend = violations.filter(isPopupBackend);
+  const ourViolations = violations.filter((v) => !isPopupBackend(v));
+  if (popupBackend.length > 0) {
+    console.log(
+      `(${popupBackend.length} POST(s) from the third-party wallet popup blocked — ` +
+        `Coinbase's own backend, not this app)`,
+    );
+  }
+  step(
+    'the page attempts no wallet write or backend mutation',
+    ourViolations.length === 0 ? 'PASS' : 'FAIL',
+    ourViolations.length === 0
+      ? `the read-only guard blocked no write from this app ` +
+        `(${popupBackend.length} third-party popup POST(s) and ` +
+        `${edgeBeacons.length} edge beacon(s) excluded by rule)`
+      : ourViolations.map((v) => `${v.reason} ${v.url}`).join('; '),
+  );
+  if (ourViolations.length > 0) failed = true;
+
   const failures = steps.filter((s) => s.verdict === 'FAIL');
   if (failed || failures.length > 0) {
     console.error(`live-connect-telemetry: FAIL — ${failures.length} step(s)`);
