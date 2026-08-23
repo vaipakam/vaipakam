@@ -335,24 +335,55 @@ try {
   // it. `.connect-addr` is the span the button puts the account in, and
   // it exists only while ConnectKit reports a connected account.
   const accountChip = page.locator('.connect-btn .connect-addr').first();
-  const chipShowsAccount = async () => {
+  /** Which accounts the wallet has authorized for this origin. With
+   *  `preAuthorized: false` this answers `[]` until the page asks, so
+   *  after a successful connect it names the account that connected —
+   *  address-exact, and independent of anything the UI chose to render. */
+  const authorizedAccounts = async () => {
     try {
-      const text = (await accountChip.innerText({ timeout: 1_000 })).trim().toLowerCase();
-      // An ENS reverse name renders INSTEAD of the short address
-      // (`AddressName`), and it is still a connected account — so a
-      // non-empty chip that is not the short address is reported as
-      // connected, with what it actually said, rather than failed.
-      return { connected: text.length > 0, exact: text === shortAccount, text };
+      return await page.evaluate(async () => {
+        const p = window.ethereum;
+        if (!p?.request) return [];
+        const a = await p.request({ method: 'eth_accounts' });
+        return Array.isArray(a) ? a.map((x) => String(x).toLowerCase()) : [];
+      });
     } catch {
-      return { connected: false, exact: false, text: '' };
+      return [];
     }
+  };
+  const chipShowsAccount = async () => {
+    let text = '';
+    try {
+      text = (await accountChip.innerText({ timeout: 1_000 })).trim().toLowerCase();
+    } catch {
+      return { connected: false, text: '', accounts: [] };
+    }
+    // THE EXPECTED LENDER, not any chip text (Codex #1894 r3). Accepting
+    // a non-empty chip to accommodate an ENS reverse name gave the whole
+    // assertion away: a connector returning a DIFFERENT account renders
+    // its own short address, which is also non-empty, so the drive
+    // stopped verifying that the account it set up is the one that
+    // connected. The chip must render this account's short address.
+    //
+    // The ENS case is handled by asking the wallet instead of guessing
+    // from the text: `AddressName` renders a reverse name in place of
+    // the address, and a name is only acceptable when the AUTHORIZED
+    // account is still the expected one. That is a fact about the
+    // connection, so it is read from the connection.
+    const accounts = await authorizedAccounts();
+    const authorized = accounts.includes(account.toLowerCase());
+    if (text === shortAccount) return { connected: true, exact: true, text, accounts };
+    if (text.length > 0 && authorized) {
+      return { connected: true, exact: false, text, accounts };
+    }
+    return { connected: false, exact: false, text, accounts };
   };
   // NOT `precondition` (Codex #1894 r2). If the page crashes or closes
   // during this poll, the read throws and precondition exits 2 —
   // BLOCKED, "nothing could be observed" — discarding every Coinbase and
   // WalletConnect step already recorded above. A crash here is a failed
   // connection, which is a finding, so it stays in the verdict.
-  let seen = { connected: false, exact: false, text: '' };
+  let seen = { connected: false, exact: false, text: '', accounts: [] };
   {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
@@ -368,8 +399,12 @@ try {
     connected
       ? seen.exact
         ? `the button renders ${shortAccount}`
-        : `the button renders "${seen.text}" (an ENS name, not the short address)`
-      : 'the account never appeared in the connect button',
+        : `the button renders "${seen.text}" — an ENS name, and eth_accounts ` +
+          `confirms ${account} is the authorized account`
+      : seen.text.length > 0
+        ? `the button renders "${seen.text}", which is neither ${shortAccount} nor a ` +
+          `name for it — authorized: [${seen.accounts.join(', ') || 'none'}]`
+        : 'the account never appeared in the connect button',
   );
   if (!connected) failed = true;
 
@@ -382,7 +417,7 @@ try {
   // Polled, not sampled once: reconnecting a stored session takes a
   // variable moment, and a single read 5 s in would report a slow
   // restore as a lost one.
-  let after = { connected: false, exact: false, text: '' };
+  let after = { connected: false, exact: false, text: '', accounts: [] };
   {
     const deadline = Date.now() + 20_000;
     while (Date.now() < deadline) {
