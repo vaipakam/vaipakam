@@ -2094,9 +2094,23 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _seedPriorDays(5);
         _mut().setGovernorCommitArmedFromDayRaw(5);
         _mut().setRecycleBucketRaw(MIRROR_BUCKET);
+        _mirrorBroadcast(MIRROR_DAY, reserve);
+    }
+
+    /// @dev One armed-day broadcast, separable so a test can deliver a SECOND
+    ///      instruction into non-zero commitment state (Codex #1907 r7).
+    ///
+    ///      Asserts the delivery moves NO tokens, and the snapshot is taken
+    ///      BEFORE it: every other custody baseline in these tests is read
+    ///      after delivery, so a reservation that transferred VPFI out of the
+    ///      Diamond without touching the bucket or `paidOutRecycled` would
+    ///      have been folded into those baselines and every later custody
+    ///      assertion would still have passed.
+    function _mirrorBroadcast(uint256 dayId, uint256 reserve) internal {
+        uint256 custodyBefore = vpfi.balanceOf(address(diamond));
         messenger.deliverBroadcastV2(
             RewardBroadcastV2({
-                dayId: 5,
+                dayId: dayId,
                 globalLenderNumeraire18: G_LENDER,
                 globalBorrowerNumeraire18: 15e18,
                 capMode: 1,
@@ -2111,6 +2125,11 @@ contract GovernorDualAccumulatorTest is SetupTest {
                 keeperAllocate: 0,
                 destChainId: CHAIN_ARB
             })
+        );
+        assertEq(
+            vpfi.balanceOf(address(diamond)),
+            custodyBefore,
+            "the instruction moved no tokens: it COMMITS, it does not spend"
         );
     }
 
@@ -2233,6 +2252,18 @@ contract GovernorDualAccumulatorTest is SetupTest {
         (uint256 paid, , ) = RewardClaimFacet(address(diamond))
             .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
 
+        // Codex #1907 r7 — anchor `paid` ITSELF. I declined this last round on
+        // the grounds that the fresh leg has its own coverage, and that reason
+        // does not survive the argument: `paid` is the custody REFERENCE here,
+        // so a payout that omitted the recycled or the fresh half would drag
+        // BOTH balance assertions down with it and pass. Each of the two
+        // claimants splits the day's lender side, so each is owed half of that
+        // side's fresh + recycled halves.
+        uint256 expectPayout =
+            (funding.freshLenderHalf + funding.lenderHalfEquiv) / 2;
+        assertApproxEqAbs(
+            paid, expectPayout, 1e6, "the claim paid this claimant's whole share"
+        );
         assertEq(
             vpfi.balanceOf(alice) - aliceBefore,
             paid,
@@ -2306,6 +2337,12 @@ contract GovernorDualAccumulatorTest is SetupTest {
         (uint256 paid2, , ) = RewardClaimFacet(address(diamond))
             .claimInteractionRewardsTo(LibVaipakam.RewardDelivery.Wallet);
 
+        assertApproxEqAbs(
+            paid2,
+            expectPayout,
+            1e6,
+            "and the second claim paid the second claimant's whole share"
+        );
         assertEq(
             vpfi.balanceOf(bob) - bobBefore,
             paid2,
@@ -2373,6 +2410,79 @@ contract GovernorDualAccumulatorTest is SetupTest {
             _cfg().getRecycledCreditedByDay(today),
             creditedBefore,
             "a claim credits nothing; consumption is not absorption"
+        );
+
+        // ── A SECOND instruction, into non-zero state (Codex #1907 r7) ──────
+        //
+        // Every fixture so far delivers one broadcast into zeroed commitment
+        // state, so replacing `reserveMirrorCommit`'s `+=` with `=` satisfied
+        // all of it. A mirror really does receive a later day's instruction
+        // while earlier claims are still outstanding; overwriting that
+        // residual would overstate local availability and lose the earlier
+        // commitment's reporting.
+        uint256 secondInstruction = 40 ether;
+        _mirrorBroadcast(MIRROR_DAY + 1, secondInstruction);
+
+        (, , uint256 outAfterSecond, uint256 paidAfterSecond) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredAfterSecond, uint256 releasedAfterSecond) =
+            _agg().getLocalRecycledCommitRetirement();
+        // Ordered before the subtraction on purpose: under the regression this
+        // exists to catch (assignment instead of addition) the residual SHRINKS,
+        // and `outAfterSecond - outEnd` would panic on underflow — killing the
+        // test with `arithmetic underflow` instead of naming what broke.
+        assertGe(
+            outAfterSecond,
+            outEnd,
+            "a later instruction never SHRINKS the outstanding residual"
+        );
+        assertEq(
+            outAfterSecond - outEnd,
+            secondInstruction,
+            "the later instruction ADDS to the surviving residual"
+        );
+        assertEq(
+            retiredAfterSecond, retiredEnd, "and disturbs the retirement total"
+        );
+        assertEq(releasedAfterSecond, releasedEnd, "nor the release subset");
+        assertEq(paidAfterSecond, paidEnd, "nor the payout counter");
+
+        // ── Consumption and release against ONE reservation (r7) ────────────
+        //
+        // The two lifecycle tests run in separate fresh fixtures, so the
+        // forfeit never starts with a consumed retirement and the claim never
+        // starts with a release. A primitive that overwrote the SHARED
+        // `recycleCommitRetiredCumulative` with its own operation-class
+        // subtotal would pass both — and erase previously reported retirement
+        // the moment a real mirror interleaved the two.
+        uint256 forfeitId = _seedEntryPerDay(alice, 94, G_LENDER / 2, 5, 6);
+        _mut().setRewardEntryForfeitedRaw(forfeitId);
+        _mut().setLoanActiveLenderEntryId(94, forfeitId);
+
+        vm.prank(makeAddr("mirror-keeper"));
+        _facet().sweepForfeitedInteractionRewards(94);
+
+        (, , uint256 outFinal, uint256 paidFinal) =
+            _agg().getGovernorCommitState();
+        (uint256 retiredFinal, uint256 releasedFinal) =
+            _agg().getLocalRecycledCommitRetirement();
+        uint256 releasedHere = outAfterSecond - outFinal;
+        assertGt(releasedHere, 0, "the interleaved forfeit released something");
+
+        assertEq(
+            retiredFinal - retiredBefore,
+            consumed + consumed2 + releasedHere,
+            "shared retirement CONTAINS both operation classes"
+        );
+        assertEq(
+            releasedFinal - releasedBefore,
+            releasedHere,
+            "the release subset carries only the release"
+        );
+        assertEq(
+            paidFinal - paidBefore,
+            consumed + consumed2,
+            "and the payout counter only the consumptions"
         );
     }
 
