@@ -709,6 +709,49 @@ export async function launch({
   // only when its body is JSON-RPC whose every method avoids the
   // broadcast/signing set — anything else is aborted AND logged so a
   // sweep can fail loudly instead of silently mutating state.
+  // ONE allowlist for BOTH doors (Codex #1894 r5/r6).
+  //
+  // There are two ways a page can reach the chain: the injected wallet
+  // binding, and a raw JSON-RPC POST straight at the RPC endpoint
+  // through the route shim. Each used to be gated by its own denylist,
+  // and a denylist has to enumerate every write that will ever exist —
+  // both already missed the ones the ecosystem added later
+  // (`wallet_sendCalls`, `eth_sendUserOperation`). Whichever door was
+  // fixed alone, the other stayed open, which is how one of two guards
+  // ends up weaker than the other.
+  //
+  // Drawn from `live-position-observe.mjs`'s ALLOWED_RPC: that file
+  // already answered "which methods are reads" for its own HTTP layer,
+  // and a second independently-drifting answer is the same failure in a
+  // new place. A too-narrow list costs a refused read, which surfaces
+  // LOUDLY in a live drive; a denylist gap surfaces not at all.
+  const READ_METHODS = new Set([
+    'eth_accounts',
+    'eth_blockNumber',
+    'eth_call',
+    'eth_chainId',
+    'eth_estimateGas',
+    'eth_feeHistory',
+    'eth_gasPrice',
+    'eth_getBalance',
+    'eth_getBlockByHash',
+    'eth_getBlockByNumber',
+    'eth_getCode',
+    'eth_getLogs',
+    'eth_getProof',
+    'eth_getStorageAt',
+    'eth_getTransactionByHash',
+    'eth_getTransactionCount',
+    'eth_getTransactionReceipt',
+    'eth_maxPriorityFeePerGas',
+    'eth_syncing',
+    'eth_subscribe',
+    'eth_unsubscribe',
+    'net_version',
+    'web3_clientVersion',
+    'wallet_getPermissions',
+  ]);
+
   const RPC_WRITE_METHODS = new Set([
     'eth_sendRawTransaction',
     'eth_sendTransaction',
@@ -728,8 +771,18 @@ export async function launch({
         const parsed = JSON.parse(body);
         const calls = Array.isArray(parsed) ? parsed : [parsed];
         if (calls.every((c) => c && typeof c.jsonrpc === 'string')) {
+          // Named write first, so the reason still says `json-rpc
+          // eth_sendTransaction` for the cases that always worked and
+          // the existing assertions keep reading the same way.
           const bad = calls.find((c) => RPC_WRITE_METHODS.has(c.method));
-          return bad ? `json-rpc ${bad.method}` : null; // read-shaped RPC — allowed
+          if (bad) return `json-rpc ${bad.method}`;
+          // Then the allowlist, which is what closes the gap: a raw
+          // `eth_sendUserOperation` POST at the RPC endpoint bypasses
+          // the injected provider entirely, and the six-entry denylist
+          // let it through unrecorded (Codex #1894 r6).
+          const unlisted = calls.find((c) => !READ_METHODS.has(c.method));
+          if (unlisted) return `json-rpc ${unlisted.method} (not a permitted read)`;
+          return null; // every method is a permitted read
         }
       } catch {
         /* not JSON — fall through to block */
@@ -819,36 +872,6 @@ export async function launch({
     'eth_signTransaction',
     'eth_sendRawTransaction',
   ]);
-  // Reads the app may legitimately need, forwarded to the chain RPC.
-  // Taken from `live-position-observe.mjs`'s ALLOWED_RPC — the same
-  // question was answered there, and a second independently-drifting
-  // copy of "which methods are reads" is how one of two guards ends up
-  // weaker than the other. Methods the switch above handles explicitly
-  // are not listed: they never reach the default branch.
-  const READ_METHODS = new Set([
-    'eth_blockNumber',
-    'eth_call',
-    'eth_estimateGas',
-    'eth_feeHistory',
-    'eth_gasPrice',
-    'eth_getBalance',
-    'eth_getBlockByHash',
-    'eth_getBlockByNumber',
-    'eth_getCode',
-    'eth_getLogs',
-    'eth_getProof',
-    'eth_getStorageAt',
-    'eth_getTransactionByHash',
-    'eth_getTransactionCount',
-    'eth_getTransactionReceipt',
-    'eth_maxPriorityFeePerGas',
-    'eth_syncing',
-    'eth_subscribe',
-    'eth_unsubscribe',
-    'web3_clientVersion',
-    'wallet_getPermissions',
-  ]);
-
   async function handle({ method, params }) {
     const { chain, rpc } = CHAINS[chainId];
     const pub = createPublicClient({ chain, transport: http(rpc) });
