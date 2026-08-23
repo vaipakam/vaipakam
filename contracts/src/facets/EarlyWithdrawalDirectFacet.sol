@@ -117,6 +117,22 @@ contract EarlyWithdrawalDirectFacet is
     ///         same reason `OfferExpired` above is declared twice.
     error OffsetActiveOnLoan();
 
+    /// @notice #1912 (#1503 items 7 + 8) — the standing buy offer's authored
+    ///         terms disagree with the position it is being spent on, so
+    ///         filling it would migrate the buyer into a loan they did not
+    ///         author. Named per-field rather than folded into the generic
+    ///         `InvalidSaleOffer` because a seller (or an interface quoting
+    ///         for one) cannot act on "invalid": which term disagrees decides
+    ///         whether they re-list, pick a different offer, or tell the buyer
+    ///         to re-author theirs.
+    ///
+    ///         `which`: 0 useFullTermInterest · 1 allowsPartialRepay ·
+    ///         2 allowsPrepayListing · 3 periodicInterestCadence ·
+    ///         4 collateralTokenId · 5 collateralQuantity · 6 tokenId ·
+    ///         7 quantity. Ordinals are append-only — a frontend maps them to
+    ///         copy, so renumbering silently re-labels a live error.
+    error SaleOfferTermsDisagree(uint8 which);
+
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -282,6 +298,87 @@ contract EarlyWithdrawalDirectFacet is
         if (buyOffer.collateralAssetType != loan.collateralAssetType)
             revert InvalidSaleOffer();
         if (buyOffer.prepayAsset != loan.prepayAsset) revert InvalidSaleOffer();
+
+        // #1912 (#1503 items 7 + 8) — BUYER-side term binding. Everything above
+        // this point, and the borrower-favourability block below, protects
+        // `alice` from Noah's terms. Nothing protected Noah from the LOAN's.
+        //
+        // The listed route has no such gap, and not because it carries more
+        // comparisons: `EarlyWithdrawalFacet._buildSaleParams` MIRRORS these
+        // exact fields off the loan onto the sale vehicle, so its buyer reviews
+        // and signs the position's real behaviour and cannot be handed
+        // anything else. That mirroring is #1503 design item 23, landed in
+        // #1779. Items 7 + 8 are the same defect on this route, and it stayed
+        // open because this path consumes an offer authored for a HYPOTHETICAL
+        // loan — there is nothing to mirror onto, so the terms must be
+        // reconciled instead.
+        //
+        // ProjectDetailsREADME §9 makes closing it mandatory rather than
+        // optional: "These rules bind both sale routes identically. A rule that
+        // applied to the direct sale and not to the listed sale's completion
+        // would let the same position be sold on different economics depending
+        // on which door it left by." Leaving this open IS that divergence — the
+        // same position sells with the buyer's behavioural terms honoured
+        // through one door and discarded through the other.
+        //
+        // EQUALITY, not a favourability direction. The listed route's buyer
+        // receives precisely the loan's values, so a directional rule here
+        // would let this door deliver terms the other door structurally never
+        // could — parity is the requirement, and parity is exact. That also
+        // rules out the "buyer inherits something stricter, so allow it"
+        // shortcut: a buyer who authored `allowsPartialRepay = true` and
+        // silently receives `false` still holds a position they did not
+        // author.
+        //
+        // Safe as a one-shot comparison because all four behavioural terms are
+        // IMMUTABLE for the loan's lifetime — `LoanFacet` writes them once at
+        // initiation and nothing in `src/` writes them again (the same
+        // reasoning `_buildSaleParams` records for mirroring at listing time
+        // rather than binding at acceptance). Principal is the field that
+        // genuinely needs a live read; these are not like principal.
+        //
+        // `creatorFull` / `creatorMaxCStar` are deliberately NOT here.
+        // `_buildSaleParams` does not mirror them either, so binding them on
+        // this route alone would break the same parity rule in the opposite
+        // direction. Full-tariff authorization on a sale is its own question
+        // (#1503 item 22), not part of this one.
+        //
+        // MAINTENANCE, stated plainly because the honest version is weaker
+        // than the one a reader will assume. This set is enumerated by hand
+        // and there is NO compiler-enforced pin to `_buildSaleParams`. Each
+        // field below has an execution test that fails if its check is
+        // removed, and a further test asserts a listed-route vehicle passes
+        // every check here — but that direction only catches this route
+        // binding MORE than the other, not less. A behavioural term added to
+        // `_buildSaleParams` and forgotten here fails no test, which is
+        // exactly how items 7 + 8 outlived item 23's fix. Adding one there
+        // means adding it here in the same diff; a source-text guard was
+        // considered and rejected for the reason `CLAUDE.md` records about
+        // the withdrawn step-4c parser — a check that cannot actually prove
+        // the property reports a green it has not earned, which on a
+        // consent boundary is worse than no check.
+        if (buyOffer.useFullTermInterest != loan.useFullTermInterest)
+            revert SaleOfferTermsDisagree(0);
+        if (buyOffer.allowsPartialRepay != loan.allowsPartialRepay)
+            revert SaleOfferTermsDisagree(1);
+        if (buyOffer.allowsPrepayListing != loan.allowsPrepayListing)
+            revert SaleOfferTermsDisagree(2);
+        if (buyOffer.periodicInterestCadence != loan.periodicInterestCadence)
+            revert SaleOfferTermsDisagree(3);
+        // Item 8 — collateral / lending-asset IDENTITY. A no-op on ERC-20 legs
+        // (both sides 0) and load-bearing on NFT legs, where a lender offer's
+        // `collateralTokenId` is a specific demand rather than a wildcard:
+        // `OfferAcceptFacet` pulls the borrower's collateral by exactly that id,
+        // and its acceptance binding already enforces it as
+        // `OfferTermsMismatch(11)` on the ordinary origination path.
+        if (buyOffer.collateralTokenId != loan.collateralTokenId)
+            revert SaleOfferTermsDisagree(4);
+        if (buyOffer.collateralQuantity != loan.collateralQuantity)
+            revert SaleOfferTermsDisagree(5);
+        if (buyOffer.tokenId != loan.tokenId)
+            revert SaleOfferTermsDisagree(6);
+        if (buyOffer.quantity != loan.quantity)
+            revert SaleOfferTermsDisagree(7);
 
         // Borrower-favorability: Noah's terms must not worsen alice's position (README Section 9)
         {

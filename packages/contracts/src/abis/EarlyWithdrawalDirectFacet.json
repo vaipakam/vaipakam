@@ -2040,6 +2040,17 @@
   },
   {
     "type": "error",
+    "name": "SaleOfferTermsDisagree",
+    "inputs": [
+      {
+        "name": "which",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SalePositionBelowSolvencyFloor",
     "inputs": [
       {

@@ -48,6 +48,28 @@ for the following platform areas:
   entirely solvent against its own older terms. The check is one-directional:
   a position on **stricter** terms than today's stays sellable, since its buyer
   inherits a better position than a fresh loan would give them.
+- **A buyer must receive the position they agreed to, whichever door they came
+  through.** Beyond the risk bounds above, a loan carries behavioural terms that
+  decide what the borrower may do to whoever holds the lender side — whether
+  principal may be repaid in parts, whether interest is owed for the full term
+  or only for time elapsed, whether interest settles periodically, and whether
+  the borrower may put the collateral up for sale. It also carries the identity
+  of the specific asset backing it. A sale must not hand an incoming lender a
+  position whose behaviour differs from the one they agreed to take on.
+  - On the listed route this holds by construction: the offer put up for sale
+    is built from the live loan, so what the buyer reviews and signs is the
+    position's real behaviour and nothing else can be delivered.
+  - The direct route spends an offer its author wrote for a loan that did not
+    exist yet, so there is nothing to build from and the two descriptions must
+    instead be reconciled — the sale is refused when they disagree.
+  - Unlike the inherited-risk rule above, this one is **exact rather than
+    one-directional**. A buyer being handed stricter terms than they wrote is
+    still a buyer holding a position they did not agree to, and the listed
+    route could never deliver it, so allowing it here would be precisely the
+    door-dependent difference the routes are forbidden to have.
+  - This governs terms the buyer authored. It is not a licence to bind terms
+    the listed route leaves alone: a rule imposed on one route and not the
+    other is the same defect in the opposite direction.
 - These two rules pull in different directions and the distinction is
   deliberate. Snapshot semantics continue to govern the **existing** loan's
   ongoing operation, so a governance retune never retroactively changes the
