@@ -529,6 +529,113 @@ contract EarlyWithdrawalFacetTest is Test {
     ///      The buy offer is the suite's ordinary valid `buyOfferId`, so the
     ///      revert is reached through a sale that would otherwise SUCCEED — the
     ///      guard, not an earlier shape check, is what refuses it.
+    // ─── #1912 (#1503 items 7 + 8): buyer-side term binding on the direct sale ───
+
+    /// @dev The listed route MIRRORS these fields off the loan onto its sale
+    ///      vehicle (`_buildSaleParams`, #1503 item 23 / #1779), so its buyer
+    ///      reviews and signs the position's real behaviour. The direct route
+    ///      consumes an offer authored for a hypothetical loan, so it must
+    ///      reconcile instead — and did not, for any of them.
+    ///
+    ///      ProjectDetailsREADME §9: "These rules bind both sale routes
+    ///      identically. A rule that applied to the direct sale and not to the
+    ///      listed sale's completion would let the same position be sold on
+    ///      different economics depending on which door it left by."
+    function _mutateLoanBool(bytes32 field, bool v) internal {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        if (field == "useFullTermInterest") l.useFullTermInterest = v;
+        else if (field == "allowsPartialRepay") l.allowsPartialRepay = v;
+        else if (field == "allowsPrepayListing") l.allowsPrepayListing = v;
+        else revert("unknown field");
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l);
+    }
+
+    function _expectTermsDisagree(uint8 which) internal {
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleOfferTermsDisagree.selector, which
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, buyOfferId
+        );
+    }
+
+    function test_1912_refusesWhenLoanFullTermInterestDiffersFromOffer() public {
+        _mutateLoanBool("useFullTermInterest", true); // offer authored false
+        _expectTermsDisagree(0);
+    }
+
+    /// @dev A buyer who authored the default no-partial-repay must not be
+    ///      migrated into a loan where the borrower CAN repay in parts.
+    function test_1912_refusesWhenLoanPartialRepayDiffersFromOffer() public {
+        _mutateLoanBool("allowsPartialRepay", true); // offer authored false
+        _expectTermsDisagree(1);
+    }
+
+    /// @dev The sharpest of the four, because it reaches a third party: the
+    ///      prepay-listing consent is snapshotted onto immutable loan state at
+    ///      origination and `NFTPrepayAutoListFacet` reads THAT copy, so a
+    ///      buyer who authored `false` could inherit a loan where it is `true`
+    ///      and the borrower could then list the collateral against a lender
+    ///      who never agreed.
+    function test_1912_refusesWhenLoanPrepayListingDiffersFromOffer() public {
+        _mutateLoanBool("allowsPrepayListing", true); // offer authored false
+        _expectTermsDisagree(2);
+    }
+
+    function test_1912_refusesWhenLoanPeriodicCadenceDiffersFromOffer() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        l.periodicInterestCadence = LibVaipakam.PeriodicInterestCadence.Monthly;
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l);
+        _expectTermsDisagree(3);
+    }
+
+    /// @dev Item 8 — collateral identity. A lender offer's `collateralTokenId`
+    ///      is a specific demand, not a wildcard: `OfferAcceptFacet` pulls the
+    ///      borrower's collateral by exactly that id, and binds it as
+    ///      `OfferTermsMismatch(11)` on the ordinary origination path.
+    function test_1912_refusesWhenLoanCollateralTokenIdDiffersFromOffer() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        l.collateralTokenId = 77; // offer authored 0
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l);
+        _expectTermsDisagree(4);
+    }
+
+    function test_1912_refusesWhenLoanCollateralQuantityDiffersFromOffer() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        l.collateralQuantity = 3; // offer authored 0
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l);
+        _expectTermsDisagree(5);
+    }
+
+    function test_1912_refusesWhenLoanTokenIdDiffersFromOffer() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        l.tokenId = 9; // offer authored 0
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l);
+        _expectTermsDisagree(6);
+    }
+
+    function test_1912_refusesWhenLoanQuantityDiffersFromOffer() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        l.quantity = 5; // offer authored 0
+        TestMutatorFacet(address(diamond)).setLoan(activeLoanId, l);
+        _expectTermsDisagree(7);
+    }
+
+    /// @dev The binding must not over-refuse: an offer that genuinely agrees
+    ///      with the position still fills. Without this, all eight refusal
+    ///      tests above would still pass if the checks rejected everything.
+    function test_1912_agreeingOfferStillFills() public {
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, buyOfferId
+        );
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(l.lender, newLender, "an agreeing offer completes the sale");
+    }
+
     function testSellLoanRejectedWhileOffsetLive() public {
         TestMutatorFacet(address(diamond)).setLoanToOffsetOfferIdRaw(activeLoanId, 99);
 
