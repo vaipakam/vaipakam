@@ -709,6 +709,49 @@ export async function launch({
   // only when its body is JSON-RPC whose every method avoids the
   // broadcast/signing set — anything else is aborted AND logged so a
   // sweep can fail loudly instead of silently mutating state.
+  // ONE allowlist for BOTH doors (Codex #1894 r5/r6).
+  //
+  // There are two ways a page can reach the chain: the injected wallet
+  // binding, and a raw JSON-RPC POST straight at the RPC endpoint
+  // through the route shim. Each used to be gated by its own denylist,
+  // and a denylist has to enumerate every write that will ever exist —
+  // both already missed the ones the ecosystem added later
+  // (`wallet_sendCalls`, `eth_sendUserOperation`). Whichever door was
+  // fixed alone, the other stayed open, which is how one of two guards
+  // ends up weaker than the other.
+  //
+  // Drawn from `live-position-observe.mjs`'s ALLOWED_RPC: that file
+  // already answered "which methods are reads" for its own HTTP layer,
+  // and a second independently-drifting answer is the same failure in a
+  // new place. A too-narrow list costs a refused read, which surfaces
+  // LOUDLY in a live drive; a denylist gap surfaces not at all.
+  const READ_METHODS = new Set([
+    'eth_accounts',
+    'eth_blockNumber',
+    'eth_call',
+    'eth_chainId',
+    'eth_estimateGas',
+    'eth_feeHistory',
+    'eth_gasPrice',
+    'eth_getBalance',
+    'eth_getBlockByHash',
+    'eth_getBlockByNumber',
+    'eth_getCode',
+    'eth_getLogs',
+    'eth_getProof',
+    'eth_getStorageAt',
+    'eth_getTransactionByHash',
+    'eth_getTransactionCount',
+    'eth_getTransactionReceipt',
+    'eth_maxPriorityFeePerGas',
+    'eth_syncing',
+    'eth_subscribe',
+    'eth_unsubscribe',
+    'net_version',
+    'web3_clientVersion',
+    'wallet_getPermissions',
+  ]);
+
   const RPC_WRITE_METHODS = new Set([
     'eth_sendRawTransaction',
     'eth_sendTransaction',
@@ -718,18 +761,108 @@ export async function launch({
     'eth_signTypedData_v4',
   ]);
   const blockedRequests = [];
+  // OUR OWN mutable surfaces — the site, and every Worker beside it
+  // (indexer, agent). The read exemption below never applies to these.
+  //
+  // Stated as "ours", not as "the RPC endpoints", because only one of
+  // those two is enumerable. The first attempt at this listed the
+  // driver's own `CHAINS[*].rpc` origins and exempted only those, and
+  // the live run refused every read alpha02 makes: the app talks to
+  // drpc (`lb.drpc.live`, `eth.drpc.org`), which the driver's table has
+  // never heard of, and no fixed list of third-party providers stays
+  // right. The surfaces that can actually be MUTATED by a request from
+  // this app are ours, and those we can name.
+  const hostOf = (raw) => {
+    try {
+      // The ROOT DOT comes off (Codex #1894 r9). `https://host.example.`
+      // is the same host as `https://host.example`, but `URL.hostname`
+      // keeps the terminal dot, so every suffix and equality test below
+      // reads it as a different host — a build could spell our own
+      // Worker that way and be classified third-party. Verified in Node:
+      // `new URL('https://a.workers.dev./x').hostname` is
+      // `'a.workers.dev.'`, and `.endsWith('.workers.dev')` is false.
+      //
+      // Normalised HERE rather than at each test, because it defeats all
+      // of them — the `SITE` equality and the `.vaipakam.com` suffix as
+      // much as the `.workers.dev` one — and a per-test fix would leave
+      // whichever branch nobody thought about.
+      return new URL(raw).hostname.toLowerCase().replace(/\.$/, '');
+    } catch {
+      return '';
+    }
+  };
+  // Origins a drive was pointed at explicitly, so a staging or preview
+  // run on some other domain still classifies its own Workers as ours.
+  const CONFIGURED_HOSTS = new Set(
+    [SITE, process.env.INDEXER_ORIGIN, process.env.AGENT_ORIGIN]
+      .map((o) => (o ? hostOf(o) : ''))
+      .filter(Boolean),
+  );
+  function isFirstParty(rawUrl) {
+    const h = hostOf(rawUrl);
+    // Unparseable destination: treat as ours, so it cannot be exempted.
+    // Unknown means fatal.
+    if (!h) return true;
+    if (CONFIGURED_HOSTS.has(h)) return true;
+    if (h === 'vaipakam.com' || h.endsWith('.vaipakam.com')) return true;
+    // EVERY `*.workers.dev`, not an enumerated list of ours (Codex #1894
+    // r8). Before the zone cutover our agent and indexer are reachable
+    // ONLY on those aliases — `docs/ops/OffChainRestore.md` requires
+    // them for every pre-cutover build and check — so a drive against a
+    // staging build was sending POSTs to our own Workers and having them
+    // classified as third-party, which meant a write handler could
+    // mutate D1 with no finding recorded.
+    //
+    // Blanket rather than enumerated because the deployed names carry
+    // the account subdomain (`agent-production.<account>.workers.dev`),
+    // which is not in the repository and varies per environment — a list
+    // here would be wrong the first time anyone deployed. The cost of
+    // the blanket rule is refusing a read-shaped POST to somebody
+    // else's workers.dev; no RPC provider we use runs there, and that
+    // failure is a loud refusal in a live drive rather than a silent
+    // pass, which is the direction this guard errs in everywhere else.
+    if (h === 'workers.dev' || h.endsWith('.workers.dev')) return true;
+    return false;
+  }
+
   function readOnlyViolation(req) {
     if (!readOnly) return null;
     const method = req.method().toUpperCase();
     if (['GET', 'HEAD', 'OPTIONS'].includes(method)) return null;
     const body = req.postData();
     if (body) {
+      // The exemption needs the DESTINATION and the VERB, not just a
+      // body that looks like JSON-RPC (Codex #1894 r7). Keying on the
+      // body alone means any endpoint can be reached by bolting
+      // `jsonrpc` and a read method onto its payload: a
+      // `PUT /thresholds` at the agent Worker parses fine, ignores the
+      // extra fields, and persists alert configuration — a real
+      // mutation, recorded as a permitted read.
+      //
+      // So: JSON-RPC is a POST, and it is never aimed at one of our own
+      // surfaces. The verb alone already refuses that `PUT`; the
+      // first-party check refuses the same trick sent as a POST to the
+      // indexer or the agent.
       try {
         const parsed = JSON.parse(body);
         const calls = Array.isArray(parsed) ? parsed : [parsed];
-        if (calls.every((c) => c && typeof c.jsonrpc === 'string')) {
+        if (
+          method === 'POST' &&
+          !isFirstParty(req.url()) &&
+          calls.every((c) => c && typeof c.jsonrpc === 'string')
+        ) {
+          // Named write first, so the reason still says `json-rpc
+          // eth_sendTransaction` for the cases that always worked and
+          // the existing assertions keep reading the same way.
           const bad = calls.find((c) => RPC_WRITE_METHODS.has(c.method));
-          return bad ? `json-rpc ${bad.method}` : null; // read-shaped RPC — allowed
+          if (bad) return `json-rpc ${bad.method}`;
+          // Then the allowlist, which is what closes the gap: a raw
+          // `eth_sendUserOperation` POST at the RPC endpoint bypasses
+          // the injected provider entirely, and the six-entry denylist
+          // let it through unrecorded (Codex #1894 r6).
+          const unlisted = calls.find((c) => !READ_METHODS.has(c.method));
+          if (unlisted) return `json-rpc ${unlisted.method} (not a permitted read)`;
+          return null; // every method is a permitted read
         }
       } catch {
         /* not JSON — fall through to block */
@@ -743,7 +876,27 @@ export async function launch({
     const req = route.request();
     const violation = readOnlyViolation(req);
     if (violation) {
-      blockedRequests.push({ reason: violation, url: req.url().slice(0, 300) });
+      // WHO asked, not only what was asked (Codex #1894 r5). A record
+      // carrying just destination and reason cannot distinguish the app
+      // POSTing to a third-party host from that third party's own page
+      // doing it, so any consumer that exempts a host is really
+      // exempting the destination for everybody — including the
+      // compromised or malfunctioning build this guard exists to catch.
+      // `frame()` is null for service-worker and some navigation
+      // requests, and can throw on a detached frame; an unknown
+      // initiator is recorded as such, and a consumer must treat unknown
+      // as "not exempt".
+      let initiator = '(unknown)';
+      try {
+        initiator = req.frame()?.url()?.slice(0, 300) || '(unknown)';
+      } catch {
+        /* detached frame — leave it unknown, which is the safe reading */
+      }
+      blockedRequests.push({
+        reason: violation,
+        url: req.url().slice(0, 300),
+        initiator,
+      });
       await route.abort('accessdenied').catch(() => {});
       return;
     }
@@ -910,6 +1063,35 @@ export async function launch({
         return hash;
       }
       default:
+        // ALLOWLIST under readOnly, not the denylist above (Codex #1894
+        // r5). `WRITE_METHODS` has to enumerate every write that will
+        // ever exist, and it already misses the ones the ecosystem added
+        // after it was written — `wallet_sendCalls`, `eth_sendUserOperation`.
+        // Those fell through to here unrecorded, so a page that
+        // attempted one and caught the error left a clean report: the
+        // guard's whole job is to notice the ATTEMPT, and it did not.
+        //
+        // `live-position-observe.mjs` already made this argument for the
+        // HTTP layer and shipped an allowlist there; this applies the
+        // same rule at the wallet, which was the one place still
+        // enumerating what to refuse instead of what to permit.
+        //
+        // A too-narrow allowlist is a real cost and is why the list is
+        // generous with reads — but it fails LOUDLY, as a refused read
+        // in a live drive, rather than silently the way a denylist gap
+        // does. That asymmetry is the reason to prefer it.
+        if (readOnly && !READ_METHODS.has(method)) {
+          blockedRequests.push({
+            reason: `wallet rpc ${method} (not a permitted read)`,
+            url: '(injected wallet)',
+            initiator: '(injected wallet)',
+          });
+          const unknown = new Error(
+            `read-only driver session: ${method} is not a permitted read`,
+          );
+          unknown.code = 4200; // EIP-1193 unsupported method
+          throw unknown;
+        }
         // All reads forward to the chain RPC.
         return pub.request({ method, params });
     }
