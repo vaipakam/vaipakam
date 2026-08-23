@@ -1778,6 +1778,18 @@ The distinction is worth stating explicitly because the instant lender-sale rout
 
 A loan may have at most **one live offsetting offer at a time**: a second offset attempt while an earlier one is still outstanding is rejected, so Liam can never be prepaid twice by stacking offers. The single live offer is cleared when it completes or is cancelled.
 
+**An offsetting offer must stop being offered at the moment it stops being acceptable.** Because the refusals above last for as long as the offer stays linked, an offsetting offer with no deadline would give Alice an unbounded veto over Liam's early exit — and one that outlives the offer's own usefulness, since nobody can declare an open-ended offer lapsed, so only Alice could ever clear it. An offsetting offer therefore always carries a deadline.
+
+**That deadline is not the original loan's maturity — it is earlier, by the length of the replacement term.** An offset can only complete if the replacement loan it creates would finish by the original loan's end date, and the replacement starts when the offer is accepted. So an offer proposing a replacement of a given length stops being acceptable that long *before* the original loan ends, not when it ends. Anchoring the deadline at the original maturity would leave the offer unacceptable but not yet lapsed for exactly that span, and the veto would persist across it — for an offset proposing the loan's whole remaining term, that is the entire remaining term, which is to say the problem would not have been fixed at all.
+
+The deadline is what bounds the veto, because it makes the offsetting offer an ordinary lapsed offer that **anyone** may clear — releasing the borrower-position lock, dropping the offset link, and returning Alice's own posted capital to Alice, exactly as her own cancellation would. Liam does not have to wait on Alice to regain his exit routes, and no third party gains anything by clearing it. Alice keeps her unconditional right to cancel at any time before then.
+
+A consequence worth stating plainly, because it looks surprising and is correct: an offset proposing a replacement exactly as long as the loan's whole remaining term can only be taken up in the instant it is posted, so its offering window is effectively nil. That is not the deadline being harsh — it is the replacement-term rule, surfaced honestly instead of being hidden behind an offer that appears open but can never be taken. A borrower who wants a usable window proposes a replacement shorter than the remaining term, and the window they get is exactly the difference. What must **not** happen is such an offer being refused at creation; it is a valid thing to post.
+
+This deadline bounds the *offer*, and is deliberately not a second enforcement of the replacement-term rule. Whether a replacement would actually run past the original end date is still decided when the offer is accepted, against the moment the replacement really starts. The deadline neither substitutes for that check nor tightens it; it only stops the platform advertising an exit that could no longer settle.
+
+On a deployment configured to allow loans longer than the platform's maximum offer lifetime, an offsetting offer's deadline may be brought forward to that limit. That only ever shortens the offer's life, which opens the clear-out to everyone sooner rather than later.
+
 #### Required Settlement Result
 
 When the offset completes, Liam must have a valid claim path for the full value owed under the old loan, including:

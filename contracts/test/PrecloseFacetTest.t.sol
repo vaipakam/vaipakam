@@ -1363,6 +1363,141 @@ contract PrecloseFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    // ─── #1814: the offset vehicle expires when it stops being acceptable ───
+
+    /// @dev Drives a REAL `offsetWithNewOffer` (no `createOfferInternal` mock,
+    ///      unlike the tests above) so the posted vehicle actually reaches
+    ///      storage and its stamped `expiresAt` can be read back.
+    function _postRealOffset(uint256 durationDays) internal returns (uint256 newOfferId) {
+        vm.prank(borrower);
+        newOfferId = PrecloseFacet(address(diamond)).offsetWithNewOffer(
+            activeLoanId, 500, durationDays, mockCollateralERC20, COLLATERAL, true, mockERC20
+        );
+    }
+
+    /// @dev The last timestamp at which an offset of `durationDays` can still be
+    ///      accepted, derived from the `_completeOffsetImpl` anti-drift guard's
+    ///      own inequality (`acceptTime + durationDays*1day <= maturity`) rather
+    ///      than restated independently — so a change to that guard shows up
+    ///      here as a failure instead of two definitions drifting apart.
+    function _lastAcceptableAcceptTime(uint256 durationDays) internal view returns (uint256) {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        return uint256(l.startTime) + uint256(l.durationDays) * 1 days - durationDays * 1 days;
+    }
+
+    function _offsetExpiry(uint256 offerId) internal view returns (uint256) {
+        return uint256(OfferCancelFacet(address(diamond)).getOffer(offerId).expiresAt);
+    }
+
+    /// @dev #1814 — the vehicle is stamped with a real deadline (not the GTC
+    ///      sentinel), and that deadline is the instant acceptance becomes
+    ///      impossible. Left GTC it is cancellable only by its creator, because
+    ///      `cancelOffer`'s permissionless branch runs through `isOfferExpired`
+    ///      and that short-circuits false on `0` forever — while the offset link
+    ///      keeps both lender exits refusing.
+    function test_1814_offsetVehicleExpiresWhenAcceptanceBecomesImpossible() public {
+        uint256 newOfferId = _postRealOffset(25);
+
+        assertTrue(_offsetExpiry(newOfferId) != 0, "offset vehicle must not be posted GTC");
+        // `isOfferExpired` is `now >= expiresAt`, so the last LIVE instant is
+        // `expiresAt - 1`. It must equal the last ACCEPTABLE instant exactly.
+        assertEq(
+            _offsetExpiry(newOfferId) - 1,
+            _lastAcceptableAcceptTime(25),
+            "vehicle stays live for exactly as long as it can still be accepted"
+        );
+    }
+
+    /// @dev #1814 — the boundary is NOT the original maturity, and the
+    ///      difference is the whole finding. Stamping the maturity would leave
+    ///      the vehicle unfillable but UNEXPIRED for a further `durationDays`,
+    ///      and only an EXPIRED offer admits the permissionless cancel — so the
+    ///      borrower's veto over both lender exits would persist across that
+    ///      window rather than ending with the vehicle's usefulness.
+    function test_1814_expiryIsStrictlyEarlierThanMaturityByTheOffsetTerm() public {
+        uint256 newOfferId = _postRealOffset(25);
+
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        uint256 maturity = uint256(l.startTime) + uint256(l.durationDays) * 1 days;
+
+        assertLt(_offsetExpiry(newOfferId), maturity, "expiry must precede the loan's maturity");
+        assertEq(
+            maturity - (_offsetExpiry(newOfferId) - 1),
+            25 * 1 days,
+            "the gap between last-acceptable and maturity is exactly the offset term"
+        );
+    }
+
+    /// @dev #1814 — the P1 itself: there must be NO window in which the vehicle
+    ///      is already unacceptable yet still blocking. At the first instant
+    ///      acceptance is impossible, a stranger can clear it. Under a
+    ///      maturity-anchored stamp this call reverts for another 25 days.
+    function test_1814_noWindowWhereVehicleIsUnfillableButUnclearable() public {
+        uint256 newOfferId = _postRealOffset(25);
+        address stranger = makeAddr("offset-cleaner");
+
+        // One second past the last acceptable accept time: the anti-drift guard
+        // can no longer be satisfied, so the vehicle is dead weight from here on.
+        vm.warp(_lastAcceptableAcceptTime(25) + 1);
+
+        vm.prank(stranger);
+        OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
+
+        assertEq(
+            OfferCancelFacet(address(diamond)).getOfferLinkedLoanId(newOfferId),
+            0,
+            "the offset link that gated both lender exits is dropped the moment the vehicle dies"
+        );
+    }
+
+    /// @dev #1814 — the before/after pair. The same stranger, the same call:
+    ///      refused while the vehicle is still acceptable, accepted once it is
+    ///      not. Under the GTC sentinel the second half could never happen.
+    function test_1814_strangerIsRefusedWhileLiveAndAcceptedOnceExpired() public {
+        uint256 newOfferId = _postRealOffset(25);
+        address stranger = makeAddr("offset-cleaner");
+
+        assertEq(
+            OfferCancelFacet(address(diamond)).getOfferLinkedLoanId(newOfferId),
+            activeLoanId,
+            "vehicle starts linked to the loan"
+        );
+
+        vm.warp(_lastAcceptableAcceptTime(25)); // still the last live instant
+        vm.prank(stranger);
+        vm.expectRevert();
+        OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
+
+        vm.warp(_offsetExpiry(newOfferId));
+        vm.prank(stranger);
+        OfferCancelFacet(address(diamond)).cancelOffer(newOfferId);
+
+        assertEq(OfferCancelFacet(address(diamond)).getOfferLinkedLoanId(newOfferId), 0, "cleared");
+    }
+
+    /// @dev #1814 / #1032 — the regression the earlier bound attempt died on.
+    ///      A same-term-at-start offset (`durationDays == the loan's own term`,
+    ///      zero elapsed) is valid and must stay CREATABLE. #1032's attempt
+    ///      stamped `expiresAt == now`, which `createOffer` rejects outright.
+    ///      The `+ 1` is the difference: creation succeeds and the vehicle
+    ///      carries a one-second fill window, which is the honest answer — with
+    ///      the replacement term equal to the remaining term, it only fits if it
+    ///      starts in that very instant.
+    function test_1814_sameTermAtStartOffsetIsCreatableWithAOneSecondWindow() public {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(uint256(l.startTime), block.timestamp, "fixture must start at elapsed 0");
+
+        uint256 newOfferId = _postRealOffset(l.durationDays);
+
+        assertGt(_offsetExpiry(newOfferId), block.timestamp, "must not be stamped at or before now");
+        assertEq(_offsetExpiry(newOfferId), block.timestamp + 1, "exactly a one-second fill window");
+        assertEq(
+            _offsetExpiry(newOfferId) - 1,
+            _lastAcceptableAcceptTime(l.durationDays),
+            "and that window is precisely the acceptance window"
+        );
+    }
+
     // ─── completeOffset reverts ─────────────────────────────────────────────
 
     function testCompleteOffsetRevertsLoanNotActive() public {

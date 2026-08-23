@@ -1548,6 +1548,13 @@ contract PrecloseFacet is
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         s.offsetOfferToLoanId[newOfferId] = loanId;
         s.loanToOffsetOfferId[loanId] = newOfferId;
+        // #1814 — the vehicle's expiry is stamped on the PARAMS path in
+        // `_buildOffsetParams`, deliberately NOT written here after creation.
+        // See the reasoning there; the short version is that
+        // `createOfferInternal` emits the self-sufficient
+        // `OfferCreatedDetails` before this frame runs, so a post-create
+        // write would leave that event advertising the GTC sentinel to
+        // event-driven consumers while storage held the real deadline.
         // The NFT stays with the initiator, but ERC-721 transfer/approve is
         // blocked at the library level for the duration of the offset flow.
         // Lock is cleared in completeOffset (success) or OfferFacet.cancelOffer
@@ -1858,16 +1865,89 @@ contract PrecloseFacet is
         // interest model. See `EarlyWithdrawalFacet._buildSaleParams`
         // for the parallel rationale on the sale-vehicle builder.
         params.useFullTermInterest = loan.useFullTermInterest;
-        // #1032 (L-c) — the offset offer is left GTC (`expiresAt == 0`). The
-        // replacement-maturity anti-drift guarantee is NOT enforced via
-        // `expiresAt` here (an earlier attempt to do so, Codex #1069 rounds 1-2,
-        // could produce `expiresAt == now` for a legitimate same-term-at-start
-        // offset — `durationDays == remaining` at elapsed 0 — which `createOffer`
-        // rejects, breaking a valid lender-swap). Instead the bound is re-checked
-        // at ACCEPTANCE inside `_completeOffsetImpl`, which fires atomically in
-        // the accepting tx (so `block.timestamp` there IS the replacement loan's
-        // fresh start): a drifting term reverts the whole acceptance, rolling the
-        // replacement loan back cleanly. See the guard there.
+        // #1032 (L-c) — the LOAD-BEARING anti-drift guarantee is not enforced
+        // via `expiresAt`; it is re-checked at ACCEPTANCE inside
+        // `_completeOffsetImpl`, which fires atomically in the accepting tx (so
+        // `block.timestamp` there IS the replacement loan's fresh start): a
+        // drifting term reverts the whole acceptance, rolling the replacement
+        // loan back cleanly. See the guard there. The expiry stamped below does
+        // not substitute for it and does not tighten it.
+        //
+        // #1814 — the vehicle is NOT posted GTC. Left open-ended
+        // (`expiresAt == 0`) it is cancellable only by its creator —
+        // `cancelOffer`'s permissionless branch runs through `isOfferExpired`,
+        // which short-circuits false on the GTC sentinel forever — while
+        // `loanToOffsetOfferId` keeps both lender exits refusing
+        // (`OffsetActiveOnLoan`). That is an unbounded borrower veto over the
+        // lender's early exit. Stamping a real expiry is the whole fix: it opts
+        // the vehicle back into the ordinary offer lifecycle, where an expired
+        // offer is clearable by ANYONE — unlocking the borrower NFT, dropping
+        // both link mappings, and refunding the creator's principal to
+        // `offer.creator` regardless of who called.
+        //
+        // The bound is the LAST TIMESTAMP AT WHICH THE VEHICLE CAN STILL BE
+        // ACCEPTED, and getting that boundary right is the whole point.
+        // Acceptance needs `acceptTime + durationDays·1day <= originalMaturity`,
+        // so the last acceptable instant is
+        // `originalMaturity - durationDays·1day` — NOT the maturity itself.
+        // `isOfferExpired` is `now >= expiresAt`, so `lastAcceptable + 1` keeps
+        // the offer live for exactly `now <= lastAcceptable` and expires it the
+        // instant acceptance becomes impossible.
+        //
+        // Stamping the maturity instead would leave the vehicle unfillable but
+        // UNEXPIRED for a further `durationDays` — and since only an EXPIRED
+        // offer admits the permissionless cancel, the veto would simply persist
+        // across that window (for a same-term-at-start offset, the loan's entire
+        // remaining term). That is the bug this stamp exists to remove, merely
+        // shortened rather than fixed.
+        //
+        // This can never land in the past, so `createOffer`'s
+        // `expiresAt <= block.timestamp` screen never fires:
+        // `_validateOffsetRequest` (already run) required
+        // `now + durationDays·1day <= maturity`, i.e. `lastAcceptable >= now`,
+        // making the stamp `>= now + 1`. The subtraction cannot underflow for
+        // the same reason. It is also strictly earlier than the maturity
+        // (`durationDays >= 1` for every offer), so the vehicle can never
+        // outlive the loan it offsets.
+        //
+        // That the value is always strictly future is exactly what lets it be
+        // set HERE, on the params path, rather than written to storage after
+        // creation — and setting it here is what puts the real deadline into
+        // the self-sufficient `OfferCreatedDetails` event, whose `expiresAt`
+        // field event-driven consumers read as authoritative. A post-create
+        // write would leave that event advertising the GTC sentinel with no
+        // later event correcting it.
+        //
+        // #1032's abandoned attempt is the near-miss worth naming: it produced
+        // `expiresAt == now` for a legitimate same-term-at-start offset, which
+        // `createOffer` rejects outright, breaking a valid lender-swap. The
+        // `+ 1` is the difference. Such an offset is now created successfully
+        // and carries a one-second fill window — the honest answer, because
+        // with `durationDays == the remaining term` the replacement only fits
+        // if it starts in that very instant. The anti-drift guard, not this
+        // stamp, is what makes that so. A borrower wanting a usable window
+        // picks a duration strictly shorter than the remaining term and gets
+        // exactly `remaining - durationDays` of it.
+        //
+        // The horizon clamp is for a deployment that has raised
+        // `cfgMaxOfferDurationDays` above the 365-day
+        // `MAX_OFFER_EXPIRY_HORIZON` (the setter's ceiling is 4385 days): there
+        // a long loan's `lastAcceptable` can sit further out than `createOffer`
+        // accepts, and an unclamped stamp would REVERT offset creation
+        // outright. Clamping only ever shortens the vehicle's life, which opens
+        // the permissionless teardown earlier and never later — the safe
+        // direction.
+        {
+            uint256 lastAcceptable = uint256(loan.startTime) +
+                uint256(loan.durationDays) * LibVaipakam.ONE_DAY -
+                durationDays * LibVaipakam.ONE_DAY;
+            uint256 horizonCap = block.timestamp +
+                LibVaipakam.MAX_OFFER_EXPIRY_HORIZON;
+            uint256 stamped = lastAcceptable + 1;
+            params.expiresAt = uint64(
+                stamped < horizonCap ? stamped : horizonCap
+            );
+        }
         // Phase 6: keeper enables are per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. The borrower (offset-offer
         // creator) can enable specific keepers on this offset offer via
