@@ -27,14 +27,49 @@
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Cron — every minute. The watcher is internally tick-rate-aware:
-  // each tick sweeps `getChainConfigs(env)` round-robin and bails
-  // early on chains that already have notify_state at the same band
-  // since the previous tick. A "* * * * *" schedule matches the
-  // existing ops/hf-watcher cadence; tighter schedules don't help
-  // (HF reads are per-tick rate-limited inside the watcher).
+  // ── KEEPER IS DEPLOYED BUT NOT SCHEDULED (#1896, operator decision) ──
+  //
+  // The schedule is deliberately EMPTY. Everything else about this
+  // Worker is untouched and stays deployed: the script, the D1 binding,
+  // all 17 secret / secrets-store / plain-text bindings, and the
+  // `KEEPER_ENABLED` secret. Nothing has to be recreated to bring it
+  // back — only this list.
+  //
+  // WHY. Measured on 2026-08-24 (#1896): `outcome: exceededCpu` on
+  // ~100% of invocations, cpuTime pinned at the 10 ms ceiling, over the
+  // whole retained window. Two passes — `watcher` and
+  // `liquidityConfidence` — consume the entire budget and are killed
+  // mid-flight every tick, while the other eight are already inert
+  // (`KEEPER_ENABLED` is off, so they return in 0 ms). So every minute
+  // the Worker was invoked, burned its ceiling, failed, and completed
+  // nothing. Removing the schedule stops that; it does not make the
+  // keeper any less functional than it already was.
+  //
+  // It also returns a cron trigger to the account pool. The free plan
+  // caps triggers at FIVE per ACCOUNT and all five were in use — see
+  // `apps/indexer/src/cronRouting.ts`, which records a deploy that
+  // failed for exactly that reason.
+  //
+  // TO RE-ENABLE, once the CPU work in #1896 is done:
+  //   1. Restore the schedule below (`"crons": ["* * * * *"]`).
+  //   2. Confirm a cron slot is free — the cap is five per account.
+  //   3. Set the `KEEPER_ENABLED` secret to `true`; the fund-moving
+  //      passes stay inert until it is, and `passIsArmed` names any
+  //      binding still blocking each pass, one line per pass per tick.
+  //   4. `wrangler tail vaipakam-keeper` and confirm the outcome is
+  //      `ok` rather than `exceededCpu`, and that `watcher` and
+  //      `liquidityConfidence` both emit a `done in Nms` line — absent
+  //      lines are what "killed mid-flight" looks like here.
+  //
+  // The original cadence note, still true and still the target to
+  // restore: the watcher is internally tick-rate-aware — each tick
+  // sweeps `getChainConfigs(env)` round-robin and bails early on chains
+  // that already have notify_state at the same band since the previous
+  // tick. "* * * * *" matched the historical ops/hf-watcher cadence;
+  // tighter schedules don't help (HF reads are per-tick rate-limited
+  // inside the watcher).
   "triggers": {
-    "crons": ["* * * * *"],
+    "crons": [],
   },
 
   // D1 binding — `vaipakam-archive`, the STAGING database for the
