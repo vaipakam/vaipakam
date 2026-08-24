@@ -1269,14 +1269,23 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     /**
      * @notice T-032 — record the FIRST PaidPush-tier notification for a
      *         loan-side and immediately bill the corresponding party
-     *         `cfgNotificationFee()`-equivalent in VPFI from their
-     *         vault → treasury (one transfer, no Diamond custody).
+     *         flat notification fee in VPFI from their vault into
+     *         DIAMOND CUSTODY, which then credits the recycle bucket
+     *         (`LibNotificationFee.bill` → `vaultWithdrawERC20(payer, vpfi,
+     *         address(this), …)` → `LibVpfiRecycle.credit(NotificationFee,
+     *         …)`). #1346 moved this off the direct-to-treasury route; it is
+     *         the loop's Layer-0 absorption class. "-equivalent" was stale
+     *         too — the amount is a FLAT native-VPFI quantity, not an
+     *         oracle conversion.
      * @dev    Idempotent: subsequent calls on an already-billed side
      *         no-op. Reverts on:
      *           - caller missing `NOTIF_BILLER_ROLE`
      *           - loanId past `nextLoanId` or never-initialized
      *             (InvalidLoanStatus)
-     *           - oracle stale / WETH unset / VPFI not configured
+     *           - VPFI not configured (`NotifFeeVpfiTokenNotSet`). No
+     *             oracle and no WETH are touched on this path — the fee is
+     *             a flat VPFI quantity, so the pre-#1346 "oracle stale /
+     *             WETH unset" causes listed here cannot occur
      *           - payer's vault has insufficient VPFI (the watcher's
      *             expected behaviour is to LOG this revert and skip
      *             the notification — the user's billed flag stays

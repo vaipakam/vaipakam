@@ -701,7 +701,13 @@ contract RewardAggregatorFacet is
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled stamp for an armed
     ///         day (zeroes with `stamped == false` pre-cutover or for a
-    ///         never-funded chain). `keeperAllocate` is always 0 until B2-b.
+    ///         never-funded chain). `keeperAllocate` is always 0 — B2-b
+    ///         landed and it is STILL always 0, because the per-chain
+    ///         keeper allocation it reserves space for is #1569, which is
+    ///         undecided. Both producers hard-zero it (`LibMeshFunding` and
+    ///         this facet's own stamp), and no consumer reads it. The old
+    ///         wording ("until B2-b") implied the field would populate at a
+    ///         milestone that has since passed.
     function getChainDayRecycledFunding(uint256 dayId, uint32 chainId)
         external
         view

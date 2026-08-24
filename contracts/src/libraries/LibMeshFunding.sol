@@ -43,20 +43,26 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *         funded budgets remaining the binding caps (scaling dust can never
  *         over-pay).
  *
- *         B2-b RE-SLICE (Codex #1417 r6): mirror LOCAL funding + the
- *         consume-on-arrival symmetry are DEFERRED to B2-d, where the
- *         delivered-backing ledger (a mirror's surrendered slice + received
- *         remittances) makes mirror-side consumption safe. A mirror funding
- *         its slice from its own bucket before the backing remittance has
- *         arrived would let pre-remittance claims cannibalise other reward
- *         ledgers and report phantom availability to Base — so until B2-d,
- *         Base funds the WHOLE mesh budget (`avail = 0` on every mirror).
- *         The two passes therefore degenerate to "Base funds all": the
- *         whole capped commit is Base-funded and reserves into the GLOBAL
- *         `outstandingCommitRecycled` (consumed at Base claims + remit), so
- *         the live `recycledBudget` stamp and the global reservation stay
- *         numerically identical to the pre-mesh single-pool
- *         `min(fundable, coupled)`. `recycleConsume` rides the wire as 0.
+ *         MIRROR LOCAL FUNDING IS ON (B2-d3). This header used to say the
+ *         opposite — "DEFERRED to B2-d … Base funds the WHOLE mesh budget
+ *         (`avail = 0` on every mirror) … `recycleConsume` rides the wire
+ *         as 0" — and the body has contradicted it since B2-d3 landed:
+ *         `_resolveDayFunding` routes every non-Base chain through
+ *         `_mirrorAvailable` (see the B2-d3 comment beside it) and writes
+ *         `recycleConsume: commitLocal`. Reading the header instead of the
+ *         body would tell you a mirror never funds its own slice, which is
+ *         no longer true and is load-bearing for the two-pass split.
+ *
+ *         Why the deferral existed, kept because it is the reason the
+ *         current shape is safe rather than merely permitted: a mirror
+ *         funding its slice from its own bucket BEFORE the backing
+ *         remittance arrived would let pre-remittance claims cannibalise
+ *         other reward ledgers and report phantom availability to Base.
+ *         What made it safe is d1's commitment report plus d2's
+ *         delivered-backing ledger — a mirror's availability is Base's
+ *         model of its committable bucket, `reported` less the net claim
+ *         draw and less the net repatriation draw, never an unbacked
+ *         optimism.
  *
  *         What B2-b DOES make live: each chain gets its own funded per-day
  *         stamp (per-side fresh floors + global-equivalent recycled halves),
@@ -116,13 +122,13 @@ library LibMeshFunding {
     /**
      * @notice Resolve + stamp the armed day's per-chain funding: writes the
      *         per-(day,chain) stamps and returns the global totals the
-     *         aggregator stamps and reserves. In the B2-b re-slice every
-     *         mirror funds 0 locally (see the library header), so the whole
-     *         commit is Base-funded and `reservedBase == Σ commit` — the
-     *         aggregator's global reservation therefore stays numerically
-     *         identical to the pre-mesh `min(fundable, coupled)` while each
-     *         chain still gets its own claimable stamp. B2-d turns on mirror
-     *         local funding + the consume-on-arrival symmetry together.
+     *         aggregator stamps and reserves. Mirrors DO fund locally since
+     *         B2-d3, so `reservedBase` is the BASE-funded remainder rather
+     *         than the whole commit, and each mirror's own share rides the
+     *         wire as `recycleConsume`. (This paragraph previously described
+     *         the B2-b re-slice, where every mirror funded 0 locally and
+     *         `reservedBase == Σ commit`; that stopped being true when
+     *         B2-d3 landed.)
      * @param  dayId         Day being finalized (denominators final).
      * @param  coupledTarget The absorption-coupled target `Ā × (1 − m)` —
      *                       NOT pre-capped by Base's fundable balance; the

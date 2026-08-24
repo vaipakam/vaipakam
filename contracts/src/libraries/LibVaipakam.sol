@@ -2084,10 +2084,12 @@ library LibVaipakam {
         // `NOTIF_BILLER_ROLE` — held by the off-chain hf-watcher) the
         // first time a paid-tier (Push-Protocol) notification fires
         // for the corresponding side of this loan. Once set, the user's
-        // VPFI vault has already been debited the
-        // `cfgNotificationFee()`-equivalent amount in VPFI,
-        // routed directly to treasury (no Diamond custody — see
-        // `LibNotificationFee.bill` for the routing). Idempotent: the
+        // VPFI vault has already been debited the flat notification fee
+        // in VPFI, taken into DIAMOND CUSTODY and credited to the recycle
+        // bucket (#1346 — see `LibNotificationFee.bill`, whose recipient
+        // is `address(this)`). The pre-#1346 wording here said "routed
+        // directly to treasury (no Diamond custody)" while citing the file
+        // that disproves it. Idempotent: the
         // facet method no-ops if the flag is already true. Free-tier
         // (Telegram-only) subscribers and unsubscribed users always
         // leave both flags `false` — they're billed only on PaidPush.
@@ -2192,7 +2194,13 @@ library LibVaipakam {
         // the treasury field every settlement split reads. The RESOLVED value
         // is stored (never 0, since `cfg*` map a 0 config to the default), so
         // `0` unambiguously means a pre-#957 loan ⇒ `effectiveTreasuryFeeBps`
-        // falls back to the live knob. Both fees are bounded by `MAX_FEE_BPS`
+        // falls back to `LEGACY_TREASURY_FEE_BPS` (100 = 1%), the FROZEN
+        // pre-#957 rate — NOT the live knob. That distinction is the whole
+        // point of the field: the live knob is 200 since the rev-8 freeze
+        // (#1352), so resolving a grandfathered loan against it would
+        // retroactively reprice it 1% → 2% at repay. This comment previously
+        // said "the live knob", which described exactly the change CLAUDE.md
+        // warns must never be made. Both fees are bounded by `MAX_FEE_BPS`
         // (5000) so `uint16` holds them; they pack into one slot. Append-only
         // tail fields — zero on every existing loan.
         uint16 treasuryFeeBpsAtInit;
@@ -3264,8 +3272,10 @@ library LibVaipakam {
         /// @dev Σ interestRateBps across every loan ever initiated.
         ///      Divided by totalLoansEverCreated to yield averageApr.
         uint256 interestRateBpsSum;
-        /// @dev T-032 — cumulative VPFI debited from user vaults and
-        ///      routed to treasury via `LoanFacet.markNotifBilled`.
+        /// @dev T-032 — cumulative VPFI debited from user vaults via
+        ///      `LoanFacet.markNotifBilled`. Since #1346 that VPFI lands in
+        ///      DIAMOND CUSTODY and credits the recycle bucket, not the
+        ///      treasury; this counter is the lifetime total either way.
         ///      Never decremented; the operator monitors this for
         ///      anomaly detection (a compromised NOTIF_BILLER_ROLE
         ///      could falsely bill, capped at the per-loan-side fee
