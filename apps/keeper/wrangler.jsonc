@@ -37,29 +37,59 @@
   //
   // WHY. Measured on 2026-08-24 (#1896): `outcome: exceededCpu` on
   // ~100% of invocations, cpuTime pinned at the 10 ms ceiling, over the
-  // whole retained window. Two passes — `watcher` and
-  // `liquidityConfidence` — consume the entire budget and are killed
-  // mid-flight every tick, while the other eight are already inert
-  // (`KEEPER_ENABLED` is off, so they return in 0 ms). So every minute
-  // the Worker was invoked, burned its ceiling, failed, and completed
-  // nothing. Removing the schedule stops that; it does not make the
-  // keeper any less functional than it already was.
+  // whole retained window. So every minute the Worker was invoked,
+  // burned its ceiling, failed, and completed nothing.
+  //
+  // WHICH pass burns it is NOT established, and an earlier revision of
+  // this comment claimed it was (Codex #1924 r1). `watcher` and
+  // `liquidityConfidence` are the two with no completion line, but
+  // every due pass is started concurrently through `ctx.waitUntil`, so
+  // a missing line means only "still in flight when the invocation
+  // died" — which a pass merely awaiting an RPC also satisfies. The
+  // timing wrapper measures WALL time and says so itself: it can
+  // EXCLUDE suspects, not name one. Attribution needs a profile.
   //
   // It also returns a cron trigger to the account pool. The free plan
   // caps triggers at FIVE per ACCOUNT and all five were in use — see
   // `apps/indexer/src/cronRouting.ts`, which records a deploy that
   // failed for exactly that reason.
   //
+  // WHAT STOPS THAT WAS NOT ALREADY STOPPED. Two passes are NOT gated
+  // by `KEEPER_ENABLED`, so unscheduling does cost function (Codex
+  // #1924 r1 — an earlier revision of this comment wrongly said it cost
+  // none):
+  //   - `dailyOracleSnapshot` — gated only on KEEPER_PRIVATE_KEY, and
+  //     deliberately so: README §"What the kill-switch does and does not
+  //     stop" records the 2026-08-03 decision that the snapshot is a
+  //     public good, left ungated precisely SO THAT disabling the keeper
+  //     for an unrelated reason would not leave holes in the oracle
+  //     series. Unscheduling leaves exactly those holes. Mitigation:
+  //     `captureDailyPriceSnapshot` is permissionlessly callable, so any
+  //     address can keep the series intact meanwhile.
+  //   - `preGraceWatcher` — no arming check at all; borrowers stop
+  //     getting the pre-grace warning.
+  //
   // TO RE-ENABLE, once the CPU work in #1896 is done:
   //   1. Restore the schedule below (`"crons": ["* * * * *"]`).
   //   2. Confirm a cron slot is free — the cap is five per account.
-  //   3. Set the `KEEPER_ENABLED` secret to `true`; the fund-moving
+  //   3. `wrangler deploy` — editing this file changes NOTHING on its
+  //      own (README §"Stopping the keeper" makes the same point about
+  //      the reverse direction). A schedule reaches Cloudflare only via
+  //      a deploy.
+  //   4. Read the schedule back TRIGGER-AWARE — Settings → Trigger
+  //      Events, or query the Worker's `/schedules` endpoint. A
+  //      mistyped or wrongly-nested key leaves the previous state in
+  //      place, and a quiet `wrangler tail` only proves no tick has
+  //      fired YET.
+  //   5. Allow the propagation window: Cloudflare documents cron
+  //      updates taking up to 15 minutes to reach every location.
+  //   6. Set the `KEEPER_ENABLED` secret to `true`; the fund-moving
   //      passes stay inert until it is, and `passIsArmed` names any
   //      binding still blocking each pass, one line per pass per tick.
-  //   4. `wrangler tail vaipakam-keeper` and confirm the outcome is
-  //      `ok` rather than `exceededCpu`, and that `watcher` and
-  //      `liquidityConfidence` both emit a `done in Nms` line — absent
-  //      lines are what "killed mid-flight" looks like here.
+  //   7. `wrangler tail vaipakam-keeper` and confirm the outcome is
+  //      `ok` rather than `exceededCpu`, and that every due pass emits
+  //      a `done in Nms` line — an absent line means the pass was still
+  //      in flight when the invocation ended.
   //
   // The original cadence note, still true and still the target to
   // restore: the watcher is internally tick-rate-aware — each tick

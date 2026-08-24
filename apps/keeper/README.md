@@ -97,18 +97,32 @@ revision of this section told you to do both, which is incoherent — the file
 change has no effect without a deploy, and a deploy is exactly what the next
 paragraph forbids.
 
-**But the repository still commits an active cron** (`"crons": ["* * * * *"]`),
-so the dashboard change is *temporary*: the next deploy of this Worker from a
-clean checkout re-arms it. If the stop needs to outlive the incident, follow
-up by committing
+**The repository now commits an EMPTY cron** (`"crons": []`) — #1896, done
+deliberately after measurement, and this section previously told you the
+opposite. The follow-up it used to recommend has been taken:
 
 ```jsonc
 "triggers": { "crons": [] }
 ```
 
 — empty, not absent; an absent `triggers` object sends no schedule update at
-all and silently leaves the committed cron in place — and deploy that
-deliberately, once the var hazard below has been dealt with.
+all and would silently leave whatever is deployed in place. The var hazard
+that gated this is resolved below: `TG_BOT_USERNAME` is the only var this
+config declares, and `apps/keeper` never reads it.
+
+**What that means for an incident.** The keeper is not currently scheduled,
+so there is nothing to emergency-stop — the dashboard steps above apply only
+after someone has re-armed it. A deploy from a clean checkout no longer
+re-arms it; it now *keeps it stopped*, which is the inversion to remember if
+you last read this section before #1896.
+
+**And it means the reverse is now the risky direction.** Re-arming requires
+editing `wrangler.jsonc` **and** running `wrangler deploy` — the file alone
+changes nothing, exactly as this section says about stopping. The full
+re-enable sequence, including the trigger-aware readback and the
+up-to-15-minute propagation window, is kept beside the empty list in
+`wrangler.jsonc` rather than here, so it cannot drift from the thing it
+describes.
 
 **Prefer the dashboard over `wrangler deploy` for this.** A deploy republishes
 the whole Worker configuration to change one schedule, which is more surface

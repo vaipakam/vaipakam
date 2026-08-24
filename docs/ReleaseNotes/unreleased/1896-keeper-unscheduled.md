@@ -11,23 +11,42 @@ rebuilding anything.
 It had not been completing its work for at least as long as the
 platform's logs go back. Measured against the live deployment, roughly
 every single invocation was being terminated for exceeding its CPU
-allowance, and had been continuously. Two of its ten jobs consumed the
-entire allowance between them and were cut off part-way through, every
-minute, while the other eight were already switched off by
-configuration and returned immediately.
+allowance, and had been continuously. So each minute the Worker
+started, spent its whole budget, failed, and finished nothing.
 
-So each minute the Worker started, spent its whole budget, failed, and
-finished nothing. Unscheduling it does not make the keeper any less
-functional than it already was — it stops a job that was reliably
-failing from being started sixty times an hour.
+*Which* of its ten jobs consumed that budget is not yet known. An
+earlier draft of this note named two of them; that was inference rather
+than measurement, and it has been withdrawn. The jobs are started
+concurrently, so a job with no completion line may equally have been
+waiting on a network response when the whole invocation was cut off.
+Finding the real answer needs profiling inside the jobs, and is part of
+the work this note does not finish.
 
 It also returns a scheduling slot to a pool that was completely full.
 The platform's plan allows only five scheduled jobs across the whole
 account, and a previous deployment failed outright on that limit.
 
-## What this does not change
+## What it does cost
 
-Nothing about what the keeper *does*. No job was deleted, no
+Two of the ten jobs were *not* switched off by configuration, so
+stopping the schedule does stop them, and an earlier draft of this note
+wrongly said the change cost nothing:
+
+- **The daily price snapshot.** It was deliberately left outside the
+  keeper's kill-switch, precisely so that turning the keeper off for an
+  unrelated reason would not leave gaps in the price series. Stopping
+  the schedule leaves exactly those gaps. It is mitigated by the fact
+  that anyone can perform this snapshot — it is not restricted to the
+  keeper — so the series can be kept whole by any other party in the
+  meantime.
+- **The pre-grace warning.** Borrowers approaching their grace boundary
+  stop receiving the heads-up that lets them repay in time.
+
+Both resume the moment the schedule does.
+
+## What it does not change
+
+Nothing about what the keeper *is*. No job was deleted, no
 configuration was cleared, and the switch that arms the fund-moving
 jobs is untouched and still off. When the underlying work is done, the
 schedule goes back and the keeper resumes every task it had before.
