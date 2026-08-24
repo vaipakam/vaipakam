@@ -636,6 +636,117 @@ contract EarlyWithdrawalFacetTest is Test {
         assertEq(l.lender, newLender, "an agreeing offer completes the sale");
     }
 
+    // ─── #1921 (#1503 item 5): admission keys on the CURRENT borrower ──────────
+    //
+    // The direct sale passed the STORED `loan.borrower` to compliance and never
+    // compared the buy-offer creator against `ownerOf(borrowerTokenId)`. After a
+    // borrower-position transfer that admits a buyer incompatible with the real
+    // borrower — or the real borrower themselves, leaving one wallet as both
+    // lender and borrower, after which `RepayFacet` rejects that wallet's own
+    // repayment. The listed route already refuses this in `LoanFacet.initiateLoan`
+    // (resolved via `ownerOf(borrowerTokenId)`); these prove the direct route now
+    // does too, and does not over-refuse a genuine third-party buyer.
+
+    /// @dev The self-deal WITHOUT any transfer: the buy offer's creator is the
+    ///      loan's current borrower. Filling it would migrate the lender onto the
+    ///      borrower. A real borrower-authored Lender offer (not a mutation) so
+    ///      the whole shape/term gauntlet is cleared before the item-5 guard.
+    function test_1921_refusesBuyOfferAuthoredByTheCurrentBorrower() public {
+        // Borrower authors a standing Lender ("buy") offer mirroring the loan's
+        // terms so every #1912 parity check passes and control reaches the guard.
+        vm.prank(borrower);
+        uint256 borrowerBuyOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleBuyerIsBorrower.selector,
+                activeLoanId,
+                borrower
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, borrowerBuyOffer
+        );
+    }
+
+    /// @dev The canonical item-5 scenario: the borrower position changes hands to
+    ///      the standing buy offer's creator AFTER origination, so the stored
+    ///      `loan.borrower` is stale but the LIVE holder is now the buyer. Proves
+    ///      the guard resolves `ownerOf(borrowerTokenId)`, not `loan.borrower` —
+    ///      the reported borrower is `newLender`, not the origination `borrower`.
+    function test_1921_refusesWhenBuyerBecameTheCurrentBorrowerViaTransfer() public {
+        uint256 borrowerTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;
+        // Borrower position moves to the buy offer's creator (the buyer).
+        vm.prank(borrower);
+        VaipakamNFTFacet(address(diamond)).transferFrom(
+            borrower, newLender, borrowerTokenId
+        );
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleBuyerIsBorrower.selector,
+                activeLoanId,
+                newLender // the LIVE holder, not the stale loan.borrower
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, buyOfferId
+        );
+    }
+
+    /// @dev The guard must NOT over-refuse: with the borrower position held by a
+    ///      third party who is not the buyer, the sale still completes. Also a
+    ///      second proof the guard reads the LIVE holder — the stored
+    ///      `loan.borrower` never equals `newLender`, so a guard keyed on the
+    ///      stale field could never have blocked, yet this fills correctly while
+    ///      the transfer case above refuses.
+    function test_1921_fillsWhenCurrentBorrowerIsAThirdPartyNotTheBuyer() public {
+        address holder = makeAddr("itemFiveBorrowerHolder");
+        uint256 borrowerTokenId =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).borrowerTokenId;
+        vm.prank(borrower);
+        VaipakamNFTFacet(address(diamond)).transferFrom(
+            borrower, holder, borrowerTokenId
+        );
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(
+            activeLoanId, buyOfferId
+        );
+        LibVaipakam.Loan memory l =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
+        assertEq(l.lender, newLender, "a third-party-held position still sells");
+    }
+
     function testSellLoanRejectedWhileOffsetLive() public {
         TestMutatorFacet(address(diamond)).setLoanToOffsetOfferIdRaw(activeLoanId, 99);
 

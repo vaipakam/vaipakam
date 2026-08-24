@@ -133,6 +133,22 @@ contract EarlyWithdrawalDirectFacet is
     ///         copy, so renumbering silently re-labels a live error.
     error SaleOfferTermsDisagree(uint8 which);
 
+    /// @notice #1921 (#1503 item 5) — the standing buy offer's creator is the
+    ///         CURRENT holder of the loan's borrower position, so filling it
+    ///         would migrate the lender side onto the borrower and leave an
+    ///         Active loan with `lender == borrower` — a party owing itself,
+    ///         which breaks claim/repay accounting (`RepayFacet` then rejects
+    ///         that wallet's ordinary repayment). The listed route already
+    ///         refuses this exact case in `LoanFacet.initiateLoan` (resolved via
+    ///         `ownerOf(borrowerTokenId)`), and `OfferAcceptFacet` surfaces it
+    ///         as the `SaleSelfBuy` preview classifier; this is the same rule on
+    ///         the direct route, which had neither the guard nor the live-holder
+    ///         resolution. Named rather than folded into the generic
+    ///         `InvalidSaleOffer` — the many shape checks above all raise that,
+    ///         and self-dealing is a WHO-is-buying refusal, not a malformed
+    ///         offer: the seller must pick a different buy offer, not re-list.
+    error SaleBuyerIsBorrower(uint256 loanId, address borrower);
+
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -400,11 +416,34 @@ contract EarlyWithdrawalDirectFacet is
                 revert InvalidSaleOffer();
         }
 
+        // #1921 (#1503 item 5) — resolve the loan's CURRENT borrower once. The
+        // borrower position NFT may have changed hands since origination, so the
+        // stored `loan.borrower` is stale; both the self-buy guard and the
+        // compliance recheck below key on the live holder. Same resolution the
+        // listed route does in `LoanFacet.initiateLoan` (Codex #959 round-8 P1).
+        address currentBorrower = LibERC721.ownerOf(loan.borrowerTokenId);
+        // Reject the loan's OWN current borrower buying the lender side of their
+        // own debt: that migrates the lender onto the borrower, leaving an Active
+        // loan with `lender == borrower` (a party owing itself — breaks
+        // claim/repay accounting, after which `RepayFacet` rejects that wallet's
+        // ordinary repayment). The exit for a borrower is repay / preclose, never
+        // buying their own debt's lender side. The listed route enforces this in
+        // `LoanFacet.initiateLoan`; this direct route had no equivalent.
+        if (buyOffer.creator == currentBorrower)
+            revert SaleBuyerIsBorrower(loanId, currentBorrower);
+
         // ── Sanctions & KYC: new lender (Noah) must pass normal initiation checks ─
+        // #1921 — validate the buyer against the loan's LIVE counterparty (the
+        // current borrower holder), not the stale `loan.borrower`. The generic
+        // offer KYC/country checks cover only lender-vs-buyer, not the borrower
+        // whose live loan the buyer is stepping into. No-op on the retail deploy
+        // (KYC/country off); load-bearing on the industrial fork where a
+        // borrower's tier/country may have degraded since origination. Mirrors
+        // the Option-2 (`initiateLoan`) sale-vehicle compliance recheck.
         LibCompliance.enforceCountryAndKyc(
             address(this),
             buyOffer.creator,
-            loan.borrower,
+            currentBorrower,
             loan.principalAsset,
             loan.principal,
             loan.collateralAsset,
