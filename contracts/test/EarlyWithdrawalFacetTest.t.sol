@@ -7262,6 +7262,131 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    // ─── Inherited FEE snapshot (#1918, design item 18) ────────────────────
+
+    /// @dev Set the live treasury fee, leaving the initiation fee as it is.
+    ///      `setFeesConfig` takes both, so a test that only means to move one
+    ///      still has to restate the other; reading it back rather than
+    ///      hardcoding keeps this from silently re-pricing initiation.
+    function _setLiveTreasuryFeeBps(uint16 bps) internal {
+        (, uint256 initFee) = ConfigFacet(address(diamond)).getFeesConfig();
+        vm.prank(owner);
+        ConfigFacet(address(diamond)).setFeesConfig(bps, uint16(initFee));
+    }
+
+    /// @dev A loan keeps the treasury-fee rate it was originated under, and
+    ///      settlement keeps reading it. Governance LOWERING the fee afterwards
+    ///      leaves this position paying the older, higher cut — so a buyer
+    ///      whose standing offer assumed today's schedule would net less than
+    ///      their own terms imply. Nothing else in the classifier can see it:
+    ///      the fee is not a risk bound, not a term the buyer authored, and
+    ///      invisible in a health or LTV reading.
+    function test_1918_refusedWhenInheritedTreasuryFeeIsHigherThanCurrent() public {
+        uint256 inherited =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).treasuryFeeBpsAtInit;
+        assertGt(inherited, 0, "fixture must carry a stamped fee, or this proves nothing");
+
+        uint16 lowered = uint16(inherited - 50);
+        _setLiveTreasuryFeeBps(lowered);
+
+        (uint8 code, uint256 a, uint256 b) =
+            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(code, 7, "a higher inherited fee must be classified on its own code");
+        assertEq(a, inherited, "must report the inherited rate");
+        assertEq(b, lowered, "must report the rate a fresh loan would carry");
+
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                LibSaleSolvency.SaleInheritsWorseFeeTerms.selector,
+                activeLoanId,
+                inherited,
+                uint256(lowered)
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    /// @dev One-directional, exactly as the risk snapshots. A loan originated
+    ///      under a LOWER fee than today's is a BETTER position than a fresh
+    ///      loan would give the buyer, so refusing it would block a sale that
+    ///      harms nobody. Guards against a naive `!=`, which is what an
+    ///      "inherited terms must match" reading would produce — and which
+    ///      would block every pre-#1352 loan, all of which carry 1% against a
+    ///      live 2%.
+    function test_1918_admittedWhenInheritedTreasuryFeeIsLowerThanCurrent() public {
+        uint256 inherited =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).treasuryFeeBpsAtInit;
+        _setLiveTreasuryFeeBps(uint16(inherited + 100));
+
+        (uint8 code, , ) = RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(code, 0, "a cheaper inherited fee must stay admissible");
+
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
+        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "a position on a cheaper-than-current fee must stay sellable"
+        );
+    }
+
+    /// @dev A pre-#957 loan carries NO stamp — `treasuryFeeBpsAtInit == 0` —
+    ///      and settles at the frozen `LEGACY_TREASURY_FEE_BPS` (100) instead.
+    ///      The comparison must therefore run on the EFFECTIVE rate, not the
+    ///      raw field: reading the raw `0` would compare a sentinel against a
+    ///      rate and call every grandfathered loan cheaper than today's. That
+    ///      is right by accident at 1% vs 2% and wrong the moment governance
+    ///      moves the knob below the legacy value, which is exactly what this
+    ///      sets up.
+    function test_1918_legacyLoanComparedAtTheFrozenFallbackNotAtTheRawZero() public {
+        TestMutatorFacet(address(diamond)).setTreasuryFeeBpsAtInitRaw(activeLoanId, 0);
+        uint16 belowLegacy = uint16(LibVaipakam.LEGACY_TREASURY_FEE_BPS - 50);
+        _setLiveTreasuryFeeBps(belowLegacy);
+
+        (uint8 code, uint256 a, uint256 b) =
+            RiskPreviewFacet(address(diamond)).saleAdmission(activeLoanId);
+        assertEq(code, 7, "an unstamped loan must be judged at the legacy fallback");
+        assertEq(
+            a,
+            LibVaipakam.LEGACY_TREASURY_FEE_BPS,
+            "must report 100, not the raw 0 the loan stores"
+        );
+        assertEq(b, belowLegacy, "must report the live rate");
+    }
+
+    /// @dev The fee refusal must NOT surface as a weaker-risk-terms error.
+    ///      Before #1918 the mapping's last line was a catch-all that turned
+    ///      every unhandled code into `SaleInheritsWeakerRiskTerms(code - 2)`,
+    ///      so code 7 would have arrived as `which = 5` — a value that error
+    ///      does not define — telling a buyer their collateral bounds were
+    ///      weak when the objection is the fee. Pins the distinction.
+    function test_1918_feeRefusalIsNotReportedAsAWeakerRiskTerm() public {
+        uint256 inherited =
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).treasuryFeeBpsAtInit;
+        _setLiveTreasuryFeeBps(uint16(inherited - 50));
+
+        vm.prank(lender);
+        try EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId) {
+            revert("sale must have been refused");
+        } catch (bytes memory err) {
+            bytes4 sel;
+            assembly { sel := mload(add(err, 0x20)) }
+            assertTrue(
+                sel != LibSaleSolvency.SaleInheritsWeakerRiskTerms.selector,
+                "a fee refusal must not be dressed up as a risk-terms refusal"
+            );
+            assertEq(
+                sel,
+                LibSaleSolvency.SaleInheritsWorseFeeTerms.selector,
+                "must be the fee error"
+            );
+        }
+    }
+
     /// @dev Equal cap snapshots say nothing about where the position actually
     ///      sits. A loan can drift above its init-LTV cap while its health
     ///      factor still clears the floor, and `LoanFacet._checkInitialLtvAndHf`

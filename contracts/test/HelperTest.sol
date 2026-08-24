@@ -93,7 +93,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](198);
+        selectors = new bytes4[](199);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -234,6 +234,9 @@ contract HelperTest {
         // writer. Used by HF tests to stress the
         // `liquidationLtvBpsAtInit == 0` branch.
         selectors[n++] = TestMutatorFacet.setLiquidationLtvBpsAtInitRaw.selector;
+        // #1918 — the pre-#957 `treasuryFeeBpsAtInit == 0` state, which no
+        // originated fixture can reach.
+        selectors[n++] = TestMutatorFacet.setTreasuryFeeBpsAtInitRaw.selector;
         // Layout-resilient mapping writers used by EarlyWithdrawal
         // tests to scaffold loan-sale state without slot math.
         selectors[n++] = TestMutatorFacet.setOfferIdToLoanIdRaw.selector;
