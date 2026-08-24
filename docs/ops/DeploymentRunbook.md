@@ -1798,9 +1798,23 @@ the deploy-script pre-flight will refuse to proceed otherwise.
 
 The HF alert watcher at `apps/keeper/` runs as a Cloudflare Worker
 and is shared across every supported chain — it polls each Diamond on
-a 5-minute cron and dispatches per-user threshold notifications via
+a cron and dispatches per-user threshold notifications via
 Telegram + Push Protocol. This section is one-time setup and does
 **not** repeat per-chain deploy.
+
+> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
+> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
+> was terminated for exceeding CPU on ~100% of invocations. **Do the
+> setup in 8a and 8b anyway** — the bot, the channel and the secrets are
+> all still needed, and they stay latched for when the schedule returns.
+> What cannot pass is **8c**: with no cron there is no tick, so the smoke
+> test has nothing to observe and must be recorded as deferred rather
+> than waited on or quietly skipped. The `cf-keeper` phase in
+> `contracts/script/deploy-{testnet,mainnet}.sh` will still report
+> success — it deploys and checks an RPC secret, and does not inspect the
+> schedule — so its green result does not contradict this hold. Restore
+> the schedule only via the sequence kept beside the empty list in
+> `apps/keeper/wrangler.jsonc`, which disarms `KEEPER_ENABLED` first.
 
 ### 8a. Telegram bot
 
@@ -1858,6 +1872,12 @@ Telegram + Push Protocol. This section is one-time setup and does
 
 ### 8c. Smoke test the watcher
 
+> **⚠ HOLD — #1896.** This test cannot pass while the keeper is
+> unscheduled: step 4 below waits for a cron tick that will never fire.
+> Record it as deferred in the deploy log and resume it when the schedule
+> is restored. Do not substitute a shorter wait or read the quiet tail as
+> a pass.
+
 ```bash
 cd apps/keeper
 npx wrangler tail        # tail logs in another terminal
@@ -1866,7 +1886,8 @@ npx wrangler tail        # tail logs in another terminal
 #   1. Subscribe to the Push channel at the URL in 8b.2
 #   2. /alerts → Save thresholds, Link Telegram, Enable Push rail
 #   3. Lower one threshold below the connected wallet's HF
-#   4. Wait for the next 5-min cron tick
+#   4. Wait for the next cron tick (HELD — see above; the canonical
+#      schedule is per-minute, not 5-minute, and is currently empty)
 # Expect: log lines for `tg send` + Push API success on band crossings.
 ```
 

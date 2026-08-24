@@ -745,6 +745,18 @@ is `wrangler tail`, so verify there rather than assuming success.
    when an eligible subscriber event occurs, so silence means "nothing has
    been attempted yet" and "every attempt is failing" equally. Wait for a
    real send, or trigger one, before calling the migration done.
+
+   > **⚠ HOLD — #1896: verify the AGENT only; defer the keeper.** The
+   > keeper is deliberately unscheduled (`"crons": []`, because the Worker
+   > was terminated for exceeding CPU on ~100% of invocations) and it has
+   > no HTTP surface, so it has no invocation from which to send and this
+   > check can never complete against it. Complete the rotation on the
+   > agent, which can satisfy it, and **record the keeper's Push
+   > verification as deferred** — do not wait indefinitely, and do not
+   > drop the check. It carries a real risk: an incompatible signer would
+   > stay undetected until the keeper is re-enabled, so the deferral must
+   > be re-run as part of the re-enable sequence in
+   > `apps/keeper/wrangler.jsonc`, at its armed-tick step.
 7. Tell subscribers to re-subscribe (see **Communicate**). They are subscribed
    to the OLD channel and nothing migrates them.
 

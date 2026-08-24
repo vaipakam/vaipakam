@@ -88,9 +88,19 @@
   //     confidence state advancing at all.
   //
   // TO RE-ENABLE, once the CPU work in #1896 is done:
-  //   1. Restore the schedule below (`"crons": ["* * * * *"]`).
-  //   2. Confirm a cron slot is free — the cap is five per account.
-  //   3. `wrangler deploy --keep-vars` — and the flag is NOT optional
+  //   1. DISARM FIRST — `( cd apps/keeper && wrangler secret put
+  //      KEEPER_ENABLED )`, entering `false` (Codex #1924 r4). Do this
+  //      BEFORE restoring the schedule, and do not assume the hold left
+  //      it off: the binding still exists on the live Worker (verified
+  //      2026-08-24, `secret_text`), a deploy never deletes a secret, and
+  //      a secret's VALUE cannot be read back — so "it should be false"
+  //      is unverifiable, not a check. If it is in fact `true`, the six
+  //      gated passes begin submitting transactions the moment the
+  //      restored schedule propagates, which is one step before step 7
+  //      would have observed anything.
+  //   2. Restore the schedule below (`"crons": ["* * * * *"]`).
+  //   3. Confirm a cron slot is free — the cap is five per account.
+  //   4. `wrangler deploy --keep-vars` — and the flag is NOT optional
   //      (Codex #1924 r2 P1). Editing this file changes nothing on its
   //      own; a schedule reaches Cloudflare only via a deploy. But a
   //      BARE deploy "will delete all vars before setting those found in
@@ -103,32 +113,41 @@
   //      reverting to defaults at the exact moment it starts mattering.
   //      Capture the live vars first if you have any doubt they are all
   //      recoverable.
-  //   4. Read the schedule back TRIGGER-AWARE — Settings → Trigger
+  //   5. Read the schedule back TRIGGER-AWARE — Settings → Trigger
   //      Events, or query the Worker's `/schedules` endpoint. A
   //      mistyped or wrongly-nested key leaves the previous state in
   //      place, and a quiet `wrangler tail` only proves no tick has
   //      fired YET.
-  //   5. Allow the propagation window: Cloudflare documents cron
+  //   6. Allow the propagation window: Cloudflare documents cron
   //      updates taking up to 15 minutes to reach every location.
-  //   6. VALIDATE AN UNARMED TICK FIRST (Codex #1924 r3). With
-  //      `KEEPER_ENABLED` still off, `wrangler tail vaipakam-keeper` and
-  //      confirm the outcome is `ok` rather than `exceededCpu`. Arming
-  //      before observing a live tick means the six gated passes can
-  //      submit transactions on an invocation that still dies — the CPU
-  //      fix being incomplete or regressed is exactly the case this
-  //      sequence exists for, so it must be ruled out while the passes
-  //      that move funds are still inert.
+  //   7. VALIDATE AN UNARMED TICK FIRST (Codex #1924 r3). With
+  //      `KEEPER_ENABLED` set to `false` in step 1, `wrangler tail
+  //      vaipakam-keeper` and confirm the outcome is `ok` rather than
+  //      `exceededCpu`. Arming before observing a live tick means the
+  //      six gated passes can submit transactions on an invocation that
+  //      still dies — the CPU fix being incomplete or regressed is
+  //      exactly the case this sequence exists for, so it must be ruled
+  //      out while the passes that move funds are still inert.
   //      If it still reports `exceededCpu`: set `"crons": []` again and
-  //      redeploy. That is the rollback, and it costs nothing because
-  //      nothing was armed.
-  //   7. Only then set the `KEEPER_ENABLED` secret to `true`. The
+  //      redeploy, and leave `KEEPER_ENABLED` at `false`. That is the
+  //      rollback, and it costs nothing because nothing was armed.
+  //   8. Only then set the `KEEPER_ENABLED` secret to `true`. The
   //      fund-moving passes stay inert until it is, and `passIsArmed`
   //      names any binding still blocking each pass, one line per pass
   //      per tick.
-  //   8. Tail once more and confirm the ARMED tick also ends `ok`, and
+  //   9. Tail once more and confirm the ARMED tick also ends `ok`, and
   //      that every due pass emits a `done in Nms` line — an absent
   //      line means the pass was still in flight when the invocation
-  //      ended. Same rollback if not.
+  //      ended. If not, roll back BOTH halves: `KEEPER_ENABLED` to
+  //      `false` first (it is now genuinely armed), then `"crons": []`
+  //      and redeploy.
+  //  10. Clear any checks DEFERRED during the hold. Specifically: if
+  //      `PUSH_CHANNEL_PK` was rotated while the keeper was unscheduled,
+  //      `docs/ops/IncidentRunbook.md`'s Push-rotation step 6 could only
+  //      be satisfied against the agent — the keeper had no invocation
+  //      from which to send. Confirm a `[push] sent channel=…` line from
+  //      THIS Worker now, because an incompatible signer would have
+  //      stayed invisible for the whole hold.
   //
   // The original cadence note, still true and still the target to
   // restore: the watcher is internally tick-rate-aware — each tick
