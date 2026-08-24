@@ -313,10 +313,15 @@ Per chain, via timelock-originated txs:
      reads `VPFI_BUY_WEI_PER_VPFI` — that env var is live and is NOT part
      of the removed sale. -->
 - `VPFIDiscountFacet` fee-discount price config — see
-  `contracts/script/ConfigureVPFIBuy.s.sol`. Sets the VPFI price anchor
-  (`VPFI_BUY_WEI_PER_VPFI`) plus the chain's ETH reference asset
-  (`<CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET`; both mandatory — see §1's env
-  block). Unlike the removed canonical-only sale, the discount applies
+  `contracts/script/ConfigureVPFIBuy.s.sol`. **#884: this is NOT a launch
+  step.** The Phase-1 posture is peg-UNSET, because pricing VPFI moves the
+  lender hold discount off direct reduction onto the VPFI-payment path —
+  a different product. `DiamondConfigSpell` runs it only under
+  `CONFIGURE_VPFI_PEG=1`, and the deploy wrappers force that off unless
+  `--configure-vpfi-peg` is passed for that run. When you do opt in, it
+  sets the VPFI price anchor (`VPFI_BUY_WEI_PER_VPFI`) plus the chain's
+  ETH reference asset (`<CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET`; both
+  mandatory for that run — see §1's env block). Unlike the removed canonical-only sale, the discount applies
   wherever a loan can be opened, so both must be set on every chain the
   protocol runs on or `LibVPFIDiscount._feeAssetWeiToVpfi` returns
   `(false, 0)` and no discount resolves.

@@ -29,6 +29,8 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *                                       id + messenger so reward reports
  *                                       flow (EVM chain ids, not eids).
  *        - ConfigureVPFIBuy          — sets the VPFI fee-discount price
+ *                                      config. #884: NOT run at launch —
+ *                                      opt in with CONFIGURE_VPFI_PEG=1
  *                                       config; runs on every chain (the
  *                                       discount applies chain-wide).
  *        - ConfigureNFTImageURIs     — sets the position-NFT artwork
@@ -77,7 +79,10 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *           before the reward-messenger lanes are live (no on-chain
  *           dependency on the order, but logically pairs after
  *           Oracle).
- *        3. ConfigureVPFIBuy — sets the VPFI fee-discount price config
+ *        3. ConfigureVPFIBuy — sets the VPFI fee-discount price config.
+ *           #884: SKIPPED unless CONFIGURE_VPFI_PEG=1. The Phase-1 posture
+ *           is peg-UNSET, and pricing VPFI moves the lender hold discount
+ *           off direct reduction onto the VPFI-payment path
  *           AFTER oracle is wired (the config doesn't read oracle, but
  *           having oracle live lets `--phase verify` sanity-check the
  *           discount price against current prices).
@@ -92,8 +97,11 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *          chain-prefixed vars so the same .env works across testnets)
  *        - REWARD_MESSENGER_PROXY (optional override) / BASE_CHAIN_ID
  *          (reporter — chains are keyed by EVM chain id, never an eid)
- *        - VPFI_BUY_WEI_PER_VPFI (global) + the chain-prefixed
- *          <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET (every chain)
+ *        - CONFIGURE_VPFI_PEG (optional; default 0). Only when it is 1
+ *          does the spell run ConfigureVPFIBuy, and only then are
+ *          VPFI_BUY_WEI_PER_VPFI (global) + the chain-prefixed
+ *          <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET required. A launch
+ *          leaves the peg unset (#884)
  *        - NFT_DEFAULT_IMAGE_LENDER / _BORROWER and the per-state
  *          override URIs (NFT artwork; defaults are baked into the
  *          contract so all of these are optional).

@@ -66,10 +66,15 @@
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase configure
 #       Runs DiamondConfigSpell.s.sol — same composition as mainnet:
-#       ConfigureOracle + ConfigureRewardReporter + ConfigureVPFIBuy +
+#       ConfigureVPFIToken + ConfigureOracle + ConfigureRewardReporter +
 #       ConfigureNFTImageURIs in one operator-action. Practising the
 #       spell on testnet under the same flow as mainnet is the whole
 #       point of the rehearsal.
+#       #884: ConfigureVPFIBuy is NOT part of it. Pricing VPFI changes
+#       the product (the lender hold discount stops being delivered by
+#       direct reduction), so it is opt-in per run via
+#       --configure-vpfi-peg. Rehearsing the launch means rehearsing it
+#       peg-UNSET.
 #
 #   bash contracts/script/deploy-testnet.sh <chain-slug> --phase handover \
 #                                           --confirm-i-have-multisig-ready
@@ -256,9 +261,11 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
   swap-adapters    — Phase 7a aggregator adapters via
                      DeploySwapAdapters.s.sol. Requires
                      INITIAL_SETTLERS env var.
-  configure        — DiamondConfigSpell: ConfigureOracle +
-                     ConfigureRewardReporter + ConfigureVPFIBuy +
+  configure        — DiamondConfigSpell: ConfigureVPFIToken +
+                     ConfigureOracle + ConfigureRewardReporter +
                      ConfigureNFTImageURIs in one operator-action.
+                     ConfigureVPFIBuy is opt-in (--configure-vpfi-peg);
+                     the launch posture leaves VPFI unpriced (#884).
   handover         — Rotate roles + ownership to governance topology.
                      Requires --confirm-i-have-multisig-ready
   abi-sync         — packages/contracts ABI + deployments.json sync
@@ -283,6 +290,7 @@ CHAIN_SLUG="$1"; shift
 
 PHASE=""
 CONFIRM_MULTISIG=0
+CONFIGURE_VPFI_PEG_OPT=0
 CONFIRM_ORPHANS=0
 FRESH=0
 # Ratified 2026-05-14 — the rehearsal SHAPE must mirror mainnet's
@@ -310,6 +318,12 @@ while [ $# -gt 0 ]; do
     --confirm-i-have-multisig-ready) CONFIRM_MULTISIG=1 ;;
     --confirm-orphans-prior-onchain-state) CONFIRM_ORPHANS=1 ;;
     --fresh)                         FRESH=1 ;;
+    # #884 — per-RUN opt-in to pricing VPFI. Deliberately a flag rather
+    # than an env var: the wrappers source a shared .env, so an exported
+    # CONFIGURE_VPFI_PEG=1 from another deploy would otherwise change this
+    # deploy's PRODUCT silently. The configure phase forces the env value
+    # off and reads only what this flag sets.
+    --configure-vpfi-peg)            CONFIGURE_VPFI_PEG_OPT=1 ;;
     # Same flag shape as mainnet, WARN-only on testnet.
     --confirm-mainnet-hardware-signer) CONFIRM_HW_SIGNER=1 ;;
     --reset-handover-deadline) CONFIRM_DEADLINE_RESET=1 ;;
@@ -1311,7 +1325,13 @@ EOF
   # SKIP_VPFI=1 left in the shared .env / a prior --skip-vpfi run can't
   # silently skip ConfigureVPFIToken/RewardReporter/VPFIBuy while the
   # configure phase still reports success.
-  SKIP_VPFI=0 \
+  # #884 — force CONFIGURE_VPFI_PEG=0 for the same shared-.env reason
+  # SKIP_VPFI is forced above. The peg changes the PRODUCT (it moves the
+  # lender hold discount from direct reduction to VPFI-payment-authoritative),
+  # so a stale CONFIGURE_VPFI_PEG=1 left over from another deploy must never
+  # price VPFI on this one. Opting in is per-run and explicit, via
+  # --configure-vpfi-peg.
+  SKIP_VPFI=0 CONFIGURE_VPFI_PEG="${CONFIGURE_VPFI_PEG_OPT:-0}" \
     forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 
