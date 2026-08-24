@@ -2650,6 +2650,22 @@
   },
   {
     "type": "error",
+    "name": "SaleAdmissionCodeUnknown",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "code",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleBelowSellerFloor",
     "inputs": [
       {
@@ -2685,6 +2701,27 @@
       },
       {
         "name": "current",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleInheritsWorseFeeTerms",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "inheritedBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "currentBps",
         "type": "uint256",
         "internalType": "uint256"
       }
