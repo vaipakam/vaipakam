@@ -60,8 +60,17 @@ do not resume at all.** A restored schedule can take up to a quarter of
 an hour to take effect everywhere. The daily snapshot then waits for
 its next daily window, and the pre-grace warning for its next turn in
 the rotation. Days of price history missed in the meantime are **not
-backfilled** — the contract records only the current day — and warnings
-that were due while the keeper was stopped are simply not sent late.
+backfilled** — the contract records only the current day.
+
+Pre-grace warnings divide in two, and an earlier draft of this note got
+it wrong by treating them as one. A loan whose repayment date has
+already passed by the time the schedule returns is never warned about —
+that warning is simply lost. But a loan that is *still* within its
+warning window when the keeper comes back **is** warned then, just
+late. So the return of the schedule can bring a burst of overdue
+warnings rather than silence, and borrowers may get less notice than
+the window is meant to give them. Expect both, and treat a long stop as
+something to announce rather than to let people discover.
 
 ## What it does not change
 

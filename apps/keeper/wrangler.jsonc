@@ -100,7 +100,15 @@
   //      would have observed anything.
   //   2. Restore the schedule below (`"crons": ["* * * * *"]`).
   //   3. Confirm a cron slot is free — the cap is five per account.
-  //   4. `wrangler deploy --keep-vars` — and the flag is NOT optional
+  //   4. `( cd apps/keeper && wrangler deploy --keep-vars )` — or the
+  //      equivalent `pnpm --filter @vaipakam/keeper run deploy`, whose
+  //      script now carries the flag. RUN IT FROM THIS DIRECTORY: a bare
+  //      `wrangler deploy` at the repo root picks up the ROOT
+  //      `wrangler.jsonc`, which is a different Worker entirely
+  //      (`vaipakam-alpha`) — so the keeper's schedule would be
+  //      untouched while something unrelated got redeployed, and on the
+  //      rollback branches that silently leaves the CPU-exhausting
+  //      schedule live (Codex #1924 r7). The flag is NOT optional
   //      (Codex #1924 r2 P1). Editing this file changes nothing on its
   //      own; a schedule reaches Cloudflare only via a deploy. But a
   //      BARE deploy "will delete all vars before setting those found in
@@ -142,11 +150,13 @@
   //      later, having let the fund-moving passes submit for that whole
   //      period on a Worker that then turns out to still die.
   //      If it still reports `exceededCpu`: set `"crons": []` again and
-  //      `wrangler deploy --keep-vars` (the flag matters on the ROLLBACK
-  //      too — Codex #1924 r5 — a bare deploy wipes the same tuning vars
-  //      step 4 protects, and a rollback is exactly when nobody is
-  //      looking for that), leaving `KEEPER_ENABLED` at `false`. That is
-  //      the rollback, and it costs nothing because nothing was armed.
+  //      `( cd apps/keeper && wrangler deploy --keep-vars )` — same
+  //      directory scoping and same flag as step 4, and both matter MORE
+  //      on a rollback, because a rollback is exactly when nobody is
+  //      checking whether the tuning survived or whether the right
+  //      Worker was targeted (Codex #1924 r5, r7). Leave
+  //      `KEEPER_ENABLED` at `false`. That is the rollback, and it costs
+  //      nothing because nothing was armed.
   //   8. Only then set the `KEEPER_ENABLED` secret to `true`. The
   //      fund-moving passes stay inert until it is, and `passIsArmed`
   //      names any binding still blocking each pass, one line per pass
@@ -159,12 +169,25 @@
   //      gated AND staggered (5 min, offset 2), so cover at least one
   //      full 5-minute cycle before declaring re-enable complete — or
   //      profile that pass in production by other means.
-  //      Confirm each tick ends `ok` and that every due pass emits a
-  //      `done in Nms` line — an absent line means the pass was still in
-  //      flight when the invocation ended. If any of it fails, roll back
-  //      BOTH halves: `KEEPER_ENABLED` to `false` first (it is now
-  //      genuinely armed), then `"crons": []` and
-  //      `wrangler deploy --keep-vars`.
+  //      A `done in Nms` LINE IS NOT PROOF THE PASS RAN (Codex #1924
+  //      r7). `timedPass` logs it whenever `run()` returns, and a gated
+  //      pass returns immediately from `passIsArmed`. That matters most
+  //      for `rewardBudgetRemit` and `remitAck`, which are gated TWICE —
+  //      `KEEPER_ENABLED` plus `REWARD_REMIT_ENABLED` — and for
+  //      `commitmentReport` (plus `REWARD_COMMIT_ENABLED`). Step 8 flips
+  //      only the master gate, so with the reward flags off, waiting out
+  //      the 5-minute cycle produces a reassuring line from a pass that
+  //      did nothing. Read the accompanying `passIsArmed` skip line,
+  //      which NAMES the blocking binding: if the reward flags are off
+  //      in this deployment, record those passes' CPU validation as
+  //      DEFERRED until they are enabled — do not count the skip as
+  //      coverage.
+  //      Otherwise confirm each tick ends `ok` and that every due pass
+  //      emits its `done in Nms` line — an absent line means the pass
+  //      was still in flight when the invocation ended. If any of it
+  //      fails, roll back BOTH halves: `KEEPER_ENABLED` to `false` first
+  //      (it is now genuinely armed), then `"crons": []` and
+  //      `( cd apps/keeper && wrangler deploy --keep-vars )`.
   //      Why the split rather than one big validation at the end: every
   //      pass that CAN be cleared before arming SHOULD be, because the
   //      cost of discovering the CPU fix is incomplete rises the moment

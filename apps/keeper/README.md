@@ -106,9 +106,24 @@ opposite. The follow-up it used to recommend has been taken:
 ```
 
 — empty, not absent; an absent `triggers` object sends no schedule update at
-all and would silently leave whatever is deployed in place. The var hazard
-that gated this is resolved below: `TG_BOT_USERNAME` is the only var this
-config declares, and `apps/keeper` never reads it.
+all and would silently leave whatever is deployed in place.
+
+**The var hazard is handled by the deploy script, not by this config being
+small** (Codex #1924 r7). An earlier revision said the hazard was "resolved"
+because `TG_BOT_USERNAME` is the only var declared here and `apps/keeper`
+never reads it. That reasoning was backwards: a bare `wrangler deploy`
+deletes every var **not** in the config before applying the ones that are, and
+what is not in the config is exactly the dashboard-managed tuning the keeper
+*does* read — `HF_SCALE`, the `LIQ_CONFIDENCE_*` and `LIQ_TIER3_*`
+thresholds, `SPLIT_MIN_IMPROVEMENT_BPS`, `PARTIAL_LIQ_MIN_HF_BPS` (see
+`env.ts`). A small config makes the hazard **worse**, not better.
+
+So `apps/keeper`'s `deploy` script now runs `wrangler deploy --keep-vars`,
+which makes the canonical `pnpm --filter @vaipakam/keeper run deploy`
+safe by construction rather than depending on whoever is typing it. Keeping
+vars costs nothing here: the only var this config declares is
+`TG_BOT_USERNAME`, which appears solely in `env.ts`'s passthrough and is read
+nowhere in the Worker.
 
 **What that means for an incident.** The keeper is not currently scheduled,
 so there is nothing to emergency-stop — the dashboard steps above apply only
