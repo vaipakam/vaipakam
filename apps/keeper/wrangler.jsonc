@@ -54,28 +54,48 @@
   // `apps/indexer/src/cronRouting.ts`, which records a deploy that
   // failed for exactly that reason.
   //
-  // WHAT STOPS THAT WAS NOT ALREADY STOPPED. Two passes are NOT gated
-  // by `KEEPER_ENABLED`, so unscheduling does cost function (Codex
-  // #1924 r1 — an earlier revision of this comment wrongly said it cost
-  // none):
+  // WHAT STOPS THAT WAS NOT ALREADY STOPPED. FOUR passes run ungated by
+  // `KEEPER_ENABLED`, so unscheduling does cost function. Two earlier
+  // revisions of this comment got this wrong in escalating ways — first
+  // claiming it cost nothing, then naming only two of the four (Codex
+  // #1924 r1/r2). README §"What the kill-switch does and does not stop
+  // (#1548)" is the authority and lists all of them:
+  //   - `watcher` — THE BIGGEST LOSS, and the one both earlier revisions
+  //     missed. It keeps evaluating positions and keeps sending Telegram
+  //     and Push health-factor alerts to USERS. Unscheduling stops those
+  //     alerts: a borrower approaching liquidation is no longer told.
   //   - `dailyOracleSnapshot` — gated only on KEEPER_PRIVATE_KEY, and
-  //     deliberately so: README §"What the kill-switch does and does not
-  //     stop" records the 2026-08-03 decision that the snapshot is a
-  //     public good, left ungated precisely SO THAT disabling the keeper
-  //     for an unrelated reason would not leave holes in the oracle
-  //     series. Unscheduling leaves exactly those holes. Mitigation:
+  //     deliberately so: the same README section records the 2026-08-03
+  //     decision that the snapshot is a public good, left ungated
+  //     precisely SO THAT disabling the keeper for an unrelated reason
+  //     would not leave holes in the oracle series. Unscheduling leaves
+  //     exactly those holes, and they do NOT backfill on re-enable — the
+  //     contract writes only the current day's slot. Mitigation:
   //     `captureDailyPriceSnapshot` is permissionlessly callable, so any
   //     address can keep the series intact meanwhile.
   //   - `preGraceWatcher` — no arming check at all; borrowers stop
   //     getting the pre-grace warning.
+  //   - `liquidityConfidence` — its gate is narrower than it looks: it
+  //     decides only whether to SUBMIT on-chain. The pass still reads
+  //     and still writes its D1 counter, so unscheduling stops the
+  //     confidence state advancing at all.
   //
   // TO RE-ENABLE, once the CPU work in #1896 is done:
   //   1. Restore the schedule below (`"crons": ["* * * * *"]`).
   //   2. Confirm a cron slot is free — the cap is five per account.
-  //   3. `wrangler deploy` — editing this file changes NOTHING on its
-  //      own (README §"Stopping the keeper" makes the same point about
-  //      the reverse direction). A schedule reaches Cloudflare only via
-  //      a deploy.
+  //   3. `wrangler deploy --keep-vars` — and the flag is NOT optional
+  //      (Codex #1924 r2 P1). Editing this file changes nothing on its
+  //      own; a schedule reaches Cloudflare only via a deploy. But a
+  //      BARE deploy "will delete all vars before setting those found in
+  //      the Wrangler configuration", and this config declares only
+  //      `TG_BOT_USERNAME`. Every dashboard-managed tuning override —
+  //      `HF_SCALE`, the `LIQ_*` confidence and Tier-3 thresholds,
+  //      `SPLIT_MIN_IMPROVEMENT_BPS`, `PARTIAL_LIQ_MIN_HF_BPS` (see
+  //      `env.ts`) — would be wiped one step before step 6 arms the
+  //      fund-moving passes. That is liquidation behaviour silently
+  //      reverting to defaults at the exact moment it starts mattering.
+  //      Capture the live vars first if you have any doubt they are all
+  //      recoverable.
   //   4. Read the schedule back TRIGGER-AWARE — Settings → Trigger
   //      Events, or query the Worker's `/schedules` endpoint. A
   //      mistyped or wrongly-nested key leaves the previous state in
