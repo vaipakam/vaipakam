@@ -120,14 +120,27 @@
   //      fired YET.
   //   6. Allow the propagation window: Cloudflare documents cron
   //      updates taking up to 15 minutes to reach every location.
-  //   7. VALIDATE AN UNARMED TICK FIRST (Codex #1924 r3). With
-  //      `KEEPER_ENABLED` set to `false` in step 1, `wrangler tail
-  //      vaipakam-keeper` and confirm the outcome is `ok` rather than
-  //      `exceededCpu`. Arming before observing a live tick means the
-  //      six gated passes can submit transactions on an invocation that
-  //      still dies — the CPU fix being incomplete or regressed is
-  //      exactly the case this sequence exists for, so it must be ruled
-  //      out while the passes that move funds are still inert.
+  //   7. VALIDATE THE UNARMED PASSES FIRST, ACROSS EVERY CADENCE THEY
+  //      RUN AT (Codex #1924 r3, tightened in r6). With `KEEPER_ENABLED`
+  //      set to `false` in step 1, `wrangler tail vaipakam-keeper` and
+  //      confirm the outcome is `ok` rather than `exceededCpu`. Arming
+  //      before observing a live tick means the six gated passes can
+  //      submit transactions on an invocation that still dies — the CPU
+  //      fix being incomplete or regressed is exactly the case this
+  //      sequence exists for, so it must be ruled out while the passes
+  //      that move funds are still inert.
+  //      ONE TICK IS NOT ENOUGH HERE. Two of the ungated passes are not
+  //      due every minute: `preGraceWatcher` runs every 15 minutes at
+  //      offset 4, and `dailyOracleSnapshot` only inside the 00:00–00:09
+  //      UTC window. Neither consults `KEEPER_ENABLED` — verified: no
+  //      `passIsArmed` / `isKeeperEnabled` reference in either module,
+  //      and for the snapshot that is deliberate (#1466, declined) — so
+  //      both can and MUST be exercised while still disarmed. Cover a
+  //      full 15-minute cycle, and the daily window, BEFORE step 8.
+  //      Skipping that leaves the worst ordering available: arm at step
+  //      8, then first reach the missed cadence at step 9 up to a day
+  //      later, having let the fund-moving passes submit for that whole
+  //      period on a Worker that then turns out to still die.
   //      If it still reports `exceededCpu`: set `"crons": []` again and
   //      `wrangler deploy --keep-vars` (the flag matters on the ROLLBACK
   //      too — Codex #1924 r5 — a bare deploy wipes the same tuning vars
@@ -138,23 +151,24 @@
   //      fund-moving passes stay inert until it is, and `passIsArmed`
   //      names any binding still blocking each pass, one line per pass
   //      per tick.
-  //   9. Tail until EVERY CADENCE has actually run — not one tick
-  //      (Codex #1924 r5 P1). One armed tick exercises only the
-  //      `cadenceMinutes: 1` passes. `passSchedule.ts` also carries
-  //      `rewardBudgetRemit` (5 min, offset 2), `preGraceWatcher`
-  //      (15 min, offset 4) and `dailyOracleSnapshot` (only inside the
-  //      00:00–00:09 UTC window). Since WHICH pass burns the CPU is
-  //      still unknown, a green single tick cannot clear the hold: the
-  //      culprit may simply not have been due. Cover at least one full
-  //      15-minute cycle for the staggered pair, and the daily window
-  //      for the snapshot — or profile those passes in production by
-  //      other means before declaring re-enable complete.
+  //   9. Now validate the GATED passes, again across every cadence they
+  //      run at (Codex #1924 r5 P1). Step 7 has already cleared the
+  //      ungated set; what step 8 newly switched on is the six gated
+  //      passes, and one armed tick exercises only the
+  //      `cadenceMinutes: 1` ones among them. `rewardBudgetRemit` is
+  //      gated AND staggered (5 min, offset 2), so cover at least one
+  //      full 5-minute cycle before declaring re-enable complete — or
+  //      profile that pass in production by other means.
   //      Confirm each tick ends `ok` and that every due pass emits a
   //      `done in Nms` line — an absent line means the pass was still in
   //      flight when the invocation ended. If any of it fails, roll back
   //      BOTH halves: `KEEPER_ENABLED` to `false` first (it is now
   //      genuinely armed), then `"crons": []` and
   //      `wrangler deploy --keep-vars`.
+  //      Why the split rather than one big validation at the end: every
+  //      pass that CAN be cleared before arming SHOULD be, because the
+  //      cost of discovering the CPU fix is incomplete rises the moment
+  //      the fund-moving passes start submitting.
   //  10. Clear any checks DEFERRED during the hold. Specifically: if
   //      `PUSH_CHANNEL_PK` was rotated while the keeper was unscheduled,
   //      `docs/ops/IncidentRunbook.md`'s Push-rotation step 6 could only
