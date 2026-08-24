@@ -1983,6 +1983,22 @@
   },
   {
     "type": "error",
+    "name": "SaleBuyerIsBorrower",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "borrower",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleInheritsWeakerRiskTerms",
     "inputs": [
       {
