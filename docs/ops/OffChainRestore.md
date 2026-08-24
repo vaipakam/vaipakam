@@ -1438,6 +1438,17 @@ caught at the cheapest stage.
    else), so they belong at the same, last step rather than being split
    across a "safe" and an "arming" half that does not exist.
 
+   > **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
+   > `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
+   > was terminated for exceeding CPU on ~100% of invocations. **Restore
+   > neither the schedule nor `KEEPER_ENABLED` in this step** until #1896's
+   > CPU work has landed — deploy the keeper so its script and bindings are
+   > current, then stop, and record the hold in the restore log. With no
+   > schedule, no pass runs, so the "watch one keeper tick" check below has
+   > nothing to observe: a quiet tail is the expected state here, not a
+   > passing check. Re-enable later via the sequence kept beside the empty
+   > list in `apps/keeper/wrangler.jsonc`.
+
    Before deploying: confirm the keeper EOA is the address you expect and
    is funded on every chain it submits from. After deploying, watch one
    keeper tick.

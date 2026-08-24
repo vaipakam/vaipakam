@@ -913,6 +913,15 @@ finalization, and a rehearsed Diamond can carry a stale non-zero
 describes the posture; this is where it gets checked, because Step 6 may be
 deferred past `D*`.
 
+> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
+> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
+> was terminated for exceeding CPU on ~100% of invocations. **Do not
+> restore the schedule or arm `KEEPER_ENABLED` as part of this procedure**
+> until #1896's CPU work has landed. With no schedule, no pass runs, so a
+> quiet `wrangler tail` here proves nothing — it is the expected state,
+> not a passing check. Re-enable only via the sequence kept beside the
+> empty list in `apps/keeper/wrangler.jsonc`.
+
 **3g. Set and CONFIRM the master flags NOW, before the arm — they are not a
 step 5 item.** **`KEEPER_ENABLED` is not a reward flag**: turning it on resumes
 the matcher, the liquidator, the liquidity-confidence pass and the rest of the

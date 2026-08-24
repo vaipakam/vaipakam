@@ -197,6 +197,17 @@ pnpm --filter @vaipakam/keeper exec wrangler deploy
 
 ## 5. Flip the runtime env flag in the keeper Worker
 
+> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
+> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
+> was terminated for exceeding CPU on ~100% of invocations. **Do not
+> restore the schedule or arm `KEEPER_ENABLED` as part of this procedure**
+> until #1896's CPU work has landed. With no schedule, no pass runs, so a
+> quiet `wrangler tail` here proves nothing — it is the expected state,
+> not a passing check. Re-enable only via the sequence kept beside the
+> empty list in `apps/keeper/wrangler.jsonc`. Setting the two flags below
+> is still correct — they are the rollout's own preconditions and stay
+> latched for when the schedule returns.
+
 Two things must be true at runtime for the flash-loan branch to
 fire:
 

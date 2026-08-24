@@ -38,7 +38,14 @@
   // WHY. Measured on 2026-08-24 (#1896): `outcome: exceededCpu` on
   // ~100% of invocations, cpuTime pinned at the 10 ms ceiling, over the
   // whole retained window. So every minute the Worker was invoked,
-  // burned its ceiling, failed, and completed nothing.
+  // burned its ceiling, and was terminated rather than finishing.
+  //
+  // NOT "completed nothing" — an earlier revision said that and the
+  // release note was corrected while this comment was not (Codex #1924
+  // r3). Passes run concurrently, and several DO emit their completion
+  // line before another exhausts the invocation; in an armed
+  // configuration those may have sent alerts or written records first.
+  // What is certain is the termination, not an absence of work.
   //
   // WHICH pass burns it is NOT established, and an earlier revision of
   // this comment claimed it was (Codex #1924 r1). `watcher` and
@@ -103,13 +110,25 @@
   //      fired YET.
   //   5. Allow the propagation window: Cloudflare documents cron
   //      updates taking up to 15 minutes to reach every location.
-  //   6. Set the `KEEPER_ENABLED` secret to `true`; the fund-moving
-  //      passes stay inert until it is, and `passIsArmed` names any
-  //      binding still blocking each pass, one line per pass per tick.
-  //   7. `wrangler tail vaipakam-keeper` and confirm the outcome is
-  //      `ok` rather than `exceededCpu`, and that every due pass emits
-  //      a `done in Nms` line — an absent line means the pass was still
-  //      in flight when the invocation ended.
+  //   6. VALIDATE AN UNARMED TICK FIRST (Codex #1924 r3). With
+  //      `KEEPER_ENABLED` still off, `wrangler tail vaipakam-keeper` and
+  //      confirm the outcome is `ok` rather than `exceededCpu`. Arming
+  //      before observing a live tick means the six gated passes can
+  //      submit transactions on an invocation that still dies — the CPU
+  //      fix being incomplete or regressed is exactly the case this
+  //      sequence exists for, so it must be ruled out while the passes
+  //      that move funds are still inert.
+  //      If it still reports `exceededCpu`: set `"crons": []` again and
+  //      redeploy. That is the rollback, and it costs nothing because
+  //      nothing was armed.
+  //   7. Only then set the `KEEPER_ENABLED` secret to `true`. The
+  //      fund-moving passes stay inert until it is, and `passIsArmed`
+  //      names any binding still blocking each pass, one line per pass
+  //      per tick.
+  //   8. Tail once more and confirm the ARMED tick also ends `ok`, and
+  //      that every due pass emits a `done in Nms` line — an absent
+  //      line means the pass was still in flight when the invocation
+  //      ended. Same rollback if not.
   //
   // The original cadence note, still true and still the target to
   // restore: the watcher is internally tick-rate-aware — each tick
