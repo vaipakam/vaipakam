@@ -104,8 +104,11 @@ CCIP_RATE_CAPACITY=        # per-lane token-bucket capacity; default 50,000 VPFI
 CCIP_RATE_REFILL=          # per-lane refill rate, VPFI/s; default ~5.8 VPFI/s
 CCIP_DEST_GAS_LIMIT=       # CCIP message dest-gas limit; default 400,000
 # VPFI fee-discount price config — read by ConfigureVPFIBuy.s.sol.
-# BOTH are mandatory: the script reads them with vm.envUint /
-# vm.envAddress and reverts before broadcast if either is unset.
+# #884: that script no longer runs at launch. DiamondConfigSpell skips it
+# unless CONFIGURE_VPFI_PEG=1, because the Phase-1 posture is peg-UNSET.
+# BOTH vars below are mandatory only for a deliberate opt-in peg run: the
+# script reads them with vm.envUint / vm.envAddress and reverts before
+# broadcast if either is unset.
 VPFI_BUY_WEI_PER_VPFI=     # discount price anchor, wei per VPFI
 <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET=
                            # the chain's canonical WETH token address

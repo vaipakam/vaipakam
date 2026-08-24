@@ -148,15 +148,45 @@ contract DiamondConfigSpell is Script {
             ConfigureRewardReporter reporter = new ConfigureRewardReporter();
             reporter.run();
 
-            console.log("");
-            console.log("[DiamondConfigSpell] ============================================");
-            console.log("[DiamondConfigSpell] ConfigureVPFIBuy (discount price)");
-            console.log("[DiamondConfigSpell] ============================================");
-            // #687-A: the discount applies on EVERY VPFI chain (not the removed
-            // canonical-only sale), so the discount price config runs on any chain
-            // that has the VPFI stack.
-            ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
-            buy.run();
+            // #884 — the VPFI discount PEG is OPT-IN, and off by default.
+            //
+            // The Phase-1 launch posture (TokenomicsTechSpec §F2) is peg-UNSET:
+            // with no peg, the lender yield-fee discount is delivered in
+            // DIRECT-REDUCTION mode and carries the WHOLE discount — the
+            // consent-gated hold slice plus the Full-tariff bump. Setting the
+            // peg silently changes that product: `LibVPFIDiscount` keys on
+            // `vpfiDiscountWeiPerVpfi != 0 && vpfiDiscountEthPriceAsset != 0`
+            // and, once set, drops the hold slice from the fallback because it
+            // becomes VPFI-PAYMENT-authoritative. A consenting lender then has
+            // to pay VPFI to receive what the unset posture gave them outright.
+            //
+            // Running this step at launch also FALSIFIED the #1356 retail
+            // guardrail: that test asserts the peg is unset on a fresh deploy,
+            // and the very next phase pegged it. The assert was true and the
+            // deployment was not.
+            //
+            // So the peg now moves only when an operator asks for it, the way
+            // every other ceremony knob does. `SKIP_VPFI=1` is the wrong lever
+            // for this — it also skips ConfigureVPFIToken and
+            // ConfigureRewardReporter, and both deploy wrappers force
+            // `SKIP_VPFI=0`.
+            bool configurePeg = vm.envOr("CONFIGURE_VPFI_PEG", uint256(0)) == 1;
+            if (!configurePeg) {
+                console.log("");
+                console.log("[DiamondConfigSpell] ConfigureVPFIBuy SKIPPED (#884) -");
+                console.log("  the VPFI discount peg stays UNSET, which is the Phase-1");
+                console.log("  launch posture. Set CONFIGURE_VPFI_PEG=1 to run it.");
+            } else {
+                console.log("");
+                console.log("[DiamondConfigSpell] ============================================");
+                console.log("[DiamondConfigSpell] ConfigureVPFIBuy (discount price) - OPT-IN");
+                console.log("[DiamondConfigSpell] ============================================");
+                // #687-A: the discount applies on EVERY VPFI chain (not the
+                // removed canonical-only sale), so when it IS requested the
+                // price config runs on any chain that has the VPFI stack.
+                ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
+                buy.run();
+            }
         }
 
         console.log("");

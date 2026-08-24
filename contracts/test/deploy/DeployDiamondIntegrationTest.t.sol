@@ -341,6 +341,16 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
     ///         1. The VPFI peg is UNSET (`vpfiDiscountWeiPerVpfi == 0`) —
     ///            the retail deploy never prices VPFI; an accidentally-set
     ///            peg would arm the VPFI-payment discount path.
+    ///
+    ///            #884 — this assert was TRUE and the deployment still ended
+    ///            up pegged: it observes a FRESH deploy, and the configure
+    ///            phase that ran next invoked `ConfigureVPFIBuy`, which sets
+    ///            the peg. A green guardrail described a state the pipeline
+    ///            immediately left. The configure step is now opt-in
+    ///            (`CONFIGURE_VPFI_PEG=1`), so this assert and the pipeline
+    ///            agree. Note no Solidity test can observe that branch — it
+    ///            lives in a broadcast script behind an env var — so the
+    ///            guarantee rests on the spell, not on this file.
     ///         2. New-origination fees resolve to the rev-8 freeze:
     ///            LIF 20 bps / yield (treasury) fee 200 bps.
     ///         3. `feeEntitlementEnabled == false` — the joint-cutover gate
