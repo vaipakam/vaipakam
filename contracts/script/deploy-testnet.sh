@@ -1256,7 +1256,9 @@ EOF
 
 # ── Phase: configure ──────────────────────────────────────────────────
 # Same shape as deploy-mainnet.sh's configure phase — composes the
-# four Diamond-side configure scripts via DiamondConfigSpell.s.sol.
+# Diamond-side configure scripts via DiamondConfigSpell.s.sol.
+# #884: ConfigureVPFIBuy is not among them at launch — the peg stays
+# unset unless --configure-vpfi-peg is passed for this run.
 # Practising the spell on testnet exercises the same operator-action
 # count + the same ADMIN signer surface as mainnet day.
 

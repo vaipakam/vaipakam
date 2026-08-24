@@ -114,6 +114,23 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *      LayerZero; no wrapper dispatches that phase.)
  */
 contract DiamondConfigSpell is Script {
+    /// @notice #884 — the peg decision, extracted so it is TESTABLE.
+    /// @dev    Codex #1920 r2 corrected me here: I claimed no Solidity test
+    ///         could observe this branch because it lives in a broadcast
+    ///         script behind an env var. That is false — `vm.setEnv` exists
+    ///         (`forge-std/src/Vm.sol:615`) and three deploy tests in this
+    ///         repo already use it. The claim was wrong and it is what let
+    ///         the regression ship without a test.
+    ///
+    ///         Pulling the decision out of `run()` means the DEFAULT-OFF
+    ///         posture and the opt-in are both pinned by
+    ///         `DiamondConfigSpellPegGateTest`, without a test having to
+    ///         broadcast a whole deploy.
+    /// @return true only when an operator has explicitly asked for the peg.
+    function pegConfigureRequested() public view returns (bool) {
+        return vm.envOr("CONFIGURE_VPFI_PEG", uint256(0)) == 1;
+    }
+
     function run() external {
         // #857 — SINGLE skip-vpfi decision point. On a `--skip-vpfi` deploy
         // (SKIP_VPFI=1) the chain has NO VPFI / cross-chain stack, so the three
@@ -158,7 +175,10 @@ contract DiamondConfigSpell is Script {
 
             // #884 — the VPFI discount PEG is OPT-IN, and off by default.
             //
-            // The Phase-1 launch posture (TokenomicsTechSpec §F2) is peg-UNSET:
+            // The Phase-1 launch posture is peg-UNSET (the lender yield-fee
+            // rules are `VpfiAbsorptionDistributionFormulaRedesign.md` §F2;
+            // the launch posture itself is TokenomicsTechSpec's VPFI
+            // fee-discount section):
             // with no peg, the lender yield-fee discount is delivered in
             // DIRECT-REDUCTION mode and carries the WHOLE discount — the
             // consent-gated hold slice plus the Full-tariff bump. Setting the
@@ -178,7 +198,7 @@ contract DiamondConfigSpell is Script {
             // for this — it also skips ConfigureVPFIToken and
             // ConfigureRewardReporter, and both deploy wrappers force
             // `SKIP_VPFI=0`.
-            bool configurePeg = vm.envOr("CONFIGURE_VPFI_PEG", uint256(0)) == 1;
+            bool configurePeg = pegConfigureRequested();
             if (!configurePeg) {
                 console.log("");
                 console.log("[DiamondConfigSpell] ConfigureVPFIBuy SKIPPED (#884) -");

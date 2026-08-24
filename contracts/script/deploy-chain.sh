@@ -1401,11 +1401,15 @@ echo "     token in [3b]/[4] but does NOT register it or wire oracles):"
 # ConfigureVPFIToken/RewardReporter/VPFIBuy while the configure still reports
 # success — the same footgun the mainnet/testnet wrappers guard against by
 # forcing SKIP_VPFI=0. A --skip-vpfi deploy overrides this to =1 below. (#857 r9)
-echo "        SKIP_VPFI=0 forge script script/DiamondConfigSpell.s.sol --rpc-url <rpc> --broadcast"
+echo "        SKIP_VPFI=0 CONFIGURE_VPFI_PEG=0 forge script script/DiamondConfigSpell.s.sol --rpc-url <rpc> --broadcast"
 echo "     Runs ConfigureVPFIToken (sets s.vpfiToken + the canonical flag so"
 echo "     TreasuryFacet.mintVPFI and every token-aware guard work), plus"
-echo "     ConfigureOracle / RewardReporter / VPFIBuy / NFT URIs. WITHOUT this"
+echo "     ConfigureOracle / RewardReporter / NFT URIs. WITHOUT this"
 echo "     the Diamond leaves s.vpfiToken unset and token paths stay disabled."
+echo "     #884: ConfigureVPFIBuy is NOT run — the launch posture leaves VPFI"
+echo "     unpriced. CONFIGURE_VPFI_PEG=0 is prefixed for the same reason"
+echo "     SKIP_VPFI=0 is: a stale =1 in the shared .env would otherwise price"
+echo "     VPFI here, and that changes the product rather than skipping a step."
 if [ "$SKIP_VPFI" = "1" ]; then
 echo "     NOTE: this was a --skip-vpfi deploy (no VPFI/cross-chain stack), so"
 echo "     prefix SKIP_VPFI=1 (instead of the =0 shown above) — all THREE VPFI children"
