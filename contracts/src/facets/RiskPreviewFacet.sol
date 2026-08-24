@@ -535,7 +535,15 @@ contract RiskPreviewFacet {
      *         snapshot-based carve-out returned 0 for the same shape, and that
      *         it refuses UNCONDITIONALLY: the progressive-risk-access consent
      *         ladder classifies assets by identity and depth, never by live
-     *         priceability, so it cannot be deferred to here (Codex r8).
+     *         priceability, so it cannot be deferred to here (Codex r8);
+     *         7 the inherited TREASURY-FEE snapshot is higher than the rate a
+     *         loan originated today would carry, so the incoming lender would
+     *         net less than their own offer's terms imply (#1918). Same
+     *         one-directional inherited-terms rule as 2/3/4 — a LOWER
+     *         inherited fee stays sellable — but reported separately because
+     *         it is an economic term rather than a risk bound, and telling a
+     *         buyer their collateral bounds are weak when the objection is the
+     *         fee would describe the wrong position.
      * @return a The position's figure for the failing check (0 when code 0),
      *         except code 6, where it names the unpriceable leg — 0 collateral,
      *         1 principal — because a refusal for want of a measurement has no
@@ -777,6 +785,50 @@ contract RiskPreviewFacet {
             curCap
         );
         if (inheritedCap > curCap) return (4, inheritedCap, curCap);
+
+        // #1918 (#1503 design item 18) — the inherited-terms rule applied to
+        // the loan's ECONOMIC snapshot, not just its risk ones. A running loan
+        // keeps `treasuryFeeBpsAtInit` when the lender migrates, and settlement
+        // keeps reading it, so a buyer whose standing offer assumed today's
+        // schedule can be swapped into an older loan that pays a higher cut to
+        // treasury and therefore yields them less. Nothing above sees it: the
+        // fee is not a risk bound, not a term the buyer authored, and not
+        // visible in a health or LTV reading.
+        //
+        // ONE-DIRECTIONAL, exactly as the risk snapshots above, and that is the
+        // spec's answer rather than a judgement call here. `ProjectDetailsREADME`
+        // draws the line explicitly: an inherited term must be "no weaker than a
+        // loan originated today would carry", and "a position on STRICTER terms
+        // than today's stays sellable, since its buyer inherits a better
+        // position than a fresh loan would give them". A lower inherited fee is
+        // that better position, so refusing it would block a sale that harms
+        // nobody.
+        //
+        // It is deliberately NOT the exact-match rule the direct route applies
+        // to behavioural terms. That rule governs "terms the buyer authored"
+        // and is exact because the listed route could never deliver a mismatch;
+        // this fee is authored by GOVERNANCE, appears in no offer, and is
+        // mirrored by neither route — so it belongs to the inherited family,
+        // whose test is directional.
+        //
+        // The snapshot itself is untouched, which is the other half of the same
+        // spec rule: "Snapshot semantics continue to govern the EXISTING loan's
+        // ongoing operation... Admission of a NEW lender is judged against
+        // current standards instead." A retune still never re-prices an open
+        // loan (§"Fee rates are fixed at loan origination") — it can only make
+        // the position temporarily unsellable while remaining perfectly valid
+        // to hold, repay or liquidate, which the spec names as the accepted
+        // consequence.
+        //
+        // Compared through `effectiveTreasuryFeeBps`, not the raw field, so the
+        // frozen `LEGACY_TREASURY_FEE_BPS` fallback for pre-#957 loans is the
+        // figure tested. Reading the raw `0` those loans carry would compare a
+        // sentinel against a rate and call every one of them cheaper than
+        // today's — right by accident at 1% vs 2%, wrong the moment governance
+        // moves the knob below the legacy value.
+        uint256 inheritedFee = LibVaipakam.effectiveTreasuryFeeBps(loan);
+        uint256 curFee = LibVaipakam.cfgTreasuryFeeBps();
+        if (inheritedFee > curFee) return (7, inheritedFee, curFee);
 
         // The LIVE LTV, not just the cap snapshots. Equal caps say nothing
         // about where the position actually sits: accrued interest or

@@ -457,6 +457,17 @@ contract TestMutatorFacet {
         LibVaipakam.storageSlot().loans[loanId].liquidationLtvBpsAtInit = bps;
     }
 
+    /// @notice Write `loans[loanId].treasuryFeeBpsAtInit` directly.
+    /// @dev    Exists to scaffold the one state a live fixture cannot reach:
+    ///         a PRE-#957 loan, which carries `0` and settles at the frozen
+    ///         `LEGACY_TREASURY_FEE_BPS` fallback instead. Every loan the
+    ///         test suite originates is stamped by `LoanFacet._snapshotFeeBps`,
+    ///         so `0` is only reachable by writing it. Layout-resilient via
+    ///         the named-field storage path — no hardcoded slot math.
+    function setTreasuryFeeBpsAtInitRaw(uint256 loanId, uint16 bps) external {
+        LibVaipakam.storageSlot().loans[loanId].treasuryFeeBpsAtInit = bps;
+    }
+
     /// @notice Write `s.offerIdToLoanId[offerId] = loanId` directly.
     ///         Used by `EarlyWithdrawalFacetTest` to scaffold the
     ///         loan-sale state without going through the full

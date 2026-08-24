@@ -66,8 +66,9 @@ library LibSaleSolvency {
     ///         is a different statement from any of the classifier's codes.
     ///         Deliberately `type(uint8).max` rather than the next free number,
     ///         so extending the classifier's range — 0-5 when this was written,
-    ///         0-6 since #1655 added the unpriceable-leg refusal — can never
-    ///         collide with it (Codex #1635 r5).
+    ///         0-6 since #1655 added the unpriceable-leg refusal, 0-7 since
+    ///         #1918 added the inherited-fee refusal — can never collide with
+    ///         it (Codex #1635 r5).
     uint8 internal constant SALE_ADMISSION_UNAVAILABLE = type(uint8).max;
 
     /// @notice The position's live Health Factor is below the floor its own
@@ -115,6 +116,30 @@ library LibSaleSolvency {
         uint256 capBps
     );
 
+    /// @notice The position's inherited TREASURY-FEE snapshot is higher than
+    ///         the rate a loan originated today would carry, so the incoming
+    ///         lender would net less on settlement than their own offer's
+    ///         terms imply. Same one-directional inherited-terms rule as
+    ///         {SaleInheritsWeakerRiskTerms} — a LOWER inherited fee stays
+    ///         sellable — but a SEPARATE error on purpose: the fee is an
+    ///         economic term, not a collateral bound, and reporting it as a
+    ///         weaker risk term would tell the buyer something false about
+    ///         the position's safety (#1918, #1503 design item 18).
+    error SaleInheritsWorseFeeTerms(
+        uint256 loanId,
+        uint256 inheritedBps,
+        uint256 currentBps
+    );
+
+    /// @notice The classifier returned a code this mapping does not know.
+    ///         Unreachable on a coherent deploy — both sides ship together —
+    ///         and reachable only on a SPLIT Diamond, where a newer
+    ///         `RiskPreviewFacet` is routed alongside sale facets still
+    ///         carrying an older `LibSaleSolvency`. Refusing is the only safe
+    ///         reading: the classifier declined to admit the sale, and a code
+    ///         we cannot name is not evidence about which check objected.
+    error SaleAdmissionCodeUnknown(uint256 loanId, uint8 code);
+
     /**
      * @notice Reverts unless `loanId` may admit a new lender by sale.
      *
@@ -134,8 +159,18 @@ library LibSaleSolvency {
         // rather than a pair of figures — there is no measurement to report,
         // which is the whole point of the refusal.
         if (code == 6) revert SaleLegUnpriceable(loanId, uint8(a));
-        // 2/3/4 map onto which = 0/1/2.
-        revert SaleInheritsWeakerRiskTerms(loanId, code - 2, a, b);
+        if (code == 7) revert SaleInheritsWorseFeeTerms(loanId, a, b);
+        // 2/3/4 map onto which = 0/1/2 — and BOUNDED, not a catch-all. Until
+        // #1918 the line below was the fall-through for every unhandled code,
+        // so adding a classifier code without a branch here did not fail: it
+        // silently reported the new refusal as a weaker RISK term carrying a
+        // `which` the error never defined. Code 7 would have arrived as
+        // `which = 5`. An explicit range plus a named unknown makes the next
+        // addition a visible refusal instead of a plausible lie.
+        if (code >= 2 && code <= 4) {
+            revert SaleInheritsWeakerRiskTerms(loanId, code - 2, a, b);
+        }
+        revert SaleAdmissionCodeUnknown(loanId, code);
     }
 
     /**

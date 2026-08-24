@@ -48,6 +48,22 @@ for the following platform areas:
   entirely solvent against its own older terms. The check is one-directional:
   a position on **stricter** terms than today's stays sellable, since its buyer
   inherits a better position than a fresh loan would give them.
+- The same rule governs the loan's inherited **treasury-fee rate**, which is not
+  a risk bound but is inherited the same way. A loan keeps the fee rate it was
+  originated under and settles at it for life, so a position originated under a
+  higher rate than the one in force today pays a larger cut to treasury and
+  yields its holder less — while an incoming lender's standing offer was written
+  against today's schedule and says nothing about the older rate. A sale is
+  therefore refused when the inherited rate is **higher** than a loan originated
+  today would carry, and permitted when it is lower, on the same reasoning as
+  the risk terms above: a cheaper inherited fee is the better position, and
+  refusing it would block a sale that harms nobody. This is deliberately not the
+  exact-match rule stated below for behavioural terms — that rule governs terms
+  the **buyer authored**, and the fee is set by governance, appears in no offer,
+  and is mirrored by neither route. The refusal is reported as its own condition
+  rather than folded into the risk-terms one, because telling a buyer their
+  collateral bounds are weak when the objection is the fee describes the wrong
+  position.
 - **A buyer must receive the position they agreed to, whichever door they came
   through.** Beyond the risk bounds above, a loan carries behavioural terms that
   decide what the borrower may do to whoever holds the lender side — whether
