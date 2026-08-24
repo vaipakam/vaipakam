@@ -129,18 +129,32 @@
   //      exactly the case this sequence exists for, so it must be ruled
   //      out while the passes that move funds are still inert.
   //      If it still reports `exceededCpu`: set `"crons": []` again and
-  //      redeploy, and leave `KEEPER_ENABLED` at `false`. That is the
-  //      rollback, and it costs nothing because nothing was armed.
+  //      `wrangler deploy --keep-vars` (the flag matters on the ROLLBACK
+  //      too — Codex #1924 r5 — a bare deploy wipes the same tuning vars
+  //      step 4 protects, and a rollback is exactly when nobody is
+  //      looking for that), leaving `KEEPER_ENABLED` at `false`. That is
+  //      the rollback, and it costs nothing because nothing was armed.
   //   8. Only then set the `KEEPER_ENABLED` secret to `true`. The
   //      fund-moving passes stay inert until it is, and `passIsArmed`
   //      names any binding still blocking each pass, one line per pass
   //      per tick.
-  //   9. Tail once more and confirm the ARMED tick also ends `ok`, and
-  //      that every due pass emits a `done in Nms` line — an absent
-  //      line means the pass was still in flight when the invocation
-  //      ended. If not, roll back BOTH halves: `KEEPER_ENABLED` to
-  //      `false` first (it is now genuinely armed), then `"crons": []`
-  //      and redeploy.
+  //   9. Tail until EVERY CADENCE has actually run — not one tick
+  //      (Codex #1924 r5 P1). One armed tick exercises only the
+  //      `cadenceMinutes: 1` passes. `passSchedule.ts` also carries
+  //      `rewardBudgetRemit` (5 min, offset 2), `preGraceWatcher`
+  //      (15 min, offset 4) and `dailyOracleSnapshot` (only inside the
+  //      00:00–00:09 UTC window). Since WHICH pass burns the CPU is
+  //      still unknown, a green single tick cannot clear the hold: the
+  //      culprit may simply not have been due. Cover at least one full
+  //      15-minute cycle for the staggered pair, and the daily window
+  //      for the snapshot — or profile those passes in production by
+  //      other means before declaring re-enable complete.
+  //      Confirm each tick ends `ok` and that every due pass emits a
+  //      `done in Nms` line — an absent line means the pass was still in
+  //      flight when the invocation ended. If any of it fails, roll back
+  //      BOTH halves: `KEEPER_ENABLED` to `false` first (it is now
+  //      genuinely armed), then `"crons": []` and
+  //      `wrangler deploy --keep-vars`.
   //  10. Clear any checks DEFERRED during the hold. Specifically: if
   //      `PUSH_CHANNEL_PK` was rotated while the keeper was unscheduled,
   //      `docs/ops/IncidentRunbook.md`'s Push-rotation step 6 could only

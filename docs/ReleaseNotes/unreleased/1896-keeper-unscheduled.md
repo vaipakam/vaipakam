@@ -65,10 +65,16 @@ that were due while the keeper was stopped are simply not sent late.
 
 ## What it does not change
 
-Nothing about what the keeper *is*. No job was deleted, no
-configuration was cleared, and the switch that arms the fund-moving
-jobs is untouched and still off. When the underlying work is done, the
-schedule goes back and the keeper resumes every task it had before.
+Nothing about what the keeper *is*. No job was deleted and no
+configuration was cleared. The switch that arms the fund-moving jobs
+is untouched — and untouched is all that can honestly be said about
+it: its value is stored in a form that cannot be read back, so nobody
+can confirm from the outside whether it is on or off. That is why the
+re-enabling steps begin by setting it off explicitly rather than
+assuming, and it is why restoring the schedule out of band, without
+that first step, must not be treated as safe. When the underlying work
+is done, the schedule goes back and the keeper resumes every task it
+had before.
 
 The re-enabling steps are written where the schedule is defined, next
 to the empty list, rather than in a separate document that could drift
