@@ -809,21 +809,24 @@ for (const file of walk(REPO_ROOT)) {
       // wrapper preamble, and a start-anchored match never saw the `cd`
       // (Codex #1924 r35). splitCommands already knows where the boundaries
       // are, and it is quote- and redirection-aware.
+      // Applied IN ORDER, every segment. Taking the first match of each kind
+      // meant `set -e; cd apps/agent; cd apps/keeper` recorded AGENT scope —
+      // and the reverse order produced a false rejection (Codex #1924 r36).
+      // The shell ends up wherever the LAST one put it.
       const segments = physical ? [] : splitCommands(line).map((c) => c.trim());
-      const pushed = segments
-        .map((c) => c.match(/^pushd\s+["']?([^\s"';&|)]+)/))
-        .find(Boolean) ?? null;
-      const popped = segments.some((c) => /^popd\b/.test(c));
-      const bareCd = segments
-        .map((c) => c.match(/^cd\s+["']?([^\s"';&|)]+)/))
-        .find(Boolean) ?? null;
-      if (pushed) {
-        dirStack.push(cwdIsKeeper);
-        cwdIsKeeper = isKeeperDir(pushed[1]);
-      } else if (popped) {
-        cwdIsKeeper = dirStack.length > 0 ? dirStack.pop() : false;
-      } else if (bareCd) {
-        cwdIsKeeper = isKeeperDir(bareCd[1]);
+      for (const seg of segments) {
+        const pushed = seg.match(/^pushd\s+["']?([^\s"';&|)]+)/);
+        if (pushed) {
+          dirStack.push(cwdIsKeeper);
+          cwdIsKeeper = isKeeperDir(pushed[1]);
+          continue;
+        }
+        if (/^popd\b/.test(seg)) {
+          cwdIsKeeper = dirStack.length > 0 ? dirStack.pop() : false;
+          continue;
+        }
+        const bareCd = seg.match(/^cd\s+["']?([^\s"';&|)]+)/);
+        if (bareCd) cwdIsKeeper = isKeeperDir(bareCd[1]);
       }
     }
 

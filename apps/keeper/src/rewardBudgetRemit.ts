@@ -328,21 +328,37 @@ async function remitToMirror(
   // is closed, this is exactly the set that would otherwise have been silently
   // counted as covered.
   const ambiguous = planWindow.filter((_, i) => (perDay[i] ?? 0n) === 0n && !closeable[i]);
-  const openDays = [];
-  for (const dayId of ambiguous) {
+  // ONE subrequest, not one per day (Codex #1924 r36). The default window is
+  // 45 days and in steady state EVERY already-closed day lands here, so the
+  // sequential loop this replaces issued up to 45 subrequests per mirror —
+  // against a 50-subrequest free-tier ceiling that the setup reads and the
+  // plan quote have already eaten into. A second mirror would simply not be
+  // processed. Adding an unbounded per-day loop to the Worker that #1896
+  // exists to bring back under its limits was the wrong instinct; multicall
+  // makes the whole probe one call.
+  const openDays: bigint[] = [];
+  if (ambiguous.length > 0) {
     try {
-      const closedBy = (await publicClient.readContract({
-        address: diamond,
-        abi: REMIT_LENS_ABI,
-        functionName: 'getDayClosedByRemitId',
-        args: [mirrorId, dayId],
-      })) as bigint;
-      if (closedBy === 0n) openDays.push(dayId);
+      const results = (await publicClient.multicall({
+        contracts: ambiguous.map((dayId) => ({
+          address: diamond,
+          abi: REMIT_LENS_ABI,
+          functionName: 'getDayClosedByRemitId',
+          args: [mirrorId, dayId],
+        })),
+        allowFailure: true,
+      })) as { status: 'success' | 'failure'; result?: unknown }[];
+      ambiguous.forEach((dayId, i) => {
+        const r = results[i];
+        // A failed probe is UNKNOWN, and unknown is reported rather than
+        // assumed closed.
+        if (r?.status !== 'success' || r.result === 0n) openDays.push(dayId);
+      });
     } catch (err) {
       console.warn(
-        `[keeper] rewardBudgetRemit Base->${mirrorId} day=${dayId} closure unknown: ${(err as Error).message}`,
+        `[keeper] rewardBudgetRemit Base->${mirrorId} closure probe failed: ${(err as Error).message}`,
       );
-      openDays.push(dayId);
+      openDays.push(...ambiguous);
     }
   }
   if (openDays.length > 0) {

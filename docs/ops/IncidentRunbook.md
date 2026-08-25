@@ -225,14 +225,21 @@ recoverable back-pressure — not a fund-loss event.
 > an opened claim gate with no funding behind it is exactly the user-visible
 > revert this section exists to prevent.
 >
-> **Also require no `finalized day(s) neither remitted nor closed` warning.**
-> That line lists days the pass cannot classify: each is either an obligation
-> still gated — awaiting its commitment report, or unbacked — or a day that
-> gave that mirror no slice at all. The pass deliberately does NOT guess
-> between them: guessing "owed" would hold coverage below `A/A` on every tick
-> for a zero-budget day and put the stand-down permanently out of reach, and
-> guessing "settled" would hide a real obligation. Check the listed day ids
-> yourself before treating coverage as complete.
+> **Then resolve any `finalized day(s) neither remitted nor closed` warning —
+> the warning itself is not a blocker; an unresolved ID is.** That line lists
+> days the pass cannot classify: each is either an obligation still gated —
+> awaiting its commitment report, or unbacked — or a day that gave that mirror
+> no slice at all. The pass deliberately does NOT guess between them: guessing
+> "owed" would hold coverage below `A/A` on every tick for a zero-budget day
+> and put the stand-down permanently out of reach, and guessing "settled"
+> would hide a real obligation.
+>
+> A zero-budget day is **never closed by anything**, so its ID keeps appearing
+> for as long as it stays in the scan window. Requiring the warning to vanish
+> would therefore recreate exactly the permanent false-red the reporting
+> exists to avoid. The rule is per ID, not per line: **stand down once every
+> warned ID has been checked and found to carry no obligation; any ID that is
+> a gated obligation keeps coverage manual until it clears.**
 > This matters most in exactly the incident this section is written for:
 > if a finalized day is broadcast and you leave a mirror's claim gate open
 > expecting the keeper to fund it, nothing will, and users hit the claim

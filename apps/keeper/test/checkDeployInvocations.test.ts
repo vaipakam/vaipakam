@@ -481,6 +481,15 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('the LAST cd on a line decides scope (#1924 r36)', () => {
+    // `cd apps/agent; cd apps/keeper` ends in the keeper directory.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'set -e; cd apps/agent; cd apps/keeper\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -807,6 +816,16 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
       'set -e; cd apps/agent\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('the last cd also decides scope in the other direction (#1924 r36)', () => {
+    // `cd apps/keeper; cd apps/agent` ends in the AGENT directory — taking the
+    // first match rejected this correct wrapper.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'set -e; cd apps/keeper; cd apps/agent\nwrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });
