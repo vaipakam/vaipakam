@@ -110,6 +110,14 @@
   //      what makes the restoration durable, so it belongs with the CPU
   //      fix rather than being left to whoever ran the procedure.
   //   3. Confirm a cron slot is free — the cap is five per account.
+  //      This slot is meant to be waiting: the capacity notes in
+  //      `ops/offchain-data-warm`, `apps/indexer` and
+  //      `docs/DesignsAndPlans/OffChainDataResilience.md` all count the
+  //      keeper's slot as RESERVED rather than spare, precisely so this
+  //      step cannot be blocked by something that moved in during the
+  //      hold (Codex #1924 r9). If it IS taken, that is a real problem
+  //      to resolve here — not something to work around by leaving the
+  //      keeper stopped.
   //   4. `( cd apps/keeper && wrangler deploy --keep-vars )` — or the
   //      equivalent `pnpm --filter @vaipakam/keeper run deploy`, whose
   //      script now carries the flag. RUN IT FROM THIS DIRECTORY: a bare

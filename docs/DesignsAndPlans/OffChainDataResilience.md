@@ -278,14 +278,24 @@ read-only for healthcheck). The healthcheck:
 
 The originally-planned shape was a separate Worker cron for the
 healthcheck (running at 09:00 UTC every Monday), but the Cloudflare
-Workers free plan caps an account at 5 cron triggers. TODAY four are
-occupied — apps/keeper, apps/agent, apps/indexer and this Worker
-itself — leaving one spare; `ops/mesh-watcher` takes that fifth on
-its FIRST DEPLOY, and it is code-complete but undeployed (§4.5). So
-the cap BINDS from that deploy onward rather than today, and this
-Worker is designed for a single cron on that basis rather than
-because the account is already full. (`ops/lz-watcher` held a slot
-until #1440 removed it.) Folding the healthcheck into the
+Workers free plan caps an account at 5 cron triggers. Historically four
+were occupied — apps/keeper, apps/agent, apps/indexer and this Worker
+itself — leaving one spare, which `ops/mesh-watcher` would take on its
+FIRST DEPLOY (code-complete but undeployed, §4.5). (`ops/lz-watcher`
+held a slot until #1440 removed it.)
+
+**Since #1896 only THREE are occupied** — apps/keeper commits
+`"crons": []`, so agent, indexer and this Worker hold the live
+schedules and mesh-watcher would be the fourth. **That fourth slot is
+NOT spare capacity: it is RESERVED for the keeper's return.** The
+keeper is unscheduled only until its CPU overrun is fixed, and its
+re-enable procedure begins by confirming a free slot — so spending this
+one on a new schedule would block that re-enable at the account cap,
+with a stopped keeper as the cost. Plan on the pre-#1896 arithmetic
+(five occupied once mesh deploys) and treat the gap as temporary.
+
+This Worker is designed for a single cron on that basis rather than
+because the account is already full. Folding the healthcheck into the
 daily cron via a `getUTCDay() === 1` guard preserves the weekly
 cadence at the cost of running the alert at 03:17 UTC instead of
 09:00 UTC. Acceptable trade-off — ops alerts aren't real-time

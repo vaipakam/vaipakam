@@ -20,9 +20,11 @@
   //     shared state, different scoped B2 keys, different B2 endpoints).
   //
   // Why one cron instead of two: Cloudflare Workers free plan caps an
-  // account at 5 cron triggers total. apps/{keeper,agent,indexer} take
-  // one each (every-minute), and this Worker takes the fourth — 4 of 5
-  // in use today. The ops/lz-watcher slot was freed when that Worker was
+  // account at 5 cron triggers total. apps/{agent,indexer} take one each
+  // (every-minute) and this Worker takes a third — 3 of 5 in use today,
+  // because apps/keeper commits an empty schedule since #1896. Its slot
+  // is RESERVED for its return (re-enable begins by confirming a free
+  // slot), so plan on the pre-#1896 arithmetic of 4 in use. The ops/lz-watcher slot was freed when that Worker was
   // deleted (#1440) and is currently SPARE: ops/mesh-watcher is the
   // intended occupant but is code-complete and UNDEPLOYED, so it holds no
   // slot yet. Deploying it takes the account to 5 of 5. Splitting backup +

@@ -190,8 +190,18 @@ config:
 ```bash
 git add apps/keeper/src/flashLoanProviders.ts
 git commit -m "apps/keeper: populate Base FlashLoanLiquidator address"
-pnpm --filter @vaipakam/keeper exec wrangler deploy
+pnpm --filter @vaipakam/keeper run deploy
 ```
+
+> **`run deploy`, not `exec wrangler deploy`** (#1896). The package script
+> carries `--keep-vars`; going straight to wrangler bypasses it and deletes
+> every var not in `wrangler.jsonc` — which is exactly the dashboard-managed
+> `HF_SCALE` / `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning this rollout is
+> about to depend on. **And note before you run it:** the keeper is currently
+> unscheduled (`"crons": []`, #1896), so this deploy updates the script and
+> bindings but starts nothing. That is fine and expected here — the rollout's
+> config and flags stay latched — but do not read a quiet `wrangler tail`
+> afterwards as evidence the branch works. See the hold in §5.
 
 ---
 
