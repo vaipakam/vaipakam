@@ -80,10 +80,19 @@ ruled out the shared budget is still only one candidate — the notification ste
 also reaches out to the cross-chain messenger, which can refuse for reasons of
 its own.
 
-What survived all of it is smaller and actually useful: a total outage points at
-permissions or an unconfigured setting, a partial one tells you nothing on its
-own, and the order to check in is the user's balance first, then the shared
-machinery behind it.
+Then a further round found that even the surviving summary was too tidy. It said
+a total outage points at permissions or an unconfigured setting — but the whole
+platform can be paused, which stops billing for everyone and was missing from the
+list entirely despite being declared on the billing function itself. And the
+shared machinery can fail for everyone at once too, whenever every user in a batch
+happens to need it.
+
+So the list stopped being a list. What is left is a way of thinking rather than a
+lookup: sort a reported failure by how many users it hits, remember that the
+shared machinery can imitate either pattern depending on the batch, and check the
+individual user's balance before reaching for anything larger. Four attempts to
+enumerate the causes produced four incomplete enumerations, which is a reasonable
+sign that enumerating them was the wrong shape.
 
 A pattern worth naming, since it repeated on nearly every one of these: the
 first correction of a wrong statement was usually itself too confident. Each

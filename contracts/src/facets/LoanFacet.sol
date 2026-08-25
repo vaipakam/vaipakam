@@ -1278,7 +1278,14 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *         too — the amount is a FLAT native-VPFI quantity, not an
      *         oracle conversion.
      * @dev    Idempotent: subsequent calls on an already-billed side
-     *         no-op. Reverts on:
+     *         no-op. Reverts on the following — a NON-EXHAUSTIVE list, and
+     *         the qualifier is not throat-clearing: three review rounds in
+     *         a row found this enumeration wrong in a new direction, so
+     *         treat it as the causes worth knowing about rather than as a
+     *         closed set:
+     *           - the Diamond being PAUSED (`whenNotPaused`, on this
+     *             function). Omitted here until #1349 despite sitting in
+     *             the signature three lines below the list
      *           - caller missing `NOTIF_BILLER_ROLE`
      *           - loanId past `nextLoanId` or never-initialized
      *             (InvalidLoanStatus)
@@ -1307,16 +1314,24 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *             therefore MIXED success and failure across payers, not a
      *             clean stop — which is precisely what makes it hard to
      *             read. Sorting the causes by BLAST RADIUS is what makes
-     *             them separable:
-     *               · uniform across every payer — a missing
-     *                 `NOTIF_BILLER_ROLE` (the CALLER's state) and an unset
-     *                 VPFI token (Diamond-wide config);
+     *             them separable — as a way of THINKING about a report, not
+     *             as a lookup table, since each attempt to make it one has
+     *             been incomplete:
+     *               · uniform across every payer — a protocol PAUSE, a
+     *                 missing `NOTIF_BILLER_ROLE` (the CALLER's state), an
+     *                 unset VPFI token (Diamond-wide config), and a
+     *                 broadcast-leg failure IF every payer in the batch
+     *                 needs an outbound send;
      *               · payer-by-payer — an underfunded vault;
-     *               · SHARED but conditional — this one. It bites only the
-     *                 payers whose rollup needs a send, so it presents as
-     *                 partial failure even though the cause is global.
-     *             So a uniform outage points at the first pair, while
-     *             partial failure does NOT identify a cause on its own: it
+     *               · SHARED but conditional — the broadcast leg in the
+     *                 ordinary case. It bites only the payers whose rollup
+     *                 needs a send, so a global cause presents as partial
+     *                 failure.
+     *             Note the broadcast leg appears TWICE on purpose: its
+     *             blast radius depends on the batch, so it is the one cause
+     *             that can imitate either pattern. A uniform outage
+     *             therefore does not identify a cause either, and
+     *             partial failure does not: it
      *             is equally consistent with underfunded vaults and with
      *             any failure on the broadcast leg. Check the failing
      *             payer's VPFI balance first; if the payer is funded, the
