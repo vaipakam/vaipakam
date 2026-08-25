@@ -1967,6 +1967,22 @@
   },
   {
     "type": "error",
+    "name": "SaleAmountNotExactPrincipal",
+    "inputs": [
+      {
+        "name": "authored",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "principal",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleBelowSellerFloor",
     "inputs": [
       {
@@ -1994,6 +2010,22 @@
         "name": "borrower",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleExposureExceedsAuthoredDuration",
+    "inputs": [
+      {
+        "name": "remainingSecs",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "authoredSecs",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
