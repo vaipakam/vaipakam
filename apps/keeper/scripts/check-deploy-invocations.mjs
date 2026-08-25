@@ -41,11 +41,25 @@ const REPO_ROOT = (
   new URL('../../../', import.meta.url).pathname
 ).replace(/\/$/, '');
 
-/** Directories never worth walking. */
+/**
+ * Directories never worth walking — matched by BASENAME at every level, which
+ * is why `lib` is NOT in here (Codex #1924 r24).
+ *
+ * This repo has first-party `lib` directories: `contracts/script/lib` holds
+ * `FacetSelectors.sol`, and `packages/lib` is a workspace package. Skipping
+ * every directory named `lib` therefore punched a hole straight through the
+ * "tree-wide" claim — a deploy helper added under `contracts/script/lib` was
+ * invisible to the guard. The vendored tree that motivated the entry is
+ * `contracts/lib` (forge submodules), so it is excluded by PATH below instead
+ * of by name.
+ */
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'out', 'coverage',
-  '.wrangler', 'lib', 'cache', 'broadcast', 'artifacts', '.next',
+  '.wrangler', 'cache', 'broadcast', 'artifacts', '.next',
 ]);
+
+/** Vendored trees excluded by exact repo-relative path, not by basename. */
+const SKIP_PATHS = new Set(['contracts/lib']);
 
 // `.json` is here for ONE file that matters more than the rest combined:
 // `apps/keeper/package.json`. Its `deploy` script is the canonical entry point
@@ -138,8 +152,15 @@ function stripOtherOptionValues(line) {
   // space left ` --keep-vars`, which then read as a real, token-initial flag.
   // The strip must not manufacture the very boundary the lookbehind tests for,
   // so it leaves a character that is not an allowed predecessor.
+  // One shell argument can MIX quoted and unquoted chunks with no whitespace
+  // between them: `--message=note'--keep-vars'` is a single argument,
+  // `--message=note--keep-vars`, enabling nothing. Matching only wholly-quoted
+  // values let the quoted suffix survive and read as a real flag (Codex #1924
+  // r24). A value is therefore one-or-more adjacent chunks, and whitespace is
+  // what ends it — so `--message remember --keep-vars`, where the shell really
+  // does pass a separate flag, is still left alone.
   return line.replace(
-    /--(?!keep-vars\b|dry-run\b)[A-Za-z0-9-]+(?:=|\s+)(?:"[^"]*"|'[^']*')/g,
+    /--(?!keep-vars\b|dry-run\b)[A-Za-z0-9-]+(?:=|\s+)(?:"[^"]*"|'[^']*'|[^\s"']+)+/g,
     '\u0000',
   );
 }
@@ -321,6 +342,7 @@ function* walk(dir) {
   for (const entry of entries) {
     if (SKIP_DIRS.has(entry)) continue;
     const full = join(dir, entry);
+    if (SKIP_PATHS.has(relative(REPO_ROOT, full))) continue;
     let st;
     try {
       st = statSync(full);

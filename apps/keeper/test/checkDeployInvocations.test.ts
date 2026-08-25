@@ -205,6 +205,33 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a flag as a QUOTED chunk of a mixed option value (#1924 r24)', () => {
+    // Bash builds one argument: --message=note--keep-vars. Matching only
+    // wholly-quoted values let the quoted suffix survive as a real flag.
+    const r = runWith('apps/keeper/README.md', "wrangler deploy --message=note'--keep-vars'\n");
+    expect(r.ok).toBe(false);
+  });
+
+  it('the mixed form with double quotes (#1924 r24)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message=note"--keep-vars"\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a deploy helper under a first-party lib directory (#1924 r24)', () => {
+    // `lib` was in SKIP_DIRS by basename, so contracts/script/lib — which
+    // holds FacetSelectors.sol — was never scanned at all.
+    const r = runWith(
+      'contracts/script/lib/deploy.sh',
+      '( cd apps/keeper && wrangler deploy )\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a deploy helper under packages/lib (#1924 r24)', () => {
+    const r = runWith('packages/lib/src/deploy.ts', "// pnpm --filter @vaipakam/keeper exec wrangler deploy\n");
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -341,6 +368,16 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('still accepts a quoted option value followed by a real flag', () => {
     const r = runWith('apps/keeper/README.md', 'wrangler deploy --message="note" --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('still leaves an unquoted option value followed by a real flag alone', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message=note --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not scan the vendored contracts/lib submodule tree', () => {
+    const r = runWith('contracts/lib/forge-std/x.sh', '( cd apps/keeper && wrangler deploy )\n');
     expect(r.ok).toBe(true);
   });
 
