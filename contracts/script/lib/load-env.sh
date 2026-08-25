@@ -80,6 +80,22 @@ load_env_file() {
     #
     # Exported names are allowed through so a `.env` can still supply the RPC
     # URLs and keys the operator's environment may also carry.
+    # Names that MUST exist before this loader can run, refused regardless of
+    # how the shell holds them. The derived rule below allows `declare -x`, so
+    # that an operator's exported RPC URL can still be overridden by `.env` —
+    # but a wrapper variable INHERITED as exported then looked identical, and
+    # `SCRIPT_DIR=/tmp/attacker` was accepted, which the wrapper follows into
+    # `bash "$SCRIPT_DIR/predeploy-check.sh"` (Codex #1938 r12).
+    #
+    # Three names, and they are stable: they are the ones this file needs in
+    # order to be sourced at all, so the list cannot grow with the callers.
+    case "$__lenv_name" in
+      SCRIPT_DIR|CONTRACTS_DIR|REPO_ROOT)
+        echo "Error: $__lenv_file:$__lenv_no sets a path this tooling resolves for" >&2
+        echo "       itself — refusing. (Name withheld.)" >&2
+        return 1 ;;
+    esac
+
     __lenv_decl="$(declare -p "$__lenv_name" 2>/dev/null || true)"
     if [ -n "$__lenv_decl" ]; then
       case "$__lenv_decl" in
@@ -101,7 +117,13 @@ load_env_file() {
       return 1 ;;
     esac
 
-    # DENY names some later process treats as a startup hook. Reading the file
+    # DENY names some later process treats as a startup hook.
+    #
+    # The git family is here because the wrappers run `git` thirteen times in
+    # deploy-mainnet.sh alone: `GIT_CONFIG_COUNT=1` plus `GIT_CONFIG_KEY_0=core.pager`
+    # and a VALUE runs a command with the deployment's credentials (#1938 r12).
+    # Every tool a deploy invokes brings its own family of these, which is the
+    # argument recorded on #1939 for why a denylist cannot be finished here. Reading the file
     # as data stops it executing HERE; exporting one of these hands execution to
     # the next child — `BASH_ENV=$(…)` runs in the first child bash, and a
     # wrapper spawns several carrying the deployment's secrets.
@@ -124,7 +146,10 @@ load_env_file() {
     case "$__lenv_name" in
       BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|GLOBIGNORE|IFS|PS4|PATH \
       |LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_FUNC_* \
-      |NODE_OPTIONS|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|RUBYOPT|JAVA_TOOL_OPTIONS)
+      |NODE_OPTIONS|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|RUBYOPT|JAVA_TOOL_OPTIONS \
+      |GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*|GIT_CONFIG_GLOBAL \
+      |GIT_CONFIG_SYSTEM|GIT_SSH_COMMAND|GIT_EXTERNAL_DIFF|GIT_PAGER|GIT_EDITOR \
+      |GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_ALTERNATE_OBJECT_DIRECTORIES)
         echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which another program" >&2
         echo "       would treat as a startup hook — refusing to export it." >&2
         return 1 ;;
@@ -147,9 +172,14 @@ load_env_file() {
         esac
         __lenv_value="${__lenv_rest%%"$__lenv_q"*}"
         __lenv_rest="${__lenv_rest#*"$__lenv_q"}"
+        # After the closing quote only WHITESPACE, then optionally a comment.
+        # `[[:space:]]*'#'*` accepted `"v" junk # note` because the glob let
+        # `junk` sit inside the `*` before the `#` (Codex #1938 r11). Strip the
+        # whitespace first, then the remainder must be empty or start with `#`.
+        __lenv_rest="${__lenv_rest#"${__lenv_rest%%[![:space:]]*}"}"
         case "$__lenv_rest" in
-          '' | [[:space:]]*'#'* | [[:space:]] | '#'*) : ;;
-          *[![:space:]]*) echo "Error: $__lenv_file:$__lenv_no has text after the closing quote;" >&2
+          '' | '#'*) : ;;
+          *) echo "Error: $__lenv_file:$__lenv_no has text after the closing quote;" >&2
              echo "       composite values are not supported — quote the whole value." >&2
              return 1 ;;
         esac

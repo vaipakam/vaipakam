@@ -117,10 +117,19 @@ done
 if [ "$__env_load_failed" = "1" ]; then
   case "$MODE" in
     unpause)
-      echo "Error: .env could not be loaded, and --unpause-calldata depends on" >&2
-      echo "       POST_HANDOVER to choose between direct and timelock calls." >&2
-      echo "       Fix .env, or set POST_HANDOVER explicitly in the environment." >&2
-      exit 1 ;;
+      # An explicitly EXPORTED value is trusted and the run continues: the
+      # loader never applied anything from the rejected file, so this came from
+      # the operator's own environment, which is the documented fallback the
+      # error message itself recommends. Refusing it would tell an operator to
+      # do something and then reject them for doing it (Codex #1938 r11).
+      if [ -n "${POST_HANDOVER:-}" ]; then
+        echo "Warning: .env was not loaded; using POST_HANDOVER from the environment." >&2
+      else
+        echo "Error: .env could not be loaded, and --unpause-calldata depends on" >&2
+        echo "       POST_HANDOVER to choose between direct and timelock calls." >&2
+        echo "       Fix .env, or set POST_HANDOVER explicitly in the environment." >&2
+        exit 1
+      fi ;;
     *)
       echo "Warning: .env was not loaded; --check will report any RPC it needs." >&2 ;;
   esac
