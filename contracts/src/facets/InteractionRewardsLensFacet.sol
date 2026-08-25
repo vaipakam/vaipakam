@@ -741,8 +741,14 @@ contract InteractionRewardsLensFacet {
      *         formula, left on the RETURN DOC of the view whose whole
      *         purpose is letting an outside reader recompute the number.
      *         A zero here is ambiguous by construction — fully consumed and
-     *         in breach look identical. Compare `vpfiBalance` against
-     *         `bucket` to separate them.
+     *         in breach look identical. Separating them takes ALL FOUR
+     *         values this view returns: compare `vpfiBalance` against
+     *         `bucket + strandedRecoveryReserved + recoveryPositionReserved`.
+     *         Comparing it against `bucket` alone — what this said until
+     *         #1349 — misreads the case the recovery terms exist for:
+     *         balance ten over bucket with twenty reserved floors
+     *         `unearmarked` to zero while `vpfiBalance > bucket` still
+     *         reads as healthy.
      *
      *         **Scoped to #1460, and NOT a general solvency figure.** It nets
      *         ONE custody class. {LibVpfiRecycle}'s separation invariant names
@@ -756,10 +762,19 @@ contract InteractionRewardsLensFacet {
      *         custody against still-open loans. The canonical statement of
      *         all three classes lives on {LibVpfiRecycle.backingPosition} and
      *         is deliberately not restated here.
-     *         Matching #1460's third condition is deliberate:
-     *         the completion plan §M7 step 0 defines it as exactly
-     *         `balanceOf − recycleBucket`, and for detecting a scheduled
-     *         payout eating recycle backing that is the correct subtraction.
+     *         Its relationship to #1460's third condition needs stating
+     *         carefully. The completion plan §M7 step 0 defines that
+     *         condition as `balanceOf − recycleBucket`, and this value is
+     *         no longer that expression — it is that expression MINUS the
+     *         two recovery reservations, so it is a strictly TIGHTER bound
+     *         that can never overstate free tokens and can floor to zero
+     *         while the plan's expression is still positive. Conservative
+     *         in the right direction for detecting a scheduled payout
+     *         eating recycle backing, which is what the condition is for —
+     *         but "defines it as exactly" was left standing here after
+     *         #1434 added the two terms, so a reader reconciling this
+     *         against the plan would find a mismatch and not know which
+     *         side was wrong.
      *         But a payout consuming LIF custody is a DIFFERENT defect, and
      *         this number cannot see it. Do not read a healthy value here as
      *         "the Diamond is solvent across all custody classes".

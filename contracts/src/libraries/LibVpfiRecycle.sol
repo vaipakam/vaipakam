@@ -279,19 +279,32 @@ library LibVpfiRecycle {
      *         before raising the bucket, so THAT property is enforced on
      *         every INFLOW. The same property on OUTFLOW is asserted by
      *         {RewardClaimFacet}'s claim-time gate, which refuses a claim
-     *         whose FRESH components exceed `balanceOf − recycleBucket`
-     *         (#1460 — added after this view; an earlier revision of this
-     *         comment said no path asserted it, which was true when written
-     *         and is not now).
+     *         whose FRESH components exceed the `backingRoom` THIS function
+     *         returns — i.e. all three subtractions, not the
+     *         `balanceOf − recycleBucket` this line said until #1349.
+     *         `RewardClaimFacet:314` reads it from here, as do the two
+     *         sweep-cap sites, which is the whole point of the
+     *         do-not-inline rule below; describing the gate by the retired
+     *         inline formula undercut that rule from the definition's own
+     *         docblock. (#1460 — added after this view; an earlier revision
+     *         said no path asserted it, which was true when written and is
+     *         not now.)
      *
      *         It measures ONE term of the separation invariant, not the
      *         invariant. This library's own natspec states that invariant
      *         over THREE custody classes — `userLifCustody +
      *         unclaimedRewardBudget + recycleBucket` — and `unearmarked`
-     *         nets only the last. That is deliberate (it is exactly #1460's
-     *         third condition, as the completion plan §M7 step 0 defines it),
-     *         but it means a healthy figure here is NOT a solvency statement
-     *         across the other two classes. An earlier revision of this
+     *         nets only the last. That is deliberate — it serves #1460's
+     *         third condition — but it is no longer the expression the
+     *         completion plan §M7 step 0 writes that condition as. The plan
+     *         says `balanceOf − recycleBucket`; this returns that MINUS the
+     *         two #1434 recovery reservations, a strictly tighter bound
+     *         that can never overstate free tokens and can floor to zero
+     *         while the plan's expression is positive. "Exactly … as the
+     *         plan defines it" until #1349, which would send a reader
+     *         reconciling the two to conclude one side was broken. And a
+     *         healthy figure here is still NOT a solvency statement across
+     *         the other two classes. An earlier revision of this
      *         comment claimed the library "owns the separation invariant it
      *         measures", which overstated the scope in precisely the way the
      *         reading facet's own natspec had already been corrected for —
@@ -499,8 +512,15 @@ library LibVpfiRecycle {
      *         without eating recycle backing. THREE floored subtractions,
      *         applied in sequence: `vpfiBalance − bucket`, then
      *         `strandedRecoveryReserved` (#1434 P2-w2), then the recovery
-     *         position (P2-w5). Zero means fully consumed OR in breach;
-     *         read it with `vpfiBalance` and `bucket` to tell those apart.
+     *         position (P2-w5). Zero means fully consumed OR in breach, and
+     *         telling those apart needs the SUBTRAHENDS, not just the
+     *         bucket: compare `vpfiBalance` against
+     *         `bucket + strandedRecoveryReserved + recoveryPosition`
+     *         (`InteractionRewardsLensFacet.getRecycleBackingSnapshot`
+     *         publishes all of them). "Read it with `vpfiBalance` and
+     *         `bucket`" — this line until #1349 — is the two-value
+     *         diagnostic from before those terms existed, and it reports
+     *         healthy on exactly the case they were added to catch.
      *
      *         This said `vpfiBalance − bucket` alone until #1349 — the
      *         formula from before the two P2-w terms were added, left
