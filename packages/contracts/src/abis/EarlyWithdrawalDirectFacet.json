@@ -2099,6 +2099,11 @@
   },
   {
     "type": "error",
+    "name": "SaleLoanPastMaturity",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SaleLtvAboveAdmissionCap",
     "inputs": [
       {
