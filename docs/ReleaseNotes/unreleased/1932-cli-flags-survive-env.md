@@ -26,29 +26,37 @@ directions: an option missing from the list is the original problem returning,
 and a name in the list that no option sets is protection for something that no
 longer exists, which makes the list look more complete than it is.
 
-Review then took the whole approach apart, correctly, and the second version of
-this fix is much simpler than the first.
+Review then took the whole approach apart, three times over, and the answer
+turned out to be much simpler than any of the attempts.
 
-The settings file is not read as data — it is executed. So an attempt to restore
-the operator's choices after loading it was never going to hold: the file can
-disable the checks that make a failed restore fatal, make a value permanently
-unwritable so the restore fails, or replace the very command used to perform the
-restore so that every restoration silently does nothing. Each of those was
-demonstrated against a successive version of the fix.
+The settings file was never being read — it was being run. Everything in it
+executes as instructions inside the deployment itself. So each attempt to let the
+operator's choices win after loading it failed for a new reason: the file could
+switch off the safeguards, make a value permanently unwritable so restoring it
+failed, replace the command used to restore, or — the one that ended the argument
+— simply supply a different command line, replacing what the operator typed
+before it was ever read. Ordering could not fix that, because the file gets to
+speak first either way.
 
-The working version does not compete with the file at all. It loads the settings
-first and reads the operator's choices afterwards, so what was typed is simply
-assigned last and wins by construction. There is no list of protected names to
-keep in step with the options, nothing saved for the file to reach, and nothing
-to restore. The one thing that survived from the first attempt is the check that
-keeps it honest — rewritten to verify the order rather than a list, and now
-covering the third deployment script, which had no protection at all and where a
-stray setting could have triggered a wipe-and-redeploy nobody asked for.
+The settings file is now read as data. Each line is taken as a name and a value
+and nothing else; nothing in it can run. A line that is not a plain setting stops
+the deployment rather than being skipped, because a skipped line is a setting the
+operator believes is in effect and is not. Every attack found during review is
+now either refused outright or stored harmlessly as text — including one that
+tried to create a file, which no longer happens. A side benefit: values containing
+a dollar sign, which is common in URLs carrying access keys, now survive exactly
+as written instead of being partially expanded.
 
-One further correction came out of testing rather than reasoning: a settings file
-can also switch off the shell's own error checking for the rest of the run, which
-would turn every later failure into a warning during a mainnet deploy. Those
-settings are now re-established immediately after the file is read.
+All four operator scripts that read the file were switched over, including one
+nobody had raised and the local development playground, which had briefly been
+made to require production settings it does not need.
+
+The check that keeps this honest is now deliberately blunt: it asks whether any
+script runs the file, rather than trying to reason about where each script reads
+its options. The three previous versions of that check each certified their own
+blind spot — one looked at only one style of option, one looked at only two of
+the scripts, and one could be walked around by writing the option parsing a
+different way. A question with no moving parts has nowhere to be incomplete.
 
 Nothing changes for an operator who was not relying on the settings file to
 supply these switches, which is everyone following the documented process.

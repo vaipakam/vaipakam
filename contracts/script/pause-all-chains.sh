@@ -41,6 +41,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/load-env.sh
+source "$SCRIPT_DIR/lib/load-env.sh"
 DEPLOY_ROOT="$CONTRACTS_DIR/deployments"
 SENTINEL_DIR="$CONTRACTS_DIR/.pause-runs"
 PAUSE_BUDGET_S=300
@@ -68,7 +70,9 @@ done
 # calldata + unpause modes don't need it. The --check branch
 # enforces presence per-chain.
 if [ -f "$CONTRACTS_DIR/.env" ]; then
-  set -a; source "$CONTRACTS_DIR/.env"; set +a
+  # #1932 / #1938 — data, not code. See lib/load-env.sh; this script also
+  # parses operator input after this point, so the same exposure applied.
+  load_env_file "$CONTRACTS_DIR/.env"
 fi
 
 # Map chain-slug → RPC env var. Mirrors deploy-{chain,mainnet,

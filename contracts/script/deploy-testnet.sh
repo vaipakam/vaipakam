@@ -197,6 +197,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/load-env.sh
+source "$SCRIPT_DIR/lib/load-env.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -283,39 +285,6 @@ Phases (mirror mainnet phase-for-phase except pause-rehearsal):
 For mainnet, use deploy-mainnet.sh (refuses pause-rehearsal).
 For Anvil + dev quick-iteration, use deploy-chain.sh.
 EOF
-  exit 1
-fi
-
-# ── Load .env BEFORE parsing anything the operator typed ──────────────
-#
-# Order is the whole mechanism, and it replaces one that could not work.
-# `.env` is SOURCED, which is to say EXECUTED: #1932 first tried to parse
-# flags and then restore them after the source, and Codex #1938 took that
-# apart in two rounds — the file can redefine the restore list, mark a
-# target `readonly` so `printf -v` fails, `set +e` so the failure is not
-# fatal, or simply define `printf() { :; }` and make every restore a
-# silent no-op. No amount of restoring-afterwards survives arbitrary code
-# running in between.
-#
-# Reading it FIRST removes the contest instead of trying to win it:
-# anything below overwrites what the file set, because it is assigned
-# later. There is no protected-name list to keep in step, no saved state
-# for the file to reach, and nothing to restore.
-#
-# Placed after the usage guard so `--help` and a no-argument run still
-# exit without requiring a `.env`.
-if [ -f "$CONTRACTS_DIR/.env" ]; then
-  set -a; source "$CONTRACTS_DIR/.env"; set +a
-  # RE-ASSERT the shell options the file may have turned off. Sourcing runs
-  # its contents in THIS shell, so a `.env` containing `set +e` leaves the
-  # rest of a mainnet deploy running without errexit — every later failure
-  # becomes a warning. Verified rather than assumed: with `set +e` in the
-  # file and a `readonly CONFIRM_PURGE_MAINNET=1`, the default assignment
-  # below failed, did not abort, and the purge gate stayed armed. Restoring
-  # the options turns that into a loud stop.
-  set -euo pipefail
-else
-  echo "Error: $CONTRACTS_DIR/.env not found." >&2
   exit 1
 fi
 
@@ -428,22 +397,21 @@ esac
 
 # ── Load .env ─────────────────────────────────────────────────────────
 
-# #884 — flags parsed above must SURVIVE this block. `set -a; source`
-# exports every assignment in the shared .env, so a `CONFIGURE_VPFI_PEG_OPT=`
-# line there overwrites what the operator just typed on the command line —
-# silently, and in BOTH directions: a stale `=1` prices VPFI on a run that
-# never asked, and a `=0` discards an explicit `--configure-vpfi-peg`.
+# #1932 / #1938 — READ as data, never SOURCE. `source` executes the file in
+# this shell, and three rounds of review showed that cannot be made safe:
+# the file could redefine the restore list, `readonly` a target so the
+# restore failed, `set +e` so the failure was not fatal, replace `printf`
+# so restoring silently did nothing, or `set -- …` to supply the very
+# command line it was supposed to lose to. Ordering does not fix an
+# arbitrary-code problem; not running the code does.
 #
-# That is precisely the failure the flag was chosen to avoid. The flag's own
-# rationale above says an env var is unsafe here "because the wrappers source
-# a shared .env" — and then the parsed flag sat in an ordinary shell variable
-# that the same source overwrites. The reasoning was right and the ordering
-# defeated it (Codex #1920 r4).
-#
-# So the CLI value is snapshotted and restored: whatever .env says about this
-# name is inert, and the only thing that prices VPFI is this run's flag.
-#
-
+# Position is therefore no longer load-bearing and is left where it was.
+if [ -f "$CONTRACTS_DIR/.env" ]; then
+  load_env_file "$CONTRACTS_DIR/.env"
+else
+  echo "Error: $CONTRACTS_DIR/.env not found." >&2
+  exit 1
+fi
 
 RPC="${!RPC_VAR:-}"
 if [ -z "$RPC" ]; then
