@@ -112,11 +112,18 @@ function allowReason(line) {
  * false-ish value disables.
  */
 function flagEnabled(line, flag) {
-  const m = line.match(new RegExp(`${flag}(?:[=\\s]+([^\\s"'\`)]+))?`));
+  // Quoted values are values. The previous pattern excluded quotes from the
+  // captured value, so `--keep-vars="false"` failed the capture, backtracked
+  // to the optional-group-absent branch, and read as a bare — i.e. ENABLED —
+  // flag (Codex #1924 r13, reproduced). A guard that blesses the exact command
+  // it exists to stop is worse than no guard, so both quoting forms are parsed.
+  const m = line.match(
+    new RegExp(`${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|([^\\s"'\`)]+)))?`),
+  );
   if (!m) return false;
-  const value = m[1];
+  const value = m[1] ?? m[2] ?? m[3];
   if (value === undefined) return true; // bare flag
-  return !/^(false|0|no|off)$/i.test(value);
+  return !/^(false|0|no|off)$/i.test(value.trim());
 }
 
 function isSafe(line) {

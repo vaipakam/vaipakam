@@ -167,6 +167,20 @@
   //      8, then first reach the missed cadence at step 9 up to a day
   //      later, having let the fund-moving passes submit for that whole
   //      period on a Worker that then turns out to still die.
+  //      ALSO CHECK THE CHAIN SET, on every tick you accept as evidence
+  //      (Codex #1924 r13). Each tick logs `chains resolved: N — …`.
+  //      Confirm N and the names match the chains this deployment is
+  //      meant to serve. A chain drops out SILENTLY: `readSecret`
+  //      collapses an absent binding or a failing Secrets Store fetch to
+  //      `undefined` (deliberately, so one bad secret cannot abort the
+  //      tick), and `getChainConfigs` then skips any chain with no RPC.
+  //      The per-chain log lines are the only other trace, so a missing
+  //      chain shows up as an ABSENCE — which is exactly what nobody
+  //      reads off a tail. A tick that ends `ok` against four of six
+  //      chains has not validated the CPU cost of six, and the work
+  //      scales with the set: when the binding recovers after step 8,
+  //      the untested load returns and can re-exhaust the budget with
+  //      the fund-moving passes already armed.
   //      If it still reports `exceededCpu`: set `"crons": []` again,
   //      **REVERT AND COMMIT that** (Codex #1924 r12 — step 2 made the
   //      active schedule a COMMITTED change, so a rollback that only
