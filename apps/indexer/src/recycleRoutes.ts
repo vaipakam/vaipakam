@@ -531,10 +531,26 @@ export function storedPayloadIsComplete(v: unknown): v is Record<string, string>
   ) {
     return false;
   }
-  return OPTIONAL_PAYLOAD_FIELDS.every(
-    (f) =>
-      rec[f] === undefined ||
-      (typeof rec[f] === 'string' && DECIMAL_STRING.test(rec[f] as string)),
+  // JOINTLY absent or JOINTLY valid — never one of the two.
+  //
+  // This repository produces exactly two payload shapes: the pre-#1930 row
+  // with neither key, and the post-#1930 row with both, written in the same
+  // object literal from the same read. A row carrying exactly one is not a
+  // shape anything here emits — it is corruption or a hand-repair — and it
+  // cannot support the reconciliation these fields exist for, because a
+  // reader subtracting the terms it can see lands on a number that does not
+  // close and has nothing to say why.
+  //
+  // Checking them independently accepted that row and normalised the missing
+  // half to `null`, which publishes a partial subtrahend set through the same
+  // `unavailableReason: null` path as a complete one. Being unable to
+  // reconcile is a fact worth reporting; appearing to reconcile and being
+  // wrong is not.
+  const present = OPTIONAL_PAYLOAD_FIELDS.filter((f) => rec[f] !== undefined);
+  if (present.length === 0) return true;
+  if (present.length !== OPTIONAL_PAYLOAD_FIELDS.length) return false;
+  return present.every(
+    (f) => typeof rec[f] === 'string' && DECIMAL_STRING.test(rec[f] as string),
   );
 }
 

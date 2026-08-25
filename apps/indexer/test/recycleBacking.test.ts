@@ -80,6 +80,20 @@ describe('storedPayloadIsComplete', () => {
     ).toBe(true);
   });
 
+  it('rejects a row carrying exactly ONE of the two recovery keys', () => {
+    // Not a shape this repository emits: both are written in the same object
+    // literal from the same read, so one-of-two is corruption or a hand
+    // repair. Accepting it would publish a partial subtrahend set through
+    // the same success path as a complete one — appearing to reconcile and
+    // being wrong, which is worse than visibly not reconciling.
+    expect(
+      storedPayloadIsComplete({ ...good, strandedRecoveryReserved: '7' }),
+    ).toBe(false);
+    expect(
+      storedPayloadIsComplete({ ...good, recoveryPositionReserved: '7' }),
+    ).toBe(false);
+  });
+
   it('rejects a present-but-malformed recovery-reserve value', () => {
     // Optional means absent-or-valid, never absent-or-anything. A
     // truncated or non-numeric figure published as a backing subtrahend is
