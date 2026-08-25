@@ -248,6 +248,16 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a bare deploy hidden under a comment ending in a backslash (#1924 r26)', () => {
+    // bash ignores the backslash inside the comment and runs line 2 normally.
+    // Folding it joined both lines, then stripComment deleted the lot.
+    const r = runWith(
+      'apps/keeper/README.md',
+      '# previous deploy used \\\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -402,6 +412,19 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
       'contracts/script/deploy-chain.sh',
       'cd "$KEEPER_DIR"\npnpm exec wrangler deploy \\\n  --keep-vars\n',
     );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a boolean option placed before the safety flag (#1924 r26)', () => {
+    // Both are booleans per wrangler's own help. Consuming --keep-vars as
+    // --strict's value made the guard REJECT a safe command, which would
+    // block CI on valid input.
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --strict --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('still strips a genuinely space-separated option value', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message note --keep-vars\n');
     expect(r.ok).toBe(true);
   });
 

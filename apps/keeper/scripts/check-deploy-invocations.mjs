@@ -164,8 +164,20 @@ function stripOtherOptionValues(line) {
   // `--message=note\ --keep-vars` as ONE argument, so nothing is enabled, but
   // a pattern that stopped at the backslash-space left `--keep-vars` looking
   // token-initial (Codex #1924 r25).
+  // Two forms, and the difference is load-bearing (Codex #1924 r26):
+  //   `--opt=<value>`  — attached, so the value is whatever follows the `=`.
+  //   `--opt <value>`  — separated, and the value must NOT begin with `-`.
+  // Without that `(?!-)`, a boolean option before the flag —
+  // `wrangler deploy --strict --keep-vars`, both booleans per wrangler's own
+  // help — had `--keep-vars` consumed as `--strict`'s value, and the guard
+  // REJECTED a perfectly safe command. That is the failure mode that gets a
+  // guard deleted: it runs in typecheck, so it would block CI on valid input.
+  const CHUNKS = '(?:"[^"]*"|\'[^\']*\'|(?:\\\\[\\s\\S])|[^\\s"\'\\\\]+)+';
   return line.replace(
-    /--(?!keep-vars\b|dry-run\b)[A-Za-z0-9-]+(?:=|\s+)(?:"[^"]*"|'[^']*'|(?:\\[\s\S])|[^\s"'\\]+)+/g,
+    new RegExp(
+      `--(?!keep-vars\\b|dry-run\\b)[A-Za-z0-9-]+(?:=${CHUNKS}|\\s+(?!-)${CHUNKS})`,
+      'g',
+    ),
     '\u0000',
   );
 }
@@ -349,7 +361,12 @@ function foldContinuations(text) {
   let startLine = 0;
   for (let i = 0; i < lines.length; i += 1) {
     const raw = lines[i];
-    const continues = /\\$/.test(raw);
+    // A trailing backslash that lives inside a COMMENT is not a continuation —
+    // bash ignores it and runs the next line normally. Folding it anyway let a
+    // comment ending in `\` swallow the command beneath it, after which
+    // `stripComment` deleted the whole logical line and an unsafe deploy
+    // vanished (Codex #1924 r26). Decide from the code part, not the raw line.
+    const continues = /\\$/.test(stripComment(raw));
     const body = continues ? raw.slice(0, -1) : raw;
     if (buf === null) {
       buf = body;
