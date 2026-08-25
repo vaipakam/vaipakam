@@ -270,7 +270,13 @@ fi
 # the error is DEFERRED to just past the anvil delegation, not dropped.
 __env_missing=0
 if [ -f "$CONTRACTS_DIR/.env" ]; then
-  load_env_file "$CONTRACTS_DIR/.env"
+  # A MALFORMED file is deferred exactly like a missing one. `set -euo
+  # pipefail` made a rejected `.env` abort here — before the anvil
+  # delegation — so a bad line in a file the local playground never reads
+  # still broke it (Codex #1938 r8). That is the same regression as the
+  # missing-file case, one round later, because I deferred one and not the
+  # other.
+  load_env_file "$CONTRACTS_DIR/.env" || __env_missing=1
 else
   __env_missing=1
 fi
@@ -363,7 +369,7 @@ esac
 
 # The anvil path has `exec`d by now; every other chain needs the file.
 if [ "$__env_missing" = "1" ]; then
-  echo "Error: $CONTRACTS_DIR/.env not found." >&2
+  echo "Error: $CONTRACTS_DIR/.env is missing or could not be loaded." >&2
   echo "Copy .env.example → .env and populate the keys for $CHAIN_SLUG." >&2
   exit 1
 fi

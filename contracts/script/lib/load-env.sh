@@ -43,7 +43,8 @@
 # declare. Adding a setting means documenting it, which was already the rule.
 load_env_file() {
   local __lenv_file="$1" __lenv_line __lenv_name __lenv_value __lenv_no=0
-  local __lenv_q __lenv_rest
+  local __lenv_q __lenv_rest __lenv_i
+  local __lenv_names=() __lenv_vals=()
 
   [ -f "$__lenv_file" ] || { echo "Error: $__lenv_file not found." >&2; return 1; }
 
@@ -62,6 +63,20 @@ load_env_file() {
     esac
     __lenv_name="${__lenv_line%%=*}"
     __lenv_value="${__lenv_line#*=}"
+
+    # The loader's OWN namespace. Renaming internals to `__lenv_*` was
+    # obscurity, not protection — `.env` can simply name the new spelling, and
+    # `export` inside this function writes the LOCAL, so
+    # `__lenv_no=BASH_VERSINFO[$(touch …)]` was executed at the next `$(( ))`
+    # again once the allowlist that had been catching it was withdrawn
+    # (Codex #1938 r8). Unlike the open-ended startup-hook list, this namespace
+    # IS closed: it is whatever this file declares, and this file declares only
+    # `__lenv_*`.
+    case "$__lenv_name" in __lenv_*)
+      echo "Error: $__lenv_file:$__lenv_no sets '$__lenv_name', which is this loader's" >&2
+      echo "       own internal namespace — refusing." >&2
+      return 1 ;;
+    esac
 
     case "$__lenv_name" in '' | [0-9]* | *[!A-Za-z0-9_]*)
       echo "Error: $__lenv_file:$__lenv_no invalid variable name '$__lenv_name'." >&2
@@ -126,6 +141,18 @@ load_env_file() {
     esac
     __lenv_value="${__lenv_value%"${__lenv_value##*[![:space:]]}"}"
 
-    export "$__lenv_name=$__lenv_value"
+    __lenv_names[${#__lenv_names[@]}]="$__lenv_name"
+    __lenv_vals[${#__lenv_vals[@]}]="$__lenv_value"
   done < "$__lenv_file"
+
+  # ATOMIC. Exporting as we went left a rejected file PARTIALLY applied — the
+  # settings above the bad line were live, and callers that treat a load
+  # failure as non-fatal (the emergency pause path) then ran on half a
+  # configuration (Codex #1938 r8). Nothing is exported until the whole file
+  # has parsed.
+  __lenv_i=0
+  while [ "$__lenv_i" -lt "${#__lenv_names[@]}" ]; do
+    export "${__lenv_names[$__lenv_i]}=${__lenv_vals[$__lenv_i]}"
+    __lenv_i=$((__lenv_i + 1))
+  done
 }
