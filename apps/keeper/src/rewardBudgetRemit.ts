@@ -231,6 +231,7 @@ async function remitToMirror(
   // backing allocation still includes an excluded day — an unstabilized
   // batch would starve affordable later days every tick.
   const MAX_REPLAN_PASSES = 24;
+  let droppedInReplan = 0;
   let stabilized = false;
   for (let pass = 0; pass < MAX_REPLAN_PASSES; pass++) {
     [perDay, closeable] = (await publicClient.readContract({
@@ -253,6 +254,12 @@ async function remitToMirror(
       break;
     }
     const drop = new Set(oversized.map((d) => d.toString()));
+    // Days dropped during REPLANNING are still owed. `deferred` is computed
+    // later from the filtered plan, so without carrying these forward a mixed
+    // plan — one oversized day plus several sendable ones — sent the sendable
+    // batch, finished with deferred === 0, and reported the destination
+    // settled while the oversized day stayed unfunded (Codex #1924 r21).
+    droppedInReplan += oversized.length;
     planWindow = planWindow.filter((d) => !drop.has(d.toString()));
     if (planWindow.length === 0) {
       // NOT settled (Codex #1924 r19). Reaching here means every owed day was
@@ -281,7 +288,7 @@ async function remitToMirror(
   // amount=0 / closeable=false) report 0/A forever and put the stand-down
   // permanently out of reach. An empty batch is settled ONLY when nothing was
   // left behind (Codex #1924 r20).
-  let deferred = 0;
+  let deferred = droppedInReplan;
   for (let i = 0; i < planWindow.length; i++) {
     const slice = perDay[i] ?? 0n;
     if (slice === 0n) {

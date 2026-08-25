@@ -160,8 +160,15 @@ function flagEnabled(rawLine, flag) {
   // matchAll yielded ONE match reading as enabled and "last occurrence wins"
   // silently did nothing. It has to be in the pattern: matchAll iterates a
   // CLONE, so adjusting `lastIndex` from the loop body has no effect.
+  // `(?<![^\\s(\`'"=])` — the flag must BEGIN a shell token. Without it,
+  // `--message=remember--keep-vars` had its suffix read as a real flag and the
+  // destructive deploy passed (Codex #1924 r21). The r19 fix only neutralized
+  // QUOTED option values, so the unquoted same-argument form slipped through.
+  // The allowed predecessors are whitespace, `(`, a backtick or quote (prose
+  // and shell wrapping) and `=` — the last so `--keep-vars=true` still
+  // matches on its own value boundary.
   const re = new RegExp(
-    `${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|((?!-)[^\\s"'\`)]+)))?`,
+    `(?<![^\\s(\`'"=])${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|((?!-)[^\\s"'\`)]+)))?`,
     'g',
   );
   let effective = null;

@@ -810,6 +810,44 @@ jobs:
           path: contracts/docs/book
           retention-days: 7
 
+  keeper-deploy-guard:
+    # DELIBERATELY UNFILTERED — no `needs: detect-changes`, no `if:`.
+    #
+    # `apps/keeper/scripts/check-deploy-invocations.mjs` asserts a TREE-WIDE
+    # property: no keeper `wrangler deploy` anywhere in the repo may omit
+    # `--keep-vars`, because a bare deploy erases the dashboard-managed
+    # liquidation tuning (`HF_SCALE`, `LIQ_*`, `SPLIT_*`, `PARTIAL_LIQ_*`).
+    # It scans docs/, contracts/script/, ops/, .github/ and the workspaces.
+    #
+    # Running it inside the `workspaces` job would path-skip it on exactly the
+    # PRs it exists to catch: a docs-only or `contracts/script/`-only change
+    # sets `workspaces=false`, so an unsafe command could merge and later tell
+    # an operator to run the destructive deploy (Codex #1924 r21). This file
+    # already records that failure mode three times — #1485, #1624, #1623, all
+    # "a check INSIDE the workspaces job reads a file OUTSIDE the workspaces"
+    # — so this is the fourth instance of a known class, and the fix is to
+    # stop path-filtering a check whose scope is the whole tree.
+    #
+    # It stays cheap enough to always run: a file walk with no pnpm install
+    # and no build, a couple of seconds.
+    name: keeper deploy guard (--keep-vars, tree-wide)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Assert every keeper deploy preserves dashboard vars
+        run: node apps/keeper/scripts/check-deploy-invocations.mjs
+
   workspaces:
     name: workspaces (pnpm typecheck)
     needs: detect-changes

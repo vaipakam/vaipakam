@@ -181,13 +181,25 @@
   //      scales with the set: when the binding recovers after step 8,
   //      the untested load returns and can re-exhaust the budget with
   //      the fund-moving passes already armed.
-  //      AND REJECT ANY TICK CARRYING `chain=… err=…` LINES (Codex
-  //      #1924 r16). Per-chain scan failures are CAUGHT and logged —
-  //      `runLiquidator` continues the loop and returns normally, so
-  //      the pass still ends `done in Nms`. A tick where the RPCs
-  //      failed early did far LESS work than a healthy one, which makes
-  //      it worthless as CPU evidence in the one direction that
-  //      matters: it looks green precisely because it did nothing.
+  //      AND REJECT ANY TICK THAT LOGS AN ERROR AT ALL — not a
+  //      particular marker (Codex #1924 r16, widened in r21). Every
+  //      pass catches its own per-chain failures, continues, and still
+  //      ends `done in Nms`, but each spells the failure differently:
+  //      `runLiquidator chain=… err=…`, `liquidator chain=…
+  //      getActiveLoansCount failed`, `preGraceWatcher count failed
+  //      chain=…`, `runLiquidityConfidence chain=… failed:` — and the
+  //      list grows whenever a pass adds a failure path. Naming shapes
+  //      to reject has been incomplete every time it was tried, so the
+  //      rule here is the blanket one: **no `console.error` output from
+  //      any due pass**.
+  //      Over-rejecting is the SAFE direction for this particular
+  //      check, which is why a blanket rule works here and did not for
+  //      the liquidation stand-down in `IncidentRunbook` §3.5. There,
+  //      rejecting too much stranded manual coverage indefinitely; here
+  //      it costs one more minute of waiting for a clean tick. A tick
+  //      whose RPCs failed early did far LESS work than a healthy one,
+  //      so it looks green precisely because it did nothing — worthless
+  //      as CPU evidence in the one direction that matters.
   //      If it still reports `exceededCpu`: set `"crons": []` again,
   //      **REVERT AND COMMIT that** (Codex #1924 r12 — step 2 made the
   //      active schedule a COMMITTED change, so a rollback that only

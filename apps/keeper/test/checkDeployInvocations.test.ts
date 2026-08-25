@@ -172,6 +172,11 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a safety flag embedded in an UNQUOTED option value (#1924 r21)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message=remember--keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -298,6 +303,11 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('accepts a later --keep-vars=true overriding an earlier false', () => {
     const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars=false --keep-vars=true\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('still accepts the flag when it begins a token after an equals', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars=true\n');
     expect(r.ok).toBe(true);
   });
 
