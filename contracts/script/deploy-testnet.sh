@@ -311,6 +311,13 @@ else
   exit 1
 fi
 
+# The unpause drill below compares `POST_HANDOVER` against the literal `1`, so
+# `true` or `yes` would be taken as pre-handover rather than refused. Validated
+# here rather than there, so `.env` and the environment are both covered by one
+# check that runs before anything branches on the value (Codex #1938 r13, swept
+# from the sibling in `pause-all-chains.sh`).
+env_assert_bool POST_HANDOVER || exit 1
+
 CHAIN_SLUG="$1"; shift
 
 PHASE=""

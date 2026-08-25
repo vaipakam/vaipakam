@@ -143,13 +143,22 @@ load_env_file() {
     # reading it before the operator's own arguments. Hardening the export
     # surface against a hostile file is a separate, larger job across every
     # reader and runbook — tracked, not smuggled in here.
+    #
+    # The npm arm is a PREFIX, and case-insensitively so, because npm maps
+    # EVERY config key to `npm_config_<key>` in any casing. The finding named
+    # two spellings; six were reachable, and three distinct keys reach
+    # execution against the `pnpm run` steps in `cf-defi`/`cf-www`/`cf-keeper`/
+    # `cf-agent`: `script_shell` directly, and `userconfig`/`globalconfig` by
+    # pointing npm at an `.npmrc` that sets it. Listing key names would have
+    # closed one of the three (Codex #1938 r13).
     case "$__lenv_name" in
       BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|GLOBIGNORE|IFS|PS4|PATH \
       |LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_FUNC_* \
       |NODE_OPTIONS|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|RUBYOPT|JAVA_TOOL_OPTIONS \
       |GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*|GIT_CONFIG_GLOBAL \
       |GIT_CONFIG_SYSTEM|GIT_SSH_COMMAND|GIT_EXTERNAL_DIFF|GIT_PAGER|GIT_EDITOR \
-      |GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_ALTERNATE_OBJECT_DIRECTORIES)
+      |GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_ALTERNATE_OBJECT_DIRECTORIES \
+      |[Nn][Pp][Mm]_[Cc][Oo][Nn][Ff][Ii][Gg]_*)
         echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which another program" >&2
         echo "       would treat as a startup hook — refusing to export it." >&2
         return 1 ;;
@@ -216,4 +225,31 @@ load_env_file() {
     export "${__lenv_names[$__lenv_i]}=${__lenv_vals[$__lenv_i]}"
     __lenv_i=$((__lenv_i + 1))
   done
+}
+
+# Assert that a declaration read as a boolean uses the documented vocabulary.
+#
+# Every consumer of these flags compares against the literal `1`, so an
+# unrecognised value is not REJECTED by them — it silently takes the `0`
+# branch. For `POST_HANDOVER` that is the dangerous direction: `0` labels the
+# pre-handover direct calls valid on a chain the timelock already owns, so
+# `POST_HANDOVER=true` reads as "not handed over" and the operator is handed
+# calldata that cannot execute (Codex #1938 r13).
+#
+# It lives here, beside the loader, so there is ONE implementation of the rule
+# and it applies whatever the value's source — `.env`, the environment, or the
+# explicit fallback the emergency path recommends. Call it once per script,
+# right after the load, BEFORE anything branches on the value.
+env_assert_bool() {
+  __eab_name="$1"
+  eval "__eab_val=\${$__eab_name:-}"
+  case "$__eab_val" in
+    ''|0|1) return 0 ;;
+    *)
+      echo "Error: $__eab_name must be 0 or 1." >&2
+      echo "       It is read as a boolean, and every reader compares against 1," >&2
+      echo "       so any other value would silently be taken as 0 rather than" >&2
+      echo "       rejected. (Value withheld.)" >&2
+      return 1 ;;
+  esac
 }

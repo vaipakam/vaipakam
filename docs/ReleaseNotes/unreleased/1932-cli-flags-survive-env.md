@@ -100,5 +100,16 @@ documented harmlessness into a refused deployment. They are recognised, and the
 forcing is what keeps them from deciding anything. A hardening change is not
 allowed to break a behaviour the documentation guarantees.
 
+One operator-visible behaviour did change, and in the safe direction. The
+emergency pause tool and the testnet unpause drill both read a switch that says
+whether ownership of the unpause has already moved to the timelock. They only
+ever recognised the value one; anything else — the word true, the word yes — was
+not rejected, it was quietly read as "ownership has not moved", and the operator
+was then handed instructions that could not run on a chain where it had. Both
+tools now check that switch once, as soon as the settings are read and before
+anything decides on it, and stop with an explanation if it says something they do
+not recognise. A declaration that is read as yes-or-no is now required to say one
+or the other.
+
 Nothing changes for an operator who was not relying on the settings file to
 supply these switches, which is everyone following the documented process.

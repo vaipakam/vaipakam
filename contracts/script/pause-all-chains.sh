@@ -114,6 +114,13 @@ done
 #
 # Pausing is the action an incident needs and it consults no such declaration,
 # so it still proceeds.
+# Validated before ANY branch reads it, and whatever its source. The fallback
+# below accepts an explicitly exported value; without this, `POST_HANDOVER=true`
+# passed that non-empty test and then failed the `= "1"` test at the emit site,
+# labelling pre-handover direct calls valid on a handed-over chain — the exact
+# failure the fallback exists to prevent (Codex #1938 r13).
+env_assert_bool POST_HANDOVER || exit 1
+
 if [ "$__env_load_failed" = "1" ]; then
   case "$MODE" in
     unpause)
