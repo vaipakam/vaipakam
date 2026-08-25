@@ -449,6 +449,20 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a four-tilde fenced shell example (#1924 r33)', () => {
+    // CommonMark allows 3+ fence characters; matching exactly three missed it.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Steps:\n\n~~~~bash\ncd apps/keeper\nwrangler \\\n  deploy\n~~~~\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a version-qualified wrangler executable (#1924 r33)', () => {
+    const r = runWith('apps/keeper/x.sh', 'npx wrangler@4.90.0 deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -743,6 +757,21 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('accepts the &>> append form as well', () => {
     const r = runWith('apps/keeper/x.sh', 'wrangler deploy &>> deploy.log --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a version-qualified executable with the flag', () => {
+    const r = runWith('apps/keeper/x.sh', 'npx wrangler@4.90.0 deploy --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not close a long fence on a shorter one inside it', () => {
+    // A ```` block may legitimately contain a ``` line; closing early would
+    // leave the remainder scanned with the wrong model.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      '````bash\ncd apps/keeper\nwrangler deploy --keep-vars\n````\n',
+    );
     expect(r.ok).toBe(true);
   });
 

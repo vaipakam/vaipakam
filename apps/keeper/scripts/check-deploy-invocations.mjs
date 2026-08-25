@@ -85,8 +85,10 @@ const SKIP_DIRS = new Set([
  * precede the subcommand, and `wrangler --cwd apps/keeper deploy` is a real
  * bare deploy that every literal `wrangler deploy` test missed (Codex #1924
  * r31). Intervening tokens are allowed as long as they look like options.
+ * The executable may also be version-qualified — `npx wrangler@4.90.0 deploy`
+ * is the ordinary npm pinning form (Codex #1924 r33).
  */
-const DEPLOY_RE = String.raw`wrangler\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*deploy\b`;
+const DEPLOY_RE = String.raw`wrangler(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*deploy\b`;
 
 /** Vendored trees excluded by exact repo-relative path, not by basename. */
 const SKIP_PATHS = new Set(['contracts/lib']);
@@ -597,9 +599,11 @@ function embeddedShellLines(text) {
     // shell, and three allowlisted README lines were reported (Codex #1924
     // r31, caught on the live tree). Only shell-tagged blocks are scanned;
     // the rest are tracked purely to stay in sync.
-    // Markdown fences may be backticks OR tildes (Codex #1924 r32).
-    const anyFence = lines[i].match(/^\s*(?:```|~~~)([A-Za-z0-9_-]*)\s*$/);
-    const fence = anyFence && /^(bash|sh|shell|console|)$/.test(anyFence[1]);
+    // A fence is THREE OR MORE of one character, and its closer must use the
+    // same character and be at least as long (CommonMark). Matching exactly
+    // three missed `~~~~bash` entirely (Codex #1924 r32, r33).
+    const anyFence = lines[i].match(/^\s*(`{3,}|~{3,})([A-Za-z0-9_-]*)\s*$/);
+    const fence = anyFence && /^(bash|sh|shell|console|)$/.test(anyFence[2]);
     // A YAML comment may follow the block indicator (`run: | # deploy keeper`),
     // and the indicator itself decides the folding (Codex #1924 r29).
     // A block scalar may carry an explicit INDENTATION indicator as well as a
@@ -608,7 +612,8 @@ function embeddedShellLines(text) {
     if (anyFence) {
       const start = i + 1;
       let j = start;
-      while (j < lines.length && !/^\s*(?:```|~~~)/.test(lines[j])) j += 1;
+      const closer = new RegExp(`^\\s*${anyFence[1][0] === '`' ? '`' : '~'}{${anyFence[1].length},}\\s*$`);
+      while (j < lines.length && !closer.test(lines[j])) j += 1;
       if (fence) {
         out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start, blockId));
         blockId += 1;
@@ -782,7 +787,7 @@ for (const file of walk(REPO_ROOT)) {
     }
     // A non-shell line is judged on its own content only.
     const scopedByCwd = physical ? false : cwdIsKeeper;
-    if (/^\s*$/.test(line) || /^\s*(?:```|~~~)/.test(line)) {
+    if (/^\s*$/.test(line) || /^\s*(?:`{3,}|~{3,})/.test(line)) {
       cwdIsKeeper = false;
     } else {
       // `pushd` moves the shell exactly as `cd` does and is ordinary in deploy

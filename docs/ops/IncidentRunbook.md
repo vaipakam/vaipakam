@@ -430,19 +430,23 @@ running.
 >      checklist tried to enumerate the markers *not* to see and were
 >      incomplete each time. A missing `scan complete` line for an
 >      expected chain means that chain was not scanned.
->   5. **On every one of those lines, `atRisk` must equal `submitted`.**
->      The marker says the chain was SWEPT, not that it is safe to stop
->      watching — those are different claims and this checklist
->      previously conflated them. `maybeAutonomousLiquidate` returns
->      without submitting when a loan has no usable quote, when the
->      keeper context or account is missing, when a submission error is
->      caught, and when `MAX_LIQUIDATIONS_PER_TICK` is hit. All of those
->      leave underwater loans untouched while the line still prints.
->      `atRisk > submitted` means loans were left this tick: keep manual
->      coverage on that chain and find out which of those causes it is.
->      In steady state the healthy reading is `atRisk=0 submitted=0` —
->      a liquidated loan leaves the active set, so the condition is
->      reachable rather than a permanent block.
+>   5. **A LATER tick must show `atRisk=0` on every chain — equality on
+>      one tick is not enough.** `atRisk == submitted` was the earlier
+>      rule here and it is too weak: `submitted` counts BROADCASTS, not
+>      confirmations. Every success path in `maybeAutonomousLiquidate`
+>      returns as soon as `writeContract` hands back a hash; none waits
+>      for a receipt. So a transaction still pending, or one that
+>      reverted on a state race, keeps the equality true while the loan
+>      is still underwater.
+>      `atRisk=0` on a subsequent scan is the observation that settles
+>      it, because a liquidated loan leaves the active set — the scan
+>      itself is the confirmation. Equality on the first tick tells you
+>      only that nothing was skipped in the moment, which is still worth
+>      checking: `atRisk > submitted` means loans were left untouched
+>      right then, and the causes are a loan with no usable quote, a
+>      missing keeper context or account, a caught submission error, or
+>      `MAX_LIQUIDATIONS_PER_TICK`. Keep manual coverage until a whole
+>      scan comes back with nothing at risk.
 
 Three escalation tiers, least to most disruptive:
 
