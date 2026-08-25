@@ -1473,8 +1473,18 @@ caught at the cheapest stage.
    **Completion criterion for branch A** — the keeper part of this restore is
    DONE when all three hold:
 
-   1. The deploy above succeeded and `wrangler deployments list | head` shows
-      it.
+   1. The deploy above succeeded, confirmed **in keeper scope**:
+
+      ```bash
+      ( cd apps/keeper && wrangler deployments list | head )
+      ```
+
+      The `cd` is load-bearing and the subshell above does not carry over —
+      it exits, leaving you at the repository root, whose `wrangler.jsonc`
+      names **`vaipakam-alpha`**. Run bare from there and this reads another
+      Worker's deployment history entirely, so branch A would complete on
+      evidence about the wrong Worker. `--cwd apps/keeper` or
+      `--name vaipakam-keeper` do the same job if you prefer them.
    2. A trigger-aware readback shows **no** schedule — the `/schedules`
       query later in this step, expected to return an EMPTY `result`. Empty
       is the pass condition here; it is the failure condition in branch B.
@@ -1584,19 +1594,13 @@ caught at the cheapest stage.
      wrangler deployments list | head )
    ```
 
-   **Branch B step 8 — arm, and only after step 7's disarmed validation has
-   passed on live ticks.**
-
-   ```bash
-   # NOT before step 7. Arming here is what lets the six fund-moving passes
-   # submit; do it only once ticks have been observed ending `ok`, across
-   # every cadence and the expected chain set.
-   ( cd apps/keeper
-     wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
-   ```
-
-   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way, at the
-   same point in the order, and only if they were on before.
+   **Branch B step 8 — arming — is NOT here.** Its command block sits at the
+   very end of step 4, after the disarmed tail-validation, because that is
+   the earliest point at which it is safe to run. An earlier revision printed
+   it here with a warning attached and the arming happened anyway: an
+   operator working the command blocks in order reached it immediately after
+   deploying, skipping the readback below and the live-tick validation
+   entirely. Ordering the page is the control; a label is not.
 
    Confirm the schedule is registered before believing a tick will come:
 
@@ -1859,6 +1863,42 @@ caught at the cheapest stage.
 
    Only after that is a tail useful, and then only as positive
    confirmation: watch for a pass you expect to have work to do.
+
+   #### Branch B step 8 — arm. This is the earliest safe point.
+
+   Only reachable if you came through branch B (the #1896 hold has lifted).
+   Everything above has run with `KEEPER_ENABLED` at `false`, which is what
+   made the CPU validation meaningful: the six fund-moving passes were inert
+   while the Worker was proved to survive a production tick.
+
+   Before running this, confirm all of the following from the ticks you just
+   watched — this is branch B step 7, and it is the gate on the command
+   below:
+
+   - Every tick ended `ok`, never `exceededCpu`.
+   - A full 15-minute cycle was covered, so `preGraceWatcher` ran; and the
+     00:00–00:09 UTC window, so `dailyOracleSnapshot` did.
+   - Each tick's `chains resolved: N — …` line named the chains this
+     deployment is meant to serve. A chain drops out silently, and a tick
+     that skipped chains has not validated the load of all of them.
+   - No `console.error` output from any due pass, of any shape.
+
+   If any of that fails, roll back instead: restore `"crons": []`, **commit
+   that**, and redeploy. Nothing is armed yet, so the rollback costs nothing
+   — which is precisely why it belongs before this command and not after.
+
+   ```bash
+   ( cd apps/keeper
+     wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
+   ```
+
+   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way and at
+   this same point, and only if they were on before.
+
+   Then do branch B step 9: validate the now-armed gated passes across every
+   cadence they run at, including one full 5-minute cycle for
+   `rewardBudgetRemit`. Finally, branch B step 10 — clear the checks branch A
+   deferred.
 
 ---
 
