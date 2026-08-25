@@ -51,6 +51,22 @@ All four operator scripts that read the file were switched over, including one
 nobody had raised and the local development playground, which had briefly been
 made to require production settings it does not need.
 
+Reading it as data turned out to be half the answer, and review caught me
+treating it as the whole one. Not running the file stops it from rewriting the
+command line, but it does nothing about an ordinary setting quietly replacing a
+choice the operator made — which is the problem this started as. Having removed
+the ordering on the grounds that it no longer mattered, I put it back: settings
+are read first, choices are read second, so what was typed is applied last.
+
+Two smaller things came out of the same review, both of which would have mattered
+in practice. A handful of setting names are ones the shell itself acts on, and
+passing them along would have handed the file a way to run commands in the next
+program the deployment starts — carrying its credentials. Those names are now
+refused outright. And a setting written with a trailing note on the same line was
+being stored complete with the note, which broke an exact comparison in the
+emergency pause script and would have made it treat a handed-over chain as
+not-yet-handed-over.
+
 The check that keeps this honest is now deliberately blunt: it asks whether any
 script runs the file, rather than trying to reason about where each script reads
 its options. The three previous versions of that check each certified their own

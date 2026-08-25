@@ -31,7 +31,10 @@ import sys
 from pathlib import Path
 
 # Any form of executing the file: `source X`, `. X`, with or without `set -a`.
-SOURCING = re.compile(r'(?:^|;|\s)(?:source|\.)\s+"?\$\{?CONTRACTS_DIR\}?/\.env"?')
+# ANY path ending in `.env`, however it is spelled — `$CONTRACTS_DIR/.env`,
+# `"$SCRIPT_DIR/../.env"`, a bare relative path. Codex #1938 r4 bypassed a
+# version of this that hard-coded the `$CONTRACTS_DIR` spelling.
+SOURCING = re.compile(r'(?:^|;|\s)(?:source|\.)\s+\S*\.env\b')
 LOADER = re.compile(r'\bload_env_file\b')
 MENTIONS_ENV = re.compile(r'\$\{?CONTRACTS_DIR\}?/\.env')
 
@@ -52,7 +55,8 @@ def main() -> int:
                 print(f"  x {path.name}:{i} — SOURCES .env; use `load_env_file` "
                       f"(lib/load-env.sh) so the file is read as data",
                       file=sys.stderr)
-        elif not LOADER.search(text):
+        elif not any(LOADER.search(l) for l in text.splitlines()
+                     if not l.lstrip().startswith('#')):
             bad = 1
             print(f"  x {path.name} — references .env but neither sources it nor "
                   f"calls `load_env_file`; unclear how it is read", file=sys.stderr)

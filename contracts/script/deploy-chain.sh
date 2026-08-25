@@ -250,6 +250,31 @@ EOF
   exit 1
 fi
 
+# ── Load .env BEFORE parsing anything the operator typed ──────────────
+#
+# BOTH halves are needed and each fixes a different failure:
+#
+#   READ AS DATA (lib/load-env.sh) — `source` executes the file in this
+#   shell, and no ordering survives that: it can `set -- …` and supply the
+#   command line itself.
+#
+#   LOAD FIRST — data-loading alone does NOT stop a plain `FRESH=1` from
+#   overwriting a parsed 0. #1938 r4 caught me removing this ordering after
+#   the data-loader landed, on the reasoning that position no longer
+#   mattered; it does, for exactly the case #1932 was filed about.
+#
+# A missing file is NOT fatal here, unlike the other wrappers:
+# `deploy-chain.sh anvil` delegates to the self-contained
+# anvil-bootstrap.sh and needs no `.env`. Moving the load ahead of the
+# parse broke that documented quick-loop once already (Codex #1938 r3), so
+# the error is DEFERRED to just past the anvil delegation, not dropped.
+__env_missing=0
+if [ -f "$CONTRACTS_DIR/.env" ]; then
+  load_env_file "$CONTRACTS_DIR/.env"
+else
+  __env_missing=1
+fi
+
 CHAIN_SLUG="$1"; shift
 
 SKIP_DEFI=0
@@ -336,24 +361,15 @@ EOF
     ;;
 esac
 
-# ── Load .env and resolve RPC ─────────────────────────────────────────
-
-# #1932 / #1938 — READ as data, never SOURCE. `source` executes the file in
-# this shell, and three rounds of review showed that cannot be made safe:
-# the file could redefine the restore list, `readonly` a target so the
-# restore failed, `set +e` so the failure was not fatal, replace `printf`
-# so restoring silently did nothing, or `set -- …` to supply the very
-# command line it was supposed to lose to. Ordering does not fix an
-# arbitrary-code problem; not running the code does.
-#
-# Position is therefore no longer load-bearing and is left where it was.
-if [ -f "$CONTRACTS_DIR/.env" ]; then
-  load_env_file "$CONTRACTS_DIR/.env"
-else
+# The anvil path has `exec`d by now; every other chain needs the file.
+if [ "$__env_missing" = "1" ]; then
   echo "Error: $CONTRACTS_DIR/.env not found." >&2
   echo "Copy .env.example → .env and populate the keys for $CHAIN_SLUG." >&2
   exit 1
 fi
+
+# ── Load .env and resolve RPC ─────────────────────────────────────────
+
 
 RPC="${!RPC_VAR:-}"
 if [ -z "$RPC" ]; then

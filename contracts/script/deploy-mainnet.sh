@@ -273,6 +273,29 @@ EOF
   exit 1
 fi
 
+# ── Load .env BEFORE parsing anything the operator typed ──────────────
+#
+# BOTH halves are needed and each fixes a different failure:
+#
+#   READ AS DATA (lib/load-env.sh) — `source` executes the file in this
+#   shell, and no ordering survives that: it can `set -- …` and supply the
+#   command line itself.
+#
+#   LOAD FIRST — data-loading alone does NOT stop a plain `FRESH=1` from
+#   overwriting a parsed 0. #1938 r4 caught me removing this ordering after
+#   the data-loader landed, on the reasoning that position no longer
+#   mattered; it does, for exactly the case #1932 was filed about. Parsing
+#   afterwards means what the operator typed is assigned last.
+#
+# Placed after the usage guard so `--help` and a no-argument run still exit
+# without requiring a `.env`.
+if [ -f "$CONTRACTS_DIR/.env" ]; then
+  load_env_file "$CONTRACTS_DIR/.env"
+else
+  echo "Error: $CONTRACTS_DIR/.env not found." >&2
+  exit 1
+fi
+
 CHAIN_SLUG="$1"; shift
 
 PHASE=""
@@ -372,21 +395,6 @@ esac
 
 # ── Load .env ─────────────────────────────────────────────────────────
 
-# #1932 / #1938 — READ as data, never SOURCE. `source` executes the file in
-# this shell, and three rounds of review showed that cannot be made safe:
-# the file could redefine the restore list, `readonly` a target so the
-# restore failed, `set +e` so the failure was not fatal, replace `printf`
-# so restoring silently did nothing, or `set -- …` to supply the very
-# command line it was supposed to lose to. Ordering does not fix an
-# arbitrary-code problem; not running the code does.
-#
-# Position is therefore no longer load-bearing and is left where it was.
-if [ -f "$CONTRACTS_DIR/.env" ]; then
-  load_env_file "$CONTRACTS_DIR/.env"
-else
-  echo "Error: $CONTRACTS_DIR/.env not found." >&2
-  exit 1
-fi
 
 RPC="${!RPC_VAR:-}"
 if [ -z "$RPC" ]; then

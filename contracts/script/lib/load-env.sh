@@ -41,6 +41,19 @@ load_env_file() {
     name="${line%%=*}"
     value="${line#*=}"
 
+    # An UNQUOTED inline comment is stripped, because `source` stripped it and
+    # this loader must not change the meaning of a file that already worked.
+    # Importing it whole is worse than it looks: `POST_HANDOVER=1 # timelock`
+    # then fails an exact `= "1"` test in pause-all-chains.sh, which silently
+    # downgrades a post-handover chain to pre-handover and prints unpause calls
+    # its own comments say are not executable (Codex #1938 r4).
+    case "$value" in
+      \"*|\'*) : ;;                       # quoted: `#` is data, leave it
+      *' #'*)   value="${value%% #*}" ;;
+      *$'\t#'*) value="${value%%$'\t#'*}" ;;
+    esac
+    value="${value%"${value##*[![:space:]]}"}"   # trailing whitespace
+
     case "$line" in *=*) : ;; *)
       echo "Error: $file:$lineno is not NAME=value and was not loaded: $line" >&2
       return 1 ;;
@@ -56,6 +69,22 @@ load_env_file() {
     case "$value" in
       \"*\") value="${value#\"}"; value="${value%\"}" ;;
       \'*\') value="${value#\'}"; value="${value%\'}" ;;
+    esac
+
+    # DENY names the shell itself acts on. Reading the file as data stops it
+    # executing HERE, but exporting these hands execution to the next process:
+    # `BASH_ENV=$(touch /tmp/owned)` stays inert text through the load and then
+    # runs in the first child bash — and a deploy wrapper spawns several,
+    # carrying the deployment environment and its secrets. Reproduced in
+    # Codex #1938 r4: marker absent after the load, present after `bash -c :`.
+    #
+    # A denylist rather than an allowlist because the legitimate names are open
+    # ended (every chain adds RPC/registry keys) while the dangerous ones are a
+    # closed, known set the shell defines.
+    case "$name" in
+      BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|GLOBIGNORE|IFS|PS4|PATH|LD_PRELOAD|LD_LIBRARY_PATH|BASH_FUNC_*)
+        echo "Error: $file:$lineno sets '$name', which the shell acts on — refusing to load it." >&2
+        return 1 ;;
     esac
 
     export "$name=$value"
