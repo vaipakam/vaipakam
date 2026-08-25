@@ -46,7 +46,12 @@ from pathlib import Path
 # command loads, and permits exactly one answer. A path variable, a line wrap,
 # a new spelling — none of them help, because the allowed set is one shape and
 # everything else is reported. Continuations are joined before matching.
-# FIRST TOKEN on a (continuation-joined) line, or immediately after a `;`.
+# COMMAND POSITION: first token, or after a separator that starts a new command
+# (`;`, `&&`, `||`, `then`, `else`, `do`, `{`). Anchoring to `^|;` alone missed
+# `true && source …` (Codex #1938 r8). The separators are enumerated rather than
+# "any punctuation" because the looser version fired on nineteen echoed
+# sentences — a full stop reads exactly like the `.` command. This list is the
+# narrowest thing that starts a command in shell and does not appear mid-prose.
 #
 # Four predicates have failed here, each in a new way, and the last two failed
 # in OPPOSITE directions: one missed `env_file=…; source "$env_file"` and a
@@ -58,7 +63,7 @@ from pathlib import Path
 # Anchoring to command position is what separates them: shell sources at the
 # start of a command, and prose never is. The `;` alternative is there because
 # that is the form the indirect bypass used.
-SOURCING = re.compile(r'(?:^|;)\s*(?:source|\.)\s+(\S+)')
+SOURCING = re.compile(r'(?:^|;|&&|\|\||\bthen\b|\belse\b|\bdo\b|\{)\s*(?:source|\.)\s+(\S+)')
 
 LOADER = re.compile(r'\bload_env_file\b')
 ALLOWED_SOURCE = re.compile(r'^"?\$\{?(?:SCRIPT_DIR|CONTRACTS_DIR)\}?/(?:script/)?lib/[A-Za-z0-9_.-]+\.sh"?$')
