@@ -342,6 +342,28 @@ protocol pause. The atomic-swap path (`triggerLiquidation`,
 `triggerLiquidationSplit`, `triggerPartialLiquidation`) keeps
 running.
 
+> **⚠ HOLD — #1896: Tiers 1 and 2 currently change NOTHING, and their
+> stated safety property does not hold.** The keeper commits
+> `"crons": []` because the Worker was terminated for exceeding CPU on
+> ~100% of invocations, so there is no next tick. Our bot already runs
+> neither the flash-loan branch **nor** the legacy partial / split /
+> atomic branches — the reassurance below that "legacy still runs" is
+> false while the hold is in force, and a successful secret deletion
+> must not be read as preserving automated liquidation.
+>
+> **What this means in an incident:**
+> - **Tier 1 / Tier 2** — already achieved by the hold, as far as our
+>   bot is concerned. Doing them is harmless and leaves the posture
+>   correctly latched for re-enable, but neither is the *response*.
+> - **Tier 3 is unaffected and is the effective lever.** It is an
+>   on-chain kill-switch, so it binds external liquidators too, and
+>   external liquidators are the only automated liquidation currently
+>   happening on our positions.
+> - **Liquidation coverage from our side is manual** until a live
+>   schedule is read back from Settings → Trigger Events (not merely a
+>   quiet `wrangler tail`, which proves nothing here). Plan the
+>   incident on that basis.
+
 Three escalation tiers, least to most disruptive:
 
 **Tier 1 — keeper-side snap-off (30-second op, our bot only)**

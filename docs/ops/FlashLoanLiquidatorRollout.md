@@ -11,6 +11,23 @@ target chain (testnet → mainnet, lowest-TVL first).
 
 All commands run from `contracts/` unless noted otherwise.
 
+> **⚠ DOCUMENT-WIDE HOLD — #1896: THERE IS NO NEXT TICK.**
+> The keeper commits `"crons": []` because the Worker was terminated for
+> exceeding CPU on ~100% of invocations. **Every "on next tick" / "the keeper
+> picks it up" statement in this runbook is suspended**, including the ones
+> that offer reassurance — most importantly the repeated promise that deleting
+> a flag or a `liquidator:` line leaves the *legacy* partial / split / atomic
+> branches running. Those branches do not run either. Our bot performs no
+> liquidation at all right now.
+>
+> Config changes here are still worth making: they latch correctly for when
+> the schedule returns. What they are not is a *response* — during the hold,
+> the on-chain kill-switch (§5 Tier 3 / `discountPathEnabled`) is the only
+> lever that changes live behaviour, because it also binds the external
+> liquidators who are currently the only automated liquidation on our
+> positions. Treat our own liquidation coverage as manual until a live
+> schedule is read back from Settings → Trigger Events.
+
 ---
 
 ## 0. Preconditions
@@ -182,7 +199,9 @@ one file makes the cross-cutting concern reviewable in one
 place. It's also a tactical override surface — to disable the
 flash-loan path on a chain without redeploying anything, just
 delete the `liquidator` line (the chain falls back to legacy
-partial/split/atomic immediately on next tick).
+partial/split/atomic immediately on next tick — **not while #1896
+holds: there is no next tick and the legacy branches do not run
+either**; see the document-wide hold above).
 
 Commit + redeploy the keeper Worker so it picks up the new
 config:
@@ -373,9 +392,11 @@ will show one of:
   (price moved past slippage tolerance between quote and
   submit). Also healthy.
 
-No action needed. The legacy partial/split/atomic branches in
-the keeper run on the next tick — the loan still gets
-liquidated, just via the atomic path instead.
+No action needed **once the keeper is scheduled again**. The legacy
+partial/split/atomic branches in the keeper run on the next tick — the
+loan still gets liquidated, just via the atomic path instead. **While
+#1896 holds there is no next tick**, so the loan is not liquidated by us
+at all; it depends on external liquidators. See the document-wide hold.
 
 ### Profitable trades available but bot logs nothing
 
@@ -420,7 +441,9 @@ order of preference (least to most disruptive):
    pnpm --filter @vaipakam/keeper exec wrangler secret delete DISCOUNT_PATH_ENABLED_8453
    ```
    Worker reads `undefined` on next tick → discount branch
-   skips → legacy partial/split/atomic still runs.
+   skips → legacy partial/split/atomic still runs. **Not while #1896
+   holds** — no tick, and the legacy branches are stopped too, so this
+   is already the posture rather than a change to it.
 
 2. **Delete the `liquidator` line in `flashLoanProviders.ts`**
    + redeploy Worker — slower (needs git commit + wrangler
