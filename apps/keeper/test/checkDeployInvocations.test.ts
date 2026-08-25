@@ -129,12 +129,12 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
   });
 
   it('a bare deploy whose only --keep-vars is in a shell comment (#1924 r17)', () => {
-    const r = runWith('apps/keeper/README.md', 'wrangler deploy # TODO: add --keep-vars\n');
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy # TODO: add --keep-vars\n');
     expect(r.ok).toBe(false);
   });
 
   it('an unsafe command followed by a comment mentioning run deploy (#1924 r17)', () => {
-    const r = runWith('apps/keeper/README.md', 'wrangler deploy # prefer pnpm run deploy\n');
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy # prefer pnpm run deploy\n');
     expect(r.ok).toBe(false);
   });
 
@@ -244,7 +244,7 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
 
   it('an escaped space inside an option value (#1924 r25)', () => {
     // bash passes ONE argument, `--message=note --keep-vars`, enabling nothing.
-    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message=note\\ --keep-vars\n');
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --message=note\\ --keep-vars\n');
     expect(r.ok).toBe(false);
   });
 
@@ -252,8 +252,45 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     // bash ignores the backslash inside the comment and runs line 2 normally.
     // Folding it joined both lines, then stripComment deleted the lot.
     const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper\n# previous deploy used \\\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a comment opening straight after a shell operator (#1924 r27)', () => {
+    // bash treats `#` after `;` as a comment, so the safety token inside it
+    // must not bless the deploy on the next line.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper\necho prev;# --keep-vars \\\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the --no-keep-vars negation (#1924 r27)', () => {
+    // wrangler 4.90.0 parses this as keepVars:false.
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --keep-vars --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('the --no-dry-run negation (#1924 r27)', () => {
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --dry-run --no-dry-run\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a deploy reached via pushd rather than cd (#1924 r27)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pushd apps/keeper\nwrangler deploy\npopd\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a real command sharing a line with allowlisted prose (#1924 r27)', () => {
+    const r = runWith(
       'apps/keeper/README.md',
-      '# previous deploy used \\\nwrangler deploy\n',
+      'Prefer the dashboard over `wrangler deploy` for this. Then: wrangler deploy\n',
     );
     expect(r.ok).toBe(false);
   });
@@ -425,6 +462,29 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('still strips a genuinely space-separated option value', () => {
     const r = runWith('apps/keeper/README.md', 'wrangler deploy --message note --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('KNOWN LIMIT: reports a deploy inside a multi-line quoted string', () => {
+    // Documented rather than fixed (#1924 r27). Distinguishing a command from
+    // the same text inside a quoted argument needs shell WORD analysis, and
+    // the attempts at that in this loop kept breaking real cases — most
+    // recently by blanking `"$KEEPER_DIR"`, which is exactly how the wrapper
+    // fixtures identify keeper scope. This over-reports in an obscure case
+    // (a keeper-tree shell script printing a multi-line string containing the
+    // command) and the workaround is to reword the string. Over-reporting is
+    // the safe direction here PROVIDED it stays rare; if this ever fires on
+    // real content, that is the signal to reconsider rather than to widen the
+    // allowlist.
+    const r = runWith(
+      'apps/keeper/x.sh',
+      'printf "%s" "line1\n# wrangler deploy \\\nline3"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('accepts a later --no- negation that re-enables via a positive flag', () => {
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --no-keep-vars --keep-vars\n');
     expect(r.ok).toBe(true);
   });
 

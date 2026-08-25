@@ -24,6 +24,16 @@
  * call sites one at a time demonstrably does not converge; asserting the
  * property over the whole tree does.
  *
+ * KNOWN LIMIT, recorded rather than fixed: in a SHELL file, a
+ * `wrangler deploy` written inside a multi-line quoted string is reported as
+ * a violation even though bash would only print it. Telling a command from
+ * the same text inside a quoted argument needs shell word analysis, and every
+ * attempt at that in PR #1924 broke a real case instead — the last one blanked
+ * `"$KEEPER_DIR"`, which is precisely how the deploy wrappers identify keeper
+ * scope. The workaround is to reword the string. Over-reporting is the safe
+ * direction PROVIDED it stays rare; if this fires on real content, reconsider
+ * the approach rather than widening `ALLOWED`.
+ *
  * WHAT COUNTS AS A VIOLATION: any keeper-scoped line mentioning
  * `wrangler deploy` without `--keep-vars` (or `--dry-run`, or the safe
  * `run deploy` form). That deliberately includes prose — see `ALLOWED` below
@@ -115,7 +125,14 @@ const ALLOWED = [
 
 function allowReason(line) {
   const hit = ALLOWED.find((a) => line.includes(a.match));
-  return hit ? hit.why : null;
+  if (!hit) return null;
+  // The exemption covers the KNOWN prose occurrence, not the whole line. An
+  // allowlisted sentence that later grows a real command beside it —
+  // `…a bare \`wrangler deploy\` is dangerous; wrangler deploy` — would
+  // otherwise be exempted wholesale (Codex #1924 r27). Remove the matched
+  // fragment and see whether a deploy is still standing.
+  const rest = line.split(hit.match).join(' ');
+  return /wrangler\s+deploy\b/.test(rest) ? null : hit.why;
 }
 
 /**
@@ -218,53 +235,145 @@ function flagEnabled(rawLine, flag) {
     `(?<![^\\s(\`'"])${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|((?!-)[^\\s"'\`)]+)))?`,
     'g',
   );
-  let effective = null;
+  const events = [];
   for (const m of line.matchAll(re)) {
     const value = m[1] ?? m[2] ?? m[3];
-    effective = value === undefined ? true : !/^(false|0|no|off)$/i.test(value.trim());
+    events.push({
+      at: m.index,
+      on: value === undefined ? true : !/^(false|0|no|off)$/i.test(value.trim()),
+    });
   }
-  return effective === true;
+  // wrangler supports the `--no-<flag>` negation, and it is simply another
+  // later occurrence: `--keep-vars --no-keep-vars` parses as keepVars:false
+  // (verified against 4.90.0). Scanning only the positive spelling blessed it
+  // (Codex #1924 r27). Merge both streams and let POSITION decide, exactly as
+  // the CLI does.
+  const negRe = new RegExp(
+    `(?<![^\\s(\`'"])--no-${flag.replace(/^--/, '')}\\b`,
+    'g',
+  );
+  for (const m of line.matchAll(negRe)) events.push({ at: m.index, on: false });
+  if (events.length === 0) return false;
+  events.sort((a, b) => a.at - b.at);
+  return events[events.length - 1].on === true;
 }
 
 /**
- * Strip a trailing shell comment before looking for safety tokens.
+ * Split a file into LOGICAL shell lines: comments removed, backslash
+ * continuations folded, quote state maintained throughout.
  *
- * `wrangler deploy # TODO: add --keep-vars` executes a BARE deploy, but a
- * whole-line search finds the flag in the comment and passes it (Codex #1924
- * r17, reproduced). The inverse is worse: an unsafe command followed by a
- * comment mentioning `run deploy` also passed. Safety must be read from what
- * the shell runs, not from what the line says somewhere.
+ * These were three separate heuristics and they kept contradicting each other,
+ * one review round at a time (Codex #1924 r17, r23, r25, r26, r27). A comment
+ * ending in `\` swallowed the command below it. A comment opening right after
+ * `;` was not recognised, so its safety token blessed the joined deploy. A
+ * quoted string spanning lines was mistaken for a comment, failing valid
+ * shell. Each fix broke a neighbour because the state is genuinely shared:
+ * quoting decides what is a comment, comments decide what continues,
+ * continuations decide where a line ends.
  *
- * `#` inside quotes is not a comment, so quoted regions are skipped. Markdown
- * prose is unaffected: it reaches here only via the default-deny path, where a
- * stripped `#` cannot make an unsafe line look safe.
+ * One pass, one state machine. It is NOT a shell parser and does not try to
+ * be — it tracks quotes, comments and continuations, which is exactly what
+ * "what does the shell execute here" needs and no more.
+ *
+ * Each logical line keeps the 1-based number of the physical line it STARTED
+ * on, so a violation still points where an operator can open it.
  */
-function stripComment(line) {
+function logicalLines(text) {
+  const out = [];
   let quote = null;
-  for (let i = 0; i < line.length; i += 1) {
-    const ch = line[i];
+  let inComment = false;
+  let buf = '';
+  let startLine = 1;
+  let line = 1;
+  let pendingStart = true;
+  let prev = '';
+
+  const flush = () => {
+    if (buf.trim() !== '') out.push({ text: buf, line: startLine });
+    buf = '';
+    pendingStart = true;
+  };
+
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+
+    if (ch === '\n') {
+      line += 1;
+      if (inComment) {
+        // A comment ends at the newline and NEVER continues, whatever it ends
+        // with — bash ignores a trailing backslash inside a comment.
+        inComment = false;
+        if (!quote) flush();
+        prev = ' ';
+        continue;
+      }
+      if (quote) {
+        buf += ' '; // a newline inside quotes is part of the string
+        prev = ' ';
+        continue;
+      }
+      if (buf.endsWith('\\')) {
+        buf = `${buf.slice(0, -1)} `; // a real continuation
+        prev = ' ';
+        continue;
+      }
+      flush();
+      prev = ' ';
+      continue;
+    }
+
+    if (inComment) continue;
+
+    if (pendingStart && !/\s/.test(ch)) {
+      startLine = line;
+      pendingStart = false;
+    }
+
     if (quote) {
+      if (ch === '\\' && quote !== "'") {
+        buf += ch + (text[i + 1] ?? '');
+        i += 1;
+        prev = 'x';
+        continue;
+      }
       if (ch === quote) quote = null;
+      buf += ch;
+      prev = ch;
       continue;
     }
+
     if (ch === '\\') {
-      i += 1; // escaped char, including \#, is literal
+      if (text[i + 1] === '\n') {
+        buf += ch; // let the newline branch consume it
+        prev = '\\';
+        continue;
+      }
+      buf += ch + (text[i + 1] ?? '');
+      i += 1;
+      prev = 'x';
       continue;
     }
+
     if (ch === '"' || ch === "'" || ch === '`') {
       quote = ch;
+      buf += ch;
+      prev = ch;
       continue;
     }
-    // A `#` is a comment only at a TOKEN BOUNDARY. Inside a word it is a
-    // literal character — `--message fix#1896` is a real wrangler flag value,
-    // and truncating there removed a genuine `--keep-vars` further along the
-    // line and FAILED a correct command (Codex #1924 r18). A guard that
-    // blocks valid CI is a guard that gets deleted.
-    if (ch === '#' && (i === 0 || /\s/.test(line[i - 1]))) {
-      return line.slice(0, i);
+
+    // `#` opens a comment at a token boundary: start of line, after
+    // whitespace, or immediately after a shell operator (Codex #1924 r27).
+    if (ch === '#' && (prev === '' || /[\s;|&(]/.test(prev))) {
+      inComment = true;
+      continue;
     }
+
+    buf += ch;
+    prev = ch;
   }
-  return line;
+
+  if (!inComment) flush();
+  return out;
 }
 
 /**
@@ -323,8 +432,7 @@ function commandIsSafe(cmd) {
  * deploy at all is safe by vacuity — the caller has already established that
  * the line mentions one, so this cannot mask anything.
  */
-function isSafe(rawLine) {
-  const line = stripComment(rawLine);
+function isSafe(line) {
   const deploys = splitCommands(line).filter((c) => /wrangler\s+deploy\b/.test(c));
   if (deploys.length === 0) return true;
   return deploys.every(commandIsSafe);
@@ -350,37 +458,16 @@ function isKeeperScoped(line, filePath) {
 }
 
 /**
- * Join lines ending in a backslash continuation into the single logical line
- * the shell actually executes, keeping the 1-based number of the line each one
- * started on so violations still point somewhere useful.
+ * Shell continuation / comment rules apply to shell scripts, not to prose.
+ * Detected by extension or shebang — the same two signals an editor uses.
  */
-function foldContinuations(text) {
-  const out = [];
-  const lines = text.split('\n');
-  let buf = null;
-  let startLine = 0;
-  for (let i = 0; i < lines.length; i += 1) {
-    const raw = lines[i];
-    // A trailing backslash that lives inside a COMMENT is not a continuation —
-    // bash ignores it and runs the next line normally. Folding it anyway let a
-    // comment ending in `\` swallow the command beneath it, after which
-    // `stripComment` deleted the whole logical line and an unsafe deploy
-    // vanished (Codex #1924 r26). Decide from the code part, not the raw line.
-    const continues = /\\$/.test(stripComment(raw));
-    const body = continues ? raw.slice(0, -1) : raw;
-    if (buf === null) {
-      buf = body;
-      startLine = i + 1;
-    } else {
-      buf += ` ${body.trim()}`;
-    }
-    if (!continues) {
-      out.push({ text: buf, line: startLine });
-      buf = null;
-    }
-  }
-  if (buf !== null) out.push({ text: buf, line: startLine });
-  return out;
+function isShellFile(rel, text) {
+  return rel.endsWith('.sh') || /^#!.*\b(ba|z|k)?sh\b/.test(text);
+}
+
+/** Physical lines, 1-based, for everything that is not a shell script. */
+function plainLines(text) {
+  return text.split('\n').map((t, i) => ({ text: t, line: i + 1 }));
 }
 
 function* walk(dir) {
@@ -430,7 +517,13 @@ for (const file of walk(REPO_ROOT)) {
   //
   // Folding shifts line numbers, so each folded line keeps the 1-based number
   // of the line it STARTED on: that is the line an operator needs to open.
-  const folded = foldContinuations(text);
+  // Shell semantics apply to SHELL files. A markdown runbook has no line
+  // continuations and no `#` comments — `#` is a heading and a backtick opens
+  // a code span, not a quoted string — so running the shell scanner over prose
+  // folded whole paragraphs into single "lines" and produced four false
+  // positives on a clean tree. Every file still gets scanned; only the model
+  // of what a line IS differs (Codex #1924 r27).
+  const folded = isShellFile(rel, text) ? logicalLines(text) : plainLines(text);
   if (!folded.some((l) => /wrangler\s+deploy/.test(l.text))) continue;
   // Directory context carries across lines, but only within a CONTIGUOUS
   // block. The form to catch is
@@ -454,10 +547,18 @@ for (const file of walk(REPO_ROOT)) {
     if (/^\s*$/.test(line) || /^\s*```/.test(line)) {
       cwdIsKeeper = false;
     } else {
-      const bareCd = line.match(/^\s*cd\s+["']?([^\s"';&|)]+)/);
-      if (bareCd) {
-        cwdIsKeeper =
-          /(^|\/)apps\/keeper\/?$/.test(bareCd[1]) || /KEEPER_DIR/.test(bareCd[1]);
+      // `pushd` moves the shell exactly as `cd` does and is ordinary in deploy
+      // wrappers; recognising only `cd` let `pushd apps/keeper` plus a bare
+      // deploy on the next line through (Codex #1924 r27). `popd` returns
+      // somewhere this scanner cannot know, so it conservatively clears scope.
+      if (/^\s*popd\b/.test(line)) {
+        cwdIsKeeper = false;
+      } else {
+        const bareCd = line.match(/^\s*(?:cd|pushd)\s+["']?([^\s"';&|)]+)/);
+        if (bareCd) {
+          cwdIsKeeper =
+            /(^|\/)apps\/keeper\/?$/.test(bareCd[1]) || /KEEPER_DIR/.test(bareCd[1]);
+        }
       }
     }
 
