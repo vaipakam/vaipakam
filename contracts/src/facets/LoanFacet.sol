@@ -1296,12 +1296,20 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *             on a Diamond with `rewardMessenger` set, a
      *             {ProtocolBroadcastFacet} failure bubbles and reverts the
      *             whole bill. `ProtocolBudgetExhausted` is the one an
-     *             operator will actually meet: the broadcast budget runs
-     *             dry and billing stops for everyone at once. Worth
-     *             stating because the other causes here are per-payer, so
-     *             an operator reading a list of only those goes looking at
-     *             one user's vault balance and role config, finds both
-     *             fine, and has nothing left to check.
+     *             operator will actually meet — but it hits only the
+     *             payers whose rollup NEEDS an outbound send.
+     *             `protocolBroadcastTierUpdate` returns early, before
+     *             touching the budget, for a zero-tier-no-change user and
+     *             for an unchanged push tuple, so while the budget is
+     *             empty those payers keep billing normally. The symptom is
+     *             therefore MIXED success and failure across payers, not a
+     *             clean stop — which is precisely what makes it hard to
+     *             read, because partial failure is what a per-payer cause
+     *             looks like. Every other entry on this list IS per-payer
+     *             and diagnosable from that payer's own state, so an
+     *             operator who does not know this one exists checks a
+     *             failing user's vault balance and role, finds both fine,
+     *             and has nothing left to look at.
      *
      *         The watcher fires this at notification-send time
      *         **only on PaidPush tier** subscribers — FreeTelegram

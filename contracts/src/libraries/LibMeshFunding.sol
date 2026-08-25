@@ -211,8 +211,12 @@ library LibMeshFunding {
             uint256 targetTotal = c.targetLender + c.targetBorrower;
 
             // #1222 M3 B2-d3 — mirror LOCAL funding is now ON (the B2-b
-            // re-slice deferred it to here, where d1's commitment report +
-            // d2's delivered-backing ledger make it safe). A mirror's
+            // re-slice deferred it to here, where d1's commitment report,
+            // d2's delivered-backing ledger AND d5's custody-relocation
+            // exclusion together make it safe — see this library's header
+            // for what each leg contributes; d1 and d2 alone do not close
+            // the phantom-availability path, and this comment said they did
+            // until #1349). A mirror's
             // availability is Base's model of its committable bucket:
             // `reported` less the net claim draw `sat(consumed −
             // released)` and less the net repatriation draw, the HARD

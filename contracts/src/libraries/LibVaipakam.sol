@@ -2200,9 +2200,15 @@ library LibVaipakam {
         // returns the governance override in `protocolCfg.treasuryFeeBps`
         // when set and otherwise `TREASURY_FEE_BPS` (200, the rev-8 freeze
         // default, #1352) — so resolving a grandfathered loan against it
-        // would reprice it at repay from 1% to WHATEVER IS LIVE THEN: 2% on
-        // an untuned deploy, and up to `MAX_FEE_BPS` (50%) after a
-        // governance retune. The exposure is not bounded at 2×. This comment
+        // would reprice it at repay from 1% to WHATEVER IS LIVE THEN, in
+        // EITHER DIRECTION. `setFeesConfig` bounds the override only from
+        // above (`> MAX_FEE_BPS` reverts), so the live knob is any value in
+        // 1..5000: 2% on an untuned deploy, up to 50% after a retune, and
+        // BELOW the frozen 1% for an override of 1..99 — which underpays
+        // treasury on every grandfathered loan rather than overcharging the
+        // borrower. Neither direction is bounded at 2×, and the downward
+        // one is the easier to miss because nobody is harmed loudly by it.
+        // This comment
         // previously said the fallback was "the live knob", which described
         // exactly the change CLAUDE.md warns must never be made. Both fees are bounded by `MAX_FEE_BPS`
         // (5000) so `uint16` holds them; they pack into one slot. Append-only
@@ -8096,9 +8102,17 @@ library LibVaipakam {
     ///      governance retune never changes the economics of a loan already
     ///      originated. `0` (pre-#957 loan) ⇒ the FROZEN legacy default
     ///      `LEGACY_TREASURY_FEE_BPS` (100 = 1%), NOT the live knob — the
-    ///      #1352 rev-8 fee freeze bumped the live default to 200 (2%), and
+    ///      #1352 rev-8 fee freeze bumped the live DEFAULT to 200 (2%), and
     ///      falling back to the live knob would retroactively reprice every
-    ///      pre-#957 open loan from 1% → 2% at repay. Freezing the fallback
+    ///      pre-#957 open loan at repay, in EITHER DIRECTION: `setFeesConfig`
+    ///      bounds the override only from above, so the live knob is any
+    ///      value in 1..`MAX_FEE_BPS`, and an override below 100 would
+    ///      reprice a grandfathered loan DOWNWARD — underpaying treasury
+    ///      rather than overcharging the borrower, which is the quieter of
+    ///      the two failures. This line said "1% → 2%" until #1349, which
+    ///      named only the untuned-deploy case; {RiskPreviewFacet}'s
+    ///      inherited-fee gate has always reasoned about the sub-legacy
+    ///      knob, so the two files disagreed. Freezing the fallback
     ///      at 100 grandfathers those loans (the grandfather resolver of
     ///      redesign §"Fee-default migration"; new loans stamp the live 200
     ///      at origination via `LoanFacet._snapshotFeeBps`).

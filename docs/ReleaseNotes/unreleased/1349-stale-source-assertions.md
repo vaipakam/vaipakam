@@ -38,11 +38,25 @@ mechanically rather than by eye — every symbol these comments name is confirme
 exist before the change goes out.
 
 Two others were understatements rather than errors, and correcting them made the
-warnings stronger. One described a hazard as capping out at twice the correct fee
-when it is really bounded only by the platform's fee ceiling. The other listed the
-reasons a billing step can fail, all of which concerned the individual being
-billed — omitting the one that stops billing for everybody at once, which is
-exactly the failure an operator would be unable to diagnose from the list given.
+warnings stronger — then review showed both corrections were themselves too
+confident, which is worth recording as its own lesson.
+
+The first described a hazard as capping out at twice the correct fee. It is not
+capped there: the fee setting a change like this would wrongly consult can be set
+anywhere up to the platform's ceiling. It can also be set *below* the frozen
+historical rate, in which case the same mistake underpays the treasury on every
+grandfathered loan instead of overcharging the borrower. That direction is the
+easier one to miss, because nobody is visibly harmed by it. A third comment
+elsewhere in the codebase had reasoned about the below-the-line case correctly
+for some time, so two files quietly disagreed; they now say the same thing.
+
+The second listed the reasons a billing step can fail, all of which concerned the
+individual being billed, and omitted one that does not. Saying it "stops billing
+for everybody" was then too broad: the step skips its costly part for users whose
+details have not changed, so while the shared budget is empty some payers keep
+billing normally and others fail. Mixed success is exactly what a
+one-user-at-a-time problem looks like, which is what makes this one hard to
+recognise — a sharper warning than the one it replaced.
 
 These were found by reading the code and asking what it does, rather than by
 reading the documentation and believing it. That distinction is the reason the
