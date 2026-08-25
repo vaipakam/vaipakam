@@ -32,7 +32,7 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 | `vaipakam-defi` | `defi.vaipakam.com` (cert provisioning) | dApp frontend | none | none |
 | `vaipakam-agent` | `agent.vaipakam.com` (cert provisioning) | D1 → users (REST, Telegram, Push, frames) | every minute | yes |
 | `vaipakam-indexer` | (no public domain — cron only) | Chain → D1 | every minute | yes |
-| `vaipakam-keeper` | (no public domain — cron only) | Chain writes | 5-min HF + 00:05 UTC daily oracle | yes |
+| `vaipakam-keeper` | (no public domain — cron only) | Chain writes | **NONE — `"crons": []`, #1896** (was `* * * * *`; the "5-min HF + 00:05 UTC daily oracle" this row used to claim was already wrong) | yes |
 
 Workers default URLs (for direct reachability before custom-domain SSL is fully live):
 - https://vaipakam-www.dawn-fire-139e.workers.dev
@@ -55,7 +55,13 @@ Workers default URLs (for direct reachability before custom-domain SSL is fully 
       auto-liq + daily oracle snapshot
 - [ ] Set `RPC_*` per chain on `vaipakam-indexer` and `vaipakam-keeper`
 - [ ] Set `TG_BOT_TOKEN`, `PUSH_CHANNEL_PK`, aggregator API keys on `vaipakam-agent`
-- [ ] Set `KEEPER_ENABLED=false` on `vaipakam-keeper` initially (flip true after validation)
+- [ ] Set `KEEPER_ENABLED=false` on `vaipakam-keeper` initially. **#1896: flipping it
+      true is NO LONGER sufficient to start the keeper, and must not be done yet.**
+      The Worker has no cron (`"crons": []`), so the flag alone arms nothing — every
+      pass stays stopped. Restoring the schedule is a prerequisite and has its own
+      sequence, kept beside the empty list in `apps/keeper/wrangler.jsonc`; that
+      sequence begins by setting this flag to `false` explicitly, because a secret's
+      value cannot be read back and "it should still be off" is not a check.
 
 ## Pending — author action
 

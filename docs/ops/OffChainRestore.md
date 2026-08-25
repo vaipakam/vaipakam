@@ -1438,9 +1438,116 @@ caught at the cheapest stage.
    else), so they belong at the same, last step rather than being split
    across a "safe" and an "arming" half that does not exist.
 
+   > **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
+   > `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
+   > was terminated for exceeding CPU on ~100% of invocations.
+   >
+   > **This step is therefore SPLIT.** Branch **A** is the whole of it while
+   > the hold is active; branch **B** — arming `KEEPER_ENABLED` and restoring
+   > the schedule — is **deferred until #1896's CPU work has landed**. Do not
+   > read on past A and carry out B because it is the next thing on the page:
+   > that re-arms a Worker known to exhaust its CPU, and with it every
+   > fund-moving pass.
+
    Before deploying: confirm the keeper EOA is the address you expect and
-   is funded on every chain it submits from. After deploying, watch one
-   keeper tick.
+   is funded on every chain it submits from.
+
+   #### A. During the hold — the only keeper actions in this step
+
+   Deploy so the script and bindings are current. Nothing else.
+
+   ```bash
+   ( cd apps/keeper && wrangler deploy --keep-vars )
+   ```
+
+   Then **stop here** and record the hold in the restore log. Do not arm
+   `KEEPER_ENABLED`, and do not put a schedule back.
+
+   **Skip step 4 entirely — it cannot be satisfied while the hold is
+   active, and it is not a step to "wait out".** Step 4 confirms the flags
+   *from a tick* and holds the restore incomplete until all six gated passes
+   emit. With `"crons": []` there is never a tick, so an operator following
+   the numbered order lands in a wait that cannot end. A quiet tail here is
+   the expected state, not a pending check.
+
+   **Completion criterion for branch A** — the keeper part of this restore is
+   DONE when all three hold:
+
+   1. The deploy above succeeded, confirmed **in keeper scope**:
+
+      ```bash
+      ( cd apps/keeper && wrangler deployments list | head )
+      ```
+
+      The `cd` is load-bearing and the subshell above does not carry over —
+      it exits, leaving you at the repository root, whose `wrangler.jsonc`
+      names **`vaipakam-alpha`**. Run bare from there and this reads another
+      Worker's deployment history entirely, so branch A would complete on
+      evidence about the wrong Worker. `--cwd apps/keeper` or
+      `--name vaipakam-keeper` do the same job if you prefer them.
+   2. A trigger-aware readback shows **no** schedule — the `/schedules`
+      query later in this step, expected to return an EMPTY `result`. Empty
+      is the pass condition here; it is the failure condition in branch B.
+   3. The hold is recorded in the restore log, naming #1896, together with
+      the checks deferred by it: every step-4 flag confirmation, and the
+      Push-rotation check in `docs/ops/IncidentRunbook.md` step 6 if
+      `PUSH_CHANNEL_PK` was rotated (the keeper has no invocation from which
+      to send while unscheduled).
+
+   Then continue at the step AFTER 4. Those deferred checks are cleared by
+   branch B's final step, not forgotten.
+
+   #### B. After the hold lifts — #1896's CPU work landed, not before
+
+   Everything from here to the end of this step is branch B. Run it only once
+   the hold is over.
+
+   **Follow the ORDER below; it is not the order this document used to
+   give.** An earlier revision of branch B armed `KEEPER_ENABLED` first and
+   restored the schedule after it — the exact inverse of the sequence kept
+   beside the empty list in `apps/keeper/wrangler.jsonc`, and it skipped the
+   production validation entirely. Arming before a schedule exists means the
+   six fund-moving passes begin submitting on the FIRST tick after the
+   schedule lands, on a Worker whose CPU fix has not been observed working.
+   The whole point of the canonical order is that everything provable while
+   the passes are inert gets proved first.
+
+   That sequence in `wrangler.jsonc` is the authority and carries the
+   reasoning for each step; this is its order, with the restore-specific
+   detail attached:
+
+   1. **Confirm `KEEPER_ENABLED` is `false` — by SETTING it false, not by
+      assuming.** It is a `secret_text` binding (see below): a deploy never
+      deletes a secret and its value cannot be read back, so "it should be
+      false" is unverifiable. `( cd apps/keeper && wrangler secret put
+      KEEPER_ENABLED )`, enter `false`.
+   2. Restore `"crons": ["* * * * *"]` in `apps/keeper/wrangler.jsonc` **and
+      commit it** — an edit living only in your checkout leaves `[]` on the
+      branch, and the next clean-checkout deploy re-unschedules the keeper
+      after this procedure has declared success.
+   3. Confirm a cron slot is free (cap is five per account; the keeper's is
+      reserved, not spare).
+   4. Deploy from the keeper's directory, with the flag — the command shown
+      in branch A above.
+   5. Read the schedule back trigger-aware — the `/schedules` query below.
+      Here a NON-empty `result` is the pass condition.
+   6. Allow the propagation window (Cloudflare documents up to 15 minutes).
+   7. **Validate the still-disarmed passes first**, across every cadence they
+      run at — a full 15-minute cycle for `preGraceWatcher`, the 00:00–00:09
+      UTC window for `dailyOracleSnapshot` — checking the `chains resolved:
+      N — …` line on every tick you accept, and rejecting any tick that logs
+      `console.error` at all. Roll back here if it still reports
+      `exceededCpu`; nothing is armed, so it costs nothing.
+   8. **Only now arm** — `KEEPER_ENABLED` to `true`, per the command block
+      further down this step.
+   9. Validate the gated passes, again across every cadence, including one
+      full 5-minute cycle for `rewardBudgetRemit`.
+   10. Clear the checks branch A deferred — step 4's flag confirmations, and
+       the Push-rotation check if `PUSH_CHANNEL_PK` was rotated during the
+       hold.
+
+   The rest of this step is the restore-specific detail those numbered items
+   refer to.
 
    **How they are actually held, verified against the live deployment
    (2026-07-30) — because this document previously guessed, and guessed
@@ -1455,31 +1562,45 @@ caught at the cheapest stage.
    does not match that comment. Trust the readback in step 4, not the comment
    (correcting it is #1465).
 
-   So restore them **the way they are held**:
+   They are restored **the way they are held** — `wrangler secret put`, not
+   `--var` and not the committed `vars` block. The commands are below, at
+   **their two different points in the order**: the disarm is branch B step
+   1, the arm is branch B step 8, and the schedule restore sits between
+   them. They are printed in that order here deliberately — an earlier
+   revision printed the arm first, and reading straight down it armed the
+   Worker before any tick had been observed.
+
+   **Branch B step 1 — disarm, before anything else.**
 
    ```bash
    ( cd apps/keeper
-     wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
+     wrangler secret put KEEPER_ENABLED )     # prompts; enter: false
    ```
 
-   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way, and
-   only if they were on before.
-
-   **Then restore the keeper's schedule — nothing else in this document
-   does.** §1 step 9 replaced it with `"crons": []`, §7a step 1 restores
-   only the *agent's* (deliberately: the keeper's schedule signs, so it is
-   armed last), and the indexer's is restored in §6. `wrangler secret put`
-   writes a secret; it does not register trigger events. Without this the
-   restore finishes with every flag correct and every keeper tick stopped —
-   liquidation, matching, remittance, commitment reporting and the daily
-   snapshot all silently dead, with the settings readback showing green.
+   **Branch B steps 2 and 4 — restore the keeper's schedule; nothing else in
+   this document does.** §1 step 9 replaced it with `"crons": []`, §7a step 1
+   restores only the *agent's* (deliberately: the keeper's schedule signs, so
+   it is armed last), and the indexer's is restored in §6. `wrangler secret
+   put` writes a secret; it does not register trigger events. Without this a
+   post-hold restore finishes with every flag correct and every keeper tick
+   stopped — liquidation, matching, remittance, commitment reporting and the
+   daily snapshot all silently dead, with the settings readback showing green.
 
    ```bash
    ( cd apps/keeper
      # put "triggers": { "crons": ["* * * * *"] } back in wrangler.jsonc
+     # — and COMMIT that edit, or the next clean-checkout deploy undoes it
      wrangler deploy --keep-vars
      wrangler deployments list | head )
    ```
+
+   **Branch B step 8 — arming — is NOT here.** Its command block sits at the
+   very end of step 4, after the disarmed tail-validation, because that is
+   the earliest point at which it is safe to run. An earlier revision printed
+   it here with a warning attached and the arming happened anyway: an
+   operator working the command blocks in order reached it immediately after
+   deploying, skipping the readback below and the live-tick validation
+   entirely. Ordering the page is the control; a label is not.
 
    Confirm the schedule is registered before believing a tick will come:
 
@@ -1636,6 +1757,16 @@ caught at the cheapest stage.
    whether to submit — **absent lines from those four are normal**, not a
    failed tick.
 
+   > **One exception, and it is the whole point of branch B's ordering: while
+   > you are running branch B's pre-arm validation, `KEEPER_ENABLED` is
+   > `false` ON PURPOSE.** All six gated passes therefore emit
+   > `KEEPER_ENABLED off (explicitly disabled)`. Those skips are the expected
+   > state, not a fault to repair — "fixing" them here arms the fund-moving
+   > passes before the CPU and cadence validation has finished, which is
+   > exactly what the branch B step 8 block at the end of this step exists to
+   > prevent. **Leave `KEEPER_ENABLED` alone until you reach that block.**
+   > Every OTHER skipped binding named below is still worth repairing now.
+
    If you see a `skipped:` line, the named binding is the one to re-enter —
    but **the two kinds of binding take different commands**, and using the
    wrong one leaves the pass disarmed while appearing to succeed:
@@ -1742,6 +1873,42 @@ caught at the cheapest stage.
 
    Only after that is a tail useful, and then only as positive
    confirmation: watch for a pass you expect to have work to do.
+
+   #### Branch B step 8 — arm. This is the earliest safe point.
+
+   Only reachable if you came through branch B (the #1896 hold has lifted).
+   Everything above has run with `KEEPER_ENABLED` at `false`, which is what
+   made the CPU validation meaningful: the six fund-moving passes were inert
+   while the Worker was proved to survive a production tick.
+
+   Before running this, confirm all of the following from the ticks you just
+   watched — this is branch B step 7, and it is the gate on the command
+   below:
+
+   - Every tick ended `ok`, never `exceededCpu`.
+   - A full 15-minute cycle was covered, so `preGraceWatcher` ran; and the
+     00:00–00:09 UTC window, so `dailyOracleSnapshot` did.
+   - Each tick's `chains resolved: N — …` line named the chains this
+     deployment is meant to serve. A chain drops out silently, and a tick
+     that skipped chains has not validated the load of all of them.
+   - No `console.error` output from any due pass, of any shape.
+
+   If any of that fails, roll back instead: restore `"crons": []`, **commit
+   that**, and redeploy. Nothing is armed yet, so the rollback costs nothing
+   — which is precisely why it belongs before this command and not after.
+
+   ```bash
+   ( cd apps/keeper
+     wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
+   ```
+
+   Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way and at
+   this same point, and only if they were on before.
+
+   Then do branch B step 9: validate the now-armed gated passes across every
+   cadence they run at, including one full 5-minute cycle for
+   `rewardBudgetRemit`. Finally, branch B step 10 — clear the checks branch A
+   deferred.
 
 ---
 

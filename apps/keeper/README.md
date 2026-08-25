@@ -97,18 +97,59 @@ revision of this section told you to do both, which is incoherent — the file
 change has no effect without a deploy, and a deploy is exactly what the next
 paragraph forbids.
 
-**But the repository still commits an active cron** (`"crons": ["* * * * *"]`),
-so the dashboard change is *temporary*: the next deploy of this Worker from a
-clean checkout re-arms it. If the stop needs to outlive the incident, follow
-up by committing
+**The repository now commits an EMPTY cron** (`"crons": []`) — #1896, done
+deliberately after measurement, and this section previously told you the
+opposite. The follow-up it used to recommend has been taken:
 
 ```jsonc
 "triggers": { "crons": [] }
 ```
 
 — empty, not absent; an absent `triggers` object sends no schedule update at
-all and silently leaves the committed cron in place — and deploy that
-deliberately, once the var hazard below has been dealt with.
+all and would silently leave whatever is deployed in place.
+
+**The var hazard is handled by the deploy script, not by this config being
+small** (Codex #1924 r7). An earlier revision said the hazard was "resolved"
+because `TG_BOT_USERNAME` is the only var declared here and `apps/keeper`
+never reads it. That reasoning was backwards: a bare `wrangler deploy`
+deletes every var **not** in the config before applying the ones that are, and
+what is not in the config is exactly the dashboard-managed tuning the keeper
+*does* read — `HF_SCALE`, the `LIQ_CONFIDENCE_*` and `LIQ_TIER3_*`
+thresholds, `SPLIT_MIN_IMPROVEMENT_BPS`, `PARTIAL_LIQ_MIN_HF_BPS` (see
+`env.ts`). A small config makes the hazard **worse**, not better.
+
+So `apps/keeper`'s `deploy` script now runs `wrangler deploy --keep-vars`,
+which makes the canonical `pnpm --filter @vaipakam/keeper run deploy`
+safe by construction rather than depending on whoever is typing it.
+
+**And a guard enforces it tree-wide**: `scripts/check-deploy-invocations.mjs`,
+wired into `pnpm --filter @vaipakam/keeper typecheck`, fails on any
+keeper-scoped `wrangler deploy` that lacks `--keep-vars`. It exists because
+fixing the package script did **not** fix the problem: four subsequent review
+rounds each found another caller reaching wrangler directly — three deploy
+wrappers, a rollout runbook, a deployment runbook, the staging plan — and each
+fix looked complete until the next round. The guard is default-deny with a
+small `ALLOWED` list, each entry carrying a reason, so prose that quotes the
+unsafe command has to be declared rather than guessed at. New prose fails the
+check until someone adds it; that is the intended cost.
+
+Keeping vars costs nothing here: the only var this config declares is
+`TG_BOT_USERNAME`, which appears solely in `env.ts`'s passthrough and is read
+nowhere in the Worker.
+
+**What that means for an incident.** The keeper is not currently scheduled,
+so there is nothing to emergency-stop — the dashboard steps above apply only
+after someone has re-armed it. A deploy from a clean checkout no longer
+re-arms it; it now *keeps it stopped*, which is the inversion to remember if
+you last read this section before #1896.
+
+**And it means the reverse is now the risky direction.** Re-arming requires
+editing `wrangler.jsonc` **and** running `wrangler deploy` — the file alone
+changes nothing, exactly as this section says about stopping. The full
+re-enable sequence, including the trigger-aware readback and the
+up-to-15-minute propagation window, is kept beside the empty list in
+`wrangler.jsonc` rather than here, so it cannot drift from the thing it
+describes.
 
 **Prefer the dashboard over `wrangler deploy` for this.** A deploy republishes
 the whole Worker configuration to change one schedule, which is more surface

@@ -340,9 +340,13 @@ manual follow-up required when the prerequisites are in place:
    `npx wrangler deploy` from `apps/defi/`. Skip with
    `--skip-frontend` if the build is intentionally lagging.
 3. **Keeper Cloudflare deploy** (phase `cf-keeper`) —
-   `pnpm exec wrangler deploy` from `apps/keeper/`, plus the
+   `pnpm run deploy` from `apps/keeper/`, plus the
    RPC-secret presence check (**hard-fails if a per-chain
    `RPC_<CHAIN>` secret is missing** — see prerequisite above).
+   The package script carries `--keep-vars` (#1896); the phase used
+   to call `pnpm exec wrangler deploy`, which bypassed it and deleted
+   the dashboard-managed `HF_SCALE` / `LIQ_*` / `SPLIT_*` /
+   `PARTIAL_LIQ_*` tuning on every deploy.
 4. **Indexer Cloudflare deploy** (phase `cf-indexer`) —
    `pnpm exec wrangler deploy` from `apps/indexer/`, then
    `pnpm exec wrangler d1 migrations apply vaipakam-archive --remote`.
@@ -352,7 +356,10 @@ manual follow-up required when the prerequisites are in place:
    cursor at the current safe head so the first cron tick starts AT
    head instead of backfilling an empty pre-deploy range.
 5. **Agent Cloudflare deploy** (phase `cf-agent`) —
-   `pnpm exec wrangler deploy` from `apps/agent/` (notifications,
+   `pnpm --filter @vaipakam/agent run deploy` — the packaged script, which
+   carries `--keep-vars`; a bare deploy drops the agent's
+   dashboard-managed `RECIPIENT_VALIDATING_TOKENS` /
+   `OPENSEA_OFFERS_MAX_PAGES` (notifications,
    Telegram webhook, frames). The retired single-watcher `cf-watcher`
    phase is explicitly rejected by `deploy-mainnet.sh`; all three
    phases above must run for a Stage 3 deploy — stopping after
@@ -1798,9 +1805,23 @@ the deploy-script pre-flight will refuse to proceed otherwise.
 
 The HF alert watcher at `apps/keeper/` runs as a Cloudflare Worker
 and is shared across every supported chain — it polls each Diamond on
-a 5-minute cron and dispatches per-user threshold notifications via
+a cron and dispatches per-user threshold notifications via
 Telegram + Push Protocol. This section is one-time setup and does
 **not** repeat per-chain deploy.
+
+> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
+> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
+> was terminated for exceeding CPU on ~100% of invocations. **Do the
+> setup in 8a and 8b anyway** — the bot, the channel and the secrets are
+> all still needed, and they stay latched for when the schedule returns.
+> What cannot pass is **8c**: with no cron there is no tick, so the smoke
+> test has nothing to observe and must be recorded as deferred rather
+> than waited on or quietly skipped. The `cf-keeper` phase in
+> `contracts/script/deploy-{testnet,mainnet}.sh` will still report
+> success — it deploys and checks an RPC secret, and does not inspect the
+> schedule — so its green result does not contradict this hold. Restore
+> the schedule only via the sequence kept beside the empty list in
+> `apps/keeper/wrangler.jsonc`, which disarms `KEEPER_ENABLED` first.
 
 ### 8a. Telegram bot
 
@@ -1858,6 +1879,12 @@ Telegram + Push Protocol. This section is one-time setup and does
 
 ### 8c. Smoke test the watcher
 
+> **⚠ HOLD — #1896.** This test cannot pass while the keeper is
+> unscheduled: step 4 below waits for a cron tick that will never fire.
+> Record it as deferred in the deploy log and resume it when the schedule
+> is restored. Do not substitute a shorter wait or read the quiet tail as
+> a pass.
+
 ```bash
 cd apps/keeper
 npx wrangler tail        # tail logs in another terminal
@@ -1866,7 +1893,8 @@ npx wrangler tail        # tail logs in another terminal
 #   1. Subscribe to the Push channel at the URL in 8b.2
 #   2. /alerts → Save thresholds, Link Telegram, Enable Push rail
 #   3. Lower one threshold below the connected wallet's HF
-#   4. Wait for the next 5-min cron tick
+#   4. Wait for the next cron tick (HELD — see above; the canonical
+#      schedule is per-minute, not 5-minute, and is currently empty)
 # Expect: log lines for `tg send` + Push API success on band crossings.
 ```
 
@@ -1899,7 +1927,7 @@ all three Stage 3 Workers bind.
 2. Deploy the AGENT — `/diag/record` is routed by
    `apps/agent/src/index.ts`, not the keeper:
    ```bash
-   cd ../agent && npx wrangler deploy
+   pnpm --filter @vaipakam/agent run deploy   # carries --keep-vars
    ```
 
 3. Smoke test the endpoint:

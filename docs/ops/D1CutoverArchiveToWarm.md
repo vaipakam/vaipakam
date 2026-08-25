@@ -230,7 +230,10 @@ check scans `wrangler d1` commands in scripts and runbooks.
 its last deploy predates several merges.
 
 ```bash
-pnpm --filter @vaipakam/agent exec wrangler deploy
+pnpm --filter @vaipakam/agent run deploy
+# `run deploy`, not `exec wrangler deploy`: the package script carries
+# --keep-vars. A bare deploy deletes RECIPIENT_VALIDATING_TOKENS and
+# OPENSEA_OFFERS_MAX_PAGES, which env.ts reads and the config does not declare.
 # [unrun here] — verified form, from OffChainRestore.md §7b.
 # NOT `npx wrangler` from the repo root: this package is outside the
 # pnpm workspace, so that would be an unpinned download.

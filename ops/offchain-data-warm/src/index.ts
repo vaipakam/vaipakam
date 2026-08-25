@@ -169,9 +169,12 @@ export default {
    *    cron wall-time and serializing failure modes).
    *
    * Why one cron at all: free-plan account cap of 5 cron triggers
-   * across the org. apps/{keeper,agent,indexer} plus this Worker occupy
-   * 4 today; the fifth is spare, reserved for ops/mesh-watcher, which is
-   * code-complete but UNDEPLOYED and therefore holds no slot yet.
+   * across the org. apps/{agent,indexer} plus this Worker occupy 3
+   * today — apps/keeper's schedule is empty since #1896, and that slot
+   * is reserved for its return rather than being spare. Counting it as
+   * occupied, 4 are taken; the fifth is reserved for ops/mesh-watcher,
+   * which is code-complete but UNDEPLOYED and therefore holds no slot
+   * yet.
    * Splitting backup + healthcheck into two crons would consume that
    * spare and leave mesh-watcher unable to deploy — CF API rejects the
    * sixth trigger with 10072.

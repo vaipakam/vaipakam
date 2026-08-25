@@ -185,6 +185,66 @@ recoverable back-pressure — not a fund-loss event.
   lane capacity must exceed the largest single-day slice. Tracked: #918.
 
 ### Automated remittance (keeper, #925)
+
+> **⚠ HOLD — #1896: there is no cron tick, so this automation is NOT running.**
+> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker was
+> terminated for exceeding CPU on ~100% of invocations. Everything below
+> describes the pass accurately **for when a schedule exists**; right now it
+> never executes, whatever the two flags say. **Treat the manual steps above as
+> the only remittance path** until **both** a live schedule is read back
+> (Settings → Trigger Events — not merely a quiet `wrangler tail`, which proves
+> nothing here) **and** you have seen this pass actually run. A restored cron
+> alone is not enough: the pass is gated TWICE, on `KEEPER_ENABLED` and
+> `REWARD_REMIT_ENABLED`, and the re-enable sequence keeps the first false
+> through its unarmed-validation step. Worse, `timedPass` logs
+> `rewardBudgetRemit done in Nms` even when the pass returned instantly from
+> its gate — so read the accompanying `passIsArmed` skip line, which names the
+> blocking binding, rather than the `done` line. Then require this pass's own
+> POSITIVE marker — `rewardBudgetRemit coverage: C/A destination(s) completed`
+> — with **C equal to A**. **`C == A` means nothing is left owed AT THE SOURCE
+> — it does NOT mean the mirrors were funded.** A successful Base receipt only
+> means CCIP accepted the message; delivery can still park or revert on the
+> mirror (a paused receiver), and per the bullet above those days are already
+> marked remitted on Base, so no later keeper tick repairs it — recovery is a
+> manual CCIP re-execution. The coverage counter cannot see the mirror and
+> does not claim to.
+>
+> **Reconcile every source-marked day, not just the ones this tick sent.** A
+> day parked from an EARLIER tick is already marked remitted, so the pass now
+> treats it as non-actionable and a perfectly idle tick reports `A/A` — and
+> the success log carries only a batch count, never the day IDs, so the
+> undelivered day appears nowhere in the tail you are reading. Watching one
+> green tick therefore cannot surface it. Before standing down manual funding,
+> reconcile the source-marked remittances against destination-side events or
+> pending CCIP messages for the whole window that could still be in flight.
+> Do not reuse §3.5's liquidator markers here: this
+> pass fails with its own distinct messages (`chain=<id> failed:`,
+> `skipped Base-><id>:`, a `REVERTED` warning), none sharing a prefix with the
+> liquidator's, so an "absence of errors" check written for one pass says
+> nothing about the other. `C < A` means mirrors went unfunded this tick, and
+> an opened claim gate with no funding behind it is exactly the user-visible
+> revert this section exists to prevent.
+>
+> **Then resolve any `finalized day(s) neither remitted nor closed` warning —
+> the warning itself is not a blocker; an unresolved ID is.** That line lists
+> days the pass cannot classify: each is either an obligation still gated —
+> awaiting its commitment report, or unbacked — or a day that gave that mirror
+> no slice at all. The pass deliberately does NOT guess between them: guessing
+> "owed" would hold coverage below `A/A` on every tick for a zero-budget day
+> and put the stand-down permanently out of reach, and guessing "settled"
+> would hide a real obligation.
+>
+> A zero-budget day is **never closed by anything**, so its ID keeps appearing
+> for as long as it stays in the scan window. Requiring the warning to vanish
+> would therefore recreate exactly the permanent false-red the reporting
+> exists to avoid. The rule is per ID, not per line: **stand down once every
+> warned ID has been checked and found to carry no obligation; any ID that is
+> a gated obligation keeps coverage manual until it clears.**
+> This matters most in exactly the incident this section is written for:
+> if a finalized day is broadcast and you leave a mirror's claim gate open
+> expecting the keeper to fund it, nothing will, and users hit the claim
+> reverts this section warns about.
+
 The steps above are the **manual** fallback. In normal operation the `apps/keeper`
 Worker drives remittance itself (`runRewardBudgetRemit`): each cron tick, running
 against Base, it re-scans a bounded recent-day window per mirror, batches the
@@ -329,6 +389,81 @@ protocol pause. The atomic-swap path (`triggerLiquidation`,
 `triggerLiquidationSplit`, `triggerPartialLiquidation`) keeps
 running.
 
+> **⚠ HOLD — #1896: Tiers 1 and 2 currently change NOTHING, and their
+> stated safety property does not hold.** The keeper commits
+> `"crons": []` because the Worker was terminated for exceeding CPU on
+> ~100% of invocations, so there is no next tick. Our bot already runs
+> neither the flash-loan branch **nor** the legacy partial / split /
+> atomic branches — the reassurance below that "legacy still runs" is
+> false while the hold is in force, and a successful secret deletion
+> must not be read as preserving automated liquidation.
+>
+> **What this means in an incident:**
+> - **Tier 1 / Tier 2** — already achieved by the hold, as far as our
+>   bot is concerned. Doing them is harmless and leaves the posture
+>   correctly latched for re-enable, but neither is the *response*.
+> - **The immediate on-chain stop is the §3 GLOBAL protocol pause — not
+>   `pauseAsset`.** The Tier 3 note below names Tier 1 and
+>   `AdminFacet.pauseAsset` as the post-handover immediate levers; that
+>   is wrong for this incident and is corrected there too. `pauseAsset`
+>   blocks NEW exposure only — creation paths consult it, and exit paths
+>   including liquidation deliberately do not, so existing loans stay
+>   liquidatable by design (`LibVaipakam` storage note; `RiskFacet` calls
+>   `requireAssetNotPaused` nowhere). `triggerLiquidationDiscounted`
+>   gates on the GLOBAL `whenNotPaused` alone. So pausing the asset
+>   leaves the vulnerable discounted path fully callable by external
+>   liquidators — and during the hold Tier 1 is a no-op as well, which
+>   would leave an operator with two levers engaged and nothing stopped.
+> - **Tier 3 still binds external liquidators — but it is not fast.**
+>   Post-handover it is a Timelock-scheduled tx with the 48h delay (see
+>   the Tier 3 note below), so it is the eventual targeted control, not
+>   the incident response. Pre-handover, where it is a direct ADMIN_ROLE
+>   call, it does act immediately.
+> - **Liquidation coverage from our side is manual, and stays manual
+>   longer than the schedule alone implies.** A restored cron is NOT the
+>   end of it: `runLiquidator` returns immediately from `passIsArmed`
+>   while `KEEPER_ENABLED` is false, and the re-enable sequence
+>   deliberately keeps it false through its unarmed-validation step —
+>   which spans a full 15-minute cycle and can span a daily window.
+>   Keep manual coverage until **all five** hold. Shorter versions of
+>   this list have been wrong three times, each by letting a tick that
+>   did not do the work look like coverage:
+>   1. A live schedule read back from Settings → Trigger Events — not a
+>      quiet `wrangler tail`, which proves nothing here.
+>   2. `chains resolved: N — …` naming the chains this deployment is
+>      meant to serve. A chain whose RPC secret is missing or failing is
+>      dropped silently, and the pass still finishes normally.
+>   3. `liquidator done in Nms` with **no** `passIsArmed` skip line
+>      naming a blocking binding — `timedPass` logs `done` even for a
+>      pass that returned instantly from its gate.
+>   4. **One `liquidator chain=… scan complete: scanned=… atRisk=…
+>      submitted=…` line per chain in (2).** Count them; the count must
+>      match. Do NOT substitute "I saw no error lines" — failures are
+>      caught at several depths (`getActiveLoansCount`, a page fetch, a
+>      multicall chunk, an HF read, and the per-chain catch), each with
+>      its own distinct message, and every one of them still lets the
+>      pass finish and log `done`. Three earlier versions of this
+>      checklist tried to enumerate the markers *not* to see and were
+>      incomplete each time. A missing `scan complete` line for an
+>      expected chain means that chain was not scanned.
+>   5. **A LATER tick must show `atRisk=0` on every chain — equality on
+>      one tick is not enough.** `atRisk == submitted` was the earlier
+>      rule here and it is too weak: `submitted` counts BROADCASTS, not
+>      confirmations. Every success path in `maybeAutonomousLiquidate`
+>      returns as soon as `writeContract` hands back a hash; none waits
+>      for a receipt. So a transaction still pending, or one that
+>      reverted on a state race, keeps the equality true while the loan
+>      is still underwater.
+>      `atRisk=0` on a subsequent scan is the observation that settles
+>      it, because a liquidated loan leaves the active set — the scan
+>      itself is the confirmation. Equality on the first tick tells you
+>      only that nothing was skipped in the moment, which is still worth
+>      checking: `atRisk > submitted` means loans were left untouched
+>      right then, and the causes are a loan with no usable quote, a
+>      missing keeper context or account, a caught submission error, or
+>      `MAX_LIQUIDATIONS_PER_TICK`. Keep manual coverage until a whole
+>      scan comes back with nothing at risk.
+
 Three escalation tiers, least to most disruptive:
 
 **Tier 1 — keeper-side snap-off (30-second op, our bot only)**
@@ -367,10 +502,27 @@ too.
 
 Post-handover this needs a Timelock-scheduled tx with the
 48h delay — **not an emergency lever once handover lands**.
-Tier 1 (keeper-side snap-off) and the asset-level
-`AdminFacet.pauseAsset` are the immediate-effect levers
-post-handover; Tier 3 is the "we have time to schedule a
-permanent fix" path.
+Tier 3 is the "we have time to schedule a permanent fix" path.
+
+**Correction (#1924 r16): `AdminFacet.pauseAsset` is NOT an
+immediate lever for this incident**, and an earlier version of
+this note listed it as one alongside Tier 1. It blocks NEW
+exposure only — creation paths consult `requireAssetNotPaused`
+and exit paths deliberately do not, so that existing positions
+can always be closed out (see the `assetPaused` note in
+`LibVaipakam`). `RiskFacet` never calls it, and
+`triggerLiquidationDiscounted` gates on the GLOBAL
+`whenNotPaused` alone. Pausing the asset therefore leaves the
+discounted path fully callable by external liquidators.
+
+So post-handover the immediate levers are **Tier 1** (our bot
+only — and see the #1896 hold above, which makes it a no-op
+today) and the **§3 global protocol pause** (everyone). If the
+defect is in the diamond's discount-path code and external
+callers must be stopped now, the global pause is the only
+immediate option; Tier 3 follows behind it as the targeted
+permanent fix. Pre-handover, Tier 3 is a direct ADMIN_ROLE call
+and does act immediately.
 
 Full per-chain rollout sequence + troubleshooting in
 [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md).
@@ -416,10 +568,21 @@ logic, the lifecycle transition, the per-leg incentive math)
 and every operator's matcher must be stopped.
 
 Post-handover this needs a Timelock-scheduled tx with the
-48h delay — **not an emergency lever once handover lands.** The
-asset-level `AdminFacet.pauseAsset` is the immediate-effect lever
-for the affected asset's loans; Tier 2 is for "we want to
-permanently disable the match path while we triage."
+48h delay — **not an emergency lever once handover lands.**
+Tier 2 is for "we want to permanently disable the match path
+while we triage."
+
+**Correction (#1924 r16): `AdminFacet.pauseAsset` is NOT the
+immediate lever here either**, and an earlier version of this
+note said it was "the immediate-effect lever for the affected
+asset's loans" — which is precisely backwards. Existing loans
+are exactly what an asset pause does not touch: creation paths
+consult `requireAssetNotPaused`, exit paths deliberately do not
+so positions can always be closed out, and `RiskFacet` never
+calls it at all. `triggerInternalMatchLiquidation` gates on the
+GLOBAL `whenNotPaused` only. For an immediate stop that binds
+every operator's matcher, the §3 global protocol pause is the
+lever; Tier 2 follows as the targeted permanent fix.
 
 ### What does NOT require flipping the internal-match
 kill-switch
@@ -647,10 +810,14 @@ runs after revocation.
    old token:
 
    ```bash
-   pnpm --filter @vaipakam/agent exec wrangler deploy
-   # --keep-vars is harmless and correct for TG_BOT_USERNAME, but it is NOT
-   # what keeps the keeper armed — see "How the keeper's arming flags are
-   # actually held" below. A plain deploy does not disarm it.
+   pnpm --filter @vaipakam/agent run deploy
+   # `run deploy` carries --keep-vars. It is REQUIRED for the agent, not
+   # merely harmless: RECIPIENT_VALIDATING_TOKENS and OPENSEA_OFFERS_MAX_PAGES
+   # are dashboard-managed and absent from its config, so a bare deploy
+   # switches recipient-token validation off.
+   # For the KEEPER the flag preserves TG_BOT_USERNAME and the tuning vars —
+   # but it is NOT what keeps the keeper armed; see "How the keeper's arming
+   # flags are actually held" below. A plain deploy does not disarm it.
    pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
    ```
 
@@ -701,10 +868,11 @@ is `wrangler tail`, so verify there rather than assuming success.
 3. Redeploy **both** consumers to drop their cached PushAPI clients:
 
    ```bash
-   pnpm --filter @vaipakam/agent exec wrangler deploy
-   # --keep-vars: same reason as the Telegram rotation — see "How the
-   # keeper's arming flags are actually held" below. It preserves
-   # TG_BOT_USERNAME; it is not what keeps the keeper armed.
+   pnpm --filter @vaipakam/agent run deploy
+   # Same as the Telegram rotation: `run deploy` carries --keep-vars, which
+   # the agent REQUIRES (RECIPIENT_VALIDATING_TOKENS,
+   # OPENSEA_OFFERS_MAX_PAGES). On the keeper it preserves TG_BOT_USERNAME and
+   # the tuning vars; it is not what keeps the keeper armed.
    pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
    ```
 4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to
@@ -745,6 +913,18 @@ is `wrangler tail`, so verify there rather than assuming success.
    when an eligible subscriber event occurs, so silence means "nothing has
    been attempted yet" and "every attempt is failing" equally. Wait for a
    real send, or trigger one, before calling the migration done.
+
+   > **⚠ HOLD — #1896: verify the AGENT only; defer the keeper.** The
+   > keeper is deliberately unscheduled (`"crons": []`, because the Worker
+   > was terminated for exceeding CPU on ~100% of invocations) and it has
+   > no HTTP surface, so it has no invocation from which to send and this
+   > check can never complete against it. Complete the rotation on the
+   > agent, which can satisfy it, and **record the keeper's Push
+   > verification as deferred** — do not wait indefinitely, and do not
+   > drop the check. It carries a real risk: an incompatible signer would
+   > stay undetected until the keeper is re-enabled, so the deferral must
+   > be re-run as part of the re-enable sequence in
+   > `apps/keeper/wrangler.jsonc`, at its armed-tick step.
 7. Tell subscribers to re-subscribe (see **Communicate**). They are subscribed
    to the OLD channel and nothing migrates them.
 

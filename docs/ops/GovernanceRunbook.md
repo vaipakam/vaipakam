@@ -305,7 +305,7 @@ every fresh deploy. To enable per chain after audit sign-off:
 | 2 | Confirm `getTierLiquidationLtvBps()` returns `(9000, 8500, 8000)` post-deploy. | Per-tier liquidation thresholds replaced the retired per-asset `liqThresholdBps` in PR2; verify the defaults stuck. |
 | 3 | Ensure keeper-bot deploy (`vaipakam-keeper-bot`) is live on this chain with the `internalMatcher` detector running. | The kill-switch alone enables the path; without a bot, no matches fire. |
 | 4 | Governance Safe schedules `timelock.schedule(diamond, 0, setInternalMatchEnabled(true), 0, salt, 48h)`. | Same 48h-gated flow as every other tunable post-handover. |
-| 5 | 48h later: Safe executes. `InternalMatchEnabledSet(true)` event emits. | Bots' next tick picks it up and starts matching eligible pairs. |
+| 5 | 48h later: Safe executes. `InternalMatchEnabledSet(true)` event emits. | Bots' next tick picks it up and starts matching eligible pairs. **#1896: `apps/keeper`'s matcher will NOT — it is unscheduled (`"crons": []`), so its next tick never comes.** The separate `vaipakam-keeper-bot` deployment from step 3 is unaffected and is what makes this step's expectation hold; if it is not running, enablement produces no matches at all and step 6 will read as a failed rollout rather than a stopped bot. |
 | 6 | Monitor `InternalMatchExecuted` event volume + matcher wallet balances for one week. | Validate the match rate is non-zero and the priority window is producing the expected 1% saving per leg. |
 | 7 | Optional follow-up: tune the priority window or incentive via `timelock.schedule(setInternalMatchConfig(window, incentive))`. | Only after a week of baseline data. Stay inside the `[0,500]` window cap + `[0,300]` incentive cap. |
 
@@ -913,8 +913,44 @@ finalization, and a rehearsed Diamond can carry a stale non-zero
 describes the posture; this is where it gets checked, because Step 6 may be
 deferred past `D*`.
 
+> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
+> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
+> was terminated for exceeding CPU on ~100% of invocations. **Do not
+> restore the schedule or arm `KEEPER_ENABLED` as part of this procedure**
+> until #1896's CPU work has landed. With no schedule, no pass runs, so a
+> quiet `wrangler tail` here proves nothing — it is the expected state,
+> not a passing check. Re-enable only via the sequence kept beside the
+> empty list in `apps/keeper/wrangler.jsonc`.
+
 **3g. Set and CONFIRM the master flags NOW, before the arm — they are not a
-step 5 item.** **`KEEPER_ENABLED` is not a reward flag**: turning it on resumes
+step 5 item.**
+
+> **⚠ #1896 AMENDMENT TO 3g — do not follow this step as written while the
+> keeper is unscheduled.** The hold above says not to arm `KEEPER_ENABLED`;
+> this step as written says to set it now and confirm it by watching a cron
+> cycle. Both cannot hold, and unamended the step either latches the
+> unreadable master secret to `true` — destroying the guaranteed-disarmed
+> posture the re-enable sequence depends on — or simply cannot be completed,
+> because with `"crons": []` the confirming cycle never comes.
+>
+> While the hold is in force:
+> - **`REWARD_COMMIT_ENABLED` / `REWARD_REMIT_ENABLED`** — set and record them
+>   as this step describes. They are reward flags and latch correctly for when
+>   the schedule returns. Their `wrangler tail` confirmation is **deferred**,
+>   not skipped: no pass runs to log a start.
+> - **`KEEPER_ENABLED`** — do **not** set it here. It is not a reward flag and
+>   the ceremony must not be what arms it. Leave it to the re-enable sequence
+>   in `apps/keeper/wrangler.jsonc`, which sets it to `false` explicitly first
+>   and arms it only after a live unarmed tick has been observed.
+> - Record both deferrals in the ceremony log, so `D*` is not treated as
+>   fully confirmed on evidence that could not have been produced.
+>
+> The "do NOT switch off flags that are already running" note below still
+> applies unchanged, and matters more here: this hold is a reason not to ARM
+> `KEEPER_ENABLED`, never a licence to turn off a flag that is currently
+> funding live mirror claims.
+
+**`KEEPER_ENABLED` is not a reward flag**: turning it on resumes
 the matcher, the liquidator, the liquidity-confidence pass and the rest of the
 keeper's jobs on every resolved chain. If it is currently off — on a fresh
 deployment, or because of an incident — validate ALL of those passes before

@@ -6,7 +6,15 @@
 // fallback, every-5-minutes for the DO path) and routed by which one
 // fired. That deploy failed in production: the free plan caps cron
 // triggers at FIVE per ACCOUNT, and this account's five Workers already
-// use all five slots — a sixth schedule cannot exist. Same routing,
+// used all five slots — a sixth schedule cannot exist. Same routing,
+//
+// #1896 note: apps/keeper now commits `"crons": []`, so THREE slots are
+// live today, not five. That does NOT reopen the two-schedule design —
+// the freed slot is RESERVED for the keeper's return (its re-enable
+// procedure starts by confirming a free slot), and the time-routing
+// below is strictly better than a second trigger anyway: it costs one
+// Worker request on a skipped tick and nothing else. Do not "simplify"
+// this back into two schedules on the strength of temporary headroom.
 // different discriminator: ONE every-minute schedule, and the tick's
 // SCHEDULED TIME decides who acts.
 //
