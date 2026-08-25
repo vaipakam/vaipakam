@@ -62,6 +62,14 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        with:
+          # Pinned rather than `stable` — 2026-08-25, upstream's `stable`
+          # channel began serving a `foundryup` the runner cannot execute
+          # ("cannot execute binary file"), which failed EVERY contracts job
+          # on every branch including main, six seconds into setup and before
+          # any compile. v1.7.1 is what `stable` resolved to on the last green
+          # run (main, 13:31 UTC). Revert to `stable` once upstream recovers.
+          version: v1.7.1
 
       # The "Restore foundry cache" step that sat here was REMOVED in
       # #1493: `forge doc` runs its own solc pass and never read the
