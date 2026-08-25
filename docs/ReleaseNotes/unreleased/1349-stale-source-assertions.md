@@ -57,13 +57,24 @@ so the borrower pays the same either way and what moves is the split between the
 lender and the platform. A rate above the frozen one pays the lender less than
 the terms they agreed to; a rate below it short-changes the platform.
 
-But that is one path, and the answer does not hold everywhere. Where a loan is
-being settled through a collateral sale, the fee is added on top of what the
+But that is one path, and the answer does not hold everywhere. Where the
+collateral is put up for sale as a listing, the fee is added on top of what the
 lender is owed to set the minimum acceptable price, and whatever the sale raises
-beyond that goes to the borrower's side. At a fixed sale price a higher rate
-therefore takes from the borrower, not the lender. So the honest answer is that
-it depends on how the loan is being closed — and each earlier attempt had picked
-one party and asserted it everywhere.
+beyond that goes to the borrower's side — so at a fixed price a higher rate takes
+from the borrower rather than the lender.
+
+There is a third arrangement, and it behaves like neither. Where the borrower has
+instead pre-authorised a swap of the collateral to repay the loan, the same
+figure is used only as the threshold the swap has to clear; once it clears, the
+proceeds are divided by the ordinary repayment rules, in which the lender's share
+and the platform's share add up to a fixed amount. A higher rate there can cause
+the swap to be refused outright, and cannot reduce what the borrower keeps on one
+that goes through.
+
+So the honest answer is that it depends on how the loan is being closed — and
+each earlier attempt had picked one party and asserted it everywhere. Naming the
+mechanism rather than the beneficiary is what finally stopped this being wrong,
+because the mechanism carries its own scope.
 
 The second listed the reasons a billing step can fail and omitted one. Saying it
 "stops billing for everybody" was then too broad, and the correction after that

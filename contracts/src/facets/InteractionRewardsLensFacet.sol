@@ -741,8 +741,10 @@ contract InteractionRewardsLensFacet {
      *         formula, left on the RETURN DOC of the view whose whole
      *         purpose is letting an outside reader recompute the number.
      *         A zero here is ambiguous by construction — fully consumed and
-     *         in breach look identical. Separating them takes ALL FOUR
-     *         values this view returns: compare `vpfiBalance` against
+     *         in breach look identical. Separating them takes four of the
+     *         values this view returns — it returns eight, and "ALL FOUR"
+     *         until #1349 was one more miscount from a comment about
+     *         miscounts: compare `vpfiBalance` against
      *         `bucket + strandedRecoveryReserved + recoveryPositionReserved`.
      *         Comparing it against `bucket` alone — what this said until
      *         #1349 — misreads the case the recovery terms exist for:
@@ -766,9 +768,14 @@ contract InteractionRewardsLensFacet {
      *         carefully. The completion plan §M7 step 0 defines that
      *         condition as `balanceOf − recycleBucket`, and this value is
      *         no longer that expression — it is that expression MINUS the
-     *         two recovery reservations, so it is a strictly TIGHTER bound
-     *         that can never overstate free tokens and can floor to zero
-     *         while the plan's expression is still positive. Conservative
+     *         two recovery reservations, so it can never exceed the PLAN'S
+     *         BOUND and can floor to zero while the plan's expression is
+     *         still positive. That is the whole of what the subtraction
+     *         proves. It does NOT mean the value cannot overstate genuinely
+     *         free tokens — {LibVpfiRecycle.backingPosition} is an UPPER
+     *         BOUND with other balance owners known and unsubtracted, and
+     *         "can never overstate free tokens" until #1349 contradicted
+     *         that in as many words. Conservative
      *         in the right direction for detecting a scheduled payout
      *         eating recycle backing, which is what the condition is for —
      *         but "defines it as exactly" was left standing here after

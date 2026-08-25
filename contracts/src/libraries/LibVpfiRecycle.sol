@@ -298,9 +298,13 @@ library LibVpfiRecycle {
      *         third condition — but it is no longer the expression the
      *         completion plan §M7 step 0 writes that condition as. The plan
      *         says `balanceOf − recycleBucket`; this returns that MINUS the
-     *         two #1434 recovery reservations, a strictly tighter bound
-     *         that can never overstate free tokens and can floor to zero
-     *         while the plan's expression is positive. "Exactly … as the
+     *         two #1434 recovery reservations, so it can never exceed the
+     *         PLAN'S BOUND and can floor to zero while the plan's
+     *         expression is positive. That is all the subtraction proves —
+     *         it does not make the figure a statement about genuinely free
+     *         tokens, which the bolded UPPER BOUND note below denies in as
+     *         many words. "Can never overstate free tokens" until #1349,
+     *         written 230 lines above the sentence that refutes it. "Exactly … as the
      *         plan defines it" until #1349, which would send a reader
      *         reconciling the two to conclude one side was broken. And a
      *         healthy figure here is still NOT a solvency statement across
@@ -489,10 +493,18 @@ library LibVpfiRecycle {
      *         turns on — the defect needs a non-zero bucket AND a
      *         scheduled-only claim AND this figure below the scheduled
      *         payout. The first two are observable in one call each; the
-     *         third was reachable only by chaining three — resolve the token
+     *         third was reachable only by chaining calls — resolve the token
      *         via {VPFITokenFacet.getVPFIToken}, call its `balanceOf` on the
-     *         Diamond, subtract {ConfigFacet.getRecycleBucket} — all at the
-     *         same block, or the answer is meaningless. An earlier revision
+     *         Diamond, subtract {ConfigFacet.getRecycleBucket} AND both
+     *         #1434 recovery reservations — all at the same block, or the
+     *         answer is meaningless. The recovery terms are not separately
+     *         published outside
+     *         {InteractionRewardsLensFacet.getRecycleBackingSnapshot}, which
+     *         is the practical answer: read them there rather than
+     *         reassembling this. This described the chain as bucket-only
+     *         until #1349, a procedure that yields a LARGER figure than the
+     *         claim and sweep gates use and can show reserved recovery
+     *         funds as available. An earlier revision
      *         called it "observable nowhere", which was the same reachability
      *         overstatement already corrected for the mirror term (Codex
      *         #1487 r3). What this adds is ATOMICITY and one call instead of
