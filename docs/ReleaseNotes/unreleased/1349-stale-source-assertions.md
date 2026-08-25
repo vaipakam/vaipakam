@@ -88,11 +88,21 @@ shared machinery can fail for everyone at once too, whenever every user in a bat
 happens to need it.
 
 So the list stopped being a list. What is left is a way of thinking rather than a
-lookup: sort a reported failure by how many users it hits, remember that the
-shared machinery can imitate either pattern depending on the batch, and check the
-individual user's balance before reaching for anything larger. Four attempts to
-enumerate the causes produced four incomplete enumerations, which is a reasonable
-sign that enumerating them was the wrong shape.
+lookup: sort a reported failure by how many users it hits, and remember that the
+shared machinery can imitate either pattern depending on the batch.
+
+The one piece of ordering advice also needed correcting, and it is the kind of
+thing an operator would have lost an hour to. "Check the user's balance first"
+was too small: a user can hold plenty and still be unable to pay, because the
+withdrawal also screens the account, can require an outdated account to be
+upgraded first, and only spends the portion not already pledged elsewhere. So a
+healthy balance does not clear the account — the whole account state has to be
+ruled out before looking at the shared machinery, and an earlier version of this
+note would have sent someone straight past a pledged or outdated account to go
+hunting through infrastructure.
+
+Five attempts to enumerate the causes produced five incomplete enumerations,
+which is a reasonable sign that enumerating them was the wrong shape.
 
 A pattern worth naming, since it repeated on nearly every one of these: the
 first correction of a wrong statement was usually itself too confident. Each

@@ -102,8 +102,10 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *             mirror's absorption. d1 and d2 alone do not close that.
  *
  *         Naming only d1 and d2 here would send someone auditing the
- *         no-phantom-availability property to two of the three places it
- *         actually lives.
+ *         no-phantom-availability property to a SUBSET of the places it
+ *         actually lives — and this sentence said "two of the three
+ *         places" until #1349, reinstating three paragraphs down the very
+ *         count the paragraph above had just removed.
  *
  *         What B2-b made live: each chain gets its own funded per-day
  *         stamp (per-side fresh floors + global-equivalent recycled halves),
@@ -238,11 +240,12 @@ library LibMeshFunding {
 
             // #1222 M3 B2-d3 — mirror LOCAL funding is now ON (the B2-b
             // re-slice deferred it to here, where d1's commitment report,
-            // d2's delivered-backing ledger AND d5's custody-relocation
-            // exclusion together make it safe — see this library's header
-            // for what each leg contributes; d1 and d2 alone do not close
-            // the phantom-availability path, and this comment said they did
-            // until #1349). A mirror's
+            // d2's delivered-backing ledger, C2's repatriation draw AND
+            // d5's custody-relocation exclusion together make it safe —
+            // see this library's header for what each leg contributes and
+            // for why no total is given. This comment said d1+d2 until
+            // #1349 and then d1+d2+d5, omitting C2's draw even while the
+            // sentence below names it. A mirror's
             // availability is Base's model of its committable bucket:
             // `reported` less the net INSTRUCTION draw `sat(consumed −
             // released)` and less the net repatriation draw, the HARD

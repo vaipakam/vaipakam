@@ -7241,9 +7241,10 @@ library LibVaipakam {
     ///      numerators (`fundedSide_c × globalSide / chainSide_c`, floor)
     ///      that make the existing per-side numerator/global-denominator
     ///      claim math yield exactly the funded budget on that chain.
-    ///      `recycleConsume` is the capped-committable share funded from the
-    ///      chain's OWN bucket (B2-b: the exact figure Base books into
-    ///      `chainConsumedRecycled[c]` at finalization and the mirror
+    ///      `recycleConsume` — ON A MIRROR RECORD — is the capped-committable
+    ///      share funded from that chain's OWN bucket (B2-b: the exact
+    ///      figure Base books into `chainConsumedRecycled[c]` at
+    ///      finalization and the mirror
     ///      RESERVES against its bucket at broadcast arrival, via
     ///      {LibVpfiRecycle.reserveMirrorCommit} — same number, both
     ///      ledgers; the remainder arrives via remittance). This line said
@@ -7253,6 +7254,20 @@ library LibVaipakam {
     ///      arrival debit charges the same tokens twice, drains the bucket
     ///      to its floor and over-states this chain's availability to Base
     ///      (§2e.1). Reserve at arrival, debit at claim/remit.
+    ///
+    ///      ON THE BASE RECORD IT IS ZERO, and that is not a dust case —
+    ///      `LibMeshFunding._stampOne` guards the local split with
+    ///      `if (c.chainId != ctx.baseId)`, because Base's own slice comes
+    ///      from the same bucket the GLOBAL reservation already governs.
+    ///      So Base books nothing into `chainConsumedRecycled[Base]` and
+    ///      returns its whole capped commit through `reservedBase`;
+    ///      per-chain instruction books exist to track what a MIRROR holds,
+    ///      and Base double-booking itself would corrupt the global
+    ///      reservation and net its own bucket twice. This paragraph
+    ///      described the mirror semantics as every chain's until #1349 —
+    ///      an inspector reading the Base stamp would have read its zero as
+    ///      "Base funded none of its own day" rather than "this field does
+    ///      not apply here".
     ///      `keeperAllocate`
     ///      is reserved for the per-chain keeper allocation (0-valued until
     ///      that resolution exists). `freshLenderHalf`/`freshBorrowerHalf`
@@ -8170,7 +8185,17 @@ library LibVaipakam {
     ///      is an ADDITIVE leg in the sale floor whose remainder
     ///      `PrepayListingFacet` routes to the borrower-position holder, so
     ///      at a fixed price it moves value between treasury and the
-    ///      BORROWER instead. `RiskPreviewFacet` only compares. This line
+    ///      BORROWER instead. That same helper has a THIRD shape:
+    ///      `SwapToRepayIntentFacet` / `LibSwapToRepayIntentSettlement` use
+    ///      it as a commit-time minimum output and a fill-time floor, and
+    ///      `LibSettlement.computeRepayment` then recomputes the split with
+    ///      `lenderDue + treasuryShare` fixed — so there the rate moves the
+    ///      ACCEPTANCE THRESHOLD (it can reject an intent or fill) and
+    ///      cannot shrink the borrower's surplus on a fill that passes.
+    ///      `RiskPreviewFacet` only compares. This duplicate explanation
+    ///      classified the helper by its sale consumer alone until #1349,
+    ///      one round after the field comment above had been corrected —
+    ///      the same fix landing on one of two copies. This line
     ///      "1% → 2%" until #1349, which
     ///      named only the untuned-deploy case; {RiskPreviewFacet}'s
     ///      inherited-fee gate has always reasoned about the sub-legacy

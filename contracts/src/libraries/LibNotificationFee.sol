@@ -49,9 +49,17 @@ import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
  *      VPFI-debit path does this; the pre-M1 bill path skipped it. The
  *      re-route closes that gap with a `rollupUserDiscount` call placed
  *      after the withdrawal and before the recycle credit — "tail" was
- *      loose wording for a call that is not last, and the position is
- *      load-bearing: it is a BROADCASTING call, so a failure there reverts
- *      the credit, the billed flag and the accrual that follow it.
+ *      loose wording for a call that is not last.
+ *
+ *      What the position actually buys, stated precisely because #1349
+ *      first got this wrong: it must come AFTER the withdrawal, so the
+ *      tracked balance it stamps is the post-mutation one. That is the
+ *      whole ordering requirement. It does NOT make the rollback atomic —
+ *      a revert unwinds the entire transaction wherever the call sits, so
+ *      moving it after the credit would not preserve credited state on
+ *      failure. The earlier wording called the position "load-bearing" for
+ *      that reason and implied a guarantee that ordinary EVM revert
+ *      semantics already provide unconditionally.
  */
 library LibNotificationFee {
     /// @notice Emitted when a loan-side's first notification triggers a
