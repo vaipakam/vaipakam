@@ -51,15 +51,7 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Install Foundry (anvil)
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
-        with:
-          # Pinned rather than `stable` — 2026-08-25, upstream's `stable`
-          # channel began serving a `foundryup` the runner cannot execute
-          # ("cannot execute binary file"), which failed EVERY contracts job
-          # on every branch including main, six seconds into setup and before
-          # any compile. v1.7.1 is what `stable` resolved to on the last green
-          # run (main, 13:31 UTC). Revert to `stable` once upstream recovers.
-          version: v1.7.1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
 
       - name: Setup pnpm
         uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4

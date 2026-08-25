@@ -506,15 +506,9 @@ jobs:
           submodules: recursive
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          # Pinned rather than `stable` — 2026-08-25, upstream's `stable`
-          # channel began serving a `foundryup` the runner cannot execute
-          # ("cannot execute binary file"), which failed EVERY contracts job
-          # on every branch including main, six seconds into setup and before
-          # any compile. v1.7.1 is what `stable` resolved to on the last green
-          # run (main, 13:31 UTC). Revert to `stable` once upstream recovers.
-          version: v1.7.1
+          version: stable
 
       # Foundry's `out/` (artifact tree) and `cache/` (incremental compile)
       # together cut a warm `forge build` from ~10 min to ~90 s.
@@ -651,15 +645,9 @@ jobs:
           fetch-depth: 0
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          # Pinned rather than `stable` — 2026-08-25, upstream's `stable`
-          # channel began serving a `foundryup` the runner cannot execute
-          # ("cannot execute binary file"), which failed EVERY contracts job
-          # on every branch including main, six seconds into setup and before
-          # any compile. v1.7.1 is what `stable` resolved to on the last green
-          # run (main, 13:31 UTC). Revert to `stable` once upstream recovers.
-          version: v1.7.1
+          version: stable
 
       - name: Setup Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
@@ -766,15 +754,9 @@ jobs:
           submodules: recursive
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
+        uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          # Pinned rather than `stable` — 2026-08-25, upstream's `stable`
-          # channel began serving a `foundryup` the runner cannot execute
-          # ("cannot execute binary file"), which failed EVERY contracts job
-          # on every branch including main, six seconds into setup and before
-          # any compile. v1.7.1 is what `stable` resolved to on the last green
-          # run (main, 13:31 UTC). Revert to `stable` once upstream recovers.
-          version: v1.7.1
+          version: stable
 
       # The #1221 warm-artifact download + in-job warm compile that used
       # to sit here were REMOVED in #1493 (with their cache-key
