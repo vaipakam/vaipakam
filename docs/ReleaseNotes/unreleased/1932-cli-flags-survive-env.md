@@ -99,5 +99,12 @@ documents kept describing it. They now describe what is actually there, which
 matters more than usual here: this work exists because documentation that had
 quietly stopped matching the code cost real time.
 
+A last correction came from the repository's own guard rather than from review.
+Two settings are documented as harmless to leave lying around — the deployment
+forces them off itself — and the stricter reading would have turned that
+documented harmlessness into a refused deployment. They are recognised, and the
+forcing is what keeps them from deciding anything. A hardening change is not
+allowed to break a behaviour the documentation guarantees.
+
 Nothing changes for an operator who was not relying on the settings file to
 supply these switches, which is everyone following the documented process.

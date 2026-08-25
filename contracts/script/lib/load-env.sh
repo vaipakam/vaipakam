@@ -30,12 +30,21 @@
 # whole argument: an allowlist that is short a name STOPS the deploy with a
 # message naming it, and a denylist that is short a name runs the payload.
 #
+# `CONFIGURE_VPFI_PEG` and `SKIP_VPFI` are on that list deliberately even
+# though the wrappers force both: `.env.example` tells operators a stale value
+# "is inert at launch", and deploy-mainnet.sh promises a stale
+# `CONFIGURE_VPFI_PEG` "is forced off". Refusing them would replace documented,
+# harmless inertness with a hard deploy failure — a hardening change breaking a
+# behaviour the documentation guarantees. They load, and the forcing downstream
+# is what makes them not decide anything.
+#
 # The allowlist is `.env.example` — the documented configuration surface —
 # plus the handful below that the scripts read but that file does not yet
 # declare. Adding a setting means documenting it, which was already the rule.
 __lenv_extra_allowed="FORK_URL_MAINNET FORK_URL_BASE_SEPOLIA POST_HANDOVER
 UNPAUSE_TIMELOCK_DELAY UNPAUSE_TIMELOCK_SALT SYNC_FORCE FORGE_GAS_MULTIPLIER
-BASE_REWARD_DEPLOYMENT MIRROR_REWARD_DEPLOYMENTS CCIP_ROUTER CCIP_RMN_PROXY"
+BASE_REWARD_DEPLOYMENT MIRROR_REWARD_DEPLOYMENTS CCIP_ROUTER CCIP_RMN_PROXY
+CONFIGURE_VPFI_PEG SKIP_VPFI"
 
 # Name SHAPES this project configures. Needed because `.env.example` documents
 # only the testnet chains: EVERY mainnet RPC name (`ETHEREUM_RPC_URL`,
