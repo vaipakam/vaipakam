@@ -271,6 +271,39 @@ EOF
   exit 1
 fi
 
+# ── Load .env BEFORE parsing anything the operator typed ──────────────
+#
+# Order is the whole mechanism, and it replaces one that could not work.
+# `.env` is SOURCED, which is to say EXECUTED: #1932 first tried to parse
+# flags and then restore them after the source, and Codex #1938 took that
+# apart in two rounds — the file can redefine the restore list, mark a
+# target `readonly` so `printf -v` fails, `set +e` so the failure is not
+# fatal, or simply define `printf() { :; }` and make every restore a
+# silent no-op. No amount of restoring-afterwards survives arbitrary code
+# running in between.
+#
+# Reading it FIRST removes the contest instead of trying to win it:
+# anything below overwrites what the file set, because it is assigned
+# later. There is no protected-name list to keep in step, no saved state
+# for the file to reach, and nothing to restore.
+#
+# Placed after the usage guard so `--help` and a no-argument run still
+# exit without requiring a `.env`.
+if [ -f "$CONTRACTS_DIR/.env" ]; then
+  set -a; source "$CONTRACTS_DIR/.env"; set +a
+  # RE-ASSERT the shell options the file may have turned off. Sourcing runs
+  # its contents in THIS shell, so a `.env` containing `set +e` leaves the
+  # rest of a mainnet deploy running without errexit — every later failure
+  # becomes a warning. Verified rather than assumed: with `set +e` in the
+  # file and a `readonly CONFIRM_PURGE_MAINNET=1`, the default assignment
+  # below failed, did not abort, and the purge gate stayed armed. Restoring
+  # the options turns that into a loud stop.
+  set -euo pipefail
+else
+  echo "Error: $CONTRACTS_DIR/.env not found." >&2
+  exit 1
+fi
+
 CHAIN_SLUG="$1"; shift
 
 PHASE=""
@@ -385,42 +418,7 @@ esac
 # So the CLI value is snapshotted and restored: whatever .env says about this
 # name is inert, and the only thing that prices VPFI is this run's flag.
 #
-# NOT yet extended to the other flag-set variables in the case block
-# (CONFIRM_PURGE_MAINNET, CONFIRM_MULTISIG, CONFIRM_HW_SIGNER,
-# CONFIRM_ORPHANS, CONFIRM_DEADLINE_RESET, FRESH, PHASE). They have the same
-# exposure and it is tracked separately — widening a launch-posture fix into
-# the mainnet purge/handover confirmations is a change that deserves its own
-# review, not a mid-review expansion of this one.
-# The names below are set by FLAGS. `.env` must never decide them, and
-# this loop is the single place that rule is implemented — #1920 protected
-# CONFIGURE_VPFI_PEG_OPT alone, and the other seven had the identical
-# exposure (#1932). Kept bash-3.2 safe (indirect expansion + `printf -v`,
-# no associative arrays): an operator on stock macOS bash must be able to
-# run a mainnet deploy.
-CLI_OWNED_VARS=(CHAIN_SLUG PHASE FRESH CONFIRM_MULTISIG CONFIRM_ORPHANS CONFIRM_HW_SIGNER CONFIRM_DEADLINE_RESET CONFIRM_PURGE_MAINNET CONFIGURE_VPFI_PEG_OPT)
-__cli_owned_saved=()
-for __v in "${CLI_OWNED_VARS[@]}"; do __cli_owned_saved+=("${!__v-}"); done
-# READONLY, and this is not belt-and-braces — it closes the hole the
-# mechanism itself opened. `set -a; source` can overwrite ANY global,
-# including the list and the saved values the restore loop then trusts:
-# a `.env` carrying `CLI_OWNED_VARS=(PHASE)` made the loop restore PHASE
-# alone and left every confirmation exactly as that file set them
-# (reproduced — Codex #1938 r1 P1). Under `set -euo pipefail` an
-# assignment to these from the sourced file now aborts the deploy
-# loudly instead of silently disarming the protection.
-readonly CLI_OWNED_VARS __cli_owned_saved
 
-if [ -f "$CONTRACTS_DIR/.env" ]; then
-  set -a; source "$CONTRACTS_DIR/.env"; set +a
-  __i=0
-  for __v in "${CLI_OWNED_VARS[@]}"; do
-    printf -v "$__v" '%s' "${__cli_owned_saved[$__i]}"
-    __i=$((__i + 1))
-  done
-else
-  echo "Error: $CONTRACTS_DIR/.env not found." >&2
-  exit 1
-fi
 
 RPC="${!RPC_VAR:-}"
 if [ -z "$RPC" ]; then

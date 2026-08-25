@@ -26,24 +26,29 @@ directions: an option missing from the list is the original problem returning,
 and a name in the list that no option sets is protection for something that no
 longer exists, which makes the list look more complete than it is.
 
-Review then found two ways the first version of this fix still failed, and both
-are worth recording because they are the same mistake in different clothes.
+Review then took the whole approach apart, correctly, and the second version of
+this fix is much simpler than the first.
 
-The protection was itself stored in ordinary settings, so a settings file could
-switch it off — naming a shorter list of things to protect left everything else
-exactly as that file wanted it. The mechanism was inside the blast radius of the
-thing it defended against. It is now fixed in place, so a settings file trying to
-touch it stops the deployment outright rather than quietly disarming it.
+The settings file is not read as data — it is executed. So an attempt to restore
+the operator's choices after loading it was never going to hold: the file can
+disable the checks that make a failed restore fatal, make a value permanently
+unwritable so the restore fails, or replace the very command used to perform the
+restore so that every restoration silently does nothing. Each of those was
+demonstrated against a successive version of the fix.
 
-The other was the chain itself. Which network to deploy to is typed on the
-command line like everything else, but it was not on the list — and a settings
-file overriding it produced the worst possible outcome: the parts resolved before
-the file was read stayed on the network the operator chose, while the parts
-resolved afterwards moved to the other one. A deployment could then check one
-network's records while preparing to act on another, which is precisely the check
-that stands between a redeploy and wiping a live deployment. The check that keeps
-the list honest now knows about the chain argument too, so this omission cannot
-be recorded as compliant again.
+The working version does not compete with the file at all. It loads the settings
+first and reads the operator's choices afterwards, so what was typed is simply
+assigned last and wins by construction. There is no list of protected names to
+keep in step with the options, nothing saved for the file to reach, and nothing
+to restore. The one thing that survived from the first attempt is the check that
+keeps it honest — rewritten to verify the order rather than a list, and now
+covering the third deployment script, which had no protection at all and where a
+stray setting could have triggered a wipe-and-redeploy nobody asked for.
+
+One further correction came out of testing rather than reasoning: a settings file
+can also switch off the shell's own error checking for the rest of the run, which
+would turn every later failure into a warning during a mainnet deploy. Those
+settings are now re-established immediately after the file is read.
 
 Nothing changes for an operator who was not relying on the settings file to
 supply these switches, which is everyone following the documented process.

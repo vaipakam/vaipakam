@@ -223,22 +223,20 @@ for s in "${DEPLOY_SH[@]}"; do
   fi
 done
 
-# 3c-bis. #1932 — every flag the wrappers parse must survive `.env`.
-# The wrappers source a shared `.env` with `set -a` AFTER parsing flags, so any
-# name that file mentions overwrites what the operator typed. `CLI_OWNED_VARS`
-# + the restore loop fixes it; this asserts the LIST has not fallen behind the
-# flags, in both directions. #1920 protected one variable and left seven with
-# the same exposure — including the mainnet purge confirmation, which a `.env`
-# line could otherwise arm.
+# 3c-bis. #1932 / #1938 — every wrapper must load `.env` BEFORE parsing what
+# the operator typed. `.env` is SOURCED, so a restore-afterwards design cannot
+# hold: the file can redefine the restore list, mark a target readonly, disable
+# errexit, or replace `printf`. Ordering removes the contest. Covers
+# deploy-chain.sh too, which had no protection at all.
 if command -v python3 >/dev/null 2>&1; then
-  if python3 "$SCRIPT_DIR/check-cli-owned-vars.py"; then
+  if python3 "$SCRIPT_DIR/check-env-load-order.py"; then
     :
   else
-    echo "  x CLI-owned flag protection drifted" >&2
+    echo "  x a deploy wrapper parses CLI input before sourcing .env" >&2
     FAIL=1
   fi
 else
-  echo "  · python3 not installed — skipping CLI-owned flag check"
+  echo "  · python3 not installed — skipping .env load-order check"
 fi
 
 # 3d. Provenance-stamp ordering (#1490). Any script that writes a

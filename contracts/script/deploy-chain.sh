@@ -248,6 +248,39 @@ EOF
   exit 1
 fi
 
+# ── Load .env BEFORE parsing anything the operator typed ──────────────
+#
+# Order is the whole mechanism, and it replaces one that could not work.
+# `.env` is SOURCED, which is to say EXECUTED: #1932 first tried to parse
+# flags and then restore them after the source, and Codex #1938 took that
+# apart in two rounds — the file can redefine the restore list, mark a
+# target `readonly` so `printf -v` fails, `set +e` so the failure is not
+# fatal, or simply define `printf() { :; }` and make every restore a
+# silent no-op. No amount of restoring-afterwards survives arbitrary code
+# running in between.
+#
+# Reading it FIRST removes the contest instead of trying to win it:
+# anything below overwrites what the file set, because it is assigned
+# later. There is no protected-name list to keep in step, no saved state
+# for the file to reach, and nothing to restore.
+#
+# Placed after the usage guard so `--help` and a no-argument run still
+# exit without requiring a `.env`.
+if [ -f "$CONTRACTS_DIR/.env" ]; then
+  set -a; source "$CONTRACTS_DIR/.env"; set +a
+  # RE-ASSERT the shell options the file may have turned off. Sourcing runs
+  # its contents in THIS shell, so a `.env` containing `set +e` leaves the
+  # rest of a mainnet deploy running without errexit — every later failure
+  # becomes a warning. Verified rather than assumed: with `set +e` in the
+  # file and a `readonly CONFIRM_PURGE_MAINNET=1`, the default assignment
+  # below failed, did not abort, and the purge gate stayed armed. Restoring
+  # the options turns that into a loud stop.
+  set -euo pipefail
+else
+  echo "Error: $CONTRACTS_DIR/.env not found." >&2
+  exit 1
+fi
+
 CHAIN_SLUG="$1"; shift
 
 SKIP_DEFI=0
@@ -336,13 +369,6 @@ esac
 
 # ── Load .env and resolve RPC ─────────────────────────────────────────
 
-if [ -f "$CONTRACTS_DIR/.env" ]; then
-  set -a; source "$CONTRACTS_DIR/.env"; set +a
-else
-  echo "Error: $CONTRACTS_DIR/.env not found." >&2
-  echo "Copy .env.example → .env and populate the keys for $CHAIN_SLUG." >&2
-  exit 1
-fi
 
 RPC="${!RPC_VAR:-}"
 if [ -z "$RPC" ]; then
