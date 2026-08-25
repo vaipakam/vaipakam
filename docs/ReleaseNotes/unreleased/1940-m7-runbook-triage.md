@@ -35,9 +35,25 @@ deliveries. Nothing validates it when it is set, so an upgrade can leave it at
 zero, and every other check in the procedure passes while each delivery runs out
 of gas on arrival.
 
-All three are now read back before the switch, in the same pass that already
-verifies the wiring rather than the components, and the design record carries
-the same three additions so the two documents do not drift apart.
+Review of that change then made the same point about the fix itself, four more
+times: the pass reads what the central contract believes, and each thing it
+points at is separately settable from its own side. A rotation that updated one
+side leaves the other naming what was replaced, and every check still passes. One
+of the four is not stored state at all — the address a messenger routes through
+is fixed into the implementation when it is built, so replacing the
+implementation changes it while every stored value the procedure reads is
+untouched.
+
+Rather than add four more remembered items to a list that had already missed
+three, the procedure now enumerates each participating contract's settable state
+as a table and requires all of it to be read back — marking which entries earlier
+steps already cover. The list of things to check is now derived from what the
+contracts can actually be told to point at, rather than from what someone
+remembered to write down.
+
+All of this is read back before the switch, in the same pass that already
+verifies the wiring rather than the components, and the design record carries the
+same additions so the two documents do not drift apart.
 
 The remaining review threads are being worked through the same way — each one
 checked against the procedure as it now stands, and answered with what was

@@ -898,6 +898,55 @@ read back on every chain:
   of it — so an emergency pause left on after a partial recovery passes every
   wiring readback and then stops the propagation the arm depends on.
 
+**Read every mutable pointer FROM THE CONTRACT THAT HOLDS IT — the list above
+walks outward from the Diamond, and each hop's far side is settable too.** Every
+bullet above reads what the Diamond, or the local `CcipMessenger`, believes. The
+reward messenger and the remittance receiver each hold their OWN owner-settable
+addresses and flags, and a rotation that updated one side leaves the other naming
+what was replaced — with every check so far passing. There is no need to guess
+which ones; each contract's settable state is short enough to enumerate, so
+enumerate it and read all of it back:
+
+| Contract | Read back | Already covered above? |
+| --- | --- | --- |
+| `VaipakamRewardMessenger` | `messenger()` | **no — read it** |
+| | `diamond()` | **no — read it** |
+| | `isCanonical()` | **no — read it** |
+| | `baseChainId()` | **no — read it** |
+| | `getBroadcastDestinations()` | yes, in the topology pass |
+| | `destGasLimit()` | yes, below |
+| `RewardRemittanceReceiver` | `messenger()` | **no — read it** |
+| | `diamond()` | **no — read it** |
+| | `vpfiToken()` | **no — read it** |
+| `CcipMessenger` | chain selectors, `remoteMessengerOf`, channel peers | yes, in the topology pass |
+| | `channelOf` / `handlerOf` | yes, above |
+| | `getRouter()` | **no — read it, and see below** |
+
+What each of the newly-required ones costs if it is wrong:
+
+- **`messenger()` and `diamond()` on both handlers** are the reciprocal of the
+  channel bindings above. Those maps can correctly name the new handler while the
+  handler still names the old adapter or the old Diamond: inbound then reverts
+  inside the handler, outbound reward sends go through the stale adapter, and
+  `onlyDiamond` rejects the live Diamond. Match both against the exact adapter
+  and Diamond inspected in this pass.
+- **`isCanonical()` and `baseChainId()` on the messenger** are a SEPARATE
+  topology from the Diamond's role fields in the first bullet, and a replacement
+  messenger can disagree with the Diamond it serves. Wrong `isCanonical` and Base
+  rejects commitment reports with `ReportOnMirror`, or a mirror rejects the `D*`
+  broadcast with `BroadcastOnCanonical`; a stale `baseChainId` sends that
+  mirror's reports and acknowledgements to the wrong chain.
+- **`vpfiToken()` on each receiver** must equal the mirror token whose registry
+  entry and minting pool you just checked. After a token rotation the channel,
+  registry and pool all read healthy while every delivery reverts `TokenMismatch`
+  inside the receiver, and the pre-`D*` receipt gate simply never completes.
+- **`getRouter()` on every adapter**, and this one is not proxy storage at all —
+  the router is a CONSTRUCTOR immutable baked into the implementation, so an
+  implementation upgrade can change it while every storage readback in this pass
+  is unchanged. `sendMessage` quotes and dispatches through `getRouter()`, so
+  confirm it equals the live router the selectors, lanes and token registry
+  belong to. Nothing else here can see this one.
+
 **And verify the mirror token's live minting pool.** Messenger peers and rate
 limiters can all read back correctly against the intended pool while the mirror
 token still points at a redeployed or unset one — `setTokenPool` is a separate
