@@ -471,6 +471,16 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a cd that follows another command on the line (#1924 r35)', () => {
+    // `set -e; cd apps/keeper` is an ordinary wrapper preamble; a
+    // start-anchored match never saw the cd.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'set -e; cd apps/keeper\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -789,6 +799,14 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
     const r = runWith(
       'apps/keeper/README.md',
       '```jsonc title="bash example"\n{ "a": 1 }\n```\n\nPrefer the dashboard over `wrangler deploy` for this.\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not treat a cd to another app after a preamble as keeper scope', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'set -e; cd apps/agent\nwrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });

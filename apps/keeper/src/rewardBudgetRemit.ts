@@ -328,6 +328,7 @@ async function remitToMirror(
   // is closed, this is exactly the set that would otherwise have been silently
   // counted as covered.
   const ambiguous = planWindow.filter((_, i) => (perDay[i] ?? 0n) === 0n && !closeable[i]);
+  const openDays = [];
   for (const dayId of ambiguous) {
     try {
       const closedBy = (await publicClient.readContract({
@@ -336,14 +337,31 @@ async function remitToMirror(
         functionName: 'getDayClosedByRemitId',
         args: [mirrorId, dayId],
       })) as bigint;
-      if (closedBy === 0n) deferred += 1; // still owed, just not actionable yet
+      if (closedBy === 0n) openDays.push(dayId);
     } catch (err) {
-      // Unknown beats optimistic on a stand-down signal.
       console.warn(
         `[keeper] rewardBudgetRemit Base->${mirrorId} day=${dayId} closure unknown: ${(err as Error).message}`,
       );
-      deferred += 1;
+      openDays.push(dayId);
     }
+  }
+  if (openDays.length > 0) {
+    // REPORTED, not folded into `deferred` (Codex #1924 r35). An open day here
+    // is one of two things and this pass cannot tell them apart: an obligation
+    // still gated (awaiting its commitment report, or unbacked), or a day that
+    // simply gave this mirror no slice — the latter is never closed by
+    // anything, so counting it as owed would hold coverage below A/A on every
+    // tick until it left the scan window, and the stand-down would never be
+    // reachable. That is the false-red the r34 fix introduced by treating both
+    // as owed.
+    //
+    // So the ambiguity is surfaced rather than guessed at: the operator has
+    // the day ids and can check whether any carries a real obligation. Same
+    // shape as the other signals here — report what is observable, do not
+    // infer what is not.
+    console.warn(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} ${openDays.length} finalized day(s) neither remitted nor closed: ${openDays.join(',')} — gated obligation or zero budget for this mirror; verify before treating coverage as complete`,
+    );
   }
 
   if (batch.length === 0) {

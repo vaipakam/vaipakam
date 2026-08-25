@@ -224,6 +224,15 @@ recoverable back-pressure — not a fund-loss event.
 > nothing about the other. `C < A` means mirrors went unfunded this tick, and
 > an opened claim gate with no funding behind it is exactly the user-visible
 > revert this section exists to prevent.
+>
+> **Also require no `finalized day(s) neither remitted nor closed` warning.**
+> That line lists days the pass cannot classify: each is either an obligation
+> still gated — awaiting its commitment report, or unbacked — or a day that
+> gave that mirror no slice at all. The pass deliberately does NOT guess
+> between them: guessing "owed" would hold coverage below `A/A` on every tick
+> for a zero-budget day and put the stand-down permanently out of reach, and
+> guessing "settled" would hide a real obligation. Check the listed day ids
+> yourself before treating coverage as complete.
 > This matters most in exactly the incident this section is written for:
 > if a finalized day is broadcast and you leave a mirror's claim gate open
 > expecting the keeper to fund it, nothing will, and users hit the claim

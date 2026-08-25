@@ -804,9 +804,19 @@ for (const file of walk(REPO_ROOT)) {
       // writes this state. An early version used `return` here — which exits
       // the whole callback and silently skipped EVERY markdown line. Twenty
       // fixtures went red at once, which is exactly what they are for.
-      const pushed = physical ? null : line.match(/^\s*pushd\s+["']?([^\s"';&|)]+)/);
-      const popped = physical ? false : /^\s*popd\b/.test(line);
-      const bareCd = physical ? null : line.match(/^\s*cd\s+["']?([^\s"';&|)]+)/);
+      // Directory changes are matched PER COMMAND SEGMENT, not only at the
+      // start of the logical line: `set -e; cd apps/keeper` is an ordinary
+      // wrapper preamble, and a start-anchored match never saw the `cd`
+      // (Codex #1924 r35). splitCommands already knows where the boundaries
+      // are, and it is quote- and redirection-aware.
+      const segments = physical ? [] : splitCommands(line).map((c) => c.trim());
+      const pushed = segments
+        .map((c) => c.match(/^pushd\s+["']?([^\s"';&|)]+)/))
+        .find(Boolean) ?? null;
+      const popped = segments.some((c) => /^popd\b/.test(c));
+      const bareCd = segments
+        .map((c) => c.match(/^cd\s+["']?([^\s"';&|)]+)/))
+        .find(Boolean) ?? null;
       if (pushed) {
         dirStack.push(cwdIsKeeper);
         cwdIsKeeper = isKeeperDir(pushed[1]);
