@@ -126,7 +126,36 @@ function flagEnabled(line, flag) {
   return !/^(false|0|no|off)$/i.test(value.trim());
 }
 
-function isSafe(line) {
+/**
+ * Strip a trailing shell comment before looking for safety tokens.
+ *
+ * `wrangler deploy # TODO: add --keep-vars` executes a BARE deploy, but a
+ * whole-line search finds the flag in the comment and passes it (Codex #1924
+ * r17, reproduced). The inverse is worse: an unsafe command followed by a
+ * comment mentioning `run deploy` also passed. Safety must be read from what
+ * the shell runs, not from what the line says somewhere.
+ *
+ * `#` inside quotes is not a comment, so quoted regions are skipped. Markdown
+ * prose is unaffected: it reaches here only via the default-deny path, where a
+ * stripped `#` cannot make an unsafe line look safe.
+ */
+function stripComment(line) {
+  let quote = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+    } else if (ch === '#') {
+      return line.slice(0, i);
+    }
+  }
+  return line;
+}
+
+function isSafe(rawLine) {
+  const line = stripComment(rawLine);
   return (
     flagEnabled(line, '--keep-vars') ||
     flagEnabled(line, '--dry-run') ||

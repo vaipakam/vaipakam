@@ -186,7 +186,10 @@ async function liquidatePassForChain(
   }
 
   const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
-  if (atRisk.length === 0) return readings;
+  if (atRisk.length === 0) {
+    logScanComplete(chain, readings.length, 0, 0);
+    return readings;
+  }
   // Lowest HF first — the keeper's gas budget goes to the most-at-risk
   // loans first when the submit cap is hit.
   atRisk.sort((a, b) => (a.hf < b.hf ? -1 : 1));
@@ -202,7 +205,38 @@ async function liquidatePassForChain(
     const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client);
     if (submitted) submits += 1;
   }
+  logScanComplete(chain, readings.length, atRisk.length, submits);
   return readings;
+}
+
+/**
+ * #1896 — POSITIVE evidence that this chain was actually scanned.
+ *
+ * Every other line this pass emits on the unhappy paths is a FAILURE marker,
+ * and the failures are caught at four different depths — `getActiveLoansCount`,
+ * a page fetch, a multicall chunk, and `runLiquidator`'s own per-chain catch.
+ * Each returns or breaks, the pass finishes normally, and `timedPass` logs
+ * `done in Nms` regardless. So "the tick looked clean" was never checkable by
+ * absence: an operator would have to know the complete set of failure strings,
+ * and that set grows silently whenever a new failure path is added. Three
+ * successive attempts to write the stand-down condition as a list of markers
+ * NOT to see were each incomplete (Codex #1924 r15, r16, r17).
+ *
+ * This line inverts it. One per chain, emitted only where the scan genuinely
+ * completed, so the check becomes "count these against the resolved chain set"
+ * — the same shape as the per-tick `chains resolved:` line, and verifiable
+ * without knowing anything about how the pass can fail.
+ */
+function logScanComplete(
+  chain: ChainConfig,
+  scanned: number,
+  atRisk: number,
+  submitted: number,
+): void {
+  // eslint-disable-next-line no-console
+  console.log(
+    `[keeper] liquidator chain=${chain.name} scan complete: scanned=${scanned} atRisk=${atRisk} submitted=${submitted}`,
+  );
 }
 
 /** Fail-open wrapper around the band pass — belt-and-braces on top of

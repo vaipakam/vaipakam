@@ -64,8 +64,17 @@ nothing, the second named only half of them:
   which is where it belonged: that service already tidies its own
   records on the same schedule, and the sweep is a single bounded
   delete. The keeper keeps its copy, so nothing is lost when it comes
-  back; running twice is harmless. This one is therefore **not** a cost
-  of the stop any more.
+  back; running twice is harmless.
+
+  **This one needs an operator step in the same sitting as the merge,
+  and is not fixed without it.** The keeper's change takes effect on
+  merge automatically; the notification service's does not, because
+  that service is not deployed automatically. Merge alone therefore
+  *removes* the only live cleanup and does not start the replacement —
+  the opposite of the intent. Deploy the notification service as part
+  of landing this, and confirm on a later run that the cleanup ran.
+  Until that is done, treat this as a cost of the stop rather than a
+  fix.
 
 **Six more stop conditionally**, and whether they were running cannot
 be determined from outside. The matcher, the liquidator, the

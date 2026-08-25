@@ -128,6 +128,16 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a bare deploy whose only --keep-vars is in a shell comment (#1924 r17)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy # TODO: add --keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('an unsafe command followed by a comment mentioning run deploy (#1924 r17)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy # prefer pnpm run deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -198,6 +208,16 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('accepts a quoted true value', () => {
     const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars="true"\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a safe command that also carries a trailing comment', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars # keeps dashboard vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not treat a # inside quotes as a comment', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars --message "fix #1896"\n');
     expect(r.ok).toBe(true);
   });
 

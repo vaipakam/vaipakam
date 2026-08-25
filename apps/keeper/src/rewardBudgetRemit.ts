@@ -141,9 +141,12 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
   })) as readonly [bigint, bigint, bigint, bigint];
   const armedFromDay = commitState[0];
 
+  let covered = 0;
+  const attempted = mirrorIds.length;
   for (const mirrorId of mirrorIds) {
     try {
       await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay);
+      covered += 1;
     } catch (err) {
       // Benign reverts (RewardPoolCapExceeded near exhaustion, NotRewardRemitter
       // if the keeper isn't authorized yet, etc.) — log at info and continue.
@@ -152,6 +155,17 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
       );
     }
   }
+  // #1896 — POSITIVE coverage evidence, for the same reason the liquidator
+  // emits one (see `logScanComplete` there). Every unhappy path in this pass
+  // is a distinct marker — `chain=<id> failed:`, `skipped Base-><id>:`,
+  // `REVERTED` — none of which shares a prefix, so "no error lines" was never
+  // a checkable condition. This says how many destinations were actually
+  // served out of how many were attempted — a number to compare, not an
+  // absence to trust (Codex #1924 r17).
+  // eslint-disable-next-line no-console
+  console.log(
+    `[keeper] rewardBudgetRemit coverage: ${covered}/${attempted} destination(s) completed`,
+  );
 }
 
 async function remitToMirror(

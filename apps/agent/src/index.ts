@@ -160,6 +160,14 @@ export default {
     // is a single bounded DELETE. `apps/keeper/src/db.ts` keeps its
     // identical copy so the watcher still sweeps once rescheduled;
     // both are idempotent, so overlapping runs are harmless.
+    //
+    // REQUIRES A DEPLOY OF THIS WORKER TO TAKE EFFECT (Codex #1924 r17).
+    // `apps/agent` does NOT auto-deploy on merge — see
+    // `docs/ops/D1CutoverArchiveToWarm.md` step 2 — while `apps/keeper`
+    // does. So the merge that empties the keeper's schedule removes the
+    // only live sweep and does NOT start this one: without an explicit
+    // `pnpm --filter @vaipakam/agent exec wrangler deploy` in the same
+    // sitting, the migration makes the leak worse rather than fixing it.
     ctx.waitUntil(
       sweepExpiredLinks(resolved.DB).catch((err) => {
         // eslint-disable-next-line no-console

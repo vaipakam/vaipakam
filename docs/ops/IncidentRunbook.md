@@ -199,9 +199,15 @@ recoverable back-pressure — not a fund-loss event.
 > through its unarmed-validation step. Worse, `timedPass` logs
 > `rewardBudgetRemit done in Nms` even when the pass returned instantly from
 > its gate — so read the accompanying `passIsArmed` skip line, which names the
-> blocking binding, rather than the `done` line. The same four-point check as
-> §3.5's stand-down applies here (schedule, chain set, no skip line, no
-> per-chain `err=` lines); a `done` line on its own establishes nothing.
+> blocking binding, rather than the `done` line. Then require this pass's own
+> POSITIVE marker — `rewardBudgetRemit coverage: C/A destination(s) completed`
+> — with **C equal to A**. Do not reuse §3.5's liquidator markers here: this
+> pass fails with its own distinct messages (`chain=<id> failed:`,
+> `skipped Base-><id>:`, a `REVERTED` warning), none sharing a prefix with the
+> liquidator's, so an "absence of errors" check written for one pass says
+> nothing about the other. `C < A` means mirrors went unfunded this tick, and
+> an opened claim gate with no funding behind it is exactly the user-visible
+> revert this section exists to prevent.
 > This matters most in exactly the incident this section is written for:
 > if a finalized day is broadcast and you leave a mirror's claim gate open
 > expecting the keeper to fund it, nothing will, and users hit the claim
@@ -398,10 +404,16 @@ running.
 >   3. `liquidator done in Nms` with **no** `passIsArmed` skip line
 >      naming a blocking binding — `timedPass` logs `done` even for a
 >      pass that returned instantly from its gate.
->   4. **No `runLiquidator chain=… err=…` lines.** Per-chain scan
->      failures are caught and logged, then the loop continues and the
->      pass returns normally — so a tick where every chain's RPC failed
->      still ends `done`, with nothing scanned and nothing liquidated.
+>   4. **One `liquidator chain=… scan complete: scanned=… atRisk=…
+>      submitted=…` line per chain in (2).** Count them; the count must
+>      match. Do NOT substitute "I saw no error lines" — failures are
+>      caught at four different depths (`getActiveLoansCount`, a page
+>      fetch, a multicall chunk, and the per-chain catch), each with its
+>      own distinct message, and every one of them still lets the pass
+>      finish and log `done`. Three earlier versions of this checklist
+>      tried to enumerate the markers *not* to see and were incomplete
+>      each time. A missing `scan complete` line for an expected chain
+>      means that chain was not scanned, whatever else the tail shows.
 
 Three escalation tiers, least to most disruptive:
 
