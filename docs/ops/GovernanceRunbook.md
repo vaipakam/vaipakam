@@ -867,10 +867,28 @@ read back on every chain:
   messenger and each mirror's reward messenger. `remitRewardBudget` dispatches
   through the stored value, so a stale or zero one reverts or takes an
   uninspected lane after the arm;
+- **and Base's OWN stored reward messenger** — `getRewardReporterConfig()
+  .rewardMessenger` on the canonical Diamond, which is a different address from
+  the cross-chain messenger above and is missed by checking that one. Both
+  `broadcastGlobal` and Base's authenticated reward-report ingress dispatch
+  through it, so a `ConfigureRewardReporter` that stopped partway, or a
+  redeployed messenger, leaves the remittance lane reading back perfectly while
+  commitment reports and the post-arm `D*` broadcast both fail. Require it to
+  equal the live `VaipakamRewardMessenger` whose peers you inspected;
 - **the remittance RECEIVER wiring on each mirror** — a redeployed
   `RewardRemittanceReceiver`, or a config that stopped before the reward-budget
   wiring, leaves an inbound delivery with nowhere to land while every outbound
   check passes;
+- **the LOCAL channel-handler bindings, in both directions** — `channelOf` for
+  each handler and `handlerOf` for each channel id, on every participating
+  chain, for the reward channel and the reward-budget channel alike. A Diamond,
+  reward messenger or remittance receiver rotated without completing
+  `registerChannel` passes every stored-address, peer, receiver, registry and
+  pause check above while the local `CcipMessenger` still binds the channel to
+  the OLD handler. Outbound then reverts at `channelOf[msg.sender]` with
+  `CallerNotHandler`, and inbound resolves the stale `handlerOf[channelId]` — so
+  the first remit or `D*` broadcast fails after the one-shot arm. The peer
+  checks look outward and cannot see this; it is local to each chain;
 - **each live pool through the CCIP token registry** — `getPool` for the token,
   not the pool address you configured. If CCT registration was skipped because
   the configuring account did not own the token, or a pool was redeployed, you
@@ -885,6 +903,14 @@ limiters can all read back correctly against the intended pool while the mirror
 token still points at a redeployed or unset one — `setTokenPool` is a separate
 step that `ConfigureCcip` may not have completed. Read the token's pool back on
 each mirror and confirm it is the pool whose limits you just checked.
+
+**And read back every live messenger's `destGasLimit`.** Commitment reports and
+the `D*` broadcast both size their CCIP callback from it, and `setDestGasLimit`
+accepts any value without validation — so a zero or stale limit left by an
+upgrade passes every wiring, capacity, peer and pause check here and then makes
+each delivery run out of gas on arrival, repeatedly, with `D*` already immutable.
+Read it back against the supported callback budget on each messenger, or prove it
+with an end-to-end delivery rehearsal, before the arm.
 
 **A DISABLED limiter is not a failure — it is unlimited.** The rate limiter
 returns immediately when the bucket is disabled, and the config validator
