@@ -97,7 +97,23 @@ const SKIP_PATHS = new Set(['contracts/lib']);
 // `apps/keeper/package.json`. Its `deploy` script is the canonical entry point
 // every corrected wrapper now calls, so a regression there re-breaks the whole
 // tree-wide invariant while each wrapper still looks right (Codex #1924 r12).
-const EXTENSIONS = ['.md', '.sh', '.ts', '.mjs', '.js', '.json', '.jsonc', '.yml', '.yaml'];
+// `.bash` / `.zsh` / `.ksh` are ordinary names for a shell wrapper, and they
+// fell through EVERY arm of the file selection: they are not `.sh`, and
+// `looksExecutable` rejects anything containing a dot, so a shebang-bearing
+// `apps/keeper/release.bash` with a bare deploy was never opened
+// (Codex #1924 r38).
+const SHELL_EXTENSIONS = ['.sh', '.bash', '.zsh', '.ksh'];
+const EXTENSIONS = [
+  ...SHELL_EXTENSIONS,
+  '.md',
+  '.ts',
+  '.mjs',
+  '.js',
+  '.json',
+  '.jsonc',
+  '.yml',
+  '.yaml',
+];
 
 /**
  * DEFAULT-DENY. Every keeper-scoped `wrangler deploy` without `--keep-vars`
@@ -559,7 +575,7 @@ function isKeeperScoped(line, filePath) {
  * Detected by extension or shebang — the same two signals an editor uses.
  */
 function isShellFile(rel, text) {
-  return rel.endsWith('.sh') || /^#!.*\b(ba|z|k)?sh\b/.test(text);
+  return SHELL_EXTENSIONS.some((e) => rel.endsWith(e)) || /^#!.*\b(ba|z|k)?sh\b/.test(text);
 }
 
 /**
@@ -664,18 +680,17 @@ function embeddedShellLines(text, isYaml = false) {
       // single-line `run:` is already judged correctly as a physical line, and
       // routing it through here as well would report one violation twice.
       if (end > i) {
-        let joined = [flow[2], ...lines.slice(i + 1, end + 1)]
-          .map((l) => l.trim())
-          .join(' ');
         const q = flow[2][0] === '"' || flow[2][0] === "'" ? flow[2][0] : null;
+        const parts = [flow[2], ...lines.slice(i + 1, end + 1)];
         if (q) {
-          joined = joined.slice(1);
-          const last = joined.lastIndexOf(q);
-          if (last !== -1) joined = joined.slice(0, last) + joined.slice(last + 1);
+          parts[0] = parts[0].slice(1);
+          const last = parts.length - 1;
+          const close = parts[last].lastIndexOf(q);
+          if (close !== -1) {
+            parts[last] = parts[last].slice(0, close) + parts[last].slice(close + 1);
+          }
         }
-        // Folds to ONE line, reported at the `run:` line — the line an operator
-        // opens to fix it.
-        out.push(...offset(logicalLines(joined), i, blockId));
+        out.push(...offset(logicalLines(foldFlowScalar(parts, q)), i, blockId));
         blockId += 1;
         i = end + 1;
         continue;
@@ -694,17 +709,27 @@ function flowScalarEnd(lines, i, content, indent) {
   const q = content[0] === '"' || content[0] === "'" ? content[0] : null;
   if (!q) {
     // A plain multiline scalar continues while lines are MORE indented than the
-    // key. A blank line, a new list item, or a comment ends it.
+    // key. A new list item or a comment ends it.
+    //
+    // A BLANK LINE does not: YAML keeps it as a line break and the scalar
+    // carries on while the content after it is still indented. Ending
+    // extraction there left `cd apps/keeper;` and an indented `wrangler deploy`
+    // in separate blocks, so the physical scan saw scope and deploy apart and
+    // passed the destructive command (Codex #1924 r38). Look PAST the blanks
+    // before deciding.
     let j = i;
-    while (
-      j + 1 < lines.length &&
-      lines[j + 1].trim() !== '' &&
-      (lines[j + 1].match(/^\s*/) ?? [''])[0].length > indent &&
-      !/^\s*[-#]/.test(lines[j + 1])
-    ) {
-      j += 1;
+    for (;;) {
+      let k = j + 1;
+      while (k < lines.length && lines[k].trim() === '') k += 1;
+      if (
+        k >= lines.length ||
+        (lines[k].match(/^\s*/) ?? [''])[0].length <= indent ||
+        /^\s*[-#]/.test(lines[k])
+      ) {
+        return j;
+      }
+      j = k;
     }
-    return j;
   }
   let rest = content.slice(1);
   let j = i;
@@ -716,6 +741,37 @@ function flowScalarEnd(lines, i, content, indent) {
     if (j >= lines.length) return j - 1;
     rest = lines[j];
   }
+}
+
+/**
+ * Fold a YAML FLOW scalar's physical lines the way YAML does: an ordinary line
+ * break becomes a space, a blank line becomes a real break.
+ */
+function foldFlowScalar(parts, q) {
+  let out = '';
+  for (const part of parts) {
+    const t = part.trim();
+    if (t === '') {
+      out += '\n';
+      continue;
+    }
+    if (out === '' || out.endsWith('\n')) {
+      out += t;
+      continue;
+    }
+    // A double-quoted scalar may end a line with `\`, YAML's ESCAPED LINE
+    // BREAK: the newline is removed OUTRIGHT rather than folded to a space, so
+    // `wrangler \` + `deploy` runs as `wrangler deploy`. Joining with a space
+    // produced `wrangler \ deploy`, which matches nothing — the guard exited 0
+    // on a destructive command (Codex #1924 r38). Only an ODD run of trailing
+    // backslashes escapes the break; `\\` is a literal backslash.
+    if (q === '"' && /(?:^|[^\\])(?:\\\\)*\\$/.test(out)) {
+      out = `${out.slice(0, -1)}${t}`;
+      continue;
+    }
+    out += ` ${t}`;
+  }
+  return out;
 }
 
 /** Does `s` contain the closing `q` of an already-open YAML quoted scalar? */
@@ -915,6 +971,15 @@ for (const file of walk(REPO_ROOT)) {
       // but a line-start snapshot judged it as keeper and rejected it
       // (Codex #1924 r37) — a false positive, in a guard that runs in
       // typecheck.
+      // What the line SAYS is scope only for the part of it that is not a
+      // directory change. `cd apps/keeper; cd ../agent; wrangler deploy` walks
+      // to apps/agent, but the line still contains the string `apps/keeper`, so
+      // a whole-line fallback let a SUPERSEDED `cd` override the walk and
+      // rejected the agent deploy (Codex #1924 r38). Directory changes are
+      // already represented by `cwdIsKeeper`; only the rest can name the keeper
+      // independently — `KEEPER_DIR=…` assignments and the subshell form, which
+      // is not `^cd`-shaped and so stays in this prefix.
+      const namedPrefix = [];
       for (const seg of splitCommands(line).map((c) => c.trim())) {
         const pushed = seg.match(/^pushd\s+["']?([^\s"';&|)]+)/);
         if (pushed) {
@@ -931,13 +996,10 @@ for (const file of walk(REPO_ROOT)) {
           cwdIsKeeper = isKeeperDir(bareCd[1]);
           continue;
         }
+        namedPrefix.push(seg);
         // `\b` so `wrangler deployments list` is not read as a deploy.
         if (!new RegExp(DEPLOY_RE).test(seg)) continue;
-        // Line-level scope still counts alongside the walked cwd:
-        // `KEEPER_DIR=apps/keeper; wrangler deploy` names the keeper on the
-        // line without any `cd` for the walk to record, and a subshell's
-        // `( cd "$KEEPER_DIR" && … )` is deliberately not walked either.
-        if (!isKeeperScoped(seg, rel) && !isKeeperScoped(line, rel) && !cwdIsKeeper) continue;
+        if (!isKeeperScoped(namedPrefix.join(' '), rel) && !cwdIsKeeper) continue;
         if (commandIsSafe(seg)) continue;
         flagged = true;
       }

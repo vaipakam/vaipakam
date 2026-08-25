@@ -927,6 +927,98 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
     expect(r.out.match(/deploy\.yml:/g)?.length).toBe(1);
   });
 
+  it('honours an escaped line break in a double-quoted run scalar (#1924 r38)', () => {
+    // YAML removes the break outright; folding it to a space searched
+    // `wrangler \\ deploy` and matched nothing.
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  d:\n    steps:\n      - run: "cd apps/keeper; wrangler \\\n          deploy"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('treats a DOUBLED backslash as a literal, not an escaped break (#1924 r38)', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  d:\n    steps:\n      - run: "cd apps/keeper; echo a\\\\\n          wrangler deploy"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('carries a plain run scalar across a BLANK line (#1924 r38)', () => {
+    // YAML keeps the scalar open; ending extraction at the blank line split
+    // the scope from the deploy and passed it.
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  d:\n    steps:\n      - run: cd apps/keeper;\n\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a blank line then a DEDENTED key still ends the scalar (#1924 r38)', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  d:\n    steps:\n      - run: cd apps/keeper\n\n      - run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a superseded cd does not scope a later deploy on the same line (#1924 r38)', () => {
+    // The walk ends in apps/agent; the line still CONTAINS `apps/keeper`, and
+    // a whole-line fallback let that stale string override the walk.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper; cd ../agent; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a KEEPER_DIR assignment on the line still scopes the deploy (#1924 r38)', () => {
+    // The narrowed fallback must not lose the non-cd ways a line names the
+    // keeper — this is what the whole-line test was there for.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'KEEPER_DIR=apps/keeper; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the subshell form still scopes the deploy after the narrowing (#1924 r38)', () => {
+    const r = runWith(
+      'contracts/script/deploy-testnet.sh',
+      '( cd "$KEEPER_DIR" && wrangler deploy )\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('scans a .bash wrapper (#1924 r38)', () => {
+    // Not `.sh`, and `looksExecutable` rejects anything with a dot — so this
+    // file was never opened at all.
+    const r = runWith(
+      'apps/keeper/release.bash',
+      '#!/usr/bin/env bash\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('scans a .zsh wrapper (#1924 r38)', () => {
+    const r = runWith(
+      'apps/keeper/release.zsh',
+      '#!/usr/bin/env zsh\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('applies SHELL semantics to a .bash file, not prose semantics (#1924 r38)', () => {
+    // A line continuation is a shell rule; the extension must select the shell
+    // line model, not just open the file.
+    const r = runWith(
+      'apps/keeper/release.bash',
+      '#!/usr/bin/env bash\nwrangler \\\n  deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('does not flag a sibling Worker manifest with a bare deploy', () => {
     // apps/agent and apps/indexer legitimately run bare deploys — they have no
     // dashboard-managed vars absent from their configs. Only the keeper is in
