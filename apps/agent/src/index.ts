@@ -166,11 +166,14 @@ export default {
     // `docs/ops/D1CutoverArchiveToWarm.md` step 2 — while `apps/keeper`
     // does. So the merge that empties the keeper's schedule removes the
     // only live sweep and does NOT start this one: without an explicit
-    // `pnpm --filter @vaipakam/agent exec wrangler deploy` in the same
-    // sitting, the migration makes the leak worse rather than fixing it.
+    // `pnpm --filter @vaipakam/agent run deploy` in the same sitting, the
+    // migration makes the leak worse rather than fixing it.
     //
-    // Use `pnpm --filter @vaipakam/agent run deploy`, NOT a bare
-    // `wrangler deploy` (Codex #1924 r31). This Worker has the same var
+    // `run deploy`, NOT `exec wrangler deploy` — the line above used to spell
+    // the unsafe form, and r31 added this correction BENEATH it instead of
+    // replacing it, leaving one comment that gave two different commands with
+    // the wrong one first (Codex #1924 r32). There is now one instruction.
+    // This Worker has the same var
     // hazard the keeper does: `env.ts` reads `RECIPIENT_VALIDATING_TOKENS`
     // and `OPENSEA_OFFERS_MAX_PAGES`, neither of which is declared in
     // `wrangler.jsonc`, so a bare deploy would delete them — silently

@@ -191,7 +191,7 @@ function stripRedirections(line) {
   // consumed the remaining `<<` as its operand, leaving the real operand to be
   // counted as an enabled flag (Codex #1924 r31).
   return line.replace(
-    /\d?(?:<<<|<<|<>|>>|>&|<&|>|<)\s*&?\s*(?:"[^"]*"|'[^']*'|[^\s"';&|)]+)/g,
+    /(?:&>>|&>|\d?(?:<<<|<<|<>|>>|>&|<&|>|<))\s*&?\s*(?:"[^"]*"|'[^']*'|[^\s"';&|)]+)/g,
     ' ',
   );
 }
@@ -484,7 +484,15 @@ function splitCommands(line) {
     // NOT a command separator. Treating it as one split `wrangler deploy 2>`
     // from `1 --keep-vars` and REJECTED a safe deploy (Codex #1924 r31) —
     // a false positive, and this runs in typecheck.
-    if ((ch === '&' && /[<>]$/.test(line.slice(0, i))) || /^[<>]&/.test(line.slice(i - 1, i + 1))) {
+    // Redirections that CONTAIN `&` are not separators: a descriptor
+    // duplication (`2>&1`, `>&2`) and bash's combined form (`&>`, `&>>`).
+    // Treating either `&` as a boundary split the command and REJECTED a safe
+    // deploy — the fifth consecutive round in which a guard fix produced a
+    // false positive (Codex #1924 r31, r32).
+    if (ch === '&' && /[<>]$/.test(line.slice(0, i))) continue;
+    if (/^[<>]&/.test(line.slice(i - 1, i + 1))) continue;
+    if (ch === '&' && /^&>>?/.test(line.slice(i))) {
+      i += /^&>>/.test(line.slice(i)) ? 2 : 1;
       continue;
     }
     const two = line.slice(i, i + 2);
@@ -589,7 +597,8 @@ function embeddedShellLines(text) {
     // shell, and three allowlisted README lines were reported (Codex #1924
     // r31, caught on the live tree). Only shell-tagged blocks are scanned;
     // the rest are tracked purely to stay in sync.
-    const anyFence = lines[i].match(/^\s*```([A-Za-z0-9_-]*)\s*$/);
+    // Markdown fences may be backticks OR tildes (Codex #1924 r32).
+    const anyFence = lines[i].match(/^\s*(?:```|~~~)([A-Za-z0-9_-]*)\s*$/);
     const fence = anyFence && /^(bash|sh|shell|console|)$/.test(anyFence[1]);
     // A YAML comment may follow the block indicator (`run: | # deploy keeper`),
     // and the indicator itself decides the folding (Codex #1924 r29).
@@ -599,7 +608,7 @@ function embeddedShellLines(text) {
     if (anyFence) {
       const start = i + 1;
       let j = start;
-      while (j < lines.length && !/^\s*```/.test(lines[j])) j += 1;
+      while (j < lines.length && !/^\s*(?:```|~~~)/.test(lines[j])) j += 1;
       if (fence) {
         out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start, blockId));
         blockId += 1;
@@ -773,7 +782,7 @@ for (const file of walk(REPO_ROOT)) {
     }
     // A non-shell line is judged on its own content only.
     const scopedByCwd = physical ? false : cwdIsKeeper;
-    if (/^\s*$/.test(line) || /^\s*```/.test(line)) {
+    if (/^\s*$/.test(line) || /^\s*(?:```|~~~)/.test(line)) {
       cwdIsKeeper = false;
     } else {
       // `pushd` moves the shell exactly as `cd` does and is ordinary in deploy

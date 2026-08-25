@@ -441,6 +441,14 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a tilde-fenced shell example with cd + continuation (#1924 r32)', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Steps:\n\n~~~bash\ncd apps/keeper\nwrangler \\\n  deploy\n~~~\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -724,6 +732,17 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
       'apps/keeper/README.md',
       '```jsonc\n{ "a": 1 }\n```\n\nPrefer the dashboard over `wrangler deploy` for this.\n',
     );
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts bash's combined &> redirection before the flag (#1924 r32)", () => {
+    // The leading `&` is part of the redirection, not a command separator.
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy &> deploy.log --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts the &>> append form as well', () => {
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy &>> deploy.log --keep-vars\n');
     expect(r.ok).toBe(true);
   });
 
