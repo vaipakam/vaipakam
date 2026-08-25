@@ -167,7 +167,13 @@
   //      8, then first reach the missed cadence at step 9 up to a day
   //      later, having let the fund-moving passes submit for that whole
   //      period on a Worker that then turns out to still die.
-  //      If it still reports `exceededCpu`: set `"crons": []` again and
+  //      If it still reports `exceededCpu`: set `"crons": []` again,
+  //      **REVERT AND COMMIT that** (Codex #1924 r12 — step 2 made the
+  //      active schedule a COMMITTED change, so a rollback that only
+  //      edits the operator's checkout leaves `["* * * * *"]` on the
+  //      branch, and the next clean-checkout or automated deploy
+  //      republishes the known-bad schedule and silently undoes this
+  //      rollback), then
   //      `( cd apps/keeper && wrangler deploy --keep-vars )` — same
   //      directory scoping and same flag as step 4, and both matter MORE
   //      on a rollback, because a rollback is exactly when nobody is
@@ -204,7 +210,8 @@
   //      emits its `done in Nms` line — an absent line means the pass
   //      was still in flight when the invocation ended. If any of it
   //      fails, roll back BOTH halves: `KEEPER_ENABLED` to `false` first
-  //      (it is now genuinely armed), then `"crons": []` and
+  //      (it is now genuinely armed), then `"crons": []` — reverted and
+  //      COMMITTED, per the same reasoning as step 7's rollback — and
   //      `( cd apps/keeper && wrangler deploy --keep-vars )`.
   //      Why the split rather than one big validation at the end: every
   //      pass that CAN be cleared before arming SHOULD be, because the

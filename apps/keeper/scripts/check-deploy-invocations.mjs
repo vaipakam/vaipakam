@@ -47,7 +47,11 @@ const SKIP_DIRS = new Set([
   '.wrangler', 'lib', 'cache', 'broadcast', 'artifacts', '.next',
 ]);
 
-const EXTENSIONS = ['.md', '.sh', '.ts', '.mjs', '.js', '.jsonc', '.yml', '.yaml'];
+// `.json` is here for ONE file that matters more than the rest combined:
+// `apps/keeper/package.json`. Its `deploy` script is the canonical entry point
+// every corrected wrapper now calls, so a regression there re-breaks the whole
+// tree-wide invariant while each wrapper still looks right (Codex #1924 r12).
+const EXTENSIONS = ['.md', '.sh', '.ts', '.mjs', '.js', '.json', '.jsonc', '.yml', '.yaml'];
 
 /**
  * DEFAULT-DENY. Every keeper-scoped `wrangler deploy` without `--keep-vars`
@@ -100,8 +104,27 @@ function allowReason(line) {
   return hit ? hit.why : null;
 }
 
+/**
+ * A flag counts only when it is actually ENABLED. `--keep-vars=false` is a
+ * live deploy that deletes vars, and `--dry-run=false` really does deploy —
+ * a bare substring test reads both as safe (Codex #1924 r12, reproduced).
+ * `--flag`, `--flag true` and `--flag=true` all enable; only an explicit
+ * false-ish value disables.
+ */
+function flagEnabled(line, flag) {
+  const m = line.match(new RegExp(`${flag}(?:[=\\s]+([^\\s"'\`)]+))?`));
+  if (!m) return false;
+  const value = m[1];
+  if (value === undefined) return true; // bare flag
+  return !/^(false|0|no|off)$/i.test(value);
+}
+
 function isSafe(line) {
-  return /--keep-vars/.test(line) || /--dry-run/.test(line) || /\brun\s+deploy\b/.test(line);
+  return (
+    flagEnabled(line, '--keep-vars') ||
+    flagEnabled(line, '--dry-run') ||
+    /\brun\s+deploy\b/.test(line)
+  );
 }
 
 /**

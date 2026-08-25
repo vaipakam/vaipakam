@@ -97,6 +97,31 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     const r = runWith('apps/keeper/README.md', 'intro\nnpx wrangler deploy\n');
     expect(r.out).toContain('apps/keeper/README.md:2');
   });
+
+  it('--keep-vars=false, which is a live deploy that deletes vars (#1924 r12)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars=false\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('--keep-vars false, the space-separated disable', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars false\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('--dry-run=false, which really does deploy (#1924 r12)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --dry-run=false\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a regression in the keeper package manifest itself (#1924 r12)', () => {
+    // The canonical entry point every corrected wrapper calls. A bare deploy
+    // here re-breaks the whole invariant while each wrapper still looks right.
+    const r = runWith(
+      'apps/keeper/package.json',
+      '{\n  "scripts": {\n    "deploy": "wrangler deploy"\n  }\n}\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
 
 describe('check-deploy-invocations — forms it must NOT flag', () => {
@@ -143,6 +168,35 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('does not flag a deploy of a sibling Worker named on one line', () => {
     const r = runWith('docs/x.md', 'pnpm --filter @vaipakam/indexer exec wrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts --keep-vars followed by another flag rather than a value', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars --outdir /tmp/b\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts an explicit --keep-vars=true', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars=true\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts the real keeper package manifest shape', () => {
+    const r = runWith(
+      'apps/keeper/package.json',
+      '{\n  "scripts": {\n    "deploy": "wrangler deploy --keep-vars"\n  }\n}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not flag a sibling Worker manifest with a bare deploy', () => {
+    // apps/agent and apps/indexer legitimately run bare deploys — they have no
+    // dashboard-managed vars absent from their configs. Only the keeper is in
+    // scope, and widening that would make this guard everyone's problem.
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n  "scripts": {\n    "deploy": "wrangler deploy"\n  }\n}\n',
+    );
     expect(r.ok).toBe(true);
   });
 });
