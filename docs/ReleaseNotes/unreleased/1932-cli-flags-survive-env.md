@@ -73,6 +73,10 @@ rather than merely read. There are two kinds, and they fail differently. The
 first is a name some program treats as an instruction to run something when it
 starts — the deployment runs a shell, several language interpreters, the version
 control tool and the package manager, and each of those has its own such names.
+Some do it at one remove: rather than naming a program to run, they move the
+directory a tool reads its own settings from, and the settings found there name
+the program. Those are refused on the same footing, because the outcome is the
+same.
 The second does not run anything: it changes where an authenticated request is
 sent, so a stale file can have the deployment deliver its own credentials to a
 host of the file's choosing, or route every request it makes through one. Both
@@ -105,6 +109,17 @@ forces them off itself — and the stricter reading would have turned that
 documented harmlessness into a refused deployment. They are recognised, and the
 forcing is what keeps them from deciding anything. A hardening change is not
 allowed to break a behaviour the documentation guarantees.
+
+A separate rule governs the settings the deployment scripts work out for
+themselves — where the repository is, which directories each phase builds from,
+which commit is being deployed. A settings file has no business replacing any of
+those, and an earlier version of this change protected three of them by name. It
+turned out there were a dozen more, and one of them is a directory a later
+publishing step runs a build from. The scripts now record their own variable
+names before they read anything, and the file is refused any name they created —
+so the protected set is worked out from the scripts themselves rather than
+remembered, and cannot fall behind as they grow. A script that skips that step
+gets no settings at all, rather than the rule silently switched off.
 
 One operator-visible behaviour did change, and in the safe direction. The
 emergency pause tool and the testnet unpause drill both read a switch that says
