@@ -100,6 +100,27 @@ for the following platform areas:
   half of the check (screening the live borrower for country/KYC compatibility)
   matters only where those gates are switched on. A borrower who wants out exits
   by repaying or pre-closing, never by buying the lender side.
+- **A direct sale must fit what the buyer authored, on both the size and the
+  term of the position.** The direct route spends a standing offer, so the
+  position must be reconciled against it (the same problem the behavioural-terms
+  rule addresses), and two quantitative axes need their own rule:
+  - **Principal is an exact match.** The buyer's offer is consumed whole — marked
+    accepted, its position record retired — so a position smaller than the offer
+    would place the buyer below the size they committed while using their offer
+    up. The offer's amount must equal the loan's principal exactly; an amount
+    above it is refused, not partially filled and refunded. This mirrors the
+    listed route, whose sale vehicle is built at exactly the principal, so the
+    two routes cannot deliver different sizes.
+  - **The remaining term must fit within the buyer's authored duration, and this
+    one is one-directional.** Because the loan's maturity is fixed at origination
+    and a sale never moves it, the buyer's authored duration is a ceiling on how
+    long they consent to be locked, not the loan's term. A remaining exposure
+    that exceeds that ceiling is refused (the buyer would be locked past their
+    window); a shorter one is permitted (their capital returns sooner — the
+    better position), exactly as the inherited risk-terms and treasury-fee rules
+    permit a stronger-than-authored inherited position. The comparison is against
+    the maturity moment, not whole days, so a fill cannot slip nearly a day past
+    the authored window.
 - These two rules pull in different directions and the distinction is
   deliberate. Snapshot semantics continue to govern the **existing** loan's
   ongoing operation, so a governance retune never retroactively changes the

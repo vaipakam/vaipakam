@@ -149,6 +149,34 @@ contract EarlyWithdrawalDirectFacet is
     ///         offer: the seller must pick a different buy offer, not re-list.
     error SaleBuyerIsBorrower(uint256 loanId, address borrower);
 
+    /// @notice #1923 (#1503 item 9) — the position's LIVE remaining exposure
+    ///         (to the fixed maturity) is longer than the duration the buy
+    ///         offer's author consented to. A sale never moves the loan's
+    ///         maturity (ProjectDetailsREADME: maturity is fixed at
+    ///         origination), so the buyer inherits the remaining term as-is and
+    ///         it must fit WITHIN their authored duration. One-directional, like
+    ///         the inherited risk-terms and treasury-fee rules: a SHORTER
+    ///         remaining term than authored stays sellable (capital returns
+    ///         sooner — the better position), only over-exposure is refused.
+    ///         Carries seconds, not days, because the check is measured off the
+    ///         maturity timestamp rather than floored whole days.
+    error SaleExposureExceedsAuthoredDuration(
+        uint256 remainingSecs,
+        uint256 authoredSecs
+    );
+
+    /// @notice #1923 (#1503 item 15) — the buy offer's amount is not EXACTLY the
+    ///         loan's principal. The offer is single-valued (ranged/partial
+    ///         rejected upstream) and is consumed whole — marked accepted, its
+    ///         position NFT burned — so admitting an over-funded offer would
+    ///         place the buyer in a SMALLER position than they authored while
+    ///         burning the offer. The listed route builds its sale vehicle at
+    ///         exactly `loan.principal`, so anything other than an exact match
+    ///         is the door-dependent divergence §9 forbids. An amount BELOW the
+    ///         principal cannot fund the sale; one ABOVE it is now refused
+    ///         rather than silently refunded.
+    error SaleAmountNotExactPrincipal(uint256 authored, uint256 principal);
+
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -405,13 +433,32 @@ contract EarlyWithdrawalDirectFacet is
         if (buyOffer.quantity != loan.quantity)
             revert SaleOfferTermsDisagree(7);
 
-        // Borrower-favorability: Noah's terms must not worsen alice's position (README Section 9)
+        // Borrower-favorability + buyer-exposure: Noah's terms must not worsen
+        // alice's position, and the position must fit inside what Noah authored
+        // (README Section 9).
         {
-            uint256 elapsedSecs = block.timestamp - loan.startTime;
-            uint256 remainDays = loan.durationDays > (elapsedSecs / 1 days)
-                ? loan.durationDays - (elapsedSecs / 1 days)
-                : 0;
-            if (buyOffer.durationDays > remainDays) revert InvalidSaleOffer();
+            // #1923 (#1503 item 9) — the buyer's authored duration is a CEILING
+            // on how long they consent to be locked, NOT the loan's term. A sale
+            // never moves the loan's maturity (fixed at origination), so the
+            // buyer inherits the remaining exposure as-is; it must fit within
+            // their authored duration. This replaces the old
+            // `buyOffer.durationDays > remainDays` check, which was inverted —
+            // it refused offers LONGER than remaining (harmless: the loan is not
+            // re-termed) while admitting a SHORT offer into a long position, the
+            // over-exposure this item is about. One-directional like the
+            // inherited risk-terms / fee rules: a shorter remaining term than
+            // authored is the better position and stays sellable. Measured off
+            // the maturity TIMESTAMP, not floored whole days, so a fill cannot
+            // slip up to ~24h past the buyer's authored window.
+            uint256 maturity =
+                uint256(loan.startTime) + uint256(loan.durationDays) * 1 days;
+            uint256 liveRemainingSecs =
+                maturity > block.timestamp ? maturity - block.timestamp : 0;
+            uint256 authoredSecs = uint256(buyOffer.durationDays) * 1 days;
+            if (liveRemainingSecs > authoredSecs)
+                revert SaleExposureExceedsAuthoredDuration(
+                    liveRemainingSecs, authoredSecs
+                );
             if (buyOffer.collateralAmount > loan.collateralAmount)
                 revert InvalidSaleOffer();
         }
@@ -511,7 +558,18 @@ contract EarlyWithdrawalDirectFacet is
         uint256 liamCost = accrued > shortfall ? accrued : shortfall;
         uint256 treasuryCut = accrued > shortfall ? accrued - shortfall : 0;
 
-        if (buyOffer.amount < loan.principal) revert InvalidSaleOffer();
+        // #1923 (#1503 item 15) — EXACT match, not a floor. The buy offer is
+        // single-valued (ranged/partial rejected above) and is consumed WHOLE
+        // (marked accepted + position-NFT burned below), so an offer whose
+        // amount exceeds the principal would place the buyer in a smaller
+        // position than they authored while burning their offer. The listed
+        // route builds its vehicle at exactly `loan.principal`, so an
+        // over-funded fill here is the door-dependent divergence §9 forbids.
+        // `amount < principal` still cannot fund the sale; `amount > principal`
+        // is now refused rather than silently refunded — which makes the old
+        // excess-refund path below unreachable, so it has been removed.
+        if (buyOffer.amount != loan.principal)
+            revert SaleAmountNotExactPrincipal(buyOffer.amount, loan.principal);
         // If liam's cost exceeds what Noah brings, net settlement cannot
         // complete — liam would owe tokens we never collected from him.
         if (liamCost > loan.principal) revert RateShortfallTooHigh();
@@ -570,14 +628,15 @@ contract EarlyWithdrawalDirectFacet is
         // lifecycle never resets and the day's minimum never records the
         // zero, so re-credited held VPFI would inherit the buyer's pre-sale
         // tier tenure. Stamping the trough makes the zero observable; the
-        // final stamp after the credits remains. When the offer escrowed
-        // MORE than the principal, the excess refund below is the last
-        // debit and carries its own re-stamp (r4 P1). LOCAL rollup (r7 P2):
-        // this is an INTERMEDIATE checkpoint — the buyer's final stamp in
-        // the settlement block carries the broadcast, and a per-checkpoint
-        // CCIP push would charge the shared budget once per dip and could
-        // revert the sale when it covers the first message but not the
-        // second.
+        // final stamp after the credits remains. Since #1923 pinned
+        // `amount == principal` (item 15), this principal pull is the buyer's
+        // ONLY debit — there is no oversized-offer refund after it — so this IS
+        // the last-debit trough (the former #1819 r4 excess re-stamp is gone
+        // with that path). LOCAL rollup (r7 P2): this is an INTERMEDIATE
+        // checkpoint — the buyer's final stamp in the settlement block carries
+        // the broadcast, and a per-checkpoint CCIP push would charge the shared
+        // budget once per dip and could revert the sale when it covers the
+        // first message but not the second.
         if (loan.principalAsset == s.vpfiToken) {
             LibFacet.crossFacetCall(
                 abi.encodeWithSelector(
@@ -600,43 +659,12 @@ contract EarlyWithdrawalDirectFacet is
             loanId
         );
 
-        // Refund any excess Noah deposited beyond the required principal.
-        // Noah deposited buyOffer.amount when creating the Lender offer;
-        // only loan.principal was withdrawn above.  Since accepted offers
-        // cannot be cancelled, the excess would otherwise be stranded.
-        uint256 excess = buyOffer.amount - loan.principal;
-        if (excess > 0) {
-            LibFacet.crossFacetCall(
-                abi.encodeWithSelector(
-                    VaultFactoryFacet.vaultWithdrawERC20.selector,
-                    buyOffer.creator,
-                    loan.principalAsset,
-                    buyOffer.creator, // Refund back to Noah
-                    excess
-                ),
-                VaultWithdrawFailed.selector
-            );
-            // #1817 (Codex #1819 r4 P1) — with an oversized offer this
-            // refund is the buyer's LAST vault debit, so the true trough is
-            // HERE, not at the principal pull: the earlier stamp records the
-            // still-positive excess, and the balance only reaches its
-            // minimum once that excess leaves (zero when no shortfall was
-            // credited above). Re-stamp so the post-refund balance is
-            // observed before the held migration re-credits. Gated on the
-            // refund actually firing — with no excess the principal-pull
-            // stamp already sat at the last debit. LOCAL rollup (r7 P2):
-            // intermediate checkpoint; the settlement block's final buyer
-            // stamp carries the one broadcast.
-            if (loan.principalAsset == s.vpfiToken) {
-                LibFacet.crossFacetCall(
-                    abi.encodeWithSelector(
-                        ConsolidationFacet.restampUserVpfiLocalInternal.selector,
-                        buyOffer.creator
-                    ),
-                    bytes4(0)
-                );
-            }
-        }
+        // #1923 (#1503 item 15) — no excess to refund. The exact-match guard
+        // above pins `buyOffer.amount == loan.principal`, so the principal pull
+        // is the buyer's ONLY vault debit; the trough checkpoint at that pull
+        // (above) is therefore their last debit, and no post-refund re-stamp is
+        // needed. The former oversized-offer refund + its #1817 r4 re-stamp are
+        // gone with the over-funding path they served.
 
         // #597 — release the old lender's held-for-lender VPFI reservation
         // BEFORE the physical migration withdraws it from their vault below:
