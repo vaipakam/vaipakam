@@ -32,7 +32,14 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
-const REPO_ROOT = new URL('../../../', import.meta.url).pathname.replace(/\/$/, '');
+// `CHECK_DEPLOY_ROOT` exists so the test suite can point this at a fixture
+// tree instead of appending to real repo files. An earlier throwaway harness
+// did mutate the repo and its cleanup reverted a real fix mid-run; scanning a
+// temp directory removes that whole class of accident.
+const REPO_ROOT = (
+  process.env.CHECK_DEPLOY_ROOT ??
+  new URL('../../../', import.meta.url).pathname
+).replace(/\/$/, '');
 
 /** Directories never worth walking. */
 const SKIP_DIRS = new Set([
@@ -143,8 +150,11 @@ function* walk(dir) {
 const violations = [];
 for (const file of walk(REPO_ROOT)) {
   const rel = relative(REPO_ROOT, file);
-  // This guard's own documentation quotes the unsafe form on purpose.
+  // This guard's own documentation quotes the unsafe form on purpose, and its
+  // test file is ENTIRELY unsafe fixtures — that is what it tests. Skipping
+  // both by name rather than by content, so no real file can hide here.
   if (rel.endsWith('check-deploy-invocations.mjs')) continue;
+  if (rel.endsWith('test/checkDeployInvocations.test.ts')) continue;
   let text;
   try {
     text = readFileSync(file, 'utf8');
@@ -152,9 +162,38 @@ for (const file of walk(REPO_ROOT)) {
     continue;
   }
   if (!text.includes('wrangler deploy')) continue;
+  // Directory context carries across lines, but only within a CONTIGUOUS
+  // block. The form to catch is
+  //     cd apps/keeper
+  //     wrangler deploy
+  // where the deploy line names nothing keeper-related, so a per-line scope
+  // test passes it (Codex #1924 r11, reproduced before fixing).
+  //
+  // The first fix tracked the last `cd` seen with no block boundary, which
+  // leaked context through entire files: in `deploy-testnet.sh` the keeper
+  // phase's `cd` made every later phase — indexer, agent — look keeper-scoped,
+  // producing seven false positives on a clean tree. A guard that cries wolf
+  // on correct code gets disabled, so the scope is now deliberately narrow:
+  // a blank line, a fence, or any other `cd` ends it.
+  //
+  // A same-line subshell (`( cd "$KEEPER_DIR" && … )`) is NOT tracked here —
+  // its `cd` cannot outlive the subshell, and the per-line test already
+  // covers it.
+  let cwdIsKeeper = false;
   text.split('\n').forEach((line, i) => {
-    if (!/wrangler\s+deploy/.test(line)) return;
-    if (!isKeeperScoped(line, rel)) return;
+    if (/^\s*$/.test(line) || /^\s*```/.test(line)) {
+      cwdIsKeeper = false;
+    } else {
+      const bareCd = line.match(/^\s*cd\s+["']?([^\s"';&|)]+)/);
+      if (bareCd) {
+        cwdIsKeeper =
+          /(^|\/)apps\/keeper\/?$/.test(bareCd[1]) || /KEEPER_DIR/.test(bareCd[1]);
+      }
+    }
+
+    // `\b` so `wrangler deployments list` is not read as a deploy.
+    if (!/wrangler\s+deploy\b/.test(line)) return;
+    if (!isKeeperScoped(line, rel) && !cwdIsKeeper) return;
     if (isSafe(line)) return;
     if (allowReason(line)) return;
     violations.push(`${rel}:${i + 1}\n    ${line.trim()}`);

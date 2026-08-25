@@ -284,15 +284,24 @@ itself — leaving one spare, which `ops/mesh-watcher` would take on its
 FIRST DEPLOY (code-complete but undeployed, §4.5). (`ops/lz-watcher`
 held a slot until #1440 removed it.)
 
-**Since #1896 only THREE are occupied** — apps/keeper commits
-`"crons": []`, so agent, indexer and this Worker hold the live
-schedules and mesh-watcher would be the fourth. **That fourth slot is
-NOT spare capacity: it is RESERVED for the keeper's return.** The
-keeper is unscheduled only until its CPU overrun is fixed, and its
-re-enable procedure begins by confirming a free slot — so spending this
-one on a new schedule would block that re-enable at the account cap,
-with a stopped keeper as the cost. Plan on the pre-#1896 arithmetic
-(five occupied once mesh deploys) and treat the gap as temporary.
+**Since #1896 only THREE schedules are LIVE** — apps/keeper commits
+`"crons": []`, so agent, indexer and this Worker are the ones actually
+running. The arithmetic to plan against is unchanged, because the
+keeper's slot is **reserved, not released**:
+
+| | Slot |
+|---|---|
+| 1–3 | apps/agent, apps/indexer, this Worker — live |
+| 4 | **apps/keeper — reserved**, empty only until #1896's CPU fix lands |
+| 5 | `ops/mesh-watcher` — its slot on first deploy (§4.5) |
+
+So **deploying mesh-watcher remains correct and expected**: it takes
+the fifth slot, exactly as planned before #1896, and does not touch
+the keeper's. What must NOT happen is treating the keeper's empty
+schedule as spare capacity for some *additional* Worker — its
+re-enable procedure begins by confirming a free slot, so spending that
+one would block re-enable at the account cap with a stopped keeper as
+the cost.
 
 This Worker is designed for a single cron on that basis rather than
 because the account is already full. Folding the healthcheck into the
