@@ -9,13 +9,22 @@ quote they acted on. The unbound sale takes whatever the live figures produce.
 
 There is now a second, opt-in way to sell that carries the seller's reviewed
 numbers: a minimum net receipt, a ceiling on how much already-accrued interest
-would transfer to the buyer with the position, and an optional deadline. The
+would transfer to the buyer with the position, and a required deadline. The
 sale is refused if execution would be worse for the seller than those figures —
 a net below the floor, more accrued interest migrating to the buyer than the
 ceiling allows, or a fill past the deadline — and passes when it is at least as
-good. These are the same two quantities the listed route's bound carries, read
-from the same seller quote, and the check runs against the very figures the
+good. These are the same quantities the listed route's bound carries, read from
+the same seller quote, and the check runs against the very figures the
 settlement uses, so it cannot drift from what the seller actually receives.
+
+The deadline is required, not optional, and that is deliberate. Selling the
+position also forfeits the seller's pending usage reward, measured at the day
+the sale settles — a loss that grows the longer the transaction is delayed and
+that neither the net floor nor the held ceiling can see. A finite deadline caps
+that forfeiture to the window the seller chose, exactly as the listed route's
+mandatory finite expiry does. A seller who genuinely wants no cap on any of the
+three costs still has the original unbound sale; the bound entry, by contrast,
+must bound all three, so it requires the deadline.
 
 This mirrors the bound entry the listed sale route already offers, and exists for
 the same reason: the platform's two sale routes must let a seller bind their

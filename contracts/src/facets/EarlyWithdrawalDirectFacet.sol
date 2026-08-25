@@ -193,13 +193,26 @@ contract EarlyWithdrawalDirectFacet is
         bool enforced;
         uint256 minSellerNet; // seller must net at least this (principal - liamCost)
         uint256 maxHeld; // the held-for-lender balance migrating to the buyer may not exceed this
-        uint64 deadline; // fill must land at/before this timestamp (0 = no deadline)
+        uint64 deadline; // fill must land at/before this timestamp; MANDATORY on the bound entry (bounds reward forfeiture — see below)
     }
 
     /// @notice #1922 (#1503 item 6) — the fill would land after the deadline the
     ///         seller reviewed. The direct sale settles in one transaction, so
     ///         this bounds the mempool window a seller's quote may sit in.
     error SaleQuoteExpired(uint64 deadline);
+
+    /// @notice #1922 (#1503 item 6, Codex r2 P1) — the bound entry was called with
+    ///         `deadline == 0`. The deadline is MANDATORY here: it is the cutoff
+    ///         that bounds the THIRD reviewed cost — reward forfeiture. The sale
+    ///         forfeits the exiting lender's pending reward at the CURRENT day
+    ///         (via `_rewardHook`), a loss that grows the longer the fill is
+    ///         delayed and that neither the net floor nor the held ceiling
+    ///         captures. A finite deadline caps it to the window the seller chose,
+    ///         exactly as the listed route's mandatory finite expiry does
+    ///         (LenderEarlyWithdrawalUXDesign.md §"part three"). Leaving it
+    ///         unbounded would be disclosure, not consent — which is what the
+    ///         unbound `sellLoanViaBuyOffer` is for.
+    error SaleDeadlineRequired();
 
     /// @notice #1922 (#1503 item 6) — the seller's net receipt at execution is
     ///         below the floor they reviewed. Drift between quote and mining
@@ -269,8 +282,11 @@ contract EarlyWithdrawalDirectFacet is
      *         (its `minSellerNet` / `maxHeld` map to the two params here), and
      *         the sale is refused if execution is WORSE —
      *         a net below `reviewedMinSellerNet`, a migrating held balance above
-     *         `reviewedMaxHeld`, or a fill past `deadline`. Better-than-reviewed
-     *         passes.
+     *         `reviewedMaxHeld`, or a fill past the MANDATORY `deadline`.
+     *         Better-than-reviewed passes. The deadline is required, not optional:
+     *         it is what bounds the third reviewed cost — reward forfeiture —
+     *         which the sale charges at the fill day and which neither economic
+     *         bound captures (Codex r2 P1; design doc item 6 caps all THREE).
      *
      *         ADDITIVE, exactly like the listed route's `createLoanSaleOfferBound`
      *         (#1823): the unbound `sellLoanViaBuyOffer` selector stays routed and
@@ -286,7 +302,9 @@ contract EarlyWithdrawalDirectFacet is
      *         SAME `liamCost` / net the sale actually uses — one computation, not
      *         a mirror of it (the #1801 lesson `createLoanSaleOfferBound` records).
      *
-     * @param deadline Fill must land at/before this timestamp; 0 disables it.
+     * @param deadline Fill must land at/before this timestamp; MANDATORY (a zero
+     *        reverts `SaleDeadlineRequired`) because it bounds the reward
+     *        forfeiture — the third reviewed cost — to the seller's chosen window.
      * @param reviewedMinSellerNet The seller's reviewed floor; net must be ≥ this
      *        (the `minSellerNet` output of `quoteSellerBounds`).
      * @param reviewedMaxHeld The seller's reviewed ceiling on the held-for-lender
@@ -708,7 +726,11 @@ contract EarlyWithdrawalDirectFacet is
         // than after moving funds. No-op on the unbound entry (`b.enforced`
         // false).
         if (b.enforced) {
-            if (b.deadline != 0 && block.timestamp > b.deadline)
+            // MANDATORY finite deadline (Codex r2 P1): it is the cutoff that
+            // bounds the reward forfeiture `_rewardHook` charges at the current
+            // day — the third reviewed cost, captured by neither bound above.
+            if (b.deadline == 0) revert SaleDeadlineRequired();
+            if (block.timestamp > b.deadline)
                 revert SaleQuoteExpired(b.deadline);
             if (priorHeld > b.maxHeld)
                 revert SaleHeldAboveReviewed(priorHeld, b.maxHeld);

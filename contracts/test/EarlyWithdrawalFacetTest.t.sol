@@ -4353,11 +4353,12 @@ contract EarlyWithdrawalFacetTest is Test {
     /// @dev The bound entry fills when execution is within the seller's reviewed
     ///      economics. With the loan's own rate and no elapsed time the seller's
     ///      cost is 0 and their net is the full principal, so generous bounds
-    ///      (floor 0, ceiling max, no deadline) pass and the position migrates.
+    ///      (floor 0, ceiling max) with a finite future deadline pass and the
+    ///      position migrates.
     function test_1922_boundFillsWithinReviewedBounds() public {
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
-            activeLoanId, buyOfferId, 0, type(uint256).max, 0
+            activeLoanId, buyOfferId, 0, type(uint256).max, uint64(block.timestamp + 1 days)
         );
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
@@ -4379,7 +4380,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
-            activeLoanId, buyOfferId, PRINCIPAL + 1, type(uint256).max, 0
+            activeLoanId, buyOfferId, PRINCIPAL + 1, type(uint256).max, uint64(block.timestamp + 1 days)
         );
     }
 
@@ -4420,7 +4421,7 @@ contract EarlyWithdrawalFacetTest is Test {
             )
         );
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
-            activeLoanId, buyOfferId, 0, 40 ether, 0
+            activeLoanId, buyOfferId, 0, 40 ether, uint64(block.timestamp + 1 days)
         );
     }
 
@@ -4437,12 +4438,28 @@ contract EarlyWithdrawalFacetTest is Test {
         deal(mockERC20, address(diamond), PRINCIPAL + 100 ether);
         vm.prank(lender);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
-            activeLoanId, buyOfferId, 0, 50 ether, 0
+            activeLoanId, buyOfferId, 0, 50 ether, uint64(block.timestamp + 1 days)
         );
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
             newLender,
             "held balance at the ceiling fills"
+        );
+    }
+
+    /// @dev The deadline is MANDATORY on the bound entry (Codex r2 P1): a zero
+    ///      reverts `SaleDeadlineRequired`, because the finite cutoff is what
+    ///      bounds the reward forfeiture the sale charges at the fill day — the
+    ///      third reviewed cost, captured by neither the net floor nor the held
+    ///      ceiling. The unbound `sellLoanViaBuyOffer` carries no deadline; that
+    ///      is the disclosed-unbounded route, not this one.
+    function test_1922_boundRequiresDeadline() public {
+        vm.prank(lender);
+        vm.expectRevert(
+            EarlyWithdrawalDirectFacet.SaleDeadlineRequired.selector
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, type(uint256).max, 0
         );
     }
 

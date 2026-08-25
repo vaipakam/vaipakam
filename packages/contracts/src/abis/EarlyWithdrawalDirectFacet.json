@@ -2048,6 +2048,11 @@
   },
   {
     "type": "error",
+    "name": "SaleDeadlineRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SaleExposureExceedsAuthoredDuration",
     "inputs": [
       {
