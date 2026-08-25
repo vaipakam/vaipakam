@@ -151,6 +151,16 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a safety flag that only appears inside another option value (#1924 r19)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message="remember --keep-vars"\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it("the same bypass with single quotes (#1924 r19)", () => {
+    const r = runWith('apps/keeper/README.md', "wrangler deploy --message='use --keep-vars next time'\n");
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -243,6 +253,35 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('does not treat an escaped hash as a comment (#1924 r18)', () => {
     const r = runWith('apps/keeper/README.md', 'wrangler deploy --message fix\\#1896 --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts prose that backticks the command and the flag separately', () => {
+    // A full shell tokenizer failed this: markdown backticks are not shell
+    // quoting, and treating them as such hid the flag (#1924 r19).
+    const r = runWith(
+      'apps/keeper/README.md',
+      'keeper-scoped `wrangler deploy` that lacks `--keep-vars`. It exists because\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("accepts a line with an apostrophe before the command", () => {
+    const r = runWith(
+      'apps/keeper/README.md',
+      "So `apps/keeper`'s `deploy` script now runs `wrangler deploy --keep-vars`,\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts --keep-vars carrying its own quoted true value', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars="true" --message="x"\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts an unquoted other-option value followed by a real flag', () => {
+    // The shell really does see a separate --keep-vars here, so it is safe.
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message remember --keep-vars\n');
     expect(r.ok).toBe(true);
   });
 

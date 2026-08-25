@@ -111,12 +111,45 @@ function allowReason(line) {
  * `--flag`, `--flag true` and `--flag=true` all enable; only an explicit
  * false-ish value disables.
  */
-function flagEnabled(line, flag) {
-  // Quoted values are values. The previous pattern excluded quotes from the
+/**
+ * Neutralize OTHER options' quoted values before looking for safety flags.
+ *
+ * `--message="remember --keep-vars"` is a destructive bare deploy, but the
+ * text inside the message read as the real flag (Codex #1924 r19). The narrow
+ * property that fixes it: a safety flag never counts when it sits inside
+ * another option's QUOTED value.
+ *
+ * This is deliberately not a shell tokenizer. A full one was written first and
+ * failed six correct lines, because markdown backticks, a JSON string wrapper
+ * and an apostrophe in "keeper's" are all indistinguishable from shell quoting
+ * by shape — and every fix for one uncovered another. Matching only the
+ * `--opt="…"` shape leaves prose alone entirely.
+ *
+ * The safety flags themselves are excluded from the strip, so
+ * `--keep-vars="true"` survives. Unquoted values are not stripped and should
+ * not be: in `--message remember --keep-vars` the shell really does see a
+ * separate `--keep-vars`.
+ */
+function stripOtherOptionValues(line) {
+  return line.replace(
+    /--(?!keep-vars\b|dry-run\b)[A-Za-z0-9-]+(?:=|\s+)(?:"[^"]*"|'[^']*')/g,
+    ' ',
+  );
+}
+
+/**
+ * A flag counts only when it is actually ENABLED. `--keep-vars=false` is a
+ * live deploy that deletes vars, and `--dry-run=false` really does deploy —
+ * a bare substring test reads both as safe (Codex #1924 r12, reproduced).
+ * `--flag`, `--flag true` and `--flag=true` all enable; only an explicit
+ * false-ish value disables.
+ */
+function flagEnabled(rawLine, flag) {
+  const line = stripOtherOptionValues(rawLine);
+  // Quoted values are values. An earlier pattern excluded quotes from the
   // captured value, so `--keep-vars="false"` failed the capture, backtracked
   // to the optional-group-absent branch, and read as a bare — i.e. ENABLED —
-  // flag (Codex #1924 r13, reproduced). A guard that blesses the exact command
-  // it exists to stop is worse than no guard, so both quoting forms are parsed.
+  // flag (Codex #1924 r13, reproduced).
   const m = line.match(
     new RegExp(`${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|([^\\s"'\`)]+)))?`),
   );

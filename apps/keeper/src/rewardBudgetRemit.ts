@@ -254,7 +254,14 @@ async function remitToMirror(
     }
     const drop = new Set(oversized.map((d) => d.toString()));
     planWindow = planWindow.filter((d) => !drop.has(d.toString()));
-    if (planWindow.length === 0) return true; // nothing left after drops
+    if (planWindow.length === 0) {
+      // NOT settled (Codex #1924 r19). Reaching here means every owed day was
+      // dropped for exceeding the lane cap — the days are still un-remitted
+      // and the warning above is an explicit call for operator attention.
+      // Returning true would count this destination as covered and let manual
+      // funding stand down over mirrors that received nothing.
+      return false;
+    }
   }
   if (!stabilized) {
     console.warn(
@@ -278,7 +285,17 @@ async function remitToMirror(
     batch.push(planWindow[i]);
     total += slice;
   }
-  if (batch.length === 0) return true; // nothing fits this tick's cap
+  if (batch.length === 0) {
+    // Also NOT settled, by the same reasoning as the all-oversized branch
+    // above (found while fixing Codex #1924 r19, not reported): reaching here
+    // means owed days remain and none fit this tick's lane cap, so nothing
+    // was sent. `window.length === 0` earlier is the only genuine
+    // nothing-owed exit.
+    console.warn(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} no day fits laneCap=${laneCap} this tick — ${planWindow.length} day(s) still owed`,
+    );
+    return false;
+  }
 
   // Exact CCIP fee for THIS batch (the keeper EOA can't call the messenger's
   // quote directly — only the Diamond handler can; that's what this view wraps).

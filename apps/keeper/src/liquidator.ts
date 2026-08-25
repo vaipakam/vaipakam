@@ -167,6 +167,14 @@ async function liquidatePassForChain(
   // loans revert `IlliquidLoanNoRiskMath` and land in the failure
   // bucket — exactly the design split (calendar rows cover them).
   const readings: HfReading[] = [];
+  // Loans whose HF could not be evaluated for a reason that is NOT the
+  // by-design illiquid revert. A short `readings` alone does not mean a gap —
+  // illiquid loans revert `IlliquidLoanNoRiskMath` and are meant to land in
+  // the failure bucket (calendar rows cover them). But an RPC-level failure
+  // on a multicall entry, or in the serial fallback, means a RISK-BEARING
+  // loan went unevaluated, and the completion marker must not claim the chain
+  // was scanned (Codex #1924 r19).
+  let unevaluated = 0;
   for (let i = 0; i < ids.length; i += HF_MULTICALL_CHUNK) {
     const chunk = ids.slice(i, i + HF_MULTICALL_CHUNK);
     const contracts = chunk.map((id) => ({
@@ -200,14 +208,22 @@ async function liquidatePassForChain(
     }
     for (let j = 0; j < chunk.length; j++) {
       const r = results[j];
-      if (r.status !== 'success' || typeof r.result !== 'bigint') continue;
+      if (r.status !== 'success' || typeof r.result !== 'bigint') {
+        if (!isIlliquidRevert(r?.error)) unevaluated += 1;
+        continue;
+      }
       readings.push({ id: chunk[j], hf: r.result as bigint });
     }
+  }
+  if (unevaluated > 0) {
+    console.error(
+      `[keeper] liquidator chain=${chain.name} ${unevaluated}/${ids.length} loan(s) unevaluated (HF read failed) — scan incomplete`,
+    );
   }
 
   const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
   if (atRisk.length === 0) {
-    if (pagesComplete) logScanComplete(chain, readings.length, 0, 0);
+    if (pagesComplete && unevaluated === 0) logScanComplete(chain, readings.length, 0, 0);
     return readings;
   }
   // Lowest HF first — the keeper's gas budget goes to the most-at-risk
@@ -225,8 +241,24 @@ async function liquidatePassForChain(
     const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client);
     if (submitted) submits += 1;
   }
-  if (pagesComplete) logScanComplete(chain, readings.length, atRisk.length, submits);
+  if (pagesComplete && unevaluated === 0) {
+    logScanComplete(chain, readings.length, atRisk.length, submits);
+  }
   return readings;
+}
+
+/**
+ * Is this HF-read failure the EXPECTED illiquid revert rather than a gap?
+ *
+ * Illiquid loans have no oracle and deliberately revert
+ * `IlliquidLoanNoRiskMath`; they are covered by calendar rows, not by HF
+ * math, so their absence from `readings` is the design working. Treating
+ * every failed entry as a scan gap would suppress the completion marker on
+ * healthy chains that simply hold illiquid collateral — the false-red half of
+ * the r18 finding, in a new place. Only unrecognised failures count.
+ */
+function isIlliquidRevert(err: unknown): boolean {
+  return err !== undefined && err !== null && /IlliquidLoanNoRiskMath/.test(String(err));
 }
 
 /**
