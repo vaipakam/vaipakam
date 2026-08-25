@@ -38,7 +38,7 @@ import {
   BASIS_POINTS,
   LOAN_STATUS_ACTIVE,
   SECONDS_PER_YEAR,
-  durationFitDays,
+  loanEndTimeOf,
   readLoanLive,
   sellerEconomics,
   type LoanLive,
@@ -99,7 +99,12 @@ export function EarlyExitFlow({
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  const fitDays = durationFitDays(live, chainNow);
+  // #1923 — the loan's live remaining exposure to its FIXED maturity, in
+  // seconds. A direct sale is refused at/after maturity, and an offer's
+  // authored duration must COVER this (it is a ceiling on the buyer's lock,
+  // not the loan's term) — mirrors the facet's SaleLoanPastMaturity +
+  // SaleExposureExceedsAuthoredDuration guards, seconds-precise.
+  const remainingExposureSecs = loanEndTimeOf(live) - chainNow;
 
   // Every seller figure prices at the SNAPSHOT's block. Since #1801 r9 that is
   // not something this component arranges — `sellerEconomics` reads
@@ -147,11 +152,15 @@ export function EarlyExitFlow({
         ) {
           return false;
         }
-        // Borrower-favourability + coverage. Duration fit uses the
-        // facet's bound: immutable term minus whole elapsed days.
-        if (BigInt(o.durationDays) > fitDays) return false;
+        // #1923 — coverage + exact size. The loan must not be past maturity
+        // (nothing is sellable then), the offer's authored duration must COVER
+        // the remaining exposure (a shorter one over-exposes the buyer and is
+        // refused), and the amount must equal the principal EXACTLY (the offer
+        // is consumed whole — an over-funded one is refused, not refunded).
+        if (remainingExposureSecs <= 0n) return false;
+        if (BigInt(o.durationDays) * 86_400n < remainingExposureSecs) return false;
         if (BigInt(o.collateralAmount) > live.collateralAmount) return false;
-        if (amount < live.principal) return false;
+        if (amount !== live.principal) return false;
         // Expired offers are refused at accept — don't list them.
         if (o.expiresAt && BigInt(o.expiresAt) <= chainNow) return false;
         // Buying out your own position is a no-op with fees.
@@ -166,7 +175,7 @@ export function EarlyExitFlow({
         // shortfall varies, monotonically with the rate).
         (a, b) => a.interestRateBps - b.interestRateBps,
       );
-  }, [offers.data, address, row, live, fitDays, chainNow]);
+  }, [offers.data, address, row, live, remainingExposureSecs, chainNow]);
 
   const selected =
     candidates?.find((o) => o.offerId === selectedId) ?? null;
@@ -303,17 +312,26 @@ export function EarlyExitFlow({
         // post-review bump past the pledge reverts InvalidSaleOffer.
         liveOffer.collateralAmount !== BigInt(selected.collateralAmount) ||
         liveOffer.collateralAmount > liveLoan.collateralAmount ||
+        // #1923 — the amount must equal the LIVE principal exactly (the offer
+        // is consumed whole; an over-funded one now reverts, not refunds).
+        liveOffer.amount !== liveLoan.principal ||
         (liveOffer.expiresAt !== 0n && liveOffer.expiresAt <= latestBlock.timestamp)
       ) {
         throw new Error(copy.match.termsChanged);
       }
-      // The duration-fit bound moves with chain time — re-check it
-      // live (the picker judged it against a ≤60s-old clock).
-      if (
-        BigInt(liveOffer.durationDays) >
-        durationFitDays(liveLoan, liveLoan.readAtTimestamp)
-      ) {
-        throw new Error(copy.match.termsChanged);
+      // #1923 — the coverage bound moves with chain time, so re-check it live
+      // (the picker judged it against a ≤60s-old clock): the loan must not be
+      // past maturity, and the offer's authored duration must still cover the
+      // remaining exposure. Seconds-precise, off the fixed maturity.
+      {
+        const liveRemainingSecs =
+          loanEndTimeOf(liveLoan) - liveLoan.readAtTimestamp;
+        if (
+          liveRemainingSecs <= 0n ||
+          BigInt(liveOffer.durationDays) * 86_400n < liveRemainingSecs
+        ) {
+          throw new Error(copy.match.termsChanged);
+        }
       }
       // Recompute the payout with LIVE state + chain time. The
       // reviewed "~" figure shrinks as time elapses — allow up to two

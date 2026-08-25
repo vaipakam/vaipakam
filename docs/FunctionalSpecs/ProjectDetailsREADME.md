@@ -100,6 +100,27 @@ for the following platform areas:
   half of the check (screening the live borrower for country/KYC compatibility)
   matters only where those gates are switched on. A borrower who wants out exits
   by repaying or pre-closing, never by buying the lender side.
+- **A direct sale must fit what the buyer authored, on both the size and the
+  term of the position.** The direct route spends a standing offer, so the
+  position must be reconciled against it (the same problem the behavioural-terms
+  rule addresses), and two quantitative axes need their own rule:
+  - **Principal is an exact match.** The buyer's offer is consumed whole — marked
+    accepted, its position record retired — so a position smaller than the offer
+    would place the buyer below the size they committed while using their offer
+    up. The offer's amount must equal the loan's principal exactly; an amount
+    above it is refused, not partially filled and refunded. This mirrors the
+    listed route, whose sale vehicle is built at exactly the principal, so the
+    two routes cannot deliver different sizes.
+  - **The remaining term must fit within the buyer's authored duration, and this
+    one is one-directional.** Because the loan's maturity is fixed at origination
+    and a sale never moves it, the buyer's authored duration is a ceiling on how
+    long they consent to be locked, not the loan's term. A remaining exposure
+    that exceeds that ceiling is refused (the buyer would be locked past their
+    window); a shorter one is permitted (their capital returns sooner — the
+    better position), exactly as the inherited risk-terms and treasury-fee rules
+    permit a stronger-than-authored inherited position. The comparison is against
+    the maturity moment, not whole days, so a fill cannot slip nearly a day past
+    the authored window.
 - These two rules pull in different directions and the distinction is
   deliberate. Snapshot semantics continue to govern the **existing** loan's
   ongoing operation, so a governance retune never retroactively changes the
@@ -1930,9 +1951,9 @@ This option allows Liam to recover principal early by selling his lender positio
 #### Preconditions
 
 - Liam must be the active lender on the loan.
-- Noah must provide funds equal to the agreed purchase amount, typically the outstanding principal.
-- Noah’s replacement lender position must preserve the same principal/lending asset type, payment/prepay asset type, and collateral asset type as the original live loan. The amount may vary if otherwise permitted by the transfer flow, but the asset types themselves must not change.
-- Noah’s selected replacement offer terms must favor Alice, the original borrower. The replacement duration, lending amount, and collateral amount may vary only to the extent they do not worsen Alice's continuing obligation or collateral exposure.
+- Noah must provide funds **exactly equal to the outstanding principal**. Because his offer is consumed whole, an amount above the principal is refused rather than partially filled and refunded, and an amount below it cannot fund the sale (§9 amount rule).
+- Noah’s replacement lender position must preserve the same principal/lending asset type, payment/prepay asset type, and collateral asset type as the original live loan, and its amount must match the principal exactly (previous bullet); the asset types themselves must not change.
+- Noah’s selected replacement offer terms must favor Alice, the original borrower, and must fit the position Noah is stepping into. His collateral requirement may not exceed the loan's, and his authored **duration must cover the loan's remaining exposure** — a sale never moves the fixed maturity, so his duration is a ceiling on acceptable lock: a remaining term longer than he authored is refused (over-exposure), a shorter one is permitted (§9 duration rule).
 - The sale structure must comply with the platform’s active offer and acceptance rules.
 
 #### Economic Treatment
