@@ -199,7 +199,9 @@ recoverable back-pressure — not a fund-loss event.
 > through its unarmed-validation step. Worse, `timedPass` logs
 > `rewardBudgetRemit done in Nms` even when the pass returned instantly from
 > its gate — so read the accompanying `passIsArmed` skip line, which names the
-> blocking binding, rather than the `done` line.
+> blocking binding, rather than the `done` line. The same four-point check as
+> §3.5's stand-down applies here (schedule, chain set, no skip line, no
+> per-chain `err=` lines); a `done` line on its own establishes nothing.
 > This matters most in exactly the incident this section is written for:
 > if a finalized day is broadcast and you leave a mirror's claim gate open
 > expecting the keeper to fund it, nothing will, and users hit the claim
@@ -362,12 +364,18 @@ running.
 > - **Tier 1 / Tier 2** — already achieved by the hold, as far as our
 >   bot is concerned. Doing them is harmless and leaves the posture
 >   correctly latched for re-enable, but neither is the *response*.
-> - **This removes one of the two immediate levers this section names
->   below.** Post-handover the text names Tier 1 *and*
->   `AdminFacet.pauseAsset` as the immediate-effect levers, with Tier 3
->   as the timelocked permanent fix. During the hold Tier 1 is a no-op,
->   so **`AdminFacet.pauseAsset` is the only immediate lever left**, and
->   a broader §3 pause is the escalation. Reach for those first.
+> - **The immediate on-chain stop is the §3 GLOBAL protocol pause — not
+>   `pauseAsset`.** The Tier 3 note below names Tier 1 and
+>   `AdminFacet.pauseAsset` as the post-handover immediate levers; that
+>   is wrong for this incident and is corrected there too. `pauseAsset`
+>   blocks NEW exposure only — creation paths consult it, and exit paths
+>   including liquidation deliberately do not, so existing loans stay
+>   liquidatable by design (`LibVaipakam` storage note; `RiskFacet` calls
+>   `requireAssetNotPaused` nowhere). `triggerLiquidationDiscounted`
+>   gates on the GLOBAL `whenNotPaused` alone. So pausing the asset
+>   leaves the vulnerable discounted path fully callable by external
+>   liquidators — and during the hold Tier 1 is a no-op as well, which
+>   would leave an operator with two levers engaged and nothing stopped.
 > - **Tier 3 still binds external liquidators — but it is not fast.**
 >   Post-handover it is a Timelock-scheduled tx with the 48h delay (see
 >   the Tier 3 note below), so it is the eventual targeted control, not
@@ -379,11 +387,21 @@ running.
 >   while `KEEPER_ENABLED` is false, and the re-enable sequence
 >   deliberately keeps it false through its unarmed-validation step —
 >   which spans a full 15-minute cycle and can span a daily window.
->   Keep manual coverage until **both** a live schedule is read back
->   from Settings → Trigger Events (not a quiet `wrangler tail`, which
->   proves nothing here) **and** you have watched a liquidator pass
->   actually run — a `liquidator done in Nms` line with no accompanying
->   `passIsArmed` skip line naming a blocking binding.
+>   Keep manual coverage until **all four** hold. Fewer than four has
+>   been wrong twice, each time by letting a tick that did no work look
+>   like coverage:
+>   1. A live schedule read back from Settings → Trigger Events — not a
+>      quiet `wrangler tail`, which proves nothing here.
+>   2. `chains resolved: N — …` naming the chains this deployment is
+>      meant to serve. A chain whose RPC secret is missing or failing is
+>      dropped silently, and the pass still finishes normally.
+>   3. `liquidator done in Nms` with **no** `passIsArmed` skip line
+>      naming a blocking binding — `timedPass` logs `done` even for a
+>      pass that returned instantly from its gate.
+>   4. **No `runLiquidator chain=… err=…` lines.** Per-chain scan
+>      failures are caught and logged, then the loop continues and the
+>      pass returns normally — so a tick where every chain's RPC failed
+>      still ends `done`, with nothing scanned and nothing liquidated.
 
 Three escalation tiers, least to most disruptive:
 
@@ -423,10 +441,27 @@ too.
 
 Post-handover this needs a Timelock-scheduled tx with the
 48h delay — **not an emergency lever once handover lands**.
-Tier 1 (keeper-side snap-off) and the asset-level
-`AdminFacet.pauseAsset` are the immediate-effect levers
-post-handover; Tier 3 is the "we have time to schedule a
-permanent fix" path.
+Tier 3 is the "we have time to schedule a permanent fix" path.
+
+**Correction (#1924 r16): `AdminFacet.pauseAsset` is NOT an
+immediate lever for this incident**, and an earlier version of
+this note listed it as one alongside Tier 1. It blocks NEW
+exposure only — creation paths consult `requireAssetNotPaused`
+and exit paths deliberately do not, so that existing positions
+can always be closed out (see the `assetPaused` note in
+`LibVaipakam`). `RiskFacet` never calls it, and
+`triggerLiquidationDiscounted` gates on the GLOBAL
+`whenNotPaused` alone. Pausing the asset therefore leaves the
+discounted path fully callable by external liquidators.
+
+So post-handover the immediate levers are **Tier 1** (our bot
+only — and see the #1896 hold above, which makes it a no-op
+today) and the **§3 global protocol pause** (everyone). If the
+defect is in the diamond's discount-path code and external
+callers must be stopped now, the global pause is the only
+immediate option; Tier 3 follows behind it as the targeted
+permanent fix. Pre-handover, Tier 3 is a direct ADMIN_ROLE call
+and does act immediately.
 
 Full per-chain rollout sequence + troubleshooting in
 [`FlashLoanLiquidatorRollout.md`](FlashLoanLiquidatorRollout.md).
@@ -472,10 +507,21 @@ logic, the lifecycle transition, the per-leg incentive math)
 and every operator's matcher must be stopped.
 
 Post-handover this needs a Timelock-scheduled tx with the
-48h delay — **not an emergency lever once handover lands.** The
-asset-level `AdminFacet.pauseAsset` is the immediate-effect lever
-for the affected asset's loans; Tier 2 is for "we want to
-permanently disable the match path while we triage."
+48h delay — **not an emergency lever once handover lands.**
+Tier 2 is for "we want to permanently disable the match path
+while we triage."
+
+**Correction (#1924 r16): `AdminFacet.pauseAsset` is NOT the
+immediate lever here either**, and an earlier version of this
+note said it was "the immediate-effect lever for the affected
+asset's loans" — which is precisely backwards. Existing loans
+are exactly what an asset pause does not touch: creation paths
+consult `requireAssetNotPaused`, exit paths deliberately do not
+so positions can always be closed out, and `RiskFacet` never
+calls it at all. `triggerInternalMatchLiquidation` gates on the
+GLOBAL `whenNotPaused` only. For an immediate stop that binds
+every operator's matcher, the §3 global protocol pause is the
+lever; Tier 2 follows as the targeted permanent fix.
 
 ### What does NOT require flipping the internal-match
 kill-switch

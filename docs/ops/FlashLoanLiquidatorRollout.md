@@ -21,20 +21,23 @@ All commands run from `contracts/` unless noted otherwise.
 > liquidation at all right now.
 >
 > Config changes here are still worth making: they latch correctly for when
-> the schedule returns. What they are not is a *response*. During the hold the
-> levers that change live behaviour are `AdminFacet.pauseAsset` and a broader
-> §3 protocol pause; the on-chain `discountPathEnabled` kill-switch does bind
-> the external liquidators who are currently the only automated liquidation on
-> our positions, but post-handover it carries the Timelock's 48h delay, so it
-> is the eventual targeted control rather than the immediate one. See
-> [`IncidentRunbook.md`](IncidentRunbook.md) §3.5 for the full tier breakdown
-> under this hold.
+> the schedule returns. What they are not is a *response*. With our bot
+> stopped, the **§3 global protocol pause is the only immediate on-chain stop**
+> for the discounted path. Note specifically that `AdminFacet.pauseAsset` is
+> **not** — it blocks new exposure only, and liquidation is deliberately
+> exempt so existing positions can always be closed out, so it leaves
+> `triggerLiquidationDiscounted` fully callable by external liquidators. The
+> `discountPathEnabled` kill-switch does bind those callers, but post-handover
+> it carries the Timelock's 48h delay, making it the eventual targeted control
+> rather than the immediate one. Full tier breakdown under this hold in
+> [`IncidentRunbook.md`](IncidentRunbook.md) §3.5.
 >
-> Treat our own liquidation coverage as manual until **both** a live schedule
-> is read back from Settings → Trigger Events **and** a liquidator pass has
-> been observed actually running — a restored cron alone is not enough, since
-> the pass stays inert while `KEEPER_ENABLED` is false and the re-enable
-> sequence keeps it false through its unarmed-validation step.
+> Treat our own liquidation coverage as manual until the **four-point**
+> stand-down check in [`IncidentRunbook.md`](IncidentRunbook.md) §3.5 passes:
+> schedule read back, expected chain set resolved, a liquidator pass with no
+> `passIsArmed` skip, and no per-chain `err=` lines. A restored cron alone is
+> not enough — the pass stays inert while `KEEPER_ENABLED` is false, and a
+> tick can log `done` having scanned nothing at all.
 
 ---
 

@@ -181,6 +181,13 @@
   //      scales with the set: when the binding recovers after step 8,
   //      the untested load returns and can re-exhaust the budget with
   //      the fund-moving passes already armed.
+  //      AND REJECT ANY TICK CARRYING `chain=… err=…` LINES (Codex
+  //      #1924 r16). Per-chain scan failures are CAUGHT and logged —
+  //      `runLiquidator` continues the loop and returns normally, so
+  //      the pass still ends `done in Nms`. A tick where the RPCs
+  //      failed early did far LESS work than a healthy one, which makes
+  //      it worthless as CPU evidence in the one direction that
+  //      matters: it looks green precisely because it did nothing.
   //      If it still reports `exceededCpu`: set `"crons": []` again,
   //      **REVERT AND COMMIT that** (Codex #1924 r12 — step 2 made the
   //      active schedule a COMMITTED change, so a rollback that only
