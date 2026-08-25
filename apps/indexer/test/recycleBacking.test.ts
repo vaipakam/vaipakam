@@ -61,6 +61,55 @@ describe('storedPayloadIsComplete', () => {
     expect(storedPayloadIsComplete(good)).toBe(true);
   });
 
+  it('accepts a PRE-#1930 payload with no recovery-reserve keys', () => {
+    // Every row written before #1930 lacks these two keys. They are a
+    // valid capture of everything they claimed to hold, and rejecting them
+    // would blank the public backing figures until the next capture — an
+    // outage caused by adding a field. This is the case that says the new
+    // fields went in as optional rather than required.
+    expect(storedPayloadIsComplete(good)).toBe(true);
+  });
+
+  it('accepts them when present and well-formed', () => {
+    expect(
+      storedPayloadIsComplete({
+        ...good,
+        strandedRecoveryReserved: '7',
+        recoveryPositionReserved: '0',
+      }),
+    ).toBe(true);
+  });
+
+  it('rejects a row carrying exactly ONE of the two recovery keys', () => {
+    // Not a shape this repository emits: both are written in the same object
+    // literal from the same read, so one-of-two is corruption or a hand
+    // repair. Accepting it would publish a partial subtrahend set through
+    // the same success path as a complete one — appearing to reconcile and
+    // being wrong, which is worse than visibly not reconciling.
+    expect(
+      storedPayloadIsComplete({ ...good, strandedRecoveryReserved: '7' }),
+    ).toBe(false);
+    expect(
+      storedPayloadIsComplete({ ...good, recoveryPositionReserved: '7' }),
+    ).toBe(false);
+  });
+
+  it('rejects a present-but-malformed recovery-reserve value', () => {
+    // Optional means absent-or-valid, never absent-or-anything. A
+    // truncated or non-numeric figure published as a backing subtrahend is
+    // worse than a missing one, because it reconciles to a wrong total
+    // instead of visibly not reconciling.
+    expect(
+      storedPayloadIsComplete({ ...good, strandedRecoveryReserved: '' }),
+    ).toBe(false);
+    expect(
+      storedPayloadIsComplete({ ...good, recoveryPositionReserved: 'NaN' }),
+    ).toBe(false);
+    expect(
+      storedPayloadIsComplete({ ...good, recoveryPositionReserved: 12 }),
+    ).toBe(false);
+  });
+
   it('rejects syntactically valid but empty JSON', () => {
     // `{}` parses fine and would previously have been spread into the
     // response with `unavailableReason: null`, so any consumer honouring

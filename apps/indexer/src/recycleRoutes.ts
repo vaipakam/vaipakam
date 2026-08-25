@@ -166,6 +166,27 @@ interface BackingSnapshot {
    * reserve, which the lens natspec warns about in as many words.
    */
   releasedRemitStranded: string | null;
+  /**
+   * The two protocol-ledger terms subtracted INSIDE `unearmarked`.
+   *
+   * Published so a reader can recompute `unearmarked` from its components
+   * instead of trusting it — which is the stated reason the lens exposes
+   * them at all, and the reason omitting them was not merely incomplete:
+   * a consumer summing the visible subtrahends got a number that did not
+   * reconcile, with nothing on the surface to say why.
+   *
+   * `strandedRecoveryReserved` is quarantined compensation value awaiting
+   * its return to Base; `recoveryPositionReserved` is the Base
+   * recovery-position earmark, and reads zero on mirror chains.
+   *
+   * NULLABLE for a reason beyond unavailability: rows captured before
+   * #1930 have no such keys, and a stored payload predating the change is
+   * still a VALID capture of everything it claimed to hold. Treating those
+   * rows as unreadable would have taken the whole backing surface down for
+   * one capture interval to add a field.
+   */
+  strandedRecoveryReserved: string | null;
+  recoveryPositionReserved: string | null;
   unavailableReason: BackingReason | null;
   asOf: string | null;
 }
@@ -179,6 +200,8 @@ const BACKING_UNAVAILABLE = (reason: BackingReason): BackingSnapshot => ({
   keeperBudget: null,
   platformRetained: null,
   releasedRemitStranded: null,
+  strandedRecoveryReserved: null,
+  recoveryPositionReserved: null,
   blockNumber: null,
   diamond: null,
   unavailableReason: reason,
@@ -308,7 +331,16 @@ export async function captureBackingSnapshot(
       abi: InteractionRewardsLensFacetABI,
       functionName: 'getRecycleBackingSnapshot',
       blockNumber,
-    }) as Promise<readonly [bigint, bigint, bigint, bigint, bigint, bigint]>,
+      // EIGHT outputs, matching the compiled ABI. This cast said SIX until
+      // #1930 — `strandedRecoveryReserved` (#1434 P2-w2) and
+      // `recoveryPositionReserved` (P2-w5) were appended to the view and
+      // never picked up here, so the destructure below silently dropped
+      // them. Both are subtrahends INSIDE `unearmarked`, published so a
+      // reader can recompute it from components; omitting them left the
+      // series unable to do the one thing they exist for.
+    }) as Promise<
+      readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint]
+    >,
     client.readContract({
       address: chain.diamond as Address,
       abi: RewardAggregatorFacetABI,
@@ -316,7 +348,16 @@ export async function captureBackingSnapshot(
       blockNumber,
     }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
   ]);
-  const [vpfiBalance, bucket, unearmarked, outstanding, paidOut, keeper] = snap;
+  const [
+    vpfiBalance,
+    bucket,
+    unearmarked,
+    outstanding,
+    paidOut,
+    keeper,
+    strandedRecoveryReserved,
+    recoveryPositionReserved,
+  ] = snap;
   const payload = {
     vpfiBalance: vpfiBalance.toString(),
     bucket: bucket.toString(),
@@ -326,6 +367,8 @@ export async function captureBackingSnapshot(
     keeperBudget: keeper.toString(),
     platformRetained: retainedFrom(bucket, outstanding, keeper).toString(),
     releasedRemitStranded: composition[1].toString(),
+    strandedRecoveryReserved: strandedRecoveryReserved.toString(),
+    recoveryPositionReserved: recoveryPositionReserved.toString(),
   };
   await env.DB.prepare(
     `INSERT INTO recycle_backing_snapshot
@@ -450,6 +493,22 @@ const STORED_PAYLOAD_FIELDS = [
   'releasedRemitStranded',
 ] as const;
 
+/**
+ * #1930 — present-or-absent, and validated only when present.
+ *
+ * Deliberately NOT added to {STORED_PAYLOAD_FIELDS}. That list is the
+ * all-or-nothing completeness contract, and every row written before this
+ * change lacks these keys; requiring them would reclassify those rows as
+ * `read-failed` and blank the public backing figures until the next
+ * capture — an outage caused by adding a field. Once present they must
+ * still be well-formed, so a truncated or non-numeric value is rejected
+ * rather than published.
+ */
+const OPTIONAL_PAYLOAD_FIELDS = [
+  'strandedRecoveryReserved',
+  'recoveryPositionReserved',
+] as const;
+
 const DECIMAL_STRING = /^\d+$/;
 
 /**
@@ -465,7 +524,32 @@ const DECIMAL_STRING = /^\d+$/;
 export function storedPayloadIsComplete(v: unknown): v is Record<string, string> {
   if (typeof v !== 'object' || v === null) return false;
   const rec = v as Record<string, unknown>;
-  return STORED_PAYLOAD_FIELDS.every(
+  if (
+    !STORED_PAYLOAD_FIELDS.every(
+      (f) => typeof rec[f] === 'string' && DECIMAL_STRING.test(rec[f] as string),
+    )
+  ) {
+    return false;
+  }
+  // JOINTLY absent or JOINTLY valid — never one of the two.
+  //
+  // This repository produces exactly two payload shapes: the pre-#1930 row
+  // with neither key, and the post-#1930 row with both, written in the same
+  // object literal from the same read. A row carrying exactly one is not a
+  // shape anything here emits — it is corruption or a hand-repair — and it
+  // cannot support the reconciliation these fields exist for, because a
+  // reader subtracting the terms it can see lands on a number that does not
+  // close and has nothing to say why.
+  //
+  // Checking them independently accepted that row and normalised the missing
+  // half to `null`, which publishes a partial subtrahend set through the same
+  // `unavailableReason: null` path as a complete one. Being unable to
+  // reconcile is a fact worth reporting; appearing to reconcile and being
+  // wrong is not.
+  const present = OPTIONAL_PAYLOAD_FIELDS.filter((f) => rec[f] !== undefined);
+  if (present.length === 0) return true;
+  if (present.length !== OPTIONAL_PAYLOAD_FIELDS.length) return false;
+  return present.every(
     (f) => typeof rec[f] === 'string' && DECIMAL_STRING.test(rec[f] as string),
   );
 }
@@ -549,6 +633,18 @@ async function readBacking(env: Env, chainId: number): Promise<BackingSnapshot> 
         BackingSnapshot,
         'unavailableReason' | 'asOf' | 'blockNumber'
       >),
+      // Absent on a pre-#1930 row. The spread would leave the keys
+      // MISSING rather than null, which JSON drops entirely — a consumer
+      // reading `.strandedRecoveryReserved` would get `undefined` where the
+      // published contract promises `string | null`.
+      strandedRecoveryReserved:
+        (parsed as Record<string, unknown>).strandedRecoveryReserved as
+          | string
+          | undefined ?? null,
+      recoveryPositionReserved:
+        (parsed as Record<string, unknown>).recoveryPositionReserved as
+          | string
+          | undefined ?? null,
       blockNumber: row.block_number,
       diamond: row.diamond,
       unavailableReason: null,
