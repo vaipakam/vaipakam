@@ -34,6 +34,24 @@ import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `getDayClosedByRemitId` lives on the read-only lens facet. */
 const REMIT_LENS_ABI = RewardRemittanceLensFacetABI as Abi;
+
+/**
+ * Multicall3's canonical deterministic-deployment address, the same on every
+ * chain the keeper touches.
+ *
+ * It has to be passed EXPLICITLY: every keeper client is built as
+ * `createPublicClient({ transport: http(chain.rpc) })` with no `chain`, so viem
+ * cannot look the address up from `chain.contracts.multicall3` and
+ * `multicall()` throws `client chain not configured. multicallAddress is
+ * required.` before it issues a single request (Codex #1924 r37). That threw
+ * the batched probe below straight into its catch path, where every ambiguous
+ * day reads as UNKNOWN — so the discriminator never actually discriminated and
+ * operators would have had to clear the whole window by hand, every run.
+ *
+ * Supplying the address rather than attaching a chain object keeps the change
+ * to this call site; the tree-wide clients are chainless by design.
+ */
+const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11' as Address;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
 const AGGREGATOR_ABI = RewardAggregatorFacetABI as Abi;
 // `getInteractionCurrentDay` moved to the read-only lens facet (#1333).
@@ -346,6 +364,7 @@ async function remitToMirror(
           functionName: 'getDayClosedByRemitId',
           args: [mirrorId, dayId],
         })),
+        multicallAddress: MULTICALL3_ADDRESS,
         allowFailure: true,
       })) as { status: 'success' | 'failure'; result?: unknown }[];
       ambiguous.forEach((dayId, i) => {

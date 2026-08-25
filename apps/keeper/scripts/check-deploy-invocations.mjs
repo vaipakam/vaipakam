@@ -587,7 +587,7 @@ function isKeeperDir(target) {
  * physical lines rather than replacing them, so prose that merely quotes a
  * command is still caught by the default-deny path.
  */
-function embeddedShellLines(text) {
+function embeddedShellLines(text, isYaml = false) {
   const lines = text.split('\n');
   const out = [];
   let i = 0;
@@ -612,6 +612,19 @@ function embeddedShellLines(text) {
     // A block scalar may carry an explicit INDENTATION indicator as well as a
     // chomping one, in either order: `|2`, `|2-`, `>+2` (Codex #1924 r30).
     const run = lines[i].match(/^(\s*)(?:-\s+)?run:\s*([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/);
+    // A `run:` value does not have to be a BLOCK scalar to span lines. A quoted
+    // or plain multiline flow scalar folds its newlines to spaces just as `>`
+    // does, so `run: "cd apps/keeper;` with `wrangler deploy"` beneath it
+    // executes as the single script `cd apps/keeper; wrangler deploy`.
+    // Recognising only `|` and `>` left that to the physical-line scan, which
+    // sees the scope and the deploy on SEPARATE lines and passed the
+    // destructive command (Codex #1924 r37).
+    //
+    // YAML files only: folding is a YAML rule, and applying it to prose that
+    // merely contains `run:` would join lines the author never joined — the
+    // same scoping mistake the shell scanner made over markdown at r27.
+    const flow =
+      isYaml && !run ? lines[i].match(/^(\s*)(?:-\s+)?run:[ \t]+(\S.*)$/) : null;
     if (anyFence) {
       const start = i + 1;
       let j = start;
@@ -645,9 +658,84 @@ function embeddedShellLines(text) {
       i = j;
       continue;
     }
+    if (flow) {
+      const end = flowScalarEnd(lines, i, flow[2], flow[1].length);
+      // Only a scalar that actually SPANS lines is folded into a block. A
+      // single-line `run:` is already judged correctly as a physical line, and
+      // routing it through here as well would report one violation twice.
+      if (end > i) {
+        let joined = [flow[2], ...lines.slice(i + 1, end + 1)]
+          .map((l) => l.trim())
+          .join(' ');
+        const q = flow[2][0] === '"' || flow[2][0] === "'" ? flow[2][0] : null;
+        if (q) {
+          joined = joined.slice(1);
+          const last = joined.lastIndexOf(q);
+          if (last !== -1) joined = joined.slice(0, last) + joined.slice(last + 1);
+        }
+        // Folds to ONE line, reported at the `run:` line — the line an operator
+        // opens to fix it.
+        out.push(...offset(logicalLines(joined), i, blockId));
+        blockId += 1;
+        i = end + 1;
+        continue;
+      }
+    }
     i += 1;
   }
   return out;
+}
+
+/**
+ * Index of the LAST line of a YAML flow scalar whose content opens on
+ * `lines[i]` as `content`, with its key at `indent`.
+ */
+function flowScalarEnd(lines, i, content, indent) {
+  const q = content[0] === '"' || content[0] === "'" ? content[0] : null;
+  if (!q) {
+    // A plain multiline scalar continues while lines are MORE indented than the
+    // key. A blank line, a new list item, or a comment ends it.
+    let j = i;
+    while (
+      j + 1 < lines.length &&
+      lines[j + 1].trim() !== '' &&
+      (lines[j + 1].match(/^\s*/) ?? [''])[0].length > indent &&
+      !/^\s*[-#]/.test(lines[j + 1])
+    ) {
+      j += 1;
+    }
+    return j;
+  }
+  let rest = content.slice(1);
+  let j = i;
+  for (;;) {
+    if (closesQuote(rest, q)) return j;
+    j += 1;
+    // An unterminated scalar is malformed YAML; stop at the last line rather
+    // than running off the end.
+    if (j >= lines.length) return j - 1;
+    rest = lines[j];
+  }
+}
+
+/** Does `s` contain the closing `q` of an already-open YAML quoted scalar? */
+function closesQuote(s, q) {
+  for (let k = 0; k < s.length; k += 1) {
+    // `\"` escapes inside a double-quoted scalar; `''` is a literal quote
+    // inside a single-quoted one.
+    if (q === '"' && s[k] === '\\') {
+      k += 1;
+      continue;
+    }
+    if (s[k] === q) {
+      if (q === "'" && s[k + 1] === "'") {
+        k += 1;
+        continue;
+      }
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Shift a block's logical lines back to real file line numbers. */
@@ -755,7 +843,7 @@ for (const file of walk(REPO_ROOT)) {
   // of what a line IS differs (Codex #1924 r27).
   const folded = isShellFile(rel, text)
     ? logicalLines(text)
-    : [...plainLines(text), ...embeddedShellLines(text)];
+    : [...plainLines(text), ...embeddedShellLines(text, /\.ya?ml$/.test(rel))];
   if (!folded.some((l) => new RegExp(DEPLOY_RE).test(l.text))) continue;
   // Directory context carries across lines, but only within a CONTIGUOUS
   // block. The form to catch is
@@ -788,10 +876,16 @@ for (const file of walk(REPO_ROOT)) {
       cwdIsKeeper = false;
       dirStack.length = 0;
     }
-    // A non-shell line is judged on its own content only.
-    const scopedByCwd = physical ? false : cwdIsKeeper;
     if (/^\s*$/.test(line) || /^\s*(?:`{3,}|~{3,})/.test(line)) {
       cwdIsKeeper = false;
+      return;
+    }
+    let flagged = false;
+    if (physical) {
+      // Prose cannot cd a shell, so a non-shell line is judged on its own
+      // content only — it neither reads nor writes the directory state.
+      flagged =
+        new RegExp(DEPLOY_RE).test(line) && isKeeperScoped(line, rel) && !isSafe(line);
     } else {
       // `pushd` moves the shell exactly as `cd` does and is ordinary in deploy
       // wrappers; recognising only `cd` let `pushd apps/keeper` plus a bare
@@ -813,8 +907,15 @@ for (const file of walk(REPO_ROOT)) {
       // meant `set -e; cd apps/agent; cd apps/keeper` recorded AGENT scope —
       // and the reverse order produced a false rejection (Codex #1924 r36).
       // The shell ends up wherever the LAST one put it.
-      const segments = physical ? [] : splitCommands(line).map((c) => c.trim());
-      for (const seg of segments) {
+      //
+      // The scope is also READ here, in the same walk, rather than snapshotted
+      // at the start of the line. A `cd` affects the commands that FOLLOW it:
+      // reaching a line with keeper scope and then running
+      // `cd ../agent; wrangler deploy` executes that deploy from apps/agent,
+      // but a line-start snapshot judged it as keeper and rejected it
+      // (Codex #1924 r37) — a false positive, in a guard that runs in
+      // typecheck.
+      for (const seg of splitCommands(line).map((c) => c.trim())) {
         const pushed = seg.match(/^pushd\s+["']?([^\s"';&|)]+)/);
         if (pushed) {
           dirStack.push(cwdIsKeeper);
@@ -826,14 +927,23 @@ for (const file of walk(REPO_ROOT)) {
           continue;
         }
         const bareCd = seg.match(/^cd\s+["']?([^\s"';&|)]+)/);
-        if (bareCd) cwdIsKeeper = isKeeperDir(bareCd[1]);
+        if (bareCd) {
+          cwdIsKeeper = isKeeperDir(bareCd[1]);
+          continue;
+        }
+        // `\b` so `wrangler deployments list` is not read as a deploy.
+        if (!new RegExp(DEPLOY_RE).test(seg)) continue;
+        // Line-level scope still counts alongside the walked cwd:
+        // `KEEPER_DIR=apps/keeper; wrangler deploy` names the keeper on the
+        // line without any `cd` for the walk to record, and a subshell's
+        // `( cd "$KEEPER_DIR" && … )` is deliberately not walked either.
+        if (!isKeeperScoped(seg, rel) && !isKeeperScoped(line, rel) && !cwdIsKeeper) continue;
+        if (commandIsSafe(seg)) continue;
+        flagged = true;
       }
     }
 
-    // `\b` so `wrangler deployments list` is not read as a deploy.
-    if (!new RegExp(DEPLOY_RE).test(line)) return;
-    if (!isKeeperScoped(line, rel) && !scopedByCwd) return;
-    if (isSafe(line)) return;
+    if (!flagged) return;
     if (allowReason(line)) return;
     violations.push(`${rel}:${lineNo}\n    ${line.trim()}`);
   });

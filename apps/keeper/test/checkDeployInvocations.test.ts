@@ -846,6 +846,87 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a same-line cd away from the keeper applies BEFORE the deploy (#1924 r37)', () => {
+    // The shell reaches this line in apps/keeper, then leaves. The deploy that
+    // FOLLOWS the cd runs from apps/agent, so it is not the keeper's.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper\ncd ../agent; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a same-line cd INTO the keeper still catches the deploy after it (#1924 r37)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd ../agent\ncd apps/keeper; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('flags a keeper deploy in a multiline DOUBLE-QUOTED run scalar (#1924 r37)', () => {
+    // YAML folds this to `cd apps/keeper; wrangler deploy` before the shell
+    // sees it; the physical scan sees scope and deploy on separate lines.
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  d:\n    steps:\n      - run: "cd apps/keeper;\n          wrangler deploy"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('flags a keeper deploy in a multiline SINGLE-QUOTED run scalar (#1924 r37)', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      "jobs:\n  d:\n    steps:\n      - run: 'cd apps/keeper;\n          wrangler deploy'\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('flags a keeper deploy in a multiline PLAIN run scalar (#1924 r37)', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  d:\n    steps:\n      - run: cd apps/keeper;\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('accepts a safe deploy in a multiline quoted run scalar (#1924 r37)', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  d:\n    steps:\n      - run: "cd apps/keeper;\n          wrangler deploy --keep-vars"\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not fold a run: scalar in prose that merely mentions it (#1924 r37)', () => {
+    // Folding is a YAML rule. Applying it to markdown would join lines the
+    // author never joined — the r27 scoping mistake by another door.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'The step is `run: cd apps/keeper;`\nand then wrangler deploy is described.\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('reports a folded run scalar ONCE, at the run: line (#1924 r37)', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  d:\n    steps:\n      - run: "cd apps/keeper;\n          wrangler deploy"\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('deploy.yml:4');
+    expect(r.out.match(/deploy\.yml:/g)?.length).toBe(1);
+  });
+
+  it('still flags a single-line keeper run: deploy exactly once (#1924 r37)', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  d:\n    steps:\n      - run: cd apps/keeper && wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out.match(/deploy\.yml:/g)?.length).toBe(1);
+  });
+
   it('does not flag a sibling Worker manifest with a bare deploy', () => {
     // apps/agent and apps/indexer legitimately run bare deploys — they have no
     // dashboard-managed vars absent from their configs. Only the keeper is in
