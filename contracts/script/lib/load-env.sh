@@ -58,7 +58,11 @@ load_env_file() {
     esac
 
     case "$__lenv_line" in *=*) : ;; *)
-      echo "Error: $__lenv_file:$__lenv_no is not NAME=value: $__lenv_line" >&2
+      # Line CONTENT is never printed. `.env` holds `DEPLOYER_PRIVATE_KEY`, and
+      # a missing `=` on that line would have put the key on stderr — into any
+      # logged terminal or CI-style operator session (Codex #1938 r9). A syntax
+      # error must not become a credential disclosure.
+      echo "Error: $__lenv_file:$__lenv_no is not NAME=value (content withheld)." >&2
       return 1 ;;
     esac
     __lenv_name="${__lenv_line%%=*}"
@@ -72,6 +76,25 @@ load_env_file() {
     # (Codex #1938 r8). Unlike the open-ended startup-hook list, this namespace
     # IS closed: it is whatever this file declares, and this file declares only
     # `__lenv_*`.
+    # CALLER-OWNED and shell-special names. Reserving only `__lenv_*` protected
+    # the loader and left the CALLER exposed: `SCRIPT_DIR=/tmp/old-tools` in a
+    # stale `.env` is exported into the wrapper's own variable, and the wrapper
+    # then runs `bash "$SCRIPT_DIR/predeploy-check.sh"` — arbitrary code with
+    # the deployment's credentials, through a door the hook denylist does not
+    # cover (Codex #1938 r9).
+    #
+    # The bash specials are here for a different reason: `export UID=1000`
+    # terminates a non-interactive shell, which defeated both the atomic commit
+    # and the emergency path's non-fatal handling.
+    case "$__lenv_name" in
+      SCRIPT_DIR|CONTRACTS_DIR|REPO_ROOT|ROOT_DIR \
+      |UID|EUID|PPID|BASHPID|FUNCNAME|LINENO|RANDOM|SECONDS \
+      |BASH_ARGV|BASH_SOURCE|BASH_VERSINFO|BASH_LINENO|PWD|OLDPWD|HOME|HISTFILE)
+        echo "Error: $__lenv_file:$__lenv_no sets '$__lenv_name', which the calling" >&2
+        echo "       script or the shell itself owns — refusing." >&2
+        return 1 ;;
+    esac
+
     case "$__lenv_name" in __lenv_*)
       echo "Error: $__lenv_file:$__lenv_no sets '$__lenv_name', which is this loader's" >&2
       echo "       own internal namespace — refusing." >&2
@@ -150,6 +173,19 @@ load_env_file() {
   # failure as non-fatal (the emergency pause path) then ran on half a
   # configuration (Codex #1938 r8). Nothing is exported until the whole file
   # has parsed.
+  # PREFLIGHT assignability. Staging made the parse atomic but not the COMMIT:
+  # a readonly name aborts the shell mid-export, so earlier pairs are live and
+  # the caller never regains control — the emergency path could not even warn
+  # (Codex #1938 r9). Check every name is writable before writing any.
+  __lenv_i=0
+  while [ "$__lenv_i" -lt "${#__lenv_names[@]}" ]; do
+    if readonly -p 2>/dev/null | grep -q "declare -[a-zA-Z-]*r[a-zA-Z-]* ${__lenv_names[$__lenv_i]}="; then
+      echo "Error: $__lenv_file sets '${__lenv_names[$__lenv_i]}', which is readonly here." >&2
+      return 1
+    fi
+    __lenv_i=$((__lenv_i + 1))
+  done
+
   __lenv_i=0
   while [ "$__lenv_i" -lt "${#__lenv_names[@]}" ]; do
     export "${__lenv_names[$__lenv_i]}=${__lenv_vals[$__lenv_i]}"
