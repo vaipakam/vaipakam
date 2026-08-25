@@ -145,22 +145,84 @@ function stripComment(line) {
     const ch = line[i];
     if (quote) {
       if (ch === quote) quote = null;
-    } else if (ch === '"' || ch === "'" || ch === '`') {
+      continue;
+    }
+    if (ch === '\\') {
+      i += 1; // escaped char, including \#, is literal
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
       quote = ch;
-    } else if (ch === '#') {
+      continue;
+    }
+    // A `#` is a comment only at a TOKEN BOUNDARY. Inside a word it is a
+    // literal character — `--message fix#1896` is a real wrangler flag value,
+    // and truncating there removed a genuine `--keep-vars` further along the
+    // line and FAILED a correct command (Codex #1924 r18). A guard that
+    // blocks valid CI is a guard that gets deleted.
+    if (ch === '#' && (i === 0 || /\s/.test(line[i - 1]))) {
       return line.slice(0, i);
     }
   }
   return line;
 }
 
+/**
+ * One line can carry several commands. `pnpm run deploy && wrangler deploy`
+ * has a safe token and an unsafe invocation; judging the line as a whole
+ * blessed both (Codex #1924 r18). Split on the shell separators that start a
+ * new command, respecting quotes, and judge each piece on its own.
+ */
+function splitCommands(line) {
+  const parts = [];
+  let quote = null;
+  let start = 0;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '\\') {
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      continue;
+    }
+    const two = line.slice(i, i + 2);
+    if (two === '&&' || two === '||') {
+      parts.push(line.slice(start, i));
+      start = i + 2;
+      i += 1;
+    } else if (ch === ';' || ch === '|' || ch === '&') {
+      parts.push(line.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(line.slice(start));
+  return parts;
+}
+
+function commandIsSafe(cmd) {
+  return (
+    flagEnabled(cmd, '--keep-vars') ||
+    flagEnabled(cmd, '--dry-run') ||
+    /\brun\s+deploy\b/.test(cmd)
+  );
+}
+
+/**
+ * Safe only if EVERY `wrangler deploy` on the line is safe. A line with no
+ * deploy at all is safe by vacuity — the caller has already established that
+ * the line mentions one, so this cannot mask anything.
+ */
 function isSafe(rawLine) {
   const line = stripComment(rawLine);
-  return (
-    flagEnabled(line, '--keep-vars') ||
-    flagEnabled(line, '--dry-run') ||
-    /\brun\s+deploy\b/.test(line)
-  );
+  const deploys = splitCommands(line).filter((c) => /wrangler\s+deploy\b/.test(c));
+  if (deploys.length === 0) return true;
+  return deploys.every(commandIsSafe);
 }
 
 /**

@@ -145,8 +145,9 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
   const attempted = mirrorIds.length;
   for (const mirrorId of mirrorIds) {
     try {
-      await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay);
-      covered += 1;
+      if (await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay)) {
+        covered += 1;
+      }
     } catch (err) {
       // Benign reverts (RewardPoolCapExceeded near exhaustion, NotRewardRemitter
       // if the keeper isn't authorized yet, etc.) — log at info and continue.
@@ -177,7 +178,14 @@ async function remitToMirror(
   lookback: number,
   laneCap: bigint,
   armedFromDay: bigint,
-): Promise<void> {
+): Promise<boolean> {
+  // Returns TRUE only when this destination is SETTLED for this tick —
+  // either remitted successfully, or genuinely nothing owed. FALSE on every
+  // path that leaves days un-remitted (plan not stabilized, zero quote,
+  // receipt timeout, reverted receipt). The caller's coverage counter is a
+  // stand-down signal, and several of these paths log-and-return rather than
+  // throwing, so counting attempts instead of outcomes reported A/A while
+  // mirrors sat unfunded (Codex #1924 r18).
   // Candidate window of recent finalized days (strictly < currentDay).
   // Codex #1426 r1: when the program is armed, extend the floor down to
   // the armed range (bounded by the backscan cap) so a day whose
@@ -197,7 +205,7 @@ async function remitToMirror(
   }
   const window: bigint[] = [];
   for (let d = from; d < currentDay; d++) window.push(d);
-  if (window.length === 0) return;
+  if (window.length === 0) return true; // nothing owed
 
   // Codex #1426 r1 — plan through the batch planner view, not the plain
   // amount quote: a gate-passing armed day whose clamp lands at ZERO moves
@@ -246,13 +254,13 @@ async function remitToMirror(
     }
     const drop = new Set(oversized.map((d) => d.toString()));
     planWindow = planWindow.filter((d) => !drop.has(d.toString()));
-    if (planWindow.length === 0) return;
+    if (planWindow.length === 0) return true; // nothing left after drops
   }
   if (!stabilized) {
     console.warn(
       `[keeper] rewardBudgetRemit mirror=${mirrorId} plan did not stabilize within ${MAX_REPLAN_PASSES} passes — skipping this tick (raise the lane capacity per #918)`,
     );
-    return;
+    return false;
   }
 
   // Greedily batch the un-remitted days, keeping the total under the lane
@@ -270,7 +278,7 @@ async function remitToMirror(
     batch.push(planWindow[i]);
     total += slice;
   }
-  if (batch.length === 0) return;
+  if (batch.length === 0) return true; // nothing fits this tick's cap
 
   // Exact CCIP fee for THIS batch (the keeper EOA can't call the messenger's
   // quote directly — only the Diamond handler can; that's what this view wraps).
@@ -290,7 +298,7 @@ async function remitToMirror(
     console.log(
       `[keeper] rewardBudgetRemit Base->${mirrorId} batch=${batch.length} — quote total 0 (raced or wiring unset); skipping`,
     );
-    return;
+    return false;
   }
   // A close-only batch (every day clamped to zero) legitimately quotes 0:
   // nothing is dispatched on-chain, the fee is 0, and the send just closes
@@ -326,7 +334,7 @@ async function remitToMirror(
     console.warn(
       `[keeper] rewardBudgetRemit Base->${mirrorId} tx=${hash} receipt wait timed out — continuing; next tick re-evaluates`,
     );
-    return;
+    return false;
   }
   if (receipt.status !== 'success') {
     // Broadcast succeeded but the tx reverted on-chain (e.g. a manual/admin
@@ -334,9 +342,10 @@ async function remitToMirror(
     console.warn(
       `[keeper] rewardBudgetRemit Base->${mirrorId} tx=${hash} REVERTED (status=${receipt.status}) — days re-evaluated next tick`,
     );
-    return;
+    return false;
   }
   console.log(
     `[keeper] rewardBudgetRemit Base->${mirrorId} days=${batch.length} total=${total} fee=${fee} tx=${hash}`,
   );
+  return true;
 }

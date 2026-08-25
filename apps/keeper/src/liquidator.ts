@@ -112,10 +112,26 @@ async function liquidatePassForChain(
     );
     return [];
   }
-  if (total === 0n) return [];
+  if (total === 0n) {
+    // A healthy chain with nothing to do STILL emits completion (Codex #1924
+    // r18). The stand-down checklist counts one line per resolved chain, so
+    // suppressing it here would make a perfectly good chain indistinguishable
+    // from an unscanned one and strand manual coverage indefinitely. The
+    // count-read FAILURE above stays silent on purpose — that one genuinely
+    // did not scan.
+    logScanComplete(chain, 0, 0, 0);
+    return [];
+  }
 
   // Page the loan-id list.
   const ids: bigint[] = [];
+  // A page failure breaks pagination but leaves earlier pages in `ids`, so
+  // the scan continues over a PARTIAL loan set. That must not be reported as
+  // complete: the loans in the pages never fetched were never checked, and
+  // the stand-down checklist would let manual coverage stop over them
+  // (Codex #1924 r18). Tracked explicitly rather than inferred from
+  // `ids.length`, which is non-empty in exactly this case.
+  let pagesComplete = true;
   for (let off = 0n; off < total; off += SCAN_PAGE) {
     let page: readonly bigint[];
     try {
@@ -129,12 +145,16 @@ async function liquidatePassForChain(
       console.error(
         `[keeper] liquidator chain=${chain.name} page off=${off} failed: ${String(err).slice(0, 200)}`,
       );
+      pagesComplete = false;
       break;
     }
     if (page.length === 0) break;
     ids.push(...page);
   }
-  if (ids.length === 0) return [];
+  if (ids.length === 0) {
+    if (pagesComplete) logScanComplete(chain, 0, 0, 0);
+    return [];
+  }
 
   // Batch-read HF via Multicall3 (deployed at the canonical address on
   // every viem-known chain). Falls back to a serial read if multicall
@@ -187,7 +207,7 @@ async function liquidatePassForChain(
 
   const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
   if (atRisk.length === 0) {
-    logScanComplete(chain, readings.length, 0, 0);
+    if (pagesComplete) logScanComplete(chain, readings.length, 0, 0);
     return readings;
   }
   // Lowest HF first — the keeper's gas budget goes to the most-at-risk
@@ -205,7 +225,7 @@ async function liquidatePassForChain(
     const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client);
     if (submitted) submits += 1;
   }
-  logScanComplete(chain, readings.length, atRisk.length, submits);
+  if (pagesComplete) logScanComplete(chain, readings.length, atRisk.length, submits);
   return readings;
 }
 
