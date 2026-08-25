@@ -8,11 +8,14 @@ the seller's actual receipt can come out lower, or their cost higher, than the
 quote they acted on. The unbound sale takes whatever the live figures produce.
 
 There is now a second, opt-in way to sell that carries the seller's reviewed
-numbers: a minimum net receipt, a maximum cost, and an optional deadline. The
+numbers: a minimum net receipt, a ceiling on how much already-accrued interest
+would transfer to the buyer with the position, and an optional deadline. The
 sale is refused if execution would be worse for the seller than those figures —
-a net below the floor, a cost above the ceiling, or a fill past the deadline —
-and passes when it is at least as good. The check runs against the very figures
-the settlement uses, so it cannot drift from what the seller actually receives.
+a net below the floor, more accrued interest migrating to the buyer than the
+ceiling allows, or a fill past the deadline — and passes when it is at least as
+good. These are the same two quantities the listed route's bound carries, read
+from the same seller quote, and the check runs against the very figures the
+settlement uses, so it cannot drift from what the seller actually receives.
 
 This mirrors the bound entry the listed sale route already offers, and exists for
 the same reason: the platform's two sale routes must let a seller bind their

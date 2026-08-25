@@ -37,7 +37,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "reviewedMaxCost",
+        "name": "reviewedMaxHeld",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -2048,22 +2048,6 @@
   },
   {
     "type": "error",
-    "name": "SaleCostAboveReviewed",
-    "inputs": [
-      {
-        "name": "cost",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "reviewedMax",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "SaleExposureExceedsAuthoredDuration",
     "inputs": [
       {
@@ -2073,6 +2057,22 @@
       },
       {
         "name": "authoredSecs",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleHeldAboveReviewed",
+    "inputs": [
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMax",
         "type": "uint256",
         "internalType": "uint256"
       }

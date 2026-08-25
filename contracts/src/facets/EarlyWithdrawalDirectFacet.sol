@@ -191,8 +191,8 @@ contract EarlyWithdrawalDirectFacet is
     ///         unbound `sellLoanViaBuyOffer`, which never checks these.
     struct SaleBounds {
         bool enforced;
-        uint256 minSellerNet; // seller must net at least this
-        uint256 maxCost; // seller's cost (max(accrued, shortfall)) may not exceed this
+        uint256 minSellerNet; // seller must net at least this (principal - liamCost)
+        uint256 maxHeld; // the held-for-lender balance migrating to the buyer may not exceed this
         uint64 deadline; // fill must land at/before this timestamp (0 = no deadline)
     }
 
@@ -207,9 +207,14 @@ contract EarlyWithdrawalDirectFacet is
     ///         bound entry refuses rather than settling the worse figure.
     error SaleNetBelowReviewed(uint256 net, uint256 reviewedMin);
 
-    /// @notice #1922 (#1503 item 6) — the seller's cost at execution is above the
-    ///         ceiling they reviewed. Same drift reasoning as {SaleNetBelowReviewed}.
-    error SaleCostAboveReviewed(uint256 cost, uint256 reviewedMax);
+    /// @notice #1922 (#1503 item 6) — the held-for-lender balance that migrates
+    ///         to the buyer at execution is above the ceiling the seller reviewed.
+    ///         Parking additional lender interest between quote and mining grows
+    ///         that balance — all of which transfers to the buyer, so the seller
+    ///         forfeits more accrued-but-unclaimed interest than they reviewed.
+    ///         Mirrors the listed route's {SaleAboveHeldCeiling}; the second value
+    ///         of `RiskPreviewFacet.quoteSellerBounds` (`maxHeld`) is this ceiling.
+    error SaleHeldAboveReviewed(uint256 held, uint256 reviewedMax);
 
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
@@ -254,7 +259,7 @@ contract EarlyWithdrawalDirectFacet is
         _sellLoanViaBuyOfferImpl(
             loanId,
             buyOfferId,
-            SaleBounds({enforced: false, minSellerNet: 0, maxCost: 0, deadline: 0})
+            SaleBounds({enforced: false, minSellerNet: 0, maxHeld: 0, deadline: 0})
         );
     }
 
@@ -263,8 +268,9 @@ contract EarlyWithdrawalDirectFacet is
      *         the economics `RiskPreviewFacet.quoteSellerBounds` showed them
      *         (its `minSellerNet` / `maxHeld` map to the two params here), and
      *         the sale is refused if execution is WORSE —
-     *         a net below `reviewedMinSellerNet`, a cost above `reviewedMaxCost`,
-     *         or a fill past `deadline`. Better-than-reviewed passes.
+     *         a net below `reviewedMinSellerNet`, a migrating held balance above
+     *         `reviewedMaxHeld`, or a fill past `deadline`. Better-than-reviewed
+     *         passes.
      *
      *         ADDITIVE, exactly like the listed route's `createLoanSaleOfferBound`
      *         (#1823): the unbound `sellLoanViaBuyOffer` selector stays routed and
@@ -281,14 +287,17 @@ contract EarlyWithdrawalDirectFacet is
      *         a mirror of it (the #1801 lesson `createLoanSaleOfferBound` records).
      *
      * @param deadline Fill must land at/before this timestamp; 0 disables it.
-     * @param reviewedMinSellerNet The seller's reviewed floor; net must be ≥ this.
-     * @param reviewedMaxCost The seller's reviewed cost ceiling; cost must be ≤ this.
+     * @param reviewedMinSellerNet The seller's reviewed floor; net must be ≥ this
+     *        (the `minSellerNet` output of `quoteSellerBounds`).
+     * @param reviewedMaxHeld The seller's reviewed ceiling on the held-for-lender
+     *        balance migrating to the buyer; the live balance must be ≤ this (the
+     *        `maxHeld` output of `quoteSellerBounds`).
      */
     function sellLoanViaBuyOfferBound(
         uint256 loanId,
         uint256 buyOfferId,
         uint256 reviewedMinSellerNet,
-        uint256 reviewedMaxCost,
+        uint256 reviewedMaxHeld,
         uint64 deadline
     ) external nonReentrant whenNotPaused {
         _sellLoanViaBuyOfferImpl(
@@ -297,7 +306,7 @@ contract EarlyWithdrawalDirectFacet is
             SaleBounds({
                 enforced: true,
                 minSellerNet: reviewedMinSellerNet,
-                maxCost: reviewedMaxCost,
+                maxHeld: reviewedMaxHeld,
                 deadline: deadline
             })
         );
@@ -680,17 +689,29 @@ contract EarlyWithdrawalDirectFacet is
 
         // #1922 (#1503 item 6) — the seller's reviewed-economics bound, checked
         // HERE against the SAME figures the settlement below uses (one
-        // computation, not a mirror): `liamCost` is the seller's cost and
-        // `principal - liamCost` their net, both now final and both proven safe
-        // (the guard just above pins `liamCost <= principal`, so the
-        // subtraction cannot underflow). Placed before any transfer, so an
-        // adverse drift reverts cheaply rather than after moving funds. No-op on
-        // the unbound entry (`b.enforced == false`).
+        // computation, not a mirror), and against the SAME two quantities the
+        // listed route bounds in `EarlyWithdrawalFacet` (`SaleBelowSellerFloor` +
+        // `SaleAboveHeldCeiling`):
+        //   * net floor — `principal - liamCost` is the seller's net (the guard
+        //     just above pins `liamCost <= principal`, so this cannot underflow).
+        //     Since #1923 pins `buyOffer.amount == loan.principal`, `principal`
+        //     is the buyer's proceeds, so this equals the listed route's
+        //     `proceeds - liamCost`.
+        //   * held ceiling — `priorHeld` (snapshotted above, before any shortfall
+        //     deposit) is the pre-existing held-for-lender balance that migrates
+        //     WHOLLY to the buyer below. Interest parked between the seller's
+        //     quote and this mining grows it, and every extra unit is forfeited
+        //     to the buyer rather than paid to the seller — the exact drift the
+        //     ceiling guards. `liamCost` is NOT that balance, which is why the
+        //     second `quoteSellerBounds` output is `maxHeld`, not a cost.
+        // Placed before any transfer, so an adverse drift reverts cheaply rather
+        // than after moving funds. No-op on the unbound entry (`b.enforced`
+        // false).
         if (b.enforced) {
             if (b.deadline != 0 && block.timestamp > b.deadline)
                 revert SaleQuoteExpired(b.deadline);
-            if (liamCost > b.maxCost)
-                revert SaleCostAboveReviewed(liamCost, b.maxCost);
+            if (priorHeld > b.maxHeld)
+                revert SaleHeldAboveReviewed(priorHeld, b.maxHeld);
             uint256 projectedNet = loan.principal - liamCost;
             if (projectedNet < b.minSellerNet)
                 revert SaleNetBelowReviewed(projectedNet, b.minSellerNet);

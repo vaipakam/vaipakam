@@ -4401,19 +4401,48 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
-    /// @dev Refused when the seller's cost exceeds the reviewed ceiling. Warp so
-    ///      forfeited accrual makes the cost positive, then a ceiling of 0 is
-    ///      below it. Partial-revert match: the exact accrued figure is
-    ///      time-dependent, only the refusal (and that a ceiling of 0 trips it)
-    ///      matters.
-    function test_1922_boundRefusedCostAboveReviewed() public {
-        vm.warp(block.timestamp + 5 days);
+    /// @dev Refused when the held-for-lender balance that would migrate to the
+    ///      buyer exceeds the reviewed ceiling — the second bound, and the one
+    ///      the earlier revision wrongly compared against `liamCost` (Codex r1
+    ///      P1). Seed `heldForLender` to 50e18 (the pre-existing balance the sale
+    ///      migrates WHOLLY to the buyer, snapshotted as `priorHeld` before any
+    ///      shortfall deposit), then a ceiling of 40e18 is below it. The check
+    ///      reverts before any vault op, so no balance seeding is needed. Exact
+    ///      match: both figures are deterministic.
+    function test_1922_boundRefusedHeldAboveReviewed() public {
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
         vm.prank(lender);
-        vm.expectPartialRevert(
-            EarlyWithdrawalDirectFacet.SaleCostAboveReviewed.selector
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleHeldAboveReviewed.selector,
+                uint256(50 ether),
+                uint256(40 ether)
+            )
         );
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
-            activeLoanId, buyOfferId, 0, 0, 0
+            activeLoanId, buyOfferId, 0, 40 ether, 0
+        );
+    }
+
+    /// @dev The complement: a held ceiling AT the live balance passes (the seller
+    ///      reviewed at least this much migrating), proving the bound is `>` not
+    ///      `>=` and that a nonzero held balance within the ceiling still fills.
+    function test_1922_boundFillsWhenHeldWithinCeiling() public {
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
+        // Back the held balance so its migration to the buyer can settle.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        deal(mockERC20, lenderVault, 100 ether);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(lender, mockERC20, 100 ether);
+        deal(mockERC20, address(diamond), PRINCIPAL + 100 ether);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, 50 ether, 0
+        );
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "held balance at the ceiling fills"
         );
     }
 

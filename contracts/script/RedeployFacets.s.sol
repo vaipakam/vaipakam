@@ -215,6 +215,16 @@ contract RedeployFacets is Script {
         // stays valid.
         (bytes4[] memory ewToAdd, bytes4[] memory ewToReplace) =
             _partitionByRouting(diamond, _earlyWithdrawalSelectors());
+        // #1922 (#1503 item 6) — EarlyWithdrawalDirectFacet gained the bound
+        // entry `sellLoanViaBuyOfferBound`, so its list is no longer a blanket
+        // Replace (the #1780 assumption below is now stale). On a pre-#1922
+        // diamond `sellLoanViaBuyOffer` is routed (Replace) and the bound entry
+        // is new (Add); a blanket Replace would revert on the unrouted new
+        // selector. The routed subset is never empty (`sellLoanViaBuyOffer` is
+        // routed on every post-#1780 diamond), so the fixed Replace slot stays
+        // valid.
+        (bytes4[] memory ewdToAdd, bytes4[] memory ewdToReplace) =
+            _partitionByRouting(diamond, _earlyWithdrawalDirectSelectors());
         // #1817 r9 — the accumulator's surface, same Add/Replace-by-routing
         // split: on a current diamond all four are routed (Replace); on a
         // pre-RL-1 diamond `rollupUserDiscountLocal` is new (Add) — the half
@@ -285,6 +295,7 @@ contract RedeployFacets is Script {
             (hfToAdd.length > 0 ? 1 : 0) + (hfToReplace.length > 0 ? 1 : 0) +
             (consToAdd.length > 0 ? 1 : 0) + (consToReplace.length > 0 ? 1 : 0) +
             (ewToAdd.length > 0 ? 1 : 0) +
+            (ewdToAdd.length > 0 ? 1 : 0) +
             (accToAdd.length > 0 ? 1 : 0) + (accToReplace.length > 0 ? 1 : 0) +
             (claimToAdd.length > 0 ? 1 : 0) + (claimToReplace.length > 0 ? 1 : 0) +
             (profToAdd.length > 0 ? 1 : 0) + (profToReplace.length > 0 ? 1 : 0) +
@@ -316,13 +327,13 @@ contract RedeployFacets is Script {
         // the consolidation-aware bytecode.
         cuts[7] = _replace(address(riskMatchFacet), _riskMatchSelectors());
         // #1780 — `sellLoanViaBuyOffer` is already routed on every existing
-        // diamond (it was part of EarlyWithdrawalFacet's surface), so moving it
-        // to its own facet is a plain Replace that repoints the selector to the
-        // new address. No Add/Remove partition is needed.
-        cuts[8] = _replace(
-            address(earlyWithdrawalDirectFacet),
-            _earlyWithdrawalDirectSelectors()
-        );
+        // diamond (it was part of EarlyWithdrawalFacet's surface), so it is a
+        // plain Replace that repoints the selector to the new address.
+        // #1922 — the bound entry `sellLoanViaBuyOfferBound` is NOT routed on a
+        // pre-#1922 diamond, so only the routed subset (`ewdToReplace`) may go
+        // through this fixed Replace; the unrouted bound selector (`ewdToAdd`) is
+        // issued as an Add in the partitioned block below.
+        cuts[8] = _replace(address(earlyWithdrawalDirectFacet), ewdToReplace);
         // ProfileFacet + ClaimFacet are partitioned below (not fixed Replaces)
         // because each gained new-and-possibly-unrouted selectors.
         uint256 idx = 9;
@@ -342,6 +353,13 @@ contract RedeployFacets is Script {
         // diamond (the routed subset went through the fixed Replace above).
         if (ewToAdd.length > 0) {
             cuts[idx++] = _add(address(earlyWithdrawalFacet), ewToAdd);
+        }
+        // #1922 (#1503 item 6) — the bound direct-sale entry is an Add on any
+        // pre-#1922 diamond (the routed `sellLoanViaBuyOffer` went through the
+        // fixed Replace above); on a current diamond the subset is empty and no
+        // Add is cut.
+        if (ewdToAdd.length > 0) {
+            cuts[idx++] = _add(address(earlyWithdrawalDirectFacet), ewdToAdd);
         }
         // #1817 r9 — route the accumulator's surface. The Add branch is the one
         // that matters on a pre-RL-1 diamond: without it the refreshed sale
