@@ -66,10 +66,17 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *           - d1's commitment report;
  *           - d2's delivered-backing ledger;
  *           - d5's custody-relocation exclusion. {creditCustodyRelocated}
- *             raises `recycleBucket` WITHOUT advancing
+ *             raises `recycleBucket` without adding the relocated amount to
  *             `recycleCreditedCumulative`, advancing
  *             `recycleCustodyRelocatedCumulative` instead, which
- *             {LibVpfiRecycle.creditedCumulative} subtracts. Drop that
+ *             {LibVpfiRecycle.creditedCumulative} subtracts. It is "not by
+ *             the relocated amount", not "never": on an in-place-upgraded
+ *             Diamond whose slot is still 0, it SEEDS
+ *             `recycleCreditedCumulative` from the derived floor first
+ *             (#1448 r3), read before the bucket write so the relocation
+ *             itself cannot land in the seed. That write is what preserves
+ *             the invariant on an upgrade, so a reader told the counter is
+ *             never touched here would mis-audit exactly that case. Drop that
  *             subtraction and Base's own remitted top-up re-enters
  *             `reported` and `_mirrorAvailable` offers it for commitment a
  *             second time — Base reading its own top-up back as the

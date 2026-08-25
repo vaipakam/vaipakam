@@ -47,7 +47,11 @@ import {VaultFactoryFacet} from "../facets/VaultFactoryFacet.sol";
  *      post-mutation balance — otherwise the payer keeps a stale
  *      fee-tier/staking stamp on VPFI that has already left. Every other
  *      VPFI-debit path does this; the pre-M1 bill path skipped it. The
- *      re-route closes that gap with a `rollupUserDiscount` tail.
+ *      re-route closes that gap with a `rollupUserDiscount` call placed
+ *      after the withdrawal and before the recycle credit — "tail" was
+ *      loose wording for a call that is not last, and the position is
+ *      load-bearing: it is a BROADCASTING call, so a failure there reverts
+ *      the credit, the billed flag and the accrual that follow it.
  */
 library LibNotificationFee {
     /// @notice Emitted when a loan-side's first notification triggers a

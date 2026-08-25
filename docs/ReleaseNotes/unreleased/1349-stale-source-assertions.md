@@ -5,17 +5,18 @@ than the tracking cards — found nine explanatory comments that describe how th
 platform used to work rather than how it works now. Nothing users can see changes
 here. What changes is what the next person reads before touching this code.
 
-Five of them said the notification fee goes straight to the treasury with no
+Four of them said the notification fee goes straight to the treasury with no
 intermediate custody. It has not worked that way since the fee became the first
 input to the recycling loop: the fee is taken into the platform's own custody and
-credited to the recycling balance. Three of those five cited, as their authority,
+credited to the recycling balance. Two of those four cited, as their authority,
 the very file that contradicts them.
 
 One was worse than merely out of date. It described how a loan opened before fees
 were frozen per-loan resolves its treasury share, and it named the wrong source —
 the current setting rather than the frozen historical one. A developer trusting
 it would conclude the code had a bug and "fix" it, and that fix would quietly
-reprice every grandfathered loan upward at repayment. The project's own
+reprice every grandfathered loan at repayment — in whichever direction the
+current setting happens to sit relative to the frozen one. The project's own
 engineering notes warn against exactly that change; the comment described it as
 already true.
 
@@ -43,20 +44,34 @@ confident, which is worth recording as its own lesson.
 
 The first described a hazard as capping out at twice the correct fee. It is not
 capped there: the fee setting a change like this would wrongly consult can be set
-anywhere up to the platform's ceiling. It can also be set *below* the frozen
-historical rate, in which case the same mistake underpays the treasury on every
-grandfathered loan instead of overcharging the borrower. That direction is the
-easier one to miss, because nobody is visibly harmed by it. A third comment
-elsewhere in the codebase had reasoned about the below-the-line case correctly
-for some time, so two files quietly disagreed; they now say the same thing.
+anywhere up to the platform's ceiling, and it can also be set *below* the frozen
+historical rate, so the same mistake can move value in either direction. A third
+comment elsewhere in the codebase had reasoned about the below-the-line case
+correctly for some time, so two files quietly disagreed; they now say the same
+thing.
 
-The second listed the reasons a billing step can fail, all of which concerned the
-individual being billed, and omitted one that does not. Saying it "stops billing
-for everybody" was then too broad: the step skips its costly part for users whose
-details have not changed, so while the shared budget is empty some payers keep
-billing normally and others fail. Mixed success is exactly what a
-one-user-at-a-time problem looks like, which is what makes this one hard to
-recognise — a sharper warning than the one it replaced.
+Naming who actually loses took one more round to get right, and both earlier
+attempts named the wrong person. This fee is a share of the interest the borrower
+already owes — the rate divides that amount, it does not add to it. So the
+borrower pays the same either way, and what moves is the split between the lender
+and the platform: a rate above the frozen one pays the lender less than the terms
+they agreed to, a rate below it short-changes the platform. The lender is the
+party the frozen rate exists to protect, and both earlier versions pointed at the
+one participant the setting cannot affect.
+
+The second listed the reasons a billing step can fail and omitted one. Saying it
+"stops billing for everybody" was then too broad, and the correction after that
+was wrong in a third way: it claimed every other listed reason concerns the
+individual being billed, when only one of the three does. The other two — a
+caller without permission, and a platform-wide setting left unconfigured — fail
+every payer alike.
+
+That distinction is the whole diagnostic value, so it was worth a third pass to
+state correctly. An exhausted shared budget is the only cause on that list that
+fails some payers and not others, because the step skips its costly part for
+users whose details have not changed. An operator seeing that partial pattern
+correctly rules out the two all-or-nothing causes and is then left inspecting the
+one failing payer — the single place the answer is not.
 
 These were found by reading the code and asking what it does, rather than by
 reading the documentation and believing it. That distinction is the reason the

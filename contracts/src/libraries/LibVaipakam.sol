@@ -2204,10 +2204,21 @@ library LibVaipakam {
         // EITHER DIRECTION. `setFeesConfig` bounds the override only from
         // above (`> MAX_FEE_BPS` reverts), so the live knob is any value in
         // 1..5000: 2% on an untuned deploy, up to 50% after a retune, and
-        // BELOW the frozen 1% for an override of 1..99 — which underpays
-        // treasury on every grandfathered loan rather than overcharging the
-        // borrower. Neither direction is bounded at 2×, and the downward
-        // one is the easier to miss because nobody is harmed loudly by it.
+        // BELOW the frozen 1% for an override of 1..99. Neither direction is
+        // bounded at 2×.
+        //
+        // WHO IT MOVES VALUE BETWEEN — and it is not the borrower, which two
+        // earlier revisions of this comment got wrong. `splitTreasury` is
+        //   `treasuryShare = interest × bps / BPS; lenderShare = interest −
+        //   treasuryShare`
+        // so the interest the BORROWER pays is fixed and the rate only
+        // divides it. Repricing a grandfathered loan therefore moves value
+        // between the LENDER and treasury: above 100 bps the lender is paid
+        // less than the receipt they signed, below it the treasury is. The
+        // lender is the party the per-loan snapshot exists to protect, so
+        // naming the borrower here pointed at the one participant the rate
+        // cannot affect. The downward direction is the easier of the two to
+        // miss, because an under-paid treasury complains to nobody.
         // This comment
         // previously said the fallback was "the live knob", which described
         // exactly the change CLAUDE.md warns must never be made. Both fees are bounded by `MAX_FEE_BPS`
@@ -8107,9 +8118,15 @@ library LibVaipakam {
     ///      pre-#957 open loan at repay, in EITHER DIRECTION: `setFeesConfig`
     ///      bounds the override only from above, so the live knob is any
     ///      value in 1..`MAX_FEE_BPS`, and an override below 100 would
-    ///      reprice a grandfathered loan DOWNWARD — underpaying treasury
-    ///      rather than overcharging the borrower, which is the quieter of
-    ///      the two failures. This line said "1% → 2%" until #1349, which
+    ///      reprice a grandfathered loan DOWNWARD. The party repriced is
+    ///      the LENDER, not the borrower: `splitTreasury` takes the share
+    ///      out of a FIXED `interestAmount` (`lenderShare = interest −
+    ///      treasuryShare`), so the borrower's outlay is identical at any
+    ///      rate and only the lender/treasury division moves. Above the
+    ///      frozen rate the lender is paid less than their signed receipt;
+    ///      below it the treasury is — the quieter failure, since an
+    ///      under-paid treasury complains to nobody. This line said
+    ///      "1% → 2%" until #1349, which
     ///      named only the untuned-deploy case; {RiskPreviewFacet}'s
     ///      inherited-fee gate has always reasoned about the sub-legacy
     ///      knob, so the two files disagreed. Freezing the fallback

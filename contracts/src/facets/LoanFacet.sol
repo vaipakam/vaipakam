@@ -1290,9 +1290,11 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *             expected behaviour is to LOG this revert and skip
      *             the notification — the user's billed flag stays
      *             false until they top up VPFI)
-     *           - anything the discount RESTAMP tail raises. `bill` ends
-     *             with `LibVPFIDiscount.rollupUserDiscount` — the
-     *             BROADCASTING wrapper, not `rollupUserDiscountLocal` — so
+     *           - anything the discount RESTAMP raises. After the vault
+     *             withdrawal and BEFORE the recycle credit, the billed
+     *             flag, the accrual and the event, `bill` calls
+     *             `LibVPFIDiscount.rollupUserDiscount` — the BROADCASTING
+     *             wrapper, not `rollupUserDiscountLocal` — so
      *             on a Diamond with `rewardMessenger` set, a
      *             {ProtocolBroadcastFacet} failure bubbles and reverts the
      *             whole bill. `ProtocolBudgetExhausted` is the one an
@@ -1305,11 +1307,17 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *             therefore MIXED success and failure across payers, not a
      *             clean stop — which is precisely what makes it hard to
      *             read, because partial failure is what a per-payer cause
-     *             looks like. Every other entry on this list IS per-payer
-     *             and diagnosable from that payer's own state, so an
-     *             operator who does not know this one exists checks a
-     *             failing user's vault balance and role, finds both fine,
-     *             and has nothing left to look at.
+     *             looks like — and exactly ONE entry on this list is
+     *             per-payer (the insufficient vault balance). The other two
+     *             are not: a missing `NOTIF_BILLER_ROLE` is the CALLER's
+     *             state, and an unset VPFI token is Diamond-wide
+     *             configuration. Both of those fail every payer uniformly,
+     *             which is the tell that separates them from this one: an
+     *             exhausted budget is the only cause here that fails SOME
+     *             payers and not others. An operator who does not know it
+     *             exists sees that partial pattern, rules out the two
+     *             uniform causes correctly, and is left inspecting the
+     *             failing payer's vault — the one place the answer is not.
      *
      *         The watcher fires this at notification-send time
      *         **only on PaidPush tier** subscribers — FreeTelegram
