@@ -161,6 +161,15 @@ function allowReason(line) {
  * not be: in `--message remember --keep-vars` the shell really does see a
  * separate `--keep-vars`.
  */
+/**
+ * A redirection operand is a FILENAME. `wrangler deploy > --keep-vars` runs a
+ * bare deploy and creates a file called `--keep-vars`, but the operand read as
+ * an enabled flag (Codex #1924 r30). Removed before any flag scanning.
+ */
+function stripRedirections(line) {
+  return line.replace(/\d?(?:>>|>|<)\s*&?\s*(?:"[^"]*"|'[^']*'|[^\s"';&|)]+)/g, ' ');
+}
+
 function stripOtherOptionValues(line) {
   // Replaced with a NUL escape, NOT a space (Codex #1924 r23). A space would
   // create a token boundary the shell never saw: in
@@ -207,7 +216,7 @@ function stripOtherOptionValues(line) {
  * false-ish value disables.
  */
 function flagEnabled(rawLine, flag) {
-  const line = stripOtherOptionValues(rawLine);
+  const line = stripOtherOptionValues(stripRedirections(rawLine));
   // Quoted values are values. An earlier pattern excluded quotes from the
   // captured value, so `--keep-vars="false"` failed the capture, backtracked
   // to the optional-group-absent branch, and read as a bare — i.e. ENABLED —
@@ -238,7 +247,7 @@ function flagEnabled(rawLine, flag) {
   // flag — pass as well. It was never needed: in `--keep-vars=true` the flag
   // is preceded by whitespace and it is the VALUE that follows the `=`.
   const re = new RegExp(
-    `(?<![^\\s(\`'"])${flag}(?:=(?:"([^"]*)"|'([^']*)'|([^\\s"'\`)\\u0000]+))` +
+    `(?<![^\\s(\`'"])${flag}(?:=((?:"[^"]*"|'[^']*'|[^\\s"'\`)\\u0000]+)+)` +
       `|\\s+(?:"([^"]*)"|'([^']*)'|((?![-#])[^\\s"'\`)\\u0000]+)))?`,
     'g',
   );
@@ -254,7 +263,13 @@ function flagEnabled(rawLine, flag) {
     // `#` is part of the argument, and excluding it made the whole value
     // branch fail and backtrack to "bare flag, enabled" — blessing a deploy
     // wrangler itself parses as false.
-    const value = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? m[6];
+    // An ATTACHED value is one shell WORD, and a word can mix adjacent quoted
+    // and unquoted chunks: `--keep-vars='true'garbage` is the single argument
+    // `--keep-vars=truegarbage`, which is not true. Stopping at the quoted
+    // prefix scored it safe (Codex #1924 r30), so the attached branch captures
+    // the whole word and the quotes are removed afterwards.
+    const attached = m[1] === undefined ? undefined : m[1].replace(/["'`]/g, '');
+    const value = attached ?? m[2] ?? m[3] ?? m[4];
     events.push({
       at: m.index,
       // wrangler declares these `[boolean] [default: false]`, and its parser
@@ -458,7 +473,7 @@ function commandIsSafe(cmd) {
   // substring test, so `--message="run deploy"` blessed a bare deploy that
   // never invokes the package script (Codex #1924 r22). `flagEnabled` already
   // strips internally; this call is for the `run deploy` test.
-  const bare = stripOtherOptionValues(cmd);
+  const bare = stripOtherOptionValues(stripRedirections(cmd));
   return (
     flagEnabled(cmd, '--keep-vars') ||
     flagEnabled(cmd, '--dry-run') ||
@@ -538,7 +553,9 @@ function embeddedShellLines(text) {
     const fence = lines[i].match(/^\s*```(?:bash|sh|shell|console)?\s*$/);
     // A YAML comment may follow the block indicator (`run: | # deploy keeper`),
     // and the indicator itself decides the folding (Codex #1924 r29).
-    const run = lines[i].match(/^(\s*)(?:-\s+)?run:\s*([|>])[-+]?\s*(?:#.*)?$/);
+    // A block scalar may carry an explicit INDENTATION indicator as well as a
+    // chomping one, in either order: `|2`, `|2-`, `>+2` (Codex #1924 r30).
+    const run = lines[i].match(/^(\s*)(?:-\s+)?run:\s*([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/);
     if (fence) {
       const start = i + 1;
       let j = start;
@@ -596,7 +613,11 @@ function foldYamlScalar(raw) {
     }
     const indent = (l.match(/^\s*/) ?? [''])[0].length;
     if (indent > base) {
-      out += `\n${l}`;
+      // A more-indented line keeps its own line breaks on BOTH sides. Adding
+      // one only before it let the NEXT base-indented line join the
+      // more-indented one — so a `# note` swallowed the `wrangler deploy`
+      // beneath it (Codex #1924 r30).
+      out += `\n${l}\n`;
       continue;
     }
     out += (out === '' || out.endsWith('\n') ? '' : ' ') + l.trim();
@@ -606,7 +627,14 @@ function foldYamlScalar(raw) {
 
 /** Physical lines, 1-based, for everything that is not a shell script. */
 function plainLines(text) {
-  return text.split('\n').map((t, i) => ({ text: t, line: i + 1 }));
+  // `physical: true` marks a line that is NOT part of a shell script. Such a
+  // line cannot establish a working directory for a LATER line — a markdown
+  // paragraph is not a command sequence — and letting it try was the r29 fix
+  // being incomplete: every plainLines entry had `block === undefined`, they
+  // all sort before the embedded blocks, so one file's `cd apps/keeper` in
+  // prose still rejected an unrelated agent deploy further down (Codex #1924
+  // r30). Directory state now belongs exclusively to real shell blocks.
+  return text.split('\n').map((t, i) => ({ text: t, line: i + 1, physical: true }));
 }
 
 function* walk(dir) {
@@ -690,7 +718,7 @@ for (const file of walk(REPO_ROOT)) {
   let cwdIsKeeper = false;
   const dirStack = [];
   let currentBlock;
-  folded.forEach(({ text: line, line: lineNo, block }) => {
+  folded.forEach(({ text: line, line: lineNo, block, physical }) => {
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
     // made one block's `cd apps/keeper` reject the NEXT block's agent deploy
@@ -701,6 +729,8 @@ for (const file of walk(REPO_ROOT)) {
       cwdIsKeeper = false;
       dirStack.length = 0;
     }
+    // A non-shell line is judged on its own content only.
+    const scopedByCwd = physical ? false : cwdIsKeeper;
     if (/^\s*$/.test(line) || /^\s*```/.test(line)) {
       cwdIsKeeper = false;
     } else {
@@ -711,9 +741,13 @@ for (const file of walk(REPO_ROOT)) {
       // `pushd`/`popd` are a STACK: after `pushd apps/keeper; pushd ../agent;
       // popd` the shell is back in apps/keeper. A single boolean lost that and
       // skipped the deploy underneath (Codex #1924 r28).
-      const pushed = line.match(/^\s*pushd\s+["']?([^\s"';&|)]+)/);
-      const popped = /^\s*popd\b/.test(line);
-      const bareCd = line.match(/^\s*cd\s+["']?([^\s"';&|)]+)/);
+      // Prose cannot cd the shell, so a non-shell line neither reads nor
+      // writes this state. An early version used `return` here — which exits
+      // the whole callback and silently skipped EVERY markdown line. Twenty
+      // fixtures went red at once, which is exactly what they are for.
+      const pushed = physical ? null : line.match(/^\s*pushd\s+["']?([^\s"';&|)]+)/);
+      const popped = physical ? false : /^\s*popd\b/.test(line);
+      const bareCd = physical ? null : line.match(/^\s*cd\s+["']?([^\s"';&|)]+)/);
       if (pushed) {
         dirStack.push(cwdIsKeeper);
         cwdIsKeeper = isKeeperDir(pushed[1]);
@@ -726,7 +760,7 @@ for (const file of walk(REPO_ROOT)) {
 
     // `\b` so `wrangler deployments list` is not read as a deploy.
     if (!/wrangler\s+deploy\b/.test(line)) return;
-    if (!isKeeperScoped(line, rel) && !cwdIsKeeper) return;
+    if (!isKeeperScoped(line, rel) && !scopedByCwd) return;
     if (isSafe(line)) return;
     if (allowReason(line)) return;
     violations.push(`${rel}:${lineNo}\n    ${line.trim()}`);

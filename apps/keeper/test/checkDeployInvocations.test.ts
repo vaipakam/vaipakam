@@ -399,6 +399,36 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a run block with an explicit indentation indicator (#1924 r30)', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  x:\n    steps:\n      - run: |2\n          cd apps/keeper\n          wrangler \\\n            deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a folded block where a more-indented comment precedes the command (#1924 r30)', () => {
+    // YAML keeps line breaks on BOTH sides of a more-indented line; adding one
+    // only before it let the comment swallow the deploy beneath.
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  x:\n    steps:\n      - run: >\n          cd apps/keeper;\n            # harmless note\n          wrangler\n          deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an attached value mixing quoted and unquoted chunks (#1924 r30)', () => {
+    // bash passes --keep-vars=truegarbage, which is not true.
+    const r = runWith('apps/keeper/x.sh', "wrangler deploy --keep-vars='true'garbage\n");
+    expect(r.ok).toBe(false);
+  });
+
+  it('a redirection target that looks like the safety flag (#1924 r30)', () => {
+    // bash runs a bare deploy and creates a file named --keep-vars.
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy > --keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -643,6 +673,22 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('accepts an attached =true even with the split value rules', () => {
     const r = runWith('apps/keeper/x.sh', 'wrangler deploy --keep-vars=true\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not let prose in one file scope a later unrelated deploy (#1924 r30)', () => {
+    // Physical (non-shell) lines all had `block === undefined`, so the r29
+    // block reset never fired for them and a `cd apps/keeper` in prose
+    // rejected an agent deploy further down the same file.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'First cd apps/keeper and read on.\n\nLater, for the agent:\n\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a redirection to an ordinary file alongside a safe deploy', () => {
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --keep-vars > deploy.log\n');
     expect(r.ok).toBe(true);
   });
 
