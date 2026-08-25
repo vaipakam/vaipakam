@@ -34,9 +34,9 @@ account, and a previous deployment failed outright on that limit.
 ## What it does cost
 
 **Four** of the ten jobs were not switched off by configuration, so
-stopping the schedule stops them. Two earlier drafts of this note got
-this wrong in turn — the first said the change cost nothing, the second
-named only half of them:
+stopping the schedule stops them for certain. Two earlier drafts of
+this note got this wrong in turn — the first said the change cost
+nothing, the second named only half of them:
 
 - **Health-factor alerts to users.** The largest loss, and the one both
   earlier drafts missed. The watcher keeps evaluating positions and
@@ -54,6 +54,29 @@ named only half of them:
 - **Liquidity-confidence state.** Its switch governs only whether it
   submits on-chain; it still reads and still records. Stopping the
   schedule stops that record advancing at all.
+- **Cleanup of expired Telegram link codes — found during review, and
+  fixed here rather than accepted.** The only thing that removed them
+  ran inside the watcher. The part that *issues* those codes is a
+  different service that stays running, so the stop would have left
+  them handed out and never cleared — short-lived codes that should
+  expire in minutes staying on record, with the table only growing.
+  That cleanup now also runs on the service that issues the codes,
+  which is where it belonged: that service already tidies its own
+  records on the same schedule, and the sweep is a single bounded
+  delete. The keeper keeps its copy, so nothing is lost when it comes
+  back; running twice is harmless. This one is therefore **not** a cost
+  of the stop any more.
+
+**Six more stop conditionally**, and whether they were running cannot
+be determined from outside. The matcher, the liquidator, the
+auto-lifecycle pass, reward-budget remittance, its acknowledgement
+pass, and the commitment report all sit behind the master switch. If
+that switch was on before this change, unscheduling stops all six as
+well; if it was off, they were already idle. Since the switch's value
+cannot be read back — the same limitation stated further down — **plan
+for the case where they were running**: matching, liquidation and
+reward funding must be treated as unavailable for the duration rather
+than assumed to be someone else's job.
 
 **They do not resume the instant the schedule returns, and some losses
 do not resume at all.** A restored schedule can take up to a quarter of

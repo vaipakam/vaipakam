@@ -1532,7 +1532,16 @@ phase_cf_keeper() {
   echo "═══════════════════════════════════════════════════════════════"
 
   echo "[a] wrangler deploy"
-  ( cd "$KEEPER_DIR" && pnpm exec wrangler deploy )
+  # `pnpm run deploy`, NOT `pnpm exec wrangler deploy` (#1896, Codex
+  # #1924 r8). The package script carries `--keep-vars`; a bare deploy
+  # deletes every var NOT in `wrangler.jsonc` before applying the ones
+  # that are, and what is not in that config is exactly the
+  # dashboard-managed tuning the keeper reads (HF_SCALE, LIQ_CONFIDENCE_*,
+  # LIQ_TIER3_*, SPLIT_MIN_IMPROVEMENT_BPS, PARTIAL_LIQ_MIN_HF_BPS).
+  # Losing them here is silent: the keeper is unscheduled, so nothing
+  # runs to reveal it, and the re-enable deploy then faithfully
+  # preserves the absence and arms liquidation on defaults.
+  ( cd "$KEEPER_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo

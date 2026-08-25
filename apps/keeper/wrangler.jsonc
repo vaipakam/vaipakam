@@ -98,7 +98,17 @@
   //      gated passes begin submitting transactions the moment the
   //      restored schedule propagates, which is one step before step 7
   //      would have observed anything.
-  //   2. Restore the schedule below (`"crons": ["* * * * *"]`).
+  //   2. Restore the schedule below (`"crons": ["* * * * *"]`) AND
+  //      COMMIT IT (Codex #1924 r8). An edit that lives only in the
+  //      operator's checkout leaves this file at `[]` on the branch, so
+  //      the next clean-checkout or automated deploy — including the
+  //      `cf-keeper` phase of `deploy-{chain,testnet,mainnet}.sh` —
+  //      re-publishes the empty list and silently unschedules the keeper
+  //      again, AFTER the runbook has declared re-enable successful.
+  //      That is the same inversion the README describes: since #1896 a
+  //      deploy from a clean checkout KEEPS it stopped. The commit is
+  //      what makes the restoration durable, so it belongs with the CPU
+  //      fix rather than being left to whoever ran the procedure.
   //   3. Confirm a cron slot is free — the cap is five per account.
   //   4. `( cd apps/keeper && wrangler deploy --keep-vars )` — or the
   //      equivalent `pnpm --filter @vaipakam/keeper run deploy`, whose

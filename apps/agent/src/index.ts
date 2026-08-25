@@ -109,6 +109,7 @@ import {
   linkTelegram,
   OptOutStorageUnavailableError,
   reserveTestAlert,
+  sweepExpiredLinks,
   unlinkTelegram,
   upsertThresholds,
 } from './db';
@@ -147,6 +148,22 @@ export default {
       pruneOldSupportTickets(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] pruneOldSupportTickets pass failed:', err);
+      }),
+    );
+    // #1896 — expired Telegram handshake codes. This sweep used to run
+    // only inside the keeper's watcher, which made a keeper outage
+    // silently stop the ONLY cleanup of a table this Worker fills:
+    // `issueTelegramLinkCode` is an agent route, so codes kept being
+    // handed out with nothing clearing them. The agent is the right
+    // owner either way — it issues the codes, it already prunes its own
+    // diagnostics and support tickets on this same tick, and the sweep
+    // is a single bounded DELETE. `apps/keeper/src/db.ts` keeps its
+    // identical copy so the watcher still sweeps once rescheduled;
+    // both are idempotent, so overlapping runs are harmless.
+    ctx.waitUntil(
+      sweepExpiredLinks(resolved.DB).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[agent] sweepExpiredLinks pass failed:', err);
       }),
     );
   },

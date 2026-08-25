@@ -185,6 +185,19 @@ recoverable back-pressure — not a fund-loss event.
   lane capacity must exceed the largest single-day slice. Tracked: #918.
 
 ### Automated remittance (keeper, #925)
+
+> **⚠ HOLD — #1896: there is no cron tick, so this automation is NOT running.**
+> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker was
+> terminated for exceeding CPU on ~100% of invocations. Everything below
+> describes the pass accurately **for when a schedule exists**; right now it
+> never executes, whatever the two flags say. **Treat the manual steps above as
+> the only remittance path** until you have read back a live schedule (Settings
+> → Trigger Events — not merely a quiet `wrangler tail`, which proves nothing
+> here). This matters most in exactly the incident this section is written for:
+> if a finalized day is broadcast and you leave a mirror's claim gate open
+> expecting the keeper to fund it, nothing will, and users hit the claim
+> reverts this section warns about.
+
 The steps above are the **manual** fallback. In normal operation the `apps/keeper`
 Worker drives remittance itself (`runRewardBudgetRemit`): each cron tick, running
 against Base, it re-scans a bounded recent-day window per mirror, batches the
