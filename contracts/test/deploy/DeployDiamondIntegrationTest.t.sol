@@ -348,9 +348,18 @@ contract DeployDiamondIntegrationTest is Test, DiamondFacetNames {
     ///            the peg. A green guardrail described a state the pipeline
     ///            immediately left. The configure step is now opt-in
     ///            (`CONFIGURE_VPFI_PEG=1`), so this assert and the pipeline
-    ///            agree. Note no Solidity test can observe that branch — it
-    ///            lives in a broadcast script behind an env var — so the
-    ///            guarantee rests on the spell, not on this file.
+    ///            agree.
+    ///
+    ///            This used to end "no Solidity test can observe that
+    ///            branch — it lives in a broadcast script behind an env
+    ///            var — so the guarantee rests on the spell, not on this
+    ///            file." That was false, and it is the sentence that
+    ///            justified shipping the #884 fix with no executable
+    ///            coverage. `vm.setEnv` exists and
+    ///            {DiamondConfigSpellPegGateTest} now pins BOTH gate values
+    ///            directly, so the guarantee rests on a test. Left as a
+    ///            correction rather than deleted: an untestability claim is
+    ///            the kind that stops the next person from trying.
     ///         2. New-origination fees resolve to the rev-8 freeze:
     ///            LIF 20 bps / yield (treasury) fee 200 bps.
     ///         3. `feeEntitlementEnabled == false` — the joint-cutover gate

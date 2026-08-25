@@ -237,6 +237,31 @@ cast send $BASE_SEPOLIA_VPFI_TOKEN "setMinter(address)" $BASE_SEPOLIA_DIAMOND_AD
 
 ## 4. Configure VPFI buy (Base only)
 
+> **DO NOT RUN THIS AS PART OF A DEPLOYMENT (#884).** Everything in this
+> section is retained history, not a step. Two separate reasons, and either
+> one is sufficient:
+>
+> 1. **The launch posture is peg-UNSET.** `DiamondConfigSpell` deliberately
+>    does not run `ConfigureVPFIBuy` unless an operator opts in for that run
+>    (`--configure-vpfi-peg` on the deploy wrapper, or `CONFIGURE_VPFI_PEG=1`
+>    — the literal `1`, nothing else). Invoking the script by hand, as the
+>    command below does, walks straight around that gate and leaves the
+>    deployment priced. With the peg set, the lender's yield-fee discount
+>    becomes VPFI-payment-authoritative instead of a direct reduction — a
+>    different product, not a tuning difference.
+> 2. **Most of what this section configures no longer exists.**
+>    `VPFI_BUY_GLOBAL_CAP`, `VPFI_BUY_PER_WALLET_CAP` and `VPFI_BUY_ENABLED`
+>    appear nowhere in `contracts/`; `getVPFIBuyConfig()` is not on any
+>    facet; and `DeployVPFIBuyReceiver.s.sol` (§5) is deleted. They went with
+>    the #687-A excision. `ConfigureVPFIBuy.s.sol` survives, but only as the
+>    discount-price step — it reads `VPFI_BUY_WEI_PER_VPFI` and writes
+>    `.vpfiDiscountWeiPerVpfi`. The name is a fossil.
+>
+> The surrounding prose describing a buy path is retained as a record of the
+> original bring-up and is tracked as known excision residue; it is not a
+> description of anything the platform does now. For what the deploy actually
+> runs, follow [`DeploymentRunbook.md`](DeploymentRunbook.md).
+
 Populate `.env`: `VPFI_BUY_WEI_PER_VPFI=1000000000000000`, `VPFI_BUY_GLOBAL_CAP=2300000000000000000000000`, `VPFI_BUY_PER_WALLET_CAP=30000000000000000000000`, `VPFI_BUY_ENABLED=true`, `BASE_SEPOLIA_VPFI_DISCOUNT_ETH_PRICE_ASSET` (= WETH).
 
 The fixed-rate buy path follows `docs/TokenomicsTechSpec.md` §8 / §8a:

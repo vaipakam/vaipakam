@@ -395,8 +395,32 @@ esac
 
 # ── Load .env ─────────────────────────────────────────────────────────
 
+# #884 — flags parsed above must SURVIVE this block. `set -a; source`
+# exports every assignment in the shared .env, so a `CONFIGURE_VPFI_PEG_OPT=`
+# line there overwrites what the operator just typed on the command line —
+# silently, and in BOTH directions: a stale `=1` prices VPFI on a run that
+# never asked, and a `=0` discards an explicit `--configure-vpfi-peg`.
+#
+# That is precisely the failure the flag was chosen to avoid. The flag's own
+# rationale above says an env var is unsafe here "because the wrappers source
+# a shared .env" — and then the parsed flag sat in an ordinary shell variable
+# that the same source overwrites. The reasoning was right and the ordering
+# defeated it (Codex #1920 r4).
+#
+# So the CLI value is snapshotted and restored: whatever .env says about this
+# name is inert, and the only thing that prices VPFI is this run's flag.
+#
+# NOT yet extended to the other flag-set variables in the case block
+# (CONFIRM_PURGE_MAINNET, CONFIRM_MULTISIG, CONFIRM_HW_SIGNER,
+# CONFIRM_ORPHANS, CONFIRM_DEADLINE_RESET, FRESH, PHASE). They have the same
+# exposure and it is tracked separately — widening a launch-posture fix into
+# the mainnet purge/handover confirmations is a change that deserves its own
+# review, not a mid-review expansion of this one.
+__cli_configure_vpfi_peg_opt="$CONFIGURE_VPFI_PEG_OPT"
+
 if [ -f "$CONTRACTS_DIR/.env" ]; then
   set -a; source "$CONTRACTS_DIR/.env"; set +a
+  CONFIGURE_VPFI_PEG_OPT="$__cli_configure_vpfi_peg_opt"
 else
   echo "Error: $CONTRACTS_DIR/.env not found." >&2
   exit 1

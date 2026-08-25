@@ -512,7 +512,7 @@ const PINNED = new Map([
   ["docs/internal/batch5-unsafe-typecast-triage.csv", [2, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "023e9b4fd22a"]],
   ["docs/ops/AnalyticsLabelRegistration.md", [3, "HISTORICAL — label registry rows", "0284187b3cbb"]],
   ["docs/ops/BNBTestnetDeploy.md", [24, "LIVE-TEXT — known debt; largest unswept operator runbook after DeploymentRunbook", "e9ba0096f4b1"]],
-  ["docs/ops/BaseSepoliaDeploy.md", [26, "LIVE-TEXT — known debt", "ec8d5ca30cfc"]],
+  ["docs/ops/BaseSepoliaDeploy.md", [31, "LIVE-TEXT — known debt, PLUS a #884 retraction banner on \u00a74 (+5). The banner is why the count rose: it names the removed knobs (VPFI_BUY_GLOBAL_CAP / _PER_WALLET_CAP / _ENABLED, getVPFIBuyConfig, DeployVPFIBuyReceiver) in order to tell an operator they no longer exist, and to stop \u00a74's hand-invocation of ConfigureVPFIBuy walking around the peg gate. The residue BELOW the banner is untouched and still debt", "10b5b32f287c"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "ab9aa52ffbe1"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "874f9b73f212"]],
   ["docs/ops/DeploymentRunbook.md", [46, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner. #884 LOWERED 47→46: the configure-phase prose no longer lists ConfigureVPFIBuy as a launch child", "4df2e707e667"]],
