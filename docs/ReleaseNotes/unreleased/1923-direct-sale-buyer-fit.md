@@ -30,7 +30,14 @@ maturity timestamp rather than whole days, so a fill cannot slip up to a day pas
 the buyer's window.
 
 Both refusals name their specific condition. The former over-funding refund path
-is removed with the over-funding it served.
+is removed with the over-funding it served. A companion guard refuses a sale once
+the loan is at or past its maturity (it was previously caught only as a
+side-effect of the old duration check), matching the listed route.
+
+The connected app's direct-exit picker is updated to match: it now shows only
+offers that cover the loan's remaining exposure and whose amount equals the
+principal exactly, and re-checks both live before submission, so a user is never
+shown — or allowed to submit — an offer the contract would reject.
 
 Closes #1923 (#1503 items 9 and 15). Of the four lender-sale items being closed
 in place, item 5 landed earlier (#1921); item 6 remains.

@@ -4332,6 +4332,22 @@ contract EarlyWithdrawalFacetTest is Test {
         );
     }
 
+    /// @dev #1923 (Codex #1929 r1 P1) — a loan at/past its maturity may not be
+    ///      sold even while still Active (grace, or after grace until default is
+    ///      triggered). The one-directional duration check floors remaining
+    ///      exposure at 0, so without an explicit maturity gate every positive
+    ///      offer would pass; this asserts the gate reverts SaleLoanPastMaturity
+    ///      first, matching the listed route.
+    function test_1923_refusesSaleAtOrPastMaturity() public {
+        // 30-day loan; warp just past maturity while it is still Active.
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(lender);
+        vm.expectRevert(
+            EarlyWithdrawalDirectFacet.SaleLoanPastMaturity.selector
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
     /// @dev Covers InvalidSaleOffer when buyOffer.collateralAmount > loan.collateralAmount
     function testSellLoanRevertsCollateralTooHigh() public {
         vm.prank(newLender);

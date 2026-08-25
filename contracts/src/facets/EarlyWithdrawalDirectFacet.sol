@@ -177,6 +177,14 @@ contract EarlyWithdrawalDirectFacet is
     ///         rather than silently refunded.
     error SaleAmountNotExactPrincipal(uint256 authored, uint256 principal);
 
+    /// @notice #1923 (Codex #1929 r1 P1) — the loan is at or past its maturity,
+    ///         so its lender side may no longer be sold. Mirrors
+    ///         `OfferAcceptFacet.SaleLoanPastMaturity` (same name, no args ⇒ same
+    ///         EVM selector), declared here rather than shared because the #1780
+    ///         split left the two sale hosts as separate contracts — the same
+    ///         reason `OfferExpired` / `OffsetActiveOnLoan` are declared twice.
+    error SaleLoanPastMaturity();
+
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -452,8 +460,17 @@ contract EarlyWithdrawalDirectFacet is
             // slip up to ~24h past the buyer's authored window.
             uint256 maturity =
                 uint256(loan.startTime) + uint256(loan.durationDays) * 1 days;
-            uint256 liveRemainingSecs =
-                maturity > block.timestamp ? maturity - block.timestamp : 0;
+            // #1923 (Codex #1929 r1 P1) — refuse a sale at or past maturity.
+            // The one-directional check below floors remaining exposure at 0, so
+            // without this an overdue-but-still-Active loan (throughout grace, or
+            // after it until default is triggered) would pass EVERY positive
+            // offer and let the seller hand off an already-matured position. The
+            // old `durationDays > remainDays` guard caught this incidentally
+            // (remainDays hit 0, so any positive offer reverted); the maturity
+            // check makes it explicit, matching the listed route's
+            // `SaleLoanPastMaturity` refusal at the same boundary.
+            if (block.timestamp >= maturity) revert SaleLoanPastMaturity();
+            uint256 liveRemainingSecs = maturity - block.timestamp;
             uint256 authoredSecs = uint256(buyOffer.durationDays) * 1 days;
             if (liveRemainingSecs > authoredSecs)
                 revert SaleExposureExceedsAuthoredDuration(

@@ -1951,9 +1951,9 @@ This option allows Liam to recover principal early by selling his lender positio
 #### Preconditions
 
 - Liam must be the active lender on the loan.
-- Noah must provide funds equal to the agreed purchase amount, typically the outstanding principal.
-- Noah’s replacement lender position must preserve the same principal/lending asset type, payment/prepay asset type, and collateral asset type as the original live loan. The amount may vary if otherwise permitted by the transfer flow, but the asset types themselves must not change.
-- Noah’s selected replacement offer terms must favor Alice, the original borrower. The replacement duration, lending amount, and collateral amount may vary only to the extent they do not worsen Alice's continuing obligation or collateral exposure.
+- Noah must provide funds **exactly equal to the outstanding principal**. Because his offer is consumed whole, an amount above the principal is refused rather than partially filled and refunded, and an amount below it cannot fund the sale (§9 amount rule).
+- Noah’s replacement lender position must preserve the same principal/lending asset type, payment/prepay asset type, and collateral asset type as the original live loan, and its amount must match the principal exactly (previous bullet); the asset types themselves must not change.
+- Noah’s selected replacement offer terms must favor Alice, the original borrower, and must fit the position Noah is stepping into. His collateral requirement may not exceed the loan's, and his authored **duration must cover the loan's remaining exposure** — a sale never moves the fixed maturity, so his duration is a ceiling on acceptable lock: a remaining term longer than he authored is refused (over-exposure), a shorter one is permitted (§9 duration rule).
 - The sale structure must comply with the platform’s active offer and acceptance rules.
 
 #### Economic Treatment
