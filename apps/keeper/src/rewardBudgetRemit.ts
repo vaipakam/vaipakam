@@ -22,6 +22,7 @@
 import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
 import {
   RewardRemittanceFacetABI,
+  RewardRemittanceLensFacetABI,
   RewardReporterFacetABI,
   RewardAggregatorFacetABI,
   InteractionRewardsLensFacetABI,
@@ -31,6 +32,8 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
+/** `getDayClosedByRemitId` lives on the read-only lens facet. */
+const REMIT_LENS_ABI = RewardRemittanceLensFacetABI as Abi;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
 const AGGREGATOR_ABI = RewardAggregatorFacetABI as Abi;
 // `getInteractionCurrentDay` moved to the read-only lens facet (#1333).
@@ -313,6 +316,36 @@ async function remitToMirror(
     batch.push(planWindow[i]);
     total += slice;
   }
+  // A zero-amount, non-closeable day is AMBIGUOUS: `quoteRemitDayPlans`
+  // returns exactly that both for a day already remitted AND for one that is
+  // still owed but gated — an armed day awaiting its commitment report, or a
+  // recycled day without backing (Codex #1924 r34). Treating them alike let
+  // the coverage marker report A/A while source funding was still owed.
+  //
+  // `getDayClosedByRemitId` is the discriminator: 0 means the day is still
+  // open. Only the ambiguous days are queried, so the cost is bounded by how
+  // many of them there are — and in the steady state, where every day really
+  // is closed, this is exactly the set that would otherwise have been silently
+  // counted as covered.
+  const ambiguous = planWindow.filter((_, i) => (perDay[i] ?? 0n) === 0n && !closeable[i]);
+  for (const dayId of ambiguous) {
+    try {
+      const closedBy = (await publicClient.readContract({
+        address: diamond,
+        abi: REMIT_LENS_ABI,
+        functionName: 'getDayClosedByRemitId',
+        args: [mirrorId, dayId],
+      })) as bigint;
+      if (closedBy === 0n) deferred += 1; // still owed, just not actionable yet
+    } catch (err) {
+      // Unknown beats optimistic on a stand-down signal.
+      console.warn(
+        `[keeper] rewardBudgetRemit Base->${mirrorId} day=${dayId} closure unknown: ${(err as Error).message}`,
+      );
+      deferred += 1;
+    }
+  }
+
   if (batch.length === 0) {
     if (deferred === 0) return true; // genuinely nothing actionable owed
     console.warn(

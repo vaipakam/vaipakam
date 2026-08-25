@@ -602,7 +602,10 @@ function embeddedShellLines(text) {
     // A fence is THREE OR MORE of one character, and its closer must use the
     // same character and be at least as long (CommonMark). Matching exactly
     // three missed `~~~~bash` entirely (Codex #1924 r32, r33).
-    const anyFence = lines[i].match(/^\s*(`{3,}|~{3,})([A-Za-z0-9_-]*)\s*$/);
+    // A fence's INFO STRING may carry more than the language —
+    // ```bash title="keeper deploy" is valid — so take the whole remainder and
+    // use its first word as the language (Codex #1924 r34).
+    const anyFence = lines[i].match(/^\s*(`{3,}|~{3,})\s*(\S*)[^\n]*$/);
     const fence = anyFence && /^(bash|sh|shell|console|)$/.test(anyFence[2]);
     // A YAML comment may follow the block indicator (`run: | # deploy keeper`),
     // and the indicator itself decides the folding (Codex #1924 r29).

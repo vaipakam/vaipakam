@@ -463,6 +463,14 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a fence whose info string carries more than the language (#1924 r34)', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Steps:\n\n```bash title="keeper deploy"\ncd apps/keeper\nnpx wrangler@4.90.0 \\\n  deploy\n```\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -771,6 +779,16 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
     const r = runWith(
       'docs/ops/DeploymentRunbook.md',
       '````bash\ncd apps/keeper\nwrangler deploy --keep-vars\n````\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a non-shell fence whose info string mentions bash', () => {
+    // The LANGUAGE is the first word; a jsonc block titled "bash example" is
+    // not shell and must not be scanned as such.
+    const r = runWith(
+      'apps/keeper/README.md',
+      '```jsonc title="bash example"\n{ "a": 1 }\n```\n\nPrefer the dashboard over `wrangler deploy` for this.\n',
     );
     expect(r.ok).toBe(true);
   });

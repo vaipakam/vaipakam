@@ -36,10 +36,13 @@ All commands run from `contracts/` unless noted otherwise.
 > stand-down check in [`IncidentRunbook.md`](IncidentRunbook.md) §3.5 passes:
 > schedule read back, expected chain set resolved, a liquidator pass with no
 > `passIsArmed` skip, a `scan complete` line for every expected chain, and
-> `atRisk` equal to `submitted` on each. A restored cron alone is not enough —
+> and then a LATER tick reporting `atRisk=0` on every one of them. A restored
+> cron alone is not enough —
 > the pass stays inert while `KEEPER_ENABLED` is false, a tick can log `done`
 > having scanned nothing, and a swept chain can still leave underwater loans
-> untouched.
+> untouched. `submitted` counts BROADCASTS, not confirmations, so equality on a
+> single tick does not mean the liquidations landed — the later zero-risk scan
+> is what settles it.
 
 ---
 
