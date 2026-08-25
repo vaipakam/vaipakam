@@ -704,10 +704,17 @@ contract RewardAggregatorFacet is
     ///         never-funded chain). `keeperAllocate` is always 0 — B2-b
     ///         landed and it is STILL always 0, because the per-chain
     ///         keeper allocation it reserves space for is #1569, which is
-    ///         undecided. Both producers hard-zero it (`LibMeshFunding` and
-    ///         this facet's own stamp). The old wording ("until B2-b")
-    ///         implied the field would populate at a milestone that has
-    ///         since passed.
+    ///         undecided. TWO places write a zero, and they are not two
+    ///         stamps: {LibMeshFunding._stampOne} is the only production
+    ///         stamp producer and hard-zeroes the field, while this facet's
+    ///         `_perDestFields` writes zero only in its MISSING-STAMP
+    ///         fallback payload (an excluded or unstamped destination) —
+    ///         where a stamp exists it forwards `f.keeperAllocate`
+    ///         verbatim. Said "this facet's own stamp" until #1349, which
+    ///         invented a second storage writer and would send whoever
+    ///         arms #1569 to the wrong file. The older wording ("until
+    ///         B2-b") implied the field would populate at a milestone that
+    ///         has since passed.
     ///
     ///         It is READ, though — do not mistake "always 0" for "inert".
     ///         `_perDestFields` puts it in every V2/V3 per-destination

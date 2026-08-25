@@ -60,8 +60,14 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *         other reward ledgers and report phantom availability to Base.
  *         What made it safe is THREE things, not two — a mirror's
  *         availability is Base's model of its committable bucket,
- *         `reported` less the net claim draw and less the net repatriation
- *         draw, never an unbacked optimism:
+ *         `reported` less the net INSTRUCTION draw and less the net
+ *         repatriation draw, never an unbacked optimism. "Claim draw" until
+ *         #1349, which was wrong on timing and on meaning: `_stampOne`
+ *         increments `chainConsumedRecycled` at FINALIZATION, when Base
+ *         instructs the mirror, and `mirrorAvailRecycled` nets it
+ *         immediately — long before any mirror claim, of which Base has no
+ *         authenticated view at all. An auditor reading "claim" would
+ *         expect availability to stay reusable until a user claims:
  *
  *           - d1's commitment report;
  *           - d2's delivered-backing ledger;
@@ -225,7 +231,7 @@ library LibMeshFunding {
             // the phantom-availability path, and this comment said they did
             // until #1349). A mirror's
             // availability is Base's model of its committable bucket:
-            // `reported` less the net claim draw `sat(consumed −
+            // `reported` less the net INSTRUCTION draw `sat(consumed −
             // released)` and less the net repatriation draw, the HARD
             // backstop the B1 ledger
             // defines — reported only ever advances on the chain's own

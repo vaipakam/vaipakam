@@ -749,7 +749,13 @@ contract ConfigFacet is DiamondAccessControl {
     ///         frontend/keeper ABI re-export in the same change rather than
     ///         a comment-only edit — tracked separately (#1934). The event
     ///         SIGNATURE and topic hash are unaffected by a name change, so
-    ///         no consumer breaks on the rename itself.
+    ///         topic routing and positional decoding keep working and an
+    ///         ALREADY-GENERATED ABI still decodes the on-chain layout. That
+    ///         is narrower than "nothing breaks", which is what this said
+    ///         until #1349: a consumer regenerated from the new ABI and
+    ///         reading `event.args.newFeeNumeraire1e18` by name breaks on
+    ///         the rename — which is exactly why #1934 has to carry the
+    ///         re-export and the consumer update together.
     /// @custom:event-category informational/config
     event NotificationFeeSet(uint256 newFeeNumeraire1e18);
     /// @notice T-032 — passed fee outside the [floor, ceil] bounds.

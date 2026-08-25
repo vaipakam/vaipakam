@@ -5899,8 +5899,12 @@ library LibVaipakam {
         // `chainReleasedRecycledCommit` — BASE-ONLY per-chain ratchet of the
         //   reported RELEASE cumulative; clamped to the ratcheted retired
         //   figure and to `chainConsumedRecycled[c]`. It re-credits
-        //   availability by reducing the NET claim draw that is subtracted
-        //   from `reported_c` — see {LibVpfiRecycle.mirrorAvailRecycled} for
+        //   availability by reducing the NET INSTRUCTION draw that is
+        //   subtracted from `reported_c` ("claim draw" until #1349:
+        //   `chainConsumedRecycled` is booked when Base INSTRUCTS at
+        //   finalization, not when a user claims, and Base has no
+        //   authenticated view of mirror claims at all) — see
+        //   {LibVpfiRecycle.mirrorAvailRecycled} for
         //   the operand order; it is subtraction-first and is not restated
         //   as a sum here, because the sum form overflows on a hostile
         //   report.

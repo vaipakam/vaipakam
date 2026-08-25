@@ -50,14 +50,20 @@ comment elsewhere in the codebase had reasoned about the below-the-line case
 correctly for some time, so two files quietly disagreed; they now say the same
 thing.
 
-Naming who actually loses took one more round to get right, and both earlier
-attempts named the wrong person. This fee is a share of the interest the borrower
-already owes — the rate divides that amount, it does not add to it. So the
-borrower pays the same either way, and what moves is the split between the lender
-and the platform: a rate above the frozen one pays the lender less than the terms
-they agreed to, a rate below it short-changes the platform. The lender is the
-party the frozen rate exists to protect, and both earlier versions pointed at the
-one participant the setting cannot affect.
+Naming who actually loses took three rounds, and the first two answers were both
+wrong. On the ordinary repayment path the fee is a share of the interest the
+borrower already owes — the rate divides that amount rather than adding to it —
+so the borrower pays the same either way and what moves is the split between the
+lender and the platform. A rate above the frozen one pays the lender less than
+the terms they agreed to; a rate below it short-changes the platform.
+
+But that is one path, and the answer does not hold everywhere. Where a loan is
+being settled through a collateral sale, the fee is added on top of what the
+lender is owed to set the minimum acceptable price, and whatever the sale raises
+beyond that goes to the borrower's side. At a fixed sale price a higher rate
+therefore takes from the borrower, not the lender. So the honest answer is that
+it depends on how the loan is being closed — and each earlier attempt had picked
+one party and asserted it everywhere.
 
 The second listed the reasons a billing step can fail and omitted one. Saying it
 "stops billing for everybody" was then too broad, and the correction after that
@@ -66,12 +72,25 @@ individual being billed, when only one of the three does. The other two — a
 caller without permission, and a platform-wide setting left unconfigured — fail
 every payer alike.
 
-That distinction is the whole diagnostic value, so it was worth a third pass to
-state correctly. An exhausted shared budget is the only cause on that list that
-fails some payers and not others, because the step skips its costly part for
-users whose details have not changed. An operator seeing that partial pattern
-correctly rules out the two all-or-nothing causes and is then left inspecting the
-one failing payer — the single place the answer is not.
+Then the correction after that overshot too, twice: it said the shared budget is
+the only cause that can fail some users and not others, and that seeing a partial
+outage means the answer is not with the individual user. Neither holds. An
+underfunded account fails exactly that way by definition, and once the account is
+ruled out the shared budget is still only one candidate — the notification step
+also reaches out to the cross-chain messenger, which can refuse for reasons of
+its own.
+
+What survived all of it is smaller and actually useful: a total outage points at
+permissions or an unconfigured setting, a partial one tells you nothing on its
+own, and the order to check in is the user's balance first, then the shared
+machinery behind it.
+
+A pattern worth naming, since it repeated on nearly every one of these: the
+first correction of a wrong statement was usually itself too confident. Each
+round replaced a false claim with a narrower one that still asserted more than
+the code supported, and it took several passes before the wording said only what
+could be checked. Describing the mechanism rather than announcing the conclusion
+is what finally held, because a mechanism carries its own limits with it.
 
 These were found by reading the code and asking what it does, rather than by
 reading the documentation and believing it. That distinction is the reason the

@@ -1317,12 +1317,17 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *                 partial failure even though the cause is global.
      *             So a uniform outage points at the first pair, while
      *             partial failure does NOT identify a cause on its own: it
-     *             is equally consistent with underfunded vaults and with an
-     *             empty broadcast budget. Check the failing payer's VPFI
-     *             balance first; if the payer is funded, the budget is the
-     *             remaining explanation. An earlier revision of this note
-     *             said partial failure rules the vault out — it does not,
-     *             and that would send an operator past the likelier cause.
+     *             is equally consistent with underfunded vaults and with
+     *             any failure on the broadcast leg. Check the failing
+     *             payer's VPFI balance first; if the payer is funded, the
+     *             cause is on that leg — but the budget is only ONE
+     *             candidate there. `sendTierUpdate` runs AFTER the budget
+     *             check and reverts `NoBroadcastDestinations` on an empty
+     *             destination list, and the messenger is `GuardianPausable`,
+     *             so a pause or a misconfigured messenger reverts the bill
+     *             just as an empty budget does. Two earlier revisions of
+     *             this note each narrowed it wrongly — first ruling the
+     *             vault out, then naming the budget as the sole remainder.
      *
      *         The watcher fires this at notification-send time
      *         **only on PaidPush tier** subscribers — FreeTelegram
