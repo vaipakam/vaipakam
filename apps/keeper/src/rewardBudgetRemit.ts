@@ -22,6 +22,7 @@
 import { createPublicClient, http, type Abi, type Address, type PublicClient } from 'viem';
 import {
   RewardRemittanceFacetABI,
+  RewardRemittanceLensFacetABI,
   RewardReporterFacetABI,
   RewardAggregatorFacetABI,
   InteractionRewardsLensFacetABI,
@@ -31,6 +32,26 @@ import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 
 const REMIT_ABI = RewardRemittanceFacetABI as Abi;
+/** `getDayClosedByRemitId` lives on the read-only lens facet. */
+const REMIT_LENS_ABI = RewardRemittanceLensFacetABI as Abi;
+
+/**
+ * Multicall3's canonical deterministic-deployment address, the same on every
+ * chain the keeper touches.
+ *
+ * It has to be passed EXPLICITLY: every keeper client is built as
+ * `createPublicClient({ transport: http(chain.rpc) })` with no `chain`, so viem
+ * cannot look the address up from `chain.contracts.multicall3` and
+ * `multicall()` throws `client chain not configured. multicallAddress is
+ * required.` before it issues a single request (Codex #1924 r37). That threw
+ * the batched probe below straight into its catch path, where every ambiguous
+ * day reads as UNKNOWN — so the discriminator never actually discriminated and
+ * operators would have had to clear the whole window by hand, every run.
+ *
+ * Supplying the address rather than attaching a chain object keeps the change
+ * to this call site; the tree-wide clients are chainless by design.
+ */
+const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11' as Address;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
 const AGGREGATOR_ABI = RewardAggregatorFacetABI as Abi;
 // `getInteractionCurrentDay` moved to the read-only lens facet (#1333).
@@ -141,9 +162,13 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
   })) as readonly [bigint, bigint, bigint, bigint];
   const armedFromDay = commitState[0];
 
+  let covered = 0;
+  const attempted = mirrorIds.length;
   for (const mirrorId of mirrorIds) {
     try {
-      await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay);
+      if (await remitToMirror(publicClient, ctx, diamond, mirrorId, currentDay, lookback, laneCap, armedFromDay)) {
+        covered += 1;
+      }
     } catch (err) {
       // Benign reverts (RewardPoolCapExceeded near exhaustion, NotRewardRemitter
       // if the keeper isn't authorized yet, etc.) — log at info and continue.
@@ -152,6 +177,17 @@ async function remitFromCanonical(env: Env, chain: ChainConfig): Promise<void> {
       );
     }
   }
+  // #1896 — POSITIVE coverage evidence, for the same reason the liquidator
+  // emits one (see `logScanComplete` there). Every unhappy path in this pass
+  // is a distinct marker — `chain=<id> failed:`, `skipped Base-><id>:`,
+  // `REVERTED` — none of which shares a prefix, so "no error lines" was never
+  // a checkable condition. This says how many destinations were actually
+  // served out of how many were attempted — a number to compare, not an
+  // absence to trust (Codex #1924 r17).
+  // eslint-disable-next-line no-console
+  console.log(
+    `[keeper] rewardBudgetRemit coverage: ${covered}/${attempted} destination(s) completed`,
+  );
 }
 
 async function remitToMirror(
@@ -163,7 +199,14 @@ async function remitToMirror(
   lookback: number,
   laneCap: bigint,
   armedFromDay: bigint,
-): Promise<void> {
+): Promise<boolean> {
+  // Returns TRUE only when this destination is SETTLED for this tick —
+  // either remitted successfully, or genuinely nothing owed. FALSE on every
+  // path that leaves days un-remitted (plan not stabilized, zero quote,
+  // receipt timeout, reverted receipt). The caller's coverage counter is a
+  // stand-down signal, and several of these paths log-and-return rather than
+  // throwing, so counting attempts instead of outcomes reported A/A while
+  // mirrors sat unfunded (Codex #1924 r18).
   // Candidate window of recent finalized days (strictly < currentDay).
   // Codex #1426 r1: when the program is armed, extend the floor down to
   // the armed range (bounded by the backscan cap) so a day whose
@@ -183,7 +226,7 @@ async function remitToMirror(
   }
   const window: bigint[] = [];
   for (let d = from; d < currentDay; d++) window.push(d);
-  if (window.length === 0) return;
+  if (window.length === 0) return true; // nothing owed
 
   // Codex #1426 r1 — plan through the batch planner view, not the plain
   // amount quote: a gate-passing armed day whose clamp lands at ZERO moves
@@ -209,6 +252,7 @@ async function remitToMirror(
   // backing allocation still includes an excluded day — an unstabilized
   // batch would starve affordable later days every tick.
   const MAX_REPLAN_PASSES = 24;
+  let droppedInReplan = 0;
   let stabilized = false;
   for (let pass = 0; pass < MAX_REPLAN_PASSES; pass++) {
     [perDay, closeable] = (await publicClient.readContract({
@@ -231,32 +275,137 @@ async function remitToMirror(
       break;
     }
     const drop = new Set(oversized.map((d) => d.toString()));
+    // Days dropped during REPLANNING are still owed. `deferred` is computed
+    // later from the filtered plan, so without carrying these forward a mixed
+    // plan — one oversized day plus several sendable ones — sent the sendable
+    // batch, finished with deferred === 0, and reported the destination
+    // settled while the oversized day stayed unfunded (Codex #1924 r21).
+    droppedInReplan += oversized.length;
     planWindow = planWindow.filter((d) => !drop.has(d.toString()));
-    if (planWindow.length === 0) return;
+    if (planWindow.length === 0) {
+      // NOT settled (Codex #1924 r19). Reaching here means every owed day was
+      // dropped for exceeding the lane cap — the days are still un-remitted
+      // and the warning above is an explicit call for operator attention.
+      // Returning true would count this destination as covered and let manual
+      // funding stand down over mirrors that received nothing.
+      return false;
+    }
   }
   if (!stabilized) {
     console.warn(
       `[keeper] rewardBudgetRemit mirror=${mirrorId} plan did not stabilize within ${MAX_REPLAN_PASSES} passes — skipping this tick (raise the lane capacity per #918)`,
     );
-    return;
+    return false;
   }
 
   // Greedily batch the un-remitted days, keeping the total under the lane
   // cap. Close-only days (closeable, zero amount) ride along for free.
   const batch: bigint[] = [];
   let total = 0n;
+  // Days that are ACTIONABLE but did not make this tick's batch. This is the
+  // discriminator the coverage signal turns on, and getting it wrong has now
+  // gone both ways: r19 treated an empty batch as always-unsettled, which made
+  // the steady state (every day already remitted, so every entry comes back
+  // amount=0 / closeable=false) report 0/A forever and put the stand-down
+  // permanently out of reach. An empty batch is settled ONLY when nothing was
+  // left behind (Codex #1924 r20).
+  let deferred = droppedInReplan;
   for (let i = 0; i < planWindow.length; i++) {
     const slice = perDay[i] ?? 0n;
     if (slice === 0n) {
+      // Zero-amount and not closeable = nothing to do for this day. Already
+      // remitted, or otherwise not eligible; NOT a deferral.
       if (closeable[i]) batch.push(planWindow[i]);
       continue;
     }
-    if (slice > laneCap) continue; // appeared oversized on the final pass
-    if (total + slice > laneCap) break; // fill the rest on a later tick
+    if (slice > laneCap) {
+      deferred += 1; // appeared oversized on the final pass
+      continue;
+    }
+    if (total + slice > laneCap) {
+      // Cap reached: this day and EVERY later actionable one wait for a
+      // later tick. Counting only this one would under-report (r20).
+      for (let k = i; k < planWindow.length; k++) {
+        const rest = perDay[k] ?? 0n;
+        if (rest > 0n) deferred += 1;
+      }
+      break;
+    }
     batch.push(planWindow[i]);
     total += slice;
   }
-  if (batch.length === 0) return;
+  // A zero-amount, non-closeable day is AMBIGUOUS: `quoteRemitDayPlans`
+  // returns exactly that both for a day already remitted AND for one that is
+  // still owed but gated — an armed day awaiting its commitment report, or a
+  // recycled day without backing (Codex #1924 r34). Treating them alike let
+  // the coverage marker report A/A while source funding was still owed.
+  //
+  // `getDayClosedByRemitId` is the discriminator: 0 means the day is still
+  // open. Only the ambiguous days are queried, so the cost is bounded by how
+  // many of them there are — and in the steady state, where every day really
+  // is closed, this is exactly the set that would otherwise have been silently
+  // counted as covered.
+  const ambiguous = planWindow.filter((_, i) => (perDay[i] ?? 0n) === 0n && !closeable[i]);
+  // ONE subrequest, not one per day (Codex #1924 r36). The default window is
+  // 45 days and in steady state EVERY already-closed day lands here, so the
+  // sequential loop this replaces issued up to 45 subrequests per mirror —
+  // against a 50-subrequest free-tier ceiling that the setup reads and the
+  // plan quote have already eaten into. A second mirror would simply not be
+  // processed. Adding an unbounded per-day loop to the Worker that #1896
+  // exists to bring back under its limits was the wrong instinct; multicall
+  // makes the whole probe one call.
+  const openDays: bigint[] = [];
+  if (ambiguous.length > 0) {
+    try {
+      const results = (await publicClient.multicall({
+        contracts: ambiguous.map((dayId) => ({
+          address: diamond,
+          abi: REMIT_LENS_ABI,
+          functionName: 'getDayClosedByRemitId',
+          args: [mirrorId, dayId],
+        })),
+        multicallAddress: MULTICALL3_ADDRESS,
+        allowFailure: true,
+      })) as { status: 'success' | 'failure'; result?: unknown }[];
+      ambiguous.forEach((dayId, i) => {
+        const r = results[i];
+        // A failed probe is UNKNOWN, and unknown is reported rather than
+        // assumed closed.
+        if (r?.status !== 'success' || r.result === 0n) openDays.push(dayId);
+      });
+    } catch (err) {
+      console.warn(
+        `[keeper] rewardBudgetRemit Base->${mirrorId} closure probe failed: ${(err as Error).message}`,
+      );
+      openDays.push(...ambiguous);
+    }
+  }
+  if (openDays.length > 0) {
+    // REPORTED, not folded into `deferred` (Codex #1924 r35). An open day here
+    // is one of two things and this pass cannot tell them apart: an obligation
+    // still gated (awaiting its commitment report, or unbacked), or a day that
+    // simply gave this mirror no slice — the latter is never closed by
+    // anything, so counting it as owed would hold coverage below A/A on every
+    // tick until it left the scan window, and the stand-down would never be
+    // reachable. That is the false-red the r34 fix introduced by treating both
+    // as owed.
+    //
+    // So the ambiguity is surfaced rather than guessed at: the operator has
+    // the day ids and can check whether any carries a real obligation. Same
+    // shape as the other signals here — report what is observable, do not
+    // infer what is not.
+    console.warn(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} ${openDays.length} finalized day(s) neither remitted nor closed: ${openDays.join(',')} — gated obligation or zero budget for this mirror; verify before treating coverage as complete`,
+    );
+  }
+
+  if (batch.length === 0) {
+    if (deferred === 0) return true; // genuinely nothing actionable owed
+    console.warn(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} no day fits laneCap=${laneCap} this tick — ${deferred} actionable day(s) still owed`,
+    );
+    return false;
+  }
 
   // Exact CCIP fee for THIS batch (the keeper EOA can't call the messenger's
   // quote directly — only the Diamond handler can; that's what this view wraps).
@@ -276,7 +425,7 @@ async function remitToMirror(
     console.log(
       `[keeper] rewardBudgetRemit Base->${mirrorId} batch=${batch.length} — quote total 0 (raced or wiring unset); skipping`,
     );
-    return;
+    return false;
   }
   // A close-only batch (every day clamped to zero) legitimately quotes 0:
   // nothing is dispatched on-chain, the fee is 0, and the send just closes
@@ -312,7 +461,7 @@ async function remitToMirror(
     console.warn(
       `[keeper] rewardBudgetRemit Base->${mirrorId} tx=${hash} receipt wait timed out — continuing; next tick re-evaluates`,
     );
-    return;
+    return false;
   }
   if (receipt.status !== 'success') {
     // Broadcast succeeded but the tx reverted on-chain (e.g. a manual/admin
@@ -320,9 +469,34 @@ async function remitToMirror(
     console.warn(
       `[keeper] rewardBudgetRemit Base->${mirrorId} tx=${hash} REVERTED (status=${receipt.status}) — days re-evaluated next tick`,
     );
-    return;
+    return false;
   }
   console.log(
     `[keeper] rewardBudgetRemit Base->${mirrorId} days=${batch.length} total=${total} fee=${fee} tx=${hash}`,
   );
+  if (deferred > 0) {
+    // The send succeeded, but only for a PREFIX of the plan — the cap cut the
+    // rest, and those finalized obligations are still unfunded. A successful
+    // tx is not the same as a settled destination (Codex #1924 r20).
+    console.warn(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} partial: ${deferred} actionable day(s) deferred to a later tick`,
+    );
+    return false;
+  }
+  // SOURCE-ACCEPTED, NOT DELIVERED (Codex #1924 r22).
+  //
+  // A successful Base receipt means CCIP accepted the message, not that the
+  // mirror received it. `IncidentRunbook`'s reward-remittance section records
+  // the failure mode explicitly: delivery can park or revert on the mirror —
+  // a paused receiver, say — while the days are ALREADY marked remitted on
+  // Base. The next tick cannot repair it (`remitRewardBudget` returns
+  // `NothingToRemit` for those days); recovery is a manual CCIP
+  // re-execution. So users on that mirror can have no claim backing while
+  // this pass reports success.
+  //
+  // This function cannot observe the destination, so it does not claim to:
+  // `true` here means "nothing left owed AT THE SOURCE". The stand-down
+  // checklist owns the rest, and says so — mirror-side confirmation is a
+  // separate check, not something the coverage counter can imply.
+  return true;
 }

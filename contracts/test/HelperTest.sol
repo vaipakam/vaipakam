@@ -1502,8 +1502,9 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](1);
+        selectors = new bytes4[](2);
         selectors[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
+        selectors[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferBound.selector;
         return selectors;
     }
 

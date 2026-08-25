@@ -1225,7 +1225,16 @@ elif [ "$SKIP_KEEPER" = "0" ]; then
     echo "Error: $KEEPER_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
     exit 1
   fi
-  ( cd "$KEEPER_DIR" && pnpm exec wrangler deploy )
+  # `pnpm run deploy`, NOT `pnpm exec wrangler deploy` (#1896, Codex
+  # #1924 r8). The package script carries `--keep-vars`; a bare deploy
+  # deletes every var NOT in `wrangler.jsonc` before applying the ones
+  # that are, and what is not in that config is exactly the
+  # dashboard-managed tuning the keeper reads (HF_SCALE, LIQ_CONFIDENCE_*,
+  # LIQ_TIER3_*, SPLIT_MIN_IMPROVEMENT_BPS, PARTIAL_LIQ_MIN_HF_BPS).
+  # Losing them here is silent: the keeper is unscheduled, so nothing
+  # runs to reveal it, and the re-enable deploy then faithfully
+  # preserves the absence and arms liquidation on defaults.
+  ( cd "$KEEPER_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo
@@ -1364,7 +1373,16 @@ elif [ "$SKIP_AGENT" = "0" ]; then
     echo "Error: $AGENT_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
     exit 1
   fi
-  ( cd "$AGENT_DIR" && pnpm exec wrangler deploy )
+  # `pnpm run deploy`, NOT `pnpm exec wrangler deploy`: the package script
+  # carries --keep-vars. A bare deploy "will delete all vars before setting
+  # those found in the Wrangler configuration", and apps/agent/src/env.ts
+  # reads RECIPIENT_VALIDATING_TOKENS and OPENSEA_OFFERS_MAX_PAGES, which
+  # apps/agent/wrangler.jsonc does not declare (the latter appears only in a
+  # comment there). So every ordinary cf-agent phase silently switched
+  # recipient-token validation off and reset OpenSea pagination
+  # (Codex #1924 r43). The keeper phase above was fixed earlier in this PR;
+  # this one was documented as fixed without being fixed.
+  ( cd "$AGENT_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo
@@ -1401,11 +1419,15 @@ echo "     token in [3b]/[4] but does NOT register it or wire oracles):"
 # ConfigureVPFIToken/RewardReporter/VPFIBuy while the configure still reports
 # success — the same footgun the mainnet/testnet wrappers guard against by
 # forcing SKIP_VPFI=0. A --skip-vpfi deploy overrides this to =1 below. (#857 r9)
-echo "        SKIP_VPFI=0 forge script script/DiamondConfigSpell.s.sol --rpc-url <rpc> --broadcast"
+echo "        SKIP_VPFI=0 CONFIGURE_VPFI_PEG=0 forge script script/DiamondConfigSpell.s.sol --rpc-url <rpc> --broadcast"
 echo "     Runs ConfigureVPFIToken (sets s.vpfiToken + the canonical flag so"
 echo "     TreasuryFacet.mintVPFI and every token-aware guard work), plus"
-echo "     ConfigureOracle / RewardReporter / VPFIBuy / NFT URIs. WITHOUT this"
+echo "     ConfigureOracle / RewardReporter / NFT URIs. WITHOUT this"
 echo "     the Diamond leaves s.vpfiToken unset and token paths stay disabled."
+echo "     #884: ConfigureVPFIBuy is NOT run — the launch posture leaves VPFI"
+echo "     unpriced. CONFIGURE_VPFI_PEG=0 is prefixed for the same reason"
+echo "     SKIP_VPFI=0 is: a stale =1 in the shared .env would otherwise price"
+echo "     VPFI here, and that changes the product rather than skipping a step."
 if [ "$SKIP_VPFI" = "1" ]; then
 echo "     NOTE: this was a --skip-vpfi deploy (no VPFI/cross-chain stack), so"
 echo "     prefix SKIP_VPFI=1 (instead of the =0 shown above) — all THREE VPFI children"

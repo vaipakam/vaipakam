@@ -207,9 +207,11 @@ avoids exact-minute B2 contention). On every invocation:
 
 Why one cron instead of two: the Cloudflare Workers free plan caps
 an account at 5 cron triggers, and the rest of the org already
-occupies 4 (`apps/{keeper,agent,indexer}` + this Worker). One slot is
-SPARE today: `ops/mesh-watcher` is code-complete but UNDEPLOYED and takes
-the fifth on its first deploy, at which point the cap binds. (`ops/lz-watcher`
+occupies 4 (`apps/{keeper,agent,indexer}` + this Worker) — counting
+`apps/keeper`, whose schedule is empty since #1896 but whose slot is
+RESERVED for its return, not spare. One slot is genuinely SPARE today:
+`ops/mesh-watcher` is code-complete but UNDEPLOYED and takes the fifth on
+its first deploy, at which point the cap binds. (`ops/lz-watcher`
 held a slot until #1440 removed it.)
 Folding healthcheck into the same cron is what keeps this Worker to ONE slot rather than two — it does not by itself put the account at 5/5, which the lines above say is 4/5 today with one slot spare until `ops/mesh-watcher` deploys.
 Split back into two crons if/when the account upgrades to Workers

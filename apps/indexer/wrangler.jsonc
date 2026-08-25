@@ -24,9 +24,11 @@
   "compatibility_flags": ["nodejs_compat"],
 
   // ONE every-minute schedule — the free plan caps cron triggers at
-  // FIVE per ACCOUNT and this account's five Workers use all five
+  // FIVE per ACCOUNT and this account's five Workers used all five
   // slots (a second schedule here failed the deploy with API error
-  // 10072). scheduled() routes each tick by its SCHEDULED TIME
+  // 10072). Since #1896 apps/keeper commits an empty schedule, but that
+  // slot is reserved for its return — do not add a second trigger here
+  // on the strength of it. scheduled() routes each tick by its SCHEDULED TIME
   // (src/cronRouting.ts): the legacy inline fallback (incident
   // rollback; round-robins ONE chain per invocation) acts every
   // minute, while the DO ingest path acts only on minutes divisible

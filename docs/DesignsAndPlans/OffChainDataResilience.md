@@ -278,14 +278,33 @@ read-only for healthcheck). The healthcheck:
 
 The originally-planned shape was a separate Worker cron for the
 healthcheck (running at 09:00 UTC every Monday), but the Cloudflare
-Workers free plan caps an account at 5 cron triggers. TODAY four are
-occupied — apps/keeper, apps/agent, apps/indexer and this Worker
-itself — leaving one spare; `ops/mesh-watcher` takes that fifth on
-its FIRST DEPLOY, and it is code-complete but undeployed (§4.5). So
-the cap BINDS from that deploy onward rather than today, and this
-Worker is designed for a single cron on that basis rather than
-because the account is already full. (`ops/lz-watcher` held a slot
-until #1440 removed it.) Folding the healthcheck into the
+Workers free plan caps an account at 5 cron triggers. Historically four
+were occupied — apps/keeper, apps/agent, apps/indexer and this Worker
+itself — leaving one spare, which `ops/mesh-watcher` would take on its
+FIRST DEPLOY (code-complete but undeployed, §4.5). (`ops/lz-watcher`
+held a slot until #1440 removed it.)
+
+**Since #1896 only THREE schedules are LIVE** — apps/keeper commits
+`"crons": []`, so agent, indexer and this Worker are the ones actually
+running. The arithmetic to plan against is unchanged, because the
+keeper's slot is **reserved, not released**:
+
+| | Slot |
+|---|---|
+| 1–3 | apps/agent, apps/indexer, this Worker — live |
+| 4 | **apps/keeper — reserved**, empty only until #1896's CPU fix lands |
+| 5 | `ops/mesh-watcher` — its slot on first deploy (§4.5) |
+
+So **deploying mesh-watcher remains correct and expected**: it takes
+the fifth slot, exactly as planned before #1896, and does not touch
+the keeper's. What must NOT happen is treating the keeper's empty
+schedule as spare capacity for some *additional* Worker — its
+re-enable procedure begins by confirming a free slot, so spending that
+one would block re-enable at the account cap with a stopped keeper as
+the cost.
+
+This Worker is designed for a single cron on that basis rather than
+because the account is already full. Folding the healthcheck into the
 daily cron via a `getUTCDay() === 1` guard preserves the weekly
 cadence at the cost of running the alert at 03:17 UTC instead of
 09:00 UTC. Acceptable trade-off — ops alerts aren't real-time

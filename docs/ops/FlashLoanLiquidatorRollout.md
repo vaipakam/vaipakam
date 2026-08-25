@@ -11,6 +11,49 @@ target chain (testnet → mainnet, lowest-TVL first).
 
 All commands run from `contracts/` unless noted otherwise.
 
+> **⚠ DOCUMENT-WIDE HOLD — #1896: THERE IS NO NEXT TICK.**
+> The keeper commits `"crons": []` because the Worker was terminated for
+> exceeding CPU on ~100% of invocations. **Every "on next tick" / "the keeper
+> picks it up" statement in this runbook is suspended**, including the ones
+> that offer reassurance — most importantly the repeated promise that deleting
+> a flag or a `liquidator:` line leaves the *legacy* partial / split / atomic
+> branches running. Those branches do not run either. Our bot performs no
+> liquidation at all right now.
+>
+> Config changes here are still worth making: they latch correctly for when
+> the schedule returns. What they are not is a *response*. With our bot
+> stopped, the **§3 global protocol pause is the only immediate on-chain stop**
+> for the discounted path **on a chain whose admin handover has completed**.
+> Note specifically that `AdminFacet.pauseAsset` is
+> **not** — it blocks new exposure only, and liquidation is deliberately
+> exempt so existing positions can always be closed out, so it leaves
+> `triggerLiquidationDiscounted` fully callable by external liquidators. The
+> `discountPathEnabled` kill-switch does bind those callers, but post-handover
+> it carries the Timelock's 48h delay, making it the eventual targeted control
+> rather than the immediate one.
+>
+> **PRE-handover, reach for the targeted switch instead, not the global
+> pause.** On a chain where admin has not yet been handed to the Timelock,
+> `ConfigFacet.setDiscountPathEnabled(false)` is a direct `ADMIN_ROLE` call
+> with no delay, and it disables the discounted path immediately and *only*
+> that path. Escalating to the global pause there would stop unrelated
+> protocol activity for no gain. `IncidentRunbook.md` §3.5 draws the same
+> distinction; the unqualified "only immediate" wording here contradicted it.
+> Full tier breakdown under this hold in
+> [`IncidentRunbook.md`](IncidentRunbook.md) §3.5.
+>
+> Treat our own liquidation coverage as manual until the **five-point**
+> stand-down check in [`IncidentRunbook.md`](IncidentRunbook.md) §3.5 passes:
+> schedule read back, expected chain set resolved, a liquidator pass with no
+> `passIsArmed` skip, a `scan complete` line for every expected chain, and
+> and then a LATER tick reporting `atRisk=0` on every one of them. A restored
+> cron alone is not enough —
+> the pass stays inert while `KEEPER_ENABLED` is false, a tick can log `done`
+> having scanned nothing, and a swept chain can still leave underwater loans
+> untouched. `submitted` counts BROADCASTS, not confirmations, so equality on a
+> single tick does not mean the liquidations landed — the later zero-risk scan
+> is what settles it.
+
 ---
 
 ## 0. Preconditions
@@ -182,7 +225,9 @@ one file makes the cross-cutting concern reviewable in one
 place. It's also a tactical override surface — to disable the
 flash-loan path on a chain without redeploying anything, just
 delete the `liquidator` line (the chain falls back to legacy
-partial/split/atomic immediately on next tick).
+partial/split/atomic immediately on next tick — **not while #1896
+holds: there is no next tick and the legacy branches do not run
+either**; see the document-wide hold above).
 
 Commit + redeploy the keeper Worker so it picks up the new
 config:
@@ -190,12 +235,33 @@ config:
 ```bash
 git add apps/keeper/src/flashLoanProviders.ts
 git commit -m "apps/keeper: populate Base FlashLoanLiquidator address"
-pnpm --filter @vaipakam/keeper exec wrangler deploy
+pnpm --filter @vaipakam/keeper run deploy
 ```
+
+> **`run deploy`, not `exec wrangler deploy`** (#1896). The package script
+> carries `--keep-vars`; going straight to wrangler bypasses it and deletes
+> every var not in `wrangler.jsonc` — which is exactly the dashboard-managed
+> `HF_SCALE` / `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning this rollout is
+> about to depend on. **And note before you run it:** the keeper is currently
+> unscheduled (`"crons": []`, #1896), so this deploy updates the script and
+> bindings but starts nothing. That is fine and expected here — the rollout's
+> config and flags stay latched — but do not read a quiet `wrangler tail`
+> afterwards as evidence the branch works. See the hold in §5.
 
 ---
 
 ## 5. Flip the runtime env flag in the keeper Worker
+
+> **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
+> `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
+> was terminated for exceeding CPU on ~100% of invocations. **Do not
+> restore the schedule or arm `KEEPER_ENABLED` as part of this procedure**
+> until #1896's CPU work has landed. With no schedule, no pass runs, so a
+> quiet `wrangler tail` here proves nothing — it is the expected state,
+> not a passing check. Re-enable only via the sequence kept beside the
+> empty list in `apps/keeper/wrangler.jsonc`. Setting the two flags below
+> is still correct — they are the rollout's own preconditions and stay
+> latched for when the schedule returns.
 
 Two things must be true at runtime for the flash-loan branch to
 fire:
@@ -352,9 +418,11 @@ will show one of:
   (price moved past slippage tolerance between quote and
   submit). Also healthy.
 
-No action needed. The legacy partial/split/atomic branches in
-the keeper run on the next tick — the loan still gets
-liquidated, just via the atomic path instead.
+No action needed **once the keeper is scheduled again**. The legacy
+partial/split/atomic branches in the keeper run on the next tick — the
+loan still gets liquidated, just via the atomic path instead. **While
+#1896 holds there is no next tick**, so the loan is not liquidated by us
+at all; it depends on external liquidators. See the document-wide hold.
 
 ### Profitable trades available but bot logs nothing
 
@@ -399,7 +467,9 @@ order of preference (least to most disruptive):
    pnpm --filter @vaipakam/keeper exec wrangler secret delete DISCOUNT_PATH_ENABLED_8453
    ```
    Worker reads `undefined` on next tick → discount branch
-   skips → legacy partial/split/atomic still runs.
+   skips → legacy partial/split/atomic still runs. **Not while #1896
+   holds** — no tick, and the legacy branches are stopped too, so this
+   is already the posture rather than a change to it.
 
 2. **Delete the `liquidator` line in `flashLoanProviders.ts`**
    + redeploy Worker — slower (needs git commit + wrangler

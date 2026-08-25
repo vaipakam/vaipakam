@@ -27,14 +27,246 @@
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
 
-  // Cron — every minute. The watcher is internally tick-rate-aware:
-  // each tick sweeps `getChainConfigs(env)` round-robin and bails
-  // early on chains that already have notify_state at the same band
-  // since the previous tick. A "* * * * *" schedule matches the
-  // existing ops/hf-watcher cadence; tighter schedules don't help
-  // (HF reads are per-tick rate-limited inside the watcher).
+  // ── KEEPER IS DEPLOYED BUT NOT SCHEDULED (#1896, operator decision) ──
+  //
+  // The schedule is deliberately EMPTY. Everything else about this
+  // Worker is untouched and stays deployed: the script, the D1 binding,
+  // all 17 secret / secrets-store / plain-text bindings, and the
+  // `KEEPER_ENABLED` secret. Nothing has to be recreated to bring it
+  // back — only this list.
+  //
+  // WHY. Measured on 2026-08-24 (#1896): `outcome: exceededCpu` on
+  // ~100% of invocations, cpuTime pinned at the 10 ms ceiling, over the
+  // whole retained window. So every minute the Worker was invoked,
+  // burned its ceiling, and was terminated rather than finishing.
+  //
+  // NOT "completed nothing" — an earlier revision said that and the
+  // release note was corrected while this comment was not (Codex #1924
+  // r3). Passes run concurrently, and several DO emit their completion
+  // line before another exhausts the invocation; in an armed
+  // configuration those may have sent alerts or written records first.
+  // What is certain is the termination, not an absence of work.
+  //
+  // WHICH pass burns it is NOT established, and an earlier revision of
+  // this comment claimed it was (Codex #1924 r1). `watcher` and
+  // `liquidityConfidence` are the two with no completion line, but
+  // every due pass is started concurrently through `ctx.waitUntil`, so
+  // a missing line means only "still in flight when the invocation
+  // died" — which a pass merely awaiting an RPC also satisfies. The
+  // timing wrapper measures WALL time and says so itself: it can
+  // EXCLUDE suspects, not name one. Attribution needs a profile.
+  //
+  // It also returns a cron trigger to the account pool. The free plan
+  // caps triggers at FIVE per ACCOUNT and all five were in use — see
+  // `apps/indexer/src/cronRouting.ts`, which records a deploy that
+  // failed for exactly that reason.
+  //
+  // WHAT STOPS THAT WAS NOT ALREADY STOPPED. FOUR passes run ungated by
+  // `KEEPER_ENABLED`, so unscheduling does cost function. Two earlier
+  // revisions of this comment got this wrong in escalating ways — first
+  // claiming it cost nothing, then naming only two of the four (Codex
+  // #1924 r1/r2). README §"What the kill-switch does and does not stop
+  // (#1548)" is the authority and lists all of them:
+  //   - `watcher` — THE BIGGEST LOSS, and the one both earlier revisions
+  //     missed. It keeps evaluating positions and keeps sending Telegram
+  //     and Push health-factor alerts to USERS. Unscheduling stops those
+  //     alerts: a borrower approaching liquidation is no longer told.
+  //   - `dailyOracleSnapshot` — gated only on KEEPER_PRIVATE_KEY, and
+  //     deliberately so: the same README section records the 2026-08-03
+  //     decision that the snapshot is a public good, left ungated
+  //     precisely SO THAT disabling the keeper for an unrelated reason
+  //     would not leave holes in the oracle series. Unscheduling leaves
+  //     exactly those holes, and they do NOT backfill on re-enable — the
+  //     contract writes only the current day's slot. Mitigation:
+  //     `captureDailyPriceSnapshot` is permissionlessly callable, so any
+  //     address can keep the series intact meanwhile.
+  //   - `preGraceWatcher` — no arming check at all; borrowers stop
+  //     getting the pre-grace warning.
+  //   - `liquidityConfidence` — its gate is narrower than it looks: it
+  //     decides only whether to SUBMIT on-chain. The pass still reads
+  //     and still writes its D1 counter, so unscheduling stops the
+  //     confidence state advancing at all.
+  //
+  // TO RE-ENABLE, once the CPU work in #1896 is done:
+  //   1. DISARM FIRST — `( cd apps/keeper && wrangler secret put
+  //      KEEPER_ENABLED )`, entering `false` (Codex #1924 r4). Do this
+  //      BEFORE restoring the schedule, and do not assume the hold left
+  //      it off: the binding still exists on the live Worker (verified
+  //      2026-08-24, `secret_text`), a deploy never deletes a secret, and
+  //      a secret's VALUE cannot be read back — so "it should be false"
+  //      is unverifiable, not a check. If it is in fact `true`, the six
+  //      gated passes begin submitting transactions the moment the
+  //      restored schedule propagates, which is one step before step 7
+  //      would have observed anything.
+  //   2. Restore the schedule below (`"crons": ["* * * * *"]`) AND
+  //      COMMIT IT (Codex #1924 r8). An edit that lives only in the
+  //      operator's checkout leaves this file at `[]` on the branch, so
+  //      the next clean-checkout or automated deploy — including the
+  //      `cf-keeper` phase of `deploy-{chain,testnet,mainnet}.sh` —
+  //      re-publishes the empty list and silently unschedules the keeper
+  //      again, AFTER the runbook has declared re-enable successful.
+  //      That is the same inversion the README describes: since #1896 a
+  //      deploy from a clean checkout KEEPS it stopped. The commit is
+  //      what makes the restoration durable, so it belongs with the CPU
+  //      fix rather than being left to whoever ran the procedure.
+  //   3. Confirm a cron slot is free — the cap is five per account.
+  //      This slot is meant to be waiting: the capacity notes in
+  //      `ops/offchain-data-warm`, `apps/indexer` and
+  //      `docs/DesignsAndPlans/OffChainDataResilience.md` all count the
+  //      keeper's slot as RESERVED rather than spare, precisely so this
+  //      step cannot be blocked by something that moved in during the
+  //      hold (Codex #1924 r9). If it IS taken, that is a real problem
+  //      to resolve here — not something to work around by leaving the
+  //      keeper stopped.
+  //   4. `( cd apps/keeper && wrangler deploy --keep-vars )` — or the
+  //      equivalent `pnpm --filter @vaipakam/keeper run deploy`, whose
+  //      script now carries the flag. RUN IT FROM THIS DIRECTORY: a bare
+  //      `wrangler deploy` at the repo root picks up the ROOT
+  //      `wrangler.jsonc`, which is a different Worker entirely
+  //      (`vaipakam-alpha`) — so the keeper's schedule would be
+  //      untouched while something unrelated got redeployed, and on the
+  //      rollback branches that silently leaves the CPU-exhausting
+  //      schedule live (Codex #1924 r7). The flag is NOT optional
+  //      (Codex #1924 r2 P1). Editing this file changes nothing on its
+  //      own; a schedule reaches Cloudflare only via a deploy. But a
+  //      BARE deploy "will delete all vars before setting those found in
+  //      the Wrangler configuration", and this config declares only
+  //      `TG_BOT_USERNAME`. Every dashboard-managed tuning override —
+  //      `HF_SCALE`, the `LIQ_*` confidence and Tier-3 thresholds,
+  //      `SPLIT_MIN_IMPROVEMENT_BPS`, `PARTIAL_LIQ_MIN_HF_BPS` (see
+  //      `env.ts`) — would be wiped one step before step 6 arms the
+  //      fund-moving passes. That is liquidation behaviour silently
+  //      reverting to defaults at the exact moment it starts mattering.
+  //      Capture the live vars first if you have any doubt they are all
+  //      recoverable.
+  //   5. Read the schedule back TRIGGER-AWARE — Settings → Trigger
+  //      Events, or query the Worker's `/schedules` endpoint. A
+  //      mistyped or wrongly-nested key leaves the previous state in
+  //      place, and a quiet `wrangler tail` only proves no tick has
+  //      fired YET.
+  //   6. Allow the propagation window: Cloudflare documents cron
+  //      updates taking up to 15 minutes to reach every location.
+  //   7. VALIDATE THE UNARMED PASSES FIRST, ACROSS EVERY CADENCE THEY
+  //      RUN AT (Codex #1924 r3, tightened in r6). With `KEEPER_ENABLED`
+  //      set to `false` in step 1, `wrangler tail vaipakam-keeper` and
+  //      confirm the outcome is `ok` rather than `exceededCpu`. Arming
+  //      before observing a live tick means the six gated passes can
+  //      submit transactions on an invocation that still dies — the CPU
+  //      fix being incomplete or regressed is exactly the case this
+  //      sequence exists for, so it must be ruled out while the passes
+  //      that move funds are still inert.
+  //      ONE TICK IS NOT ENOUGH HERE. Two of the ungated passes are not
+  //      due every minute: `preGraceWatcher` runs every 15 minutes at
+  //      offset 4, and `dailyOracleSnapshot` only inside the 00:00–00:09
+  //      UTC window. Neither consults `KEEPER_ENABLED` — verified: no
+  //      `passIsArmed` / `isKeeperEnabled` reference in either module,
+  //      and for the snapshot that is deliberate (#1466, declined) — so
+  //      both can and MUST be exercised while still disarmed. Cover a
+  //      full 15-minute cycle, and the daily window, BEFORE step 8.
+  //      Skipping that leaves the worst ordering available: arm at step
+  //      8, then first reach the missed cadence at step 9 up to a day
+  //      later, having let the fund-moving passes submit for that whole
+  //      period on a Worker that then turns out to still die.
+  //      ALSO CHECK THE CHAIN SET, on every tick you accept as evidence
+  //      (Codex #1924 r13). Each tick logs `chains resolved: N — …`.
+  //      Confirm N and the names match the chains this deployment is
+  //      meant to serve. A chain drops out SILENTLY: `readSecret`
+  //      collapses an absent binding or a failing Secrets Store fetch to
+  //      `undefined` (deliberately, so one bad secret cannot abort the
+  //      tick), and `getChainConfigs` then skips any chain with no RPC.
+  //      The per-chain log lines are the only other trace, so a missing
+  //      chain shows up as an ABSENCE — which is exactly what nobody
+  //      reads off a tail. A tick that ends `ok` against four of six
+  //      chains has not validated the CPU cost of six, and the work
+  //      scales with the set: when the binding recovers after step 8,
+  //      the untested load returns and can re-exhaust the budget with
+  //      the fund-moving passes already armed.
+  //      AND REJECT ANY TICK THAT LOGS AN ERROR AT ALL — not a
+  //      particular marker (Codex #1924 r16, widened in r21). Every
+  //      pass catches its own per-chain failures, continues, and still
+  //      ends `done in Nms`, but each spells the failure differently:
+  //      `runLiquidator chain=… err=…`, `liquidator chain=…
+  //      getActiveLoansCount failed`, `preGraceWatcher count failed
+  //      chain=…`, `runLiquidityConfidence chain=… failed:` — and the
+  //      list grows whenever a pass adds a failure path. Naming shapes
+  //      to reject has been incomplete every time it was tried, so the
+  //      rule here is the blanket one: **no `console.error` output from
+  //      any due pass**.
+  //      Over-rejecting is the SAFE direction for this particular
+  //      check, which is why a blanket rule works here and did not for
+  //      the liquidation stand-down in `IncidentRunbook` §3.5. There,
+  //      rejecting too much stranded manual coverage indefinitely; here
+  //      it costs one more minute of waiting for a clean tick. A tick
+  //      whose RPCs failed early did far LESS work than a healthy one,
+  //      so it looks green precisely because it did nothing — worthless
+  //      as CPU evidence in the one direction that matters.
+  //      If it still reports `exceededCpu`: set `"crons": []` again,
+  //      **REVERT AND COMMIT that** (Codex #1924 r12 — step 2 made the
+  //      active schedule a COMMITTED change, so a rollback that only
+  //      edits the operator's checkout leaves `["* * * * *"]` on the
+  //      branch, and the next clean-checkout or automated deploy
+  //      republishes the known-bad schedule and silently undoes this
+  //      rollback), then
+  //      `( cd apps/keeper && wrangler deploy --keep-vars )` — same
+  //      directory scoping and same flag as step 4, and both matter MORE
+  //      on a rollback, because a rollback is exactly when nobody is
+  //      checking whether the tuning survived or whether the right
+  //      Worker was targeted (Codex #1924 r5, r7). Leave
+  //      `KEEPER_ENABLED` at `false`. That is the rollback, and it costs
+  //      nothing because nothing was armed.
+  //   8. Only then set the `KEEPER_ENABLED` secret to `true`. The
+  //      fund-moving passes stay inert until it is, and `passIsArmed`
+  //      names any binding still blocking each pass, one line per pass
+  //      per tick.
+  //   9. Now validate the GATED passes, again across every cadence they
+  //      run at (Codex #1924 r5 P1). Step 7 has already cleared the
+  //      ungated set; what step 8 newly switched on is the six gated
+  //      passes, and one armed tick exercises only the
+  //      `cadenceMinutes: 1` ones among them. `rewardBudgetRemit` is
+  //      gated AND staggered (5 min, offset 2), so cover at least one
+  //      full 5-minute cycle before declaring re-enable complete — or
+  //      profile that pass in production by other means.
+  //      A `done in Nms` LINE IS NOT PROOF THE PASS RAN (Codex #1924
+  //      r7). `timedPass` logs it whenever `run()` returns, and a gated
+  //      pass returns immediately from `passIsArmed`. That matters most
+  //      for `rewardBudgetRemit` and `remitAck`, which are gated TWICE —
+  //      `KEEPER_ENABLED` plus `REWARD_REMIT_ENABLED` — and for
+  //      `commitmentReport` (plus `REWARD_COMMIT_ENABLED`). Step 8 flips
+  //      only the master gate, so with the reward flags off, waiting out
+  //      the 5-minute cycle produces a reassuring line from a pass that
+  //      did nothing. Read the accompanying `passIsArmed` skip line,
+  //      which NAMES the blocking binding: if the reward flags are off
+  //      in this deployment, record those passes' CPU validation as
+  //      DEFERRED until they are enabled — do not count the skip as
+  //      coverage.
+  //      Otherwise confirm each tick ends `ok` and that every due pass
+  //      emits its `done in Nms` line — an absent line means the pass
+  //      was still in flight when the invocation ended. If any of it
+  //      fails, roll back BOTH halves: `KEEPER_ENABLED` to `false` first
+  //      (it is now genuinely armed), then `"crons": []` — reverted and
+  //      COMMITTED, per the same reasoning as step 7's rollback — and
+  //      `( cd apps/keeper && wrangler deploy --keep-vars )`.
+  //      Why the split rather than one big validation at the end: every
+  //      pass that CAN be cleared before arming SHOULD be, because the
+  //      cost of discovering the CPU fix is incomplete rises the moment
+  //      the fund-moving passes start submitting.
+  //  10. Clear any checks DEFERRED during the hold. Specifically: if
+  //      `PUSH_CHANNEL_PK` was rotated while the keeper was unscheduled,
+  //      `docs/ops/IncidentRunbook.md`'s Push-rotation step 6 could only
+  //      be satisfied against the agent — the keeper had no invocation
+  //      from which to send. Confirm a `[push] sent channel=…` line from
+  //      THIS Worker now, because an incompatible signer would have
+  //      stayed invisible for the whole hold.
+  //
+  // The original cadence note, still true and still the target to
+  // restore: the watcher is internally tick-rate-aware — each tick
+  // sweeps `getChainConfigs(env)` round-robin and bails early on chains
+  // that already have notify_state at the same band since the previous
+  // tick. "* * * * *" matched the historical ops/hf-watcher cadence;
+  // tighter schedules don't help (HF reads are per-tick rate-limited
+  // inside the watcher).
   "triggers": {
-    "crons": ["* * * * *"],
+    "crons": [],
   },
 
   // D1 binding — `vaipakam-archive`, the STAGING database for the

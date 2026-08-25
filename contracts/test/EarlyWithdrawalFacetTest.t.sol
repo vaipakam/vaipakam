@@ -4218,14 +4218,77 @@ contract EarlyWithdrawalFacetTest is Test {
         vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
 
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
+        // #1923 (#1503 item 15) — below-principal now reverts with the exact-
+        // match error (was the generic InvalidSaleOffer under the old floor).
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleAmountNotExactPrincipal.selector,
+                PRINCIPAL / 2,
+                PRINCIPAL
+            )
+        );
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, lowOffer);
         vm.clearMockedCalls();
     }
 
-    /// @dev Covers InvalidSaleOffer when buyOffer.durationDays > remaining days
-    function testSellLoanRevertsDurationTooLong() public {
-        // Warp 20 days (10 remaining), then use offer with 30 day duration
+    /// @dev #1923 (#1503 item 9) — a buy offer whose AUTHORED duration is
+    ///      shorter than the loan's live remaining exposure is refused: filling
+    ///      it would lock the buyer past the window they consented to. This
+    ///      inverts the old guard (which refused offers LONGER than remaining —
+    ///      harmless, since a sale never re-terms the loan). No warp: ~30 days
+    ///      remain, so a 10-day offer cannot cover the exposure.
+    function test_1923_refusesDurationBelowRemainingExposure() public {
+        vm.prank(newLender);
+        uint256 shortOffer = OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockERC20,
+                amount: PRINCIPAL,
+                interestRateBps: 500,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: COLLATERAL,
+                durationDays: 10,
+                assetType: LibVaipakam.AssetType.ERC20,
+                tokenId: 0,
+                quantity: 0,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: PRINCIPAL,
+                interestRateBpsMax: 500,
+                collateralAmountMax: COLLATERAL,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+
+        // No warp, so now == the loan's start: the full 30-day term remains,
+        // and the 10-day offer covers only 10 days of it.
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleExposureExceedsAuthoredDuration.selector,
+                uint256(30 days),
+                uint256(10 days)
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, shortOffer);
+    }
+
+    /// @dev #1923 (#1503 item 9) — one-directional: an offer LONGER than the
+    ///      remaining exposure still fills. The buyer is locked for LESS than
+    ///      they authored (capital returns sooner — the better position), which
+    ///      the OLD guard wrongly refused. Warp 20 days (~10 remain), 30-day
+    ///      offer covers it.
+    function test_1923_admitsDurationAboveRemainingExposure() public {
         vm.warp(block.timestamp + 20 days);
 
         vm.prank(newLender);
@@ -4261,8 +4324,143 @@ contract EarlyWithdrawalFacetTest is Test {
         );
 
         vm.prank(lender);
-        vm.expectRevert(IVaipakamErrors.InvalidSaleOffer.selector);
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, longOffer);
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "an under-exposed (offer longer than remaining) sale still fills"
+        );
+    }
+
+    /// @dev #1923 (Codex #1929 r1 P1) — a loan at/past its maturity may not be
+    ///      sold even while still Active (grace, or after grace until default is
+    ///      triggered). The one-directional duration check floors remaining
+    ///      exposure at 0, so without an explicit maturity gate every positive
+    ///      offer would pass; this asserts the gate reverts SaleLoanPastMaturity
+    ///      first, matching the listed route.
+    function test_1923_refusesSaleAtOrPastMaturity() public {
+        // 30-day loan; warp just past maturity while it is still Active.
+        vm.warp(block.timestamp + 31 days);
+        vm.prank(lender);
+        vm.expectRevert(
+            EarlyWithdrawalDirectFacet.SaleLoanPastMaturity.selector
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
+    }
+
+    // ─── #1922 (#1503 item 6): the bound direct-sale entry ────────────────────
+
+    /// @dev The bound entry fills when execution is within the seller's reviewed
+    ///      economics. With the loan's own rate and no elapsed time the seller's
+    ///      cost is 0 and their net is the full principal, so generous bounds
+    ///      (floor 0, ceiling max) with a finite future deadline pass and the
+    ///      position migrates.
+    function test_1922_boundFillsWithinReviewedBounds() public {
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, type(uint256).max, uint64(block.timestamp + 1 days)
+        );
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "bound sale within reviewed economics fills"
+        );
+    }
+
+    /// @dev Refused when the seller's net would fall below the reviewed floor.
+    ///      No elapsed time ⇒ cost 0 ⇒ net == principal exactly, so a floor one
+    ///      wei above the principal is adverse drift.
+    function test_1922_boundRefusedNetBelowReviewed() public {
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleNetBelowReviewed.selector,
+                PRINCIPAL,
+                PRINCIPAL + 1
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, PRINCIPAL + 1, type(uint256).max, uint64(block.timestamp + 1 days)
+        );
+    }
+
+    /// @dev Refused when the fill lands after the seller's reviewed deadline.
+    ///      Warp first so the deadline is a real, non-zero past timestamp (a
+    ///      deadline of 0 is the "no deadline" sentinel, not a past one).
+    function test_1922_boundRefusedDeadlinePassed() public {
+        vm.warp(block.timestamp + 10 days);
+        uint64 pastDeadline = uint64(block.timestamp - 1);
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleQuoteExpired.selector,
+                pastDeadline
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, type(uint256).max, pastDeadline
+        );
+    }
+
+    /// @dev Refused when the held-for-lender balance that would migrate to the
+    ///      buyer exceeds the reviewed ceiling — the second bound, and the one
+    ///      the earlier revision wrongly compared against `liamCost` (Codex r1
+    ///      P1). Seed `heldForLender` to 50e18 (the pre-existing balance the sale
+    ///      migrates WHOLLY to the buyer, snapshotted as `priorHeld` before any
+    ///      shortfall deposit), then a ceiling of 40e18 is below it. The check
+    ///      reverts before any vault op, so no balance seeding is needed. Exact
+    ///      match: both figures are deterministic.
+    function test_1922_boundRefusedHeldAboveReviewed() public {
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleHeldAboveReviewed.selector,
+                uint256(50 ether),
+                uint256(40 ether)
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, 40 ether, uint64(block.timestamp + 1 days)
+        );
+    }
+
+    /// @dev The complement: a held ceiling AT the live balance passes (the seller
+    ///      reviewed at least this much migrating), proving the bound is `>` not
+    ///      `>=` and that a nonzero held balance within the ceiling still fills.
+    function test_1922_boundFillsWhenHeldWithinCeiling() public {
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
+        // Back the held balance so its migration to the buyer can settle.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        deal(mockERC20, lenderVault, 100 ether);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(lender, mockERC20, 100 ether);
+        deal(mockERC20, address(diamond), PRINCIPAL + 100 ether);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, 50 ether, uint64(block.timestamp + 1 days)
+        );
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "held balance at the ceiling fills"
+        );
+    }
+
+    /// @dev The deadline is MANDATORY on the bound entry (Codex r2 P1): a zero
+    ///      reverts `SaleDeadlineRequired`, because the finite cutoff is what
+    ///      bounds the reward forfeiture the sale charges at the fill day — the
+    ///      third reviewed cost, captured by neither the net floor nor the held
+    ///      ceiling. The unbound `sellLoanViaBuyOffer` carries no deadline; that
+    ///      is the disclosed-unbounded route, not this one.
+    function test_1922_boundRequiresDeadline() public {
+        vm.prank(lender);
+        vm.expectRevert(
+            EarlyWithdrawalDirectFacet.SaleDeadlineRequired.selector
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, type(uint256).max, 0
+        );
     }
 
     /// @dev Covers InvalidSaleOffer when buyOffer.collateralAmount > loan.collateralAmount
@@ -4568,9 +4766,12 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, wrongColl);
     }
 
-    /// @dev Covers excess refund path (buyOffer.amount > loan.principal) and excess > 0 branch
-    function testSellLoanExcessRefund() public {
-        // Create buy offer with higher principal than loan
+    /// @dev #1923 (#1503 item 15) — an offer whose amount EXCEEDS the principal
+    ///      is now refused outright (exact-match), where it used to fund the
+    ///      principal and refund the excess while consuming the whole offer.
+    ///      The old excess-refund + excess-refund-failure paths are gone with
+    ///      it, so this replaces both of the tests that covered them.
+    function test_1923_refusesOverfundedOffer() public {
         vm.prank(newLender);
         uint256 excessOffer = OfferCreateFacet(address(diamond)).createOffer(
             LibVaipakam.CreateOfferParams({
@@ -4603,73 +4804,15 @@ contract EarlyWithdrawalFacetTest is Test {
             })
         );
 
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector), abi.encode(true));
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
-
         vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleAmountNotExactPrincipal.selector,
+                PRINCIPAL + 100 ether,
+                PRINCIPAL
+            )
+        );
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
-
-        LibVaipakam.Loan memory loan = LoanFacet(address(diamond)).getLoanDetails(activeLoanId);
-        assertEq(loan.lender, newLender);
-        vm.clearMockedCalls();
-    }
-
-    /// @dev Covers excess refund failure path
-    function testSellLoanExcessRefundFails() public {
-        vm.prank(newLender);
-        uint256 excessOffer = OfferCreateFacet(address(diamond)).createOffer(
-            LibVaipakam.CreateOfferParams({
-                offerType: LibVaipakam.OfferType.Lender,
-                lendingAsset: mockERC20,
-                amount: PRINCIPAL + 100 ether,
-                interestRateBps: 500,
-                collateralAsset: mockCollateralERC20,
-                collateralAmount: COLLATERAL,
-                durationDays: 30,
-                assetType: LibVaipakam.AssetType.ERC20,
-                tokenId: 0,
-                quantity: 0,
-                creatorRiskAndTermsConsent: true,
-                prepayAsset: mockERC20,
-                collateralAssetType: LibVaipakam.AssetType.ERC20,
-                collateralTokenId: 0,
-                collateralQuantity: 0,
-                allowsPartialRepay: false,
-                allowsPrepayListing: false,
-                allowsParallelSale: false,
-                amountMax: PRINCIPAL + 100 ether,
-                interestRateBpsMax: 500,
-                collateralAmountMax: COLLATERAL,
-                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
-                expiresAt: 0,
-                fillMode: LibVaipakam.FillMode.Partial,
-                refinanceTargetLoanId: 0,
-                useFullTermInterest: false
-            })
-        );
-
-        // First vaultWithdraw (principal) succeeds, second (excess refund) fails
-        // Use specific args to differentiate:
-        // Principal withdraw: (newLender, mockERC20, lender, PRINCIPAL)
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, newLender, mockERC20, lender, PRINCIPAL),
-            abi.encode(true)
-        );
-        // Excess refund: (newLender, mockERC20, newLender, 100 ether) — fails
-        vm.mockCallRevert(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector, newLender, mockERC20, newLender, uint256(100 ether)),
-            "refund fail"
-        );
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.burnNFT.selector), "");
-        vm.mockCall(address(diamond), abi.encodeWithSelector(VaipakamNFTFacet.mintNFT.selector), "");
-
-        vm.prank(lender);
-        vm.expectRevert(bytes("refund fail"));
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, excessOffer);
-        vm.clearMockedCalls();
     }
 
     // ─── createLoanSaleOffer NFT revert ─────────────────────────────────────
@@ -5577,7 +5720,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 interestRateBps: 5000, // Very high rate (50%)
                 collateralAsset: mockCollateralERC20,
                 collateralAmount: COLLATERAL,
-                durationDays: 29, // <= remaining days
+                durationDays: 30, // #1923: cover the loan's remaining exposure
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,
@@ -5962,13 +6105,13 @@ contract EarlyWithdrawalFacetTest is Test {
             TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
         assertTrue(buyerStart0 != 0, "fixture: buyer is an active staker pre-sale");
 
-        // Shrink the buy offer's residual term below the loan's remaining
-        // days so the borrower-favorability duration check still passes
-        // after the warp (the warp exists so the pre-sale stake start and
-        // the sale timestamp are distinguishable).
+        // Keep the buy offer's term at the loan's full 30 days so it COVERS
+        // the remaining exposure under the #1923 rule (a shorter term would now
+        // be refused as over-exposure). The warp exists only so the pre-sale
+        // stake start and the sale timestamp are distinguishable.
         LibVaipakam.Offer memory o =
             OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
-        o.durationDays = 7;
+        o.durationDays = 30;
         TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
         vm.warp(block.timestamp + 2 days);
 
@@ -5985,64 +6128,6 @@ contract EarlyWithdrawalFacetTest is Test {
         assertTrue(
             buyerStart1 != buyerStart0,
             "pre-sale tenure does not survive the mid-sale zero balance"
-        );
-    }
-
-    /// @notice #1817, Codex #1819 r4 P1 — with an OVERSIZED buy offer the
-    ///         buyer's last vault debit is the EXCESS REFUND, not the
-    ///         principal pull: the principal-pull stamp records the
-    ///         still-positive excess, and only after the refund does the
-    ///         balance reach its true minimum (zero here — no rate
-    ///         shortfall). The refund leg must re-stamp, or the pre-sale
-    ///         stake tenure survives an actual zero.
-    function test_1817_directSaleOversizedOfferTroughAtExcessRefund() public {
-        TestMutatorFacet(address(diamond)).setVpfiTokenRaw(mockERC20);
-
-        uint256 held = 500 ether;
-        address oldVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
-        ERC20Mock(mockERC20).mint(oldVault, held);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(lender, mockERC20, held);
-        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, held);
-        TestMutatorFacet(address(diamond)).setLenderProceedsEncumberedRaw(activeLoanId, mockERC20, held);
-        TestMutatorFacet(address(diamond)).setEncumberedRaw(lender, mockERC20, 0, held);
-
-        // Grow the buy offer past the principal and fund the difference in
-        // the buyer's vault, as the larger creation escrow would have. The
-        // principal pull now leaves `extra` behind, so the buyer's zero
-        // only appears after the refund withdraws it.
-        uint256 extra = 100 ether;
-        LibVaipakam.Offer memory o =
-            OfferCancelFacet(address(diamond)).getOffer(buyOfferId);
-        o.amount = o.amount + extra;
-        o.amountMax = o.amount;
-        o.durationDays = 7;
-        TestMutatorFacet(address(diamond)).setOffer(buyOfferId, o);
-        address buyerVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newLender);
-        ERC20Mock(mockERC20).mint(buyerVault, extra);
-        TestMutatorFacet(address(diamond)).setProtocolTrackedVaultBalanceRaw(
-            newLender, mockERC20, ERC20Mock(mockERC20).balanceOf(buyerVault)
-        );
-
-        TestMutatorFacet(address(diamond)).restampUserVpfiRaw(newLender);
-        (uint40 buyerStart0, , , ) =
-            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
-        assertTrue(buyerStart0 != 0, "fixture: buyer is an active staker pre-sale");
-
-        vm.warp(block.timestamp + 2 days);
-
-        vm.prank(lender);
-        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
-
-        (uint40 buyerStart1, , , ) =
-            TestMutatorFacet(address(diamond)).getStakeRollupStateRaw(newLender);
-        assertEq(
-            buyerStart1,
-            uint40(block.timestamp),
-            "buyer's stake start RESET - the post-refund zero was observed"
-        );
-        assertTrue(
-            buyerStart1 != buyerStart0,
-            "pre-sale tenure does not survive the post-refund zero"
         );
     }
 
@@ -6079,7 +6164,7 @@ contract EarlyWithdrawalFacetTest is Test {
                 interestRateBps: 500,
                 collateralAsset: mockCollateralERC20,
                 collateralAmount: COLLATERAL,
-                durationDays: 7,
+                durationDays: 30, // #1923: cover the loan's remaining exposure
                 assetType: LibVaipakam.AssetType.ERC20,
                 tokenId: 0,
                 quantity: 0,

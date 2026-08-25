@@ -99,12 +99,37 @@ async function liquidatePassForChain(
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
+  // PIN THE WHOLE SCAN TO ONE BLOCK (Codex #1924 r20).
+  //
+  // `activeLoanIdsList` is maintained by swap-and-pop
+  // (`LibMetricsHooks._removeFromActiveLoanList`): removing an entry moves the
+  // LAST id into the freed slot. So if a loan on an earlier page closes while
+  // we are paging, the tail loan moves backwards — behind the cursor — and is
+  // never returned by any page. Every read succeeds, `pagesComplete` stays
+  // true, and a still-active loan is silently missing from the scan. Reading
+  // a mutable list across several calls does not produce a snapshot, however
+  // healthy each individual call looks.
+  //
+  // One `eth_blockNumber` per chain per tick buys a consistent view for the
+  // count, every page, and every HF read. It is an I/O wait rather than CPU,
+  // so it does not work against #1896's budget.
+  let pinnedBlock: bigint;
+  try {
+    pinnedBlock = await client.getBlockNumber();
+  } catch (err) {
+    console.error(
+      `[keeper] liquidator chain=${chain.name} getBlockNumber failed: ${String(err).slice(0, 200)}`,
+    );
+    return [];
+  }
+
   let total: bigint;
   try {
     total = (await client.readContract({
       address: diamond,
       abi: METRICS_ABI,
       functionName: 'getActiveLoansCount',
+      blockNumber: pinnedBlock,
     })) as bigint;
   } catch (err) {
     console.error(
@@ -112,10 +137,26 @@ async function liquidatePassForChain(
     );
     return [];
   }
-  if (total === 0n) return [];
+  if (total === 0n) {
+    // A healthy chain with nothing to do STILL emits completion (Codex #1924
+    // r18). The stand-down checklist counts one line per resolved chain, so
+    // suppressing it here would make a perfectly good chain indistinguishable
+    // from an unscanned one and strand manual coverage indefinitely. The
+    // count-read FAILURE above stays silent on purpose — that one genuinely
+    // did not scan.
+    logScanComplete(chain, 0, 0, 0);
+    return [];
+  }
 
   // Page the loan-id list.
   const ids: bigint[] = [];
+  // A page failure breaks pagination but leaves earlier pages in `ids`, so
+  // the scan continues over a PARTIAL loan set. That must not be reported as
+  // complete: the loans in the pages never fetched were never checked, and
+  // the stand-down checklist would let manual coverage stop over them
+  // (Codex #1924 r18). Tracked explicitly rather than inferred from
+  // `ids.length`, which is non-empty in exactly this case.
+  let pagesComplete = true;
   for (let off = 0n; off < total; off += SCAN_PAGE) {
     let page: readonly bigint[];
     try {
@@ -124,17 +165,22 @@ async function liquidatePassForChain(
         abi: METRICS_ABI,
         functionName: 'getActiveLoansPaginated',
         args: [off, SCAN_PAGE],
+        blockNumber: pinnedBlock,
       })) as readonly bigint[];
     } catch (err) {
       console.error(
         `[keeper] liquidator chain=${chain.name} page off=${off} failed: ${String(err).slice(0, 200)}`,
       );
+      pagesComplete = false;
       break;
     }
     if (page.length === 0) break;
     ids.push(...page);
   }
-  if (ids.length === 0) return [];
+  if (ids.length === 0) {
+    if (pagesComplete) logScanComplete(chain, 0, 0, 0);
+    return [];
+  }
 
   // Batch-read HF via Multicall3 (deployed at the canonical address on
   // every viem-known chain). Falls back to a serial read if multicall
@@ -147,6 +193,14 @@ async function liquidatePassForChain(
   // loans revert `IlliquidLoanNoRiskMath` and land in the failure
   // bucket — exactly the design split (calendar rows cover them).
   const readings: HfReading[] = [];
+  // Loans whose HF could not be evaluated for a reason that is NOT the
+  // by-design illiquid revert. A short `readings` alone does not mean a gap —
+  // illiquid loans revert `IlliquidLoanNoRiskMath` and are meant to land in
+  // the failure bucket (calendar rows cover them). But an RPC-level failure
+  // on a multicall entry, or in the serial fallback, means a RISK-BEARING
+  // loan went unevaluated, and the completion marker must not claim the chain
+  // was scanned (Codex #1924 r19).
+  let unevaluated = 0;
   for (let i = 0; i < ids.length; i += HF_MULTICALL_CHUNK) {
     const chunk = ids.slice(i, i + HF_MULTICALL_CHUNK);
     const contracts = chunk.map((id) => ({
@@ -157,7 +211,11 @@ async function liquidatePassForChain(
     }));
     let results: { status: 'success' | 'failure'; result?: unknown; error?: Error }[];
     try {
-      results = (await client.multicall({ contracts, allowFailure: true })) as typeof results;
+      results = (await client.multicall({
+        contracts,
+        allowFailure: true,
+        blockNumber: pinnedBlock,
+      })) as typeof results;
     } catch (err) {
       console.error(
         `[keeper] liquidator chain=${chain.name} multicall chunk ${i}/${ids.length} failed: ${String(err).slice(0, 200)}`,
@@ -171,6 +229,7 @@ async function liquidatePassForChain(
             abi: RISK_ABI,
             functionName: 'calculateHealthFactor',
             args: [id],
+            blockNumber: pinnedBlock,
           })) as bigint;
           results.push({ status: 'success', result: hf });
         } catch (subErr) {
@@ -180,13 +239,24 @@ async function liquidatePassForChain(
     }
     for (let j = 0; j < chunk.length; j++) {
       const r = results[j];
-      if (r.status !== 'success' || typeof r.result !== 'bigint') continue;
+      if (r.status !== 'success' || typeof r.result !== 'bigint') {
+        if (!isIlliquidRevert(r?.error)) unevaluated += 1;
+        continue;
+      }
       readings.push({ id: chunk[j], hf: r.result as bigint });
     }
   }
+  if (unevaluated > 0) {
+    console.error(
+      `[keeper] liquidator chain=${chain.name} ${unevaluated}/${ids.length} loan(s) unevaluated (HF read failed) — scan incomplete`,
+    );
+  }
 
   const atRisk = readings.filter((r) => r.hf < HF_LIQUIDATION_THRESHOLD);
-  if (atRisk.length === 0) return readings;
+  if (atRisk.length === 0) {
+    if (pagesComplete && unevaluated === 0) logScanComplete(chain, readings.length, 0, 0);
+    return readings;
+  }
   // Lowest HF first — the keeper's gas budget goes to the most-at-risk
   // loans first when the submit cap is hit.
   atRisk.sort((a, b) => (a.hf < b.hf ? -1 : 1));
@@ -202,7 +272,54 @@ async function liquidatePassForChain(
     const submitted = await maybeAutonomousLiquidate(env, chain, r.id, r.hf, client);
     if (submitted) submits += 1;
   }
+  if (pagesComplete && unevaluated === 0) {
+    logScanComplete(chain, readings.length, atRisk.length, submits);
+  }
   return readings;
+}
+
+/**
+ * Is this HF-read failure the EXPECTED illiquid revert rather than a gap?
+ *
+ * Illiquid loans have no oracle and deliberately revert
+ * `IlliquidLoanNoRiskMath`; they are covered by calendar rows, not by HF
+ * math, so their absence from `readings` is the design working. Treating
+ * every failed entry as a scan gap would suppress the completion marker on
+ * healthy chains that simply hold illiquid collateral — the false-red half of
+ * the r18 finding, in a new place. Only unrecognised failures count.
+ */
+function isIlliquidRevert(err: unknown): boolean {
+  return err !== undefined && err !== null && /IlliquidLoanNoRiskMath/.test(String(err));
+}
+
+/**
+ * #1896 — POSITIVE evidence that this chain was actually scanned.
+ *
+ * Every other line this pass emits on the unhappy paths is a FAILURE marker,
+ * and the failures are caught at four different depths — `getActiveLoansCount`,
+ * a page fetch, a multicall chunk, and `runLiquidator`'s own per-chain catch.
+ * Each returns or breaks, the pass finishes normally, and `timedPass` logs
+ * `done in Nms` regardless. So "the tick looked clean" was never checkable by
+ * absence: an operator would have to know the complete set of failure strings,
+ * and that set grows silently whenever a new failure path is added. Three
+ * successive attempts to write the stand-down condition as a list of markers
+ * NOT to see were each incomplete (Codex #1924 r15, r16, r17).
+ *
+ * This line inverts it. One per chain, emitted only where the scan genuinely
+ * completed, so the check becomes "count these against the resolved chain set"
+ * — the same shape as the per-tick `chains resolved:` line, and verifiable
+ * without knowing anything about how the pass can fail.
+ */
+function logScanComplete(
+  chain: ChainConfig,
+  scanned: number,
+  atRisk: number,
+  submitted: number,
+): void {
+  // eslint-disable-next-line no-console
+  console.log(
+    `[keeper] liquidator chain=${chain.name} scan complete: scanned=${scanned} atRisk=${atRisk} submitted=${submitted}`,
+  );
 }
 
 /** Fail-open wrapper around the band pass — belt-and-braces on top of

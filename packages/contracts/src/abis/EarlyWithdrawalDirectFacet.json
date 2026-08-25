@@ -18,6 +18,39 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "sellLoanViaBuyOfferBound",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "buyOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMinSellerNet",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMaxHeld",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "LoanSold",
     "inputs": [
@@ -1967,6 +2000,22 @@
   },
   {
     "type": "error",
+    "name": "SaleAmountNotExactPrincipal",
+    "inputs": [
+      {
+        "name": "authored",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "principal",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleBelowSellerFloor",
     "inputs": [
       {
@@ -1994,6 +2043,43 @@
         "name": "borrower",
         "type": "address",
         "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleDeadlineRequired",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SaleExposureExceedsAuthoredDuration",
+    "inputs": [
+      {
+        "name": "remainingSecs",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "authoredSecs",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleHeldAboveReviewed",
+    "inputs": [
+      {
+        "name": "held",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMax",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -2067,6 +2153,11 @@
   },
   {
     "type": "error",
+    "name": "SaleLoanPastMaturity",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "SaleLtvAboveAdmissionCap",
     "inputs": [
       {
@@ -2081,6 +2172,22 @@
       },
       {
         "name": "capBps",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleNetBelowReviewed",
+    "inputs": [
+      {
+        "name": "net",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMin",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -2120,6 +2227,17 @@
         "name": "floor",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleQuoteExpired",
+    "inputs": [
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },

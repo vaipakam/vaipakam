@@ -109,6 +109,7 @@ import {
   linkTelegram,
   OptOutStorageUnavailableError,
   reserveTestAlert,
+  sweepExpiredLinks,
   unlinkTelegram,
   upsertThresholds,
 } from './db';
@@ -147,6 +148,43 @@ export default {
       pruneOldSupportTickets(resolved).catch((err) => {
         // eslint-disable-next-line no-console
         console.error('[agent] pruneOldSupportTickets pass failed:', err);
+      }),
+    );
+    // #1896 — expired Telegram handshake codes. This sweep used to run
+    // only inside the keeper's watcher, which made a keeper outage
+    // silently stop the ONLY cleanup of a table this Worker fills:
+    // `issueTelegramLinkCode` is an agent route, so codes kept being
+    // handed out with nothing clearing them. The agent is the right
+    // owner either way — it issues the codes, it already prunes its own
+    // diagnostics and support tickets on this same tick, and the sweep
+    // is a single bounded DELETE. `apps/keeper/src/db.ts` keeps its
+    // identical copy so the watcher still sweeps once rescheduled;
+    // both are idempotent, so overlapping runs are harmless.
+    //
+    // REQUIRES A DEPLOY OF THIS WORKER TO TAKE EFFECT (Codex #1924 r17).
+    // `apps/agent` does NOT auto-deploy on merge — see
+    // `docs/ops/D1CutoverArchiveToWarm.md` step 2 — while `apps/keeper`
+    // does. So the merge that empties the keeper's schedule removes the
+    // only live sweep and does NOT start this one: without an explicit
+    // `pnpm --filter @vaipakam/agent run deploy` in the same sitting, the
+    // migration makes the leak worse rather than fixing it.
+    //
+    // `run deploy`, NOT `exec wrangler deploy` — the line above used to spell
+    // the unsafe form, and r31 added this correction BENEATH it instead of
+    // replacing it, leaving one comment that gave two different commands with
+    // the wrong one first (Codex #1924 r32). There is now one instruction.
+    // This Worker has the same var
+    // hazard the keeper does: `env.ts` reads `RECIPIENT_VALIDATING_TOKENS`
+    // and `OPENSEA_OFFERS_MAX_PAGES`, neither of which is declared in
+    // `wrangler.jsonc`, so a bare deploy would delete them — silently
+    // disabling recipient-token validation and resetting OpenSea pagination
+    // while trying to turn this sweep on. The package script now carries the
+    // flag; `--keep-vars` only skips the DELETE step, so the config's own
+    // vars are still applied.
+    ctx.waitUntil(
+      sweepExpiredLinks(resolved.DB).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error('[agent] sweepExpiredLinks pass failed:', err);
       }),
     );
   },

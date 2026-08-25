@@ -101,7 +101,7 @@
  * this boundary, and hands every scheduled pass the plain resolved `Env`. (This said "all five passes"; ten are scheduled below.)
  */
 
-import { resolveEnv, type WorkerEnv } from './env';
+import { getChainConfigs, resolveEnv, type WorkerEnv } from './env';
 import { KEEPER_PASSES, cadenceSkipReason } from './passSchedule';
 
 /**
@@ -149,6 +149,27 @@ export default {
     // T-078 — resolve the Secrets Store bindings once, here at the
     // entry point; every scheduled pass gets the plain resolved env.
     const resolved = await resolveEnv(env);
+
+    // #1896 — name the RESOLVED chain set, once per tick.
+    //
+    // A chain drops out silently: `readSecret` collapses an absent binding or
+    // a failing Secrets Store fetch to `undefined` (deliberately — see its
+    // comment), and `getChainConfigs` then skips any chain with no RPC. The
+    // passes log per-chain, so a dropped chain produces NO line at all, and
+    // absence is not something an operator can read off a tail.
+    //
+    // That matters most for the CPU validation this Worker is unscheduled
+    // for: a tick can end `ok` purely because it ran against fewer chains
+    // than production will once the binding recovers, and the work scales
+    // with the chain set. This line turns that into a positive assertion to
+    // check against the expected deployments (Codex #1924 r13).
+    const chains = getChainConfigs(resolved);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[keeper] chains resolved: ${chains.length} — ${
+        chains.map((c) => `${c.name}(${c.id})`).join(', ') || 'NONE'
+      }`,
+    );
 
     // ONE loop over the declared table (#1896), rather than ten
     // hand-written blocks. Each pass still gets its own `waitUntil` and
