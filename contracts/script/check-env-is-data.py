@@ -46,7 +46,13 @@ from pathlib import Path
 # command loads, and permits exactly one answer. A path variable, a line wrap,
 # a new spelling — none of them help, because the allowed set is one shape and
 # everything else is reported. Continuations are joined before matching.
-# COMMAND POSITION: first token, or after a separator that starts a new command
+# COMMAND POSITION: first token, or after any keyword/operator that starts a new
+# command — `;` `&&` `||` `then` `else` `do` `if` `elif` `while` `until` `{` `!`.
+#
+# `if` was the sixth gap in this predicate, found the round after `&&` was the
+# fifth. The list is now the shell's own command-starting grammar rather than a
+# guess at which forms someone might write, which is the distinction the
+# previous five versions kept missing.
 # (`;`, `&&`, `||`, `then`, `else`, `do`, `{`). Anchoring to `^|;` alone missed
 # `true && source …` (Codex #1938 r8). The separators are enumerated rather than
 # "any punctuation" because the looser version fired on nineteen echoed
@@ -63,7 +69,7 @@ from pathlib import Path
 # Anchoring to command position is what separates them: shell sources at the
 # start of a command, and prose never is. The `;` alternative is there because
 # that is the form the indirect bypass used.
-SOURCING = re.compile(r'(?:^|;|&&|\|\||\bthen\b|\belse\b|\bdo\b|\{)\s*(?:source|\.)\s+(\S+)')
+SOURCING = re.compile(r'(?:^|;|&&|\|\||\bthen\b|\belse\b|\bdo\b|\bif\b|\belif\b|\bwhile\b|\buntil\b|\{|!)\s*(?:source|\.)\s+(\S+)')
 
 LOADER = re.compile(r'\bload_env_file\b')
 ALLOWED_SOURCE = re.compile(r'^"?\$\{?(?:SCRIPT_DIR|CONTRACTS_DIR)\}?/(?:script/)?lib/[A-Za-z0-9_.-]+\.sh"?$')

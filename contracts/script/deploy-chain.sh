@@ -250,32 +250,30 @@ EOF
   exit 1
 fi
 
-# ── Load .env BEFORE parsing anything the operator typed ──────────────
+# ── The anvil playground delegates BEFORE any configuration is read ───
 #
-# BOTH halves are needed and each fixes a different failure:
+# `deploy-chain.sh anvil` hands off to the self-contained anvil-bootstrap.sh,
+# which brings its own keys, RPC and mocks. Loading `.env` first contaminated
+# it even when the file was perfectly VALID — a stale `DEPLOY_SKIP_ARTIFACTS=true`
+# makes DeployDiamond skip writing `addresses.json` so the bootstrap configures
+# a stale recorded Diamond, and `ANVIL_WETH` replaces the mock it would create
+# (Codex #1938 r9). Deferring the MISSING and MALFORMED cases, as earlier rounds
+# did, left the ordinary case doing the damage.
 #
-#   READ AS DATA (lib/load-env.sh) — `source` executes the file in this
-#   shell, and no ordering survives that: it can `set -- …` and supply the
-#   command line itself.
+# Reading `$1` here does not reopen the override problem: `.env` is data now, so
+# it cannot rewrite the caller's arguments the way a sourced file could.
+if [ "${1:-}" = "anvil" ]; then
+  echo "anvil dev playground — delegating to anvil-bootstrap.sh (no .env read)"
+  exec bash "$SCRIPT_DIR/anvil-bootstrap.sh"
+fi
+
+# ── Load .env BEFORE parsing anything the operator typed ───────────────
 #
-#   LOAD FIRST — data-loading alone does NOT stop a plain `FRESH=1` from
-#   overwriting a parsed 0. #1938 r4 caught me removing this ordering after
-#   the data-loader landed, on the reasoning that position no longer
-#   mattered; it does, for exactly the case #1932 was filed about.
-#
-# A missing file is NOT fatal here, unlike the other wrappers:
-# `deploy-chain.sh anvil` delegates to the self-contained
-# anvil-bootstrap.sh and needs no `.env`. Moving the load ahead of the
-# parse broke that documented quick-loop once already (Codex #1938 r3), so
-# the error is DEFERRED to just past the anvil delegation, not dropped.
+# BOTH halves are needed: read as DATA (lib/load-env.sh) so the file cannot
+# execute or rewrite `$@`, and read FIRST so a plain `FRESH=1` cannot overwrite
+# a parsed 0.
 __env_missing=0
 if [ -f "$CONTRACTS_DIR/.env" ]; then
-  # A MALFORMED file is deferred exactly like a missing one. `set -euo
-  # pipefail` made a rejected `.env` abort here — before the anvil
-  # delegation — so a bad line in a file the local playground never reads
-  # still broke it (Codex #1938 r8). That is the same regression as the
-  # missing-file case, one round later, because I deferred one and not the
-  # other.
   load_env_file "$CONTRACTS_DIR/.env" || __env_missing=1
 else
   __env_missing=1
@@ -332,6 +330,11 @@ fi
 
 case "$CHAIN_SLUG" in
   anvil)
+    # UNREACHABLE for `deploy-chain.sh anvil` since #1938 r9 — the delegation
+    # now happens before `.env` is read, so the playground cannot be
+    # contaminated by a valid-but-stale configuration. Kept as a backstop for
+    # any future path that reaches the chain table with this slug, and so the
+    # table stays a complete list of the chains this script accepts.
     echo "anvil dev playground — delegating to anvil-bootstrap.sh"
     exec bash "$SCRIPT_DIR/anvil-bootstrap.sh"
     ;;
