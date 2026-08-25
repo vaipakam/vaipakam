@@ -21,12 +21,20 @@ All commands run from `contracts/` unless noted otherwise.
 > liquidation at all right now.
 >
 > Config changes here are still worth making: they latch correctly for when
-> the schedule returns. What they are not is a *response* — during the hold,
-> the on-chain kill-switch (§5 Tier 3 / `discountPathEnabled`) is the only
-> lever that changes live behaviour, because it also binds the external
-> liquidators who are currently the only automated liquidation on our
-> positions. Treat our own liquidation coverage as manual until a live
-> schedule is read back from Settings → Trigger Events.
+> the schedule returns. What they are not is a *response*. During the hold the
+> levers that change live behaviour are `AdminFacet.pauseAsset` and a broader
+> §3 protocol pause; the on-chain `discountPathEnabled` kill-switch does bind
+> the external liquidators who are currently the only automated liquidation on
+> our positions, but post-handover it carries the Timelock's 48h delay, so it
+> is the eventual targeted control rather than the immediate one. See
+> [`IncidentRunbook.md`](IncidentRunbook.md) §3.5 for the full tier breakdown
+> under this hold.
+>
+> Treat our own liquidation coverage as manual until **both** a live schedule
+> is read back from Settings → Trigger Events **and** a liquidator pass has
+> been observed actually running — a restored cron alone is not enough, since
+> the pass stays inert while `KEEPER_ENABLED` is false and the re-enable
+> sequence keeps it false through its unarmed-validation step.
 
 ---
 

@@ -191,9 +191,16 @@ recoverable back-pressure — not a fund-loss event.
 > terminated for exceeding CPU on ~100% of invocations. Everything below
 > describes the pass accurately **for when a schedule exists**; right now it
 > never executes, whatever the two flags say. **Treat the manual steps above as
-> the only remittance path** until you have read back a live schedule (Settings
-> → Trigger Events — not merely a quiet `wrangler tail`, which proves nothing
-> here). This matters most in exactly the incident this section is written for:
+> the only remittance path** until **both** a live schedule is read back
+> (Settings → Trigger Events — not merely a quiet `wrangler tail`, which proves
+> nothing here) **and** you have seen this pass actually run. A restored cron
+> alone is not enough: the pass is gated TWICE, on `KEEPER_ENABLED` and
+> `REWARD_REMIT_ENABLED`, and the re-enable sequence keeps the first false
+> through its unarmed-validation step. Worse, `timedPass` logs
+> `rewardBudgetRemit done in Nms` even when the pass returned instantly from
+> its gate — so read the accompanying `passIsArmed` skip line, which names the
+> blocking binding, rather than the `done` line.
+> This matters most in exactly the incident this section is written for:
 > if a finalized day is broadcast and you leave a mirror's claim gate open
 > expecting the keeper to fund it, nothing will, and users hit the claim
 > reverts this section warns about.
@@ -355,14 +362,28 @@ running.
 > - **Tier 1 / Tier 2** — already achieved by the hold, as far as our
 >   bot is concerned. Doing them is harmless and leaves the posture
 >   correctly latched for re-enable, but neither is the *response*.
-> - **Tier 3 is unaffected and is the effective lever.** It is an
->   on-chain kill-switch, so it binds external liquidators too, and
->   external liquidators are the only automated liquidation currently
->   happening on our positions.
-> - **Liquidation coverage from our side is manual** until a live
->   schedule is read back from Settings → Trigger Events (not merely a
->   quiet `wrangler tail`, which proves nothing here). Plan the
->   incident on that basis.
+> - **This removes one of the two immediate levers this section names
+>   below.** Post-handover the text names Tier 1 *and*
+>   `AdminFacet.pauseAsset` as the immediate-effect levers, with Tier 3
+>   as the timelocked permanent fix. During the hold Tier 1 is a no-op,
+>   so **`AdminFacet.pauseAsset` is the only immediate lever left**, and
+>   a broader §3 pause is the escalation. Reach for those first.
+> - **Tier 3 still binds external liquidators — but it is not fast.**
+>   Post-handover it is a Timelock-scheduled tx with the 48h delay (see
+>   the Tier 3 note below), so it is the eventual targeted control, not
+>   the incident response. Pre-handover, where it is a direct ADMIN_ROLE
+>   call, it does act immediately.
+> - **Liquidation coverage from our side is manual, and stays manual
+>   longer than the schedule alone implies.** A restored cron is NOT the
+>   end of it: `runLiquidator` returns immediately from `passIsArmed`
+>   while `KEEPER_ENABLED` is false, and the re-enable sequence
+>   deliberately keeps it false through its unarmed-validation step —
+>   which spans a full 15-minute cycle and can span a daily window.
+>   Keep manual coverage until **both** a live schedule is read back
+>   from Settings → Trigger Events (not a quiet `wrangler tail`, which
+>   proves nothing here) **and** you have watched a liquidator pass
+>   actually run — a `liquidator done in Nms` line with no accompanying
+>   `passIsArmed` skip line naming a blocking binding.
 
 Three escalation tiers, least to most disruptive:
 
