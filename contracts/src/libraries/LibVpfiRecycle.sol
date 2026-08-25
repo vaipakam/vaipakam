@@ -497,19 +497,26 @@ library LibVpfiRecycle {
      *         via {VPFITokenFacet.getVPFIToken}, call its `balanceOf` on the
      *         Diamond, subtract {ConfigFacet.getRecycleBucket} AND both
      *         #1434 recovery reservations — all at the same block, or the
-     *         answer is meaningless. The recovery terms are not separately
-     *         published outside
-     *         {InteractionRewardsLensFacet.getRecycleBackingSnapshot}, which
-     *         is the practical answer: read them there rather than
-     *         reassembling this. This described the chain as bucket-only
+     *         answer is meaningless. Both recovery terms ARE separately
+     *         readable — {RewardRemittanceLensFacet.getStrandedRecoveryReserved}
+     *         and {RewardRemittanceLensFacet.getRecoveryPosition} — so the
+     *         reconstruction is FIVE block-consistent reads, not impossible.
+     *         (I wrote "not separately published outside
+     *         {InteractionRewardsLensFacet.getRecycleBackingSnapshot}" in
+     *         the #1349 pass without grepping for the getters; the same
+     *         reachability overstatement this paragraph already carries a
+     *         retraction for two sentences down, made again while
+     *         correcting it.) This also described the chain as bucket-only
      *         until #1349, a procedure that yields a LARGER figure than the
      *         claim and sweep gates use and can show reserved recovery
      *         funds as available. An earlier revision
      *         called it "observable nowhere", which was the same reachability
      *         overstatement already corrected for the mirror term (Codex
-     *         #1487 r3). What this adds is ATOMICITY and one call instead of
-     *         three, which is why a deployment could satisfy
-     *         all three and look healthy. Publishing it does NOT close the
+     *         #1487 r3). What the snapshot adds is ATOMICITY and one call
+     *         instead of five — the count grew with the terms, and five
+     *         reads that must share a block is a STRONGER argument for the
+     *         single call than three was, not a weaker one — which is why a
+     *         deployment could satisfy all three and look healthy. Publishing it does NOT close the
      *         defect; it makes the difference between "corrupted" and
      *         "merely eligible" readable instead of assumed.
      *
