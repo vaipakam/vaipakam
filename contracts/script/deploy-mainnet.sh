@@ -397,9 +397,18 @@ esac
 # exposure (#1932). Kept bash-3.2 safe (indirect expansion + `printf -v`,
 # no associative arrays): an operator on stock macOS bash must be able to
 # run a mainnet deploy.
-CLI_OWNED_VARS=(PHASE FRESH CONFIRM_MULTISIG CONFIRM_ORPHANS CONFIRM_HW_SIGNER CONFIRM_DEADLINE_RESET CONFIRM_PURGE_MAINNET CONFIGURE_VPFI_PEG_OPT)
+CLI_OWNED_VARS=(CHAIN_SLUG PHASE FRESH CONFIRM_MULTISIG CONFIRM_ORPHANS CONFIRM_HW_SIGNER CONFIRM_DEADLINE_RESET CONFIRM_PURGE_MAINNET CONFIGURE_VPFI_PEG_OPT)
 __cli_owned_saved=()
 for __v in "${CLI_OWNED_VARS[@]}"; do __cli_owned_saved+=("${!__v-}"); done
+# READONLY, and this is not belt-and-braces — it closes the hole the
+# mechanism itself opened. `set -a; source` can overwrite ANY global,
+# including the list and the saved values the restore loop then trusts:
+# a `.env` carrying `CLI_OWNED_VARS=(PHASE)` made the loop restore PHASE
+# alone and left every confirmation exactly as that file set them
+# (reproduced — Codex #1938 r1 P1). Under `set -euo pipefail` an
+# assignment to these from the sourced file now aborts the deploy
+# loudly instead of silently disarming the protection.
+readonly CLI_OWNED_VARS __cli_owned_saved
 
 if [ -f "$CONTRACTS_DIR/.env" ]; then
   set -a; source "$CONTRACTS_DIR/.env"; set +a

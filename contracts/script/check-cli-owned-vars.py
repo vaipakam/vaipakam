@@ -40,6 +40,9 @@ SCRIPTS = ("deploy-mainnet.sh", "deploy-testnet.sh")
 # because the names look specific enough to act on.
 ASSIGN = re.compile(r'\b([A-Z][A-Z0-9_]{2,})=')
 
+# A positional operator argument: `NAME="$1"` (typically followed by `shift`).
+POSITIONAL = re.compile(r'\b([A-Z][A-Z0-9_]{2,})="\$1"')
+
 
 def strip_comment(line: str) -> str:
     """Drop a `#` comment tail, ignoring `#` inside single or double quotes."""
@@ -84,8 +87,18 @@ def main() -> int:
     bad = 0
     for name in SCRIPTS:
         text = (here / name).read_text()
+        clean = [strip_comment(l) for l in text.splitlines()]
         body = '\n'.join(strip_comment(l) for l in case_block(text).splitlines())
         parsed = set(ASSIGN.findall(body))
+        # POSITIONAL decisions count too. `CHAIN_SLUG="$1"; shift` never
+        # appears inside the case block, so a checker that reads only that
+        # block certifies its own blind spot as compliant — which is exactly
+        # what the first version of this file did while #1938 r1 was finding
+        # the unprotected `CHAIN_SLUG` by hand. A chain selected on the
+        # command line and silently replaced from `.env` splits the run:
+        # the registry and RPC resolve before the file is read, the artifact
+        # directory and markers after it.
+        parsed |= {m for line in clean for m in POSITIONAL.findall(line)}
         listed = set(declared(text))
         if not parsed:
             raise SystemExit(f"FAIL: {name} — case block assigned no variables; parser drifted")
