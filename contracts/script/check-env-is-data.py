@@ -34,15 +34,35 @@ from pathlib import Path
 # ANY path ending in `.env`, however it is spelled — `$CONTRACTS_DIR/.env`,
 # `"$SCRIPT_DIR/../.env"`, a bare relative path. Codex #1938 r4 bypassed a
 # version of this that hard-coded the `$CONTRACTS_DIR` spelling.
-SOURCING = re.compile(r'(?:^|;|\s)(?:source|\.)\s+\S*\.env\b')
+# The ONLY thing these scripts may source is a helper under `script/lib/`.
+#
+# Three predicates have failed here already, each because it modelled how the
+# offending line would be WRITTEN: `case "$1"`-only; `$CONTRACTS_DIR`-only;
+# then "command and `.env` on the same physical line", which Codex #1938 r6
+# walked past with `env_file="$CONTRACTS_DIR/.env"; source "$env_file"` and
+# with a backslash line-continuation.
+#
+# So this no longer looks for `.env` at all. It asks what each `source` /`.`
+# command loads, and permits exactly one answer. A path variable, a line wrap,
+# a new spelling — none of them help, because the allowed set is one shape and
+# everything else is reported. Continuations are joined before matching.
+# FIRST TOKEN on a (continuation-joined) line, or immediately after a `;`.
+#
+# Four predicates have failed here, each in a new way, and the last two failed
+# in OPPOSITE directions: one missed `env_file=…; source "$env_file"` and a
+# line-wrap, and its replacement fired on nineteen legitimate lines because a
+# sentence-ending period inside an echoed string reads exactly like the `.`
+# command. Both failure modes are fatal to a guard — one lets the thing
+# through, the other trains people to ignore it.
+#
+# Anchoring to command position is what separates them: shell sources at the
+# start of a command, and prose never is. The `;` alternative is there because
+# that is the form the indirect bypass used.
+SOURCING = re.compile(r'(?:^|;)\s*(?:source|\.)\s+(\S+)')
+
 LOADER = re.compile(r'\bload_env_file\b')
-# The GATE must be as wide as the predicate. A version of this widened the
-# sourcing pattern to any `.env` path and left this one pinned to
-# `$CONTRACTS_DIR`, so a helper sourcing `"$SCRIPT_DIR/../.env"` was not even
-# considered — the file was skipped before the check ran. That is the fifth
-# time in this PR that half a guard was widened and its sibling left behind,
-# which is the argument for keeping both patterns adjacent and identical in
-# shape.
+ALLOWED_SOURCE = re.compile(r'^"?\$\{?(?:SCRIPT_DIR|CONTRACTS_DIR)\}?/(?:script/)?lib/[A-Za-z0-9_.-]+\.sh"?$')
+
 MENTIONS_ENV = re.compile(r'\S*\.env\b')
 
 
@@ -57,13 +77,38 @@ def main() -> int:
         if not MENTIONS_ENV.search(text):
             continue
         checked += 1
-        offenders = [i for i, line in enumerate(text.splitlines(), 1)
-                     if SOURCING.search(line) and not line.lstrip().startswith('#')]
+        # (line-number, logical-line). Joining continuations renumbers lines,
+        # and a guard that reports the wrong line sends the reader hunting —
+        # so the FIRST physical line of each logical line is carried along.
+        joined, buf, start = [], '', 0
+        for lineno, raw in enumerate(text.splitlines(), 1):
+            # Drop comment-only lines BEFORE joining continuations — joining
+            # first merged a comment onto the code line above it and made the
+            # comment look like part of a command.
+            if raw.lstrip().startswith('#') and not buf:
+                continue
+            if not buf:
+                start = lineno
+            line = buf + raw
+            if line.rstrip().endswith('\\'):
+                buf = line.rstrip()[:-1]
+                continue
+            buf = ''
+            joined.append((start, line))
+
+        offenders = []
+        for i, line in joined:
+            if line.lstrip().startswith('#'):
+                continue
+            for m in SOURCING.finditer(line):
+                target = m.group(1)
+                if not ALLOWED_SOURCE.match(target):
+                    offenders.append((i, target))
         if offenders:
             bad = 1
-            for i in offenders:
-                print(f"  x {path.name}:{i} — SOURCES .env; use `load_env_file` "
-                      f"(lib/load-env.sh) so the file is read as data",
+            for i, target in offenders:
+                print(f"  x {path.name}:{i} — sources {target}; only script/lib/*.sh "
+                      f"may be sourced. Read .env with `load_env_file`.",
                       file=sys.stderr)
         elif any(LOADER.search(l) for l in text.splitlines()
                  if not l.lstrip().startswith('#')):

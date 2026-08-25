@@ -59,7 +59,15 @@ mkdir -p "$SENTINEL_DIR"
 # Optional here: calldata and unpause modes need no RPC, and the --check
 # branch enforces presence per-chain.
 if [ -f "$CONTRACTS_DIR/.env" ]; then
-  load_env_file "$CONTRACTS_DIR/.env"
+  # NON-FATAL here, unlike the deploy wrappers. This is the emergency pause
+  # path: `calldata` and `--unpause-calldata` need no RPC at all, and a
+  # malformed or undocumented `.env` must not stop an operator producing
+  # pause calldata during an incident (Codex #1938 r6). The `--check` branch
+  # enforces per-chain RPC presence itself, so a skipped load surfaces there
+  # as a specific error rather than as a silent gap.
+  load_env_file "$CONTRACTS_DIR/.env" || {
+    echo "Warning: .env was not loaded; --check will report any RPC it needs." >&2
+  }
 fi
 
 MODE="calldata"

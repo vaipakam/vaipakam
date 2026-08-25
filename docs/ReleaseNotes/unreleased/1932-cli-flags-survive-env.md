@@ -83,12 +83,21 @@ being stored complete with the note, which broke an exact comparison in the
 emergency pause script and would have made it treat a handed-over chain as
 not-yet-handed-over.
 
-The check that keeps this honest is now deliberately blunt: it asks whether any
-script runs the file, rather than trying to reason about where each script reads
-its options. The three previous versions of that check each certified their own
-blind spot — one looked at only one style of option, one looked at only two of
-the scripts, and one could be walked around by writing the option parsing a
-different way. A question with no moving parts has nowhere to be incomplete.
+The check that keeps this honest asks one question — does any script execute the
+file — and nothing else. Earlier versions of it tried to reason about where each
+script reads its options, and every one of them certified something it was written
+to prevent: one looked at a single style of option, one looked at only two of the
+scripts, one could be walked around by writing the option parsing differently, and
+one fired on nineteen ordinary lines because a full stop inside a printed sentence
+looks exactly like the shell's own load command. A question with no moving parts
+has nowhere to be wrong in either direction.
+
+An earlier draft of this note, and of the specification, described a different
+check — one that compared a list of protected options against the options each
+script accepts. That check was removed when the approach changed, and both
+documents kept describing it. They now describe what is actually there, which
+matters more than usual here: this work exists because documentation that had
+quietly stopped matching the code cost real time.
 
 Nothing changes for an operator who was not relying on the settings file to
 supply these switches, which is everyone following the documented process.
