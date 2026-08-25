@@ -1019,6 +1019,93 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('resolves a relative cd BETWEEN siblings (#1924 r39)', () => {
+    // `cd apps/agent; cd ../keeper` ends in apps/keeper; scoring each target
+    // as its own boolean saw `../keeper` and recorded non-keeper.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent; cd ../keeper; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('resolves a relative cd back OUT of the keeper (#1924 r39)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper; cd ../../apps/agent; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('keeps a keeper state reachable across a || fallback (#1924 r39)', () => {
+    // The left cd succeeds in this tree, so the deploy runs from the keeper;
+    // applying both cds unconditionally ended in agent scope.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper || cd apps/agent; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('flags the other || order too — keeper is still reachable (#1924 r39)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent || cd apps/keeper; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('&& does NOT keep the pre-cd state reachable (#1924 r39)', () => {
+    // Unlike ||, the right-hand side of && runs only when the cd SUCCEEDED, so
+    // apps/agent is the only reachable state. Modelling both would be a false
+    // positive.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent && wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('pushd/popd still restore the directory through the state set (#1924 r39)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pushd apps/keeper; pushd ../agent; popd; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects --keep-vars\\=false, which bash passes as --keep-vars=false (#1924 r39)', () => {
+    const r = runWith(
+      'apps/keeper/release.sh',
+      '#!/usr/bin/env bash\nwrangler deploy --keep-vars\\=false\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('rejects --keep-vars"="false (#1924 r39)', () => {
+    const r = runWith(
+      'apps/keeper/release.sh',
+      '#!/usr/bin/env bash\nwrangler deploy --keep-vars"="false\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("rejects --keep-vars'='false (#1924 r39)", () => {
+    const r = runWith(
+      'apps/keeper/release.sh',
+      "#!/usr/bin/env bash\nwrangler deploy --keep-vars'='false\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('still accepts a plain --keep-vars after the normalisation (#1924 r39)', () => {
+    const r = runWith(
+      'apps/keeper/release.sh',
+      '#!/usr/bin/env bash\nwrangler deploy --keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('does not flag a sibling Worker manifest with a bare deploy', () => {
     // apps/agent and apps/indexer legitimately run bare deploys — they have no
     // dashboard-managed vars absent from their configs. Only the keeper is in

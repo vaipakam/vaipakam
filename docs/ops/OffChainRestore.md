@@ -1440,18 +1440,38 @@ caught at the cheapest stage.
 
    > **⚠ HOLD — #1896: the keeper is deliberately UNSCHEDULED.**
    > `apps/keeper/wrangler.jsonc` commits `"crons": []` because the Worker
-   > was terminated for exceeding CPU on ~100% of invocations. **Restore
-   > neither the schedule nor `KEEPER_ENABLED` in this step** until #1896's
-   > CPU work has landed — deploy the keeper so its script and bindings are
-   > current, then stop, and record the hold in the restore log. With no
-   > schedule, no pass runs, so the "watch one keeper tick" check below has
-   > nothing to observe: a quiet tail is the expected state here, not a
-   > passing check. Re-enable later via the sequence kept beside the empty
-   > list in `apps/keeper/wrangler.jsonc`.
+   > was terminated for exceeding CPU on ~100% of invocations.
+   >
+   > **This step is therefore SPLIT.** Branch **A** is the whole of it while
+   > the hold is active; branch **B** — arming `KEEPER_ENABLED` and restoring
+   > the schedule — is **deferred until #1896's CPU work has landed**. Do not
+   > read on past A and carry out B because it is the next thing on the page:
+   > that re-arms a Worker known to exhaust its CPU, and with it every
+   > fund-moving pass.
 
    Before deploying: confirm the keeper EOA is the address you expect and
-   is funded on every chain it submits from. After deploying, watch one
-   keeper tick.
+   is funded on every chain it submits from.
+
+   #### A. During the hold — the only keeper actions in this step
+
+   Deploy so the script and bindings are current. Nothing else.
+
+   ```bash
+   ( cd apps/keeper && wrangler deploy --keep-vars )
+   ```
+
+   Then **stop here** and record the hold in the restore log. Do not arm
+   `KEEPER_ENABLED`, and do not put a schedule back. With no schedule no pass
+   runs, so the "watch one keeper tick" check has nothing to observe: a quiet
+   tail is the expected state, not a passing check. Continue to the next
+   numbered step.
+
+   #### B. After the hold lifts — #1896's CPU work landed, not before
+
+   Everything from here to the end of this step is branch B. Run it only once
+   the hold is over; the full re-enable sequence, including the validation
+   passes this summary does not repeat, is kept beside the empty list in
+   `apps/keeper/wrangler.jsonc` and is the authority.
 
    **How they are actually held, verified against the live deployment
    (2026-07-30) — because this document previously guessed, and guessed
@@ -1466,9 +1486,13 @@ caught at the cheapest stage.
    does not match that comment. Trust the readback in step 4, not the comment
    (correcting it is #1465).
 
-   So restore them **the way they are held**:
+   So restore them **the way they are held** — branch B only, so not while
+   the #1896 hold is active:
 
    ```bash
+   # DEFERRED while #1896 holds. Arming this with no schedule does nothing;
+   # arming it alongside the schedule restore below re-arms the Worker that
+   # was terminated for exceeding CPU, and every fund-moving pass with it.
    ( cd apps/keeper
      wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
    ```
@@ -1477,11 +1501,12 @@ caught at the cheapest stage.
    only if they were on before.
 
    **Then restore the keeper's schedule — nothing else in this document
-   does.** §1 step 9 replaced it with `"crons": []`, §7a step 1 restores
+   does** (still branch B: not while the #1896 hold is active). §1 step 9
+   replaced it with `"crons": []`, §7a step 1 restores
    only the *agent's* (deliberately: the keeper's schedule signs, so it is
    armed last), and the indexer's is restored in §6. `wrangler secret put`
-   writes a secret; it does not register trigger events. Without this the
-   restore finishes with every flag correct and every keeper tick stopped —
+   writes a secret; it does not register trigger events. Without this a
+   post-hold restore finishes with every flag correct and every keeper tick stopped —
    liquidation, matching, remittance, commitment reporting and the daily
    snapshot all silently dead, with the settings readback showing green.
 

@@ -260,7 +260,7 @@ function stripOtherOptionValues(line) {
  * false-ish value disables.
  */
 function flagEnabled(rawLine, flag) {
-  const line = stripOtherOptionValues(stripRedirections(rawLine));
+  const line = stripOtherOptionValues(stripRedirections(normalizeFlagEquals(rawLine)));
   // Quoted values are values. An earlier pattern excluded quotes from the
   // captured value, so `--keep-vars="false"` failed the capture, backtracked
   // to the optional-group-absent branch, and read as a bare — i.e. ENABLED —
@@ -480,9 +480,16 @@ function logicalLines(text) {
  * blessed both (Codex #1924 r18). Split on the shell separators that start a
  * new command, respecting quotes, and judge each piece on its own.
  */
+/**
+ * Split a line into command segments, each carrying the separator that PRECEDES
+ * it. The separator is not decoration: `||` runs its right-hand side only when
+ * the left one FAILED, which decides what directory that segment starts in
+ * (Codex #1924 r39).
+ */
 function splitCommands(line) {
   const parts = [];
   let quote = null;
+  let sep = null;
   let start = 0;
   for (let i = 0; i < line.length; i += 1) {
     const ch = line[i];
@@ -515,16 +522,42 @@ function splitCommands(line) {
     }
     const two = line.slice(i, i + 2);
     if (two === '&&' || two === '||') {
-      parts.push(line.slice(start, i));
+      parts.push({ text: line.slice(start, i), sep });
+      sep = two;
       start = i + 2;
       i += 1;
     } else if (ch === ';' || ch === '|' || ch === '&') {
-      parts.push(line.slice(start, i));
+      parts.push({ text: line.slice(start, i), sep });
+      sep = ch;
       start = i + 1;
     }
   }
-  parts.push(line.slice(start));
+  parts.push({ text: line.slice(start), sep });
   return parts;
+}
+
+/**
+ * Resolve the shell quoting that can sit between a flag name and its `=`.
+ *
+ * Bash removes it before wrangler ever sees the argument: `--keep-vars\=false`,
+ * `--keep-vars"="false` and `--keep-vars'='false` all arrive as the single
+ * argument `--keep-vars=false`. The scoring regex requires a RAW `=`, so each of
+ * those spellings read as a bare — i.e. ENABLED — flag and blessed a deploy that
+ * deletes vars (Codex #1924 r39).
+ *
+ * Deliberately narrow: ONLY the separator between a flag token and its `=` is
+ * normalised, so no other spacing or quoting on the line shifts and the tuned
+ * value rules below keep working unchanged. Escapes elsewhere in an argument
+ * are a recorded limit, not a claim. Every rewrite here can only turn a
+ * bare-looking flag into one with a value, which is the conservative direction
+ * for a default-deny guard.
+ */
+function normalizeFlagEquals(line) {
+  const FLAG = '(--?[A-Za-z0-9][A-Za-z0-9-]*)';
+  return line
+    .replace(new RegExp(`${FLAG}\\\\=`, 'g'), '$1=')
+    .replace(new RegExp(`${FLAG}(["'])=\\2`, 'g'), '$1=')
+    .replace(new RegExp(`${FLAG}(["'])=`, 'g'), '$1=');
 }
 
 function commandIsSafe(cmd) {
@@ -546,7 +579,9 @@ function commandIsSafe(cmd) {
  * the line mentions one, so this cannot mask anything.
  */
 function isSafe(line) {
-  const deploys = splitCommands(line).filter((c) => new RegExp(DEPLOY_RE).test(c));
+  const deploys = splitCommands(line)
+    .map((c) => c.text)
+    .filter((c) => new RegExp(DEPLOY_RE).test(c));
   if (deploys.length === 0) return true;
   return deploys.every(commandIsSafe);
 }
@@ -586,9 +621,76 @@ function looksExecutable(entry) {
   return !entry.includes('.') && entry.length > 0;
 }
 
-/** Does this `cd`/`pushd` target put the shell in the keeper's directory? */
-function isKeeperDir(target) {
-  return /(^|\/)apps\/keeper\/?$/.test(target) || /KEEPER_DIR/.test(target);
+/**
+ * Resolve a `cd`/`pushd` target against the directory the shell is already in.
+ *
+ * Reducing each target to a boolean on its own lost every relative move BETWEEN
+ * siblings: `cd apps/agent; cd ../keeper` ends in apps/keeper, but `../keeper`
+ * matched nothing and recorded non-keeper scope, so the guard exited 0 on a
+ * destructive deploy (Codex #1924 r39). The cwd is tracked as a real path and
+ * normalised instead.
+ *
+ * The base is unknown — a wrapper is invoked from wherever the operator stands
+ * — so this is a path RELATIVE to that base, and `isKeeperCwd` matches on the
+ * suffix. `..` past the base is kept as `..` rather than silently collapsing,
+ * which would make unrelated directories look like the keeper's.
+ */
+function resolveDir(cwd, target) {
+  // A `$KEEPER_DIR` reference is the keeper wherever it happens to be defined.
+  if (/KEEPER_DIR/.test(target)) return 'apps/keeper';
+  const parts = target.startsWith('/') ? [] : cwd.split('/').filter(Boolean);
+  for (const part of target.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part !== '..') {
+      parts.push(part);
+      continue;
+    }
+    if (parts.length > 0 && parts[parts.length - 1] !== '..') parts.pop();
+    else parts.push('..');
+  }
+  return parts.join('/');
+}
+
+/** Is the shell standing in the keeper's directory? */
+function isKeeperCwd(cwd) {
+  return /(^|\/)apps\/keeper$/.test(cwd);
+}
+
+/** Apply one directory directive to one reachable state. */
+function applyDir(state, dir) {
+  if (dir.kind === 'popd') {
+    return state.stack.length > 0
+      ? { cwd: state.stack[state.stack.length - 1], stack: state.stack.slice(0, -1) }
+      : { cwd: '', stack: [] };
+  }
+  return {
+    cwd: resolveDir(state.cwd, dir.target),
+    stack: dir.kind === 'pushd' ? [...state.stack, state.cwd] : state.stack,
+  };
+}
+
+/** The directory directive a segment performs, if any. */
+function dirDirective(seg) {
+  const pushed = seg.match(/^pushd\s+["']?([^\s"';&|)]+)/);
+  if (pushed) return { kind: 'pushd', target: pushed[1] };
+  if (/^popd\b/.test(seg)) return { kind: 'popd' };
+  const cd = seg.match(/^cd\s+["']?([^\s"';&|)]+)/);
+  return cd ? { kind: 'cd', target: cd[1] } : null;
+}
+
+/**
+ * Dedupe reachable states, and CAP them. The cap is a runaway guard only: a
+ * line would need dozens of `||`-chained `cd`s to approach it, and dropping the
+ * tail can only lose scope, never invent it.
+ */
+function dedupeStates(states) {
+  const seen = new Map();
+  for (const st of states) {
+    const key = `${st.cwd}\u0000${st.stack.join('/')}`;
+    if (!seen.has(key)) seen.set(key, st);
+    if (seen.size >= 32) break;
+  }
+  return [...seen.values()];
 }
 
 /**
@@ -918,8 +1020,15 @@ for (const file of walk(REPO_ROOT)) {
   // A same-line subshell (`( cd "$KEEPER_DIR" && … )`) is NOT tracked here —
   // its `cd` cannot outlive the subshell, and the per-line test already
   // covers it.
-  let cwdIsKeeper = false;
-  const dirStack = [];
+  // A SET of reachable states, not one boolean. `cd apps/keeper || cd apps/agent`
+  // runs the right-hand `cd` only if the left one FAILED, so applying both
+  // unconditionally ended in agent scope and passed a deploy that in this tree
+  // runs from the keeper (Codex #1924 r39). Each state carries its own pushd
+  // stack. A deploy is judged against every state that can reach it: for a
+  // default-deny guard, one reachable keeper state is enough to flag.
+  const INITIAL = [{ cwd: '', stack: [] }];
+  let states = INITIAL;
+  let prior = INITIAL;
   let currentBlock;
   folded.forEach(({ text: line, line: lineNo, block, physical }) => {
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
@@ -929,11 +1038,12 @@ for (const file of walk(REPO_ROOT)) {
     // typecheck, so it would have blocked CI on a correct workflow.
     if (block !== currentBlock) {
       currentBlock = block;
-      cwdIsKeeper = false;
-      dirStack.length = 0;
+      states = INITIAL;
+      prior = INITIAL;
     }
     if (/^\s*$/.test(line) || /^\s*(?:`{3,}|~{3,})/.test(line)) {
-      cwdIsKeeper = false;
+      states = INITIAL;
+      prior = INITIAL;
       return;
     }
     let flagged = false;
@@ -980,26 +1090,30 @@ for (const file of walk(REPO_ROOT)) {
       // independently — `KEEPER_DIR=…` assignments and the subshell form, which
       // is not `^cd`-shaped and so stays in this prefix.
       const namedPrefix = [];
-      for (const seg of splitCommands(line).map((c) => c.trim())) {
-        const pushed = seg.match(/^pushd\s+["']?([^\s"';&|)]+)/);
-        if (pushed) {
-          dirStack.push(cwdIsKeeper);
-          cwdIsKeeper = isKeeperDir(pushed[1]);
-          continue;
-        }
-        if (/^popd\b/.test(seg)) {
-          cwdIsKeeper = dirStack.length > 0 ? dirStack.pop() : false;
-          continue;
-        }
-        const bareCd = seg.match(/^cd\s+["']?([^\s"';&|)]+)/);
-        if (bareCd) {
-          cwdIsKeeper = isKeeperDir(bareCd[1]);
-          continue;
-        }
+      // The previous line ran to completion, so this line starts from `states`.
+      prior = states;
+      for (const part of splitCommands(line)) {
+        const seg = part.text.trim();
+        // `||` means the PREVIOUS segment failed, so this one starts from the
+        // state that preceded it — a failed `cd` moves nothing.
+        const input = part.sep === '||' ? prior : states;
+        const dir = dirDirective(seg);
+        const after = dir ? input.map((st) => applyDir(st, dir)) : input;
+        // After `A || B` both outcomes remain reachable: A succeeded and B was
+        // skipped, or A failed and B ran.
+        const next = part.sep === '||' ? dedupeStates([...states, ...after]) : after;
+        prior = input;
+        states = next;
+        if (dir) continue;
         namedPrefix.push(seg);
         // `\b` so `wrangler deployments list` is not read as a deploy.
         if (!new RegExp(DEPLOY_RE).test(seg)) continue;
-        if (!isKeeperScoped(namedPrefix.join(' '), rel) && !cwdIsKeeper) continue;
+        if (
+          !isKeeperScoped(namedPrefix.join(' '), rel) &&
+          !input.some((st) => isKeeperCwd(st.cwd))
+        ) {
+          continue;
+        }
         if (commandIsSafe(seg)) continue;
         flagged = true;
       }
