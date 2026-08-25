@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# FIRST statement, before ANY assignment: the names present now. `load_env_file`
+# subtracts this from the names present at load time, and the difference is
+# exactly what this script created — the set `.env` may not replace. Derived so
+# it cannot fall behind the variables added below (Codex #1938 r15).
+__lenv_baseline="$(compgen -v)"
 #
 # deploy-testnet.sh — testnet rehearsal-grade tiered deploy.
 #

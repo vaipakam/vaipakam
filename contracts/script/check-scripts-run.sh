@@ -25,7 +25,14 @@ probe() {                      # $1 = label, rest = command
   fi
 }
 
-probe "pause-all-chains.sh (calldata)"  bash "$SCRIPT_DIR/pause-all-chains.sh"
+# `pause-all-chains.sh` in its default mode WRITES a `run-*.epoch` sentinel when
+# it completes, and a later `--check` reads those to report incident timing. This
+# probe only runs the script far enough to catch unbound state, but "far enough"
+# was being decided by output truncation — on a small or partial deployment the
+# script finishes, writes a sentinel no ceremony produced, and the next real
+# `--check` reports a synthetic run (Codex #1938 r15). Point it at a throwaway
+# directory instead of relying on where the output happens to stop.
+probe "pause-all-chains.sh (calldata)"  bash "$SCRIPT_DIR/pause-all-chains.sh" --self-test
 probe "pause-all-chains.sh (--check)"   bash "$SCRIPT_DIR/pause-all-chains.sh" --check
 probe "pause-all-chains.sh (--unpause)" bash "$SCRIPT_DIR/pause-all-chains.sh" --unpause-calldata
 probe "deploy-mainnet.sh (usage)"       bash "$SCRIPT_DIR/deploy-mainnet.sh"

@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# FIRST statement, before ANY assignment: the names present now. `load_env_file`
+# subtracts this from the names present at load time, and the difference is
+# exactly what this script created — the set `.env` may not replace. Derived so
+# it cannot fall behind the variables added below (Codex #1938 r15).
+__lenv_baseline="$(compgen -v)"
 #
 # deploy-chain.sh — testnet one-shot deployment / quick-iteration script.
 #
@@ -263,6 +268,16 @@ fi
 # Reading `$1` here does not reopen the override problem: `.env` is data now, so
 # it cannot rewrite the caller's arguments the way a sourced file could.
 if [ "${1:-}" = "anvil" ]; then
+  # `anvil-bootstrap.sh` takes no arguments, and moving this delegation ahead of
+  # the parsing loop (r9) meant anything trailing was silently DISCARDED rather
+  # than rejected — `deploy-chain.sh anvil --definitely-invalid` bootstrapped
+  # happily, where every other invocation gets `Unknown flag`. Validate here, so
+  # the delegation stays env-free without losing the rejection (Codex #1938 r15).
+  if [ "$#" -gt 1 ]; then
+    shift
+    echo "Error: anvil takes no further arguments; got: $*" >&2
+    exit 1
+  fi
   echo "anvil dev playground — delegating to anvil-bootstrap.sh (no .env read)"
   exec bash "$SCRIPT_DIR/anvil-bootstrap.sh"
 fi

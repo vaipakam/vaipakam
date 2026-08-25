@@ -24,6 +24,16 @@
 # documentation-drift defect this session merged #1926 to fix.
 #
 load_env_file() {
+  # FAIL CLOSED: a wrapper that never took the baseline gets no import at all,
+  # rather than an import with the wrapper-owned rule silently disabled.
+  if [ -z "${__lenv_baseline+set}" ]; then
+    echo "Error: load_env_file called without __lenv_baseline." >&2
+    echo "       Add \`__lenv_baseline=\"\$(compgen -v)\"\` as the first" >&2
+    echo "       statement of the calling script, before any assignment." >&2
+    return 1
+  fi
+  __lenv_owned="$(comm -13 <(printf '%s\n' "$__lenv_baseline" | sort -u) \
+                            <(compgen -v | sort -u))"
   local __lenv_file="$1" __lenv_line __lenv_name __lenv_value __lenv_no=0
   local __lenv_q __lenv_rest __lenv_i __lenv_decl
   local __lenv_names=() __lenv_vals=()
@@ -89,12 +99,26 @@ load_env_file() {
     #
     # Three names, and they are stable: they are the ones this file needs in
     # order to be sourced at all, so the list cannot grow with the callers.
-    case "$__lenv_name" in
-      SCRIPT_DIR|CONTRACTS_DIR|REPO_ROOT)
-        echo "Error: $__lenv_file:$__lenv_no sets a path this tooling resolves for" >&2
-        echo "       itself — refusing. (Name withheld.)" >&2
-        return 1 ;;
-    esac
+    # WRAPPER-OWNED names, DERIVED — not a list.
+    #
+    # r12 refused `SCRIPT_DIR`, `CONTRACTS_DIR` and `REPO_ROOT` by name, and I
+    # argued that was a closed set because they must exist before this file can
+    # be sourced. That was the wrong closure: the wrappers set a dozen more
+    # names before they read `.env` — `DEFI_DIR`, `TREE_COMMIT_AT_START` and the
+    # rest — and inheriting any of them as EXPORTED made it indistinguishable
+    # from operator configuration, so `.env` could replace it. `DEFI_DIR` is a
+    # directory a later Cloudflare phase runs `pnpm` from (Codex #1938 r15).
+    #
+    # So the set is computed instead: each wrapper records its variable names on
+    # its FIRST line, before assigning anything, and the difference against the
+    # names present now is exactly what the script created. That covers every
+    # wrapper variable, including ones added later, with nothing to maintain —
+    # and it subsumes the three names above, which are simply members of it.
+    if ! grep -qx -- "$__lenv_name" <<<"$__lenv_owned"; then :; else
+      echo "Error: $__lenv_file:$__lenv_no sets a name this script created before" >&2
+      echo "       reading the file — refusing. (Name withheld.)" >&2
+      return 1
+    fi
 
     __lenv_decl="$(declare -p "$__lenv_name" 2>/dev/null || true)"
     if [ -n "$__lenv_decl" ]; then
@@ -155,7 +179,8 @@ load_env_file() {
     # closed one of the three (Codex #1938 r13).
     case "$__lenv_name" in
       BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|GLOBIGNORE|IFS|PS4|PATH \
-      |LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_FUNC_* \
+      |LD_*|DYLD_*|BASH_FUNC_* \
+      |HOME|XDG_CONFIG_HOME|XDG_DATA_HOME|XDG_CACHE_HOME|USERPROFILE \
       |NODE_OPTIONS|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|RUBYOPT|JAVA_TOOL_OPTIONS \
       |GIT_CONFIG*|GIT_SSH_COMMAND|GIT_EXTERNAL_DIFF|GIT_PAGER|GIT_EDITOR \
       |GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_ALTERNATE_OBJECT_DIRECTORIES \

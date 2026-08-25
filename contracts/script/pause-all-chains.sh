@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# FIRST statement, before ANY assignment: the names present now. `load_env_file`
+# subtracts this from the names present at load time, and the difference is
+# exactly what this script created — the set `.env` may not replace. Derived so
+# it cannot fall behind the variables added below (Codex #1938 r15).
+__lenv_baseline="$(compgen -v)"
 #
 # pause-all-chains.sh — production-grade simultaneous-pause helper.
 #
@@ -89,10 +94,18 @@ mkdir -p "$SENTINEL_DIR"
 
 MODE="calldata"
 CHAINS_FILTER=""
+SELF_TEST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --check)             MODE="check" ;;
     --unpause-calldata)  MODE="unpause" ;;
+    # Runs the ordinary calldata path and stops before the sentinel write. The
+    # run-the-scripts guard needs the early path exercised, not an audit record
+    # invented for an incident that never happened — and it was previously
+    # relying on its own output truncation to stop us getting that far, which is
+    # not a property of this script at all (Codex #1938 r15). A FLAG rather than
+    # an environment variable, so it cannot be reached from `.env`.
+    --self-test)         SELF_TEST=1 ;;
     --chains)            shift; CHAINS_FILTER="$1" ;;
     *)
       echo "Unknown flag: $1" >&2
@@ -281,6 +294,11 @@ BANNER
     # Stamp a sentinel so --check knows when this run started. One
     # sentinel per run — keeps the audit trail across multiple
     # incidents.
+    if [ "$SELF_TEST" = "1" ]; then
+      echo "(--self-test: stopping before the sentinel write)"
+      exit 0
+    fi
+
     SENTINEL="$SENTINEL_DIR/run-$RUN_ID.epoch"
     date +%s > "$SENTINEL"
     {
