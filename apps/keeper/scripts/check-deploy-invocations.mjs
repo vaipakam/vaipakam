@@ -238,7 +238,8 @@ function flagEnabled(rawLine, flag) {
   // flag — pass as well. It was never needed: in `--keep-vars=true` the flag
   // is preceded by whitespace and it is the VALUE that follows the `=`.
   const re = new RegExp(
-    `(?<![^\\s(\`'"])${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|((?![-#])[^\\s"'\`)\\u0000]+)))?`,
+    `(?<![^\\s(\`'"])${flag}(?:=(?:"([^"]*)"|'([^']*)'|([^\\s"'\`)\\u0000]+))` +
+      `|\\s+(?:"([^"]*)"|'([^']*)'|((?![-#])[^\\s"'\`)\\u0000]+)))?`,
     'g',
   );
   const events = [];
@@ -246,7 +247,14 @@ function flagEnabled(rawLine, flag) {
     // `(?![-#])` keeps the NEXT option and a trailing comment marker from being
     // read as this flag's value: under the true-only rule a bare
     // `--keep-vars # note` in prose was otherwise scored false.
-    const value = m[1] ?? m[2] ?? m[3];
+    // ATTACHED (`--flag=x`) and SEPARATED (`--flag x`) values need different
+    // rules, and collapsing them was wrong in both directions (Codex #1924
+    // r29). Only a SEPARATED value can be mistaken for the next option or a
+    // comment, so `(?![-#])` belongs there alone: in `--keep-vars=#false` the
+    // `#` is part of the argument, and excluding it made the whole value
+    // branch fail and backtrack to "bare flag, enabled" — blessing a deploy
+    // wrangler itself parses as false.
+    const value = m[1] ?? m[2] ?? m[3] ?? m[4] ?? m[5] ?? m[6];
     events.push({
       at: m.index,
       // wrangler declares these `[boolean] [default: false]`, and its parser
@@ -525,14 +533,18 @@ function embeddedShellLines(text) {
   const lines = text.split('\n');
   const out = [];
   let i = 0;
+  let blockId = 0;
   while (i < lines.length) {
     const fence = lines[i].match(/^\s*```(?:bash|sh|shell|console)?\s*$/);
-    const run = lines[i].match(/^(\s*)(?:-\s+)?run:\s*[|>][-+]?\s*$/);
+    // A YAML comment may follow the block indicator (`run: | # deploy keeper`),
+    // and the indicator itself decides the folding (Codex #1924 r29).
+    const run = lines[i].match(/^(\s*)(?:-\s+)?run:\s*([|>])[-+]?\s*(?:#.*)?$/);
     if (fence) {
       const start = i + 1;
       let j = start;
       while (j < lines.length && !/^\s*```/.test(lines[j])) j += 1;
-      out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start));
+      out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start, blockId));
+      blockId += 1;
       i = j + 1;
       continue;
     }
@@ -546,7 +558,14 @@ function embeddedShellLines(text) {
       ) {
         j += 1;
       }
-      out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start));
+      // `run: >` is a FOLDED scalar: YAML replaces ordinary newlines with
+      // spaces before the shell ever sees it, so `cd apps/keeper;` / `wrangler`
+      // / `deploy` on three source lines executes as one command. Scanning the
+      // unfolded source missed it entirely (Codex #1924 r29).
+      const raw = lines.slice(start, j);
+      const body = run[2] === '>' ? foldYamlScalar(raw) : raw.join('\n');
+      out.push(...offset(logicalLines(body), start, blockId));
+      blockId += 1;
       i = j;
       continue;
     }
@@ -556,8 +575,33 @@ function embeddedShellLines(text) {
 }
 
 /** Shift a block's logical lines back to real file line numbers. */
-function offset(block, start) {
-  return block.map((l) => ({ text: l.text, line: l.line + start }));
+function offset(block, start, blockId) {
+  return block.map((l) => ({ text: l.text, line: l.line + start, block: blockId }));
+}
+
+/**
+ * YAML folded-scalar (`>`) semantics: ordinary newlines become spaces; a blank
+ * line is a real line break; a MORE-indented line keeps its newline.
+ */
+function foldYamlScalar(raw) {
+  const base = Math.min(
+    ...raw.filter((l) => l.trim() !== '').map((l) => (l.match(/^\s*/) ?? [''])[0].length),
+  );
+  let out = '';
+  for (let k = 0; k < raw.length; k += 1) {
+    const l = raw[k];
+    if (l.trim() === '') {
+      out += '\n';
+      continue;
+    }
+    const indent = (l.match(/^\s*/) ?? [''])[0].length;
+    if (indent > base) {
+      out += `\n${l}`;
+      continue;
+    }
+    out += (out === '' || out.endsWith('\n') ? '' : ' ') + l.trim();
+  }
+  return out;
 }
 
 /** Physical lines, 1-based, for everything that is not a shell script. */
@@ -645,7 +689,18 @@ for (const file of walk(REPO_ROOT)) {
   // covers it.
   let cwdIsKeeper = false;
   const dirStack = [];
-  folded.forEach(({ text: line, line: lineNo }) => {
+  let currentBlock;
+  folded.forEach(({ text: line, line: lineNo, block }) => {
+    // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
+    // and so does the next fenced example. Carrying `cwdIsKeeper` across them
+    // made one block's `cd apps/keeper` reject the NEXT block's agent deploy
+    // (Codex #1924 r29). That is a false positive, and this guard runs in
+    // typecheck, so it would have blocked CI on a correct workflow.
+    if (block !== currentBlock) {
+      currentBlock = block;
+      cwdIsKeeper = false;
+      dirStack.length = 0;
+    }
     if (/^\s*$/.test(line) || /^\s*```/.test(line)) {
       cwdIsKeeper = false;
     } else {

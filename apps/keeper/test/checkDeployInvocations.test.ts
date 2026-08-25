@@ -374,6 +374,31 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a run block whose indicator carries a YAML comment (#1924 r29)', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  x:\n    steps:\n      - run: | # deploy keeper\n          cd apps/keeper\n          wrangler \\\n            deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a folded run: > block, where YAML joins lines (#1924 r29)', () => {
+    // YAML replaces the newlines with spaces before the shell sees it, so this
+    // executes as `cd apps/keeper; wrangler deploy`.
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  x:\n    steps:\n      - run: >\n          cd apps/keeper;\n          wrangler\n          deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an attached value beginning with # (#1924 r29)', () => {
+    // The `#` is part of the argument, not a comment. Excluding it made the
+    // value branch backtrack to "bare flag, enabled".
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --keep-vars=#false\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -595,6 +620,29 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
       'contracts/script/deploy-chain.sh',
       'pushd apps/agent\nwrangler deploy\npopd\n',
     );
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not leak keeper scope from one run block into the next (#1924 r29)', () => {
+    // Each Actions step is a fresh shell. Carrying scope across blocks made
+    // the first block's cd reject the second block's AGENT deploy.
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  x:\n    steps:\n      - run: |\n          cd apps/keeper\n          wrangler deploy --keep-vars\n      - run: |\n          cd apps/agent\n          wrangler \\\n            deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not leak keeper scope between fenced examples', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      '```bash\ncd apps/keeper\nwrangler deploy --keep-vars\n```\n\n```bash\ncd apps/agent\nwrangler deploy\n```\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts an attached =true even with the split value rules', () => {
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --keep-vars=true\n');
     expect(r.ok).toBe(true);
   });
 
