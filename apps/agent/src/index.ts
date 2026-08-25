@@ -168,6 +168,16 @@ export default {
     // only live sweep and does NOT start this one: without an explicit
     // `pnpm --filter @vaipakam/agent exec wrangler deploy` in the same
     // sitting, the migration makes the leak worse rather than fixing it.
+    //
+    // Use `pnpm --filter @vaipakam/agent run deploy`, NOT a bare
+    // `wrangler deploy` (Codex #1924 r31). This Worker has the same var
+    // hazard the keeper does: `env.ts` reads `RECIPIENT_VALIDATING_TOKENS`
+    // and `OPENSEA_OFFERS_MAX_PAGES`, neither of which is declared in
+    // `wrangler.jsonc`, so a bare deploy would delete them — silently
+    // disabling recipient-token validation and resetting OpenSea pagination
+    // while trying to turn this sweep on. The package script now carries the
+    // flag; `--keep-vars` only skips the DELETE step, so the config's own
+    // vars are still applied.
     ctx.waitUntil(
       sweepExpiredLinks(resolved.DB).catch((err) => {
         // eslint-disable-next-line no-console

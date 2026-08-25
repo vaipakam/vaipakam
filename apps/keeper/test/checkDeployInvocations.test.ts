@@ -429,6 +429,18 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a here-string operand that looks like the safety flag (#1924 r31)', () => {
+    // bash treats --keep-vars as the <<< operand; wrangler gets only `deploy`.
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy <<< --keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('global wrangler flags before the subcommand (#1924 r31)', () => {
+    // `--cwd` is a documented global flag, so `deploy` is not the next word.
+    const r = runWith('apps/keeper/x.sh', 'wrangler --cwd apps/keeper deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -689,6 +701,29 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('accepts a redirection to an ordinary file alongside a safe deploy', () => {
     const r = runWith('apps/keeper/x.sh', 'wrangler deploy --keep-vars > deploy.log\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts stderr redirection before the safety flag (#1924 r31)', () => {
+    // The `&` in `2>&1` is not a command separator; treating it as one split
+    // the command and REJECTED a safe deploy.
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy 2>&1 --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts global flags before the subcommand on a safe deploy', () => {
+    const r = runWith('apps/keeper/x.sh', 'wrangler --cwd apps/keeper deploy --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('keeps allowlisted prose exempt after a non-shell fenced block', () => {
+    // A ```jsonc opener was skipped while its CLOSING fence read as an opener,
+    // so the prose after it was scanned as shell and three allowlisted README
+    // lines were reported on the live tree (#1924 r31).
+    const r = runWith(
+      'apps/keeper/README.md',
+      '```jsonc\n{ "a": 1 }\n```\n\nPrefer the dashboard over `wrangler deploy` for this.\n',
+    );
     expect(r.ok).toBe(true);
   });
 

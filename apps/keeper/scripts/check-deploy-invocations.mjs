@@ -34,6 +34,18 @@
  * direction PROVIDED it stays rare; if this fires on real content, reconsider
  * the approach rather than widening `ALLOWED`.
  *
+ * SECOND KNOWN LIMIT, also recorded rather than fixed: an `ALLOWED` prose
+ * exemption applies in shell files too, so `echo "…a bare \`wrangler deploy\`"`
+ * — which bash runs as command substitution — inherits it. Restricting
+ * exemptions to non-shell files was tried and FAILED real content: the
+ * `--help` usage text in `deploy-{testnet,mainnet}.sh` lives inside a heredoc,
+ * where it is data rather than a command, and the guard began reporting two
+ * correct lines. Telling heredoc data from commands is another slice of shell
+ * parsing, and this loop has repeatedly shown that each slice costs a false
+ * positive elsewhere. The exposure is narrow — it needs someone to embed an
+ * allowlisted SENTENCE verbatim in executable shell — and the entries are
+ * long, specific strings.
+ *
  * WHAT COUNTS AS A VIOLATION: any keeper-scoped line mentioning
  * `wrangler deploy` without `--keep-vars` (or `--dry-run`, or the safe
  * `run deploy` form). That deliberately includes prose — see `ALLOWED` below
@@ -67,6 +79,14 @@ const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'out', 'coverage',
   '.wrangler', 'cache', 'broadcast', 'artifacts', '.next',
 ]);
+
+/**
+ * `deploy` need not be the word straight after `wrangler`: global flags may
+ * precede the subcommand, and `wrangler --cwd apps/keeper deploy` is a real
+ * bare deploy that every literal `wrangler deploy` test missed (Codex #1924
+ * r31). Intervening tokens are allowed as long as they look like options.
+ */
+const DEPLOY_RE = String.raw`wrangler\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*deploy\b`;
 
 /** Vendored trees excluded by exact repo-relative path, not by basename. */
 const SKIP_PATHS = new Set(['contracts/lib']);
@@ -132,7 +152,7 @@ function allowReason(line) {
   // otherwise be exempted wholesale (Codex #1924 r27). Remove the matched
   // fragment and see whether a deploy is still standing.
   const rest = line.split(hit.match).join(' ');
-  return /wrangler\s+deploy\b/.test(rest) ? null : hit.why;
+  return new RegExp(DEPLOY_RE).test(rest) ? null : hit.why;
 }
 
 /**
@@ -167,7 +187,13 @@ function allowReason(line) {
  * an enabled flag (Codex #1924 r30). Removed before any flag scanning.
  */
 function stripRedirections(line) {
-  return line.replace(/\d?(?:>>|>|<)\s*&?\s*(?:"[^"]*"|'[^']*'|[^\s"';&|)]+)/g, ' ');
+  // Longest operator first: `<<<` is a here-string, and matching a bare `<`
+  // consumed the remaining `<<` as its operand, leaving the real operand to be
+  // counted as an enabled flag (Codex #1924 r31).
+  return line.replace(
+    /\d?(?:<<<|<<|<>|>>|>&|<&|>|<)\s*&?\s*(?:"[^"]*"|'[^']*'|[^\s"';&|)]+)/g,
+    ' ',
+  );
 }
 
 function stripOtherOptionValues(line) {
@@ -454,6 +480,13 @@ function splitCommands(line) {
       quote = ch;
       continue;
     }
+    // A descriptor duplication (`2>&1`, `>&2`, `<&0`) contains an `&` that is
+    // NOT a command separator. Treating it as one split `wrangler deploy 2>`
+    // from `1 --keep-vars` and REJECTED a safe deploy (Codex #1924 r31) —
+    // a false positive, and this runs in typecheck.
+    if ((ch === '&' && /[<>]$/.test(line.slice(0, i))) || /^[<>]&/.test(line.slice(i - 1, i + 1))) {
+      continue;
+    }
     const two = line.slice(i, i + 2);
     if (two === '&&' || two === '||') {
       parts.push(line.slice(start, i));
@@ -487,7 +520,7 @@ function commandIsSafe(cmd) {
  * the line mentions one, so this cannot mask anything.
  */
 function isSafe(line) {
-  const deploys = splitCommands(line).filter((c) => /wrangler\s+deploy\b/.test(c));
+  const deploys = splitCommands(line).filter((c) => new RegExp(DEPLOY_RE).test(c));
   if (deploys.length === 0) return true;
   return deploys.every(commandIsSafe);
 }
@@ -550,18 +583,27 @@ function embeddedShellLines(text) {
   let i = 0;
   let blockId = 0;
   while (i < lines.length) {
-    const fence = lines[i].match(/^\s*```(?:bash|sh|shell|console)?\s*$/);
+    // EVERY fence must be consumed in pairs, whatever its language. Matching
+    // only shell fences meant a ```jsonc opener was skipped and its CLOSING
+    // ``` was then read as an opener — so the prose after it was scanned as
+    // shell, and three allowlisted README lines were reported (Codex #1924
+    // r31, caught on the live tree). Only shell-tagged blocks are scanned;
+    // the rest are tracked purely to stay in sync.
+    const anyFence = lines[i].match(/^\s*```([A-Za-z0-9_-]*)\s*$/);
+    const fence = anyFence && /^(bash|sh|shell|console|)$/.test(anyFence[1]);
     // A YAML comment may follow the block indicator (`run: | # deploy keeper`),
     // and the indicator itself decides the folding (Codex #1924 r29).
     // A block scalar may carry an explicit INDENTATION indicator as well as a
     // chomping one, in either order: `|2`, `|2-`, `>+2` (Codex #1924 r30).
     const run = lines[i].match(/^(\s*)(?:-\s+)?run:\s*([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/);
-    if (fence) {
+    if (anyFence) {
       const start = i + 1;
       let j = start;
       while (j < lines.length && !/^\s*```/.test(lines[j])) j += 1;
-      out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start, blockId));
-      blockId += 1;
+      if (fence) {
+        out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start, blockId));
+        blockId += 1;
+      }
       i = j + 1;
       continue;
     }
@@ -697,7 +739,7 @@ for (const file of walk(REPO_ROOT)) {
   const folded = isShellFile(rel, text)
     ? logicalLines(text)
     : [...plainLines(text), ...embeddedShellLines(text)];
-  if (!folded.some((l) => /wrangler\s+deploy/.test(l.text))) continue;
+  if (!folded.some((l) => new RegExp(DEPLOY_RE).test(l.text))) continue;
   // Directory context carries across lines, but only within a CONTIGUOUS
   // block. The form to catch is
   //     cd apps/keeper
@@ -759,7 +801,7 @@ for (const file of walk(REPO_ROOT)) {
     }
 
     // `\b` so `wrangler deployments list` is not read as a deploy.
-    if (!/wrangler\s+deploy\b/.test(line)) return;
+    if (!new RegExp(DEPLOY_RE).test(line)) return;
     if (!isKeeperScoped(line, rel) && !scopedByCwd) return;
     if (isSafe(line)) return;
     if (allowReason(line)) return;

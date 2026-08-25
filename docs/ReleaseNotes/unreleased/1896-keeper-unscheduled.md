@@ -82,9 +82,11 @@ nothing, the second named only half of them:
   that service is not deployed automatically. Merge alone therefore
   *removes* the only live cleanup and does not start the replacement —
   the opposite of the intent. Deploy the notification service as part
-  of landing this, and confirm on a later run that the cleanup ran.
-  Until that is done, treat this as a cost of the stop rather than a
-  fix.
+  of landing this — through its own packaged command, not a plain
+  deploy, because that service also holds settings that exist only on
+  the dashboard and a plain deploy erases them — and confirm on a later
+  run that the cleanup ran. Until that is done, treat this as a cost of
+  the stop rather than a fix.
 
 **Six more stop conditionally**, and whether they were running cannot
 be determined from outside. The matcher, the liquidator, the
