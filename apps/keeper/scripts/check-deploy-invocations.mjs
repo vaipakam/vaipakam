@@ -192,7 +192,7 @@ function stripOtherOptionValues(line) {
   const CHUNKS = '(?:"[^"]*"|\'[^\']*\'|(?:\\\\[\\s\\S])|[^\\s"\'\\\\]+)+';
   return line.replace(
     new RegExp(
-      `--(?!keep-vars\\b|dry-run\\b)[A-Za-z0-9-]+(?:=${CHUNKS}|\\s+(?!-)${CHUNKS})`,
+      `--(?!keep-vars\\b|dry-run\\b|no-keep-vars\\b|no-dry-run\\b)[A-Za-z0-9-]+(?:=${CHUNKS}|\\s+(?!-)${CHUNKS})`,
       'g',
     ),
     '\u0000',
@@ -216,6 +216,12 @@ function flagEnabled(rawLine, flag) {
   // wrangler 4.90.0: `--keep-vars --keep-vars=false` parses as
   // `keepVars: false`, yet a single `.match()` accepted the first, enabling
   // occurrence and blessed a destructive deploy (Codex #1924 r20).
+  // `\u0000` is excluded from the value class: it is the placeholder
+  // `stripOtherOptionValues` leaves behind. Once assigned values had to
+  // parse as literally true, capturing that placeholder as a value turned a
+  // bare `--dry-run --outdir …` into a violation — a false positive I
+  // introduced with the stricter rule and caught on the live tree.
+  //
   // `(?!-)` on the unquoted alternative: a token starting with `-` is the NEXT
   // option, not this flag's value. Without it the first `--keep-vars` in
   // `--keep-vars --keep-vars=false` swallowed the second as its own value, so
@@ -232,15 +238,22 @@ function flagEnabled(rawLine, flag) {
   // flag — pass as well. It was never needed: in `--keep-vars=true` the flag
   // is preceded by whitespace and it is the VALUE that follows the `=`.
   const re = new RegExp(
-    `(?<![^\\s(\`'"])${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|((?!-)[^\\s"'\`)]+)))?`,
+    `(?<![^\\s(\`'"])${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|((?![-#])[^\\s"'\`)\\u0000]+)))?`,
     'g',
   );
   const events = [];
   for (const m of line.matchAll(re)) {
+    // `(?![-#])` keeps the NEXT option and a trailing comment marker from being
+    // read as this flag's value: under the true-only rule a bare
+    // `--keep-vars # note` in prose was otherwise scored false.
     const value = m[1] ?? m[2] ?? m[3];
     events.push({
       at: m.index,
-      on: value === undefined ? true : !/^(false|0|no|off)$/i.test(value.trim()),
+      // wrangler declares these `[boolean] [default: false]`, and its parser
+      // evaluates anything that is not literally true-ish as FALSE — so
+      // `--keep-vars=yes`, `=garbage` and `=` are all destructive deploys.
+      // An allow-list of false-ish words got that backwards (Codex #1924 r28).
+      on: value === undefined ? true : /^(true|1)$/i.test(value.trim()),
     });
   }
   // wrangler supports the `--no-<flag>` negation, and it is simply another
@@ -248,6 +261,13 @@ function flagEnabled(rawLine, flag) {
   // (verified against 4.90.0). Scanning only the positive spelling blessed it
   // (Codex #1924 r27). Merge both streams and let POSITION decide, exactly as
   // the CLI does.
+  // `--keep-vars=` with nothing after it is an EMPTY value, which wrangler
+  // parses as false rather than as a bare flag. It cannot ride in the pattern
+  // above: an optional `=` capture there swallows the equals before the value
+  // alternation can, breaking every `--keep-vars=true` (caught by the
+  // fixtures). Scanned separately, positioned like any other event.
+  const emptyRe = new RegExp(`(?<![^\\s(\`'"])${flag}=(?=\\s|$)`, 'g');
+  for (const m of line.matchAll(emptyRe)) events.push({ at: m.index, on: false });
   const negRe = new RegExp(
     `(?<![^\\s(\`'"])--no-${flag.replace(/^--/, '')}\\b`,
     'g',
@@ -281,6 +301,7 @@ function flagEnabled(rawLine, flag) {
 function logicalLines(text) {
   const out = [];
   let quote = null;
+  let ansiC = false;
   let inComment = false;
   let buf = '';
   let startLine = 1;
@@ -330,13 +351,19 @@ function logicalLines(text) {
     }
 
     if (quote) {
-      if (ch === '\\' && quote !== "'") {
+      // `$'…'` (ANSI-C) processes escapes, plain `'…'` does not — so an
+      // escaped apostrophe inside `$'it\\'s'` does NOT close the string
+      // (Codex #1924 r28).
+      if (ch === '\\' && (quote !== "'" || ansiC)) {
         buf += ch + (text[i + 1] ?? '');
         i += 1;
         prev = 'x';
         continue;
       }
-      if (ch === quote) quote = null;
+      if (ch === quote) {
+        quote = null;
+        ansiC = false;
+      }
       buf += ch;
       prev = ch;
       continue;
@@ -356,6 +383,7 @@ function logicalLines(text) {
 
     if (ch === '"' || ch === "'" || ch === '`') {
       quote = ch;
+      ansiC = ch === "'" && prev === '$';
       buf += ch;
       prev = ch;
       continue;
@@ -363,7 +391,7 @@ function logicalLines(text) {
 
     // `#` opens a comment at a token boundary: start of line, after
     // whitespace, or immediately after a shell operator (Codex #1924 r27).
-    if (ch === '#' && (prev === '' || /[\s;|&(]/.test(prev))) {
+    if (ch === '#' && (prev === '' || /[\s;|&()]/.test(prev))) {
       inComment = true;
       continue;
     }
@@ -372,7 +400,10 @@ function logicalLines(text) {
     prev = ch;
   }
 
-  if (!inComment) flush();
+  // EOF ends a comment just as a newline does, and the executable text BEFORE
+  // it must still be emitted. Skipping the flush discarded a whole command in
+  // a file with no trailing newline (Codex #1924 r28).
+  flush();
   return out;
 }
 
@@ -465,6 +496,70 @@ function isShellFile(rel, text) {
   return rel.endsWith('.sh') || /^#!.*\b(ba|z|k)?sh\b/.test(text);
 }
 
+/**
+ * An extensionless file is a shebang candidate — conventional for executable
+ * wrappers (`contracts/script/deploy-keeper`). A dotfile is not.
+ */
+function looksExecutable(entry) {
+  return !entry.includes('.') && entry.length > 0;
+}
+
+/** Does this `cd`/`pushd` target put the shell in the keeper's directory? */
+function isKeeperDir(target) {
+  return /(^|\/)apps\/keeper\/?$/.test(target) || /KEEPER_DIR/.test(target);
+}
+
+/**
+ * Shell lives INSIDE non-shell files too: a workflow's `run: |` block and a
+ * fenced ```bash example are both executed by a shell. Scoping shell semantics
+ * to `.sh` files (r27) fixed the markdown false positives but opened this gap —
+ * a workflow step with `cd apps/keeper` and a `wrangler \` continuation ran a
+ * bare deploy that no scanned line contained (Codex #1924 r28).
+ *
+ * Each embedded block is run through the same scanner, and its logical lines
+ * are OFFSET back to real file line numbers. Results are appended to the plain
+ * physical lines rather than replacing them, so prose that merely quotes a
+ * command is still caught by the default-deny path.
+ */
+function embeddedShellLines(text) {
+  const lines = text.split('\n');
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    const fence = lines[i].match(/^\s*```(?:bash|sh|shell|console)?\s*$/);
+    const run = lines[i].match(/^(\s*)(?:-\s+)?run:\s*[|>][-+]?\s*$/);
+    if (fence) {
+      const start = i + 1;
+      let j = start;
+      while (j < lines.length && !/^\s*```/.test(lines[j])) j += 1;
+      out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start));
+      i = j + 1;
+      continue;
+    }
+    if (run) {
+      const indent = run[1].length;
+      const start = i + 1;
+      let j = start;
+      while (
+        j < lines.length &&
+        (lines[j].trim() === '' || (lines[j].match(/^\s*/) ?? [''])[0].length > indent)
+      ) {
+        j += 1;
+      }
+      out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start));
+      i = j;
+      continue;
+    }
+    i += 1;
+  }
+  return out;
+}
+
+/** Shift a block's logical lines back to real file line numbers. */
+function offset(block, start) {
+  return block.map((l) => ({ text: l.text, line: l.line + start }));
+}
+
 /** Physical lines, 1-based, for everything that is not a shell script. */
 function plainLines(text) {
   return text.split('\n').map((t, i) => ({ text: t, line: i + 1 }));
@@ -489,7 +584,11 @@ function* walk(dir) {
     }
     if (st.isDirectory()) {
       yield* walk(full);
-    } else if (EXTENSIONS.some((e) => entry.endsWith(e))) {
+    } else if (EXTENSIONS.some((e) => entry.endsWith(e)) || looksExecutable(entry)) {
+      // The header claims shebang detection, but an extension allow-list never
+      // yields an extensionless file, so `contracts/script/deploy-keeper` with
+      // a bash shebang was never even opened (Codex #1924 r28). Extensionless
+      // candidates are yielded and `isShellFile` decides from the shebang.
       yield full;
     }
   }
@@ -523,7 +622,9 @@ for (const file of walk(REPO_ROOT)) {
   // folded whole paragraphs into single "lines" and produced four false
   // positives on a clean tree. Every file still gets scanned; only the model
   // of what a line IS differs (Codex #1924 r27).
-  const folded = isShellFile(rel, text) ? logicalLines(text) : plainLines(text);
+  const folded = isShellFile(rel, text)
+    ? logicalLines(text)
+    : [...plainLines(text), ...embeddedShellLines(text)];
   if (!folded.some((l) => /wrangler\s+deploy/.test(l.text))) continue;
   // Directory context carries across lines, but only within a CONTIGUOUS
   // block. The form to catch is
@@ -543,6 +644,7 @@ for (const file of walk(REPO_ROOT)) {
   // its `cd` cannot outlive the subshell, and the per-line test already
   // covers it.
   let cwdIsKeeper = false;
+  const dirStack = [];
   folded.forEach(({ text: line, line: lineNo }) => {
     if (/^\s*$/.test(line) || /^\s*```/.test(line)) {
       cwdIsKeeper = false;
@@ -551,14 +653,19 @@ for (const file of walk(REPO_ROOT)) {
       // wrappers; recognising only `cd` let `pushd apps/keeper` plus a bare
       // deploy on the next line through (Codex #1924 r27). `popd` returns
       // somewhere this scanner cannot know, so it conservatively clears scope.
-      if (/^\s*popd\b/.test(line)) {
-        cwdIsKeeper = false;
-      } else {
-        const bareCd = line.match(/^\s*(?:cd|pushd)\s+["']?([^\s"';&|)]+)/);
-        if (bareCd) {
-          cwdIsKeeper =
-            /(^|\/)apps\/keeper\/?$/.test(bareCd[1]) || /KEEPER_DIR/.test(bareCd[1]);
-        }
+      // `pushd`/`popd` are a STACK: after `pushd apps/keeper; pushd ../agent;
+      // popd` the shell is back in apps/keeper. A single boolean lost that and
+      // skipped the deploy underneath (Codex #1924 r28).
+      const pushed = line.match(/^\s*pushd\s+["']?([^\s"';&|)]+)/);
+      const popped = /^\s*popd\b/.test(line);
+      const bareCd = line.match(/^\s*cd\s+["']?([^\s"';&|)]+)/);
+      if (pushed) {
+        dirStack.push(cwdIsKeeper);
+        cwdIsKeeper = isKeeperDir(pushed[1]);
+      } else if (popped) {
+        cwdIsKeeper = dirStack.length > 0 ? dirStack.pop() : false;
+      } else if (bareCd) {
+        cwdIsKeeper = isKeeperDir(bareCd[1]);
       }
     }
 

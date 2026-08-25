@@ -295,6 +295,85 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a workflow run: block with cd + continuation (#1924 r28)', () => {
+    // GitHub Actions `run:` blocks ARE shell. Scoping shell semantics to .sh
+    // files in r27 closed the markdown false positives and opened this.
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  x:\n    steps:\n      - run: |\n          cd apps/keeper\n          wrangler \\\n            deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a fenced bash block with cd + continuation (#1924 r28)', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Steps:\n\n```bash\ncd apps/keeper\nwrangler \\\n  deploy\n```\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an extensionless wrapper with a bash shebang (#1924 r28)', () => {
+    // The header claimed shebang detection; the extension allow-list never
+    // yielded such a file, so it was not even opened.
+    const r = runWith(
+      'contracts/script/deploy-keeper',
+      '#!/usr/bin/env bash\ncd apps/keeper\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a command lost when a comment runs to EOF (#1924 r28)', () => {
+    // No trailing newline: inComment was still true at EOF, so the buffered
+    // command before the comment was discarded with it.
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy # TODO --keep-vars');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a comment opening right after a closing paren (#1924 r28)', () => {
+    const r = runWith(
+      'apps/keeper/x.sh',
+      '(true)# --keep-vars \\\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('nested pushd/popd returning to the keeper directory (#1924 r28)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pushd apps/keeper\npushd ../agent\npopd\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('--keep-vars=yes, which wrangler parses as false (#1924 r28)', () => {
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --keep-vars=yes\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('--keep-vars= with an empty value (#1924 r28)', () => {
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --keep-vars=\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a negation followed by a positional script (#1924 r28)', () => {
+    // The option-value strip used to swallow `--no-keep-vars src/index.ts`
+    // whole, leaving only the positive event behind.
+    const r = runWith(
+      'apps/keeper/x.sh',
+      'wrangler deploy --keep-vars --no-keep-vars src/index.ts\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("ANSI-C $'…' quoting does not end at an escaped apostrophe (#1924 r28)", () => {
+    const r = runWith(
+      'apps/keeper/x.sh',
+      "printf '%s' $'it\\'s fine' # --keep-vars \\\nwrangler deploy\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -485,6 +564,37 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('accepts a later --no- negation that re-enables via a positive flag', () => {
     const r = runWith('apps/keeper/x.sh', 'wrangler deploy --no-keep-vars --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a safe deploy inside a workflow run: block', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      'jobs:\n  x:\n    steps:\n      - run: |\n          cd apps/keeper\n          wrangler deploy --keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a bare --dry-run followed by another option', () => {
+    // The stricter true-only rule briefly read the strip placeholder as this
+    // flag's value and failed a correct bundle check.
+    const r = runWith(
+      'apps/keeper/x.sh',
+      'wrangler deploy --dry-run --outdir /tmp/keeper-bundle\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts an explicit --keep-vars=true after the stricter parse', () => {
+    const r = runWith('apps/keeper/x.sh', 'wrangler deploy --keep-vars=true\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts pushd into a sibling app, deploying that one', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pushd apps/agent\nwrangler deploy\npopd\n',
+    );
     expect(r.ok).toBe(true);
   });
 
