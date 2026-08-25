@@ -416,11 +416,23 @@ esac
 # exposure and it is tracked separately — widening a launch-posture fix into
 # the mainnet purge/handover confirmations is a change that deserves its own
 # review, not a mid-review expansion of this one.
-__cli_configure_vpfi_peg_opt="$CONFIGURE_VPFI_PEG_OPT"
+# The names below are set by FLAGS. `.env` must never decide them, and
+# this loop is the single place that rule is implemented — #1920 protected
+# CONFIGURE_VPFI_PEG_OPT alone, and the other seven had the identical
+# exposure (#1932). Kept bash-3.2 safe (indirect expansion + `printf -v`,
+# no associative arrays): an operator on stock macOS bash must be able to
+# run a mainnet deploy.
+CLI_OWNED_VARS=(PHASE FRESH PAUSE_MODE CONFIRM_MULTISIG CONFIRM_ORPHANS CONFIRM_HW_SIGNER CONFIRM_DEADLINE_RESET CONFIGURE_VPFI_PEG_OPT)
+__cli_owned_saved=()
+for __v in "${CLI_OWNED_VARS[@]}"; do __cli_owned_saved+=("${!__v-}"); done
 
 if [ -f "$CONTRACTS_DIR/.env" ]; then
   set -a; source "$CONTRACTS_DIR/.env"; set +a
-  CONFIGURE_VPFI_PEG_OPT="$__cli_configure_vpfi_peg_opt"
+  __i=0
+  for __v in "${CLI_OWNED_VARS[@]}"; do
+    printf -v "$__v" '%s' "${__cli_owned_saved[$__i]}"
+    __i=$((__i + 1))
+  done
 else
   echo "Error: $CONTRACTS_DIR/.env not found." >&2
   exit 1

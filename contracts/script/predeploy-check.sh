@@ -223,6 +223,24 @@ for s in "${DEPLOY_SH[@]}"; do
   fi
 done
 
+# 3c-bis. #1932 — every flag the wrappers parse must survive `.env`.
+# The wrappers source a shared `.env` with `set -a` AFTER parsing flags, so any
+# name that file mentions overwrites what the operator typed. `CLI_OWNED_VARS`
+# + the restore loop fixes it; this asserts the LIST has not fallen behind the
+# flags, in both directions. #1920 protected one variable and left seven with
+# the same exposure — including the mainnet purge confirmation, which a `.env`
+# line could otherwise arm.
+if command -v python3 >/dev/null 2>&1; then
+  if python3 "$SCRIPT_DIR/check-cli-owned-vars.py"; then
+    :
+  else
+    echo "  x CLI-owned flag protection drifted" >&2
+    FAIL=1
+  fi
+else
+  echo "  · python3 not installed — skipping CLI-owned flag check"
+fi
+
 # 3d. Provenance-stamp ordering (#1490). Any script that writes a
 # `monorepoCommit` stamp must snapshot the working-tree state BEFORE it
 # writes its own output — otherwise the dirty marker is set on every run by
