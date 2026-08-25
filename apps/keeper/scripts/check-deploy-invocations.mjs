@@ -159,8 +159,13 @@ function stripOtherOptionValues(line) {
   // r24). A value is therefore one-or-more adjacent chunks, and whitespace is
   // what ends it — so `--message remember --keep-vars`, where the shell really
   // does pass a separate flag, is still left alone.
+  // `(?:\\[\s\S])` in the chunk set: an ESCAPED character — including an
+  // escaped space — is part of the value, not the end of it. Bash passes
+  // `--message=note\ --keep-vars` as ONE argument, so nothing is enabled, but
+  // a pattern that stopped at the backslash-space left `--keep-vars` looking
+  // token-initial (Codex #1924 r25).
   return line.replace(
-    /--(?!keep-vars\b|dry-run\b)[A-Za-z0-9-]+(?:=|\s+)(?:"[^"]*"|'[^']*'|[^\s"']+)+/g,
+    /--(?!keep-vars\b|dry-run\b)[A-Za-z0-9-]+(?:=|\s+)(?:"[^"]*"|'[^']*'|(?:\\[\s\S])|[^\s"'\\]+)+/g,
     '\u0000',
   );
 }
@@ -332,6 +337,35 @@ function isKeeperScoped(line, filePath) {
   );
 }
 
+/**
+ * Join lines ending in a backslash continuation into the single logical line
+ * the shell actually executes, keeping the 1-based number of the line each one
+ * started on so violations still point somewhere useful.
+ */
+function foldContinuations(text) {
+  const out = [];
+  const lines = text.split('\n');
+  let buf = null;
+  let startLine = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = lines[i];
+    const continues = /\\$/.test(raw);
+    const body = continues ? raw.slice(0, -1) : raw;
+    if (buf === null) {
+      buf = body;
+      startLine = i + 1;
+    } else {
+      buf += ` ${body.trim()}`;
+    }
+    if (!continues) {
+      out.push({ text: buf, line: startLine });
+      buf = null;
+    }
+  }
+  if (buf !== null) out.push({ text: buf, line: startLine });
+  return out;
+}
+
 function* walk(dir) {
   let entries;
   try {
@@ -371,7 +405,16 @@ for (const file of walk(REPO_ROOT)) {
   } catch {
     continue;
   }
-  if (!text.includes('wrangler deploy')) continue;
+  // Fold shell line continuations FIRST. A wrapper may spell the command
+  // `wrangler \` / newline / `deploy`, which bash runs as a bare
+  // `wrangler deploy` — but the literal prefilter below never matched it, so
+  // the whole FILE was skipped (Codex #1924 r25). This is an ordinary form in
+  // shell scripts, not an exotic one.
+  //
+  // Folding shifts line numbers, so each folded line keeps the 1-based number
+  // of the line it STARTED on: that is the line an operator needs to open.
+  const folded = foldContinuations(text);
+  if (!folded.some((l) => /wrangler\s+deploy/.test(l.text))) continue;
   // Directory context carries across lines, but only within a CONTIGUOUS
   // block. The form to catch is
   //     cd apps/keeper
@@ -390,7 +433,7 @@ for (const file of walk(REPO_ROOT)) {
   // its `cd` cannot outlive the subshell, and the per-line test already
   // covers it.
   let cwdIsKeeper = false;
-  text.split('\n').forEach((line, i) => {
+  folded.forEach(({ text: line, line: lineNo }) => {
     if (/^\s*$/.test(line) || /^\s*```/.test(line)) {
       cwdIsKeeper = false;
     } else {
@@ -406,7 +449,7 @@ for (const file of walk(REPO_ROOT)) {
     if (!isKeeperScoped(line, rel) && !cwdIsKeeper) return;
     if (isSafe(line)) return;
     if (allowReason(line)) return;
-    violations.push(`${rel}:${i + 1}\n    ${line.trim()}`);
+    violations.push(`${rel}:${lineNo}\n    ${line.trim()}`);
   });
 }
 

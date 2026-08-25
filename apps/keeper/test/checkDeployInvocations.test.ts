@@ -232,6 +232,22 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a deploy split across a shell line continuation (#1924 r25)', () => {
+    // bash runs a bare `wrangler deploy`; the literal prefilter used to skip
+    // the whole file because no single line contained the phrase.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd "$KEEPER_DIR"\npnpm exec wrangler \\\n  deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an escaped space inside an option value (#1924 r25)', () => {
+    // bash passes ONE argument, `--message=note --keep-vars`, enabling nothing.
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message=note\\ --keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -378,6 +394,14 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('does not scan the vendored contracts/lib submodule tree', () => {
     const r = runWith('contracts/lib/forge-std/x.sh', '( cd apps/keeper && wrangler deploy )\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a safe deploy split across a line continuation', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd "$KEEPER_DIR"\npnpm exec wrangler deploy \\\n  --keep-vars\n',
+    );
     expect(r.ok).toBe(true);
   });
 
