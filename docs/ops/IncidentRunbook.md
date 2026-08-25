@@ -393,9 +393,9 @@ running.
 >   while `KEEPER_ENABLED` is false, and the re-enable sequence
 >   deliberately keeps it false through its unarmed-validation step —
 >   which spans a full 15-minute cycle and can span a daily window.
->   Keep manual coverage until **all four** hold. Fewer than four has
->   been wrong twice, each time by letting a tick that did no work look
->   like coverage:
+>   Keep manual coverage until **all five** hold. Shorter versions of
+>   this list have been wrong three times, each by letting a tick that
+>   did not do the work look like coverage:
 >   1. A live schedule read back from Settings → Trigger Events — not a
 >      quiet `wrangler tail`, which proves nothing here.
 >   2. `chains resolved: N — …` naming the chains this deployment is
@@ -407,13 +407,26 @@ running.
 >   4. **One `liquidator chain=… scan complete: scanned=… atRisk=…
 >      submitted=…` line per chain in (2).** Count them; the count must
 >      match. Do NOT substitute "I saw no error lines" — failures are
->      caught at four different depths (`getActiveLoansCount`, a page
->      fetch, a multicall chunk, and the per-chain catch), each with its
->      own distinct message, and every one of them still lets the pass
->      finish and log `done`. Three earlier versions of this checklist
->      tried to enumerate the markers *not* to see and were incomplete
->      each time. A missing `scan complete` line for an expected chain
->      means that chain was not scanned, whatever else the tail shows.
+>      caught at several depths (`getActiveLoansCount`, a page fetch, a
+>      multicall chunk, an HF read, and the per-chain catch), each with
+>      its own distinct message, and every one of them still lets the
+>      pass finish and log `done`. Three earlier versions of this
+>      checklist tried to enumerate the markers *not* to see and were
+>      incomplete each time. A missing `scan complete` line for an
+>      expected chain means that chain was not scanned.
+>   5. **On every one of those lines, `atRisk` must equal `submitted`.**
+>      The marker says the chain was SWEPT, not that it is safe to stop
+>      watching — those are different claims and this checklist
+>      previously conflated them. `maybeAutonomousLiquidate` returns
+>      without submitting when a loan has no usable quote, when the
+>      keeper context or account is missing, when a submission error is
+>      caught, and when `MAX_LIQUIDATIONS_PER_TICK` is hit. All of those
+>      leave underwater loans untouched while the line still prints.
+>      `atRisk > submitted` means loans were left this tick: keep manual
+>      coverage on that chain and find out which of those causes it is.
+>      In steady state the healthy reading is `atRisk=0 submitted=0` —
+>      a liquidated loan leaves the active set, so the condition is
+>      reachable rather than a permanent block.
 
 Three escalation tiers, least to most disruptive:
 

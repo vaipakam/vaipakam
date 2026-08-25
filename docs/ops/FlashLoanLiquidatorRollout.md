@@ -32,12 +32,14 @@ All commands run from `contracts/` unless noted otherwise.
 > rather than the immediate one. Full tier breakdown under this hold in
 > [`IncidentRunbook.md`](IncidentRunbook.md) §3.5.
 >
-> Treat our own liquidation coverage as manual until the **four-point**
+> Treat our own liquidation coverage as manual until the **five-point**
 > stand-down check in [`IncidentRunbook.md`](IncidentRunbook.md) §3.5 passes:
 > schedule read back, expected chain set resolved, a liquidator pass with no
-> `passIsArmed` skip, and no per-chain `err=` lines. A restored cron alone is
-> not enough — the pass stays inert while `KEEPER_ENABLED` is false, and a
-> tick can log `done` having scanned nothing at all.
+> `passIsArmed` skip, a `scan complete` line for every expected chain, and
+> `atRisk` equal to `submitted` on each. A restored cron alone is not enough —
+> the pass stays inert while `KEEPER_ENABLED` is false, a tick can log `done`
+> having scanned nothing, and a swept chain can still leave underwater loans
+> untouched.
 
 ---
 

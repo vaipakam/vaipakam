@@ -150,13 +150,26 @@ function flagEnabled(rawLine, flag) {
   // captured value, so `--keep-vars="false"` failed the capture, backtracked
   // to the optional-group-absent branch, and read as a bare — i.e. ENABLED —
   // flag (Codex #1924 r13, reproduced).
-  const m = line.match(
-    new RegExp(`${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|([^\\s"'\`)]+)))?`),
+  // LAST occurrence wins, because that is what the CLI does. Verified against
+  // wrangler 4.90.0: `--keep-vars --keep-vars=false` parses as
+  // `keepVars: false`, yet a single `.match()` accepted the first, enabling
+  // occurrence and blessed a destructive deploy (Codex #1924 r20).
+  // `(?!-)` on the unquoted alternative: a token starting with `-` is the NEXT
+  // option, not this flag's value. Without it the first `--keep-vars` in
+  // `--keep-vars --keep-vars=false` swallowed the second as its own value, so
+  // matchAll yielded ONE match reading as enabled and "last occurrence wins"
+  // silently did nothing. It has to be in the pattern: matchAll iterates a
+  // CLONE, so adjusting `lastIndex` from the loop body has no effect.
+  const re = new RegExp(
+    `${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|((?!-)[^\\s"'\`)]+)))?`,
+    'g',
   );
-  if (!m) return false;
-  const value = m[1] ?? m[2] ?? m[3];
-  if (value === undefined) return true; // bare flag
-  return !/^(false|0|no|off)$/i.test(value.trim());
+  let effective = null;
+  for (const m of line.matchAll(re)) {
+    const value = m[1] ?? m[2] ?? m[3];
+    effective = value === undefined ? true : !/^(false|0|no|off)$/i.test(value.trim());
+  }
+  return effective === true;
 }
 
 /**

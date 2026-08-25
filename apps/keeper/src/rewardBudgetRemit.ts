@@ -274,25 +274,42 @@ async function remitToMirror(
   // cap. Close-only days (closeable, zero amount) ride along for free.
   const batch: bigint[] = [];
   let total = 0n;
+  // Days that are ACTIONABLE but did not make this tick's batch. This is the
+  // discriminator the coverage signal turns on, and getting it wrong has now
+  // gone both ways: r19 treated an empty batch as always-unsettled, which made
+  // the steady state (every day already remitted, so every entry comes back
+  // amount=0 / closeable=false) report 0/A forever and put the stand-down
+  // permanently out of reach. An empty batch is settled ONLY when nothing was
+  // left behind (Codex #1924 r20).
+  let deferred = 0;
   for (let i = 0; i < planWindow.length; i++) {
     const slice = perDay[i] ?? 0n;
     if (slice === 0n) {
+      // Zero-amount and not closeable = nothing to do for this day. Already
+      // remitted, or otherwise not eligible; NOT a deferral.
       if (closeable[i]) batch.push(planWindow[i]);
       continue;
     }
-    if (slice > laneCap) continue; // appeared oversized on the final pass
-    if (total + slice > laneCap) break; // fill the rest on a later tick
+    if (slice > laneCap) {
+      deferred += 1; // appeared oversized on the final pass
+      continue;
+    }
+    if (total + slice > laneCap) {
+      // Cap reached: this day and EVERY later actionable one wait for a
+      // later tick. Counting only this one would under-report (r20).
+      for (let k = i; k < planWindow.length; k++) {
+        const rest = perDay[k] ?? 0n;
+        if (rest > 0n) deferred += 1;
+      }
+      break;
+    }
     batch.push(planWindow[i]);
     total += slice;
   }
   if (batch.length === 0) {
-    // Also NOT settled, by the same reasoning as the all-oversized branch
-    // above (found while fixing Codex #1924 r19, not reported): reaching here
-    // means owed days remain and none fit this tick's lane cap, so nothing
-    // was sent. `window.length === 0` earlier is the only genuine
-    // nothing-owed exit.
+    if (deferred === 0) return true; // genuinely nothing actionable owed
     console.warn(
-      `[keeper] rewardBudgetRemit Base->${mirrorId} no day fits laneCap=${laneCap} this tick — ${planWindow.length} day(s) still owed`,
+      `[keeper] rewardBudgetRemit Base->${mirrorId} no day fits laneCap=${laneCap} this tick — ${deferred} actionable day(s) still owed`,
     );
     return false;
   }
@@ -364,5 +381,14 @@ async function remitToMirror(
   console.log(
     `[keeper] rewardBudgetRemit Base->${mirrorId} days=${batch.length} total=${total} fee=${fee} tx=${hash}`,
   );
+  if (deferred > 0) {
+    // The send succeeded, but only for a PREFIX of the plan — the cap cut the
+    // rest, and those finalized obligations are still unfunded. A successful
+    // tx is not the same as a settled destination (Codex #1924 r20).
+    console.warn(
+      `[keeper] rewardBudgetRemit Base->${mirrorId} partial: ${deferred} actionable day(s) deferred to a later tick`,
+    );
+    return false;
+  }
   return true;
 }

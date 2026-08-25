@@ -161,6 +161,17 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a later --keep-vars=false overriding an earlier bare one (#1924 r20)', () => {
+    // Verified against wrangler 4.90.0: this parses as keepVars:false.
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars --keep-vars=false\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a later --dry-run=false overriding an earlier enabling one (#1924 r20)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --dry-run --dry-run=false\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -282,6 +293,11 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('accepts an unquoted other-option value followed by a real flag', () => {
     // The shell really does see a separate --keep-vars here, so it is safe.
     const r = runWith('apps/keeper/README.md', 'wrangler deploy --message remember --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts a later --keep-vars=true overriding an earlier false', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars=false --keep-vars=true\n');
     expect(r.ok).toBe(true);
   });
 

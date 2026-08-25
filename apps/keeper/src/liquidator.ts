@@ -99,12 +99,37 @@ async function liquidatePassForChain(
   const client = createPublicClient({ transport: http(chain.rpc) });
   const diamond = chain.diamond as Address;
 
+  // PIN THE WHOLE SCAN TO ONE BLOCK (Codex #1924 r20).
+  //
+  // `activeLoanIdsList` is maintained by swap-and-pop
+  // (`LibMetricsHooks._removeFromActiveLoanList`): removing an entry moves the
+  // LAST id into the freed slot. So if a loan on an earlier page closes while
+  // we are paging, the tail loan moves backwards — behind the cursor — and is
+  // never returned by any page. Every read succeeds, `pagesComplete` stays
+  // true, and a still-active loan is silently missing from the scan. Reading
+  // a mutable list across several calls does not produce a snapshot, however
+  // healthy each individual call looks.
+  //
+  // One `eth_blockNumber` per chain per tick buys a consistent view for the
+  // count, every page, and every HF read. It is an I/O wait rather than CPU,
+  // so it does not work against #1896's budget.
+  let pinnedBlock: bigint;
+  try {
+    pinnedBlock = await client.getBlockNumber();
+  } catch (err) {
+    console.error(
+      `[keeper] liquidator chain=${chain.name} getBlockNumber failed: ${String(err).slice(0, 200)}`,
+    );
+    return [];
+  }
+
   let total: bigint;
   try {
     total = (await client.readContract({
       address: diamond,
       abi: METRICS_ABI,
       functionName: 'getActiveLoansCount',
+      blockNumber: pinnedBlock,
     })) as bigint;
   } catch (err) {
     console.error(
@@ -140,6 +165,7 @@ async function liquidatePassForChain(
         abi: METRICS_ABI,
         functionName: 'getActiveLoansPaginated',
         args: [off, SCAN_PAGE],
+        blockNumber: pinnedBlock,
       })) as readonly bigint[];
     } catch (err) {
       console.error(
@@ -185,7 +211,11 @@ async function liquidatePassForChain(
     }));
     let results: { status: 'success' | 'failure'; result?: unknown; error?: Error }[];
     try {
-      results = (await client.multicall({ contracts, allowFailure: true })) as typeof results;
+      results = (await client.multicall({
+        contracts,
+        allowFailure: true,
+        blockNumber: pinnedBlock,
+      })) as typeof results;
     } catch (err) {
       console.error(
         `[keeper] liquidator chain=${chain.name} multicall chunk ${i}/${ids.length} failed: ${String(err).slice(0, 200)}`,
@@ -199,6 +229,7 @@ async function liquidatePassForChain(
             abi: RISK_ABI,
             functionName: 'calculateHealthFactor',
             args: [id],
+            blockNumber: pinnedBlock,
           })) as bigint;
           results.push({ status: 'success', result: hf });
         } catch (subErr) {
