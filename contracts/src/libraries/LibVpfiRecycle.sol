@@ -495,10 +495,22 @@ library LibVpfiRecycle {
      * @param  s Diamond storage.
      * @return vpfiBalance The Diamond's live VPFI balance (all labels).
      * @return bucket      VPFI wei labelled as recycled reward runway.
-     * @return unearmarked `vpfiBalance − bucket`, floored at zero — the
-     *         balance available to fresh/scheduled payout without eating
-     *         recycle backing. Zero means fully consumed OR in breach; read
-     *         it with `vpfiBalance` and `bucket` to tell those apart.
+     * @return unearmarked The balance available to fresh/scheduled payout
+     *         without eating recycle backing. THREE floored subtractions,
+     *         applied in sequence: `vpfiBalance − bucket`, then
+     *         `strandedRecoveryReserved` (#1434 P2-w2), then the recovery
+     *         position (P2-w5). Zero means fully consumed OR in breach;
+     *         read it with `vpfiBalance` and `bucket` to tell those apart.
+     *
+     *         This said `vpfiBalance − bucket` alone until #1349 — the
+     *         formula from before the two P2-w terms were added, left
+     *         standing in the RETURN CONTRACT of the function that applies
+     *         them. A reader reproducing the figure from this line gets a
+     *         number larger than the one returned, on any chain where
+     *         either term is non-zero, and concludes the code is wrong.
+     *         The count is safe to state here BECAUSE these three are the
+     *         subtractions this function performs — unlike the unsubtracted
+     *         owners below, whose count went stale three rounds running.
      *
      *         **This is an UPPER BOUND on genuinely free tokens, on every
      *         deployment.** Other owners of this balance are known and
@@ -530,10 +542,25 @@ library LibVpfiRecycle {
         if (token == address(0)) revert RecycleBackingTokenUnset();
         vpfiBalance = IERC20(token).balanceOf(address(this));
         bucket = s.recycleBucket;
-        // #1555 r4 — this subtracts the BUCKET ONLY, and that is now a
-        // DELIBERATE stopping point rather than an oversight. An r3 revision
-        // also subtracted `treasuryBalances[vpfi]`; it was reverted. Why, in
-        // full, because the reasoning is the useful part:
+        // #1555 r4 — this subtracts no further BALANCE-OWNER term beyond
+        // the bucket, and that is a DELIBERATE stopping point rather than an
+        // oversight. An r3 revision also subtracted `treasuryBalances[vpfi]`;
+        // it was reverted. Why, in full, because the reasoning is the useful
+        // part:
+        //
+        // #1349 — this opened "subtracts the BUCKET ONLY" until now, and the
+        // qualifier matters: `unearmarked` is THREE floored subtractions by
+        // the end of this function — bucket, then `strandedRecoveryReserved`
+        // (#1434 P2-w2), then the recovery position (P2-w5). Both were added
+        // AFTER this sentence, and the rule below was narrowed from "sixth
+        // subtraction" to "balance-owner subtraction" to admit them while the
+        // opening line kept the absolute wording. A reader who stops here —
+        // and the sentence reads as a complete statement of the formula, so
+        // stopping is the reasonable thing to do — leaves with a formula that
+        // will not reproduce the number this function returns. It cost a
+        // review round: the same superseded formula is printed on the public
+        // dashboard (#1937), and I nearly refuted that finding on the
+        // strength of this line before reading to the end of the function.
         //
         // Review kept surfacing further owners of this one balance. The list
         // is in the natspec above and is NOT duplicated or counted here — an

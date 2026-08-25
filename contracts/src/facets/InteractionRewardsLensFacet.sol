@@ -733,7 +733,13 @@ contract InteractionRewardsLensFacet {
      *         actually corrupted from one that is merely fully consumed.
      * @return vpfiBalance         Diamond's live VPFI balance, all labels.
      * @return bucket              VPFI wei labelled as recycled runway.
-     * @return unearmarked         `vpfiBalance − bucket`, floored at zero.
+     * @return unearmarked         THREE floored subtractions in sequence:
+     *         `vpfiBalance − bucket`, then `strandedRecoveryReserved`, then
+     *         the recovery position — the two terms this same view returns
+     *         below, published so a reader can reproduce this figure. Said
+     *         `vpfiBalance − bucket` alone until #1349: the pre-#1434
+     *         formula, left on the RETURN DOC of the view whose whole
+     *         purpose is letting an outside reader recompute the number.
      *         A zero here is ambiguous by construction — fully consumed and
      *         in breach look identical. Compare `vpfiBalance` against
      *         `bucket` to separate them.
