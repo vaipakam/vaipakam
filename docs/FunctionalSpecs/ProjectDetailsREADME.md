@@ -86,6 +86,20 @@ for the following platform areas:
   - This governs terms the buyer authored. It is not a licence to bind terms
     the listed route leaves alone: a rule imposed on one route and not the
     other is the same defect in the opposite direction.
+- **Admission is judged against the loan's current borrower, and the borrower
+  may not buy their own debt's lender side.** A borrower position can change
+  hands after the loan is opened, so the party the incoming lender is admitted
+  against is whoever holds the borrower position **now**, not the borrower
+  recorded at origination — a stale record would let a sale be screened against
+  someone no longer party to the loan. The sharper case is the loan's own
+  current borrower acquiring the lender side of their own debt: that would leave
+  a single party as both lender and borrower of a live loan — one wallet owing
+  itself — which the repayment path cannot service, stranding the position. Such
+  a sale is refused outright. Both sale routes enforce this identically; the
+  refusal takes effect on every deployment, while the where-identity-gating-is-on
+  half of the check (screening the live borrower for country/KYC compatibility)
+  matters only where those gates are switched on. A borrower who wants out exits
+  by repaying or pre-closing, never by buying the lender side.
 - These two rules pull in different directions and the distinction is
   deliberate. Snapshot semantics continue to govern the **existing** loan's
   ongoing operation, so a governance retune never retroactively changes the
