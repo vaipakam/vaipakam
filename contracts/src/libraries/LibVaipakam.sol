@@ -472,18 +472,23 @@ library LibVaipakam {
     uint256 constant MIN_AUTO_PAUSE_SECONDS = 300; // 5 min
     uint256 constant MAX_AUTO_PAUSE_SECONDS = 7200; // 2 hours
 
-    /// @dev T-032 / Numeraire generalization (b1) — Notification fee (per loan-side)
-    ///      defaults + bounds. Charged in VPFI, denominated in the
-    ///      ACTIVE NUMERAIRE (1e18-scaled — USD by post-deploy default;
-    ///      whatever governance has rotated to otherwise), deducted on
+    /// @dev T-032 — Notification fee (per loan-side) defaults + bounds.
+    ///      A flat VPFI QUANTITY (see the M1 paragraph below), deducted on
     ///      first paid-tier notification fired by the off-chain
-    ///      hf-watcher. Default 2.0 numeraire-units covers Push
-    ///      Protocol channel-side delivery costs at the operator's
-    ///      expected notification volumes (~5-10 notifications per
-    ///      loan lifetime). Floor 0.1 prevents governance accidentally
-    ///      setting it to ~0 and starving the channel; ceiling 50.0
-    ///      caps the worst-case bill on a per-loan basis if governance
-    ///      misfires upward.
+    ///      hf-watcher. The default covers Push Protocol channel-side
+    ///      delivery costs at the operator's expected notification volumes
+    ///      (~5-10 notifications per loan lifetime); the floor prevents
+    ///      governance accidentally setting it to ~0 and starving the
+    ///      channel, and the ceiling caps the worst-case per-loan bill if
+    ///      governance misfires upward.
+    ///
+    ///      This paragraph used to open "denominated in the ACTIVE
+    ///      NUMERAIRE (1e18-scaled)" with a "Default 2.0 numeraire-units",
+    ///      which #1346 retired — and it contradicted BOTH the paragraph
+    ///      directly below it and the constant directly beneath, which is
+    ///      `5e17`, i.e. 0.5 VPFI, not 2.0 of anything. A reader taking the
+    ///      first half at face value would price this fee through an oracle
+    ///      that the bill path does not consult.
     ///
     ///      Recycling M1 (#1346, governor §4.1/§13/§14.2) — the fee is a
     ///      **flat native-VPFI tariff**: the stored value IS the VPFI wei
@@ -2084,10 +2089,12 @@ library LibVaipakam {
         // `NOTIF_BILLER_ROLE` — held by the off-chain hf-watcher) the
         // first time a paid-tier (Push-Protocol) notification fires
         // for the corresponding side of this loan. Once set, the user's
-        // VPFI vault has already been debited the
-        // `cfgNotificationFee()`-equivalent amount in VPFI,
-        // routed directly to treasury (no Diamond custody — see
-        // `LibNotificationFee.bill` for the routing). Idempotent: the
+        // VPFI vault has already been debited the flat notification fee
+        // in VPFI, taken into DIAMOND CUSTODY and credited to the recycle
+        // bucket (#1346 — see `LibNotificationFee.bill`, whose recipient
+        // is `address(this)`). The pre-#1346 wording here said "routed
+        // directly to treasury (no Diamond custody)" while citing the file
+        // that disproves it. Idempotent: the
         // facet method no-ops if the flag is already true. Free-tier
         // (Telegram-only) subscribers and unsubscribed users always
         // leave both flags `false` — they're billed only on PaidPush.
@@ -2192,7 +2199,60 @@ library LibVaipakam {
         // the treasury field every settlement split reads. The RESOLVED value
         // is stored (never 0, since `cfg*` map a 0 config to the default), so
         // `0` unambiguously means a pre-#957 loan ⇒ `effectiveTreasuryFeeBps`
-        // falls back to the live knob. Both fees are bounded by `MAX_FEE_BPS`
+        // falls back to `LEGACY_TREASURY_FEE_BPS` (100 = 1%), the FROZEN
+        // pre-#957 rate — NOT the live knob. That distinction is the whole
+        // point of the field. The live knob is `cfgTreasuryFeeBps()`, which
+        // returns the governance override in `protocolCfg.treasuryFeeBps`
+        // when set and otherwise `TREASURY_FEE_BPS` (200, the rev-8 freeze
+        // default, #1352) — so resolving a grandfathered loan against it
+        // would reprice it at repay from 1% to WHATEVER IS LIVE THEN, in
+        // EITHER DIRECTION. `setFeesConfig` bounds the override only from
+        // above (`> MAX_FEE_BPS` reverts), so the live knob is any value in
+        // 1..5000: 2% on an untuned deploy, up to 50% after a retune, and
+        // BELOW the frozen 1% for an override of 1..99. Neither direction is
+        // bounded at 2×.
+        //
+        // WHO IT MOVES VALUE BETWEEN — and it depends on the path, which
+        // three earlier revisions of this comment each got wrong in a
+        // different way.
+        //
+        // On the INTEREST-SPLIT paths (`LibEntitlement.splitTreasury`:
+        // repay, rental settlement) the rate divides a fixed amount —
+        //   `treasuryShare = interest × bps / BPS;
+        //    lenderShare  = interest − treasuryShare`
+        // so the borrower's outlay is identical at any rate and the value
+        // moves between LENDER and treasury. Above the frozen rate the
+        // lender is paid less than the receipt they signed; below it the
+        // treasury is.
+        //
+        // On the T-086 PARALLEL-SALE path it is additive, not a split:
+        // `LibCollateralSettlement.treasuryAndPrecloseFee` adds
+        // `interest × (treasuryBps + precloseBps) / BPS` on TOP of
+        // `principalPlusAccruedInterest` to form the minimum sale floor, the
+        // lender's interest leg is preserved whole, and `PrepayListingFacet`
+        // routes the remainder to `ownerOf(loan.borrowerTokenId)`. At a
+        // fixed sale price a higher rate therefore shrinks the BORROWER
+        // remainder. So "the borrower is never affected" — an earlier
+        // revision's wording — is true of the split paths and false here.
+        //
+        // That helper is NOT confined to the sale path, and its other use
+        // behaves differently again: `SwapToRepayIntentFacet` and
+        // `LibSwapToRepayIntentSettlement` call it for a commit-time
+        // minimum-output and a fill-time live floor, but the actual
+        // distribution is recomputed by `LibSettlement.computeRepayment`,
+        // where `lenderDue + treasuryShare` is the fixed
+        // principal + interest + late-fee amount. So on that path the rate
+        // moves the ACCEPTANCE THRESHOLD, not the split: a change can cause
+        // the intent or fill to be rejected outright, and cannot shrink the
+        // borrower's surplus on a fill that passes. Three call shapes, three
+        // different answers — which is why this comment names the path
+        // rather than a party.
+        //
+        // Either way the downward direction is the easier to miss, because
+        // an under-paid treasury complains to nobody.
+        // This comment
+        // previously said the fallback was "the live knob", which described
+        // exactly the change CLAUDE.md warns must never be made. Both fees are bounded by `MAX_FEE_BPS`
         // (5000) so `uint16` holds them; they pack into one slot. Append-only
         // tail fields — zero on every existing loan.
         uint16 treasuryFeeBpsAtInit;
@@ -3264,8 +3324,10 @@ library LibVaipakam {
         /// @dev Σ interestRateBps across every loan ever initiated.
         ///      Divided by totalLoansEverCreated to yield averageApr.
         uint256 interestRateBpsSum;
-        /// @dev T-032 — cumulative VPFI debited from user vaults and
-        ///      routed to treasury via `LoanFacet.markNotifBilled`.
+        /// @dev T-032 — cumulative VPFI debited from user vaults via
+        ///      `LoanFacet.markNotifBilled`. Since #1346 that VPFI lands in
+        ///      DIAMOND CUSTODY and credits the recycle bucket, not the
+        ///      treasury; this counter is the lifetime total either way.
         ///      Never decremented; the operator monitors this for
         ///      anomaly detection (a compromised NOTIF_BILLER_ROLE
         ///      could falsely bill, capped at the per-loan-side fee
@@ -5850,8 +5912,12 @@ library LibVaipakam {
         // `chainReleasedRecycledCommit` — BASE-ONLY per-chain ratchet of the
         //   reported RELEASE cumulative; clamped to the ratcheted retired
         //   figure and to `chainConsumedRecycled[c]`. It re-credits
-        //   availability by reducing the NET claim draw that is subtracted
-        //   from `reported_c` — see {LibVpfiRecycle.mirrorAvailRecycled} for
+        //   availability by reducing the NET INSTRUCTION draw that is
+        //   subtracted from `reported_c` ("claim draw" until #1349:
+        //   `chainConsumedRecycled` is booked when Base INSTRUCTS at
+        //   finalization, not when a user claims, and Base has no
+        //   authenticated view of mirror claims at all) — see
+        //   {LibVpfiRecycle.mirrorAvailRecycled} for
         //   the operand order; it is subtraction-first and is not restated
         //   as a sum here, because the sum form overflows on a hostile
         //   report.
@@ -7175,11 +7241,34 @@ library LibVaipakam {
     ///      numerators (`fundedSide_c × globalSide / chainSide_c`, floor)
     ///      that make the existing per-side numerator/global-denominator
     ///      claim math yield exactly the funded budget on that chain.
-    ///      `recycleConsume` is the capped-committable share funded from the
-    ///      chain's OWN bucket (B2-b: the exact figure Base books into
-    ///      `chainConsumedRecycled[c]` at finalization and the mirror debits
-    ///      from its bucket at broadcast arrival — same number, both
-    ///      ledgers; the remainder arrives via remittance); `keeperAllocate`
+    ///      `recycleConsume` — ON A MIRROR RECORD — is the capped-committable
+    ///      share funded from that chain's OWN bucket (B2-b: the exact
+    ///      figure Base books into `chainConsumedRecycled[c]` at
+    ///      finalization and the mirror
+    ///      RESERVES against its bucket at broadcast arrival, via
+    ///      {LibVpfiRecycle.reserveMirrorCommit} — same number, both
+    ///      ledgers; the remainder arrives via remittance). This line said
+    ///      the mirror "debits from its bucket at broadcast arrival" until
+    ///      #1349, which is the one thing that function is written NOT to
+    ///      do: `consume` already runs at every claim on every chain, so an
+    ///      arrival debit charges the same tokens twice, drains the bucket
+    ///      to its floor and over-states this chain's availability to Base
+    ///      (§2e.1). Reserve at arrival, debit at claim/remit.
+    ///
+    ///      ON THE BASE RECORD IT IS ZERO, and that is not a dust case —
+    ///      `LibMeshFunding._stampOne` guards the local split with
+    ///      `if (c.chainId != ctx.baseId)`, because Base's own slice comes
+    ///      from the same bucket the GLOBAL reservation already governs.
+    ///      So Base books nothing into `chainConsumedRecycled[Base]` and
+    ///      returns its whole capped commit through `reservedBase`;
+    ///      per-chain instruction books exist to track what a MIRROR holds,
+    ///      and Base double-booking itself would corrupt the global
+    ///      reservation and net its own bucket twice. This paragraph
+    ///      described the mirror semantics as every chain's until #1349 —
+    ///      an inspector reading the Base stamp would have read its zero as
+    ///      "Base funded none of its own day" rather than "this field does
+    ///      not apply here".
+    ///      `keeperAllocate`
     ///      is reserved for the per-chain keeper allocation (0-valued until
     ///      that resolution exists). `freshLenderHalf`/`freshBorrowerHalf`
     ///      (B2-b append) are the per-side FRESH floors this chain prices
@@ -7916,9 +8005,16 @@ library LibVaipakam {
     ///      "never configured" and can never be confused with a deliberate
     ///      zero-share policy (which would strand every claimant).
     ///
-    ///      Read at FINALIZE only, to stamp `dayUserSideCapVpfi18[d]`. Days
-    ///      already finalized keep the `C` they were stamped with, so a
-    ///      governance retune cannot retroactively reprice a past day's ceiling.
+    ///      Read at FINALIZE only, to stamp the per-SIDE ceilings
+    ///      `dayUserSideCapLenderVpfi18[d]` / `dayUserSideCapBorrowerVpfi18[d]`
+    ///      (`LibInteractionRewards`). It used to say it stamps
+    ///      `dayUserSideCapVpfi18[d]` — the single-value slot #1222 M3 B2-b
+    ///      RETIRED in favour of that pair. Nothing writes the retired slot
+    ///      any more, so the sentence pointed the one governance knob whose
+    ///      blast radius is every claimant's ceiling at a mapping that is
+    ///      now permanently zero. Days already finalized keep the `C` they
+    ///      were stamped with, so a governance retune cannot retroactively
+    ///      reprice a past day's ceiling.
     function cfgUserSideShareCapBps() internal view returns (uint256) {
         uint16 v = storageSlot().userSideShareCapBps;
         return v == 0 ? uint256(USER_SIDE_SHARE_CAP_DEFAULT_BPS) : uint256(v);
@@ -8075,12 +8171,44 @@ library LibVaipakam {
     ///      governance retune never changes the economics of a loan already
     ///      originated. `0` (pre-#957 loan) ⇒ the FROZEN legacy default
     ///      `LEGACY_TREASURY_FEE_BPS` (100 = 1%), NOT the live knob — the
-    ///      #1352 rev-8 fee freeze bumped the live default to 200 (2%), and
+    ///      #1352 rev-8 fee freeze bumped the live DEFAULT to 200 (2%), and
     ///      falling back to the live knob would retroactively reprice every
-    ///      pre-#957 open loan from 1% → 2% at repay. Freezing the fallback
+    ///      pre-#957 open loan at repay, in EITHER DIRECTION: `setFeesConfig`
+    ///      bounds the override only from above, so the live knob is any
+    ///      value in 1..`MAX_FEE_BPS`, and an override below 100 would
+    ///      reprice a grandfathered loan DOWNWARD. WHICH PARTY is repriced
+    ///      depends on the caller, and there are four: on the interest-SPLIT
+    ///      paths (`LibEntitlement.splitTreasury`, and the sizing read in
+    ///      `LibVPFIDiscount`) the borrower's outlay is fixed and the value
+    ///      moves between LENDER and treasury; on the T-086 parallel-sale
+    ///      path (`LibCollateralSettlement.treasuryAndPrecloseFee`) the fee
+    ///      is an ADDITIVE leg in the sale floor whose remainder
+    ///      `PrepayListingFacet` routes to the borrower-position holder, so
+    ///      at a fixed price it moves value between treasury and the
+    ///      BORROWER instead. That same helper has a THIRD shape:
+    ///      `SwapToRepayIntentFacet` / `LibSwapToRepayIntentSettlement` use
+    ///      it as a commit-time minimum output and a fill-time floor, and
+    ///      `LibSettlement.computeRepayment` then recomputes the split with
+    ///      `lenderDue + treasuryShare` fixed — so there the rate moves the
+    ///      ACCEPTANCE THRESHOLD (it can reject an intent or fill) and
+    ///      cannot shrink the borrower's surplus on a fill that passes.
+    ///      `RiskPreviewFacet` only compares. This duplicate explanation
+    ///      classified the helper by its sale consumer alone until #1349,
+    ///      one round after the field comment above had been corrected —
+    ///      the same fix landing on one of two copies. This line
+    ///      "1% → 2%" until #1349, which
+    ///      named only the untuned-deploy case; {RiskPreviewFacet}'s
+    ///      inherited-fee gate has always reasoned about the sub-legacy
+    ///      knob, so the two files disagreed. Freezing the fallback
     ///      at 100 grandfathers those loans (the grandfather resolver of
-    ///      redesign §"Fee-default migration"; new loans stamp the live 200
-    ///      at origination via `LoanFacet._snapshotFeeBps`).
+    ///      redesign §"Fee-default migration"; new loans stamp
+    ///      `cfgTreasuryFeeBps()` at origination via
+    ///      `LoanFacet._snapshotFeeBps:936` — the CONFIGURED rate, which is
+    ///      200 only on an untuned deploy). This said "the live 200" until
+    ///      #1349, four lines below the sentence explaining that the knob
+    ///      is any value in 1..`MAX_FEE_BPS` — the same docblock asserting
+    ///      both that the rate is variable and that new loans stamp a
+    ///      constant.
     function effectiveTreasuryFeeBps(
         Loan storage loan
     ) internal view returns (uint256) {

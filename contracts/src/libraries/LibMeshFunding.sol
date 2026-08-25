@@ -43,27 +43,79 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *         funded budgets remaining the binding caps (scaling dust can never
  *         over-pay).
  *
- *         B2-b RE-SLICE (Codex #1417 r6): mirror LOCAL funding + the
- *         consume-on-arrival symmetry are DEFERRED to B2-d, where the
- *         delivered-backing ledger (a mirror's surrendered slice + received
- *         remittances) makes mirror-side consumption safe. A mirror funding
- *         its slice from its own bucket before the backing remittance has
- *         arrived would let pre-remittance claims cannibalise other reward
- *         ledgers and report phantom availability to Base — so until B2-d,
- *         Base funds the WHOLE mesh budget (`avail = 0` on every mirror).
- *         The two passes therefore degenerate to "Base funds all": the
- *         whole capped commit is Base-funded and reserves into the GLOBAL
- *         `outstandingCommitRecycled` (consumed at Base claims + remit), so
- *         the live `recycledBudget` stamp and the global reservation stay
- *         numerically identical to the pre-mesh single-pool
- *         `min(fundable, coupled)`. `recycleConsume` rides the wire as 0.
+ *         MIRROR LOCAL FUNDING IS ON (B2-d3). This header used to say the
+ *         opposite — "DEFERRED to B2-d … Base funds the WHOLE mesh budget
+ *         (`avail = 0` on every mirror) … `recycleConsume` rides the wire
+ *         as 0" — and the body has contradicted it since B2-d3 landed:
+ *         `resolveAndStampDayFunding` routes every non-Base chain through
+ *         `_mirrorAvailable` (see the B2-d3 comment beside it) and writes
+ *         `recycleConsume: commitLocal`. Reading the header instead of the
+ *         body would tell you a mirror never funds its own slice, which is
+ *         no longer true and is load-bearing for the two-pass split.
  *
- *         What B2-b DOES make live: each chain gets its own funded per-day
+ *         Why the deferral existed, kept because it is the reason the
+ *         current shape is safe rather than merely permitted: a mirror
+ *         funding its slice from its own bucket BEFORE the backing
+ *         remittance arrived would let pre-remittance claims cannibalise
+ *         other reward ledgers and report phantom availability to Base.
+ *         What made it safe is the legs BELOW — deliberately not given a
+ *         count. This sentence has said "two", then "THREE things, not
+ *         two", and each number was wrong within a round; a total is a
+ *         claim about completeness that nobody has been able to keep true,
+ *         while the list itself stays useful without one. A mirror's
+ *         availability is Base's model of its committable bucket,
+ *         `reported` less the net INSTRUCTION draw and less the net
+ *         repatriation draw, never an unbacked optimism. "Claim draw" until
+ *         #1349, which was wrong on timing and on meaning: `_stampOne`
+ *         increments `chainConsumedRecycled` at FINALIZATION, when Base
+ *         instructs the mirror, and `mirrorAvailRecycled` nets it
+ *         immediately — long before any mirror claim, of which Base has no
+ *         authenticated view at all. An auditor reading "claim" would
+ *         expect availability to stay reusable until a user claims:
+ *
+ *           - d1's commitment report;
+ *           - d2's delivered-backing ledger;
+ *           - C2's repatriation draw. {RepatriationFacet.authorizeRepatriation}
+ *             advances `chainRepatriationDebited` BEFORE dispatch and
+ *             {mirrorAvailRecycled} subtracts it as a SEPARATE term from
+ *             the instruction draw, so custody pending return to Base
+ *             cannot also be offered to day finalization — without it the
+ *             same tokens could be authorized for return and recommitted.
+ *             The paragraph above already named "the net repatriation
+ *             draw" and the list then omitted it, which is how a
+ *             self-contradicting count survives a correction.
+ *           - d5's custody-relocation exclusion. {creditCustodyRelocated}
+ *             raises `recycleBucket` without adding the relocated amount to
+ *             `recycleCreditedCumulative`, advancing
+ *             `recycleCustodyRelocatedCumulative` instead, which
+ *             {LibVpfiRecycle.creditedCumulative} subtracts. It is "not by
+ *             the relocated amount", not "never": on an in-place-upgraded
+ *             Diamond whose slot is still 0, it SEEDS
+ *             `recycleCreditedCumulative` from the derived floor first
+ *             (#1448 r3), read before the bucket write so the relocation
+ *             itself cannot land in the seed. That write is what preserves
+ *             the invariant on an upgrade, so a reader told the counter is
+ *             never touched here would mis-audit exactly that case. Drop that
+ *             subtraction and Base's own remitted top-up re-enters
+ *             `reported` and `_mirrorAvailable` offers it for commitment a
+ *             second time — Base reading its own top-up back as the
+ *             mirror's absorption. d1 and d2 alone do not close that.
+ *
+ *         Naming only d1 and d2 here would send someone auditing the
+ *         no-phantom-availability property to a SUBSET of the places it
+ *         actually lives — and this sentence said "two of the three
+ *         places" until #1349, reinstating three paragraphs down the very
+ *         count the paragraph above had just removed.
+ *
+ *         What B2-b made live: each chain gets its own funded per-day
  *         stamp (per-side fresh floors + global-equivalent recycled halves),
  *         Base prices its OWN claims + remittances from its stamp (never the
  *         aggregate), and the per-destination V2 broadcast ships every
- *         mirror its stamp + cap family so the shape is ready for B2-d to
- *         arm mirror consumption against.
+ *         mirror its stamp + cap family. That last clause used to end "so
+ *         the shape is READY for B2-d to arm mirror consumption against",
+ *         which survived the correction above and re-asserted, four
+ *         paragraphs later, the pending state the header had just retired.
+ *         B2-d3 armed it: mirrors consume against that stamp today.
  */
 library LibMeshFunding {
     /// @notice Emitted once per (armed day, chain) with the funded stamp.
@@ -116,13 +168,13 @@ library LibMeshFunding {
     /**
      * @notice Resolve + stamp the armed day's per-chain funding: writes the
      *         per-(day,chain) stamps and returns the global totals the
-     *         aggregator stamps and reserves. In the B2-b re-slice every
-     *         mirror funds 0 locally (see the library header), so the whole
-     *         commit is Base-funded and `reservedBase == Σ commit` — the
-     *         aggregator's global reservation therefore stays numerically
-     *         identical to the pre-mesh `min(fundable, coupled)` while each
-     *         chain still gets its own claimable stamp. B2-d turns on mirror
-     *         local funding + the consume-on-arrival symmetry together.
+     *         aggregator stamps and reserves. Mirrors DO fund locally since
+     *         B2-d3, so `reservedBase` is the BASE-funded remainder rather
+     *         than the whole commit, and each mirror's own share rides the
+     *         wire as `recycleConsume`. (This paragraph previously described
+     *         the B2-b re-slice, where every mirror funded 0 locally and
+     *         `reservedBase == Σ commit`; that stopped being true when
+     *         B2-d3 landed.)
      * @param  dayId         Day being finalized (denominators final).
      * @param  coupledTarget The absorption-coupled target `Ā × (1 − m)` —
      *                       NOT pre-capped by Base's fundable balance; the
@@ -187,10 +239,15 @@ library LibMeshFunding {
             uint256 targetTotal = c.targetLender + c.targetBorrower;
 
             // #1222 M3 B2-d3 — mirror LOCAL funding is now ON (the B2-b
-            // re-slice deferred it to here, where d1's commitment report +
-            // d2's delivered-backing ledger make it safe). A mirror's
+            // re-slice deferred it to here, where d1's commitment report,
+            // d2's delivered-backing ledger, C2's repatriation draw AND
+            // d5's custody-relocation exclusion together make it safe —
+            // see this library's header for what each leg contributes and
+            // for why no total is given. This comment said d1+d2 until
+            // #1349 and then d1+d2+d5, omitting C2's draw even while the
+            // sentence below names it. A mirror's
             // availability is Base's model of its committable bucket:
-            // `reported` less the net claim draw `sat(consumed −
+            // `reported` less the net INSTRUCTION draw `sat(consumed −
             // released)` and less the net repatriation draw, the HARD
             // backstop the B1 ledger
             // defines — reported only ever advances on the chain's own

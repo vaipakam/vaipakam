@@ -701,7 +701,30 @@ contract RewardAggregatorFacet is
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled stamp for an armed
     ///         day (zeroes with `stamped == false` pre-cutover or for a
-    ///         never-funded chain). `keeperAllocate` is always 0 until B2-b.
+    ///         never-funded chain). `keeperAllocate` is always 0 — B2-b
+    ///         landed and it is STILL always 0, because the per-chain
+    ///         keeper allocation it reserves space for is #1569, which is
+    ///         undecided. TWO places write a zero, and they are not two
+    ///         stamps: {LibMeshFunding._stampOne} is the only production
+    ///         stamp producer and hard-zeroes the field, while this facet's
+    ///         `_perDestFields` writes zero only in its MISSING-STAMP
+    ///         fallback payload (an excluded or unstamped destination) —
+    ///         where a stamp exists it forwards `f.keeperAllocate`
+    ///         verbatim. Said "this facet's own stamp" until #1349, which
+    ///         invented a second storage writer and would send whoever
+    ///         arms #1569 to the wrong file. The older wording ("until
+    ///         B2-b") implied the field would populate at a milestone that
+    ///         has since passed.
+    ///
+    ///         It is READ, though — do not mistake "always 0" for "inert".
+    ///         `_perDestFields` puts it in every V2/V3 per-destination
+    ///         payload, {VaipakamRewardMessenger} forwards it, and
+    ///         {RewardReporterFacet} stores it and REPLAY-COMPARES it: a
+    ///         re-broadcast carrying a value that differs from the stored
+    ///         one reverts `KnownGlobalAlreadySet()`. So whoever arms #1569
+    ///         is changing a wire field under an equality check, not filling
+    ///         in an unused slot. What is true is narrower than "unread":
+    ///         no accounting or allocation logic acts on the value.
     function getChainDayRecycledFunding(uint256 dayId, uint32 chainId)
         external
         view
@@ -737,8 +760,15 @@ contract RewardAggregatorFacet is
     /// @return consumedCumulative   Cumulative Base has instructed the chain
     ///                              to consume (written from B2 on).
     /// @return availRecycled        What mesh funding/netting may draw
-    ///                              against: `reported`, less the net claim
-    ///                              draw `sat(consumed − released)`, less the
+    ///                              against: `reported`, less the net
+    ///                              INSTRUCTION draw `sat(consumed −
+    ///                              released)` — "claim draw" until #1349,
+    ///                              which had the timing backwards on the
+    ///                              one surface operators read: `_stampOne`
+    ///                              books `chainConsumedRecycled` at
+    ///                              FINALIZATION, when Base instructs, and
+    ///                              Base never observes a mirror claim —
+    ///                              less the
     ///                              MAINTAINED net repatriation slot — that
     ///                              one is decremented by a cancellation ACK,
     ///                              never derived from two gross cumulatives

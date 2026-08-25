@@ -1269,18 +1269,88 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
     /**
      * @notice T-032 — record the FIRST PaidPush-tier notification for a
      *         loan-side and immediately bill the corresponding party
-     *         `cfgNotificationFee()`-equivalent in VPFI from their
-     *         vault → treasury (one transfer, no Diamond custody).
+     *         flat notification fee in VPFI from their vault into
+     *         DIAMOND CUSTODY, which then credits the recycle bucket
+     *         (`LibNotificationFee.bill` → `vaultWithdrawERC20(payer, vpfi,
+     *         address(this), …)` → `LibVpfiRecycle.credit(NotificationFee,
+     *         …)`). #1346 moved this off the direct-to-treasury route; it is
+     *         the loop's Layer-0 absorption class. "-equivalent" was stale
+     *         too — the amount is a FLAT native-VPFI quantity, not an
+     *         oracle conversion.
      * @dev    Idempotent: subsequent calls on an already-billed side
-     *         no-op. Reverts on:
+     *         no-op. Reverts on the following — a NON-EXHAUSTIVE list, and
+     *         the qualifier is not throat-clearing: three review rounds in
+     *         a row found this enumeration wrong in a new direction, so
+     *         treat it as the causes worth knowing about rather than as a
+     *         closed set:
+     *           - the Diamond being PAUSED (`whenNotPaused`, on this
+     *             function). Omitted here until #1349 despite sitting in
+     *             the signature three lines below the list
      *           - caller missing `NOTIF_BILLER_ROLE`
      *           - loanId past `nextLoanId` or never-initialized
      *             (InvalidLoanStatus)
-     *           - oracle stale / WETH unset / VPFI not configured
+     *           - VPFI not configured (`NotifFeeVpfiTokenNotSet`). No
+     *             oracle and no WETH are touched on this path — the fee is
+     *             a flat VPFI quantity, so the pre-#1346 "oracle stale /
+     *             WETH unset" causes listed here cannot occur
      *           - payer's vault has insufficient VPFI (the watcher's
      *             expected behaviour is to LOG this revert and skip
      *             the notification — the user's billed flag stays
      *             false until they top up VPFI)
+     *           - anything the discount RESTAMP raises. After the vault
+     *             withdrawal and BEFORE the recycle credit, the billed
+     *             flag, the accrual and the event, `bill` calls
+     *             `LibVPFIDiscount.rollupUserDiscount` — the BROADCASTING
+     *             wrapper, not `rollupUserDiscountLocal` — so
+     *             on a Diamond with `rewardMessenger` set, a
+     *             {ProtocolBroadcastFacet} failure bubbles and reverts the
+     *             whole bill. `ProtocolBudgetExhausted` is the one an
+     *             operator will actually meet — but it hits only the
+     *             payers whose rollup NEEDS an outbound send.
+     *             `protocolBroadcastTierUpdate` returns early, before
+     *             touching the budget, for a zero-tier-no-change user and
+     *             for an unchanged push tuple, so while the budget is
+     *             empty those payers keep billing normally. The symptom is
+     *             therefore MIXED success and failure across payers, not a
+     *             clean stop — which is precisely what makes it hard to
+     *             read. Sorting the causes by BLAST RADIUS is what makes
+     *             them separable — as a way of THINKING about a report, not
+     *             as a lookup table, since each attempt to make it one has
+     *             been incomplete:
+     *               · uniform across every payer — a protocol PAUSE, a
+     *                 missing `NOTIF_BILLER_ROLE` (the CALLER's state), an
+     *                 unset VPFI token (Diamond-wide config), and a
+     *                 broadcast-leg failure IF every payer in the batch
+     *                 needs an outbound send;
+     *               · payer-by-payer — an underfunded vault;
+     *               · SHARED but conditional — the broadcast leg in the
+     *                 ordinary case. It bites only the payers whose rollup
+     *                 needs a send, so a global cause presents as partial
+     *                 failure.
+     *             Note the broadcast leg appears TWICE on purpose: its
+     *             blast radius depends on the batch, so it is the one cause
+     *             that can imitate either pattern. A uniform outage
+     *             therefore does not identify a cause either, and
+     *             partial failure does not: it
+     *             is equally consistent with vault-side causes and with
+     *             any failure on the broadcast leg. Check the failing
+     *             payer's VPFI balance first — but a SUFFICIENT balance
+     *             does not move the diagnosis off the vault, which an
+     *             earlier revision of this note claimed it did. `bill`
+     *             withdraws through `vaultWithdrawERC20`, which resolves
+     *             the vault via `getOrCreateUserVault` (a sanctions screen
+     *             and an upgrade requirement both live there) and then
+     *             spends UNENCUMBERED balance, so a fully funded vault
+     *             still reverts `WithdrawWouldUnderflowLien` when the
+     *             balance is liened. Only once vault state is cleared does
+     *             the broadcast leg become the place to look, and the
+     *             budget is one candidate there among several. `sendTierUpdate` runs AFTER the budget
+     *             check and reverts `NoBroadcastDestinations` on an empty
+     *             destination list, and the messenger is `GuardianPausable`,
+     *             so a pause or a misconfigured messenger reverts the bill
+     *             just as an empty budget does. Two earlier revisions of
+     *             this note each narrowed it wrongly — first ruling the
+     *             vault out, then naming the budget as the sole remainder.
      *
      *         The watcher fires this at notification-send time
      *         **only on PaidPush tier** subscribers — FreeTelegram

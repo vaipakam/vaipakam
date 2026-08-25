@@ -733,10 +733,24 @@ contract InteractionRewardsLensFacet {
      *         actually corrupted from one that is merely fully consumed.
      * @return vpfiBalance         Diamond's live VPFI balance, all labels.
      * @return bucket              VPFI wei labelled as recycled runway.
-     * @return unearmarked         `vpfiBalance − bucket`, floored at zero.
+     * @return unearmarked         THREE floored subtractions in sequence:
+     *         `vpfiBalance − bucket`, then `strandedRecoveryReserved`, then
+     *         the recovery position — the two terms this same view returns
+     *         below, published so a reader can reproduce this figure. Said
+     *         `vpfiBalance − bucket` alone until #1349: the pre-#1434
+     *         formula, left on the RETURN DOC of the view whose whole
+     *         purpose is letting an outside reader recompute the number.
      *         A zero here is ambiguous by construction — fully consumed and
-     *         in breach look identical. Compare `vpfiBalance` against
-     *         `bucket` to separate them.
+     *         in breach look identical. Separating them takes four of the
+     *         values this view returns — it returns eight, and "ALL FOUR"
+     *         until #1349 was one more miscount from a comment about
+     *         miscounts: compare `vpfiBalance` against
+     *         `bucket + strandedRecoveryReserved + recoveryPositionReserved`.
+     *         Comparing it against `bucket` alone — what this said until
+     *         #1349 — misreads the case the recovery terms exist for:
+     *         balance ten over bucket with twenty reserved floors
+     *         `unearmarked` to zero while `vpfiBalance > bucket` still
+     *         reads as healthy.
      *
      *         **Scoped to #1460, and NOT a general solvency figure.** It nets
      *         ONE custody class. {LibVpfiRecycle}'s separation invariant names
@@ -750,10 +764,24 @@ contract InteractionRewardsLensFacet {
      *         custody against still-open loans. The canonical statement of
      *         all three classes lives on {LibVpfiRecycle.backingPosition} and
      *         is deliberately not restated here.
-     *         Matching #1460's third condition is deliberate:
-     *         the completion plan §M7 step 0 defines it as exactly
-     *         `balanceOf − recycleBucket`, and for detecting a scheduled
-     *         payout eating recycle backing that is the correct subtraction.
+     *         Its relationship to #1460's third condition needs stating
+     *         carefully. The completion plan §M7 step 0 defines that
+     *         condition as `balanceOf − recycleBucket`, and this value is
+     *         no longer that expression — it is that expression MINUS the
+     *         two recovery reservations, so it can never exceed the PLAN'S
+     *         BOUND and can floor to zero while the plan's expression is
+     *         still positive. That is the whole of what the subtraction
+     *         proves. It does NOT mean the value cannot overstate genuinely
+     *         free tokens — {LibVpfiRecycle.backingPosition} is an UPPER
+     *         BOUND with other balance owners known and unsubtracted, and
+     *         "can never overstate free tokens" until #1349 contradicted
+     *         that in as many words. Conservative
+     *         in the right direction for detecting a scheduled payout
+     *         eating recycle backing, which is what the condition is for —
+     *         but "defines it as exactly" was left standing here after
+     *         #1434 added the two terms, so a reader reconciling this
+     *         against the plan would find a mismatch and not know which
+     *         side was wrong.
      *         But a payout consuming LIF custody is a DIFFERENT defect, and
      *         this number cannot see it. Do not read a healthy value here as
      *         "the Diamond is solvent across all custody classes".

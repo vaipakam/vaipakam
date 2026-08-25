@@ -54,8 +54,11 @@ library LibAccessControl {
     ///      `LoanFacet.markNotifBilled(loanId, isLenderSide)` on the
     ///      first PaidPush-tier notification fired for a loan-side.
     ///      That call debits the user's VPFI vault by
-    ///      `cfgNotificationFee()`-equivalent → treasury directly
-    ///      (no Diamond custody — see `LibNotificationFee`).
+    ///      the flat notification fee into DIAMOND CUSTODY, which then
+    ///      credits the recycle bucket (#1346). The pre-#1346 wording here
+    ///      said "→ treasury directly (no Diamond custody)" and cited
+    ///      `LibNotificationFee` as its authority — the very file that
+    ///      refutes it.
     ///      Distinct from `WATCHER_ROLE` because the operations have
     ///      different blast radii: WATCHER's worst case is a 2h freeze
     ///      (recoverable by PAUSER_ROLE); NOTIF_BILLER's worst case is

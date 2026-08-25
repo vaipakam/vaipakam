@@ -279,19 +279,36 @@ library LibVpfiRecycle {
      *         before raising the bucket, so THAT property is enforced on
      *         every INFLOW. The same property on OUTFLOW is asserted by
      *         {RewardClaimFacet}'s claim-time gate, which refuses a claim
-     *         whose FRESH components exceed `balanceOf − recycleBucket`
-     *         (#1460 — added after this view; an earlier revision of this
-     *         comment said no path asserted it, which was true when written
-     *         and is not now).
+     *         whose FRESH components exceed the `backingRoom` THIS function
+     *         returns — i.e. all three subtractions, not the
+     *         `balanceOf − recycleBucket` this line said until #1349.
+     *         `RewardClaimFacet:314` reads it from here, as do the two
+     *         sweep-cap sites, which is the whole point of the
+     *         do-not-inline rule below; describing the gate by the retired
+     *         inline formula undercut that rule from the definition's own
+     *         docblock. (#1460 — added after this view; an earlier revision
+     *         said no path asserted it, which was true when written and is
+     *         not now.)
      *
      *         It measures ONE term of the separation invariant, not the
      *         invariant. This library's own natspec states that invariant
      *         over THREE custody classes — `userLifCustody +
      *         unclaimedRewardBudget + recycleBucket` — and `unearmarked`
-     *         nets only the last. That is deliberate (it is exactly #1460's
-     *         third condition, as the completion plan §M7 step 0 defines it),
-     *         but it means a healthy figure here is NOT a solvency statement
-     *         across the other two classes. An earlier revision of this
+     *         nets only the last. That is deliberate — it serves #1460's
+     *         third condition — but it is no longer the expression the
+     *         completion plan §M7 step 0 writes that condition as. The plan
+     *         says `balanceOf − recycleBucket`; this returns that MINUS the
+     *         two #1434 recovery reservations, so it can never exceed the
+     *         PLAN'S BOUND and can floor to zero while the plan's
+     *         expression is positive. That is all the subtraction proves —
+     *         it does not make the figure a statement about genuinely free
+     *         tokens, which the bolded UPPER BOUND note below denies in as
+     *         many words. "Can never overstate free tokens" until #1349,
+     *         written 230 lines above the sentence that refutes it. "Exactly … as the
+     *         plan defines it" until #1349, which would send a reader
+     *         reconciling the two to conclude one side was broken. And a
+     *         healthy figure here is still NOT a solvency statement across
+     *         the other two classes. An earlier revision of this
      *         comment claimed the library "owns the separation invariant it
      *         measures", which overstated the scope in precisely the way the
      *         reading facet's own natspec had already been corrected for —
@@ -476,15 +493,30 @@ library LibVpfiRecycle {
      *         turns on — the defect needs a non-zero bucket AND a
      *         scheduled-only claim AND this figure below the scheduled
      *         payout. The first two are observable in one call each; the
-     *         third was reachable only by chaining three — resolve the token
+     *         third was reachable only by chaining calls — resolve the token
      *         via {VPFITokenFacet.getVPFIToken}, call its `balanceOf` on the
-     *         Diamond, subtract {ConfigFacet.getRecycleBucket} — all at the
-     *         same block, or the answer is meaningless. An earlier revision
+     *         Diamond, subtract {ConfigFacet.getRecycleBucket} AND both
+     *         #1434 recovery reservations — all at the same block, or the
+     *         answer is meaningless. Both recovery terms ARE separately
+     *         readable — {RewardRemittanceLensFacet.getStrandedRecoveryReserved}
+     *         and {RewardRemittanceLensFacet.getRecoveryPosition} — so the
+     *         reconstruction is FIVE block-consistent reads, not impossible.
+     *         (I wrote "not separately published outside
+     *         {InteractionRewardsLensFacet.getRecycleBackingSnapshot}" in
+     *         the #1349 pass without grepping for the getters; the same
+     *         reachability overstatement this paragraph already carries a
+     *         retraction for two sentences down, made again while
+     *         correcting it.) This also described the chain as bucket-only
+     *         until #1349, a procedure that yields a LARGER figure than the
+     *         claim and sweep gates use and can show reserved recovery
+     *         funds as available. An earlier revision
      *         called it "observable nowhere", which was the same reachability
      *         overstatement already corrected for the mirror term (Codex
-     *         #1487 r3). What this adds is ATOMICITY and one call instead of
-     *         three, which is why a deployment could satisfy
-     *         all three and look healthy. Publishing it does NOT close the
+     *         #1487 r3). What the snapshot adds is ATOMICITY and one call
+     *         instead of five — the count grew with the terms, and five
+     *         reads that must share a block is a STRONGER argument for the
+     *         single call than three was, not a weaker one — which is why a
+     *         deployment could satisfy all three and look healthy. Publishing it does NOT close the
      *         defect; it makes the difference between "corrupted" and
      *         "merely eligible" readable instead of assumed.
      *
@@ -495,10 +527,29 @@ library LibVpfiRecycle {
      * @param  s Diamond storage.
      * @return vpfiBalance The Diamond's live VPFI balance (all labels).
      * @return bucket      VPFI wei labelled as recycled reward runway.
-     * @return unearmarked `vpfiBalance − bucket`, floored at zero — the
-     *         balance available to fresh/scheduled payout without eating
-     *         recycle backing. Zero means fully consumed OR in breach; read
-     *         it with `vpfiBalance` and `bucket` to tell those apart.
+     * @return unearmarked The balance available to fresh/scheduled payout
+     *         without eating recycle backing. THREE floored subtractions,
+     *         applied in sequence: `vpfiBalance − bucket`, then
+     *         `strandedRecoveryReserved` (#1434 P2-w2), then the recovery
+     *         position (P2-w5). Zero means fully consumed OR in breach, and
+     *         telling those apart needs the SUBTRAHENDS, not just the
+     *         bucket: compare `vpfiBalance` against
+     *         `bucket + strandedRecoveryReserved + recoveryPosition`
+     *         (`InteractionRewardsLensFacet.getRecycleBackingSnapshot`
+     *         publishes all of them). "Read it with `vpfiBalance` and
+     *         `bucket`" — this line until #1349 — is the two-value
+     *         diagnostic from before those terms existed, and it reports
+     *         healthy on exactly the case they were added to catch.
+     *
+     *         This said `vpfiBalance − bucket` alone until #1349 — the
+     *         formula from before the two P2-w terms were added, left
+     *         standing in the RETURN CONTRACT of the function that applies
+     *         them. A reader reproducing the figure from this line gets a
+     *         number larger than the one returned, on any chain where
+     *         either term is non-zero, and concludes the code is wrong.
+     *         The count is safe to state here BECAUSE these three are the
+     *         subtractions this function performs — unlike the unsubtracted
+     *         owners below, whose count went stale three rounds running.
      *
      *         **This is an UPPER BOUND on genuinely free tokens, on every
      *         deployment.** Other owners of this balance are known and
@@ -530,10 +581,25 @@ library LibVpfiRecycle {
         if (token == address(0)) revert RecycleBackingTokenUnset();
         vpfiBalance = IERC20(token).balanceOf(address(this));
         bucket = s.recycleBucket;
-        // #1555 r4 — this subtracts the BUCKET ONLY, and that is now a
-        // DELIBERATE stopping point rather than an oversight. An r3 revision
-        // also subtracted `treasuryBalances[vpfi]`; it was reverted. Why, in
-        // full, because the reasoning is the useful part:
+        // #1555 r4 — this subtracts no further BALANCE-OWNER term beyond
+        // the bucket, and that is a DELIBERATE stopping point rather than an
+        // oversight. An r3 revision also subtracted `treasuryBalances[vpfi]`;
+        // it was reverted. Why, in full, because the reasoning is the useful
+        // part:
+        //
+        // #1349 — this opened "subtracts the BUCKET ONLY" until now, and the
+        // qualifier matters: `unearmarked` is THREE floored subtractions by
+        // the end of this function — bucket, then `strandedRecoveryReserved`
+        // (#1434 P2-w2), then the recovery position (P2-w5). Both were added
+        // AFTER this sentence, and the rule below was narrowed from "sixth
+        // subtraction" to "balance-owner subtraction" to admit them while the
+        // opening line kept the absolute wording. A reader who stops here —
+        // and the sentence reads as a complete statement of the formula, so
+        // stopping is the reasonable thing to do — leaves with a formula that
+        // will not reproduce the number this function returns. It cost a
+        // review round: the same superseded formula is printed on the public
+        // dashboard (#1937), and I nearly refuted that finding on the
+        // strength of this line before reading to the end of the function.
         //
         // Review kept surfacing further owners of this one balance. The list
         // is in the natspec above and is NOT duplicated or counted here — an
