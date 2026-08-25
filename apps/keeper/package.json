@@ -8,8 +8,9 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --keep-vars",
     "build": "pnpm run typecheck",
-    "typecheck": "tsc -p . --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsc -p . --noEmit && node scripts/check-deploy-invocations.mjs",
+    "test": "vitest run",
+    "check-deploy-invocations": "node scripts/check-deploy-invocations.mjs"
   },
   "dependencies": {
     "@pushprotocol/restapi": "^0.0.1",

@@ -120,8 +120,20 @@ thresholds, `SPLIT_MIN_IMPROVEMENT_BPS`, `PARTIAL_LIQ_MIN_HF_BPS` (see
 
 So `apps/keeper`'s `deploy` script now runs `wrangler deploy --keep-vars`,
 which makes the canonical `pnpm --filter @vaipakam/keeper run deploy`
-safe by construction rather than depending on whoever is typing it. Keeping
-vars costs nothing here: the only var this config declares is
+safe by construction rather than depending on whoever is typing it.
+
+**And a guard enforces it tree-wide**: `scripts/check-deploy-invocations.mjs`,
+wired into `pnpm --filter @vaipakam/keeper typecheck`, fails on any
+keeper-scoped `wrangler deploy` that lacks `--keep-vars`. It exists because
+fixing the package script did **not** fix the problem: four subsequent review
+rounds each found another caller reaching wrangler directly — three deploy
+wrappers, a rollout runbook, a deployment runbook, the staging plan — and each
+fix looked complete until the next round. The guard is default-deny with a
+small `ALLOWED` list, each entry carrying a reason, so prose that quotes the
+unsafe command has to be declared rather than guessed at. New prose fails the
+check until someone adds it; that is the intended cost.
+
+Keeping vars costs nothing here: the only var this config declares is
 `TG_BOT_USERNAME`, which appears solely in `env.ts`'s passthrough and is read
 nowhere in the Worker.
 
