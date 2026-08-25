@@ -340,9 +340,13 @@ manual follow-up required when the prerequisites are in place:
    `npx wrangler deploy` from `apps/defi/`. Skip with
    `--skip-frontend` if the build is intentionally lagging.
 3. **Keeper Cloudflare deploy** (phase `cf-keeper`) —
-   `pnpm exec wrangler deploy` from `apps/keeper/`, plus the
+   `pnpm run deploy` from `apps/keeper/`, plus the
    RPC-secret presence check (**hard-fails if a per-chain
    `RPC_<CHAIN>` secret is missing** — see prerequisite above).
+   The package script carries `--keep-vars` (#1896); the phase used
+   to call `pnpm exec wrangler deploy`, which bypassed it and deleted
+   the dashboard-managed `HF_SCALE` / `LIQ_*` / `SPLIT_*` /
+   `PARTIAL_LIQ_*` tuning on every deploy.
 4. **Indexer Cloudflare deploy** (phase `cf-indexer`) —
    `pnpm exec wrangler deploy` from `apps/indexer/`, then
    `pnpm exec wrangler d1 migrations apply vaipakam-archive --remote`.
