@@ -760,8 +760,15 @@ contract RewardAggregatorFacet is
     /// @return consumedCumulative   Cumulative Base has instructed the chain
     ///                              to consume (written from B2 on).
     /// @return availRecycled        What mesh funding/netting may draw
-    ///                              against: `reported`, less the net claim
-    ///                              draw `sat(consumed − released)`, less the
+    ///                              against: `reported`, less the net
+    ///                              INSTRUCTION draw `sat(consumed −
+    ///                              released)` — "claim draw" until #1349,
+    ///                              which had the timing backwards on the
+    ///                              one surface operators read: `_stampOne`
+    ///                              books `chainConsumedRecycled` at
+    ///                              FINALIZATION, when Base instructs, and
+    ///                              Base never observes a mirror claim —
+    ///                              less the
     ///                              MAINTAINED net repatriation slot — that
     ///                              one is decremented by a cancellation ACK,
     ///                              never derived from two gross cumulatives

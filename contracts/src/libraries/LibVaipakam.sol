@@ -8201,8 +8201,14 @@ library LibVaipakam {
     ///      inherited-fee gate has always reasoned about the sub-legacy
     ///      knob, so the two files disagreed. Freezing the fallback
     ///      at 100 grandfathers those loans (the grandfather resolver of
-    ///      redesign §"Fee-default migration"; new loans stamp the live 200
-    ///      at origination via `LoanFacet._snapshotFeeBps`).
+    ///      redesign §"Fee-default migration"; new loans stamp
+    ///      `cfgTreasuryFeeBps()` at origination via
+    ///      `LoanFacet._snapshotFeeBps:936` — the CONFIGURED rate, which is
+    ///      200 only on an untuned deploy). This said "the live 200" until
+    ///      #1349, four lines below the sentence explaining that the knob
+    ///      is any value in 1..`MAX_FEE_BPS` — the same docblock asserting
+    ///      both that the rate is variable and that new loans stamp a
+    ///      constant.
     function effectiveTreasuryFeeBps(
         Loan storage loan
     ) internal view returns (uint256) {
