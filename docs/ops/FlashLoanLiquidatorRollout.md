@@ -23,13 +23,23 @@ All commands run from `contracts/` unless noted otherwise.
 > Config changes here are still worth making: they latch correctly for when
 > the schedule returns. What they are not is a *response*. With our bot
 > stopped, the **§3 global protocol pause is the only immediate on-chain stop**
-> for the discounted path. Note specifically that `AdminFacet.pauseAsset` is
+> for the discounted path **on a chain whose admin handover has completed**.
+> Note specifically that `AdminFacet.pauseAsset` is
 > **not** — it blocks new exposure only, and liquidation is deliberately
 > exempt so existing positions can always be closed out, so it leaves
 > `triggerLiquidationDiscounted` fully callable by external liquidators. The
 > `discountPathEnabled` kill-switch does bind those callers, but post-handover
 > it carries the Timelock's 48h delay, making it the eventual targeted control
-> rather than the immediate one. Full tier breakdown under this hold in
+> rather than the immediate one.
+>
+> **PRE-handover, reach for the targeted switch instead, not the global
+> pause.** On a chain where admin has not yet been handed to the Timelock,
+> `ConfigFacet.setDiscountPathEnabled(false)` is a direct `ADMIN_ROLE` call
+> with no delay, and it disables the discounted path immediately and *only*
+> that path. Escalating to the global pause there would stop unrelated
+> protocol activity for no gain. `IncidentRunbook.md` §3.5 draws the same
+> distinction; the unqualified "only immediate" wording here contradicted it.
+> Full tier breakdown under this hold in
 > [`IncidentRunbook.md`](IncidentRunbook.md) §3.5.
 >
 > Treat our own liquidation coverage as manual until the **five-point**

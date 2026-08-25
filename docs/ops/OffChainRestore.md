@@ -1757,6 +1757,16 @@ caught at the cheapest stage.
    whether to submit — **absent lines from those four are normal**, not a
    failed tick.
 
+   > **One exception, and it is the whole point of branch B's ordering: while
+   > you are running branch B's pre-arm validation, `KEEPER_ENABLED` is
+   > `false` ON PURPOSE.** All six gated passes therefore emit
+   > `KEEPER_ENABLED off (explicitly disabled)`. Those skips are the expected
+   > state, not a fault to repair — "fixing" them here arms the fund-moving
+   > passes before the CPU and cadence validation has finished, which is
+   > exactly what the branch B step 8 block at the end of this step exists to
+   > prevent. **Leave `KEEPER_ENABLED` alone until you reach that block.**
+   > Every OTHER skipped binding named below is still worth repairing now.
+
    If you see a `skipped:` line, the named binding is the one to re-enter —
    but **the two kinds of binding take different commands**, and using the
    wrong one leaves the pass disarmed while appearing to succeed:

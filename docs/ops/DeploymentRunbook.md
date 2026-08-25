@@ -356,7 +356,10 @@ manual follow-up required when the prerequisites are in place:
    cursor at the current safe head so the first cron tick starts AT
    head instead of backfilling an empty pre-deploy range.
 5. **Agent Cloudflare deploy** (phase `cf-agent`) —
-   `pnpm exec wrangler deploy` from `apps/agent/` (notifications,
+   `pnpm --filter @vaipakam/agent run deploy` — the packaged script, which
+   carries `--keep-vars`; a bare deploy drops the agent's
+   dashboard-managed `RECIPIENT_VALIDATING_TOKENS` /
+   `OPENSEA_OFFERS_MAX_PAGES` (notifications,
    Telegram webhook, frames). The retired single-watcher `cf-watcher`
    phase is explicitly rejected by `deploy-mainnet.sh`; all three
    phases above must run for a Stage 3 deploy — stopping after
@@ -1924,7 +1927,7 @@ all three Stage 3 Workers bind.
 2. Deploy the AGENT — `/diag/record` is routed by
    `apps/agent/src/index.ts`, not the keeper:
    ```bash
-   cd ../agent && npx wrangler deploy
+   pnpm --filter @vaipakam/agent run deploy   # carries --keep-vars
    ```
 
 3. Smoke test the endpoint:

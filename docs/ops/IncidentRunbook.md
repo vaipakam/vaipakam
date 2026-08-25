@@ -810,10 +810,14 @@ runs after revocation.
    old token:
 
    ```bash
-   pnpm --filter @vaipakam/agent exec wrangler deploy
-   # --keep-vars is harmless and correct for TG_BOT_USERNAME, but it is NOT
-   # what keeps the keeper armed — see "How the keeper's arming flags are
-   # actually held" below. A plain deploy does not disarm it.
+   pnpm --filter @vaipakam/agent run deploy
+   # `run deploy` carries --keep-vars. It is REQUIRED for the agent, not
+   # merely harmless: RECIPIENT_VALIDATING_TOKENS and OPENSEA_OFFERS_MAX_PAGES
+   # are dashboard-managed and absent from its config, so a bare deploy
+   # switches recipient-token validation off.
+   # For the KEEPER the flag preserves TG_BOT_USERNAME and the tuning vars —
+   # but it is NOT what keeps the keeper armed; see "How the keeper's arming
+   # flags are actually held" below. A plain deploy does not disarm it.
    pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
    ```
 
@@ -864,10 +868,11 @@ is `wrangler tail`, so verify there rather than assuming success.
 3. Redeploy **both** consumers to drop their cached PushAPI clients:
 
    ```bash
-   pnpm --filter @vaipakam/agent exec wrangler deploy
-   # --keep-vars: same reason as the Telegram rotation — see "How the
-   # keeper's arming flags are actually held" below. It preserves
-   # TG_BOT_USERNAME; it is not what keeps the keeper armed.
+   pnpm --filter @vaipakam/agent run deploy
+   # Same as the Telegram rotation: `run deploy` carries --keep-vars, which
+   # the agent REQUIRES (RECIPIENT_VALIDATING_TOKENS,
+   # OPENSEA_OFFERS_MAX_PAGES). On the keeper it preserves TG_BOT_USERNAME and
+   # the tuning vars; it is not what keeps the keeper armed.
    pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
    ```
 4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to

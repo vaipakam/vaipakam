@@ -1159,9 +1159,15 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   });
 
   it('does not flag a sibling Worker manifest with a bare deploy', () => {
-    // apps/agent and apps/indexer legitimately run bare deploys — they have no
-    // dashboard-managed vars absent from their configs. Only the keeper is in
-    // scope, and widening that would make this guard everyone's problem.
+    // Only the KEEPER is in scope — but not because the others are safe. That
+    // was the old reason here and it was factually wrong for apps/agent, which
+    // reads dashboard-managed RECIPIENT_VALIDATING_TOKENS and
+    // OPENSEA_OFFERS_MAX_PAGES that its config does not declare — which is why
+    // this PR put --keep-vars in its package script too, and why Codex #1924
+    // r42 found six runbook sites still telling operators to deploy it bare.
+    // The scope is narrow because widening it is a separate change with its
+    // own false-positive surface, tracked as #1933. Do not read this
+    // expectation as "a bare agent deploy is fine".
     const r = runWith(
       'apps/agent/package.json',
       '{\n  "scripts": {\n    "deploy": "wrangler deploy"\n  }\n}\n',
