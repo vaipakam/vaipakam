@@ -206,10 +206,17 @@ recoverable back-pressure — not a fund-loss event.
 > means CCIP accepted the message; delivery can still park or revert on the
 > mirror (a paused receiver), and per the bullet above those days are already
 > marked remitted on Base, so no later keeper tick repairs it — recovery is a
-> manual CCIP re-execution. Before standing down manual funding, confirm
-> delivery on the destination side for the days this pass reported, exactly as
-> that bullet describes. The coverage counter cannot see the mirror and does
-> not claim to.
+> manual CCIP re-execution. The coverage counter cannot see the mirror and
+> does not claim to.
+>
+> **Reconcile every source-marked day, not just the ones this tick sent.** A
+> day parked from an EARLIER tick is already marked remitted, so the pass now
+> treats it as non-actionable and a perfectly idle tick reports `A/A` — and
+> the success log carries only a batch count, never the day IDs, so the
+> undelivered day appears nowhere in the tail you are reading. Watching one
+> green tick therefore cannot surface it. Before standing down manual funding,
+> reconcile the source-marked remittances against destination-side events or
+> pending CCIP messages for the whole window that could still be in flight.
 > Do not reuse §3.5's liquidator markers here: this
 > pass fails with its own distinct messages (`chain=<id> failed:`,
 > `skipped Base-><id>:`, a `REVERTED` warning), none sharing a prefix with the

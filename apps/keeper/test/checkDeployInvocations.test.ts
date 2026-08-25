@@ -192,6 +192,19 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a flag concatenated onto a quoted option value (#1924 r23)', () => {
+    // The shell builds ONE argument here — `--message=note--keep-vars` — so no
+    // flag is enabled. Stripping the quoted value to a SPACE used to
+    // manufacture a token boundary the shell never saw.
+    const r = runWith('apps/keeper/README.md', "wrangler deploy --message='note'--keep-vars\n");
+    expect(r.ok).toBe(false);
+  });
+
+  it('the same concatenation with double quotes (#1924 r23)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message="note"--keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.
@@ -323,6 +336,11 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('still accepts the flag when it begins a token after an equals', () => {
     const r = runWith('apps/keeper/README.md', 'wrangler deploy --keep-vars=true\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('still accepts a quoted option value followed by a real flag', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message="note" --keep-vars\n');
     expect(r.ok).toBe(true);
   });
 

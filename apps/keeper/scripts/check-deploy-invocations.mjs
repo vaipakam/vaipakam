@@ -131,9 +131,16 @@ function allowReason(line) {
  * separate `--keep-vars`.
  */
 function stripOtherOptionValues(line) {
+  // Replaced with a NUL escape, NOT a space (Codex #1924 r23). A space would
+  // create a token boundary the shell never saw: in
+  // `--message='note'--keep-vars` the shell builds ONE argument,
+  // `--message=note--keep-vars`, and no flag is enabled — but stripping to a
+  // space left ` --keep-vars`, which then read as a real, token-initial flag.
+  // The strip must not manufacture the very boundary the lookbehind tests for,
+  // so it leaves a character that is not an allowed predecessor.
   return line.replace(
     /--(?!keep-vars\b|dry-run\b)[A-Za-z0-9-]+(?:=|\s+)(?:"[^"]*"|'[^']*')/g,
-    ' ',
+    '\u0000',
   );
 }
 

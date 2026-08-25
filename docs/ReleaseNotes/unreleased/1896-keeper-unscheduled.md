@@ -3,8 +3,18 @@
 The keeper Worker has been removed from its every-minute schedule. It is
 still deployed, and everything it needs to work is still in place — the
 code, the database binding, all seventeen secret and configuration
-bindings. Bringing it back is a matter of restoring one line, not
-rebuilding anything.
+bindings. **Nothing has to be rebuilt or reconfigured to bring it back.**
+
+That is not the same as saying it comes back in one line, and an earlier
+version of this note said exactly that. It is wrong in a way that
+matters: the switch arming the jobs that move funds cannot be read back,
+so restoring only the schedule can start all six of them immediately, on
+a Worker still known to exceed its limit. Safe restoration is a written
+sequence — turn that switch off first, commit and publish the schedule,
+wait for it to take effect, then watch the jobs that cannot move funds
+before arming the ones that can. It is kept beside the schedule itself
+and is summarised further down. Follow it rather than the one-line
+shortcut.
 
 ## Why
 
