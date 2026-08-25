@@ -311,13 +311,6 @@ else
   exit 1
 fi
 
-# The unpause drill below compares `POST_HANDOVER` against the literal `1`, so
-# `true` or `yes` would be taken as pre-handover rather than refused. Validated
-# here rather than there, so `.env` and the environment are both covered by one
-# check that runs before anything branches on the value (Codex #1938 r13, swept
-# from the sibling in `pause-all-chains.sh`).
-env_assert_bool POST_HANDOVER || exit 1
-
 CHAIN_SLUG="$1"; shift
 
 PHASE=""
@@ -2055,6 +2048,12 @@ phase_pause_rehearsal() {
       ;;
 
     unpause-calldata)
+      # This drill compares `POST_HANDOVER` against the literal `1`, so `true` or
+      # `yes` would be taken as pre-handover rather than refused. Validated here,
+      # in the ONE phase that reads it: r13 put this at the top of the script and
+      # a stale `.env` then aborted every other phase over a declaration none of
+      # them consult (Codex #1938 r13/r14, swept from `pause-all-chains.sh`).
+      env_assert_bool POST_HANDOVER || exit 1
       echo "═══════════════════════════════════════════════════════════════"
       echo "deploy-testnet.sh — pause-rehearsal UNPAUSE-CALLDATA  ($CHAIN_SLUG)"
       echo "  Cleanup phase. Unpause is deliberately owner-only (#857). WHO the"

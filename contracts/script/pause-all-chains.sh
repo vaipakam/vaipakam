@@ -114,12 +114,18 @@ done
 #
 # Pausing is the action an incident needs and it consults no such declaration,
 # so it still proceeds.
-# Validated before ANY branch reads it, and whatever its source. The fallback
-# below accepts an explicitly exported value; without this, `POST_HANDOVER=true`
-# passed that non-empty test and then failed the `= "1"` test at the emit site,
-# labelling pre-handover direct calls valid on a handed-over chain — the exact
-# failure the fallback exists to prevent (Codex #1938 r13).
-env_assert_bool POST_HANDOVER || exit 1
+if [ "$MODE" = "unpause" ]; then
+  # Validated for the mode that READS it, and whatever its source. Without this,
+  # `POST_HANDOVER=true` passed the non-empty test below and then failed the
+  # `= "1"` test at the emit site, labelling pre-handover direct calls valid on a
+  # handed-over chain — the failure the fallback exists to prevent (r13).
+  #
+  # Scoped to unpause, because r13 put it before the mode dispatch and a stale
+  # `.env` then aborted PAUSE calldata over a declaration the pause path never
+  # reads — breaking the incident path the comment below promises still proceeds,
+  # which is a worse outcome than the one being fixed (r14).
+  env_assert_bool POST_HANDOVER || exit 1
+fi
 
 if [ "$__env_load_failed" = "1" ]; then
   case "$MODE" in

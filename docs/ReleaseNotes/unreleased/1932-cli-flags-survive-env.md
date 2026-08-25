@@ -68,9 +68,15 @@ one stops a documented step. Review had found two of those sixty by reading, ove
 two rounds, so shipping the rest would have meant finding them one failed
 deployment at a time.
 
-What remains refused is the small set of settings that some other program treats
-as an instruction to run something at start-up. That set is open-ended and the
-change does not pretend otherwise; the wider work of closing it everywhere,
+What remains refused is a small set of settings that another program would act on
+rather than merely read. There are two kinds, and they fail differently. The
+first is a name some program treats as an instruction to run something when it
+starts — the deployment runs a shell, several language interpreters, the version
+control tool and the package manager, and each of those has its own such names.
+The second does not run anything: it changes where an authenticated request is
+sent, so a stale file can have the deployment deliver its own credentials to a
+host of the file's choosing, or route every request it makes through one. Both
+sets are open-ended and the change does not pretend otherwise; the wider work of closing it everywhere,
 including in the written operator procedures that still execute the file, is
 tracked separately. The reasoning for the split is the threat it defends against:
 the file already holds the deployment's private key, so anyone able to edit it

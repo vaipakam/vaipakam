@@ -117,7 +117,9 @@ load_env_file() {
       return 1 ;;
     esac
 
-    # DENY names some later process treats as a startup hook.
+    # DENY names some later process treats as a startup hook. A SECOND family,
+    # which redirects where a credential is sent rather than running anything,
+    # is refused just below.
     #
     # The git family is here because the wrappers run `git` thirteen times in
     # deploy-mainnet.sh alone: `GIT_CONFIG_COUNT=1` plus `GIT_CONFIG_KEY_0=core.pager`
@@ -155,12 +157,31 @@ load_env_file() {
       BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|GLOBIGNORE|IFS|PS4|PATH \
       |LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_FUNC_* \
       |NODE_OPTIONS|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|RUBYOPT|JAVA_TOOL_OPTIONS \
-      |GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*|GIT_CONFIG_GLOBAL \
-      |GIT_CONFIG_SYSTEM|GIT_SSH_COMMAND|GIT_EXTERNAL_DIFF|GIT_PAGER|GIT_EDITOR \
+      |GIT_CONFIG*|GIT_SSH_COMMAND|GIT_EXTERNAL_DIFF|GIT_PAGER|GIT_EDITOR \
       |GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_ALTERNATE_OBJECT_DIRECTORIES \
       |[Nn][Pp][Mm]_[Cc][Oo][Nn][Ff][Ii][Gg]_*)
         echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which another program" >&2
         echo "       would treat as a startup hook — refusing to export it." >&2
+        return 1 ;;
+    esac
+
+    # A SECOND family, and it fails differently, so it gets its own message: it
+    # does not run anything, it changes WHERE an authenticated tool sends its
+    # request. The deploy exports `CLOUDFLARE_API_TOKEN` and then runs wrangler;
+    # a `.env` naming the API endpoint delivers that token to a host of the
+    # file's choosing, and the proxy variables do the same to every HTTP client
+    # the deploy invokes — curl, git, node, wrangler alike — while
+    # `NODE_EXTRA_CA_CERTS` makes an interceptor's certificate trusted
+    # (Codex #1938 r14).
+    case "$__lenv_name" in
+      CLOUDFLARE_API_BASE_URL|CF_API_BASE_URL \
+      |[Hh][Tt][Tt][Pp]_[Pp][Rr][Oo][Xx][Yy] \
+      |[Hh][Tt][Tt][Pp][Ss]_[Pp][Rr][Oo][Xx][Yy] \
+      |[Aa][Ll][Ll]_[Pp][Rr][Oo][Xx][Yy]|[Nn][Oo]_[Pp][Rr][Oo][Xx][Yy] \
+      |NODE_EXTRA_CA_CERTS)
+        echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which redirects where" >&2
+        echo "       an authenticated request is sent — refusing to export it." >&2
+        echo "       Set it in your own environment if you genuinely need it." >&2
         return 1 ;;
     esac
 
