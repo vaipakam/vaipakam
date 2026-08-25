@@ -1106,6 +1106,58 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('an unresolvable cd target is assumed to succeed (#1924 r40)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper; cd "$AGENT_DIR"; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('rejects --keep-vars"=true garbage", one bash argument (#1924 r40)', () => {
+    // Wrangler parses `--keep-vars=true garbage` as false; dropping the
+    // opening quote let the matcher stop at the space and read `true`.
+    const r = runWith(
+      'apps/keeper/release.sh',
+      '#!/usr/bin/env bash\nwrangler deploy --keep-vars"=true garbage"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('still accepts --keep-vars"=true" after the quote move (#1924 r40)', () => {
+    const r = runWith(
+      'apps/keeper/release.sh',
+      '#!/usr/bin/env bash\nwrangler deploy --keep-vars"=true"\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not accept a package script quoted inside a value (#1924 r40)', () => {
+    // Bash runs a BARE wrangler deploy here; `pnpm run deploy` is just text
+    // inside an environment assignment.
+    const r = runWith(
+      'apps/keeper/release.sh',
+      '#!/usr/bin/env bash\nNOTE=" pnpm run deploy" wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('still accepts the package script as the executed command (#1924 r40)', () => {
+    const r = runWith(
+      'apps/keeper/release.sh',
+      '#!/usr/bin/env bash\npnpm --filter @vaipakam/keeper run deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('accepts the package script behind an env assignment it really uses (#1924 r40)', () => {
+    const r = runWith(
+      'apps/keeper/release.sh',
+      '#!/usr/bin/env bash\nCI=1 pnpm run deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('does not flag a sibling Worker manifest with a bare deploy', () => {
     // apps/agent and apps/indexer legitimately run bare deploys — they have no
     // dashboard-managed vars absent from their configs. Only the keeper is in

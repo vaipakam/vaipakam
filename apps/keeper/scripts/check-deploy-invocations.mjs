@@ -46,6 +46,27 @@
  * allowlisted SENTENCE verbatim in executable shell — and the entries are
  * long, specific strings.
  *
+ * THIRD KNOWN LIMIT, recorded after being tried and reverted: a `cd` that
+ * FAILS at runtime leaves the shell where it was, so
+ * `cd apps/keeper && cd missing; wrangler deploy` really does deploy from the
+ * keeper — and this scanner reads it as apps/keeper/missing and stays quiet
+ * (Codex #1924 r40). It is not fixable from the text alone. Modelling every
+ * `cd` as possibly-failing is the sound reading of "we cannot know", and it
+ * immediately rejects `cd apps/keeper; cd ../agent; wrangler deploy` — an
+ * ordinary correct wrapper, and the exact case r38 required NOT be flagged.
+ * The two cannot both hold: the forms are structurally identical and differ
+ * only in whether the target happens to exist.
+ *
+ * Deciding it on existence was implemented and reverted the same round. It
+ * failed five regression tests standing for previously accepted findings, and
+ * on the real tree it makes the verdict depend on whether a directory is
+ * present in this checkout — so an ordinary `cd` into a not-yet-generated
+ * build directory would start holding keeper scope. For a guard that runs
+ * inside `typecheck`, a false red on correct code is the more expensive error,
+ * and this loop has produced that trade twice already (r19/r20, r35). The
+ * exposure needs a wrapper that is ALREADY broken — cd-ing somewhere absent —
+ * and the deploy it then misses is one the wrapper's own failure surfaces.
+ *
  * WHAT COUNTS AS A VIOLATION: any keeper-scoped line mentioning
  * `wrangler deploy` without `--keep-vars` (or `--dry-run`, or the safe
  * `run deploy` form). That deliberately includes prose — see `ALLOWED` below
@@ -557,7 +578,24 @@ function normalizeFlagEquals(line) {
   return line
     .replace(new RegExp(`${FLAG}\\\\=`, 'g'), '$1=')
     .replace(new RegExp(`${FLAG}(["'])=\\2`, 'g'), '$1=')
-    .replace(new RegExp(`${FLAG}(["'])=`, 'g'), '$1=');
+    // MOVE the quote across the `=`, never drop it. `--keep-vars"=true garbage"`
+    // is ONE bash argument, `--keep-vars=true garbage`, which wrangler parses as
+    // false; deleting the opening quote left the matcher stopping at the space
+    // and reading the value as exactly `true` (Codex #1924 r40). Rewriting it to
+    // `--keep-vars="true garbage"` keeps the word boundary the shell gave it, and
+    // the quoted-value branch below already strips the quotes.
+    .replace(new RegExp(`${FLAG}(["'])=`, 'g'), '$1=$2');
+}
+
+/**
+ * Strip what precedes the command a segment actually executes: grouping
+ * punctuation and leading `VAR=value` environment assignments, whose values
+ * bash never runs.
+ */
+function executedCommand(cmd) {
+  return cmd
+    .replace(/^[\s(){]*/, '')
+    .replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]*)\s+)*/, '');
 }
 
 function commandIsSafe(cmd) {
@@ -569,7 +607,12 @@ function commandIsSafe(cmd) {
   return (
     flagEnabled(cmd, '--keep-vars') ||
     flagEnabled(cmd, '--dry-run') ||
-    /(?:^|\s)(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run\s+deploy\b/.test(bare)
+    // ANCHORED at the segment's executed command. As a free substring test,
+    // `NOTE=" pnpm run deploy" wrangler deploy` — a bare deploy carrying an
+    // unrelated environment assignment — matched inside the quoted value and
+    // was blessed (Codex #1924 r40). The package script is a safe deploy only
+    // when it is the thing being RUN.
+    /^(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run\s+deploy\b/.test(executedCommand(bare))
   );
 }
 
