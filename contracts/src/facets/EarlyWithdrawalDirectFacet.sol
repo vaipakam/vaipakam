@@ -185,6 +185,50 @@ contract EarlyWithdrawalDirectFacet is
     ///         reason `OfferExpired` / `OffsetActiveOnLoan` are declared twice.
     error SaleLoanPastMaturity();
 
+    /// @notice #1922 (#1503 item 6) — the seller's reviewed economics, carried by
+    ///         the bound sale entry so the sale can only fill on terms no worse
+    ///         than the quote the seller acted on. `enforced` false is the
+    ///         unbound `sellLoanViaBuyOffer`, which never checks these.
+    struct SaleBounds {
+        bool enforced;
+        uint256 minSellerNet; // seller must net at least this (principal - liamCost)
+        uint256 maxHeld; // the held-for-lender balance migrating to the buyer may not exceed this
+        uint64 deadline; // fill must land at/before this timestamp; MANDATORY on the bound entry (bounds reward forfeiture — see below)
+    }
+
+    /// @notice #1922 (#1503 item 6) — the fill would land after the deadline the
+    ///         seller reviewed. The direct sale settles in one transaction, so
+    ///         this bounds the mempool window a seller's quote may sit in.
+    error SaleQuoteExpired(uint64 deadline);
+
+    /// @notice #1922 (#1503 item 6, Codex r2 P1) — the bound entry was called with
+    ///         `deadline == 0`. The deadline is MANDATORY here: it is the cutoff
+    ///         that bounds the THIRD reviewed cost — reward forfeiture. The sale
+    ///         forfeits the exiting lender's pending reward at the CURRENT day
+    ///         (via `_rewardHook`), a loss that grows the longer the fill is
+    ///         delayed and that neither the net floor nor the held ceiling
+    ///         captures. A finite deadline caps it to the window the seller chose,
+    ///         exactly as the listed route's mandatory finite expiry does
+    ///         (LenderEarlyWithdrawalUXDesign.md §"part three"). Leaving it
+    ///         unbounded would be disclosure, not consent — which is what the
+    ///         unbound `sellLoanViaBuyOffer` is for.
+    error SaleDeadlineRequired();
+
+    /// @notice #1922 (#1503 item 6) — the seller's net receipt at execution is
+    ///         below the floor they reviewed. Drift between quote and mining
+    ///         (a borrower partial-repay, parked interest) can lower it; the
+    ///         bound entry refuses rather than settling the worse figure.
+    error SaleNetBelowReviewed(uint256 net, uint256 reviewedMin);
+
+    /// @notice #1922 (#1503 item 6) — the held-for-lender balance that migrates
+    ///         to the buyer at execution is above the ceiling the seller reviewed.
+    ///         Parking additional lender interest between quote and mining grows
+    ///         that balance — all of which transfers to the buyer, so the seller
+    ///         forfeits more accrued-but-unclaimed interest than they reviewed.
+    ///         Mirrors the listed route's {SaleAboveHeldCeiling}; the second value
+    ///         of `RiskPreviewFacet.quoteSellerBounds` (`maxHeld`) is this ceiling.
+    error SaleHeldAboveReviewed(uint256 held, uint256 reviewedMax);
+
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -225,6 +269,76 @@ contract EarlyWithdrawalDirectFacet is
         uint256 loanId,
         uint256 buyOfferId
     ) external nonReentrant whenNotPaused {
+        _sellLoanViaBuyOfferImpl(
+            loanId,
+            buyOfferId,
+            SaleBounds({enforced: false, minSellerNet: 0, maxHeld: 0, deadline: 0})
+        );
+    }
+
+    /**
+     * @notice #1922 (#1503 item 6) — the bound direct sale: the seller carries
+     *         the economics `RiskPreviewFacet.quoteSellerBounds` showed them
+     *         (its `minSellerNet` / `maxHeld` map to the two params here), and
+     *         the sale is refused if execution is WORSE —
+     *         a net below `reviewedMinSellerNet`, a migrating held balance above
+     *         `reviewedMaxHeld`, or a fill past the MANDATORY `deadline`.
+     *         Better-than-reviewed passes. The deadline is required, not optional:
+     *         it is what bounds the third reviewed cost — reward forfeiture —
+     *         which the sale charges at the fill day and which neither economic
+     *         bound captures (Codex r2 P1; design doc item 6 caps all THREE).
+     *
+     *         ADDITIVE, exactly like the listed route's `createLoanSaleOfferBound`
+     *         (#1823): the unbound `sellLoanViaBuyOffer` selector stays routed and
+     *         unchanged, so the deployed frontend keeps working and no
+     *         `FacetCutAction.Remove` leg (the split-Diamond hazard) is needed.
+     *         The direct sale settles in one transaction, so the drift this
+     *         guards is the mempool window between the seller reading a quote and
+     *         their transaction mining (a borrower partial-repay or parked
+     *         interest landing first). §9 requires both sale routes to bind the
+     *         seller's economics identically; this is the direct route's half.
+     *
+     *         The bound is checked INSIDE the shared settlement path against the
+     *         SAME `liamCost` / net the sale actually uses — one computation, not
+     *         a mirror of it (the #1801 lesson `createLoanSaleOfferBound` records).
+     *
+     * @param deadline Fill must land at/before this timestamp; MANDATORY (a zero
+     *        reverts `SaleDeadlineRequired`) because it bounds the reward
+     *        forfeiture — the third reviewed cost — to the seller's chosen window.
+     * @param reviewedMinSellerNet The seller's reviewed floor; net must be ≥ this
+     *        (the `minSellerNet` output of `quoteSellerBounds`).
+     * @param reviewedMaxHeld The seller's reviewed ceiling on the held-for-lender
+     *        balance migrating to the buyer; the live balance must be ≤ this (the
+     *        `maxHeld` output of `quoteSellerBounds`).
+     */
+    function sellLoanViaBuyOfferBound(
+        uint256 loanId,
+        uint256 buyOfferId,
+        uint256 reviewedMinSellerNet,
+        uint256 reviewedMaxHeld,
+        uint64 deadline
+    ) external nonReentrant whenNotPaused {
+        _sellLoanViaBuyOfferImpl(
+            loanId,
+            buyOfferId,
+            SaleBounds({
+                enforced: true,
+                minSellerNet: reviewedMinSellerNet,
+                maxHeld: reviewedMaxHeld,
+                deadline: deadline
+            })
+        );
+    }
+
+    /// @dev The shared settlement body for both direct-sale entries. Private, so
+    ///      `msg.sender` (the exiting lender) is preserved from the external
+    ///      caller. `b` carries the seller's reviewed bounds, checked below only
+    ///      when `b.enforced`.
+    function _sellLoanViaBuyOfferImpl(
+        uint256 loanId,
+        uint256 buyOfferId,
+        SaleBounds memory b
+    ) private {
         // Tier-1 sanctions gate — selling a loan routes funds back
         // to msg.sender (the lender exiting early).
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -590,6 +704,40 @@ contract EarlyWithdrawalDirectFacet is
         // If liam's cost exceeds what Noah brings, net settlement cannot
         // complete — liam would owe tokens we never collected from him.
         if (liamCost > loan.principal) revert RateShortfallTooHigh();
+
+        // #1922 (#1503 item 6) — the seller's reviewed-economics bound, checked
+        // HERE against the SAME figures the settlement below uses (one
+        // computation, not a mirror), and against the SAME two quantities the
+        // listed route bounds in `EarlyWithdrawalFacet` (`SaleBelowSellerFloor` +
+        // `SaleAboveHeldCeiling`):
+        //   * net floor — `principal - liamCost` is the seller's net (the guard
+        //     just above pins `liamCost <= principal`, so this cannot underflow).
+        //     Since #1923 pins `buyOffer.amount == loan.principal`, `principal`
+        //     is the buyer's proceeds, so this equals the listed route's
+        //     `proceeds - liamCost`.
+        //   * held ceiling — `priorHeld` (snapshotted above, before any shortfall
+        //     deposit) is the pre-existing held-for-lender balance that migrates
+        //     WHOLLY to the buyer below. Interest parked between the seller's
+        //     quote and this mining grows it, and every extra unit is forfeited
+        //     to the buyer rather than paid to the seller — the exact drift the
+        //     ceiling guards. `liamCost` is NOT that balance, which is why the
+        //     second `quoteSellerBounds` output is `maxHeld`, not a cost.
+        // Placed before any transfer, so an adverse drift reverts cheaply rather
+        // than after moving funds. No-op on the unbound entry (`b.enforced`
+        // false).
+        if (b.enforced) {
+            // MANDATORY finite deadline (Codex r2 P1): it is the cutoff that
+            // bounds the reward forfeiture `_rewardHook` charges at the current
+            // day — the third reviewed cost, captured by neither bound above.
+            if (b.deadline == 0) revert SaleDeadlineRequired();
+            if (block.timestamp > b.deadline)
+                revert SaleQuoteExpired(b.deadline);
+            if (priorHeld > b.maxHeld)
+                revert SaleHeldAboveReviewed(priorHeld, b.maxHeld);
+            uint256 projectedNet = loan.principal - liamCost;
+            if (projectedNet < b.minSellerNet)
+                revert SaleNetBelowReviewed(projectedNet, b.minSellerNet);
+        }
 
         // T-407-C (#566) Codex P1 — release the buy offer's offer-principal
         // lock before consuming its principal. The Lender buy offer

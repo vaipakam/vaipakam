@@ -2075,12 +2075,14 @@ contract DeployDiamond is Script {
         s[3] = EarlyWithdrawalFacet.createLoanSaleOfferBound.selector;
     }
 
-    /// @dev #1780 — the direct lender-exit route's own facet. One selector, but
-    ///      it carries the whole Option-1 body, which is why the split bought
-    ///      the listed route its EIP-170 headroom back.
+    /// @dev #1780 — the direct lender-exit route's own facet. It carries the
+    ///      whole Option-1 body, which is why the split bought the listed route
+    ///      its EIP-170 headroom back. #1922 (#1503 item 6) added the bound
+    ///      entry `sellLoanViaBuyOfferBound` beside the unbound one.
     function _getEarlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
+        s[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferBound.selector;
     }
 
     function _getPartialWithdrawalSelectors() internal pure returns (bytes4[] memory s) {

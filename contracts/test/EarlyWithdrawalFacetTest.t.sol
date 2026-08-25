@@ -4348,6 +4348,121 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
+    // ─── #1922 (#1503 item 6): the bound direct-sale entry ────────────────────
+
+    /// @dev The bound entry fills when execution is within the seller's reviewed
+    ///      economics. With the loan's own rate and no elapsed time the seller's
+    ///      cost is 0 and their net is the full principal, so generous bounds
+    ///      (floor 0, ceiling max) with a finite future deadline pass and the
+    ///      position migrates.
+    function test_1922_boundFillsWithinReviewedBounds() public {
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, type(uint256).max, uint64(block.timestamp + 1 days)
+        );
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "bound sale within reviewed economics fills"
+        );
+    }
+
+    /// @dev Refused when the seller's net would fall below the reviewed floor.
+    ///      No elapsed time ⇒ cost 0 ⇒ net == principal exactly, so a floor one
+    ///      wei above the principal is adverse drift.
+    function test_1922_boundRefusedNetBelowReviewed() public {
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleNetBelowReviewed.selector,
+                PRINCIPAL,
+                PRINCIPAL + 1
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, PRINCIPAL + 1, type(uint256).max, uint64(block.timestamp + 1 days)
+        );
+    }
+
+    /// @dev Refused when the fill lands after the seller's reviewed deadline.
+    ///      Warp first so the deadline is a real, non-zero past timestamp (a
+    ///      deadline of 0 is the "no deadline" sentinel, not a past one).
+    function test_1922_boundRefusedDeadlinePassed() public {
+        vm.warp(block.timestamp + 10 days);
+        uint64 pastDeadline = uint64(block.timestamp - 1);
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleQuoteExpired.selector,
+                pastDeadline
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, type(uint256).max, pastDeadline
+        );
+    }
+
+    /// @dev Refused when the held-for-lender balance that would migrate to the
+    ///      buyer exceeds the reviewed ceiling — the second bound, and the one
+    ///      the earlier revision wrongly compared against `liamCost` (Codex r1
+    ///      P1). Seed `heldForLender` to 50e18 (the pre-existing balance the sale
+    ///      migrates WHOLLY to the buyer, snapshotted as `priorHeld` before any
+    ///      shortfall deposit), then a ceiling of 40e18 is below it. The check
+    ///      reverts before any vault op, so no balance seeding is needed. Exact
+    ///      match: both figures are deterministic.
+    function test_1922_boundRefusedHeldAboveReviewed() public {
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleHeldAboveReviewed.selector,
+                uint256(50 ether),
+                uint256(40 ether)
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, 40 ether, uint64(block.timestamp + 1 days)
+        );
+    }
+
+    /// @dev The complement: a held ceiling AT the live balance passes (the seller
+    ///      reviewed at least this much migrating), proving the bound is `>` not
+    ///      `>=` and that a nonzero held balance within the ceiling still fills.
+    function test_1922_boundFillsWhenHeldWithinCeiling() public {
+        TestMutatorFacet(address(diamond)).setHeldForLenderRaw(activeLoanId, 50 ether);
+        // Back the held balance so its migration to the buyer can settle.
+        address lenderVault = VaultFactoryFacet(address(diamond)).getOrCreateUserVault(lender);
+        deal(mockERC20, lenderVault, 100 ether);
+        vm.prank(address(diamond));
+        VaultFactoryFacet(address(diamond)).recordVaultDepositERC20(lender, mockERC20, 100 ether);
+        deal(mockERC20, address(diamond), PRINCIPAL + 100 ether);
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, 50 ether, uint64(block.timestamp + 1 days)
+        );
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "held balance at the ceiling fills"
+        );
+    }
+
+    /// @dev The deadline is MANDATORY on the bound entry (Codex r2 P1): a zero
+    ///      reverts `SaleDeadlineRequired`, because the finite cutoff is what
+    ///      bounds the reward forfeiture the sale charges at the fill day — the
+    ///      third reviewed cost, captured by neither the net floor nor the held
+    ///      ceiling. The unbound `sellLoanViaBuyOffer` carries no deadline; that
+    ///      is the disclosed-unbounded route, not this one.
+    function test_1922_boundRequiresDeadline() public {
+        vm.prank(lender);
+        vm.expectRevert(
+            EarlyWithdrawalDirectFacet.SaleDeadlineRequired.selector
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, type(uint256).max, 0
+        );
+    }
+
     /// @dev Covers InvalidSaleOffer when buyOffer.collateralAmount > loan.collateralAmount
     function testSellLoanRevertsCollateralTooHigh() public {
         vm.prank(newLender);
