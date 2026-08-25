@@ -43,11 +43,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 # shellcheck source=lib/load-env.sh
 source "$SCRIPT_DIR/lib/load-env.sh"
-DEPLOY_ROOT="$CONTRACTS_DIR/deployments"
-SENTINEL_DIR="$CONTRACTS_DIR/.pause-runs"
-PAUSE_BUDGET_S=300
 
-mkdir -p "$SENTINEL_DIR"
 
 # ── Args ──────────────────────────────────────────────────────────────
 
@@ -65,10 +61,25 @@ if [ -f "$CONTRACTS_DIR/.env" ]; then
   # pause calldata during an incident (Codex #1938 r6). The `--check` branch
   # enforces per-chain RPC presence itself, so a skipped load surfaces there
   # as a specific error rather than as a silent gap.
-  load_env_file "$CONTRACTS_DIR/.env" || {
-    echo "Warning: .env was not loaded; --check will report any RPC it needs." >&2
-  }
+  load_env_file "$CONTRACTS_DIR/.env" || __env_load_failed=1
 fi
+
+# Script-owned state, initialised AFTER the load — deliberately.
+#
+# `.env` setting `DEPLOY_ROOT`, `SENTINEL_DIR` or `PAUSE_BUDGET_S` used to
+# overwrite these, which during an incident means calldata generated from the
+# wrong deployment tree, a sentinel written to the wrong path, or an
+# over-budget pause certified under an inflated limit (Codex #1938 r10).
+#
+# Assigning them after the load fixes the whole class rather than adding three
+# more names to a reserved list — the loader only has to reserve what MUST
+# exist before it runs (`SCRIPT_DIR`, `CONTRACTS_DIR`), and everything else is
+# simply set later and wins by ordering, which is the same principle the CLI
+# flags use.
+DEPLOY_ROOT="$CONTRACTS_DIR/deployments"
+SENTINEL_DIR="$CONTRACTS_DIR/.pause-runs"
+PAUSE_BUDGET_S=300
+mkdir -p "$SENTINEL_DIR"
 
 MODE="calldata"
 CHAINS_FILTER=""
@@ -85,6 +96,29 @@ while [ $# -gt 0 ]; do
   shift
 done
 
+
+# A rejected `.env` is tolerable for pause calldata and NOT for unpause.
+#
+# Atomic staging means a rejected file imports nothing — including
+# `POST_HANDOVER`. Unpause reads that to decide whether ownership has moved to
+# the timelock, so an unset value silently defaults to pre-handover and the
+# script would label direct calls valid after a handover (Codex #1938 r10). My
+# own atomicity fix created that: partial import became no import, and the
+# missing declaration then read as a safe default.
+#
+# Pausing is the action an incident needs and it consults no such declaration,
+# so it still proceeds.
+if [ "$__env_load_failed" = "1" ]; then
+  case "$MODE" in
+    unpause)
+      echo "Error: .env could not be loaded, and --unpause-calldata depends on" >&2
+      echo "       POST_HANDOVER to choose between direct and timelock calls." >&2
+      echo "       Fix .env, or set POST_HANDOVER explicitly in the environment." >&2
+      exit 1 ;;
+    *)
+      echo "Warning: .env was not loaded; --check will report any RPC it needs." >&2 ;;
+  esac
+fi
 
 # Map chain-slug → RPC env var. Mirrors deploy-{chain,mainnet,
 # testnet}.sh so naming stays consistent across every script that

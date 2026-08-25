@@ -46,7 +46,21 @@ from pathlib import Path
 # command loads, and permits exactly one answer. A path variable, a line wrap,
 # a new spelling — none of them help, because the allowed set is one shape and
 # everything else is reported. Continuations are joined before matching.
-# COMMAND POSITION: first token, or after any keyword/operator that starts a new
+# COMMAND POSITION: first token, or after any keyword/operator that starts a
+# new command — `;` `&&` `||` `then` `else` `do` `if` `elif` `while` `until`
+# `{` `!`.
+#
+# KNOWN GAP, stated rather than papered over: a `case` arm (`yes) source … ;;`)
+# is NOT detected. Adding `)` to this list was tried and reverted — `)` occurs
+# constantly inside echoed prose ("…(reference). See …"), and it reintroduced
+# nineteen false positives on legitimate lines. A guard that cries wolf is one
+# people stop reading, which is a worse failure than this gap.
+#
+# The real fix is not a seventh regex. Distinguishing a case arm from a
+# parenthesis in English needs a shell parser, and that belongs with the
+# broader work in #1939 rather than in a bugfix. Seven predicates have now
+# failed here, and the pattern is that each one models how the offending line
+# will be WRITTEN; the model is the defect.
 # command — `;` `&&` `||` `then` `else` `do` `if` `elif` `while` `until` `{` `!`.
 #
 # `if` was the sixth gap in this predicate, found the round after `&&` was the

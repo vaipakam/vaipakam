@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# ── Read `.env` as DATA, against an ALLOWLIST ─────────────────────────────
+# ── Read `.env` as DATA ───────────────────────────────────────────────────
 #
 # #1932 / #1938. Two separate properties, both needed, both learned the hard
 # way over five review rounds:
@@ -15,32 +15,14 @@
 #      ordering once on the reasoning that data-loading made it unnecessary;
 #      it does not.
 #
-# ── Why an ALLOWLIST, having argued for a denylist and been wrong ─────────
+# The loader accepts any valid identifier EXCEPT: names another program treats
+# as a startup hook, names the calling script or the shell owns, and this
+# loader's own namespace. An allowlist of documented settings was implemented
+# and WITHDRAWN — a systematic sweep found sixty settings it would have refused,
+# each aborting a documented deploy phase (#1939 carries that work). The header
+# described the allowlist for two rounds after it was removed, which is the
+# documentation-drift defect this session merged #1926 to fix.
 #
-# The denylist blocked names the SHELL acts on. It missed the ones every other
-# runtime acts on (`NODE_OPTIONS=--require=…` runs code in the first `node`
-# the deploy starts), and it missed this loader's OWN locals: a file setting
-# `lineno=BASH_VERSINFO[$(touch /tmp/owned)]` was picked up by the counter and
-# executed at the next `$(( ))`. Verified — the marker appeared.
-#
-# Those are not oversights to patch. A denylist has to enumerate every name
-# any current or future child process treats as executable, which is open
-# ended; an allowlist enumerates what THIS project configures, which is
-# written down already. The failure modes are asymmetric and that is the
-# whole argument: an allowlist that is short a name STOPS the deploy with a
-# message naming it, and a denylist that is short a name runs the payload.
-#
-# `CONFIGURE_VPFI_PEG` and `SKIP_VPFI` are on that list deliberately even
-# though the wrappers force both: `.env.example` tells operators a stale value
-# "is inert at launch", and deploy-mainnet.sh promises a stale
-# `CONFIGURE_VPFI_PEG` "is forced off". Refusing them would replace documented,
-# harmless inertness with a hard deploy failure — a hardening change breaking a
-# behaviour the documentation guarantees. They load, and the forcing downstream
-# is what makes them not decide anything.
-#
-# The allowlist is `.env.example` — the documented configuration surface —
-# plus the handful below that the scripts read but that file does not yet
-# declare. Adding a setting means documenting it, which was already the rule.
 load_env_file() {
   local __lenv_file="$1" __lenv_line __lenv_name __lenv_value __lenv_no=0
   local __lenv_q __lenv_rest __lenv_i
@@ -58,6 +40,12 @@ load_env_file() {
     esac
 
     case "$__lenv_line" in *=*) : ;; *)
+      # NOTHING from the file reaches the output — not the line, and not the
+      # NAME. r9 withheld the line on THIS branch and left the invalid-name
+      # branch printing `$__lenv_name`, which is everything before the first
+      # `=`: an operator writing `DEPLOYER_PRIVATE_KEY 0xSECRET=` put the key
+      # on stderr through the branch the fix had not covered (Codex #1938
+      # r10). The same defect, one round later, in the neighbouring branch.
       # Line CONTENT is never printed. `.env` holds `DEPLOYER_PRIVATE_KEY`, and
       # a missing `=` on that line would have put the key on stderr — into any
       # logged terminal or CI-style operator session (Codex #1938 r9). A syntax
@@ -90,19 +78,19 @@ load_env_file() {
       SCRIPT_DIR|CONTRACTS_DIR|REPO_ROOT|ROOT_DIR \
       |UID|EUID|PPID|BASHPID|FUNCNAME|LINENO|RANDOM|SECONDS \
       |BASH_ARGV|BASH_SOURCE|BASH_VERSINFO|BASH_LINENO|PWD|OLDPWD|HOME|HISTFILE)
-        echo "Error: $__lenv_file:$__lenv_no sets '$__lenv_name', which the calling" >&2
+        echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which the calling" >&2
         echo "       script or the shell itself owns — refusing." >&2
         return 1 ;;
     esac
 
     case "$__lenv_name" in __lenv_*)
-      echo "Error: $__lenv_file:$__lenv_no sets '$__lenv_name', which is this loader's" >&2
+      echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which is this loader's" >&2
       echo "       own internal namespace — refusing." >&2
       return 1 ;;
     esac
 
     case "$__lenv_name" in '' | [0-9]* | *[!A-Za-z0-9_]*)
-      echo "Error: $__lenv_file:$__lenv_no invalid variable name '$__lenv_name'." >&2
+      echo "Error: $__lenv_file:$__lenv_no invalid variable name a withheld name." >&2
       return 1 ;;
     esac
 
@@ -130,7 +118,7 @@ load_env_file() {
       BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|GLOBIGNORE|IFS|PS4|PATH \
       |LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_FUNC_* \
       |NODE_OPTIONS|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|RUBYOPT|JAVA_TOOL_OPTIONS)
-        echo "Error: $__lenv_file:$__lenv_no sets '$__lenv_name', which another program" >&2
+        echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which another program" >&2
         echo "       would treat as a startup hook — refusing to export it." >&2
         return 1 ;;
     esac
@@ -180,7 +168,7 @@ load_env_file() {
   __lenv_i=0
   while [ "$__lenv_i" -lt "${#__lenv_names[@]}" ]; do
     if readonly -p 2>/dev/null | grep -q "declare -[a-zA-Z-]*r[a-zA-Z-]* ${__lenv_names[$__lenv_i]}="; then
-      echo "Error: $__lenv_file sets '${__lenv_names[$__lenv_i]}', which is readonly here." >&2
+      echo "Error: $__lenv_file sets a withheld name, which is readonly here." >&2
       return 1
     fi
     __lenv_i=$((__lenv_i + 1))
