@@ -1,0 +1,25 @@
+### A seller can now hold a direct position sale to the economics they reviewed
+
+Selling a loan position straight into a standing buy offer settles in one
+transaction, at figures the contract recomputes from live state at the moment it
+mines. Between the seller reading a quote and their transaction landing, that
+state can move — a borrower partial-repays, or parked interest is settled — and
+the seller's actual receipt can come out lower, or their cost higher, than the
+quote they acted on. The unbound sale takes whatever the live figures produce.
+
+There is now a second, opt-in way to sell that carries the seller's reviewed
+numbers: a minimum net receipt, a maximum cost, and an optional deadline. The
+sale is refused if execution would be worse for the seller than those figures —
+a net below the floor, a cost above the ceiling, or a fill past the deadline —
+and passes when it is at least as good. The check runs against the very figures
+the settlement uses, so it cannot drift from what the seller actually receives.
+
+This mirrors the bound entry the listed sale route already offers, and exists for
+the same reason: the platform's two sale routes must let a seller bind their
+economics identically, or the same position could be sold on different terms
+depending on which route it left by. The original unbound sale is unchanged and
+still available; the bound entry is a strictly additional, safer option.
+
+Closes #1922 (#1503 item 6) — the last of the four remaining lender-sale items
+(5, 9, 15 already closed) being closed in place rather than by a new sale
+instrument.

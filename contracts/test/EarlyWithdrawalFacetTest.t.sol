@@ -4348,6 +4348,75 @@ contract EarlyWithdrawalFacetTest is Test {
         EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOffer(activeLoanId, buyOfferId);
     }
 
+    // ─── #1922 (#1503 item 6): the bound direct-sale entry ────────────────────
+
+    /// @dev The bound entry fills when execution is within the seller's reviewed
+    ///      economics. With the loan's own rate and no elapsed time the seller's
+    ///      cost is 0 and their net is the full principal, so generous bounds
+    ///      (floor 0, ceiling max, no deadline) pass and the position migrates.
+    function test_1922_boundFillsWithinReviewedBounds() public {
+        vm.prank(lender);
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, type(uint256).max, 0
+        );
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(activeLoanId).lender,
+            newLender,
+            "bound sale within reviewed economics fills"
+        );
+    }
+
+    /// @dev Refused when the seller's net would fall below the reviewed floor.
+    ///      No elapsed time ⇒ cost 0 ⇒ net == principal exactly, so a floor one
+    ///      wei above the principal is adverse drift.
+    function test_1922_boundRefusedNetBelowReviewed() public {
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleNetBelowReviewed.selector,
+                PRINCIPAL,
+                PRINCIPAL + 1
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, PRINCIPAL + 1, type(uint256).max, 0
+        );
+    }
+
+    /// @dev Refused when the fill lands after the seller's reviewed deadline.
+    ///      Warp first so the deadline is a real, non-zero past timestamp (a
+    ///      deadline of 0 is the "no deadline" sentinel, not a past one).
+    function test_1922_boundRefusedDeadlinePassed() public {
+        vm.warp(block.timestamp + 10 days);
+        uint64 pastDeadline = uint64(block.timestamp - 1);
+        vm.prank(lender);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                EarlyWithdrawalDirectFacet.SaleQuoteExpired.selector,
+                pastDeadline
+            )
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, type(uint256).max, pastDeadline
+        );
+    }
+
+    /// @dev Refused when the seller's cost exceeds the reviewed ceiling. Warp so
+    ///      forfeited accrual makes the cost positive, then a ceiling of 0 is
+    ///      below it. Partial-revert match: the exact accrued figure is
+    ///      time-dependent, only the refusal (and that a ceiling of 0 trips it)
+    ///      matters.
+    function test_1922_boundRefusedCostAboveReviewed() public {
+        vm.warp(block.timestamp + 5 days);
+        vm.prank(lender);
+        vm.expectPartialRevert(
+            EarlyWithdrawalDirectFacet.SaleCostAboveReviewed.selector
+        );
+        EarlyWithdrawalDirectFacet(address(diamond)).sellLoanViaBuyOfferBound(
+            activeLoanId, buyOfferId, 0, 0, 0
+        );
+    }
+
     /// @dev Covers InvalidSaleOffer when buyOffer.collateralAmount > loan.collateralAmount
     function testSellLoanRevertsCollateralTooHigh() public {
         vm.prank(newLender);

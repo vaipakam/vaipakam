@@ -619,10 +619,14 @@ contract RedeployFacets is Script {
     }
 
     /// @dev #1780 — the direct lender-exit route's whole routed surface.
-    ///      Mirrors `DeployDiamond._getEarlyWithdrawalDirectSelectors`.
+    ///      Mirrors `DeployDiamond._getEarlyWithdrawalDirectSelectors`. #1922
+    ///      (#1503 item 6) added `sellLoanViaBuyOfferBound` — both must be cut
+    ///      or a curated refresh strands one on stale bytecode (the split
+    ///      Diamond `CLAUDE.md` documents).
     function _earlyWithdrawalDirectSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](1);
+        s = new bytes4[](2);
         s[0] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOffer.selector;
+        s[1] = EarlyWithdrawalDirectFacet.sellLoanViaBuyOfferBound.selector;
     }
 
     /// @dev #658 PR-B2 — RefinanceFacet selectors, mirrors

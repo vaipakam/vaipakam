@@ -18,6 +18,39 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "sellLoanViaBuyOfferBound",
+    "inputs": [
+      {
+        "name": "loanId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "buyOfferId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMinSellerNet",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMaxCost",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "LoanSold",
     "inputs": [
@@ -2015,6 +2048,22 @@
   },
   {
     "type": "error",
+    "name": "SaleCostAboveReviewed",
+    "inputs": [
+      {
+        "name": "cost",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMax",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleExposureExceedsAuthoredDuration",
     "inputs": [
       {
@@ -2125,6 +2174,22 @@
   },
   {
     "type": "error",
+    "name": "SaleNetBelowReviewed",
+    "inputs": [
+      {
+        "name": "net",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "reviewedMin",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "SaleOfferAlreadyExists",
     "inputs": []
   },
@@ -2157,6 +2222,17 @@
         "name": "floor",
         "type": "uint256",
         "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "SaleQuoteExpired",
+    "inputs": [
+      {
+        "name": "deadline",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },

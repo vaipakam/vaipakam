@@ -185,6 +185,32 @@ contract EarlyWithdrawalDirectFacet is
     ///         reason `OfferExpired` / `OffsetActiveOnLoan` are declared twice.
     error SaleLoanPastMaturity();
 
+    /// @notice #1922 (#1503 item 6) — the seller's reviewed economics, carried by
+    ///         the bound sale entry so the sale can only fill on terms no worse
+    ///         than the quote the seller acted on. `enforced` false is the
+    ///         unbound `sellLoanViaBuyOffer`, which never checks these.
+    struct SaleBounds {
+        bool enforced;
+        uint256 minSellerNet; // seller must net at least this
+        uint256 maxCost; // seller's cost (max(accrued, shortfall)) may not exceed this
+        uint64 deadline; // fill must land at/before this timestamp (0 = no deadline)
+    }
+
+    /// @notice #1922 (#1503 item 6) — the fill would land after the deadline the
+    ///         seller reviewed. The direct sale settles in one transaction, so
+    ///         this bounds the mempool window a seller's quote may sit in.
+    error SaleQuoteExpired(uint64 deadline);
+
+    /// @notice #1922 (#1503 item 6) — the seller's net receipt at execution is
+    ///         below the floor they reviewed. Drift between quote and mining
+    ///         (a borrower partial-repay, parked interest) can lower it; the
+    ///         bound entry refuses rather than settling the worse figure.
+    error SaleNetBelowReviewed(uint256 net, uint256 reviewedMin);
+
+    /// @notice #1922 (#1503 item 6) — the seller's cost at execution is above the
+    ///         ceiling they reviewed. Same drift reasoning as {SaleNetBelowReviewed}.
+    error SaleCostAboveReviewed(uint256 cost, uint256 reviewedMax);
+
 
     /// @dev #671 phase 2 (Codex #729 r4) — the buyer-side progressive-risk gate
     ///      for the direct Option-1 loan sale. Kept in its own frame so the
@@ -225,6 +251,67 @@ contract EarlyWithdrawalDirectFacet is
         uint256 loanId,
         uint256 buyOfferId
     ) external nonReentrant whenNotPaused {
+        _sellLoanViaBuyOfferImpl(
+            loanId,
+            buyOfferId,
+            SaleBounds({enforced: false, minSellerNet: 0, maxCost: 0, deadline: 0})
+        );
+    }
+
+    /**
+     * @notice #1922 (#1503 item 6) — the bound direct sale: the seller carries
+     *         the economics `RiskPreviewFacet.quoteSellerBounds` showed them
+     *         (its `minSellerNet` / `maxHeld` map to the two params here), and
+     *         the sale is refused if execution is WORSE —
+     *         a net below `reviewedMinSellerNet`, a cost above `reviewedMaxCost`,
+     *         or a fill past `deadline`. Better-than-reviewed passes.
+     *
+     *         ADDITIVE, exactly like the listed route's `createLoanSaleOfferBound`
+     *         (#1823): the unbound `sellLoanViaBuyOffer` selector stays routed and
+     *         unchanged, so the deployed frontend keeps working and no
+     *         `FacetCutAction.Remove` leg (the split-Diamond hazard) is needed.
+     *         The direct sale settles in one transaction, so the drift this
+     *         guards is the mempool window between the seller reading a quote and
+     *         their transaction mining (a borrower partial-repay or parked
+     *         interest landing first). §9 requires both sale routes to bind the
+     *         seller's economics identically; this is the direct route's half.
+     *
+     *         The bound is checked INSIDE the shared settlement path against the
+     *         SAME `liamCost` / net the sale actually uses — one computation, not
+     *         a mirror of it (the #1801 lesson `createLoanSaleOfferBound` records).
+     *
+     * @param deadline Fill must land at/before this timestamp; 0 disables it.
+     * @param reviewedMinSellerNet The seller's reviewed floor; net must be ≥ this.
+     * @param reviewedMaxCost The seller's reviewed cost ceiling; cost must be ≤ this.
+     */
+    function sellLoanViaBuyOfferBound(
+        uint256 loanId,
+        uint256 buyOfferId,
+        uint256 reviewedMinSellerNet,
+        uint256 reviewedMaxCost,
+        uint64 deadline
+    ) external nonReentrant whenNotPaused {
+        _sellLoanViaBuyOfferImpl(
+            loanId,
+            buyOfferId,
+            SaleBounds({
+                enforced: true,
+                minSellerNet: reviewedMinSellerNet,
+                maxCost: reviewedMaxCost,
+                deadline: deadline
+            })
+        );
+    }
+
+    /// @dev The shared settlement body for both direct-sale entries. Private, so
+    ///      `msg.sender` (the exiting lender) is preserved from the external
+    ///      caller. `b` carries the seller's reviewed bounds, checked below only
+    ///      when `b.enforced`.
+    function _sellLoanViaBuyOfferImpl(
+        uint256 loanId,
+        uint256 buyOfferId,
+        SaleBounds memory b
+    ) private {
         // Tier-1 sanctions gate — selling a loan routes funds back
         // to msg.sender (the lender exiting early).
         LibVaipakam._assertNotSanctioned(msg.sender);
@@ -590,6 +677,24 @@ contract EarlyWithdrawalDirectFacet is
         // If liam's cost exceeds what Noah brings, net settlement cannot
         // complete — liam would owe tokens we never collected from him.
         if (liamCost > loan.principal) revert RateShortfallTooHigh();
+
+        // #1922 (#1503 item 6) — the seller's reviewed-economics bound, checked
+        // HERE against the SAME figures the settlement below uses (one
+        // computation, not a mirror): `liamCost` is the seller's cost and
+        // `principal - liamCost` their net, both now final and both proven safe
+        // (the guard just above pins `liamCost <= principal`, so the
+        // subtraction cannot underflow). Placed before any transfer, so an
+        // adverse drift reverts cheaply rather than after moving funds. No-op on
+        // the unbound entry (`b.enforced == false`).
+        if (b.enforced) {
+            if (b.deadline != 0 && block.timestamp > b.deadline)
+                revert SaleQuoteExpired(b.deadline);
+            if (liamCost > b.maxCost)
+                revert SaleCostAboveReviewed(liamCost, b.maxCost);
+            uint256 projectedNet = loan.principal - liamCost;
+            if (projectedNet < b.minSellerNet)
+                revert SaleNetBelowReviewed(projectedNet, b.minSellerNet);
+        }
 
         // T-407-C (#566) Codex P1 — release the buy offer's offer-principal
         // lock before consuming its principal. The Lender buy offer
