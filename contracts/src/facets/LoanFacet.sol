@@ -1306,18 +1306,23 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *             empty those payers keep billing normally. The symptom is
      *             therefore MIXED success and failure across payers, not a
      *             clean stop — which is precisely what makes it hard to
-     *             read, because partial failure is what a per-payer cause
-     *             looks like — and exactly ONE entry on this list is
-     *             per-payer (the insufficient vault balance). The other two
-     *             are not: a missing `NOTIF_BILLER_ROLE` is the CALLER's
-     *             state, and an unset VPFI token is Diamond-wide
-     *             configuration. Both of those fail every payer uniformly,
-     *             which is the tell that separates them from this one: an
-     *             exhausted budget is the only cause here that fails SOME
-     *             payers and not others. An operator who does not know it
-     *             exists sees that partial pattern, rules out the two
-     *             uniform causes correctly, and is left inspecting the
-     *             failing payer's vault — the one place the answer is not.
+     *             read. Sorting the causes by BLAST RADIUS is what makes
+     *             them separable:
+     *               · uniform across every payer — a missing
+     *                 `NOTIF_BILLER_ROLE` (the CALLER's state) and an unset
+     *                 VPFI token (Diamond-wide config);
+     *               · payer-by-payer — an underfunded vault;
+     *               · SHARED but conditional — this one. It bites only the
+     *                 payers whose rollup needs a send, so it presents as
+     *                 partial failure even though the cause is global.
+     *             So a uniform outage points at the first pair, while
+     *             partial failure does NOT identify a cause on its own: it
+     *             is equally consistent with underfunded vaults and with an
+     *             empty broadcast budget. Check the failing payer's VPFI
+     *             balance first; if the payer is funded, the budget is the
+     *             remaining explanation. An earlier revision of this note
+     *             said partial failure rules the vault out — it does not,
+     *             and that would send an operator past the likelier cause.
      *
      *         The watcher fires this at notification-send time
      *         **only on PaidPush tier** subscribers — FreeTelegram

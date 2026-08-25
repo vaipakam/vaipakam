@@ -472,18 +472,23 @@ library LibVaipakam {
     uint256 constant MIN_AUTO_PAUSE_SECONDS = 300; // 5 min
     uint256 constant MAX_AUTO_PAUSE_SECONDS = 7200; // 2 hours
 
-    /// @dev T-032 / Numeraire generalization (b1) — Notification fee (per loan-side)
-    ///      defaults + bounds. Charged in VPFI, denominated in the
-    ///      ACTIVE NUMERAIRE (1e18-scaled — USD by post-deploy default;
-    ///      whatever governance has rotated to otherwise), deducted on
+    /// @dev T-032 — Notification fee (per loan-side) defaults + bounds.
+    ///      A flat VPFI QUANTITY (see the M1 paragraph below), deducted on
     ///      first paid-tier notification fired by the off-chain
-    ///      hf-watcher. Default 2.0 numeraire-units covers Push
-    ///      Protocol channel-side delivery costs at the operator's
-    ///      expected notification volumes (~5-10 notifications per
-    ///      loan lifetime). Floor 0.1 prevents governance accidentally
-    ///      setting it to ~0 and starving the channel; ceiling 50.0
-    ///      caps the worst-case bill on a per-loan basis if governance
-    ///      misfires upward.
+    ///      hf-watcher. The default covers Push Protocol channel-side
+    ///      delivery costs at the operator's expected notification volumes
+    ///      (~5-10 notifications per loan lifetime); the floor prevents
+    ///      governance accidentally setting it to ~0 and starving the
+    ///      channel, and the ceiling caps the worst-case per-loan bill if
+    ///      governance misfires upward.
+    ///
+    ///      This paragraph used to open "denominated in the ACTIVE
+    ///      NUMERAIRE (1e18-scaled)" with a "Default 2.0 numeraire-units",
+    ///      which #1346 retired — and it contradicted BOTH the paragraph
+    ///      directly below it and the constant directly beneath, which is
+    ///      `5e17`, i.e. 0.5 VPFI, not 2.0 of anything. A reader taking the
+    ///      first half at face value would price this fee through an oracle
+    ///      that the bill path does not consult.
     ///
     ///      Recycling M1 (#1346, governor §4.1/§13/§14.2) — the fee is a
     ///      **flat native-VPFI tariff**: the stored value IS the VPFI wei
@@ -2207,18 +2212,31 @@ library LibVaipakam {
         // BELOW the frozen 1% for an override of 1..99. Neither direction is
         // bounded at 2×.
         //
-        // WHO IT MOVES VALUE BETWEEN — and it is not the borrower, which two
-        // earlier revisions of this comment got wrong. `splitTreasury` is
-        //   `treasuryShare = interest × bps / BPS; lenderShare = interest −
-        //   treasuryShare`
-        // so the interest the BORROWER pays is fixed and the rate only
-        // divides it. Repricing a grandfathered loan therefore moves value
-        // between the LENDER and treasury: above 100 bps the lender is paid
-        // less than the receipt they signed, below it the treasury is. The
-        // lender is the party the per-loan snapshot exists to protect, so
-        // naming the borrower here pointed at the one participant the rate
-        // cannot affect. The downward direction is the easier of the two to
-        // miss, because an under-paid treasury complains to nobody.
+        // WHO IT MOVES VALUE BETWEEN — and it depends on the path, which
+        // three earlier revisions of this comment each got wrong in a
+        // different way.
+        //
+        // On the INTEREST-SPLIT paths (`LibEntitlement.splitTreasury`:
+        // repay, rental settlement) the rate divides a fixed amount —
+        //   `treasuryShare = interest × bps / BPS;
+        //    lenderShare  = interest − treasuryShare`
+        // so the borrower's outlay is identical at any rate and the value
+        // moves between LENDER and treasury. Above the frozen rate the
+        // lender is paid less than the receipt they signed; below it the
+        // treasury is.
+        //
+        // On the T-086 PARALLEL-SALE path it is additive, not a split:
+        // `LibCollateralSettlement.treasuryAndPrecloseFee` adds
+        // `interest × (treasuryBps + precloseBps) / BPS` on TOP of
+        // `principalPlusAccruedInterest` to form the minimum sale floor, the
+        // lender's interest leg is preserved whole, and `PrepayListingFacet`
+        // routes the remainder to `ownerOf(loan.borrowerTokenId)`. At a
+        // fixed sale price a higher rate therefore shrinks the BORROWER
+        // remainder. So "the borrower is never affected" — the previous
+        // revision's wording — is true of the split paths and false here.
+        //
+        // Either way the downward direction is the easier to miss, because
+        // an under-paid treasury complains to nobody.
         // This comment
         // previously said the fallback was "the live knob", which described
         // exactly the change CLAUDE.md warns must never be made. Both fees are bounded by `MAX_FEE_BPS`
@@ -7208,9 +7226,17 @@ library LibVaipakam {
     ///      claim math yield exactly the funded budget on that chain.
     ///      `recycleConsume` is the capped-committable share funded from the
     ///      chain's OWN bucket (B2-b: the exact figure Base books into
-    ///      `chainConsumedRecycled[c]` at finalization and the mirror debits
-    ///      from its bucket at broadcast arrival — same number, both
-    ///      ledgers; the remainder arrives via remittance); `keeperAllocate`
+    ///      `chainConsumedRecycled[c]` at finalization and the mirror
+    ///      RESERVES against its bucket at broadcast arrival, via
+    ///      {LibVpfiRecycle.reserveMirrorCommit} — same number, both
+    ///      ledgers; the remainder arrives via remittance). This line said
+    ///      the mirror "debits from its bucket at broadcast arrival" until
+    ///      #1349, which is the one thing that function is written NOT to
+    ///      do: `consume` already runs at every claim on every chain, so an
+    ///      arrival debit charges the same tokens twice, drains the bucket
+    ///      to its floor and over-states this chain's availability to Base
+    ///      (§2e.1). Reserve at arrival, debit at claim/remit.
+    ///      `keeperAllocate`
     ///      is reserved for the per-chain keeper allocation (0-valued until
     ///      that resolution exists). `freshLenderHalf`/`freshBorrowerHalf`
     ///      (B2-b append) are the per-side FRESH floors this chain prices
@@ -8118,14 +8144,16 @@ library LibVaipakam {
     ///      pre-#957 open loan at repay, in EITHER DIRECTION: `setFeesConfig`
     ///      bounds the override only from above, so the live knob is any
     ///      value in 1..`MAX_FEE_BPS`, and an override below 100 would
-    ///      reprice a grandfathered loan DOWNWARD. The party repriced is
-    ///      the LENDER, not the borrower: `splitTreasury` takes the share
-    ///      out of a FIXED `interestAmount` (`lenderShare = interest −
-    ///      treasuryShare`), so the borrower's outlay is identical at any
-    ///      rate and only the lender/treasury division moves. Above the
-    ///      frozen rate the lender is paid less than their signed receipt;
-    ///      below it the treasury is — the quieter failure, since an
-    ///      under-paid treasury complains to nobody. This line said
+    ///      reprice a grandfathered loan DOWNWARD. WHICH PARTY is repriced
+    ///      depends on the caller, and there are four: on the interest-SPLIT
+    ///      paths (`LibEntitlement.splitTreasury`, and the sizing read in
+    ///      `LibVPFIDiscount`) the borrower's outlay is fixed and the value
+    ///      moves between LENDER and treasury; on the T-086 parallel-sale
+    ///      path (`LibCollateralSettlement.treasuryAndPrecloseFee`) the fee
+    ///      is an ADDITIVE leg in the sale floor whose remainder
+    ///      `PrepayListingFacet` routes to the borrower-position holder, so
+    ///      at a fixed price it moves value between treasury and the
+    ///      BORROWER instead. `RiskPreviewFacet` only compares. This line
     ///      "1% → 2%" until #1349, which
     ///      named only the untuned-deploy case; {RiskPreviewFacet}'s
     ///      inherited-fee gate has always reasoned about the sub-legacy

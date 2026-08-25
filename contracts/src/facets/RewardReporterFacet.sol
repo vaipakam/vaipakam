@@ -471,7 +471,10 @@ contract RewardReporterFacet is
     /// @notice #1222 M3 B2-b — a V2 broadcast was applied on this mirror:
     ///         the consensus pair + cap family landed, the chain's own
     ///         funded stamp was written, and the local recycle bucket
-    ///         surrendered its instructed slice (consume-on-arrival).
+    ///         RESERVED its instructed slice. Said "surrendered …
+    ///         (consume-on-arrival)" until #1349: arrival encumbers the
+    ///         slice, it does not spend it — `consume` debits at
+    ///         claim/remit.
     /// @custom:event-category informational/reward-governor
     event RewardBroadcastV2Applied(
         uint256 indexed dayId,
@@ -491,8 +494,13 @@ contract RewardReporterFacet is
      *      2. Whole-day idempotency — the first application sets
      *         `broadcastV2Applied[dayId]`; a re-delivered packet must
      *         match EVERY applied field (revert on divergence) and is
-     *         otherwise a no-op, so the consume-on-arrival debit can
-     *         never run twice.
+     *         otherwise a no-op, so the arrival-time RESERVATION
+     *         (`_reserveMirrorCommitOnce` → {LibVpfiRecycle.reserveMirrorCommit})
+     *         can never run twice. This said "the consume-on-arrival debit"
+     *         until #1349 — in the function that performs the reservation,
+     *         and describing the one thing it is written NOT to do: arrival
+     *         reserves, `consume` debits later at claim/remit, because
+     *         debiting at both points charges the same tokens twice.
      *      3. Consensus pair — written, or verified against a value a
      *         legacy kind-2 delivery already set (mixed-generation days).
      *      4. Cap family, atomic with the mode (#1351 2a pairing):
@@ -504,10 +512,12 @@ contract RewardReporterFacet is
      *         stay 0 here: they are Base-side records; the equivalent
      *         halves already encode the funded budgets exactly.)
      *      6. `armedFromDay` — forward-only, as in the legacy ingress.
-     *      7. Consume-on-arrival — the local bucket surrenders
+     *      7. Reserve-on-arrival — the local bucket ENCUMBERS
      *         `recycleConsume` exactly once, mirroring the
      *         `chainConsumedRecycled[c]` mark Base booked at finalization
-     *         (same figure, both ledgers).
+     *         (same figure, both ledgers). Headed "Consume-on-arrival …
+     *         surrenders" until #1349; the debit happens later, at
+     *         claim/remit, and doing both would charge the slice twice.
      */
     /// @dev #1222 M3 B2-d3 — reserve this day's instructed local recycled
     ///      commit AT MOST ONCE, tracked on its own flag

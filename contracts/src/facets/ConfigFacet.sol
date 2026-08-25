@@ -737,9 +737,19 @@ contract ConfigFacet is DiamondAccessControl {
         emit MaxOfferDurationDaysSet(newDays);
     }
 
-    /// @notice T-032 / Numeraire generalization (Phase 1) — emitted on every change to
-    ///         the per-loan-side notification fee. Value in numeraire-
-    ///         units (1e18-scaled).
+    /// @notice T-032 — emitted on every change to the per-loan-side
+    ///         notification fee. The value is a flat VPFI QUANTITY in wei
+    ///         (1e18-scaled), NOT a numeraire figure: #1346 made this a
+    ///         native-VPFI tariff with no oracle step and no numeraire
+    ///         linkage (`setNumeraire` no longer rotates it). This notice
+    ///         said "value in numeraire-units" until #1349.
+    /// @dev    The PARAMETER NAME is still `newFeeNumeraire1e18` and is
+    ///         therefore still wrong for decoders that surface argument
+    ///         names. Renaming it changes the emitted ABI, so it needs the
+    ///         frontend/keeper ABI re-export in the same change rather than
+    ///         a comment-only edit — tracked separately (#1934). The event
+    ///         SIGNATURE and topic hash are unaffected by a name change, so
+    ///         no consumer breaks on the rename itself.
     /// @custom:event-category informational/config
     event NotificationFeeSet(uint256 newFeeNumeraire1e18);
     /// @notice T-032 — passed fee outside the [floor, ceil] bounds.
