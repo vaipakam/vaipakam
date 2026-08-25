@@ -177,6 +177,21 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('an option whose entire value looks like the flag (#1924 r22)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message=--keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('`run deploy` appearing only inside an option value (#1924 r22)', () => {
+    const r = runWith('apps/keeper/README.md', 'wrangler deploy --message="run deploy"\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('`run deploy` inside a single-quoted option value (#1924 r22)', () => {
+    const r = runWith('apps/keeper/README.md', "wrangler deploy --message='run deploy'\n");
+    expect(r.ok).toBe(false);
+  });
+
   it('a regression in the keeper package manifest itself (#1924 r12)', () => {
     // The canonical entry point every corrected wrapper calls. A bare deploy
     // here re-breaks the whole invariant while each wrapper still looks right.

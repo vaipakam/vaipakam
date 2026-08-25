@@ -201,7 +201,16 @@ recoverable back-pressure — not a fund-loss event.
 > its gate — so read the accompanying `passIsArmed` skip line, which names the
 > blocking binding, rather than the `done` line. Then require this pass's own
 > POSITIVE marker — `rewardBudgetRemit coverage: C/A destination(s) completed`
-> — with **C equal to A**. Do not reuse §3.5's liquidator markers here: this
+> — with **C equal to A**. **`C == A` means nothing is left owed AT THE SOURCE
+> — it does NOT mean the mirrors were funded.** A successful Base receipt only
+> means CCIP accepted the message; delivery can still park or revert on the
+> mirror (a paused receiver), and per the bullet above those days are already
+> marked remitted on Base, so no later keeper tick repairs it — recovery is a
+> manual CCIP re-execution. Before standing down manual funding, confirm
+> delivery on the destination side for the days this pass reported, exactly as
+> that bullet describes. The coverage counter cannot see the mirror and does
+> not claim to.
+> Do not reuse §3.5's liquidator markers here: this
 > pass fails with its own distinct messages (`chain=<id> failed:`,
 > `skipped Base-><id>:`, a `REVERTED` warning), none sharing a prefix with the
 > liquidator's, so an "absence of errors" check written for one pass says

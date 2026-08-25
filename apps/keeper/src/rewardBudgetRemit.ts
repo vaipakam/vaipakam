@@ -397,5 +397,20 @@ async function remitToMirror(
     );
     return false;
   }
+  // SOURCE-ACCEPTED, NOT DELIVERED (Codex #1924 r22).
+  //
+  // A successful Base receipt means CCIP accepted the message, not that the
+  // mirror received it. `IncidentRunbook`'s reward-remittance section records
+  // the failure mode explicitly: delivery can park or revert on the mirror —
+  // a paused receiver, say — while the days are ALREADY marked remitted on
+  // Base. The next tick cannot repair it (`remitRewardBudget` returns
+  // `NothingToRemit` for those days); recovery is a manual CCIP
+  // re-execution. So users on that mirror can have no claim backing while
+  // this pass reports success.
+  //
+  // This function cannot observe the destination, so it does not claim to:
+  // `true` here means "nothing left owed AT THE SOURCE". The stand-down
+  // checklist owns the rest, and says so — mirror-side confirmation is a
+  // separate check, not something the coverage counter can imply.
   return true;
 }

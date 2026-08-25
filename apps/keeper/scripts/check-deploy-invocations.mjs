@@ -160,15 +160,17 @@ function flagEnabled(rawLine, flag) {
   // matchAll yielded ONE match reading as enabled and "last occurrence wins"
   // silently did nothing. It has to be in the pattern: matchAll iterates a
   // CLONE, so adjusting `lastIndex` from the loop body has no effect.
-  // `(?<![^\\s(\`'"=])` — the flag must BEGIN a shell token. Without it,
+  // `(?<![^\\s(\`'"])` — the flag must BEGIN a shell token. Without it,
   // `--message=remember--keep-vars` had its suffix read as a real flag and the
   // destructive deploy passed (Codex #1924 r21). The r19 fix only neutralized
   // QUOTED option values, so the unquoted same-argument form slipped through.
-  // The allowed predecessors are whitespace, `(`, a backtick or quote (prose
-  // and shell wrapping) and `=` — the last so `--keep-vars=true` still
-  // matches on its own value boundary.
+  //
+  // `=` is NOT an allowed predecessor (Codex #1924 r22). Admitting it let
+  // `--message=--keep-vars` — another option whose entire value looks like the
+  // flag — pass as well. It was never needed: in `--keep-vars=true` the flag
+  // is preceded by whitespace and it is the VALUE that follows the `=`.
   const re = new RegExp(
-    `(?<![^\\s(\`'"=])${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|((?!-)[^\\s"'\`)]+)))?`,
+    `(?<![^\\s(\`'"])${flag}(?:[=\\s]+(?:"([^"]*)"|'([^']*)'|((?!-)[^\\s"'\`)]+)))?`,
     'g',
   );
   let effective = null;
@@ -259,10 +261,15 @@ function splitCommands(line) {
 }
 
 function commandIsSafe(cmd) {
+  // `run deploy` gets the same option-value strip the flags do: it was a raw
+  // substring test, so `--message="run deploy"` blessed a bare deploy that
+  // never invokes the package script (Codex #1924 r22). `flagEnabled` already
+  // strips internally; this call is for the `run deploy` test.
+  const bare = stripOtherOptionValues(cmd);
   return (
     flagEnabled(cmd, '--keep-vars') ||
     flagEnabled(cmd, '--dry-run') ||
-    /\brun\s+deploy\b/.test(cmd)
+    /(?:^|\s)(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run\s+deploy\b/.test(bare)
   );
 }
 

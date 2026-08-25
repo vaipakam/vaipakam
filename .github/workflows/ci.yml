@@ -78,6 +78,15 @@
 # ProjectProcedures §7.1, which now says how to check rather than
 # asserting a list that can drift.
 #
+# ⚠ OPERATOR ACTION OWED (#1924 r22): `keeper deploy guard (--keep-vars,
+# tree-wide)` belongs in that required list and is NOT in it yet — adding
+# it needs a ruleset change nobody can make from a PR. Until it is added
+# the job RUNS on every PR but does not BLOCK merge, because GitHub does
+# not gate on a red non-required check. It is the same case as `D1 name
+# consistency`: unconditional by design, because a path gate would
+# exclude exactly the changes it exists to catch. Treat its red as
+# blocking by convention until the ruleset catches up.
+#
 # The first four are conditionally required via path-filter `if:`
 # guards — branch protection treats `if:`-skipped checks as SUCCESS, so
 # docs-only PRs still merge fast. `D1 name consistency` is the
