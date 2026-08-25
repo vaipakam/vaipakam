@@ -1625,7 +1625,16 @@ phase_cf_agent() {
   echo "═══════════════════════════════════════════════════════════════"
 
   echo "[a] wrangler deploy"
-  ( cd "$AGENT_DIR" && pnpm exec wrangler deploy )
+  # `pnpm run deploy`, NOT `pnpm exec wrangler deploy`: the package script
+  # carries --keep-vars. A bare deploy "will delete all vars before setting
+  # those found in the Wrangler configuration", and apps/agent/src/env.ts
+  # reads RECIPIENT_VALIDATING_TOKENS and OPENSEA_OFFERS_MAX_PAGES, which
+  # apps/agent/wrangler.jsonc does not declare (the latter appears only in a
+  # comment there). So every ordinary cf-agent phase silently switched
+  # recipient-token validation off and reset OpenSea pagination
+  # (Codex #1924 r43). The keeper phase above was fixed earlier in this PR;
+  # this one was documented as fixed without being fixed.
+  ( cd "$AGENT_DIR" && pnpm run deploy )
 
   if [ -n "$EXPECTED_RPC_SECRET" ]; then
     echo
