@@ -223,6 +223,17 @@ for s in "${DEPLOY_SH[@]}"; do
   fi
 done
 
+# 3c-ante. #1938 r11 — RUN each operator script's early path. `bash -n` parses
+# and cannot see an unset variable: `pause-all-chains.sh` shipped with an
+# uninitialised sentinel and aborted with "unbound variable" in every mode,
+# including the incident path, while `bash -n` reported it clean.
+if bash "$SCRIPT_DIR/check-scripts-run.sh"; then
+  :
+else
+  echo "  x an operator script dies on unbound state" >&2
+  FAIL=1
+fi
+
 # 3c-bis. #1932 / #1938 — `.env` must be read as DATA, never sourced. Sourcing
 # executes it in the deploy shell, and three review rounds showed no amount of
 # ordering or restoring survives that: the file could redefine the restore

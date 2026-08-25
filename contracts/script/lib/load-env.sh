@@ -25,7 +25,7 @@
 #
 load_env_file() {
   local __lenv_file="$1" __lenv_line __lenv_name __lenv_value __lenv_no=0
-  local __lenv_q __lenv_rest __lenv_i
+  local __lenv_q __lenv_rest __lenv_i __lenv_decl
   local __lenv_names=() __lenv_vals=()
 
   [ -f "$__lenv_file" ] || { echo "Error: $__lenv_file not found." >&2; return 1; }
@@ -64,24 +64,31 @@ load_env_file() {
     # (Codex #1938 r8). Unlike the open-ended startup-hook list, this namespace
     # IS closed: it is whatever this file declares, and this file declares only
     # `__lenv_*`.
-    # CALLER-OWNED and shell-special names. Reserving only `__lenv_*` protected
-    # the loader and left the CALLER exposed: `SCRIPT_DIR=/tmp/old-tools` in a
-    # stale `.env` is exported into the wrapper's own variable, and the wrapper
-    # then runs `bash "$SCRIPT_DIR/predeploy-check.sh"` — arbitrary code with
-    # the deployment's credentials, through a door the hook denylist does not
-    # cover (Codex #1938 r9).
+    # CALLER-OWNED / ATTRIBUTED names, derived from the SHELL rather than
+    # listed. `declare -p NAME` reports what the shell already holds:
     #
-    # The bash specials are here for a different reason: `export UID=1000`
-    # terminates a non-interactive shell, which defeated both the atomic commit
-    # and the emergency path's non-fatal handling.
-    case "$__lenv_name" in
-      SCRIPT_DIR|CONTRACTS_DIR|REPO_ROOT|ROOT_DIR \
-      |UID|EUID|PPID|BASHPID|FUNCNAME|LINENO|RANDOM|SECONDS \
-      |BASH_ARGV|BASH_SOURCE|BASH_VERSINFO|BASH_LINENO|PWD|OLDPWD|HOME|HISTFILE)
-        echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which the calling" >&2
-        echo "       script or the shell itself owns — refusing." >&2
-        return 1 ;;
-    esac
+    #   `declare --`  a plain variable the calling script created  -> refuse
+    #   `declare -x`  an exported variable inherited from the env  -> allow
+    #   `declare -ir` integer / readonly / array attributes        -> refuse
+    #
+    # Listing names failed five times here — `SCRIPT_DIR` was reserved and
+    # `DEPLOY_ROOT`, `SENTINEL_DIR`, `PAUSE_BUDGET_S`, then
+    # `TREE_COMMIT_AT_START`, `DEFI_DIR`, `KEEPER_DIR` and the rest were not,
+    # and an integer-attributed `OPTIND=BASH_VERSINFO[$(touch …)]` executed on
+    # export regardless (Codex #1938 r11). The shell already knows all of this;
+    # asking it is closed where a list is not.
+    #
+    # Exported names are allowed through so a `.env` can still supply the RPC
+    # URLs and keys the operator's environment may also carry.
+    __lenv_decl="$(declare -p "$__lenv_name" 2>/dev/null || true)"
+    if [ -n "$__lenv_decl" ]; then
+      case "$__lenv_decl" in
+        "declare -x "*) : ;;
+        *) echo "Error: $__lenv_file:$__lenv_no sets a name this shell already holds" >&2
+           echo "       as script-owned or attributed state — refusing. (Name withheld.)" >&2
+           return 1 ;;
+      esac
+    fi
 
     case "$__lenv_name" in __lenv_*)
       echo "Error: $__lenv_file:$__lenv_no sets a withheld name, which is this loader's" >&2

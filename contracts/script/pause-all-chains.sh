@@ -54,6 +54,12 @@ source "$SCRIPT_DIR/lib/load-env.sh"
 #
 # Optional here: calldata and unpause modes need no RPC, and the --check
 # branch enforces presence per-chain.
+# Initialised on EVERY path. It was not, and under `set -euo pipefail` this
+# script then aborted with "unbound variable" whenever `.env` was absent or
+# loaded cleanly — i.e. normally. I shipped that: the assignment was added
+# with a text replace I did not assert, in the same commit where I asserted
+# the others, and `bash -n` cannot see an unset variable (Codex #1938 r11).
+__env_load_failed=0
 if [ -f "$CONTRACTS_DIR/.env" ]; then
   # NON-FATAL here, unlike the deploy wrappers. This is the emergency pause
   # path: `calldata` and `--unpause-calldata` need no RPC at all, and a
