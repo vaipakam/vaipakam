@@ -47,10 +47,15 @@
 #       instead of the Cancun-fork canonical 0x0000…2734.
 #
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase configure
-#       Runs DiamondConfigSpell.s.sol — composes the four Diamond-side
-#       configure scripts (ConfigureOracle / ConfigureRewardReporter /
-#       ConfigureVPFIBuy / ConfigureNFTImageURIs) into a single
-#       operator-action that lands all four sequentially. Each child
+#       Runs DiamondConfigSpell.s.sol — composes the Diamond-side
+#       configure scripts (ConfigureVPFIToken / ConfigureOracle /
+#       ConfigureRewardReporter / ConfigureNFTImageURIs) into a single
+#       operator-action that lands them sequentially.
+#       #884: ConfigureVPFIBuy is NOT among them. The launch posture is
+#       peg-UNSET — the lender discount is delivered by direct reduction —
+#       and pricing VPFI changes that product. Pass --configure-vpfi-peg
+#       to run it for THIS deploy only; a stale CONFIGURE_VPFI_PEG in the
+#       shared .env is forced off. Each child
 #       broadcasts as ADMIN_PRIVATE_KEY; if any reverts, Foundry stops
 #       the script so the operator can't accidentally skip the failed
 #       subset. Run BEFORE --phase handover so the configs land while
@@ -242,9 +247,11 @@ Phases:
   swap-adapters   — Phase 7a aggregator adapters via
                     DeploySwapAdapters.s.sol. Requires
                     INITIAL_SETTLERS env var.
-  configure       — DiamondConfigSpell: ConfigureOracle +
-                    ConfigureRewardReporter + ConfigureVPFIBuy +
+  configure       — DiamondConfigSpell: ConfigureVPFIToken +
+                    ConfigureOracle + ConfigureRewardReporter +
                     ConfigureNFTImageURIs in one operator-action.
+                    ConfigureVPFIBuy is opt-in (--configure-vpfi-peg);
+                    the launch posture leaves VPFI unpriced (#884).
   handover        — Rotate roles + ownership to governance topology.
                     Requires --confirm-i-have-multisig-ready
   abi-sync        — packages/contracts ABI + deployments.json sync
@@ -268,6 +275,7 @@ CHAIN_SLUG="$1"; shift
 
 PHASE=""
 CONFIRM_MULTISIG=0
+CONFIGURE_VPFI_PEG_OPT=0
 CONFIRM_ORPHANS=0
 FRESH=0
 CONFIRM_PURGE_MAINNET=0
@@ -282,6 +290,12 @@ while [ $# -gt 0 ]; do
       ;;
     --confirm-i-have-multisig-ready) CONFIRM_MULTISIG=1 ;;
     --fresh)                         FRESH=1 ;;
+    # #884 — per-RUN opt-in to pricing VPFI. Deliberately a flag rather
+    # than an env var: the wrappers source a shared .env, so an exported
+    # CONFIGURE_VPFI_PEG=1 from another deploy would otherwise change this
+    # deploy's PRODUCT silently. The configure phase forces the env value
+    # off and reads only what this flag sets.
+    --configure-vpfi-peg)            CONFIGURE_VPFI_PEG_OPT=1 ;;
     # MAINNET-only second gate. --fresh on mainnet wipes the
     # canonical deploy from this chain's directory; this confirm
     # asserts the operator has reviewed the archived state and
@@ -356,8 +370,32 @@ esac
 
 # ── Load .env ─────────────────────────────────────────────────────────
 
+# #884 — flags parsed above must SURVIVE this block. `set -a; source`
+# exports every assignment in the shared .env, so a `CONFIGURE_VPFI_PEG_OPT=`
+# line there overwrites what the operator just typed on the command line —
+# silently, and in BOTH directions: a stale `=1` prices VPFI on a run that
+# never asked, and a `=0` discards an explicit `--configure-vpfi-peg`.
+#
+# That is precisely the failure the flag was chosen to avoid. The flag's own
+# rationale above says an env var is unsafe here "because the wrappers source
+# a shared .env" — and then the parsed flag sat in an ordinary shell variable
+# that the same source overwrites. The reasoning was right and the ordering
+# defeated it (Codex #1920 r4).
+#
+# So the CLI value is snapshotted and restored: whatever .env says about this
+# name is inert, and the only thing that prices VPFI is this run's flag.
+#
+# NOT yet extended to the other flag-set variables in the case block
+# (CONFIRM_PURGE_MAINNET, CONFIRM_MULTISIG, CONFIRM_HW_SIGNER,
+# CONFIRM_ORPHANS, CONFIRM_DEADLINE_RESET, FRESH, PHASE). They have the same
+# exposure and it is tracked separately — widening a launch-posture fix into
+# the mainnet purge/handover confirmations is a change that deserves its own
+# review, not a mid-review expansion of this one.
+__cli_configure_vpfi_peg_opt="$CONFIGURE_VPFI_PEG_OPT"
+
 if [ -f "$CONTRACTS_DIR/.env" ]; then
   set -a; source "$CONTRACTS_DIR/.env"; set +a
+  CONFIGURE_VPFI_PEG_OPT="$__cli_configure_vpfi_peg_opt"
 else
   echo "Error: $CONTRACTS_DIR/.env not found." >&2
   exit 1
@@ -1207,7 +1245,13 @@ EOF
   # SKIP_VPFI=1 left in the shared .env / a prior --skip-vpfi run can't
   # silently skip ConfigureVPFIToken/RewardReporter/VPFIBuy while the
   # configure phase still reports success.
-  SKIP_VPFI=0 \
+  # #884 — force CONFIGURE_VPFI_PEG=0 for the same shared-.env reason
+  # SKIP_VPFI is forced above. The peg changes the PRODUCT (it moves the
+  # lender hold discount from direct reduction to VPFI-payment-authoritative),
+  # so a stale CONFIGURE_VPFI_PEG=1 left over from another deploy must never
+  # price VPFI on this one. Opting in is per-run and explicit, via
+  # --configure-vpfi-peg.
+  SKIP_VPFI=0 CONFIGURE_VPFI_PEG="${CONFIGURE_VPFI_PEG_OPT:-0}" \
     forge script script/DiamondConfigSpell.s.sol \
     --rpc-url "$RPC" --broadcast --slow
 

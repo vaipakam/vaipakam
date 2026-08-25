@@ -104,8 +104,11 @@ CCIP_RATE_CAPACITY=        # per-lane token-bucket capacity; default 50,000 VPFI
 CCIP_RATE_REFILL=          # per-lane refill rate, VPFI/s; default ~5.8 VPFI/s
 CCIP_DEST_GAS_LIMIT=       # CCIP message dest-gas limit; default 400,000
 # VPFI fee-discount price config — read by ConfigureVPFIBuy.s.sol.
-# BOTH are mandatory: the script reads them with vm.envUint /
-# vm.envAddress and reverts before broadcast if either is unset.
+# #884: that script no longer runs at launch. DiamondConfigSpell skips it
+# unless CONFIGURE_VPFI_PEG=1, because the Phase-1 posture is peg-UNSET.
+# BOTH vars below are mandatory only for a deliberate opt-in peg run: the
+# script reads them with vm.envUint / vm.envAddress and reverts before
+# broadcast if either is unset.
 VPFI_BUY_WEI_PER_VPFI=     # discount price anchor, wei per VPFI
 <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET=
                            # the chain's canonical WETH token address
@@ -310,10 +313,15 @@ Per chain, via timelock-originated txs:
      reads `VPFI_BUY_WEI_PER_VPFI` — that env var is live and is NOT part
      of the removed sale. -->
 - `VPFIDiscountFacet` fee-discount price config — see
-  `contracts/script/ConfigureVPFIBuy.s.sol`. Sets the VPFI price anchor
-  (`VPFI_BUY_WEI_PER_VPFI`) plus the chain's ETH reference asset
-  (`<CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET`; both mandatory — see §1's env
-  block). Unlike the removed canonical-only sale, the discount applies
+  `contracts/script/ConfigureVPFIBuy.s.sol`. **#884: this is NOT a launch
+  step.** The Phase-1 posture is peg-UNSET, because pricing VPFI moves the
+  lender hold discount off direct reduction onto the VPFI-payment path —
+  a different product. `DiamondConfigSpell` runs it only under
+  `CONFIGURE_VPFI_PEG=1`, and the deploy wrappers force that off unless
+  `--configure-vpfi-peg` is passed for that run. When you do opt in, it
+  sets the VPFI price anchor (`VPFI_BUY_WEI_PER_VPFI`) plus the chain's
+  ETH reference asset (`<CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET`; both
+  mandatory for that run — see §1's env block). Unlike the removed canonical-only sale, the discount applies
   wherever a loan can be opened, so both must be set on every chain the
   protocol runs on or `LibVPFIDiscount._feeAssetWeiToVpfi` returns
   `(false, 0)` and no discount resolves.

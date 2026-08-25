@@ -9,6 +9,7 @@ import {ConfigureOracle} from "./ConfigureOracle.s.sol";
 import {ConfigureRewardReporter} from "./ConfigureRewardReporter.s.sol";
 import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
 import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
+import {EnvFlag} from "./lib/EnvFlag.sol";
 
 /**
  * @title DiamondConfigSpell
@@ -29,6 +30,8 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *                                       id + messenger so reward reports
  *                                       flow (EVM chain ids, not eids).
  *        - ConfigureVPFIBuy          — sets the VPFI fee-discount price
+ *                                      config. #884: NOT run at launch —
+ *                                      opt in with CONFIGURE_VPFI_PEG=1
  *                                       config; runs on every chain (the
  *                                       discount applies chain-wide).
  *        - ConfigureNFTImageURIs     — sets the position-NFT artwork
@@ -77,7 +80,10 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *           before the reward-messenger lanes are live (no on-chain
  *           dependency on the order, but logically pairs after
  *           Oracle).
- *        3. ConfigureVPFIBuy — sets the VPFI fee-discount price config
+ *        3. ConfigureVPFIBuy — sets the VPFI fee-discount price config.
+ *           #884: SKIPPED unless CONFIGURE_VPFI_PEG=1. The Phase-1 posture
+ *           is peg-UNSET, and pricing VPFI moves the lender hold discount
+ *           off direct reduction onto the VPFI-payment path
  *           AFTER oracle is wired (the config doesn't read oracle, but
  *           having oracle live lets `--phase verify` sanity-check the
  *           discount price against current prices).
@@ -92,8 +98,11 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *          chain-prefixed vars so the same .env works across testnets)
  *        - REWARD_MESSENGER_PROXY (optional override) / BASE_CHAIN_ID
  *          (reporter — chains are keyed by EVM chain id, never an eid)
- *        - VPFI_BUY_WEI_PER_VPFI (global) + the chain-prefixed
- *          <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET (every chain)
+ *        - CONFIGURE_VPFI_PEG (optional; default 0). Only when it is 1
+ *          does the spell run ConfigureVPFIBuy, and only then are
+ *          VPFI_BUY_WEI_PER_VPFI (global) + the chain-prefixed
+ *          <CHAIN>_VPFI_DISCOUNT_ETH_PRICE_ASSET required. A launch
+ *          leaves the peg unset (#884)
  *        - NFT_DEFAULT_IMAGE_LENDER / _BORROWER and the per-state
  *          override URIs (NFT artwork; defaults are baked into the
  *          contract so all of these are optional).
@@ -106,6 +115,23 @@ import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
  *      LayerZero; no wrapper dispatches that phase.)
  */
 contract DiamondConfigSpell is Script {
+    /// @notice #884 — the peg decision, extracted so it is TESTABLE.
+    /// @dev    Codex #1920 r2 corrected me here: I claimed no Solidity test
+    ///         could observe this branch because it lives in a broadcast
+    ///         script behind an env var. That is false — `vm.setEnv` exists
+    ///         (`forge-std/src/Vm.sol:615`) and three deploy tests in this
+    ///         repo already use it. The claim was wrong and it is what let
+    ///         the regression ship without a test.
+    ///
+    ///         Pulling the decision out of `run()` means the DEFAULT-OFF
+    ///         posture and the opt-in are both pinned by
+    ///         `DiamondConfigSpellPegGateTest`, without a test having to
+    ///         broadcast a whole deploy.
+    /// @return true only when an operator has explicitly asked for the peg.
+    function pegConfigureRequested() public view returns (bool) {
+        return EnvFlag.isOn("CONFIGURE_VPFI_PEG");
+    }
+
     function run() external {
         // #857 — SINGLE skip-vpfi decision point. On a `--skip-vpfi` deploy
         // (SKIP_VPFI=1) the chain has NO VPFI / cross-chain stack, so the three
@@ -116,7 +142,7 @@ contract DiamondConfigSpell is Script {
         // exist" step (no per-child skip logic to drift). The VPFI-INDEPENDENT
         // children (Oracle, NFT URIs) always run: a chain still needs oracle
         // pricing for lending even without VPFI.
-        bool skipVpfi = vm.envOr("SKIP_VPFI", uint256(0)) == 1;
+        bool skipVpfi = EnvFlag.isOn("SKIP_VPFI");
         if (skipVpfi) {
             console.log("[DiamondConfigSpell] SKIP_VPFI=1 - skipping ConfigureVPFIToken /");
             console.log("  ConfigureRewardReporter / ConfigureVPFIBuy (no VPFI stack on this chain).");
@@ -148,15 +174,48 @@ contract DiamondConfigSpell is Script {
             ConfigureRewardReporter reporter = new ConfigureRewardReporter();
             reporter.run();
 
-            console.log("");
-            console.log("[DiamondConfigSpell] ============================================");
-            console.log("[DiamondConfigSpell] ConfigureVPFIBuy (discount price)");
-            console.log("[DiamondConfigSpell] ============================================");
-            // #687-A: the discount applies on EVERY VPFI chain (not the removed
-            // canonical-only sale), so the discount price config runs on any chain
-            // that has the VPFI stack.
-            ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
-            buy.run();
+            // #884 — the VPFI discount PEG is OPT-IN, and off by default.
+            //
+            // The Phase-1 launch posture is peg-UNSET (the lender yield-fee
+            // rules are `VpfiAbsorptionDistributionFormulaRedesign.md` §F2;
+            // the launch posture itself is TokenomicsTechSpec's VPFI
+            // fee-discount section):
+            // with no peg, the lender yield-fee discount is delivered in
+            // DIRECT-REDUCTION mode and carries the WHOLE discount — the
+            // consent-gated hold slice plus the Full-tariff bump. Setting the
+            // peg silently changes that product: `LibVPFIDiscount` keys on
+            // `vpfiDiscountWeiPerVpfi != 0 && vpfiDiscountEthPriceAsset != 0`
+            // and, once set, drops the hold slice from the fallback because it
+            // becomes VPFI-PAYMENT-authoritative. A consenting lender then has
+            // to pay VPFI to receive what the unset posture gave them outright.
+            //
+            // Running this step at launch also FALSIFIED the #1356 retail
+            // guardrail: that test asserts the peg is unset on a fresh deploy,
+            // and the very next phase pegged it. The assert was true and the
+            // deployment was not.
+            //
+            // So the peg now moves only when an operator asks for it, the way
+            // every other ceremony knob does. `SKIP_VPFI=1` is the wrong lever
+            // for this — it also skips ConfigureVPFIToken and
+            // ConfigureRewardReporter, and both deploy wrappers force
+            // `SKIP_VPFI=0`.
+            bool configurePeg = pegConfigureRequested();
+            if (!configurePeg) {
+                console.log("");
+                console.log("[DiamondConfigSpell] ConfigureVPFIBuy SKIPPED (#884) -");
+                console.log("  the VPFI discount peg stays UNSET, which is the Phase-1");
+                console.log("  launch posture. Set CONFIGURE_VPFI_PEG=1 to run it.");
+            } else {
+                console.log("");
+                console.log("[DiamondConfigSpell] ============================================");
+                console.log("[DiamondConfigSpell] ConfigureVPFIBuy (discount price) - OPT-IN");
+                console.log("[DiamondConfigSpell] ============================================");
+                // #687-A: the discount applies on EVERY VPFI chain (not the
+                // removed canonical-only sale), so when it IS requested the
+                // price config runs on any chain that has the VPFI stack.
+                ConfigureVPFIBuy buy = new ConfigureVPFIBuy();
+                buy.run();
+            }
         }
 
         console.log("");
