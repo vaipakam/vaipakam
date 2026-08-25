@@ -47,7 +47,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *         opposite — "DEFERRED to B2-d … Base funds the WHOLE mesh budget
  *         (`avail = 0` on every mirror) … `recycleConsume` rides the wire
  *         as 0" — and the body has contradicted it since B2-d3 landed:
- *         `_resolveDayFunding` routes every non-Base chain through
+ *         `resolveAndStampDayFunding` routes every non-Base chain through
  *         `_mirrorAvailable` (see the B2-d3 comment beside it) and writes
  *         `recycleConsume: commitLocal`. Reading the header instead of the
  *         body would tell you a mirror never funds its own slice, which is
@@ -58,18 +58,36 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *         funding its slice from its own bucket BEFORE the backing
  *         remittance arrived would let pre-remittance claims cannibalise
  *         other reward ledgers and report phantom availability to Base.
- *         What made it safe is d1's commitment report plus d2's
- *         delivered-backing ledger — a mirror's availability is Base's
- *         model of its committable bucket, `reported` less the net claim
- *         draw and less the net repatriation draw, never an unbacked
- *         optimism.
+ *         What made it safe is THREE things, not two — a mirror's
+ *         availability is Base's model of its committable bucket,
+ *         `reported` less the net claim draw and less the net repatriation
+ *         draw, never an unbacked optimism:
  *
- *         What B2-b DOES make live: each chain gets its own funded per-day
+ *           - d1's commitment report;
+ *           - d2's delivered-backing ledger;
+ *           - d5's custody-relocation exclusion. {creditCustodyRelocated}
+ *             raises `recycleBucket` WITHOUT advancing
+ *             `recycleCreditedCumulative`, advancing
+ *             `recycleCustodyRelocatedCumulative` instead, which
+ *             {LibVpfiRecycle.creditedCumulative} subtracts. Drop that
+ *             subtraction and Base's own remitted top-up re-enters
+ *             `reported` and `_mirrorAvailable` offers it for commitment a
+ *             second time — Base reading its own top-up back as the
+ *             mirror's absorption. d1 and d2 alone do not close that.
+ *
+ *         Naming only d1 and d2 here would send someone auditing the
+ *         no-phantom-availability property to two of the three places it
+ *         actually lives.
+ *
+ *         What B2-b made live: each chain gets its own funded per-day
  *         stamp (per-side fresh floors + global-equivalent recycled halves),
  *         Base prices its OWN claims + remittances from its stamp (never the
  *         aggregate), and the per-destination V2 broadcast ships every
- *         mirror its stamp + cap family so the shape is ready for B2-d to
- *         arm mirror consumption against.
+ *         mirror its stamp + cap family. That last clause used to end "so
+ *         the shape is READY for B2-d to arm mirror consumption against",
+ *         which survived the correction above and re-asserted, four
+ *         paragraphs later, the pending state the header had just retired.
+ *         B2-d3 armed it: mirrors consume against that stamp today.
  */
 library LibMeshFunding {
     /// @notice Emitted once per (armed day, chain) with the funded stamp.

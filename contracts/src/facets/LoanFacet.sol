@@ -1290,6 +1290,18 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *             expected behaviour is to LOG this revert and skip
      *             the notification — the user's billed flag stays
      *             false until they top up VPFI)
+     *           - anything the discount RESTAMP tail raises. `bill` ends
+     *             with `LibVPFIDiscount.rollupUserDiscount` — the
+     *             BROADCASTING wrapper, not `rollupUserDiscountLocal` — so
+     *             on a Diamond with `rewardMessenger` set, a
+     *             {ProtocolBroadcastFacet} failure bubbles and reverts the
+     *             whole bill. `ProtocolBudgetExhausted` is the one an
+     *             operator will actually meet: the broadcast budget runs
+     *             dry and billing stops for everyone at once. Worth
+     *             stating because the other causes here are per-payer, so
+     *             an operator reading a list of only those goes looking at
+     *             one user's vault balance and role config, finds both
+     *             fine, and has nothing left to check.
      *
      *         The watcher fires this at notification-send time
      *         **only on PaidPush tier** subscribers — FreeTelegram

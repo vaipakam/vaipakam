@@ -2196,11 +2196,15 @@ library LibVaipakam {
         // `0` unambiguously means a pre-#957 loan ⇒ `effectiveTreasuryFeeBps`
         // falls back to `LEGACY_TREASURY_FEE_BPS` (100 = 1%), the FROZEN
         // pre-#957 rate — NOT the live knob. That distinction is the whole
-        // point of the field: the live knob is 200 since the rev-8 freeze
-        // (#1352), so resolving a grandfathered loan against it would
-        // retroactively reprice it 1% → 2% at repay. This comment previously
-        // said "the live knob", which described exactly the change CLAUDE.md
-        // warns must never be made. Both fees are bounded by `MAX_FEE_BPS`
+        // point of the field. The live knob is `cfgTreasuryFeeBps()`, which
+        // returns the governance override in `protocolCfg.treasuryFeeBps`
+        // when set and otherwise `TREASURY_FEE_BPS` (200, the rev-8 freeze
+        // default, #1352) — so resolving a grandfathered loan against it
+        // would reprice it at repay from 1% to WHATEVER IS LIVE THEN: 2% on
+        // an untuned deploy, and up to `MAX_FEE_BPS` (50%) after a
+        // governance retune. The exposure is not bounded at 2×. This comment
+        // previously said the fallback was "the live knob", which described
+        // exactly the change CLAUDE.md warns must never be made. Both fees are bounded by `MAX_FEE_BPS`
         // (5000) so `uint16` holds them; they pack into one slot. Append-only
         // tail fields — zero on every existing loan.
         uint16 treasuryFeeBpsAtInit;
@@ -7926,9 +7930,16 @@ library LibVaipakam {
     ///      "never configured" and can never be confused with a deliberate
     ///      zero-share policy (which would strand every claimant).
     ///
-    ///      Read at FINALIZE only, to stamp `dayUserSideCapVpfi18[d]`. Days
-    ///      already finalized keep the `C` they were stamped with, so a
-    ///      governance retune cannot retroactively reprice a past day's ceiling.
+    ///      Read at FINALIZE only, to stamp the per-SIDE ceilings
+    ///      `dayUserSideCapLenderVpfi18[d]` / `dayUserSideCapBorrowerVpfi18[d]`
+    ///      (`LibInteractionRewards`). It used to say it stamps
+    ///      `dayUserSideCapVpfi18[d]` — the single-value slot #1222 M3 B2-b
+    ///      RETIRED in favour of that pair. Nothing writes the retired slot
+    ///      any more, so the sentence pointed the one governance knob whose
+    ///      blast radius is every claimant's ceiling at a mapping that is
+    ///      now permanently zero. Days already finalized keep the `C` they
+    ///      were stamped with, so a governance retune cannot retroactively
+    ///      reprice a past day's ceiling.
     function cfgUserSideShareCapBps() internal view returns (uint256) {
         uint16 v = storageSlot().userSideShareCapBps;
         return v == 0 ? uint256(USER_SIDE_SHARE_CAP_DEFAULT_BPS) : uint256(v);

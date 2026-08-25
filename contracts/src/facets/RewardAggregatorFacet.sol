@@ -705,9 +705,19 @@ contract RewardAggregatorFacet is
     ///         landed and it is STILL always 0, because the per-chain
     ///         keeper allocation it reserves space for is #1569, which is
     ///         undecided. Both producers hard-zero it (`LibMeshFunding` and
-    ///         this facet's own stamp), and no consumer reads it. The old
-    ///         wording ("until B2-b") implied the field would populate at a
-    ///         milestone that has since passed.
+    ///         this facet's own stamp). The old wording ("until B2-b")
+    ///         implied the field would populate at a milestone that has
+    ///         since passed.
+    ///
+    ///         It is READ, though — do not mistake "always 0" for "inert".
+    ///         `_perDestFields` puts it in every V2/V3 per-destination
+    ///         payload, {VaipakamRewardMessenger} forwards it, and
+    ///         {RewardReporterFacet} stores it and REPLAY-COMPARES it: a
+    ///         re-broadcast carrying a value that differs from the stored
+    ///         one reverts `KnownGlobalAlreadySet()`. So whoever arms #1569
+    ///         is changing a wire field under an equality check, not filling
+    ///         in an unused slot. What is true is narrower than "unread":
+    ///         no accounting or allocation logic acts on the value.
     function getChainDayRecycledFunding(uint256 dayId, uint32 chainId)
         external
         view
