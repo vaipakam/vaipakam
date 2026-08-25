@@ -9,6 +9,7 @@ import {ConfigureOracle} from "./ConfigureOracle.s.sol";
 import {ConfigureRewardReporter} from "./ConfigureRewardReporter.s.sol";
 import {ConfigureVPFIBuy} from "./ConfigureVPFIBuy.s.sol";
 import {ConfigureVPFIToken} from "./ConfigureVPFIToken.s.sol";
+import {EnvFlag} from "./lib/EnvFlag.sol";
 
 /**
  * @title DiamondConfigSpell
@@ -128,7 +129,7 @@ contract DiamondConfigSpell is Script {
     ///         broadcast a whole deploy.
     /// @return true only when an operator has explicitly asked for the peg.
     function pegConfigureRequested() public view returns (bool) {
-        return vm.envOr("CONFIGURE_VPFI_PEG", uint256(0)) == 1;
+        return EnvFlag.isOn("CONFIGURE_VPFI_PEG");
     }
 
     function run() external {
@@ -141,7 +142,7 @@ contract DiamondConfigSpell is Script {
         // exist" step (no per-child skip logic to drift). The VPFI-INDEPENDENT
         // children (Oracle, NFT URIs) always run: a chain still needs oracle
         // pricing for lending even without VPFI.
-        bool skipVpfi = vm.envOr("SKIP_VPFI", uint256(0)) == 1;
+        bool skipVpfi = EnvFlag.isOn("SKIP_VPFI");
         if (skipVpfi) {
             console.log("[DiamondConfigSpell] SKIP_VPFI=1 - skipping ConfigureVPFIToken /");
             console.log("  ConfigureRewardReporter / ConfigureVPFIBuy (no VPFI stack on this chain).");

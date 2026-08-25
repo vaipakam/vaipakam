@@ -1222,7 +1222,7 @@ not the intended end-state.
 
 Automated: `script/ConfigureOracle.s.sol` writes the per-chain oracle config from env vars. The `--phase configure` step in `deploy-{testnet,mainnet}.sh` actually invokes [`DiamondConfigSpell.s.sol`](../../contracts/script/DiamondConfigSpell.s.sol) which composes the configures into one operator-action: `ConfigureVPFIToken` → `ConfigureOracle` → `ConfigureRewardReporter` → `ConfigureNFTImageURIs`. Single broadcast window, deterministic order, halt-on-first-failure.
 
-`ConfigureVPFIBuy` is **not** part of that sequence at launch (#884): the Phase-1 posture is peg-UNSET, so the spell runs it only when `CONFIGURE_VPFI_PEG=1`. Two corrections to what this section used to say — the VPFI-dependent children are gated by `SKIP_VPFI`, not by a chain-branch, and the discount price config applies on **every** VPFI chain rather than the canonical one only (the canonical-only sale was removed by #687-A).
+`ConfigureVPFIBuy` is **not** part of that sequence at launch (#884): the Phase-1 posture is peg-UNSET, so the spell runs it only when `CONFIGURE_VPFI_PEG=1`. The opt-in is that exact value and nothing else — `true`, `yes`, `2` and a stray space all read as OFF, and none of them abort the ceremony. This is a product switch, not a tuning knob, so it fails closed rather than guessing what you meant. Two corrections to what this section used to say — the VPFI-dependent children are gated by `SKIP_VPFI`, not by a chain-branch, and the discount price config applies on **every** VPFI chain rather than the canonical one only (the canonical-only sale was removed by #687-A).
 
 **Pre-handover broadcaster requirement.** ConfigureOracle's pre-flight
 asserts `vm.addr(ADMIN_PRIVATE_KEY) == OwnershipFacet.owner()` AND

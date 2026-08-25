@@ -26,3 +26,9 @@ Two documentation errors turned up in the same area and are fixed with it: the
 deployment runbook described this step as running on one network only when it
 actually runs on all of them, and it listed the step as part of the standard
 launch sequence, which it no longer is.
+
+Asking for it takes one exact value. Anything else — a typo, a leftover setting
+from a previous deployment, a plausible-looking word that means yes in some other
+tool — leaves the price unset. A switch that decides which of two products the
+platform launches as should not be reachable by accident, and the deployment
+should not stop halfway through because someone wrote the wrong word for yes.

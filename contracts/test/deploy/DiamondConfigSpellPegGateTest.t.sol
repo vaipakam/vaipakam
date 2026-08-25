@@ -26,6 +26,18 @@ import {DiamondConfigSpell} from "../../script/DiamondConfigSpell.s.sol";
 ///         `vm.setEnv` exists (`forge-std/src/Vm.sol:615`) and three deploy
 ///         tests here already use it. The decision is now a `public view`
 ///         helper on the spell, so both gate values are pinned directly.
+///
+///         Codex #1920 r3 then read the gate's `envOr(name, uint256(0))`
+///         against the vendored interface — which states at
+///         `forge-std/src/Vm.sol:507-509` that the uint256 overload REVERTS
+///         on a present-but-nonnumeric value — and concluded the `"true"`
+///         case below could not pass. Measured on forge 1.5.1 it does pass:
+///         that overload returns the default instead. The stated failure did
+///         not reproduce, but the gap it pointed at was real — the gate was
+///         depending on runtime behaviour that contradicts its own vendored
+///         contract. It is a string compare now (`EnvFlag.isOn`), which
+///         cannot revert under either reading, so this file pins a rule
+///         rather than a measurement.
 contract DiamondConfigSpellPegGateTest is Test {
     DiamondConfigSpell internal spell;
 
@@ -70,11 +82,22 @@ contract DiamondConfigSpellPegGateTest is Test {
         //    assertTrue would catch it. This says the two branches differ.
         assertTrue(on != off, "the gate must distinguish its two values");
 
-        // 5. Fail-closed on anything else. A typo, a stale `true`, or `2`
-        //    must not price VPFI — this is a product switch, not a tuning knob.
-        vm.setEnv("CONFIGURE_VPFI_PEG", "2");
-        assertFalse(spell.pegConfigureRequested(), "2 is not an opt-in");
-        vm.setEnv("CONFIGURE_VPFI_PEG", "true");
-        assertFalse(spell.pegConfigureRequested(), "a non-numeric value is not an opt-in");
+        // 5. Fail-closed on everything else. A typo, a stale `true`, a `2`,
+        //    a padded `01` — none of them price VPFI. This is a product
+        //    switch, not a tuning knob, so the domain is exactly {on, off}
+        //    and only the literal `"1"` every wrapper writes is on.
+        //
+        //    Each case is asserted from the OPT-IN value, not from the
+        //    previous off value: if `setEnv` silently failed, the gate would
+        //    still read `"1"` and the assert would go red. Walking off -> off
+        //    would pass whether or not the write ever landed — which is how
+        //    a fail-closed test quietly stops testing anything.
+        string[5] memory notAnOptIn = ["2", "true", "yes", "01", " 1"];
+        for (uint256 i = 0; i < notAnOptIn.length; i++) {
+            vm.setEnv("CONFIGURE_VPFI_PEG", "1");
+            assertTrue(spell.pegConfigureRequested(), "precondition: the gate is on");
+            vm.setEnv("CONFIGURE_VPFI_PEG", notAnOptIn[i]);
+            assertFalse(spell.pegConfigureRequested(), notAnOptIn[i]);
+        }
     }
 }
