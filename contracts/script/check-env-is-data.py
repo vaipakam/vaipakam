@@ -36,13 +36,23 @@ from pathlib import Path
 # version of this that hard-coded the `$CONTRACTS_DIR` spelling.
 SOURCING = re.compile(r'(?:^|;|\s)(?:source|\.)\s+\S*\.env\b')
 LOADER = re.compile(r'\bload_env_file\b')
-MENTIONS_ENV = re.compile(r'\$\{?CONTRACTS_DIR\}?/\.env')
+# The GATE must be as wide as the predicate. A version of this widened the
+# sourcing pattern to any `.env` path and left this one pinned to
+# `$CONTRACTS_DIR`, so a helper sourcing `"$SCRIPT_DIR/../.env"` was not even
+# considered — the file was skipped before the check ran. That is the fifth
+# time in this PR that half a guard was widened and its sibling left behind,
+# which is the argument for keeping both patterns adjacent and identical in
+# shape.
+MENTIONS_ENV = re.compile(r'\S*\.env\b')
 
 
 def main() -> int:
     here = Path(__file__).resolve().parent
     checked = bad = 0
-    for path in sorted(here.glob("*.sh")):
+    # RECURSIVE, and over the whole script tree rather than one directory —
+    # a version of this scanned only `script/*.sh`, so a helper under `lib/`
+    # could have sourced `.env` unseen (Codex #1938 r5).
+    for path in sorted(here.rglob("*.sh")):
         text = path.read_text()
         if not MENTIONS_ENV.search(text):
             continue
@@ -55,13 +65,20 @@ def main() -> int:
                 print(f"  x {path.name}:{i} — SOURCES .env; use `load_env_file` "
                       f"(lib/load-env.sh) so the file is read as data",
                       file=sys.stderr)
-        elif not any(LOADER.search(l) for l in text.splitlines()
-                     if not l.lstrip().startswith('#')):
-            bad = 1
-            print(f"  x {path.name} — references .env but neither sources it nor "
-                  f"calls `load_env_file`; unclear how it is read", file=sys.stderr)
-        else:
+        elif any(LOADER.search(l) for l in text.splitlines()
+                 if not l.lstrip().startswith('#')):
             print(f"  ok {path.name} — reads .env as data")
+        else:
+            # Mentions `.env` but does not source it. That is the property this
+            # guard is about, so it passes. An earlier arm here FAILED such
+            # files on the theory that an unexplained mention might be a third
+            # way of reading the file — and it flagged two scripts whose only
+            # mention is `cp .env.example .env` in a comment. A guard that
+            # fires on prose gets ignored, and an ignored guard is worse than
+            # a narrow one. The property is "nothing SOURCES .env"; anything
+            # more is a model of how files might be read, and every model this
+            # PR has written has been walked around.
+            print(f"  ok {path.name} — mentions .env, does not source it")
 
     if checked == 0:
         print("  x found no script referencing .env — this checker has stopped "

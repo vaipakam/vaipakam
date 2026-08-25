@@ -51,6 +51,17 @@ mkdir -p "$SENTINEL_DIR"
 
 # ── Args ──────────────────────────────────────────────────────────────
 
+# Load .env BEFORE the flags below, for the same two reasons as the deploy
+# wrappers (#1932 / #1938): it is read as DATA so it cannot execute, and it is
+# read FIRST so a plain `CHAINS_FILTER=base` in the file cannot replace what
+# the operator passed with `--chains`. It sat after this block until #1938 r5.
+#
+# Optional here: calldata and unpause modes need no RPC, and the --check
+# branch enforces presence per-chain.
+if [ -f "$CONTRACTS_DIR/.env" ]; then
+  load_env_file "$CONTRACTS_DIR/.env"
+fi
+
 MODE="calldata"
 CHAINS_FILTER=""
 while [ $# -gt 0 ]; do
@@ -66,14 +77,6 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# Load .env if present so --check has the RPC URLs. .env is optional;
-# calldata + unpause modes don't need it. The --check branch
-# enforces presence per-chain.
-if [ -f "$CONTRACTS_DIR/.env" ]; then
-  # #1932 / #1938 — data, not code. See lib/load-env.sh; this script also
-  # parses operator input after this point, so the same exposure applied.
-  load_env_file "$CONTRACTS_DIR/.env"
-fi
 
 # Map chain-slug → RPC env var. Mirrors deploy-{chain,mainnet,
 # testnet}.sh so naming stays consistent across every script that

@@ -58,6 +58,22 @@ choice the operator made — which is the problem this started as. Having remove
 the ordering on the grounds that it no longer mattered, I put it back: settings
 are read first, choices are read second, so what was typed is applied last.
 
+Blocking the dangerous names one at a time then turned out to be the wrong shape
+too, and it took two more rounds to admit it. The list of names that make some
+other program run code is not a list anybody can finish: after the shell's own,
+there are the ones the JavaScript runtime reads, and the ones this project's own
+loader used internally — a settings file could name the loader's line counter and
+have it evaluated as an expression. Each was a real way to run commands with the
+deployment's credentials.
+
+So the file is now checked against what the platform actually documents as
+settings. Anything not documented stops the deployment with a message naming it.
+The two approaches fail in opposite directions, and that is the whole argument for
+this one: a documented-settings list that is missing an entry stops the deploy and
+tells you which entry, while a dangerous-names list that is missing an entry runs
+whatever it names. Review suggested this in the first place and I argued for the
+other; it was right.
+
 Two smaller things came out of the same review, both of which would have mattered
 in practice. A handful of setting names are ones the shell itself acts on, and
 passing them along would have handed the file a way to run commands in the next
