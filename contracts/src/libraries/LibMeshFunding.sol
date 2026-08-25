@@ -58,7 +58,11 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *         funding its slice from its own bucket BEFORE the backing
  *         remittance arrived would let pre-remittance claims cannibalise
  *         other reward ledgers and report phantom availability to Base.
- *         What made it safe is THREE things, not two — a mirror's
+ *         What made it safe is the legs BELOW — deliberately not given a
+ *         count. This sentence has said "two", then "THREE things, not
+ *         two", and each number was wrong within a round; a total is a
+ *         claim about completeness that nobody has been able to keep true,
+ *         while the list itself stays useful without one. A mirror's
  *         availability is Base's model of its committable bucket,
  *         `reported` less the net INSTRUCTION draw and less the net
  *         repatriation draw, never an unbacked optimism. "Claim draw" until
@@ -71,6 +75,15 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
  *
  *           - d1's commitment report;
  *           - d2's delivered-backing ledger;
+ *           - C2's repatriation draw. {RepatriationFacet.authorizeRepatriation}
+ *             advances `chainRepatriationDebited` BEFORE dispatch and
+ *             {mirrorAvailRecycled} subtracts it as a SEPARATE term from
+ *             the instruction draw, so custody pending return to Base
+ *             cannot also be offered to day finalization — without it the
+ *             same tokens could be authorized for return and recommitted.
+ *             The paragraph above already named "the net repatriation
+ *             draw" and the list then omitted it, which is how a
+ *             self-contradicting count survives a correction.
  *           - d5's custody-relocation exclusion. {creditCustodyRelocated}
  *             raises `recycleBucket` without adding the relocated amount to
  *             `recycleCreditedCumulative`, advancing

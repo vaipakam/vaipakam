@@ -470,11 +470,22 @@ contract RewardReporterFacet is
 
     /// @notice #1222 M3 B2-b — a V2 broadcast was applied on this mirror:
     ///         the consensus pair + cap family landed, the chain's own
-    ///         funded stamp was written, and the local recycle bucket
-    ///         RESERVED its instructed slice. Said "surrendered …
-    ///         (consume-on-arrival)" until #1349: arrival encumbers the
-    ///         slice, it does not spend it — `consume` debits at
-    ///         claim/remit.
+    ///         funded stamp was written, and — on a FRESH post-d3
+    ///         application — the local recycle bucket RESERVED its
+    ///         instructed slice. Said "surrendered … (consume-on-arrival)"
+    ///         until #1349: arrival encumbers the slice, it does not spend
+    ///         it — `consume` debits at claim/remit.
+    ///
+    ///         DO NOT read a historical occurrence of this event as proof
+    ///         the reservation exists. A day first applied by a PRE-d3
+    ///         receiver got the stamp and the applied flag with no
+    ///         reservation, and the replay branch in `_applyBroadcastV2Core`
+    ///         completes that missed reservation LATER — guarded by its own
+    ///         flag, and returning without emitting this event again. So
+    ///         for such a day the reservation and the event sit in
+    ///         different transactions, and an event-driven audit that
+    ///         infers reservation state from this log alone will be wrong
+    ///         about exactly the days the rollout gap created.
     /// @custom:event-category informational/reward-governor
     event RewardBroadcastV2Applied(
         uint256 indexed dayId,

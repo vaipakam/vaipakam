@@ -1332,11 +1332,19 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
      *             that can imitate either pattern. A uniform outage
      *             therefore does not identify a cause either, and
      *             partial failure does not: it
-     *             is equally consistent with underfunded vaults and with
+     *             is equally consistent with vault-side causes and with
      *             any failure on the broadcast leg. Check the failing
-     *             payer's VPFI balance first; if the payer is funded, the
-     *             cause is on that leg — but the budget is only ONE
-     *             candidate there. `sendTierUpdate` runs AFTER the budget
+     *             payer's VPFI balance first — but a SUFFICIENT balance
+     *             does not move the diagnosis off the vault, which an
+     *             earlier revision of this note claimed it did. `bill`
+     *             withdraws through `vaultWithdrawERC20`, which resolves
+     *             the vault via `getOrCreateUserVault` (a sanctions screen
+     *             and an upgrade requirement both live there) and then
+     *             spends UNENCUMBERED balance, so a fully funded vault
+     *             still reverts `WithdrawWouldUnderflowLien` when the
+     *             balance is liened. Only once vault state is cleared does
+     *             the broadcast leg become the place to look, and the
+     *             budget is one candidate there among several. `sendTierUpdate` runs AFTER the budget
      *             check and reverts `NoBroadcastDestinations` on an empty
      *             destination list, and the messenger is `GuardianPausable`,
      *             so a pause or a misconfigured messenger reverts the bill

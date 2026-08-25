@@ -2232,8 +2232,21 @@ library LibVaipakam {
         // lender's interest leg is preserved whole, and `PrepayListingFacet`
         // routes the remainder to `ownerOf(loan.borrowerTokenId)`. At a
         // fixed sale price a higher rate therefore shrinks the BORROWER
-        // remainder. So "the borrower is never affected" — the previous
+        // remainder. So "the borrower is never affected" — an earlier
         // revision's wording — is true of the split paths and false here.
+        //
+        // That helper is NOT confined to the sale path, and its other use
+        // behaves differently again: `SwapToRepayIntentFacet` and
+        // `LibSwapToRepayIntentSettlement` call it for a commit-time
+        // minimum-output and a fill-time live floor, but the actual
+        // distribution is recomputed by `LibSettlement.computeRepayment`,
+        // where `lenderDue + treasuryShare` is the fixed
+        // principal + interest + late-fee amount. So on that path the rate
+        // moves the ACCEPTANCE THRESHOLD, not the split: a change can cause
+        // the intent or fill to be rejected outright, and cannot shrink the
+        // borrower's surplus on a fill that passes. Three call shapes, three
+        // different answers — which is why this comment names the path
+        // rather than a party.
         //
         // Either way the downward direction is the easier to miss, because
         // an under-paid treasury complains to nobody.
