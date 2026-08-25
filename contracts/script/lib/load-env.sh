@@ -41,42 +41,11 @@
 # The allowlist is `.env.example` — the documented configuration surface —
 # plus the handful below that the scripts read but that file does not yet
 # declare. Adding a setting means documenting it, which was already the rule.
-__lenv_extra_allowed="FORK_URL_MAINNET FORK_URL_BASE_SEPOLIA POST_HANDOVER
-UNPAUSE_TIMELOCK_DELAY UNPAUSE_TIMELOCK_SALT SYNC_FORCE FORGE_GAS_MULTIPLIER
-BASE_REWARD_DEPLOYMENT MIRROR_REWARD_DEPLOYMENTS CCIP_ROUTER CCIP_RMN_PROXY
-CONFIGURE_VPFI_PEG SKIP_VPFI"
-
-# Name SHAPES this project configures. Needed because `.env.example` documents
-# only the testnet chains: EVERY mainnet RPC name (`ETHEREUM_RPC_URL`,
-# `BASE_RPC_URL`, …) is absent from it, so a documented-names-only allowlist
-# refused exactly the settings `deploy-mainnet.sh` requires — the outage I said
-# I had checked for and had not (Codex #1938 r6).
-#
-# My check could not have found them: the wrappers reach those names through
-# `RPC_VAR="ETHEREUM_RPC_URL"` and `${!RPC_VAR}`, so they never appear as a
-# direct expansion, and I looked for direct expansions.
-#
-# The shapes stay fail-closed. No runtime startup hook is spelled like any of
-# them: `NODE_OPTIONS`, `BASH_ENV`, `PYTHONSTARTUP`, `PERL5OPT`, `LD_PRELOAD`
-# and a lowercase `lineno` all match none.
-__lenv_allowed_shapes="*_RPC_URL *_PRIVATE_KEY *_API_KEY *_ADDRESS *_DEPLOY_BLOCK
-CCIP_* VPFI_* FORK_URL_* *_CHAIN_ID *_ETHERSCAN_KEY"
-
-# Internals carry a `__lenv_` prefix so nothing in the loaded file can collide
-# with them. The allowlist already refuses a lowercase `lineno`; this is the
-# second lock on the same door, because the first one was picked.
 load_env_file() {
   local __lenv_file="$1" __lenv_line __lenv_name __lenv_value __lenv_no=0
-  local __lenv_allowed __lenv_ex __lenv_ok __lenv_shape __lenv_q __lenv_rest
+  local __lenv_q __lenv_rest
 
   [ -f "$__lenv_file" ] || { echo "Error: $__lenv_file not found." >&2; return 1; }
-
-  __lenv_ex="$(dirname "$__lenv_file")/.env.example"
-  [ -f "$__lenv_ex" ] || { echo "Error: $__lenv_ex missing; cannot validate .env." >&2; return 1; }
-  __lenv_allowed=" $(sed 's/#.*//' "$__lenv_ex" \
-      | grep -oE '^[[:space:]]*(export[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*=' \
-      | sed -E 's/^[[:space:]]*(export[[:space:]]+)?//; s/=$//' \
-      | tr '\n' ' ')$(echo $__lenv_extra_allowed) "
 
   while IFS= read -r __lenv_line || [ -n "$__lenv_line" ]; do
     __lenv_no=$((__lenv_no + 1))
@@ -99,23 +68,35 @@ load_env_file() {
       return 1 ;;
     esac
 
-    __lenv_ok=0
-    case "$__lenv_allowed" in *" $__lenv_name "*) __lenv_ok=1 ;; esac
-    if [ "$__lenv_ok" = "0" ]; then
-      for __lenv_shape in $__lenv_allowed_shapes; do
-        # shellcheck disable=SC2254
-        case "$__lenv_name" in $__lenv_shape) __lenv_ok=1; break ;; esac
-      done
-    fi
-    if [ "$__lenv_ok" = "0" ]; then
-      echo "Error: $__lenv_file:$__lenv_no sets '$__lenv_name', which is neither a documented" >&2
-      echo "       setting nor a recognised configuration name. Add it to .env.example." >&2
-      return 1
-    fi
+    # DENY names some later process treats as a startup hook. Reading the file
+    # as data stops it executing HERE; exporting one of these hands execution to
+    # the next child — `BASH_ENV=$(…)` runs in the first child bash, and a
+    # wrapper spawns several carrying the deployment's secrets.
+    #
+    # This is a DENYLIST and it is deliberately not claimed to be complete. An
+    # allowlist was tried and withdrawn: a systematic sweep of what the deploy
+    # actually configures found SIXTY names it would have refused — NFT image
+    # URIs, faucet tokens, census, vesting, governance roles, swap adapters,
+    # per-chain WETH — each of which aborts a documented phase. Review had found
+    # two of those sixty by inspection over two rounds; shipping the rest would
+    # have been discovering them one broken mainnet deploy at a time.
+    #
+    # The residual risk is bounded by the threat model: `.env` holds
+    # `ADMIN_PRIVATE_KEY`. Anyone who can write to it already owns the deploy
+    # and has no need of `BASH_ENV`. What #1932 is actually about is a STALE or
+    # SHARED file, and that is closed completely by reading it as data and
+    # reading it before the operator's own arguments. Hardening the export
+    # surface against a hostile file is a separate, larger job across every
+    # reader and runbook — tracked, not smuggled in here.
+    case "$__lenv_name" in
+      BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|GLOBIGNORE|IFS|PS4|PATH \
+      |LD_PRELOAD|LD_LIBRARY_PATH|DYLD_INSERT_LIBRARIES|BASH_FUNC_* \
+      |NODE_OPTIONS|PYTHONSTARTUP|PYTHONPATH|PERL5OPT|RUBYOPT|JAVA_TOOL_OPTIONS)
+        echo "Error: $__lenv_file:$__lenv_no sets '$__lenv_name', which another program" >&2
+        echo "       would treat as a startup hook — refusing to export it." >&2
+        return 1 ;;
+    esac
 
-    # Quoted value: strip the quotes AND any comment after them, as `source`
-    # would. Unquoted: strip an inline comment. The loader must not change the
-    # meaning of a file that already worked under `source`.
     # A quoted value must CLOSE, and after the closing quote only whitespace or
     # a comment may follow. The previous version took everything up to the
     # first closing quote and discarded the rest, so

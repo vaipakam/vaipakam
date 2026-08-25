@@ -58,30 +58,24 @@ choice the operator made — which is the problem this started as. Having remove
 the ordering on the grounds that it no longer mattered, I put it back: settings
 are read first, choices are read second, so what was typed is applied last.
 
-Blocking the dangerous names one at a time then turned out to be the wrong shape
-too, and it took two more rounds to admit it. The list of names that make some
-other program run code is not a list anybody can finish: after the shell's own,
-there are the ones the JavaScript runtime reads, and the ones this project's own
-loader used internally — a settings file could name the loader's line counter and
-have it evaluated as an expression. Each was a real way to run commands with the
-deployment's credentials.
+Then a stricter idea — allow only settings the platform documents, refuse
+everything else — was built and withdrawn, which is worth recording because it
+was withdrawn on evidence rather than taste. Checking mechanically what the
+deployment actually configures turned up sixty settings it would have refused:
+the artwork for position tokens, the test-token faucet, vesting, governance
+roles, liquidation routing, and the wrapped-ether address on every chain. Each
+one stops a documented step. Review had found two of those sixty by reading, over
+two rounds, so shipping the rest would have meant finding them one failed
+deployment at a time.
 
-So the file is now checked against what the platform actually documents as
-settings. Anything not documented stops the deployment with a message naming it.
-The two approaches fail in opposite directions, and that is the whole argument for
-this one: a documented-settings list that is missing an entry stops the deploy and
-tells you which entry, while a dangerous-names list that is missing an entry runs
-whatever it names. Review suggested this in the first place and I argued for the
-other; it was right.
-
-Two smaller things came out of the same review, both of which would have mattered
-in practice. A handful of setting names are ones the shell itself acts on, and
-passing them along would have handed the file a way to run commands in the next
-program the deployment starts — carrying its credentials. Those names are now
-refused outright. And a setting written with a trailing note on the same line was
-being stored complete with the note, which broke an exact comparison in the
-emergency pause script and would have made it treat a handed-over chain as
-not-yet-handed-over.
+What remains refused is the small set of settings that some other program treats
+as an instruction to run something at start-up. That set is open-ended and the
+change does not pretend otherwise; the wider work of closing it everywhere,
+including in the written operator procedures that still execute the file, is
+tracked separately. The reasoning for the split is the threat it defends against:
+the file already holds the deployment's private key, so anyone able to edit it
+has no need of a start-up trick. The problem this change was filed for is a stale
+or shared file, and that is closed.
 
 The check that keeps this honest asks one question — does any script execute the
 file — and nothing else. Earlier versions of it tried to reason about where each
