@@ -1,4 +1,4 @@
-# The lender's paid discount now reaches all but one settlement route
+# The lender's paid discount reaches every repayment route — and none of the recovery ones
 
 A lender who paid the optional up-front tariff on a loan earns a further
 reduction of the fee taken from their interest. When that arrangement was
