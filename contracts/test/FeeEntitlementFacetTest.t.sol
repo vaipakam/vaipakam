@@ -194,7 +194,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         address newLenderAddr,
         uint256 newLenderPk,
         address treasuryEoa
-    ) private returns (uint256 cut) {
+    ) private returns (uint256 cut, uint256 toLender) {
         // Codex #1957 r1 P2 — `vm.revertToState` does NOT clear mocks, so on
         // runs 2 and 3 the acceptance below would execute with run 1's mocks
         // still installed (the `vaultWithdrawERC20` prefix mock intercepts
@@ -239,10 +239,23 @@ contract FeeEntitlementFacetTest is SetupTest {
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
         ERC20Mock(mockERC20).mint(address(diamond), PRINCIPAL * 2);
 
+        // The saving must REACH the lender (Codex #1957 r6 P2): removing
+        // `lenderInterest += lenderExtra` in `RefinanceFacet` would shrink the
+        // treasury fee while the discount simply vanished. The recipient is
+        // `oldLoan.lender`'s VAULT — refinance deposits `lenderDue` there
+        // (`RefinanceFacet:505-530`). Note the discount is keyed on the HOLDER
+        // while the payment goes to the STORED lender; that split is the
+        // pre-existing #1124 gap and is deliberately not asserted away here.
+        address storedLender =
+            LoanFacet(address(diamond)).getLoanDetails(oldLoanId).lender;
+        address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(storedLender);
+        uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
         uint256 before = IERC20(mockERC20).balanceOf(treasuryEoa);
         vm.prank(borrower);
         RefinanceFacet(address(diamond)).refinanceLoan(oldLoanId, borrowerOfferId);
         cut = IERC20(mockERC20).balanceOf(treasuryEoa) - before;
+        lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(storedLender);
+        toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
     }
 
     /// @notice #1955 — refinance resolves the lender yield-fee discount for the
@@ -304,7 +317,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         // interest the treasury cut is taken from.
         uint256 snap = vm.snapshotState();
         vm.warp(block.timestamp + 15 days);
-        uint256 baseCut = _refinanceTreasuryCut(
+        (uint256 baseCut, uint256 baseLender) = _refinanceTreasuryCut(
             oldLoanId, borrowerOfferId, newLender, newLenderPk, treasuryEoa);
 
         // Run 2 — the STALE lender is staked and consenting; the holder is not.
@@ -313,7 +326,7 @@ contract FeeEntitlementFacetTest is SetupTest {
         vm.prank(lender);
         VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
         vm.warp(block.timestamp + 15 days); // age the stake past the TWA window
-        uint256 staleStakedCut = _refinanceTreasuryCut(
+        (uint256 staleStakedCut, ) = _refinanceTreasuryCut(
             oldLoanId, borrowerOfferId, newLender, newLenderPk, treasuryEoa);
 
         // Run 3 — CONTROL: the HOLDER is staked and consenting.
@@ -335,7 +348,7 @@ contract FeeEntitlementFacetTest is SetupTest {
             VPFIDiscountFacet(address(diamond)).getVPFIDiscountConsent(holder),
             "holder consented"
         );
-        uint256 holderStakedCut = _refinanceTreasuryCut(
+        (uint256 holderStakedCut, uint256 holderLender) = _refinanceTreasuryCut(
             oldLoanId, borrowerOfferId, newLender, newLenderPk, treasuryEoa);
 
         assertGt(baseCut, 0, "reference refinance paid a treasury cut");
@@ -353,6 +366,11 @@ contract FeeEntitlementFacetTest is SetupTest {
         // can earn a discount here the assertion above passes vacuously.
         assertLt(holderStakedCut, baseCut,
             "CONTROL: this fixture can discount on the refinance path");
+        assertEq(
+            baseCut - holderStakedCut,
+            holderLender - baseLender,
+            "every wei the treasury gave up reached the lender"
+        );
     }
 
     // ─── #1955 — the asset-type gate that keeps rentals out of the tariff ────
