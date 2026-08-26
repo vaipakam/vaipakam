@@ -776,6 +776,104 @@ contract DefaultedFacetTest is Test {
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
     }
 
+    /// @dev #1955 — drive ONE liquid ERC-20 default to completion on an existing
+    ///      loan, optionally stamping the lender `Full` first, and return what
+    ///      the treasury took and what the lender's vault received.
+    ///
+    ///      The warp and the mocks live IN HERE, not in the caller: the caller
+    ///      replays this from a state snapshot, and `vm.revertToState` undoes
+    ///      chain state (the warp) but NOT mocked calls. Setting the HF mock
+    ///      before the loan exists would also block its creation.
+    function _defaultAndMeasure(
+        uint256 loanId,
+        address treasuryEoa,
+        bool stampFull
+    ) private returns (uint256 toTreasury, uint256 toLender) {
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        if (stampFull) {
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+
+        vm.warp(uint256(ln.startTime) + uint256(ln.durationDays) * 1 days
+            + LibVaipakam.gracePeriod(ln.durationDays) + 1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector, mockCollateralERC20
+            ),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+
+        address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
+        uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
+
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
+        toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
+    }
+
+    /// @notice #1955 — a Full-stamped lender keeps the `+10%` on the interest a
+    ///         TIME-BASED DEFAULT recovers. `DefaultedFacet.triggerDefault` is
+    ///         one of the five recovery entry points #1383 swept; this covers
+    ///         its ERC-20 leg.
+    ///
+    /// @dev    Treasury is pointed at an EOA first — this suite points it at the
+    ///         DIAMOND (`setUp`), where the fee is invisible in a balance diff
+    ///         because the diamond holds the collateral and the swap proceeds at
+    ///         the same time.
+    ///
+    ///         Value conservation rather than an absolute: the treasury transfer
+    ///         bundles the handling fee, which the discount never touches and
+    ///         which cannot be zeroed (a 0 falls back to the default).
+    function test_1955_timeDefault_lenderFull_shiftsInterestFeeToLender() public {
+        address treasuryEoa = makeAddr("treasuryEoaFor1955Default");
+        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+
+        uint256 snap = vm.snapshotState();
+        (uint256 baseTreasury, uint256 baseLender) =
+            _defaultAndMeasure(loanId, treasuryEoa, false);
+        vm.revertToState(snap);
+        (uint256 fullTreasury, uint256 fullLender) =
+            _defaultAndMeasure(loanId, treasuryEoa, true);
+
+        assertGt(baseTreasury, 0, "reference run paid a treasury cut");
+        assertLt(fullTreasury, baseTreasury, "Full stamp reduced the treasury cut");
+        assertEq(
+            baseTreasury - fullTreasury,
+            fullLender - baseLender,
+            "every wei the treasury gave up reached the lender"
+        );
+        vm.clearMockedCalls();
+    }
+
     // ─── #998 S10 (#1006) — fail-closed frozen-claimant end-to-end ─────────────
 
     /// @dev Full close-out proof: a default whose CURRENT lender-position holder
