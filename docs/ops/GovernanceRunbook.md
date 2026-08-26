@@ -178,10 +178,15 @@ when the signing EOA is not a target's current `owner()` it prints
 `acceptOwnership()` for every target; on any skipped target that call REVERTS,
 and — worse than the CCT case, which only stalls step 6 — a target still owned by
 another key is left OUTSIDE governance with no recovery step documented here. So
-before scheduling each ownership acceptance, require EITHER a successful handover
-output for that target OR `Ownable2Step(target).pendingOwner() == timelock`
-read directly (`OwnershipTransferRequested(_, timelock)` outstanding for the pool,
-whose pending owner is private — same log rule as step 6). Where it is not
+before scheduling each ownership acceptance, require the LIVE readback —
+`Ownable2Step(target).pendingOwner() == timelock`, or for the pool, whose pending
+owner is private, `OwnershipTransferRequested(_, timelock)` outstanding under the
+same log rule as step 6. The handover script's output is corroborating evidence
+and **not** a substitute: both OpenZeppelin's and Chainlink's `transferOwnership`
+REPLACE an outstanding proposal rather than rejecting it, so a successful run
+recorded an hour ago says nothing about who is pending now. A stale "yes" here
+schedules a Timelock action that reverts after its delay and stalls the
+handover. Where it is not
 pending, the current owner must run `transferOwnership` first, exactly as for the
 CCT leg. Schedule an acceptance only for targets that are actually pending to the
 timelock.
@@ -1070,11 +1075,29 @@ enumerate it and read all of it back:
 | | `isSupportedChain(selector)` per lane | **no — read it, and see below** |
 | | `getRemotePools(selector)` both ends | **no — read it, and see below** |
 | | `getRouter()` (the POOL's own router) | **no — read it, and see below** |
+| | `getRmnProxy()` | **no — read it, and see below** |
+| | `getAllowListEnabled()` | **no — read it, and see below** |
+| | `getRemoteToken(selector)` both ends | **no — read it, and see below** |
+| | its own `owner()` + event-log rule | **no — see the pair note below** |
+| `VpfiPoolRateGovernor` (cont.) | `owner()`, `pendingOwner()`, implementation | **no — see the pair note below** |
 | `VpfiPoolRateGovernor` | `pool()` | **no — read it, and see below** |
 | `CcipMessenger` (cont.) | `getRouter()` (the ADAPTER's) | **no — read it, and see below** |
 | *all three* | `owner()`, `pendingOwner()` | **no — read them** |
 | | `guardian()` | **no — read it** |
 | | the proxy's implementation | **no — read it** |
+
+**And re-apply the PRINCIPAL checks to the live pool and its governor as a
+pair.** The reciprocal `getRateLimitAdmin()` / `pool()` readbacks prove the two
+point at each other; they say nothing about who controls either. If the
+registry-selected pool or the governor was replaced after step 6, both pointers
+agree while the replacement is still deployer-controlled or carries a pending
+takeover — and the pool's owner can rewrite its router, its remote pools, its
+allowlist and its limiters with none of the governor's bounds, while the
+governor's owner can repoint it and authorise a UUPS upgrade. The `all three`
+principal rows below cover the handlers, and the mirror-token paragraph covers
+the token; neither reaches this pair. Apply the pool's owner + event-log rule and
+the governor's owner / zero-pending-owner / implementation checks to the exact
+live addresses this pass resolved.
 
 The table above is the settable STATE. It is not the whole answer, and saying it
 enumerated everything was too strong: the last three rows are the PRINCIPALS who
@@ -1178,6 +1201,27 @@ What each of the newly-required ones costs if it is wrong:
   `_onlyOnRamp` / `_onlyOffRamp` and rejects the first remittance, while every
   lane check above still reads healthy. Confirm `vpfiTokenPool.getRouter()` equals
   the live router the lane belongs to, alongside the adapter readback.
+- **`getRmnProxy()` on the live pool**, against the published RMN proxy for that
+  chain. It is a CONSTRUCTOR immutable consulted in both `_validateLockOrBurn`
+  and `_validateReleaseOrMint`, so a redeployment carrying a stale
+  `CCIP_RMN_PROXY` passes every router, remote-pool, lane, limit and ownership
+  readback above. A stale permissive proxy lets transfers through a lane the live
+  RMN has CURSED; an invalid one halts every transfer. Neither is visible from
+  storage.
+- **`getAllowListEnabled() == false` on each live pool.** `i_allowlistEnabled` is
+  set from `allowlist.length > 0` in the constructor, and `DeployCrosschain`
+  builds both pools with `new address[](0)` — "empty allowlist => permissionless
+  pool". A replacement constructed with a non-empty list reads back healthy
+  everywhere in this table while ordinary VPFI sends revert `SenderNotAllowed`
+  for any `originalSender` not on it. If permissioning is ever introduced
+  deliberately, verify the complete required sender set instead.
+- **`getRemoteToken(expectedSelector)` on both ends of every lane**, decoded and
+  compared against the live peer token. `lockOrBurn` returns it as the
+  destination token, and `ConfigureCcip` stores it SEPARATELY from
+  `remotePoolAddresses` — so a rotated mirror token with the lane's
+  `remoteTokenAddress` left behind passes the registry, live-token, remote-pool,
+  router and limiter checks, and then targets the retired token or fails at the
+  destination where the receiver expects the new one.
 - **`VpfiPoolRateGovernor.pool()`, the reciprocal of `getRateLimitAdmin()`.**
   Setting the pool's `rateLimitAdmin` to the governor is only half the pairing:
   the governor stores the pool it drives, and after a pool rotation a
