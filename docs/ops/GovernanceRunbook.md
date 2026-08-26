@@ -139,6 +139,58 @@ For each 2-step target, from the Governance Safe UI:
 Repeat for every 2-step target on the chain. These can be batched into
 a single Safe multi-send to avoid N separate signing ceremonies.
 
+**And the CCT administrator, which is NOT an `acceptOwnership()` call.** Where
+`CCIP_TOKEN_ADMIN_REGISTRY` is configured, `Handover.s.sol` also runs
+`transferAdminRole` on the CCIP `TokenAdminRegistry` for VPFI — a two-step
+transfer on a different contract, with a different accept function. Schedule and
+execute it the same way, with the registry as the target:
+
+```
+TimelockController.schedule(
+  target = <CCIP TokenAdminRegistry>,
+  data   = acceptAdminRole(<vpfiToken>),
+  ... same predecessor / salt / 48h delay as above)
+```
+
+Miss this and step 6's administrator readback fails with no step in this runbook
+able to fix it — the deployer stays administrator and can still call `setPool` on
+the live VPFI token. It batches into the same multi-send as the ownership
+acceptances.
+
+**But read the handover's own output first — this leg is CONDITIONAL.**
+`_transferCctAdmin` returns false and SKIPS when the signing EOA is not the
+token's current administrator, which is a supported path (CCT registration may
+have been done by a separate token owner). It prints `SKIP CCT admin transfer`
+with the current administrator and the signing key. In that case there is no
+pending transfer to accept and scheduling `acceptAdminRole` REVERTS — so confirm
+`getTokenConfig(vpfiToken).pendingAdministrator == timelock` before scheduling.
+If it is not pending, the CURRENT administrator must run `transferAdminRole`
+first; that is a step outside this ceremony and it blocks step 6 until it is
+done. Do not read the skip as "not applicable" — the administrator is still an
+EOA either way.
+
+**The ORDINARY ownership legs are conditional the same way — the round-6 warning
+above was scoped only to the CCT admin leg, and it is not the only skip.**
+`_transferCrossChainOwnership` follows the identical supported skip path:
+when the signing EOA is not a target's current `owner()` it prints
+`SKIP ownership transfer` and creates NO pending transfer (`Handover.s.sol`, the
+`currentOwner != signer` branch). Step 5 then instructs the operator to schedule
+`acceptOwnership()` for every target; on any skipped target that call REVERTS,
+and — worse than the CCT case, which only stalls step 6 — a target still owned by
+another key is left OUTSIDE governance with no recovery step documented here. So
+before scheduling each ownership acceptance, require the LIVE readback —
+`Ownable2Step(target).pendingOwner() == timelock`, or for the pool, whose pending
+owner is private, `OwnershipTransferRequested(_, timelock)` outstanding under the
+same log rule as step 6. The handover script's output is corroborating evidence
+and **not** a substitute: both OpenZeppelin's and Chainlink's `transferOwnership`
+REPLACE an outstanding proposal rather than rejecting it, so a successful run
+recorded an hour ago says nothing about who is pending now. A stale "yes" here
+schedules a Timelock action that reverts after its delay and stalls the
+handover. Where it is not
+pending, the current owner must run `transferOwnership` first, exactly as for the
+CCT leg. Schedule an acceptance only for targets that are actually pending to the
+timelock.
+
 ### 6. Readback verification
 
 Per chain, confirm:
@@ -153,11 +205,58 @@ ac.hasRole(PAUSER_ROLE, deployerEOA)            == false
 
 // VPFIToken (canonical only)
 Ownable2Step(vpfiToken).owner()                 == timelock
+Ownable2Step(vpfiToken).pendingOwner()          == address(0)
 
-// Each GuardianPausable cross-chain contract
+// EVERY cross-chain target `Handover.s.sol` transfers — not only the
+// GuardianPausable ones. `_transferCrossChainOwnership` covers: ccipMessenger,
+// vpfiTokenPool, vpfiPoolRateGovernor, rewardMessenger, vpfiMirror,
+// buybackRemittanceReceiver, rewardRemittanceReceiver, vpfiReturnSender,
+// vpfiReturnReceiver.
 Ownable2Step(target).owner()                    == timelock
+Ownable2Step(target).pendingOwner()             == address(0)
+
+// EXCEPT vpfiTokenPool. Eight of the nine are OpenZeppelin
+// `Ownable2StepUpgradeable` and expose `pendingOwner()`. The pool is
+// CHAINLINK's `Ownable2Step` (via `Ownable2StepMsgSender`), where
+// `s_pendingOwner` is PRIVATE and the only external surface is `owner()`,
+// `transferOwnership()` and `acceptOwnership()` — so the call above REVERTS
+// on it, and an operator who hits that revert either stalls or skips the
+// pending-takeover check entirely. Establish it from the log instead:
+//   the LAST OwnershipTransferRequested(from, to) on the pool
+//   must be followed by OwnershipTransferred(from, to) with the SAME `to`
+//   and no later Requested event outstanding.
+// Both events are emitted by that base, so this is decidable from the chain.
+//
+// ONE terminal exception: `to == address(0)` is how an outstanding pool
+// handover is CANCELLED. Chainlink's `_transferOwnership` rejects only
+// `to == msg.sender`, so zero is stored and a Requested event is emitted —
+// and no Transferred can ever follow it, because address(0) cannot call
+// `acceptOwnership()`. A last Requested naming zero, together with
+// `owner() == timelock`, is therefore a SAFE cleared state, not an
+// unfinished one. Requiring a matching Transferred for every request would
+// make a correctly cancelled transfer unpassable.
+
+// guardian() ONLY where the contract carries GuardianPausable.
+// `VpfiPoolRateGovernor` does NOT — it is Ownable2Step alone, and its owner
+// sets every lane's rate limits and authorizes UUPS upgrades, so scoping the
+// ownership assertions to "the GuardianPausable ones" silently exempts it.
 GuardianPausable(target).guardian()             == guardian
+
+// The CCT ADMINISTRATOR, where CCIP_TOKEN_ADMIN_REGISTRY is configured. This is
+// a SEPARATE two-step transfer from any of the above — `transferAdminRole` is
+// leg one and the Timelock `acceptAdminRole`s later — and no Ownable readback
+// touches it. Skip the accept and the deployer can still call `setPool`; leave a
+// stale pending and that address can accept afterwards and replace the live VPFI
+// pool, including after `D*`.
+registry.getTokenConfig(vpfiToken).administrator        == timelock
+registry.getTokenConfig(vpfiToken).pendingAdministrator == address(0)
 ```
+
+**The `pendingOwner()` lines are not decoration.** `Ownable2Step` completes a
+transfer in two steps and only the second clears the pending address, so
+`owner() == timelock` holds perfectly well while some other key is still able to
+call `acceptOwnership()`. Checking the owner alone accepts a handover that has
+not finished.
 
 A Foundry test `test/GovernanceHandover.t.sol` can drive all of these
 in one pass against a fork of the target chain; add that to CI as a
@@ -852,7 +951,15 @@ said was fine. Bound the keeper's cap by the live bucket capacities, not by the
 largest single-day slice.
 
 **Verify the WIRING, not the components — as one pass, because they fail the
-same way.** Every check above inspects a component you believe is in use. The
+same way.** **M3 / ACTIVE-MIRROR BRANCH ONLY**, like the rest of 3e. On the
+Base-only / dark-mirror branch the reward transport this pass inspects — each
+mirror's `VaipakamRewardMessenger` and `RewardRemittanceReceiver`, the reward and
+reward-budget channels, the mirror pools — need not exist at all, and requiring
+them makes the ceremony unreachable on a branch Gate B explicitly permits (see
+the branch split at the head of Step 3). What survives on the dark branch is
+Base's own side: Base is not a mirror, has no remittance receiver, and sends
+nothing, so nothing here applies to it either. Skip the whole block; do not
+perform it "just in case". Every check above inspects a component you believe is in use. The
 protocol dispatches through what is actually STORED and REGISTERED, and a
 `ConfigureCcip` or `ConfigureRewardReporter` that stopped partway leaves those
 disagreeing while each component reads back healthy on its own. Before the arm,
@@ -867,18 +974,263 @@ read back on every chain:
   messenger and each mirror's reward messenger. `remitRewardBudget` dispatches
   through the stored value, so a stale or zero one reverts or takes an
   uninspected lane after the arm;
+- **and Base's OWN stored reward messenger** — `getRewardReporterConfig()
+  .rewardMessenger` on the canonical Diamond, which is a different address from
+  the cross-chain messenger above and is missed by checking that one. Both
+  `broadcastGlobal` and Base's authenticated reward-report ingress dispatch
+  through it, so a `ConfigureRewardReporter` that stopped partway, or a
+  redeployed messenger, leaves the remittance lane reading back perfectly while
+  commitment reports and the post-arm `D*` broadcast both fail. Require it to
+  equal the live `VaipakamRewardMessenger` whose peers you inspected;
 - **the remittance RECEIVER wiring on each mirror** — a redeployed
   `RewardRemittanceReceiver`, or a config that stopped before the reward-budget
   wiring, leaves an inbound delivery with nowhere to land while every outbound
   check passes;
+- **the LOCAL channel-handler bindings, in both directions** — `channelOf` for
+  each handler and `handlerOf` for each channel id, on every participating
+  chain, for the reward channel and the reward-budget channel alike. A Diamond,
+  reward messenger or remittance receiver rotated without completing
+  `registerChannel` passes every stored-address, peer, receiver, registry and
+  pause check above while the local `CcipMessenger` still binds the channel to
+  the OLD handler. Outbound then reverts at `channelOf[msg.sender]` with
+  `CallerNotHandler`, and inbound resolves the stale `handlerOf[channelId]` — so
+  the first remit or `D*` broadcast fails after the one-shot arm. The peer
+  checks look outward and cannot see this; it is local to each chain;
 - **each live pool through the CCIP token registry** — `getPool` for the token,
   not the pool address you configured. If CCT registration was skipped because
   the configuring account did not own the token, or a pool was redeployed, you
   will have inspected a healthy pool that is not the one CCIP will use;
-- **and that the whole path is UNPAUSED.** Every cross-chain contract carries a
-  guardian pause, the remit is `whenNotPaused`, and the arming setter checks none
-  of it — so an emergency pause left on after a partial recovery passes every
-  wiring readback and then stops the propagation the arm depends on.
+- **and that the whole path is UNPAUSED — the participating DIAMONDS included,
+  not only the non-Diamond cross-chain contracts.** Every cross-chain contract
+  carries a guardian pause, the remit is `whenNotPaused`, and the arming setter
+  checks none of it — so an emergency pause left on after a partial recovery
+  passes every wiring readback and then stops the propagation the arm depends on.
+  The remit itself lives on the Diamond: Base's `remitRewardBudget` is
+  `whenNotPaused`, and a mirror rejects the receiver's `onRewardBudgetReceived`
+  call at the SAME guard — so a Base Diamond or any mirror Diamond left paused
+  after an incident breaks the path even when every cross-chain contract is
+  unpaused and every wiring readback is clean. Require `AdminFacet.paused() ==
+  false` on Base AND every participating mirror, not just on the transport
+  contracts.
+
+**If ANY of this was rotated, matching readbacks are not enough — the lane has
+to be DRAINED first.** `CcipMessenger` resolves the destination handler at
+DELIVERY time and the envelope names no intended handler, so a message sent while
+the old handler was live — with any tokens it carries — is forwarded to the
+REPLACEMENT if it lands after the re-registration. In the other direction,
+installing a new channel peer makes `_ccipReceive` reject a delayed message that
+the old peer had already sent, because the originator on the wire is the old one.
+Both states pass every readback in this pass.
+
+The contract says so itself and points here: the drain "is the control, and it is
+documented in the admin runbook rather than enforced here". So it belongs in this
+ceremony, not in a comment. For every binding changed by a rotation: quiesce the
+channel, then RECONCILE rather than wait — "let in-flight deliveries land" is not
+a condition an operator can observe, and a delayed or already-failed delivery
+leaves the lane in exactly the state that forwards tokens to the replacement.
+Take every outbound message id sent on that channel since the last known-good
+point, and require each one to have **EXECUTED successfully at its
+destination**. That is the only terminal state, and the round-4 wording here was
+wrong to offer "abandoned with the reason recorded" as an alternative: a FAILED
+CCIP message stays manually re-executable indefinitely, and `CcipMessenger` has
+no cancellation and no per-message-id tombstone — so a re-execution after the
+rotation resolves `handlerOf[channelId]` to the REPLACEMENT and hands it the old
+message and its tokens. That is the precise hazard this drain exists to prevent,
+and an operator note does not close it. Re-execute a failed message to success
+before rotating, or do not rotate. Only then clear and re-register.
+
+A pending id is a blocker, not a delay — CCIP will deliver it eventually, and
+eventually is after the rotation. The peer rejection is recoverable (clear the new peer, re-install
+the old, manually re-execute the stranded message, then repeat the rotation), but
+running that recovery re-points a live lane's trust anchor backwards, which is a
+worse thing to be doing than waiting was — and worse still with `D*` immutable.
+
+**Read every mutable pointer FROM THE CONTRACT THAT HOLDS IT — the list above
+walks outward from the Diamond, and each hop's far side is settable too.** Every
+bullet above reads what the Diamond, or the local `CcipMessenger`, believes. The
+reward messenger and the remittance receiver each hold their OWN owner-settable
+addresses and flags, and a rotation that updated one side leaves the other naming
+what was replaced — with every check so far passing. There is no need to guess
+which ones; each contract's settable state is short enough to enumerate, so
+enumerate it and read all of it back:
+
+| Contract | Read back | Already covered above? |
+| --- | --- | --- |
+| `VaipakamRewardMessenger` | `messenger()` | **no — read it** |
+| | `diamond()` | **no — read it** |
+| | `isCanonical()` | **no — read it** |
+| | `baseChainId()` | **no — read it** |
+| | `getBroadcastDestinations()` | yes, in the topology pass |
+| | `destGasLimit()` | yes, below |
+| `RewardRemittanceReceiver` | `messenger()` | **no — read it** |
+| | `diamond()` | **no — read it** |
+| | `vpfiToken()` | **no — read it** |
+| `CcipMessenger` | `remoteMessengerOf` | yes, in the topology pass |
+| | `chainSelectorOf` / `chainIdOf` (both directions) | **no — read them** |
+| | reward-channel peers | yes, in the topology pass |
+| | reward-BUDGET channel peers | **no — read them** |
+| | `channelOf` / `handlerOf` | yes, above |
+| | `channelOfPeer` (the REVERSE index) | **no — read it** |
+| `vpfiTokenPool` | `getRateLimitAdmin()` | **no — read it** |
+| | `isSupportedChain(selector)` per lane | **no — read it, and see below** |
+| | `getRemotePools(selector)` both ends | **no — read it, and see below** |
+| | `getRouter()` (the POOL's own router) | **no — read it, and see below** |
+| | `getRmnProxy()` | **no — read it, and see below** |
+| | `getAllowListEnabled()` | **no — read it, and see below** |
+| | `getRemoteToken(selector)` both ends | **no — read it, and see below** |
+| | its own `owner()` + event-log rule | **no — see the pair note below** |
+| `VpfiPoolRateGovernor` (cont.) | `owner()`, `pendingOwner()`, implementation | **no — see the pair note below** |
+| `VpfiPoolRateGovernor` | `pool()` | **no — read it, and see below** |
+| `CcipMessenger` (cont.) | `getRouter()` (the ADAPTER's) | **no — read it, and see below** |
+| *all three* | `owner()`, `pendingOwner()` | **no — read them** |
+| | `guardian()` | **no — read it** |
+| | the proxy's implementation | **no — read it** |
+
+**And re-apply the PRINCIPAL checks to the live pool and its governor as a
+pair.** The reciprocal `getRateLimitAdmin()` / `pool()` readbacks prove the two
+point at each other; they say nothing about who controls either. If the
+registry-selected pool or the governor was replaced after step 6, both pointers
+agree while the replacement is still deployer-controlled or carries a pending
+takeover — and the pool's owner can rewrite its router, its remote pools, its
+allowlist and its limiters with none of the governor's bounds, while the
+governor's owner can repoint it and authorise a UUPS upgrade. The `all three`
+principal rows below cover the handlers, and the mirror-token paragraph covers
+the token; neither reaches this pair. Apply the pool's owner + event-log rule and
+the governor's owner / zero-pending-owner / implementation checks to the exact
+live addresses this pass resolved.
+
+The table above is the settable STATE. It is not the whole answer, and saying it
+enumerated everything was too strong: the last three rows are the PRINCIPALS who
+can rewrite that state after you have read it. All three contracts are
+`Ownable2Step` + `GuardianPausable`, so an owner can rewrite every field above
+and authorise a UUPS upgrade, and a guardian can pause the transport — after this
+preflight and after the irreversible arm. The handover check earlier in this
+runbook establishes ownership of the Diamond, the token and the timelock targets;
+it says nothing about a cross-chain contract REPLACED since, which is precisely
+the case this section exists for. Two EXACT values, not one comparison: `owner() ==
+the governance address` **and `pendingOwner() == address(0)`**. A completed
+transfer clears the pending owner, so a non-zero one means a handover is still
+open and that address can call `acceptOwnership()` whenever it likes — including
+after `D*`, at which point it holds every setter above and the UUPS upgrade
+authority. "Owned by the timelock" is true of that state too, which is why the
+pending value has to be named rather than folded into the owner check. Then
+`guardian()` against the current guardian key, and each proxy's implementation
+against the one you intend to be running.
+
+What each of the newly-required ones costs if it is wrong:
+
+- **`messenger()` and `diamond()` on both handlers** are the reciprocal of the
+  channel bindings above. Those maps can correctly name the new handler while the
+  handler still names the old adapter or the old Diamond: inbound then reverts
+  inside the handler, outbound reward sends go through the stale adapter, and
+  `onlyDiamond` rejects the live Diamond. Match both against the exact adapter
+  and Diamond inspected in this pass.
+- **`isCanonical()` and `baseChainId()` on the messenger** are a SEPARATE
+  topology from the Diamond's role fields in the first bullet, and a replacement
+  messenger can disagree with the Diamond it serves. Wrong `isCanonical` and Base
+  rejects commitment reports with `ReportOnMirror`, or a mirror rejects the `D*`
+  broadcast with `BroadcastOnCanonical`; a stale `baseChainId` sends that
+  mirror's reports and acknowledgements to the wrong chain.
+- **`vpfiToken()` on each receiver** must equal the mirror token whose registry
+  entry and minting pool you just checked. After a token rotation the channel,
+  registry and pool all read healthy while every delivery reverts `TokenMismatch`
+  inside the receiver, and the pre-`D*` receipt gate simply never completes.
+- **both selector mappings, in both directions.** Outbound resolution reads
+  `chainSelectorOf[destinationChainId]` and inbound authentication derives the
+  source identity from `chainIdOf[sourceChainSelector]` — and nothing else in
+  this ceremony reads either. The `eth_chainId`, peer, router and lane checks all
+  pass with a missing or stale selector binding, and the first send after the arm
+  then resolves to no lane or to the wrong one. Require
+  `chainSelectorOf[chainId] == expectedSelector` AND
+  `chainIdOf[expectedSelector] == chainId` for every live lane. This row was
+  marked covered by the topology pass in the first version of this table and it
+  was not: `grep` the ceremony for either name and it appears nowhere else.
+- **the reward-BUDGET channel's peer on each mirror**, separately from the reward
+  channel's. The pairing check earlier in Step 3 is about the reward messenger
+  that broadcasts carry; the remittance arrives on its own channel, and
+  `_ccipReceive` rejects the Base Diamond as an unauthorized peer if that entry
+  is missing or stale — with every receiver, handler, token, router and ownership
+  readback above still passing. Require each mirror's
+  `channelPeerOf[<reward-budget channel>][baseChainId]` to equal the live Base
+  Diamond. "Channel peers" as a single line covered one channel and read as
+  covering both.
+- **`channelOfPeer[remoteChainId][peer]` for every forward peer**, and not just
+  the forward `channelPeerOf` entries the topology pass already compared. The
+  reverse index was APPENDED to this contract, so on a proxy upgraded from the
+  earlier implementation it starts EMPTY while the forward map is fully
+  populated — and until `backfillChannelPeerIndex` has run over every pair, the
+  one-peer-to-one-channel invariant `setChannelPeer` advertises does not hold:
+  its duplicate check reads an empty reverse entry and admits an address that is
+  already another channel's live peer. A rotation performed during this ceremony
+  can therefore bind a live peer to a second channel and leave one lane
+  rejecting messages. The contract is explicit that completeness here is the
+  OPERATOR's, because mappings are not enumerable and it cannot discover its own
+  configured pairs: derive the pair list from this proxy's `ChannelPeerSet`
+  event log, not from memory, and confirm
+  `channelOfPeer[remoteChainId][peer] == channelId` for each. Three deployments
+  are already in that state.
+- **`getRateLimitAdmin()` on the live registry-selected pool**, against the
+  verified `VpfiPoolRateGovernor`. `setChainRateLimiterConfig(s)` authorises
+  `s_rateLimitAdmin` **or** the owner, and `ConfigureCcip` deliberately points
+  that principal at the governor because the governor is the bounds-checked path
+  — it refuses to disable a lane and range-bounds every value. A pool left with a
+  deployer or stale EOA there passes every registry, bucket and ownership
+  readback in this pass, and that address can rewrite both limiter
+  configurations directly, immediately before or after the arm, with none of the
+  governor's bounds applied. The ownership rows above do not cover it: this is a
+  second principal on the same contract.
+- **`getRouter()` on every adapter**, and this one is not proxy storage at all —
+  the router is a CONSTRUCTOR immutable baked into the implementation, so an
+  implementation upgrade can change it while every storage readback in this pass
+  is unchanged. `sendMessage` quotes and dispatches through `getRouter()`, so
+  confirm it equals the live router the selectors, lanes and token registry
+  belong to. Nothing else here can see this one.
+- **`getRemotePools(expectedSelector)` on the pool at BOTH ends of every lane.**
+  The registry, supported-chain, rate-limit, ownership and messenger checks can
+  all pass on a lane whose peer pool was redeployed while the local lane still
+  lists only the OLD peer address. The first delivery from the replacement is
+  then rejected inside `_validateReleaseOrMint`, because `isRemotePool` does not
+  recognise its `sourcePoolAddress`. Require the live peer pool to appear in
+  `getRemotePools(expectedSelector)` on both ends — do NOT require the old entry
+  to be removed, since it may still cover an in-flight message — before the
+  irreversible arm.
+- **`getRouter()` on the POOL, not only on the adapter.** The pool carries its
+  OWN independently-mutable router (`TokenPool.setRouter`), separate from the
+  `CcipMessenger` router the previous bullet reads. A pool left on a stale router
+  authenticates the live on-ramp and off-ramp against that stale router in
+  `_onlyOnRamp` / `_onlyOffRamp` and rejects the first remittance, while every
+  lane check above still reads healthy. Confirm `vpfiTokenPool.getRouter()` equals
+  the live router the lane belongs to, alongside the adapter readback.
+- **`getRmnProxy()` on the live pool**, against the published RMN proxy for that
+  chain. It is a CONSTRUCTOR immutable consulted in both `_validateLockOrBurn`
+  and `_validateReleaseOrMint`, so a redeployment carrying a stale
+  `CCIP_RMN_PROXY` passes every router, remote-pool, lane, limit and ownership
+  readback above. A stale permissive proxy lets transfers through a lane the live
+  RMN has CURSED; an invalid one halts every transfer. Neither is visible from
+  storage.
+- **`getAllowListEnabled() == false` on each live pool.** `i_allowlistEnabled` is
+  set from `allowlist.length > 0` in the constructor, and `DeployCrosschain`
+  builds both pools with `new address[](0)` — "empty allowlist => permissionless
+  pool". A replacement constructed with a non-empty list reads back healthy
+  everywhere in this table while ordinary VPFI sends revert `SenderNotAllowed`
+  for any `originalSender` not on it. If permissioning is ever introduced
+  deliberately, verify the complete required sender set instead.
+- **`getRemoteToken(expectedSelector)` on both ends of every lane**, decoded and
+  compared against the live peer token. `lockOrBurn` returns it as the
+  destination token, and `ConfigureCcip` stores it SEPARATELY from
+  `remotePoolAddresses` — so a rotated mirror token with the lane's
+  `remoteTokenAddress` left behind passes the registry, live-token, remote-pool,
+  router and limiter checks, and then targets the retired token or fails at the
+  destination where the receiver expects the new one.
+- **`VpfiPoolRateGovernor.pool()`, the reciprocal of `getRateLimitAdmin()`.**
+  Setting the pool's `rateLimitAdmin` to the governor is only half the pairing:
+  the governor stores the pool it drives, and after a pool rotation a
+  freshly-registered pool can point AT the governor while the governor still
+  points at the RETIRED pool. Every bounds-checked `setLaneRateLimits` call is
+  then dispatched through `VpfiPoolRateGovernor.pool` to the old pool, so
+  governance cannot repair or tune the live lane after arming. Require
+  `VpfiPoolRateGovernor.pool() == registry.getPool(vpfiToken)` so the governor
+  and the live pool name each other.
 
 **And verify the mirror token's live minting pool.** Messenger peers and rate
 limiters can all read back correctly against the intended pool while the mirror
@@ -886,11 +1238,41 @@ token still points at a redeployed or unset one — `setTokenPool` is a separate
 step that `ConfigureCcip` may not have completed. Read the token's pool back on
 each mirror and confirm it is the pool whose limits you just checked.
 
-**A DISABLED limiter is not a failure — it is unlimited.** The rate limiter
-returns immediately when the bucket is disabled, and the config validator
-requires a disabled bucket to be fully zeroed. So `isEnabled == false` with zero
-capacity is a correctly configured no-limit lane, not a blocked one; treating it
-as blocked would stall a ceremony over a healthy configuration.
+**And read back the mirror TOKEN's own principals — not only its pool pointer.**
+`VPFIMirrorToken` is `Ownable2StepUpgradeable` + `GuardianPausable` + UUPS, so
+confirming only `tokenPool()` lets a deployer-owned replacement token pass this
+preflight: its owner can immediately repoint `tokenPool` via `setTokenPool`
+— handing an arbitrary address the SOLE mint/burn authority — and can authorise a
+UUPS upgrade, while its guardian can pause every mint and transfer, all after the
+irreversible arm. The Step-6 handover readback covers the mirror token that was
+handed over; it says nothing about one REPLACED since, which is the case this
+section exists for. Apply the SAME four readbacks the table's last rows require of
+the other proxies to the live mirror-token proxy on each mirror: `owner() ==
+timelock`, `pendingOwner() == address(0)`, `guardian()` == the current guardian
+key, and the proxy implementation == the one you intend to be running.
+
+**And read back every live messenger's `destGasLimit`.** Commitment reports and
+the `D*` broadcast both size their CCIP callback from it, and `setDestGasLimit`
+accepts any value without validation — so a zero or stale limit left by an
+upgrade passes every wiring, capacity, peer and pause check here and then makes
+each delivery run out of gas on arrival, repeatedly, with `D*` already immutable.
+Read it back against the supported callback budget on each messenger, or prove it
+with an end-to-end delivery rehearsal, before the arm.
+
+**A DISABLED limiter is not a failure — it is unlimited. But establish the lane
+EXISTS before applying that rule.** A missing lane and a validly disabled one are
+indistinguishable through the limiter getters: both return the mapping's
+zero-initialised bucket — `isEnabled == false`, zero capacity, zero rate. So
+"disabled is unlimited" reads a pool that was registered before its lane was
+added as a healthy no-limit lane, the arm proceeds, and the first transfer then
+reverts `ChainNotAllowed` because `_onlyOnRamp` checks `isSupportedChain` as a
+SEPARATE condition the buckets know nothing about. Require
+`isSupportedChain(expectedSelector) == true` first; only then does the rest
+apply. The rate limiter returns immediately when the bucket is disabled, and the
+config validator requires a disabled bucket to be fully zeroed — so on a lane that
+exists, `isEnabled == false` with zero capacity is a correctly configured no-limit
+lane, not a blocked one, and treating it as blocked would stall a ceremony over a
+healthy configuration.
 
 **3f. Deploy `ops/mesh-watcher` AND verify it runs clean.** It reads every
 reward chain's recycled ledger and alerts on the commitment invariants, and it is
@@ -1005,9 +1387,18 @@ This single Base call **is** the `D*` cutover. It is:
 `interactionLaunchTimestamp` is zero and the current day reads zero too, so a
 "the clocks agree" check passes vacuously — every chain agreeing at zero — and
 the setter then accepts any non-zero `D*` because the current day is zero as
-well. Require a NON-ZERO launch timestamp and a non-zero current day on every
-chain before comparing them. A check that cannot fail on the state you are
-guarding against is not a check.
+well. A check that cannot fail on the state you are guarding against is not a
+check.
+
+Require a **NON-ZERO launch timestamp** and an **ACTIVE clock** on every chain
+before comparing them — *not* a non-zero current day. `currentDayOrZero()`
+returns a `(day, active)` pair: `(0, false)` when the launch is unset or still in
+the future, and `((now − launch) / 1 days, true)` once it has passed. So during
+the first 24 hours of a valid launch it returns `(0, true)` — day zero is the
+first ACTIVE reward day, not an idle clock. Requiring a non-zero day would block
+the documented genesis activation, which the setter accepts perfectly well since
+it only demands `D* > 0` and `D* > today`. The `active` flag is what separates
+"not started" from "started, on day zero"; the day number cannot.
 
 **Then confirm every target mirror is still UNARMED.** Both ingress paths
 install the incoming `armedFromDay` only while the local value is zero
