@@ -761,20 +761,42 @@ The only deploy assertion touching this flag pins it OFF on a fresh deploy
 and the setter checks only the chain role. Treat the whole of this step as a
 MANUAL readback — a green deploy-sanity suite is not evidence for any part of
 it. The RECOVERY paths — time-based
-default, liquidation, discounted liquidation, split, partial, and the
-periodic-interest auto-liquidation leg — still take the ordinary cut from
-recovered lender interest without consulting the stamp; both collateral
+default, liquidation, discounted liquidation, split and partial (FIVE, not the
+six an earlier revision of this step named — the periodic-interest
+auto-liquidation leg deducts a handling fee on swap PROCEEDS and charges no
+lender yield fee at all, so there is nothing there for the bump to reduce) —
+still take the ordinary cut from recovered lender interest without consulting
+the stamp; both collateral
 prepay-SALE terminals pay a raw treasury leg on a PROPER close with no
 eligibility call; and refinance resolves the stamp against the STORED lender
 rather than the current holder. Frozen §F2
 is "at every lender-yield settlement", so that is a live divergence and a hard
 precondition for this step, not a scope boundary. Enabling here while it stands
 collects `C*` for a discount a lender can lose depending on how their loan ends.
-See `TokenomicsTechSpec` §F2 and #1383.
+The frozen rule is `### F2 — Lender yield fee (frozen — rev 8)` in
+`docs/DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md` — NOT
+`TokenomicsTechSpec`, which has no §F2 of its own. The open implementation card
+is **#1947**; #1383 is the COMPLETED repayment/early-close family and is not the
+blocker. See also `TokenomicsTechSpec`'s lender-settlement section for the
+discharge criterion.
 Without the cap, a Full loan enters the uncapped reward path; without the sweep,
 a user can pay `C*` for a discount settlement then ignores. This bites on partial
 or stacked upgrades, where a Diamond can have M1b live and still be missing
-either. Read back the deploy assertions for both before scheduling anything.
+either.
+
+**Do NOT "read back the deploy assertions" for these** — an earlier revision of
+this step said to, and there is nothing to read: the only deploy assertion
+touching this flag pins it OFF on a fresh deploy and observes no settlement path.
+Establish both by hand on the TARGET Diamond before scheduling anything:
+
+- **PR-5c (loan-side reward cap)** — confirm the facet carrying it is the one
+  routed for its selectors on this Diamond (`facetAddress(bytes4)` via the
+  loupe), and that the cap knob reads its intended value.
+- **PR-6 / #1947 (settlement sweep)** — confirm the DEPLOYED bytecode of
+  `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet`, `PrepayListingFacet`
+  and `RefinanceFacet` is the fixed version, again by loupe-resolving their
+  selectors and comparing against the build you intend. While #1947 is open there
+  is no such build, so this readback cannot pass and the step cannot proceed.
 
 ```
 ConfigFacet.setFeeEntitlementEnabled(true)      # ADMIN_ROLE

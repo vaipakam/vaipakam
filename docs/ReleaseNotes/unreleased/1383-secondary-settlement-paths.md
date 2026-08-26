@@ -44,6 +44,22 @@ pays the full fee anyway.
 One further route honours the arrangement but pays for it out of the wrong
 pocket: refinancing resolves it against whoever the records still name as lender.
 
+One route that earlier drafts of this note counted among the recovery
+routes turns out not to belong there at all. When a periodic-interest
+payment is missed and collateral is sold to cover it, the charge taken is a
+handling fee on the sale proceeds, not a share of the interest — so there is
+no yield fee on that route for the arrangement to reduce, and asking for one
+would either discount an unrelated service charge or introduce a fee the
+route does not levy. The count of affected recovery routes is five, not six.
+The mistake is recorded rather than quietly amended: it had reached six
+separate documents.
+
+A related precision on the sale routes: the charge they pay is really two
+charges added together, and only the first is the one this arrangement
+reduces. The second reads as nothing today, so an implementation that passed
+the combined figure through would look correct and would silently begin
+discounting the wrong charge the day the second is switched on.
+
 Two things follow that the documents had not said. The condition for declaring
 this settled now spells out that a decision to leave recovered interest out of
 scope would settle only the recovery half — the sale routes close a loan
@@ -72,3 +88,9 @@ operator's switch reference told whoever throws the switch that this was "a
 check, not a blocker". Either would have led someone to enable the arrangement
 while a lender who paid for the reduction could still lose it, depending only on
 how their loan happened to end.
+
+Separately, tightening the milestone conditions turned up a slice of work
+with no tracker: the ability for a maker to opt into the full arrangement on
+a pre-signed offer was never delivered, but the card covering it was closed
+when its other half shipped. The source still points readers at that closed
+card. It now has an open one, so the milestone cannot close over it.

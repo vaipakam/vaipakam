@@ -639,16 +639,23 @@ optional:
   #1383) are live — but the RECOVERY paths are not: time-based default,
   liquidation, split liquidation and partial liquidation each take the
   ordinary cut from recovered lender interest without honouring the
-  stamp — six entry points in all: time-based default, liquidation,
+  stamp — five entry points in all: time-based default, liquidation,
   DISCOUNTED liquidation (separately gated, beside the ordinary one),
-  split liquidation, partial liquidation (which leaves the loan Active),
-  and the periodic-interest auto-liquidation leg. Two PROPER-CLOSE
+  split liquidation, and partial liquidation (which leaves the loan
+  Active). The periodic-interest auto-liquidation leg is NOT one of
+  them — an earlier revision of this note counted it as a sixth; it
+  deducts a handling fee on swap PROCEEDS and charges no lender yield
+  fee at all, so the bump has nothing to reduce there. Two PROPER-CLOSE
   routes are open as well: both collateral prepay-SALE terminals pay a
-  raw treasury leg with no eligibility call. And refinance is a further
+  raw treasury leg with no eligibility call — and only the
+  treasury-yield HALF of that leg is discountable, since it is
+  `interest × (treasuryFeeBps + precloseFeeBps)` and the second summand
+  is a separate preclose fee that merely reads zero today. And refinance is a further
   concern: it honours the stamp but resolves it against the STORED
   lender, so a transferred position can have the previous lender's
   vault fund the buyer's discount.
-  The frozen §F2 rule is "at every lender-yield settlement", so
+  The frozen §F2 rule — `VpfiAbsorptionDistributionFormulaRedesign.md`,
+  not `TokenomicsTechSpec` — is "at every lender-yield settlement", so
   that is a divergence rather than a scope boundary, and it is a
   **blocker** until it is closed or explicitly superseded. Do not read
   the #1383 family as covering it, and do not read PR-6 (#1354) as
