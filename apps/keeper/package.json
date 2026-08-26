@@ -8,9 +8,10 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --keep-vars",
     "build": "pnpm run typecheck",
-    "typecheck": "tsc -p . --noEmit && node scripts/check-deploy-invocations.mjs",
+    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && node scripts/check-deploy-invocations.mjs",
     "test": "vitest run",
-    "check-deploy-invocations": "node scripts/check-deploy-invocations.mjs"
+    "check-deploy-invocations": "node scripts/check-deploy-invocations.mjs",
+    "bench:cpu": "tsx bench/passCpu.ts"
   },
   "dependencies": {
     "@pushprotocol/restapi": "^0.0.1",
@@ -21,6 +22,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.0.0",
+    "tsx": "^4.19.2",
     "typescript": "^6.0.0",
     "vitest": "^4.1.4",
     "wrangler": "^4.0.0"
