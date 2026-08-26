@@ -1343,9 +1343,18 @@ This single Base call **is** the `D*` cutover. It is:
 `interactionLaunchTimestamp` is zero and the current day reads zero too, so a
 "the clocks agree" check passes vacuously — every chain agreeing at zero — and
 the setter then accepts any non-zero `D*` because the current day is zero as
-well. Require a NON-ZERO launch timestamp and a non-zero current day on every
-chain before comparing them. A check that cannot fail on the state you are
-guarding against is not a check.
+well. A check that cannot fail on the state you are guarding against is not a
+check.
+
+Require a **NON-ZERO launch timestamp** and an **ACTIVE clock** on every chain
+before comparing them — *not* a non-zero current day. `currentDayOrZero()`
+returns a `(day, active)` pair: `(0, false)` when the launch is unset or still in
+the future, and `((now − launch) / 1 days, true)` once it has passed. So during
+the first 24 hours of a valid launch it returns `(0, true)` — day zero is the
+first ACTIVE reward day, not an idle clock. Requiring a non-zero day would block
+the documented genesis activation, which the setter accepts perfectly well since
+it only demands `D* > 0` and `D* > today`. The `active` flag is what separates
+"not started" from "started, on day zero"; the day number cannot.
 
 **Then confirm every target mirror is still UNARMED.** Both ingress paths
 install the incoming `armedFromDay` only while the local value is zero
