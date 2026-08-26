@@ -210,11 +210,21 @@ async function main(): Promise<void> {
     resetD1();
     const warmed = await cpuMs(() => pass.run(makeEnv()));
     if (warmed === null) {
-      // The warm-up TIMED OUT. Its abandoned work (a pending RPC retry on a
-      // backoff timer) may still sit on the event loop, so a measured run now
-      // would not be isolated and would publish a polluted, non-comparable
-      // number. Mark the pass hung and skip measurement — the same treatment a
-      // hung measured rep gets below (Codex #1945 r9).
+      // The warm-up TIMED OUT and its abandoned work (a pending RPC retry on a
+      // backoff timer) is still on the shared event loop / fixtures. This
+      // single-process harness cannot cancel it, so ANY later pass would be
+      // measured against polluted state — CONTINUING merely shifts the polluted
+      // sample to the next pass (Codex #1945 r10). TERMINATE instead: passes
+      // measured before this point are isolated and valid; the hung pass and
+      // any after it are left unmeasured. Worker-per-pass isolation (tracked in
+      // #1948) is the way to profile past a hang.
+      console.error = realError;
+      console.warn = realWarn;
+      Date.now = realNow;
+      realError(
+        `[bench] ${pass.name} warm-up did not settle within the grace window ` +
+          `— terminating the run to keep the earlier passes isolated`,
+      );
       rows.push({
         name: pass.name,
         median: 0,
@@ -225,8 +235,7 @@ async function main(): Promise<void> {
         unbounded: false,
         warmUpErrors: errors,
       });
-      errors = 0;
-      continue;
+      break;
     }
 
     // Counters start AFTER the warm-up. Including it double-counted every
@@ -279,6 +288,17 @@ async function main(): Promise<void> {
       unbounded,
       warmUpErrors,
     });
+    if (hung > 0) {
+      // Same reasoning as the warm-up timeout above: a measured rep that did
+      // not settle within the grace window leaves work on the shared event
+      // loop, so measuring any later pass against it is non-isolated. Terminate
+      // the run; earlier passes are valid (Codex #1945 r10).
+      realError(
+        `[bench] ${pass.name} did not settle within the grace window ` +
+          `— terminating the run to keep the earlier passes isolated`,
+      );
+      break;
+    }
   }
 
   restore();

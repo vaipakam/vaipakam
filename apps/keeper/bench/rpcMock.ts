@@ -578,7 +578,10 @@ export const rpcStats = { calls: 0 };
  * is still inside the interval, and therefore still a known floor: the
  * `JSON.parse` of the request body and the `Response` construction.
  */
-const responseCache = new Map<string, string>();
+// Caches the ANSWER OBJECTS (id-free), keyed on url + method + params. The
+// per-request JSON-RPC id is patched back on the way out — see the warm-up
+// note in installRpcMock (Codex #1945 r10).
+const responseCache = new Map<string, unknown[]>();
 
 /** Install the mock as global fetch. Returns a restore function. */
 export function installRpcMock(): () => void {
@@ -605,16 +608,31 @@ export function installRpcMock(): () => void {
       );
     }
     const raw = init?.body ?? '{}';
-    const cacheKey = `${url}|${raw}`;
-    let payload = responseCache.get(cacheKey);
-    if (payload === undefined) {
-      const body = JSON.parse(raw);
-      const out = Array.isArray(body)
-        ? body.map((b) => answer(b, url))
-        : answer(body, url);
-      payload = JSON.stringify(out);
-      responseCache.set(cacheKey, payload);
+    const body = JSON.parse(raw);
+    const isBatch = Array.isArray(body);
+    // viem assigns a FRESH JSON-RPC id to every request (a global counter), so
+    // keying the cache on the raw body — id included — means the warm-up (id 0)
+    // and the measured call (id 1) never share an entry, and every measured
+    // call re-runs answerCall's ABI encode inside the interval: exactly the
+    // remote-server work this cache exists to move to the warm-up (Codex #1945
+    // r10). Key on method+params only; cache the answer objects, then patch each
+    // one's id to the CURRENT request before serializing.
+    const reqs = (isBatch ? body : [body]) as {
+      method: string;
+      params?: unknown[];
+      id?: unknown;
+    }[];
+    const cacheKey = `${url}|${JSON.stringify(reqs.map((r) => [r.method, r.params]))}`;
+    let results = responseCache.get(cacheKey);
+    if (results === undefined) {
+      results = reqs.map((b) => answer(b, url));
+      responseCache.set(cacheKey, results);
     }
+    const patched = results.map((r, i) => ({
+      ...(r as Record<string, unknown>),
+      id: reqs[i].id ?? 1,
+    }));
+    const payload = JSON.stringify(isBatch ? patched : patched[0]);
     return new Response(payload, {
       status: 200,
       headers: { 'content-type': 'application/json' },
