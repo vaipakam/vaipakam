@@ -193,7 +193,7 @@ cast rpc anvil_mine 40 --rpc-url "$RPC" >/dev/null 2>&1 \
   || echo "    WARN: anvil_mine failed — seeded offers may stay below the safe block until more blocks are mined" >&2
 
 # [6/6] Sync ABI bundles + consolidated deployments JSON to dependent
-# repos so the frontend (apps/{defi,labs}) + Workers (apps/{keeper,
+# repos so the frontend (apps/{app,www}) + Workers (apps/{keeper,
 # indexer,agent}, all reading via @vaipakam/contracts) + the
 # public reference keeper-bot pick up the freshly-deployed anvil
 # diamond on next reload. All three exports are

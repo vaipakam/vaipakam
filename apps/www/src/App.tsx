@@ -49,7 +49,7 @@ const AdminKnobsDocs = lazy(() => import('./pages/AdminKnobsDocs'));
  * standard Navbar + Footer chrome. The actual deposit / withdraw flow
  * lives at `<defi>/buy-vpfi` (wallet-gated); CTAs inside
  * `BuyVPFIMarketing` open that URL in a new tab via the
- * `defiUrl(...)` helper.
+ * `appUrl(...)` helper.
  */
 function PublicBuyVPFI() {
   return (
@@ -97,7 +97,7 @@ function PublicDataRights() {
  * `/analytics`, `/nft-verifier`, `/protocol-console`, the entire
  * connected-app surface — are public-read or wallet-bearing
  * surfaces hosted on the connected-app domain. The Navbar /
- * Footer link out to them via `defiUrl(...)`. Cross-domain
+ * Footer link out to them via `appUrl(...)`. Cross-domain
  * visitors hitting a marketing-only path on the connected app
  * (or vice versa) get the SPA's natural 404 — matching the
  * dominant industry posture (Morpho, etc.) of

@@ -1791,7 +1791,7 @@ Enviaste los tokens tú mismo por error, controlas la billetera de origen y sabe
 
 ### Flujo de recuperación
 
-1. Visita la [página de recuperación](https://alpha02.vaipakam.com/recover).
+1. Visita la [página de recuperación](https://app.vaipakam.com/recover).
 2. Ingresa la dirección del contrato del token, el origen desde el que enviaste y el monto.
 3. Revisa cuidadosamente el reconocimiento en pantalla.
 4. Escribe "CONFIRM" para habilitar la firma.

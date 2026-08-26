@@ -16,7 +16,7 @@ import {
  *   - The first toggle is treated as a user choice. From that moment
  *     on, the value is persisted to BOTH a parent-domain cookie
  *     (`vaipakam_theme`, scoped to `.vaipakam.com` so the choice
- *     follows the user across labs.vaipakam.com ↔ defi.vaipakam.com)
+ *     follows the user across labs.vaipakam.com ↔ app.vaipakam.com)
  *     AND localStorage (belt-and-suspenders for cookie-disabled
  *     clients), and the system listener is ignored. Subsequent OS
  *     theme switches don't override what the user picked.
@@ -133,7 +133,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Dual-write to cookie + localStorage:
   //   - Cookie (`Domain=.vaipakam.com`) is the cross-domain source
   //     of truth — picking dark on labs.vaipakam.com makes
-  //     defi.vaipakam.com also dark on the next navigation.
+  //     app.vaipakam.com also dark on the next navigation.
   //   - localStorage is the belt-and-suspenders fallback for
   //     cookie-disabled clients (private mode, strict cookie
   //     blockers) and pre-existing same-origin users.

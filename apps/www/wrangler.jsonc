@@ -5,7 +5,7 @@
   // (basic + advanced), Terms, Privacy, Data Rights, Discord, Help
   // Search. Wallet-free; cross-domain link-outs to the connected-
   // app surface via the `defiUrl(...)` helper (env-driven by
-  // `VITE_DEFI_URL`, defaults `https://defi.vaipakam.com`).
+  // `VITE_DEFI_URL`, defaults `https://app.vaipakam.com`).
   //
   // Custom-domain bindings (apex-canonical setup):
   //   - vaipakam.com       CANONICAL user-facing URL. Apex is the

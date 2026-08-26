@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Shared React components for Vaipakam apps. Stage 2b scope: only the truly framework-decoupled primitives (InfoTip, TokenIcon). Most candidate components in apps/defi/src/components/ couple to defi-only hooks (WalletContext, useEnsName, useTokenMeta, coingecko hooks) or app-specific lib (format with i18n, contracts/config with Vite env). Each will migrate in a follow-up Stage 2c after its dependency chain is extracted.",
+  "description": "Shared React components for Vaipakam apps. Stage 2b scope: only the truly framework-decoupled primitives (InfoTip, TokenIcon). Most candidate components in the connected app couple to app-only hooks (WalletContext, useEnsName, useTokenMeta, coingecko hooks) or app-specific lib (format with i18n, contracts/config with Vite env). Each will migrate in a follow-up Stage 2c after its dependency chain is extracted.",
   "exports": {
     ".": {
       "types": "./src/index.ts",

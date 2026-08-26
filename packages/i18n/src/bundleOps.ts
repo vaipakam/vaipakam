@@ -7,7 +7,7 @@
  * placeholder, and its only other mode overwrote a bundle wholesale. So
  * a locale that had been translated once froze at that day's key set —
  * every section added afterwards silently fell back to English, in a
- * bundle that looked complete. `apps/alpha02` accumulated 291 such keys
+ * bundle that looked complete. `apps/app` accumulated 291 such keys
  * across nine locales, including every string on the stuck-token
  * recovery page (see #1560).
  *
@@ -496,7 +496,7 @@ export function leafAt(bundle: Bundle, dotted: string): unknown {
  * sailed through both (Codex #1563 r17). It has to be a rejection at
  * ingestion, in the SHARED scripts, because the surfaces at risk
  * include apps with no locale-coverage guard of their own:
- * `apps/defi`'s recovery page compares typed input against the same
+ * `apps/app`'s recovery page compares typed input against the same
  * literal and has nothing downstream to catch a translated prompt.
  */
 export function requiredLiteralProblems(
@@ -510,7 +510,7 @@ export function requiredLiteralProblems(
     // On a COMPLETE bundle an absent leaf is a failure of this check's
     // own question — "does this bundle carry the literals it must" —
     // and answering "yes" for a key that isn't there is wrong. It used
-    // to `continue` unconditionally, so apps/defi's translator (which
+    // to `continue` unconditionally, so apps/app's translator (which
     // runs no structural validation) wrote a response that omitted the
     // confirmation prompt and exited 0 (Codex #1563 r24).
     //

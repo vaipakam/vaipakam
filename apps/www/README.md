@@ -14,7 +14,7 @@ The **public marketing + docs surface** served at `vaipakam.com` (apex; `www.vai
 - NO wallet connect / wagmi / `wallet_*` JSON-RPC.
 - NO on-chain reads (every value the page shows is statically content-baked or sourced from a sibling Worker, not from a chain RPC).
 - NO connectkit / react-query / per-action permissioning.
-- Public-read tools that live on the connected-app domain by industry convention (analytics, NFT verifier, protocol console) are linked out via `defiUrl()` to `defi.vaipakam.com` rather than duplicated here.
+- Public-read tools that live on the connected-app domain by industry convention (analytics, NFT verifier, protocol console) are linked out via `defiUrl()` to `app.vaipakam.com` rather than duplicated here.
 
 This deliberate dependency-surface narrowing means a marketing-only change has a tighter blast radius — `apps/www` can't accidentally regress the connected app, and vice versa.
 
@@ -49,7 +49,7 @@ No on-chain test surface — by design.
 
 - Stage 4 source-tree refactor (labs → www): [`docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md).
 - Whitepaper authoring + sync: [`docs/internal/ProjectProcedures.md` §6.5](../../docs/internal/ProjectProcedures.md).
-- Cloudflare static-assets deploy shape: same as `apps/defi`, dependency-trimmed.
+- Cloudflare static-assets deploy shape: same as `apps/app`, dependency-trimmed.
 
 ## Configuration
 
@@ -59,6 +59,6 @@ No secrets — there's nothing here that requires server-side credentials. `apps
 
 ## Related
 
-- `apps/defi` — the connected app at `defi.vaipakam.com`. Shares a marketing-content base; the connected app overlays wallet + on-chain reads on top.
-- `packages/ui` — primitives shared between `apps/defi` + `apps/www`.
-- `packages/lib` — `crossDomainPref` (parent-domain cookie helper for theme + language sync between this domain and `defi.vaipakam.com`).
+- `apps/app` — the connected app at `app.vaipakam.com`. Shares a marketing-content base; the connected app overlays wallet + on-chain reads on top.
+- `packages/ui` — primitives shared between `apps/app` + `apps/www`.
+- `packages/lib` — `crossDomainPref` (parent-domain cookie helper for theme + language sync between this domain and `app.vaipakam.com`).

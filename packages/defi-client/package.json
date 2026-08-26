@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Protocol orchestration for alpha01 — reimplemented from apps/defi patterns without importing defi.",
+  "description": "Protocol orchestration primitives, originally written for the apps/alpha01 prototype and independent of any app. ORPHANED as of #1854: alpha01 was deleted with apps/defi and apps/alpha, and no workspace imports this package today. Kept for reuse; delete it if nothing adopts it.",
   "exports": {
     ".": {
       "types": "./src/index.ts",

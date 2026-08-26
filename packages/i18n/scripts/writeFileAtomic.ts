@@ -3,7 +3,7 @@
  *
  * Deliberately NOT in `src/bundleOps.ts`, and not exported from the
  * package barrel. `src/` is browser-facing — `apps/www` and
- * `apps/alpha02` import `@vaipakam/i18n` into client code — so a
+ * `apps/app` import `@vaipakam/i18n` into client code — so a
  * `node:fs` import there breaks their typecheck outright and would
  * drag a filesystem dependency into a browser bundle. The scripts are
  * the only consumers; sharing between them belongs here, not one level

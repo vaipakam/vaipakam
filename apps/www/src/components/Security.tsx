@@ -14,7 +14,7 @@ import "./Security.css";
  * chain-agnostic by design. Each Security card describes a property
  * of the protocol; the per-chain Diamond / facet addresses + live
  * event feed live on the connected-app surface
- * (defi.vaipakam.com/analytics#transparency), reachable via the
+ * (app.vaipakam.com/analytics#transparency), reachable via the
  * Footer "Smart Contracts" link. The cards therefore intentionally
  * carry NO inline verify links — the marketing page is the high-
  * level claim, the connected app is where the artifacts are.

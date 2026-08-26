@@ -92,7 +92,7 @@ export default function DataRights() {
           surface (labs.vaipakam.com) has no on-chain interactions and
           therefore no journey buffer, so the card is intentionally
           absent here. The connected-app DataRights page on
-          defi.vaipakam.com keeps the journey-log export. */}
+          app.vaipakam.com keeps the journey-log export. */}
 
       <div
         className="card"

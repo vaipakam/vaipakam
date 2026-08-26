@@ -5,7 +5,7 @@ import {
   ArrowRight,
   Coins,
 } from 'lucide-react';
-import { defiUrl } from '../lib/defiUrl';
+import { appUrl } from '../lib/appUrl';
 import { usePageMeta } from '../lib/usePageMeta';
 
 /**
@@ -90,7 +90,7 @@ export default function BuyVPFIMarketing() {
               standard for public-read DeFi dashboards). Open in a new
               tab so the marketing page stays open behind. */}
           <a
-            href={defiUrl('/analytics')}
+            href={appUrl('/analytics')}
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: 'var(--brand)' }}
@@ -110,7 +110,7 @@ export default function BuyVPFIMarketing() {
           fixed-rate buy card was removed in #712. */}
       <div style={{ marginTop: 32, textAlign: 'center' }}>
         <a
-          href={defiUrl('/vpfi-vault#step-2')}
+          href={appUrl('/vpfi-vault#step-2')}
           target="_blank"
           rel="noopener noreferrer"
           className="btn btn-primary btn-lg"

@@ -1503,7 +1503,7 @@ the chain-free marketing and documentation surface: protocol education, FAQs and
 whitepaper and docs, the public VPFI utility page, public Terms and Privacy routes, and links into
 the transparency surfaces. It loads no wallet context, no active-chain state, and no per-user
 lookups; any "verify on chain" affordance hands off to the connected app's public transparency
-route. The **connected app** (`defi.vaipakam.com`) hosts wallet-connected actions — dashboard, offer
+route. The **connected app** (`app.vaipakam.com`) hosts wallet-connected actions — dashboard, offer
 book, offer creation, loan details, claim center, activity, VPFI vault, rewards, allowances, and
 alerts — plus public-read shells (analytics, NFT verifier, protocol console) that work without
 connecting a wallet. The app ships in ten locales with a Basic / Advanced mode toggle that controls

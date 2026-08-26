@@ -5,13 +5,13 @@
 # version.
 #
 # The `/protocol-console/docs` route lives on the marketing apex
-# (`apps/www`) — the connected-app surface (`apps/defi`) keeps only
+# (`apps/www`) — the connected-app surface (`apps/app`) keeps only
 # the interactive `/protocol-console` dashboard whose info-icons
 # deep-link cross-domain to the prose docs via the `marketingUrl()`
 # helper. So the canonical source of truth at
 # `docs/ops/AdminConfigurableKnobsAndSwitches.md` is mirrored into
 # `apps/www/src/content/admin/AdminConfigurableKnobsAndSwitches.en.md`
-# (NOT apps/defi any more). English-only on purpose — the runbook is
+# (NOT apps/app any more). English-only on purpose — the runbook is
 # technical auditor-facing copy that translation drift would harm more
 # than it would help (same policy as the Whitepaper).
 #

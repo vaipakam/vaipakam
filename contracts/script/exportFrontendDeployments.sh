@@ -5,7 +5,7 @@
 # Writes the consolidated `deployments.json` (every per-chain
 # `contracts/deployments/<chain-slug>/addresses.json` folded into one
 # object keyed by `chainId`) into the `@vaipakam/contracts` workspace
-# package. Every consumer in the monorepo — apps/{defi,labs} for
+# package. Every consumer in the monorepo — apps/{app,www} for
 # the React surfaces, apps/{keeper,indexer,agent} for the Cloudflare
 # Workers — imports from `@vaipakam/contracts/deployments`, so this
 # single write reaches everything.
@@ -296,5 +296,5 @@ echo "  source stamp -> $FRONTEND_SOURCE_FILE"
 echo ""
 echo "Done. Next steps:"
 echo "  git diff packages/contracts/src/deployments.json     # review the change"
-echo "  pnpm --filter @vaipakam/defi exec tsc -b --noEmit    # confirm consumers still typecheck"
+echo "  pnpm --filter @vaipakam/app exec tsc -b --noEmit    # confirm consumers still typecheck"
 echo "  git commit -am 'Sync deployments with contracts@${COMMIT:0:7}'"

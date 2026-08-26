@@ -1,7 +1,7 @@
 import { L as Link } from "./L";
 import { ArrowRight, Coins } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { defiUrl } from "../lib/defiUrl";
+import { appUrl } from "../lib/appUrl";
 import "./Hero.css";
 
 export default function Hero() {
@@ -29,7 +29,7 @@ export default function Hero() {
                 VPFI-benefits page (`/vpfi`); from there a "Launch App"
                 CTA opens the wallet-gated in-app surface in a new tab. */}
             <a
-              href={defiUrl('/')}
+              href={appUrl('/')}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-primary btn-lg"

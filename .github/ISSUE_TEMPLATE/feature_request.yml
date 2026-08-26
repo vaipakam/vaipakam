@@ -42,7 +42,7 @@ body:
       label: Primary surface
       options:
         - "contracts"
-        - "apps/defi (frontend)"
+        - "apps/app (connected app)"
         - "apps/keeper"
         - "apps/indexer"
         - "apps/agent"

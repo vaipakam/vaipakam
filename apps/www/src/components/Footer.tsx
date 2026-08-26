@@ -2,7 +2,7 @@ import { L as Link } from './L';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import { openConsentBanner } from '../lib/consent';
-import { defiUrl } from '../lib/defiUrl';
+import { appUrl } from '../lib/appUrl';
 import './Footer.css';
 
 const GITHUB_URL = 'https://github.com/vaipakam';
@@ -28,7 +28,7 @@ export default function Footer() {
             />
             <p className="footer-tagline">{t('footer.tagline')}</p>
             {/* Per-chain Diamond verify links live on the connected-app
-                surface (defi.vaipakam.com/analytics#transparency) — see
+                surface (app.vaipakam.com/analytics#transparency) — see
                 the "Smart Contracts" link in the Resources column. The
                 marketing footer is intentionally chain-agnostic so the
                 deployed-network set can change without a labs build. */}
@@ -50,21 +50,21 @@ export default function Footer() {
                 — see Navbar for the rationale. Plain `<a>` with
                 `target="_blank"` so the marketing tab stays open. */}
             <a
-              href={defiUrl('/analytics#transparency')}
+              href={appUrl('/analytics#transparency')}
               target="_blank"
               rel="noopener noreferrer"
             >
               {t('footer.smartContracts')}
             </a>
             <a
-              href={defiUrl('/protocol-console')}
+              href={appUrl('/protocol-console')}
               target="_blank"
               rel="noopener noreferrer"
             >
               {t('footer.protocolConsole', 'Protocol Console')}
             </a>
             <a
-              href={defiUrl('/nft-verifier')}
+              href={appUrl('/nft-verifier')}
               target="_blank"
               rel="noopener noreferrer"
             >

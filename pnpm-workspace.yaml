@@ -2,8 +2,16 @@
 #
 # `apps/` holds runnable surfaces — each is its own deployable
 # (Vite SPA, Cloudflare Worker, etc.):
-#   - apps/defi    in-app surface served at defi.vaipakam.com
-#                   (formerly the top-level frontend/)
+#   - apps/app     the connected (wallet-bearing) app → app.vaipakam.com.
+#                   Naive-user-first surface. Developed as `apps/alpha02`
+#                   on alpha02.vaipakam.com; folder, package name and
+#                   Worker were renamed together at the #1854 cutover,
+#                   which also retired `apps/defi` (defi.vaipakam.com,
+#                   itself the former top-level frontend/) along with the
+#                   superseded `apps/alpha` and `apps/alpha01` prototypes.
+#                   apps/www links out to this domain — a URL and nothing
+#                   more; there is no build or import coupling between the
+#                   two, which is what made the rehome a one-line change.
 #   - apps/www     marketing + docs site → www.vaipakam.com
 #                   (canonical) + vaipakam.com (apex 301 → www).
 #                   Folder renamed from `apps/labs` in the labs →
@@ -28,7 +36,7 @@
 # `alpha/` (the FROZEN ARCHIVE root that held `alpha/frontend` and
 # `alpha/hf-watcher`) was removed in the Phase 4 cleanup of issue #135.
 # It had been scheduled for `rm -rf alpha/` once the Stage 3+4
-# successors (apps/defi, apps/keeper, apps/indexer, apps/agent) had been
+# successors (apps/app, apps/keeper, apps/indexer, apps/agent) had been
 # live without a fallback being needed. The two Cloudflare Workers that
 # were last built from the archive sources — `vaipakam-alpha` (formerly
 # bound to alpha.vaipakam.com) and `vaipakam-hf-watcher` — are operator-

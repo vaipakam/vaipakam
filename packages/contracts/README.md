@@ -6,7 +6,7 @@
 
 ## What is this
 
-This package is the **bridge between `contracts/` (Solidity source) and every off-chain consumer** in the monorepo — `apps/defi`, `apps/www`, `apps/agent`, `apps/keeper`, `apps/indexer`. They all import ABIs + deployment addresses from here, not from individual hand-typed declarations. That keeps every Worker / frontend / bot ABI-aligned with whatever the contracts actually shipped.
+This package is the **bridge between `contracts/` (Solidity source) and every off-chain consumer** in the monorepo — `apps/app`, `apps/www`, `apps/agent`, `apps/keeper`, `apps/indexer`. They all import ABIs + deployment addresses from here, not from individual hand-typed declarations. That keeps every Worker / frontend / bot ABI-aligned with whatever the contracts actually shipped.
 
 What it carries:
 
@@ -50,5 +50,5 @@ None — package is pure data + typed loader. No env vars, no secrets.
 ## Related
 
 - `contracts/` — Solidity source. The export scripts under `contracts/script/` produce this package's content.
-- `apps/defi`, `apps/www`, `apps/agent`, `apps/keeper`, `apps/indexer` — every consumer.
+- `apps/app`, `apps/www`, `apps/agent`, `apps/keeper`, `apps/indexer` — every consumer.
 - `vaipakam/vaipakam-keeper-bot` (sibling repo) — uses its own copy of these ABIs via `contracts/script/exportAbis.sh`.

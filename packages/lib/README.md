@@ -6,7 +6,7 @@
 
 ## What is this
 
-The **lowest layer of shared off-chain code** — utilities that have no React / Vite / Worker-specific dependency, so every consumer can import them. Consumers today: `apps/defi`, `apps/www`, `apps/agent`, `apps/indexer`, `apps/keeper`.
+The **lowest layer of shared off-chain code** — utilities that have no React / Vite / Worker-specific dependency, so every consumer can import them. Consumers today: `apps/app`, `apps/www`, `apps/agent`, `apps/indexer`, `apps/keeper`.
 
 Current scope (Stage 2a of the source-tree refactor):
 

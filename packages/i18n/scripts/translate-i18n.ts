@@ -1,13 +1,13 @@
 /**
  * Translate an app's canonical English locale bundle into other
  * supported locales via the Claude API. Generalised from
- * apps/defi/scripts/translate-i18n.ts so every surface shares one
+ * apps/app/scripts/translate-i18n.ts so every surface shares one
  * script (and one glossary + prompt).
  *
  * Usage (from the repo root or the package dir):
  *
  *     ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
- *         --locales-dir apps/alpha02/src/i18n/locales [codes...]
+ *         --locales-dir apps/app/src/i18n/locales [codes...]
  *
  *   - No codes            → translate every locale whose JSON is
  *                           missing OR is an empty placeholder `{}`.
@@ -72,7 +72,7 @@ function readFlagValue(flag: string): string | undefined {
 const localesDirArg = readFlagValue('--locales-dir');
 if (!localesDirArg) {
   console.error(
-    'Missing --locales-dir <path> (e.g. apps/alpha02/src/i18n/locales).',
+    'Missing --locales-dir <path> (e.g. apps/app/src/i18n/locales).',
   );
   process.exit(1);
 }

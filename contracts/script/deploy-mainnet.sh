@@ -89,14 +89,14 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #       Runs the three export scripts. No on-chain effect — safe to
 #       re-run. Usually run after `--phase contracts` lands.
 #
-#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-defi
-#       Builds apps/defi (the dApp) and deploys to Cloudflare Workers
+#   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-app
+#       Builds apps/app (the dApp) and deploys to Cloudflare Workers
 #       Static Assets via wrangler. Requires the monorepo's `pnpm
-#       install` to have populated `apps/defi/node_modules`.
+#       install` to have populated `apps/app/node_modules`.
 #
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-www
 #       Builds apps/www (the marketing site) and deploys via wrangler.
-#       Same install prerequisite as cf-defi.
+#       Same install prerequisite as cf-app.
 #
 #   bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-keeper
 #       Deploys apps/keeper (autonomous HF-liquidation Worker) via
@@ -149,7 +149,7 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 set -euo pipefail
 
 # ── Node version preflight ────────────────────────────────────────────
-# Vite 5+ and Wrangler 4+ both require Node 20+. The cf-{defi,www,
+# Vite 5+ and Wrangler 4+ both require Node 20+. The cf-{app,www,
 # keeper,indexer,agent} phases call them deep into the deploy; a
 # version mismatch there manifests as obscure crashes (e.g.
 # `ReferenceError: CustomEvent is not defined` from Vite). Failing
@@ -177,13 +177,13 @@ if [ "${NODE_MAJOR:-0}" -lt 20 ]; then
       export PATH="$BEST_NODE_BIN:$PATH"
       echo "[node-preflight] auto-switched to $BEST_NODE_BIN (was Node v$NODE_MAJOR)"
     else
-      echo "Error: Node v$NODE_MAJOR detected. cf-{defi,www,keeper,indexer,agent} phases need Node 20+ for Vite + Wrangler." >&2
+      echo "Error: Node v$NODE_MAJOR detected. cf-{app,www,keeper,indexer,agent} phases need Node 20+ for Vite + Wrangler." >&2
       echo "       Either run \`nvm install 20 && nvm use 20\`, or invoke this script with PATH" >&2
       echo "       overridden to a Node-20+ install (e.g. \`PATH=/path/to/node-20/bin:\$PATH bash …\`)." >&2
       exit 1
     fi
   else
-    echo "Error: Node v$NODE_MAJOR detected. cf-{defi,www,keeper,indexer,agent} phases need Node 20+ for Vite + Wrangler." >&2
+    echo "Error: Node v$NODE_MAJOR detected. cf-{app,www,keeper,indexer,agent} phases need Node 20+ for Vite + Wrangler." >&2
     echo "       Install Node 20+ (or nvm) before running this script." >&2
     exit 1
   fi
@@ -224,12 +224,12 @@ if ! git -C "$REPO_ROOT" diff --quiet HEAD 2>/dev/null; then
   TREE_DIRTY_AT_START=" (dirty)"
 fi
 # Stage 3 / Stage 4 source-tree split — see CLAUDE.md "Worker ABI
-# consumption (Stage 3 split)" + "Frontend ABI sync". apps/defi and
+# consumption (Stage 3 split)" + "Frontend ABI sync". apps/app and
 # apps/www are the two SPAs; apps/{keeper,indexer,agent} are the
 # three focused Workers that replaced the old `ops/hf-watcher`
 # monolith. The legacy `ops/hf-watcher` tree is archived under
 # `alpha/hf-watcher/` and is never deployed by this script.
-DEFI_DIR="$REPO_ROOT/apps/defi"
+APP_DIR="$REPO_ROOT/apps/app"
 WWW_DIR="$REPO_ROOT/apps/www"
 KEEPER_DIR="$REPO_ROOT/apps/keeper"
 INDEXER_DIR="$REPO_ROOT/apps/indexer"
@@ -265,7 +265,7 @@ Phases:
                     Requires --confirm-i-have-multisig-ready
   abi-sync        — packages/contracts ABI + deployments.json sync
                     + sibling keeper-bot repo (when present).
-  cf-defi         — Build + wrangler deploy apps/defi (the dApp).
+  cf-app         — Build + wrangler deploy apps/app (the dApp).
   cf-www          — Build + wrangler deploy apps/www (marketing).
   cf-keeper       — wrangler deploy apps/keeper (autonomous keeper).
   cf-indexer      — wrangler deploy apps/indexer + D1 migrations
@@ -1425,7 +1425,7 @@ phase_abi_sync() {
   echo "═══════════════════════════════════════════════════════════════"
   # Single canonical export target after the Stage 3 split:
   # `packages/contracts/src/{abis,deployments.json}`. Every consumer in
-  # the monorepo — apps/{defi,www} (the SPAs) and apps/{keeper,indexer,
+  # the monorepo — apps/{app,www} (the SPAs) and apps/{keeper,indexer,
   # agent} (the Workers) — imports from `@vaipakam/contracts`. So this
   # one step keeps the entire downstream surface (SPA reads, Worker
   # event decode, sibling keeper-bot reads) on the same compiled-
@@ -1470,29 +1470,29 @@ phase_abi_sync() {
   mark_phase_done "abi-sync"
 }
 
-# ── Phase: cf-defi ────────────────────────────────────────────────────
-# Builds + deploys apps/defi (the dApp — connected wallet, OfferBook,
+# ── Phase: cf-app ────────────────────────────────────────────────────
+# Builds + deploys apps/app (the dApp — connected wallet, OfferBook,
 # LoanList, vault management). Cloudflare Workers Static Assets target
-# is `vaipakam-defi`. Stage 4 split (May 2026) made this its own app
+# is `vaipakam-app`. Stage 4 split (May 2026) made this its own app
 # distinct from apps/www; per-phase deploys let the operator iterate
 # on one without touching the other.
 
-phase_cf_defi() {
-  if [ ! -d "$DEFI_DIR/node_modules" ]; then
-    echo "Error: $DEFI_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
+phase_cf_app() {
+  if [ ! -d "$APP_DIR/node_modules" ]; then
+    echo "Error: $APP_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
     exit 1
   fi
   echo "═══════════════════════════════════════════════════════════════"
-  echo "deploy-mainnet.sh — cf-defi"
+  echo "deploy-mainnet.sh — cf-app"
   echo "═══════════════════════════════════════════════════════════════"
-  ( cd "$DEFI_DIR" && pnpm run build && pnpm exec wrangler deploy )
-  mark_phase_done "cf-defi"
+  ( cd "$APP_DIR" && pnpm run build && pnpm exec wrangler deploy )
+  mark_phase_done "cf-app"
 }
 
 # ── Phase: cf-www ─────────────────────────────────────────────────────
 # Builds + deploys apps/www (the marketing site — landing, docs, blog,
 # brand surfaces). Cloudflare Workers Static Assets target is
-# `vaipakam-www`. Same install prerequisite as cf-defi (root pnpm
+# `vaipakam-www`. Same install prerequisite as cf-app (root pnpm
 # install populates both `node_modules` symlink chains).
 
 phase_cf_www() {
@@ -1801,7 +1801,7 @@ case "$PHASE" in
   configure)     phase_configure ;;
   handover)      phase_handover ;;
   abi-sync)      phase_abi_sync ;;
-  cf-defi)       phase_cf_defi ;;
+  cf-app)       phase_cf_app ;;
   cf-www)        phase_cf_www ;;
   cf-keeper)     phase_cf_keeper ;;
   cf-indexer)    phase_cf_indexer ;;
@@ -1827,7 +1827,7 @@ EOF
 Phase '$PHASE' was retired in the Stage 3/4 source-tree split.
 
 Replacement phases (run them in order):
-  --phase cf-defi       (apps/defi  — the dApp)
+  --phase cf-app       (apps/app  — the dApp)
   --phase cf-www        (apps/www   — marketing site)
   --phase cf-keeper     (apps/keeper  — autonomous keeper)
   --phase cf-indexer    (apps/indexer — D1 indexer + migrations)

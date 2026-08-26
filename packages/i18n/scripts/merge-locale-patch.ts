@@ -2,7 +2,7 @@
  * Merge hand-authored translation patches into locale bundles.
  *
  *     pnpm --filter @vaipakam/i18n merge-patch -- \
- *         --locales-dir apps/alpha02/src/i18n/locales \
+ *         --locales-dir apps/app/src/i18n/locales \
  *         --patches path/to/patches   # <code>.json per locale
  *
  * Pass `--reorder` to additionally normalise each bundle to `en.json`'s

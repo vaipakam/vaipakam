@@ -44,7 +44,7 @@ export interface OfferHeadlineInput {
   interestRateBpsMax: number;
 }
 
-/** Mirrors apps/defi `offerHeadline` — NFT rentals use `amount` as the daily fee. */
+/** Mirrors apps/app `offerHeadline` — NFT rentals use `amount` as the daily fee. */
 export function offerHeadline(offer: OfferHeadlineInput): { principalWei: bigint; rateBps: number } {
   const amount = BigInt(offer.amount?.trim() || '0');
   const amountMax = BigInt(offer.amountMax?.trim() || '0');

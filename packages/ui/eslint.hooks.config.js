@@ -5,7 +5,7 @@
  * -------------------------------------------------
  * `packages/ui` is not deployed on its own, and I first used that as
  * the reason to leave it unguarded. That was the wrong test. These
- * components are compiled INTO deployable surfaces — `apps/defi`
+ * components are compiled INTO deployable surfaces — `apps/app`
  * imports them from eleven files — so a conditional hook here crashes
  * a real page.
  *

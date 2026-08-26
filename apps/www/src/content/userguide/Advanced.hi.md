@@ -1712,7 +1712,7 @@ permission हो; initiate step खुद user-only ही रहता है�
 
 ### रिकवरी फ्लो (Recovery flow)
 
-1. [रिकवरी पेज](https://alpha02.vaipakam.com/recover) पर जाएं।
+1. [रिकवरी पेज](https://app.vaipakam.com/recover) पर जाएं।
 2. टोकन कॉन्ट्रैक्ट एड्रेस, वह सोर्स जिससे आपने भेजा था, और राशि दर्ज करें।
 3. स्क्रीन पर दी गई पावती (acknowledgment) को ध्यान से पढ़ें।
 4. साइनिंग सक्षम करने के लिए "CONFIRM" टाइप करें।

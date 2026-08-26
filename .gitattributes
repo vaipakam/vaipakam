@@ -34,7 +34,7 @@ Makefile     text eol=lf
 # Binary — never normalise; never diff as text
 # ----------------------------------------------------------------------
 # Note on SVG: deliberately NOT marked binary. SVGs are XML text and
-# are diffable / mergeable — UI icon + logo edits under apps/defi /
+# are diffable / mergeable — UI icon + logo edits under apps/app /
 # apps/www are real source we want to see inline diffs for. Image
 # editors that emit a single-line "minified" SVG are still text;
 # git diff handles them fine.

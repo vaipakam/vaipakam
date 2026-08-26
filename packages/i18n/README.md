@@ -1,7 +1,7 @@
 # @vaipakam/i18n
 
 Shared internationalisation core for every Vaipakam app surface
-(apps/www, apps/alpha02, future surfaces). Hoisted out of apps/www so
+(apps/www, apps/app, future surfaces). Hoisted out of apps/www so
 the third consumer (alpha02) didn't become the third copy.
 
 ## What lives here (must never drift between apps)
@@ -34,7 +34,7 @@ the third consumer (alpha02) didn't become the third copy.
 
 ```bash
 ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
-  --locales-dir apps/alpha02/src/i18n/locales        # fill empty stubs
+  --locales-dir apps/app/src/i18n/locales        # fill empty stubs
 # or explicit codes (overwrites):
 #   ... translate -- --locales-dir <dir> es zh hi ja
 # or top up locales that fell behind en.json (never overwrites):
@@ -64,7 +64,7 @@ a bundle whose order has already drifted rewrites most of it, which is
 worth doing as its own mechanical commit but never alongside content.
 Each consuming app should also carry a coverage test that fails when a
 locale in its `TRANSLATED_LOCALES` falls behind `en.json` — see
-`apps/alpha02/scripts/check-locale-coverage.ts`.
+`apps/app/scripts/check-locale-coverage.ts`.
 
 Review the diff before committing — the glossary check flags missing
 verbatim terms as warnings, not failures. Hand-authored translations

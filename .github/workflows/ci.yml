@@ -63,8 +63,8 @@
 #
 #   workspaces        pnpm workspace typechecks (apps/keeper, apps/indexer
 #                     — incl. the indexer's event-coverage script,
-#                     apps/agent, apps/defi via `tsc -b --noEmit`,
-#                     apps/www). The vitest test suites in apps/defi +
+#                     apps/agent, apps/app via `tsc -b --noEmit`,
+#                     apps/www). The vitest test suites in apps/app +
 #                     apps/agent are NOT run here — pre-existing test-
 #                     setup failures tracked as Issue #85; once that's
 #                     resolved, `pnpm -r test` joins this workflow in a
@@ -897,15 +897,14 @@ jobs:
       # red CI on that scenario (the step errors with "command not found"
       # rather than silently no-opping).
       #
-      # `apps/defi` now HAS a `typecheck` script (#1521): `tsc -b --noEmit`
-      # plus a one-rule `react-hooks/rules-of-hooks` lint. We avoid the
-      # full build to keep CI fast — `--noEmit` is the structural-only
-      # half of the build and is what matters for "did the types break".
-      # The lint half is deliberately narrow: defi's full config reports
-      # ~277 errors (mostly `no-explicit-any`), which is exactly why no
-      # job ever ran it, and is how a real hook-order crash on Create
-      # Offer reached production. Guarding the one rule the app is clean
-      # against beats guarding nothing until the backlog is cleared.
+      # The connected app (`apps/app`) runs `tsc -b --noEmit` plus its
+      # lint and i18n guards. We avoid the full build to keep CI fast —
+      # `--noEmit` is the structural-only half of the build and is what
+      # matters for "did the types break". The narrow rules-of-hooks
+      # guard this list once carried for the retired apps/defi came from
+      # a real hook-order crash on Create Offer reaching production
+      # (#1521); apps/app lints clean under its full config, so it needs
+      # no such carve-out.
       - name: Typecheck — apps/keeper
         run: pnpm --filter @vaipakam/keeper typecheck
 
@@ -915,28 +914,14 @@ jobs:
       - name: Typecheck — apps/agent
         run: pnpm --filter @vaipakam/agent typecheck
 
-      - name: Typecheck — apps/defi (tsc -b --noEmit + rules-of-hooks)
-        run: pnpm --filter @vaipakam/defi typecheck
-
       - name: Typecheck — apps/www
         run: pnpm --filter @vaipakam/www typecheck
 
-      - name: Typecheck — apps/alpha02
-        run: pnpm --filter @vaipakam/alpha02 typecheck
-
-      # `apps/alpha` and `apps/alpha01` are deployable Workers that
-      # render React, and neither was typechecked here at all (#1521).
-      # Both now run `tsc` plus the single-rule rules-of-hooks check,
-      # so a conditional hook in either fails CI like it does in the
-      # other React apps.
-      - name: Typecheck — apps/alpha (tsc -b --noEmit + rules-of-hooks)
-        run: pnpm --filter @vaipakam/alpha typecheck
-
-      - name: Typecheck — apps/alpha01 (tsc -b --noEmit + rules-of-hooks)
-        run: pnpm --filter @vaipakam/alpha01 typecheck
+      - name: Typecheck — apps/app (tsc -b --noEmit + lint + i18n guards)
+        run: pnpm --filter @vaipakam/app typecheck
 
       # `packages/ui` is not deployed on its own, but its components are
-      # compiled INTO apps/defi (eleven importers), and each app's
+      # compiled INTO the apps that import it, and each app's
       # `eslint .` runs from that app's directory without following
       # imports across the workspace boundary. Without this step a
       # conditional hook in a shared component keeps every app green
@@ -972,7 +957,7 @@ jobs:
       # that by induction. If that ruleset is ever relaxed to allow
       # direct pushes, this comparison inherits an untrusted base and
       # needs a persistent known-good ceiling instead.
-      - name: Baselines may only shrink — apps/alpha02
+      - name: Baselines may only shrink — apps/app
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BASE="${{ github.event.pull_request.base.sha }}"
@@ -986,17 +971,16 @@ jobs:
             fi
           fi
           git fetch --depth=1 origin "$BASE"
-          pnpm --filter @vaipakam/alpha02 exec tsx \
+          pnpm --filter @vaipakam/app exec tsx \
             scripts/check-baselines-shrink-only.ts --base "$BASE"
 
-      # `pnpm -r test` (the vitest suites in apps/defi and apps/agent) is
-      # intentionally NOT wired into this required-check workflow. apps/defi
-      # has pre-existing test-setup failures (Issue #85 — PublicDashboard +
-      # LoanDetails tests need a ChainProvider wrap that no longer matches
-      # the current context module) that are unrelated to anything CI is
-      # gating against. Adding the vitest step would have shipped a red CI on
-      # day one. Tracked separately; once #85 is fixed, add the
-      # `pnpm -r test` step back here in a follow-up PR.
+      # `pnpm -r test` is intentionally NOT wired into this required-check
+      # workflow. The suites that matter gate elsewhere and per-workspace:
+      # the connected app, @vaipakam/lib and apps/indexer all run in the
+      # `defi vitest` workflow's `vitest` job. A blanket `-r test` here
+      # would re-run those and additionally pull in workspaces with no
+      # meaningful suite. (Issue #85, the ChainProvider test-setup failure
+      # this note used to describe, died with apps/defi in #1854.)
 
   # ── ops/mesh-watcher ──────────────────────────────────────────────────
   # The VPFI recycling mesh invariant watcher (#1222 M3 B4-c). A

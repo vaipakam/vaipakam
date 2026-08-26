@@ -106,9 +106,9 @@ apps/www/public/robots.txt
 apps/www/public/docs/
 apps/www/public/llms.txt
 apps/www/public/llms-full.txt
-# Same pattern for alpha02 (apps/alpha02/scripts/generate-seo.mjs).
-apps/alpha02/public/sitemap.xml
-apps/alpha02/public/robots.txt
+# Same pattern for apps/app (apps/app/scripts/generate-seo.mjs).
+apps/app/public/sitemap.xml
+apps/app/public/robots.txt
 
 # ops/{subgraph,tenderly,lz-watcher} per-chain generated artifacts.
 #
