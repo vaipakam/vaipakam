@@ -759,15 +759,21 @@ enforce them and will enable happily without them: the loan-side reward cap
 The only deploy assertion touching this flag pins it OFF on a fresh deploy
 (`DeployDiamondIntegrationTest.t.sol`); it observes no settlement path at all,
 and the setter checks only the chain role. Treat the whole of this step as a
-MANUAL readback — a green deploy-sanity suite is not evidence for any part of
-it. The RECOVERY paths — time-based
+MANUAL readback. The test corpus does cover the source behaviour of the swept
+paths (`VPFIDiscountFacetTest`, `SwapToRepayFacetTest`), but no test can show
+that THIS Diamond routes that bytecode, and none covers the recovery paths or
+refinance at all — so a green suite is not evidence for this step. The RECOVERY paths — time-based
 default, liquidation, discounted liquidation, split and partial (FIVE, not the
 six an earlier revision of this step named — the periodic-interest
 auto-liquidation leg deducts a handling fee on swap PROCEEDS and charges no
 lender yield fee at all, so there is nothing there for the bump to reduce) —
 still take the ordinary cut from recovered lender interest without consulting
 the stamp; and refinance resolves the stamp against the STORED lender rather
-than the current holder. (The collateral prepay-SALE terminals were named here
+than the current holder. **Partial liquidation is worse than the others**: it
+deposits the lender share to `loan.lender` and deliberately writes no claim
+record, so on a transferred position the previous lender keeps the proceeds
+outright and the current holder has nothing to claim against — the discount is
+the smaller half of that defect. (The collateral prepay-SALE terminals were named here
 in an earlier revision and are REMOVED: their treasury leg is an ADDITIVE
 consideration item funded from the sale price — the lender receives principal
 plus interest GROSS and the BORROWER's residual bears the fee — so there is no

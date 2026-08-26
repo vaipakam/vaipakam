@@ -29,7 +29,14 @@ IMPLEMENTATION list — not from the entitlement itself, which the frozen rule
 already extends to every settlement of a lender's interest.
 
 One of those routes does not even end the loan: a partial liquidation leaves it
-running and still takes a cut from the interest it recovers on the way.
+running and still takes a cut from the interest it recovers on the way. It also
+carries a larger problem than the missing reduction. Because the loan stays
+open, that route pays the recovered money straight to whoever the records name
+as lender and deliberately records no claim for anyone to collect against —
+every route that does end a loan records one. So if the position has changed
+hands and the tidy-up step declined to run, the previous lender keeps the money
+itself, and the new holder has no way to ask for it. Putting that right is part
+of the same work.
 
 A second pair of routes was added to this list during review and then taken
 back off it, and the reason is worth recording. When an NFT collateral position

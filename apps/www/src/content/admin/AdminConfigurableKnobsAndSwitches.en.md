@@ -642,7 +642,10 @@ optional:
   stamp — five entry points in all: time-based default, liquidation,
   DISCOUNTED liquidation (separately gated, beside the ordinary one),
   split liquidation, and partial liquidation (which leaves the loan
-  Active). The periodic-interest auto-liquidation leg is NOT one of
+  Active, and which additionally pays the lender share to the STORED
+  lender with no claim record — so on a transferred position the
+  previous lender keeps the proceeds themselves, not merely the
+  discount). The periodic-interest auto-liquidation leg is NOT one of
   them — an earlier revision of this note counted it as a sixth; it
   deducts a handling fee on swap PROCEEDS and charges no lender yield
   fee at all, so the bump has nothing to reduce there. The collateral
@@ -662,9 +665,15 @@ optional:
   the #1383 family as covering it, and do not read PR-6 (#1354) as
   discharging it. Do not read the deploy assertions as bearing on it
   either: the only one touching this flag pins it OFF on a fresh
-  deploy, and observes no settlement path at all. Nothing automated
-  checks that any settlement path honours the stamp, and the setter
-  checks only the chain role — the precondition is a manual readback.
+  deploy, and observes no settlement path at all. What the test corpus
+  DOES cover is the source behaviour of the paths already swept —
+  `VPFIDiscountFacetTest` drives Full-stamped repay and partial-repay
+  settlements and asserts the exact treasury discount, and
+  `SwapToRepayFacetTest` covers the swap terminal. What no automated
+  check can establish is that a PARTICULAR deployed Diamond routes that
+  bytecode, and no test covers the recovery paths or refinance at all —
+  which is why they are open. The setter checks only the chain role, so
+  the deployment side of this precondition is a manual readback.
 
 Disabling is always allowed, from any chain role.
 
