@@ -1626,7 +1626,7 @@ What the ceremony can actually do:
 
 A protocol-enforced gate (or a propagation mechanism that does not depend on an
 unapplied day) is the real fix and is **not** in this ceremony's gift. Tracked as
-a follow-up; the instructions above are mitigation, not closure. Nothing here is
+**#1944**; the instructions above are mitigation, not closure. Nothing here is
 exploitable for profit — the costs are a user meeting an empty-balance revert on
 a gate opened early, and, in the pre-arm case, a mirror that cannot be armed.
 
