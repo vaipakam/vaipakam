@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -216,7 +217,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -319,6 +320,25 @@ contract DefaultedFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getConsolidationFacetSelectors()
         });
+
+        // #1955 — the recovery/refinance paths resolve the lender yield-fee
+
+        // discount through `VPFIDiscountFacet` (host-routed). Production cuts
+
+        // it; without it a Full-STAMPED loan reverts `FunctionDoesNotExist`
+
+        // here, so this suite could not exercise a stamped settlement at all.
+
+        cuts[20] = IDiamondCut.FacetCut({
+
+            facetAddress: address(new VPFIDiscountFacet()),
+
+            action: IDiamondCut.FacetCutAction.Add,
+
+            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
+
+        });
+
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();

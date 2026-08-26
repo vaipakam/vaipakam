@@ -4464,6 +4464,87 @@ contract RiskFacetTest is Test {
         vm.clearMockedCalls();
     }
 
+    /// @dev #1955 — run ONE partial liquidation on an existing loan, optionally
+    ///      stamping the lender `Full` first, and return what the treasury took
+    ///      and what the lender received. The lender's share lands in their
+    ///      WALLET: `freezeOrPayActiveLenderResident`'s clean branch is a direct
+    ///      transfer (only the frozen branch vaults, and it vaults to the STORED
+    ///      lender deliberately).
+    function _partialAndMeasure(
+        uint256 loanId,
+        address treasuryEoa,
+        address lenderAddr,
+        bool stampFull
+    ) private returns (uint256 toTreasury, uint256 toLender) {
+        if (stampFull) {
+            LibVaipakam.Loan memory ln =
+                LoanFacet(address(diamond)).getLoanDetails(loanId);
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+        uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
+        uint256 lBefore = IERC20(mockERC20).balanceOf(lenderAddr);
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId, 2_000, defaultAdapterCalls()
+        );
+        toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
+        toLender = IERC20(mockERC20).balanceOf(lenderAddr) - lBefore;
+    }
+
+    /// @notice #1955 — the Full stamp reaches the interest a PARTIAL liquidation
+    ///         recovers. This entry point does not end the loan, and its payout
+    ///         re-key is covered by the #1383 test above; the DISCOUNT on it was
+    ///         not, and it is the one recovery entry whose treasury cut is taken
+    ///         while the loan stays Active.
+    ///
+    /// @dev    Same value-conservation shape as the HF-liquidation test: the
+    ///         treasury transfer bundles the handling fee, which the discount
+    ///         never touches, so two replays of ONE loan isolate the discount
+    ///         without needing to know that fee (it cannot be zeroed — a 0 falls
+    ///         back to the default).
+    function test_1955_partialLiquidation_lenderFull_shiftsInterestFeeToLender()
+        public
+    {
+        address treasuryEoa = makeAddr("treasuryEoaFor1955");
+        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+
+        uint256 loanId = _setupPartialSizing(0.65e8);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 0);
+        address lenderAddr = LoanFacet(address(diamond)).getLoanDetails(loanId).lender;
+
+        // Interest must have ACCRUED or there is no yield fee to discount and
+        // both replays measure the handling fee alone — the trap the #1383 test
+        // fell into first. In-term, so the partial maturity gate still passes.
+        vm.warp(block.timestamp + 10 days);
+
+        uint256 snap = vm.snapshotState();
+        (uint256 baseTreasury, uint256 baseLender) =
+            _partialAndMeasure(loanId, treasuryEoa, lenderAddr, false);
+        vm.revertToState(snap);
+        (uint256 fullTreasury, uint256 fullLender) =
+            _partialAndMeasure(loanId, treasuryEoa, lenderAddr, true);
+
+        assertGt(baseTreasury, 0, "reference run paid a treasury cut");
+        assertLt(fullTreasury, baseTreasury, "Full stamp reduced the treasury cut");
+        assertEq(
+            baseTreasury - fullTreasury,
+            fullLender - baseLender,
+            "every wei the treasury gave up reached the lender"
+        );
+        vm.clearMockedCalls();
+    }
+
     /// @dev HF_SCALE-relative ceiling the routine guard enforces (default 1.20).
     function _ceiling() private pure returns (uint256) {
         return (HF_SCALE * 12_000) / 10_000;

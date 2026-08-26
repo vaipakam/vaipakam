@@ -6,6 +6,7 @@ import {Test} from "forge-std/Test.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {RefinanceFacet} from "../src/facets/RefinanceFacet.sol";
+import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {IVaipakamErrors} from "../src/interfaces/IVaipakamErrors.sol";
 import {OracleFacet} from "../src/facets/OracleFacet.sol";
@@ -121,7 +122,7 @@ contract RefinanceFacetTest is Test {
         testMutatorFacet = new TestMutatorFacet();
         helperTest = new HelperTest();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0]  = IDiamondCut.FacetCut({facetAddress: address(offerCreateFacet),         action: IDiamondCut.FacetCutAction.Add, functionSelectors: helperTest.getOfferCreateFacetSelectors()});
         cuts[17] = IDiamondCut.FacetCut({
             facetAddress: address(offerAcceptFacet),
@@ -167,6 +168,25 @@ contract RefinanceFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getConsolidationFacetSelectors()
         });
+
+        // #1955 — the recovery/refinance paths resolve the lender yield-fee
+
+        // discount through `VPFIDiscountFacet` (host-routed). Production cuts
+
+        // it; without it a Full-STAMPED loan reverts `FunctionDoesNotExist`
+
+        // here, so this suite could not exercise a stamped settlement at all.
+
+        cuts[21] = IDiamondCut.FacetCut({
+
+            facetAddress: address(new VPFIDiscountFacet()),
+
+            action: IDiamondCut.FacetCutAction.Add,
+
+            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
+
+        });
+
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
 
