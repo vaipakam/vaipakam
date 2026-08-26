@@ -155,9 +155,22 @@ function defaultFor(p: AbiParameter, fnName = ''): unknown {
     // one RPC per chain and — because its RPC count is non-zero — is reported
     // as MEASURED rather than gated. `autoLifecycle` read
     // `getAutoExtendEnabled`, got false, and its 3.9 ms was a closed kill
-    // switch presented as a cost (Codex #1945 r1). Gate-shaped names open.
-    return /enabled|active|allowed|valid|open|exists|is[A-Z]|has[A-Z]|can[A-Z]|ok|success/.test(
-      p.name ?? '',
+    // switch presented as a cost (Codex #1945 r1).
+    //
+    // The FUNCTION name has to be consulted, not just the parameter:
+    // `getAutoExtendEnabled`'s output is UNNAMED (`('', 'bool')`), so the
+    // first cut of this fix keyed on `p.name`, never fired, and left the gate
+    // shut. That is the same unnamed-output trap that produced the 1e18 count
+    // — made twice in this file, which is why both heuristics now read from
+    // the same pair of sources.
+    const where = `${p.name ?? ''} ${fnName}`;
+    // Inverted gates first: `paused`/`frozen` true would BLOCK work, which is
+    // the opposite of what an open gate means.
+    if (/paused|blocked|frozen|sanction|banned|denied|revoked|expired/i.test(where)) {
+      return false;
+    }
+    return /enabled|active|allowed|valid|open|exists|\bis[A-Z]|\bhas[A-Z]|\bcan[A-Z]|success|approved|supported/i.test(
+      where,
     );
   }
   if (t === 'string') return 'x';
