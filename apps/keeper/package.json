@@ -10,7 +10,8 @@
     "build": "pnpm run typecheck",
     "typecheck": "tsc -p . --noEmit && node scripts/check-deploy-invocations.mjs",
     "test": "vitest run",
-    "check-deploy-invocations": "node scripts/check-deploy-invocations.mjs"
+    "check-deploy-invocations": "node scripts/check-deploy-invocations.mjs",
+    "bench:cpu": "tsx bench/passCpu.ts"
   },
   "dependencies": {
     "@pushprotocol/restapi": "^0.0.1",
