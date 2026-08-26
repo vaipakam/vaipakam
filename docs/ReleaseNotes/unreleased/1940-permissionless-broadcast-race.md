@@ -43,15 +43,30 @@ current cutover date, so announcing a different untouched day works normally.
 Only running out of eligible days is unrecoverable. Saying otherwise would have
 had someone treat a fixable situation as ruined.
 
-**And there is an enforceable gate after all.** The messenger that carries these
-announcements can be paused by its guardian, and pausing it does not stop the
-funding transfers, which travel a different path. So the funding and its
-confirmations can be completed while announcements are impossible, and the pause
-lifted immediately before announcing — which closes the gap rather than
-shortening it. It is not free: pausing stops every other announcement on that
-messenger, and lifting the pause is an owner action, meaning a scheduled and
-delayed one after governance handover. The procedure now lays out the trade-off
-instead of claiming no gate exists.
+**And there is an enforceable gate after all — but it is narrower than it first
+looked.** The messenger that carries these announcements can be paused by its
+guardian, and pausing it does not stop the funding transfers, which travel a
+different path. So the funding and its confirmations can be completed while
+announcements are impossible, and the pause lifted immediately before announcing.
+
+That closes the gap for the day being prepared, and only for that day. An
+announcement may name any day that has been closed off for accounting, so the
+moment the pause lifts, someone can announce a different one that is neither
+funded nor yet handled on that chain — reaching the same exposure by another
+route. The procedure therefore says to reconcile every announceable day before
+lifting the pause, or to leave the messenger paused until the underlying
+fund-safety fix is deployed there, and admits that on a chain with real history
+the second may be the only honest answer.
+
+There is one further trap in the mechanics. Lifting the pause is an owner action,
+which after governance handover means a scheduled action with a delay — and the
+timelock as deployed by default lets *anyone* execute a scheduled action once its
+delay expires. Queuing the unpause in advance therefore hands away control of
+when it happens: if the funding is still in flight at that moment, someone else
+can execute the unpause and announce against an unfunded chain. The procedure now
+says to run this only on a timelock whose executor is the operator's own
+multi-signature wallet, or to queue the unpause only once every confirmation is
+final and to be ready to cancel it.
 
 **The severity was also understated.** While the outstanding fund-safety item is
 open, a claim arriving at a gate opened ahead of its funding does not simply

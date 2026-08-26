@@ -1592,8 +1592,10 @@ of the CHAIN, not of the caller. Any account on Base willing to pay the CCIP fee
 can broadcast a finalized day. So between finalizing the day and the last
 `RewardBudgetReceived` landing, a third party can open every mirror's claim gate
 against a budget that has not arrived, and no amount of operator discipline
-prevents it. Nothing here is exploitable for profit; the harm is that users meet
-an empty-balance revert on a gate the ceremony opened early.
+prevents it. **While #1566 is undeployed on that mirror this is a fund-loss path,
+not an empty-balance revert** — see the containment note below; an earlier
+revision of this sentence said the opposite and it survived one round of the
+correction because only the paragraph below was rewritten.
 
 **This window cannot be closed by ordering, and an earlier revision of this
 paragraph was wrong to say it could.** Moving the remit and its receipts ahead of
@@ -1625,13 +1627,34 @@ over the SEPARATE `crossChainMessenger` / `RewardRemittanceReceiver` path. So:
    the pause;
 3. unpause, then broadcast.
 
-That closes the finalize→receipt window rather than shrinking it. **Weigh the
-trade-offs rather than reaching for it reflexively:** the pause stops *all* reward
-messaging on that messenger for its duration, not just this day's broadcast; and
-`unpause` is owner-only, so post-handover it is a Timelock action with the full
-delay — the unpause must be scheduled in advance and its execution is what gates
-the broadcast. On a mesh already funding live mirror claims, that cost may exceed
-the exposure.
+That closes the finalize→receipt window for the CANDIDATE day. **It does not
+make unpausing safe on its own**, and treating it that way is the trap:
+`broadcastGlobal` accepts any `dayId` whose `dailyGlobalFinalized[dayId]` is true,
+so the moment the pause lifts, an arbitrary caller can broadcast a DIFFERENT
+finalized day that is unapplied and unfunded on that mirror — reaching the same
+#1566 borrower-collateral path. Funding one candidate closes one door.
+
+So before unpausing, either **reconcile every broadcastable finalized day** on
+each target mirror — funded, or already applied, or otherwise unable to open an
+unfunded gate — or **keep the messenger paused** until #1566 is deployed there or
+a day-scoped gate exists. On a mesh with real history the first option may not be
+achievable, and the second is then the honest answer even though it is expensive.
+
+**Weigh the trade-offs rather than reaching for the pause reflexively:** it stops
+*all* reward messaging on that messenger for its duration, not just this day's
+broadcast. On a mesh already funding live mirror claims, that cost may exceed the
+exposure.
+
+**And do NOT pre-schedule the unpause as a convenience.** `unpause` is
+owner-only, so post-handover it is a Timelock action with the full delay — but
+`DeployTimelock.s.sol` defaults `TIMELOCK_EXECUTOR` to `address(0)`, which is
+**open execution: anyone may execute once the delay expires**. A queued unpause
+therefore leaves operator control at the moment it becomes executable, and if
+remittance or receipts are still incomplete then, someone else can execute it and
+broadcast against an unfunded mirror. Either run this procedure on a Timelock
+whose executor is the Safe, or schedule the unpause only once every receipt is
+final and be prepared to CANCEL it if that stops being true. The delay is the
+window; do not start it before you can afford it to end.
 
 Whether or not the pause is used:
 
