@@ -534,6 +534,19 @@ function answerCall(data: string, chainKey = ''): string {
     ) {
       return FIXTURE_CHAIN_IDS.map((c) => c);
     }
+    // getActiveLoansPaginated returns the loan-id list directly, and the keeper
+    // joins those ids against the D1 `loans` table for HF-band recipients (and
+    // reads getLoanDetails per id). Real 1-based sequential ids (pageOffset + i
+    // + 1) so they line up with the seeded loans (loan_id 1..ROWS) — a constant
+    // 1e18 id matched no seeded row, so recordHfBandNotifications resolved no
+    // recipient and never exercised its notification-row construction or its
+    // batched writes (Codex #1948 liquidator r1).
+    if (
+      /getactiveloanspaginated/i.test(fn.name) &&
+      /^u?int(256)?$/.test(inner.type)
+    ) {
+      return Array.from({ length: pageLen }, (_, i) => BigInt(pageOffset + i + 1));
+    }
     if (fixedSizePage) {
       // Reward-entry ids are allocated from 1, so the COUNT_VALUE-entry dataset
       // is ids 1..COUNT_VALUE INCLUSIVE. Real entries for those ids
