@@ -206,6 +206,24 @@ All of this is read back before the switch, in the same pass that already
 verifies the wiring rather than the components, and the design record carries the
 same additions so the two documents do not drift apart.
 
+A further pass added six more readbacks in the same spirit — each a pointer or a
+principal that every other check can pass while it alone is wrong. The transfer
+route now confirms that each pool actually lists the live peer pool at the far
+end, so a redeployed peer cannot slip through a healthy-looking lane that then
+rejects its first delivery; that the pool's own message router — separate from,
+and independently changeable from, the adapter's — is the live one; and that the
+rate-limit governor and the live pool name each other, not merely that the pool
+names the governor, so the limits stay tunable after the switch. The mirror token
+is now checked for the same controlling principals as the other cross-chain
+contracts — its owner can hand the sole mint authority elsewhere and its guardian
+can freeze it — rather than only for which pool it mints through. The unpaused
+check now covers the participating settlement contracts on each chain, not only
+the transport contracts, because the remittance itself refuses to move while
+either end is paused. And the conditional-acceptance caution, previously stated
+only for the token-administrator transfer, now applies to every ownership
+transfer the same script can skip, so an operator does not schedule an acceptance
+that will simply fail and leave a contract outside governance.
+
 The remaining review threads are being worked through the same way — each one
 checked against the procedure as it now stands, and answered with what was
 found. The count of genuinely outstanding points is an outcome of that pass, not

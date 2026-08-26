@@ -169,6 +169,23 @@ first; that is a step outside this ceremony and it blocks step 6 until it is
 done. Do not read the skip as "not applicable" — the administrator is still an
 EOA either way.
 
+**The ORDINARY ownership legs are conditional the same way — the round-6 warning
+above was scoped only to the CCT admin leg, and it is not the only skip.**
+`_transferCrossChainOwnership` follows the identical supported skip path:
+when the signing EOA is not a target's current `owner()` it prints
+`SKIP ownership transfer` and creates NO pending transfer (`Handover.s.sol`, the
+`currentOwner != signer` branch). Step 5 then instructs the operator to schedule
+`acceptOwnership()` for every target; on any skipped target that call REVERTS,
+and — worse than the CCT case, which only stalls step 6 — a target still owned by
+another key is left OUTSIDE governance with no recovery step documented here. So
+before scheduling each ownership acceptance, require EITHER a successful handover
+output for that target OR `Ownable2Step(target).pendingOwner() == timelock`
+read directly (`OwnershipTransferRequested(_, timelock)` outstanding for the pool,
+whose pending owner is private — same log rule as step 6). Where it is not
+pending, the current owner must run `transferOwnership` first, exactly as for the
+CCT leg. Schedule an acceptance only for targets that are actually pending to the
+timelock.
+
 ### 6. Readback verification
 
 Per chain, confirm:
@@ -978,10 +995,18 @@ read back on every chain:
   not the pool address you configured. If CCT registration was skipped because
   the configuring account did not own the token, or a pool was redeployed, you
   will have inspected a healthy pool that is not the one CCIP will use;
-- **and that the whole path is UNPAUSED.** Every cross-chain contract carries a
-  guardian pause, the remit is `whenNotPaused`, and the arming setter checks none
-  of it — so an emergency pause left on after a partial recovery passes every
-  wiring readback and then stops the propagation the arm depends on.
+- **and that the whole path is UNPAUSED — the participating DIAMONDS included,
+  not only the non-Diamond cross-chain contracts.** Every cross-chain contract
+  carries a guardian pause, the remit is `whenNotPaused`, and the arming setter
+  checks none of it — so an emergency pause left on after a partial recovery
+  passes every wiring readback and then stops the propagation the arm depends on.
+  The remit itself lives on the Diamond: Base's `remitRewardBudget` is
+  `whenNotPaused`, and a mirror rejects the receiver's `onRewardBudgetReceived`
+  call at the SAME guard — so a Base Diamond or any mirror Diamond left paused
+  after an incident breaks the path even when every cross-chain contract is
+  unpaused and every wiring readback is clean. Require `AdminFacet.paused() ==
+  false` on Base AND every participating mirror, not just on the transport
+  contracts.
 
 **If ANY of this was rotated, matching readbacks are not enough — the lane has
 to be DRAINED first.** `CcipMessenger` resolves the destination handler at
@@ -1043,7 +1068,10 @@ enumerate it and read all of it back:
 | | `channelOfPeer` (the REVERSE index) | **no — read it** |
 | `vpfiTokenPool` | `getRateLimitAdmin()` | **no — read it** |
 | | `isSupportedChain(selector)` per lane | **no — read it, and see below** |
-| `CcipMessenger` (cont.) | `getRouter()` | **no — read it, and see below** |
+| | `getRemotePools(selector)` both ends | **no — read it, and see below** |
+| | `getRouter()` (the POOL's own router) | **no — read it, and see below** |
+| `VpfiPoolRateGovernor` | `pool()` | **no — read it, and see below** |
+| `CcipMessenger` (cont.) | `getRouter()` (the ADAPTER's) | **no — read it, and see below** |
 | *all three* | `owner()`, `pendingOwner()` | **no — read them** |
 | | `guardian()` | **no — read it** |
 | | the proxy's implementation | **no — read it** |
@@ -1134,12 +1162,50 @@ What each of the newly-required ones costs if it is wrong:
   is unchanged. `sendMessage` quotes and dispatches through `getRouter()`, so
   confirm it equals the live router the selectors, lanes and token registry
   belong to. Nothing else here can see this one.
+- **`getRemotePools(expectedSelector)` on the pool at BOTH ends of every lane.**
+  The registry, supported-chain, rate-limit, ownership and messenger checks can
+  all pass on a lane whose peer pool was redeployed while the local lane still
+  lists only the OLD peer address. The first delivery from the replacement is
+  then rejected inside `_validateReleaseOrMint`, because `isRemotePool` does not
+  recognise its `sourcePoolAddress`. Require the live peer pool to appear in
+  `getRemotePools(expectedSelector)` on both ends — do NOT require the old entry
+  to be removed, since it may still cover an in-flight message — before the
+  irreversible arm.
+- **`getRouter()` on the POOL, not only on the adapter.** The pool carries its
+  OWN independently-mutable router (`TokenPool.setRouter`), separate from the
+  `CcipMessenger` router the previous bullet reads. A pool left on a stale router
+  authenticates the live on-ramp and off-ramp against that stale router in
+  `_onlyOnRamp` / `_onlyOffRamp` and rejects the first remittance, while every
+  lane check above still reads healthy. Confirm `vpfiTokenPool.getRouter()` equals
+  the live router the lane belongs to, alongside the adapter readback.
+- **`VpfiPoolRateGovernor.pool()`, the reciprocal of `getRateLimitAdmin()`.**
+  Setting the pool's `rateLimitAdmin` to the governor is only half the pairing:
+  the governor stores the pool it drives, and after a pool rotation a
+  freshly-registered pool can point AT the governor while the governor still
+  points at the RETIRED pool. Every bounds-checked `setLaneRateLimits` call is
+  then dispatched through `VpfiPoolRateGovernor.pool` to the old pool, so
+  governance cannot repair or tune the live lane after arming. Require
+  `VpfiPoolRateGovernor.pool() == registry.getPool(vpfiToken)` so the governor
+  and the live pool name each other.
 
 **And verify the mirror token's live minting pool.** Messenger peers and rate
 limiters can all read back correctly against the intended pool while the mirror
 token still points at a redeployed or unset one — `setTokenPool` is a separate
 step that `ConfigureCcip` may not have completed. Read the token's pool back on
 each mirror and confirm it is the pool whose limits you just checked.
+
+**And read back the mirror TOKEN's own principals — not only its pool pointer.**
+`VPFIMirrorToken` is `Ownable2StepUpgradeable` + `GuardianPausable` + UUPS, so
+confirming only `tokenPool()` lets a deployer-owned replacement token pass this
+preflight: its owner can immediately repoint `tokenPool` via `setTokenPool`
+— handing an arbitrary address the SOLE mint/burn authority — and can authorise a
+UUPS upgrade, while its guardian can pause every mint and transfer, all after the
+irreversible arm. The Step-6 handover readback covers the mirror token that was
+handed over; it says nothing about one REPLACED since, which is the case this
+section exists for. Apply the SAME four readbacks the table's last rows require of
+the other proxies to the live mirror-token proxy on each mirror: `owner() ==
+timelock`, `pendingOwner() == address(0)`, `guardian()` == the current guardian
+key, and the proxy implementation == the one you intend to be running.
 
 **And read back every live messenger's `destGasLimit`.** Commitment reports and
 the `D*` broadcast both size their CCIP callback from it, and `setDestGasLimit`
