@@ -1703,7 +1703,21 @@ verified live first:
   "the shared definition exists". While the expiry predicate and the claim gate
   measure different quantities, executable time accrues for claims that currently
   revert, so restored funding lets the next sweep expire entitlements on stale
-  elapsed time. Assert the deployed code slice per chain, as Steps 1 and 4 do.
+  elapsed time. Assert the deployed code slice per chain, as Steps 1 and 4 do;
+- **#1566 CLOSED and its fix deployed** — the same gate Step 4 carries, and it
+  belongs here TOO rather than only there. Step 4's version reads *"the
+  fund-safety half is #1566, and it is OPEN. Do not arm until it closes"*, which
+  binds arming. This step is deliberately separate and can be performed later,
+  ad hoc — which is precisely the route by which a precondition gets skipped, and
+  the reason this list exists. While payouts are bounded by un-earmarked BALANCE
+  rather than by funding delivered for rewards, the bucket's backing shares one
+  fungible balance with claimants that include **user collateral**
+  (`LibVpfiRecycle`'s custody enumeration lists a live swap-to-repay intent's
+  `custodialCollateral` and liquidation `fallbackSnapshot` custody, and says
+  outright that a payout drawing on them spends a BORROWER's collateral).
+  Turning on the sweep moves more value through that shared balance, so enabling
+  RL-3 ahead of #1566 widens the exposure the arming gate was written to hold
+  shut. Deferring Step 6 does not defer this.
 
 The setter range-checks a non-zero value against the configured minimum, so a
 too-short horizon reverts rather than silently truncating a user's window.

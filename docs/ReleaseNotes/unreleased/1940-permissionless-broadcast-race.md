@@ -32,3 +32,21 @@ lands, and stopping to investigate lengthens exactly the gap that caused it.
 
 Nothing here is exploitable for gain. The cost of the race is a user meeting a
 failed claim on a gate that opened a few minutes early.
+
+
+## A second gate that only bound one step
+
+The same review pass found that the switch which turns on the expiry-and-sweep
+behaviour carries its own list of things to confirm first, and that list was
+missing one of them. The condition in question — an open fund-safety item about
+how reward payouts are bounded — is written down as a blocker on the irreversible
+activation step, and correctly so. But the sweep switch is deliberately separate
+and may be thrown later, on its own; a condition attached only to the earlier
+step does not reach it.
+
+That matters because turning the sweep on moves more value through a balance the
+programme shares with other claimants, two of which are user collateral. Until
+payouts are bounded by what was actually delivered for rewards rather than by
+whatever the balance happens to hold, enabling the sweep widens exactly the
+exposure the activation gate exists to hold shut. The condition is now listed in
+both places, with a note that deferring the step does not defer the condition.

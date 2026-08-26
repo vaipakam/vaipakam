@@ -1415,6 +1415,7 @@ GovernanceRunbook gains a recycling section, executed in order:
    alignment attempts were each subtly wrong (all with green suites);
    the fix is one shared derivation across the three sites plus a
    property-test matrix, and should land with **#1566** (#1498 is its auto-closed predecessor — see §M7 step 0; sending this matrix to #1498 files it against a closed card).
+2b. **RL-3's precondition list includes #1566**, not only #1499 — the horizon knob is separately gated and can be set ad hoc later, so a gate carried only on ARMING (§M7 step 3) does not bind it. While payouts are bounded by un-earmarked BALANCE, the sweep moves more value through a fungible balance whose other claimants include user collateral, so enabling RL-3 ahead of #1566 widens the exposure the arming gate holds shut.
 3. **RL-4 weights** — stay `[keeper 0, reserve 10000]` absent a keeper
    funding need.
 4. **`feeEntitlementEnabled`** — only at the M2 joint-cutover gate,
