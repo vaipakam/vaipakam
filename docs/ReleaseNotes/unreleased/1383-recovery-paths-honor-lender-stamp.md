@@ -28,6 +28,15 @@ the new holder to ask for it.
 This was never about the reduction. It was money going to the wrong person, and
 it is fixed independently of any decision about the reduction itself.
 
+Fixing it also changed **where** that money lands, for every partial
+liquidation and not only for positions that changed hands: it now goes to the
+lender's own wallet rather than into their vault. That is how the equivalent
+step already worked when a missed periodic payment forces a sale, and it is the
+route that handles a sanctioned recipient properly — it sets the payment aside
+under restriction instead of failing the whole liquidation, which paying into a
+vault could not do, because the platform will not open a vault for a restricted
+wallet at all.
+
 ## And one route was reducing the right fee for the wrong person
 
 Refinancing did apply the reduction, but resolved it against the stored lender.

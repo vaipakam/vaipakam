@@ -1247,14 +1247,35 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // not a fee discount: it stands whatever is decided about whether
         // recovered interest earns the Full bump.
         uint256 lenderProceeds = afterFees - treasuryInterestFee;
-        // #821 — vault-lock the lender's share (self-guards a zero amount).
-        LibSanctionedLock.depositLocked(
-            s,
-            LibERC721.ownerOf(loan.lenderTokenId),
-            loanId,
-            loan.principalAsset,
-            lenderProceeds
-        );
+        // #1383 — pay-or-freeze through the #998 S10 Class B host rather than a
+        // raw locked deposit. Same shape as `RepayPeriodicFacet`'s
+        // auto-liquidation leg: an ACTIVE loan, funds already in the Diamond, no
+        // claim record behind it. The host resolves `ownerOf` itself, pays a
+        // clean holder directly, and FREEZES fail-closed (park into the stored
+        // lender's vault + `heldForLender` + encumber + marker) for a
+        // registry-flagged one.
+        //
+        // A raw `depositLocked(ownerOf(...))` was the first attempt and is
+        // WRONG here: `getOrCreateUserVault` refuses to mint a vault for a
+        // flagged wallet (`SanctionedRecipientHasNoVault`), so a flagged holder
+        // who never opened one would revert the liquidation outright — blocking
+        // a close-out, which is exactly what Tier-2 handling exists to avoid.
+        // Paying the stale `loan.lender` instead was the original bug.
+        //
+        // `deliveredThroughAt` is 0: this payout settles no interest period, and
+        // the host's NatSpec asks for 0 from such callers.
+        if (lenderProceeds > 0) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                    loanId,
+                    loan.principalAsset,
+                    lenderProceeds,
+                    uint256(0)
+                ),
+                bytes4(0)
+            );
+        }
 
         // #395 (Codex r1 P1 #2) — snapshot the PRE-partial position value
         // BEFORE the mutation below. The dust waiver keys off this pre-existing

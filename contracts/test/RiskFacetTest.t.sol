@@ -4375,21 +4375,22 @@ contract RiskFacetTest is Test {
     ///
     /// @dev    Unlike every other recovery entry, this one deliberately writes
     ///         NO `s.lenderClaims[loanId]` (claims are reserved for terminal
-    ///         events; the loan stays Active). So the deposit recipient is the
+    ///         events; the loan stays Active). So the payout recipient is the
     ///         FINAL word — there is no `ownerOf`-gated claim behind it to
     ///         correct a stale address, and paying `loan.lender` handed the
     ///         previous lender the principal and interest outright.
     ///
-    ///         **The consolidation must actually SKIP for this to test
+    ///         **The consolidation must actually DECLINE for this to test
     ///         anything.** `_eagerConsolidateBothSides` normally re-anchors
     ///         `loan.lender` to the holder, and on that happy path the fix is
-    ///         invisible — old and new code both pay the holder. The skip is
-    ///         forced here with a sanctioned holder, which is precisely the
-    ///         Tier-2 `Result.Skipped` case the consolidation is designed for
-    ///         ("skip, never block the close-out"). The assertion that
-    ///         `loan.lender` is STILL the stale address after the call is what
-    ///         proves the fixture is live rather than silently exercising the
-    ///         consolidated path.
+    ///         invisible — old and new code both pay the holder. It is mocked to
+    ///         a no-op here, which isolates exactly the documented precondition
+    ///         ("skip-not-block leaves the stored field stale") without dragging
+    ///         in sanctions semantics: an earlier draft forced the skip with a
+    ///         FLAGGED holder, which also trips the freeze branch and parks the
+    ///         proceeds in the stored lender's vault — testing the opposite
+    ///         thing. The assertion that `loan.lender` is STILL stale after the
+    ///         call is what proves the fixture is live.
     function test_1383_partialLiquidation_paysCurrentHolder_notStoredLender()
         public
     {
@@ -4398,26 +4399,21 @@ contract RiskFacetTest is Test {
 
         LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
         address storedLender = l0.lender;
-        address newHolder = address(0xF1A6);
+        address newHolder = makeAddr("holder1383");
 
         vm.prank(storedLender);
         VaipakamNFTFacet(address(diamond)).transferFrom(
             storedLender, newHolder, l0.lenderTokenId
         );
 
-        // The holder needs a vault BEFORE being flagged: `depositLocked`
-        // refuses to CREATE one for a sanctioned recipient
-        // (`SanctionedRecipientHasNoVault`), and vault creation is itself a
-        // Tier-1 sanctions-gated entry point. This ordering is the realistic
-        // one too — a lender who buys a position has a vault, and is flagged
-        // afterwards.
-        vm.prank(newHolder);
-        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newHolder);
-
-        // Force the Tier-2 consolidation to DECLINE on the lender side.
-        MockSanctionsList sanctions = new MockSanctionsList();
-        sanctions.setFlagged(newHolder, true);
-        ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctions));
+        // Consolidation DECLINES — the skip-not-block case.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector, loanId
+            ),
+            abi.encode()
+        );
 
         // ── fixture is live ────────────────────────────────────────────────
         assertEq(
@@ -4436,20 +4432,23 @@ contract RiskFacetTest is Test {
             loanId, 2_000, defaultAdapterCalls()
         );
 
-        // The consolidation really did skip — without this the test would pass
-        // on the consolidated path and prove nothing about the fix.
+        // The consolidation really did decline — without this the test would
+        // pass on the consolidated path and prove nothing about the fix.
         assertEq(
             LoanFacet(address(diamond)).getLoanDetails(loanId).lender,
             storedLender,
-            "consolidation skipped, so `loan.lender` is STALE (fixture live)"
+            "consolidation declined, so `loan.lender` is STALE (fixture live)"
         );
 
         // ── the property ──────────────────────────────────────────────────
-        address holderVault =
-            VaultFactoryFacet(address(diamond)).getUserVaultAddress(newHolder);
-        assertTrue(holderVault != address(0), "holder vault created for the payout");
+        // Paid to the holder's WALLET, not a vault: on the clean branch
+        // `freezeOrPayActiveLenderResident` does a direct `safeTransfer`, the
+        // same as `RepayPeriodicFacet`'s auto-liquidation leg on this identical
+        // shape (Active loan, funds resident in the Diamond, no claim record).
+        // Only the FROZEN branch vaults, and it vaults to the STORED lender
+        // deliberately, parking + encumbering rather than paying.
         assertGt(
-            IERC20(mockERC20).balanceOf(holderVault),
+            IERC20(mockERC20).balanceOf(newHolder),
             0,
             "current holder received the recovered lender share"
         );
