@@ -2,6 +2,7 @@
 pragma solidity ^0.8.29;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC173} from "@diamond-3/interfaces/IERC173.sol";
@@ -336,6 +337,114 @@ contract GovernanceHandoverTest is Test {
         assertEq(tokenPool.owner(), address(timelock), "pool owner");
         (bool ok, ) = address(tokenPool).staticcall(abi.encodeWithSignature("pendingOwner()"));
         assertFalse(ok, "pool must NOT expose pendingOwner() - the runbook's log path exists for this");
+    }
+
+    // ─── The pool's event-log readback (runbook step 6, pool exception) ──────
+    //
+    // Asserting only that `pendingOwner()` is absent proves the SHAPE and none
+    // of the property: `owner() == timelock` with a later transfer pending
+    // satisfies both of the assertions above, which is exactly the dangling
+    // takeover the log rule exists to reject (Codex #1941 r7). These three
+    // exercise the rule itself over its completed, outstanding and cancelled
+    // cases.
+
+    bytes32 private constant REQUESTED_TOPIC =
+        keccak256("OwnershipTransferRequested(address,address)");
+    bytes32 private constant TRANSFERRED_TOPIC =
+        keccak256("OwnershipTransferred(address,address)");
+
+    /// @dev The runbook's rule, implemented against recorded logs: take the LAST
+    ///      Requested for the pool; it is settled when `to == address(0)` (a
+    ///      cancellation, which can never be followed by a Transferred) or when
+    ///      a LATER Transferred names the same `to`.
+    function _poolHandoverSettled() internal returns (bool) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 lastRequested = type(uint256).max;
+        address pendingTo;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter != address(tokenPool)) continue;
+            if (logs[i].topics[0] == REQUESTED_TOPIC) {
+                lastRequested = i;
+                pendingTo = address(uint160(uint256(logs[i].topics[2])));
+            }
+        }
+        if (lastRequested == type(uint256).max) return true; // never transferred
+        if (pendingTo == address(0)) return true; // cancelled — terminal
+        for (uint256 i = lastRequested + 1; i < logs.length; i++) {
+            if (logs[i].emitter != address(tokenPool)) continue;
+            if (
+                logs[i].topics[0] == TRANSFERRED_TOPIC
+                    && address(uint160(uint256(logs[i].topics[2]))) == pendingTo
+            ) return true;
+        }
+        return false;
+    }
+
+    function test_PoolLogRule_CompletedHandoverIsSettled() public {
+        vm.recordLogs();
+        _runFullHandover();
+        assertTrue(_poolHandoverSettled(), "completed handover must read as settled");
+    }
+
+    function test_PoolLogRule_OutstandingRequestIsNotSettled() public {
+        vm.recordLogs();
+        _runFullHandover();
+        // The Timelock owns the pool and then proposes it away again. `owner()`
+        // is still the timelock and `pendingOwner()` is still unreadable, so
+        // every other assertion in this file passes over this state.
+        vm.prank(address(timelock));
+        tokenPool.transferOwnership(attacker);
+        assertEq(tokenPool.owner(), address(timelock), "owner unchanged - why the getter checks miss this");
+        assertFalse(_poolHandoverSettled(), "a pending takeover must NOT read as settled");
+    }
+
+    /// @notice The ordering half of the rule, which the outstanding-request case
+    ///         above does NOT pin: there, no `Transferred` to the pending address
+    ///         exists anywhere, so a rule that ignored ordering would still say
+    ///         "not settled" and look correct. Mutating the scan to start at
+    ///         index 0 survived until this fixture existed.
+    ///
+    ///         Here ownership genuinely COMPLETED to `attacker` once, came back,
+    ///         and is then re-proposed to `attacker` and left pending — so an
+    ///         earlier matching `Transferred` exists and must not be read as
+    ///         discharging the later request. A re-run handover that proposes to
+    ///         an address it previously transferred to is the realistic shape.
+    function test_PoolLogRule_EarlierTransferDoesNotSettleALaterRequest() public {
+        vm.recordLogs();
+        _runFullHandover();
+
+        vm.prank(address(timelock));
+        tokenPool.transferOwnership(attacker);
+        vm.prank(attacker);
+        tokenPool.acceptOwnership(); // Transferred(-> attacker) is now in the log
+
+        vm.prank(attacker);
+        tokenPool.transferOwnership(address(timelock));
+        vm.prank(address(timelock));
+        tokenPool.acceptOwnership();
+
+        // Re-proposed to the SAME address that has a completed transfer earlier.
+        vm.prank(address(timelock));
+        tokenPool.transferOwnership(attacker);
+
+        assertEq(tokenPool.owner(), address(timelock), "owner still timelock");
+        assertFalse(
+            _poolHandoverSettled(),
+            "an earlier completed transfer to the same address must not settle a later request"
+        );
+    }
+
+    function test_PoolLogRule_ZeroAddressRequestIsCancellation() public {
+        vm.recordLogs();
+        _runFullHandover();
+        vm.prank(address(timelock));
+        tokenPool.transferOwnership(attacker); // dangling
+        vm.prank(address(timelock));
+        tokenPool.transferOwnership(address(0)); // cancelled
+        assertTrue(
+            _poolHandoverSettled(),
+            "a cancellation is terminal - requiring a matching Transferred would fail a safe state"
+        );
     }
 
     /// @notice The CCT administrator is a SEPARATE two-step transfer on a

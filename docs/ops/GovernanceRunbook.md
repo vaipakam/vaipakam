@@ -157,6 +157,18 @@ able to fix it — the deployer stays administrator and can still call `setPool`
 the live VPFI token. It batches into the same multi-send as the ownership
 acceptances.
 
+**But read the handover's own output first — this leg is CONDITIONAL.**
+`_transferCctAdmin` returns false and SKIPS when the signing EOA is not the
+token's current administrator, which is a supported path (CCT registration may
+have been done by a separate token owner). It prints `SKIP CCT admin transfer`
+with the current administrator and the signing key. In that case there is no
+pending transfer to accept and scheduling `acceptAdminRole` REVERTS — so confirm
+`getTokenConfig(vpfiToken).pendingAdministrator == timelock` before scheduling.
+If it is not pending, the CURRENT administrator must run `transferAdminRole`
+first; that is a step outside this ceremony and it blocks step 6 until it is
+done. Do not read the skip as "not applicable" — the administrator is still an
+EOA either way.
+
 ### 6. Readback verification
 
 Per chain, confirm:
@@ -1029,7 +1041,9 @@ enumerate it and read all of it back:
 | | reward-BUDGET channel peers | **no — read them** |
 | | `channelOf` / `handlerOf` | yes, above |
 | | `channelOfPeer` (the REVERSE index) | **no — read it** |
-| | `getRouter()` | **no — read it, and see below** |
+| `vpfiTokenPool` | `getRateLimitAdmin()` | **no — read it** |
+| | `isSupportedChain(selector)` per lane | **no — read it, and see below** |
+| `CcipMessenger` (cont.) | `getRouter()` | **no — read it, and see below** |
 | *all three* | `owner()`, `pendingOwner()` | **no — read them** |
 | | `guardian()` | **no — read it** |
 | | the proxy's implementation | **no — read it** |
@@ -1104,6 +1118,16 @@ What each of the newly-required ones costs if it is wrong:
   event log, not from memory, and confirm
   `channelOfPeer[remoteChainId][peer] == channelId` for each. Three deployments
   are already in that state.
+- **`getRateLimitAdmin()` on the live registry-selected pool**, against the
+  verified `VpfiPoolRateGovernor`. `setChainRateLimiterConfig(s)` authorises
+  `s_rateLimitAdmin` **or** the owner, and `ConfigureCcip` deliberately points
+  that principal at the governor because the governor is the bounds-checked path
+  — it refuses to disable a lane and range-bounds every value. A pool left with a
+  deployer or stale EOA there passes every registry, bucket and ownership
+  readback in this pass, and that address can rewrite both limiter
+  configurations directly, immediately before or after the arm, with none of the
+  governor's bounds applied. The ownership rows above do not cover it: this is a
+  second principal on the same contract.
 - **`getRouter()` on every adapter**, and this one is not proxy storage at all —
   the router is a CONSTRUCTOR immutable baked into the implementation, so an
   implementation upgrade can change it while every storage readback in this pass
@@ -1125,11 +1149,20 @@ each delivery run out of gas on arrival, repeatedly, with `D*` already immutable
 Read it back against the supported callback budget on each messenger, or prove it
 with an end-to-end delivery rehearsal, before the arm.
 
-**A DISABLED limiter is not a failure — it is unlimited.** The rate limiter
-returns immediately when the bucket is disabled, and the config validator
-requires a disabled bucket to be fully zeroed. So `isEnabled == false` with zero
-capacity is a correctly configured no-limit lane, not a blocked one; treating it
-as blocked would stall a ceremony over a healthy configuration.
+**A DISABLED limiter is not a failure — it is unlimited. But establish the lane
+EXISTS before applying that rule.** A missing lane and a validly disabled one are
+indistinguishable through the limiter getters: both return the mapping's
+zero-initialised bucket — `isEnabled == false`, zero capacity, zero rate. So
+"disabled is unlimited" reads a pool that was registered before its lane was
+added as a healthy no-limit lane, the arm proceeds, and the first transfer then
+reverts `ChainNotAllowed` because `_onlyOnRamp` checks `isSupportedChain` as a
+SEPARATE condition the buckets know nothing about. Require
+`isSupportedChain(expectedSelector) == true` first; only then does the rest
+apply. The rate limiter returns immediately when the bucket is disabled, and the
+config validator requires a disabled bucket to be fully zeroed — so on a lane that
+exists, `isEnabled == false` with zero capacity is a correctly configured no-limit
+lane, not a blocked one, and treating it as blocked would stall a ceremony over a
+healthy configuration.
 
 **3f. Deploy `ops/mesh-watcher` AND verify it runs clean.** It reads every
 reward chain's recycled ledger and alerts on the commitment invariants, and it is

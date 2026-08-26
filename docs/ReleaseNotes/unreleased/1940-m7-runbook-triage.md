@@ -176,6 +176,32 @@ before-state as well, so a passing run is known to mean the checks can fail.
 Removing either newly added completion step from the simulated handover was
 confirmed to turn the relevant assertions red.
 
+A further round found four more, and the sharpest was against the new test rather
+than the procedure. Checking that a value cannot be read is not the same as
+checking the thing that value was for: the substitute check confirmed the missing
+reading and never exercised the history-based rule meant to replace it, so the
+gate stayed green for precisely the dangling-takeover state the rule exists to
+catch. The rule is now exercised over its completed, still-outstanding and
+cancelled cases — and, after a deliberate attempt to break it survived, over one
+more: a contract whose ownership genuinely completed to an address once, came
+back, and was later offered to that same address again. Without that case, a
+version of the rule that ignored the order of events passed everything.
+
+Three procedural corrections came with it. The newly added acceptance step is
+conditional — the handover script skips that transfer entirely when the signing
+key is not the current administrator, which is a supported situation, and
+scheduling the acceptance anyway simply fails; the procedure now says to confirm
+the transfer is actually pending, and what to do when it is not. The rule that a
+switched-off transfer limit means "no limit" needed a precondition: a limit that
+was never configured for a route reads identically to one deliberately switched
+off, and the transfer then fails for an unrelated reason the limits know nothing
+about — so the route's existence is confirmed first. And the contract that holds
+the token has a second authority besides its owner: a separate address permitted
+to rewrite those transfer limits directly, which is deliberately set to the
+bounds-checking governor and was never read back. A stale one there could rewrite
+both limits, immediately before or after the switch, with none of the intended
+bounds applied.
+
 All of this is read back before the switch, in the same pass that already
 verifies the wiring rather than the components, and the design record carries the
 same additions so the two documents do not drift apart.
