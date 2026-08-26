@@ -1627,55 +1627,39 @@ over the SEPARATE `crossChainMessenger` / `RewardRemittanceReceiver` path. So:
    the pause;
 3. unpause, then broadcast.
 
-That closes the finalize→receipt window for the CANDIDATE day. **It does not
-make unpausing safe on its own**, and treating it that way is the trap:
-`broadcastGlobal` accepts any `dayId` whose `dailyGlobalFinalized[dayId]` is true,
-so the moment the pause lifts, an arbitrary caller can broadcast a DIFFERENT
-finalized day that is unapplied and unfunded on that mirror — reaching the same
-#1566 borrower-collateral path. Funding one candidate closes one door.
+That closes the finalize→receipt window for the CANDIDATE day and **nothing
+more**, and five successive attempts to build a safe procedure on top of it have
+each been refuted. They are recorded here as a DEAD-END LIST so the next person
+does not re-derive them:
 
-So before unpausing, either **reconcile every broadcastable finalized day** on
-each target mirror, or **keep the messenger paused** until #1566 is deployed
-there or a day-scoped gate exists.
+| Attempted procedure | Why it does not hold |
+| --- | --- |
+| Remit + receipts BEFORE arming | `broadcastGlobal`'s only day-state gate is `dailyGlobalFinalized`; arming is irrelevant to it. Worse, a pre-arm application spends that day for propagation (`_applyBroadcastV2Core` replays without installing `armedFromDay`). |
+| Pause, fund the candidate, unpause, broadcast | `broadcastGlobal` accepts ANY finalized day, so unpausing re-opens every other unfunded finalized day at once. |
+| Reconcile every broadcastable day first | An applied-but-unfunded day is ALREADY open and pausing Base cannot close it; and `finalizeDay` is permissionless, so new broadcastable days can appear after the inventory. |
+| Contain the destination's claim path meanwhile | `AdminFacet.pause()` is the Diamond's single global flag: `claimInteractionRewards` and `onRewardBudgetReceived` are BOTH `whenNotPaused`, so pausing claims also blocks the remittance receipt. "Wait until every pending day is funded" is unreachable — funding cannot land while claims are stopped, and unpausing to admit it re-opens the race. |
+| Safe-only executor + fresh reconciliation before execution | Restricting the executor controls only WHO unpauses. It does not make reconciliation and unpause atomic, and `finalizeDay` — permissionless and not routed through the paused messenger — lets a new unfunded day be created after the inventory, including by front-running the Safe's own unpause. |
 
-**"Already applied" is NOT a reconciliation state**, and an earlier revision of
-this list wrongly allowed it. An applied-but-unfunded day means the claim gate on
-that mirror is ALREADY OPEN; pausing Base's reward messenger does nothing to
-close it, and while #1566 is absent claimants can keep drawing against a balance
-that includes borrower collateral. Replay idempotency only stops that day opening
-the gate a second time — it does not contain what is already open. Count a day
-reconciled only when it is FUNDED, or when the mirror's own claim path is paused
-or #1566-fixed. On a mesh with real history the first option may not be
-achievable, and the second is then the honest answer even though it is expensive.
+**So there is ONE safe branch on a mirror where #1566 is not deployed: keep the
+reward messenger PAUSED, and do not run the post-arm propagation to that mirror
+until #1566 or a day-scoped protocol gate lands there (#1944).** That is
+expensive — it stops all reward messaging on that messenger and leaves the mirror
+unarmed — and it is the only option in the list above that does not fail to an
+argument already written down. Prefer arming a mesh whose mirrors carry the
+#1566 fix; where that is not yet true, the mirror waits.
 
-**Weigh the trade-offs rather than reaching for the pause reflexively:** it stops
-*all* reward messaging on that messenger for its duration, not just this day's
-broadcast. On a mesh already funding live mirror claims, that cost may exceed the
-exposure.
+Two mechanical facts that survive whatever branch is taken:
 
-**The pause does not reach a broadcast already IN FLIGHT.** It blocks future
-sends on that messenger instance; a CCIP message dispatched a moment earlier
-still reaches the mirror and applies the day during the remit wait. Pausing the
-mirror's ingress instead only leaves that delivery FAILED and manually
-re-executable, so it stays hazardous after unpause rather than being cancelled.
-Before treating the pause as a gate, inventory the outbound broadcast message ids
-and require each to have reached a terminal state — or keep the destination's
-ingress and claim path contained until every pending day is funded.
-
-**And do NOT pre-schedule the unpause as a convenience — on an open-executor
-Timelock it cannot be made safe by timing.** `unpause` is owner-only, so
-post-handover it is a Timelock action with the full delay, and
-`DeployTimelock.s.sol` defaults `TIMELOCK_EXECUTOR` to `address(0)` — **open
-execution: anyone may execute once the delay expires**. Scheduling only after
-receipts are final does not fix it either: `finalizeDay` is itself
-`onlyCanonical` and therefore permissionless, so during the delay someone can
-create a NEW unfunded finalized day, wait for the operation to become ready,
-execute the unpause themselves, and broadcast — faster than any off-chain
-cancellation can intervene. **Cancellation monitoring does not secure this
-branch.** Either run the procedure on a Timelock whose executor is the Safe, with
-a fresh reconciliation immediately before execution, or keep the messenger paused
-until #1566 or a day-scoped protocol gate is deployed. An earlier revision of
-this paragraph offered schedule-late-and-cancel as an alternative; it is not one.
+- **The pause does not reach a broadcast already IN FLIGHT.** It blocks future
+  sends on that messenger instance; a CCIP message dispatched a moment earlier
+  still reaches the mirror and applies the day. Pausing the mirror's ingress
+  does not cancel it either — the delivery is left FAILED and manually
+  re-executable, so it stays hazardous rather than being resolved.
+- **A queued unpause on an open-executor Timelock is public.**
+  `DeployTimelock.s.sol` defaults `TIMELOCK_EXECUTOR` to `address(0)`, so anyone
+  may execute once the delay expires. Scheduling late and watching for trouble
+  is not a mitigation: cancellation cannot outrun an attacker who executes the
+  ready operation themselves.
 
 Whether or not the pause is used:
 
@@ -1867,8 +1851,11 @@ Before mainnet:
   expiry, which the reward-messenger unpause procedure depends on NOT being the
   case. Open execution (executor
   = `address(0)`) means anyone can execute after delay; useful if the
-  Safe is unavailable, but removes a cancellation checkpoint. Current
-  default is Safe-only; flip per chain if availability concerns dominate.
+  Safe is unavailable, but removes a cancellation checkpoint. **Set
+  `TIMELOCK_EXECUTOR` to the Safe explicitly if you want Safe-only execution —
+  it is not what you get by default.** An earlier revision of this bullet ended
+  by saying the current default was Safe-only, contradicting its own opening two
+  sentences after they were corrected.
 
 ---
 

@@ -107,3 +107,27 @@ payouts are bounded by what was actually delivered for rewards rather than by
 whatever the balance happens to hold, enabling the sweep widens exactly the
 exposure the activation gate exists to hold shut. The condition is now listed in
 both places, with a note that deferring the step does not defer the condition.
+
+
+## Five procedures, all refuted — and what the document says instead
+
+Successive review rounds refuted every operational procedure built on the pause,
+and each refutation was correct. Re-ordering the ceremony does not help, because
+announcing a day depends only on the day having been closed off. Pausing, funding
+the day in hand, and unpausing does not help, because the announcement may name
+any closed day and unpausing frees all of them at once. Reconciling every such day
+first does not help, because a day already announced without funding is already
+open and closing a day off is something anyone can do at any time. Containing the
+receiving chain's claims meanwhile does not help, because the same single switch
+that stops claims also stops the funding arriving — so the condition being waited
+for can never be met. And restricting who may lift the pause does not help,
+because that controls only the lifting, not what someone else may have created in
+the meantime.
+
+The procedure therefore stops offering alternatives and states the one branch
+that survives: on a chain without the fund-safety fix, leave the messenger paused
+and do not propagate to that chain until the fix is deployed there. That is
+expensive — it stops other reward messaging and leaves the chain out of the
+cutover — and it is the only option in the list that has not been argued away.
+The five that were is kept in the document as a dead-end list, with the reason
+each fails, so nobody re-derives them under time pressure.
