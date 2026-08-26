@@ -180,16 +180,17 @@ as sufficient for mainnet enablement?
   DEX revert — liquidation skips to the **in-kind fallback**.
   Lender receives the collateral asset directly, not the lending
   asset. This is **disclosed and consent-gated in the frontend**:
-  - [`apps/defi/src/i18n/locales/en.json`](../../apps/defi/src/i18n/locales/en.json#L543) line 543: "If liquidation of liquid collateral fails (like in Abnormal Market conditions, when slippage > 6%, thin liquidity, DEX revert, or any other runtime failure)"
-  - Line 544: "Lender receives the collateral in-kind — NOT the lending asset."
-  - Line 729: "You must agree to the abnormal-market liquidation fallback terms before creating an offer." (`fallbackConsentRequired` validation key, gates `createOffer` UI flow.)
+  - [`apps/www/src/i18n/locales/en.json`](../../apps/www/src/i18n/locales/en.json#L523) `riskDisclosures.section1Heading`: "If liquidation of liquid collateral fails (like in Abnormal Market conditions, when slippage > 6%, thin liquidity, DEX revert, or any other runtime failure)"
+  - `riskDisclosures.section1Point1`: "Lender receives the collateral in-kind — NOT the lending asset."
+  - `riskAndTermsConsentRequired`: "You must agree to the abnormal-market liquidation fallback terms before creating an offer." (gates the `createOffer` UI flow.)
+  - **Citation note (#1854):** these three lines were cited against `apps/defi/src/i18n/locales/en.json` (lines 543 / 544 / 729). `apps/defi` has been deleted; the strings above are the surviving copies in `apps/www`. **Before circulating to signers, re-verify the CONSENT-GATING claim itself against the live connected app `apps/app` (`ConsentLabel.tsx` / `copy.consentParts.*`)** — the disclosure text is confirmed, the gate is not.
 - **Claim-time retry**: lender or their keeper bot supplies a ranked
   retry try-list (0x → 1inch → UniV3 → Balancer) at claim time via
   [`ClaimFacet.claimAsLenderWithRetry`](../../contracts/src/facets/ClaimFacet.sol#L162-L178).
   On any-success commits to principal-asset proceeds; on total
   failure, terminal Defaulted with in-kind collateral (premium split
-  3% lender / 2% treasury per `apps/defi/src/i18n/locales/en.json`
-  line 1518).
+  3% lender / 2% treasury per `apps/www/src/i18n/locales/en.json`
+  line 1433 — the citation was `apps/defi`'s en.json line 1518 before #1854).
 
 **Committee question to confirm**: do you accept the in-kind
 fallback + claim-time retry as adequate user protection, given the
@@ -210,7 +211,8 @@ consent-gated disclosure on the offer-creation flow?
   `SequencerUnhealthy`. New loans / HF-based liquidations / rate-
   dependent quotes block. Repayments + user-initiated exits stay
   live so users can never be trapped. Documented in
-  [`apps/defi/src/i18n/locales/en.json`](../../apps/defi/src/i18n/locales/en.json#L1550) line 1550.
+  [`apps/www/src/i18n/locales/en.json`](../../apps/www/src/i18n/locales/en.json#L1474) (`faq.sequencer`;
+  the citation was `apps/defi`'s en.json line 1550 before #1854).
 - **Primary oracle (Chainlink) outage**: hybrid staleness rule
   (2h volatile / 25h stable-with-peg-check) applied per
   `OracleFacet._validatePriceFeed`. Beyond staleness → `StalePriceData`
