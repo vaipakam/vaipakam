@@ -1806,13 +1806,17 @@ cleared `remoteMessengerOf`, or `UnsupportedByRouter` when the router no longer
 supports the selector. So a mirror can be taken out of the block by a
 genuine teardown — but the exemption must be keyed to what GOVERNANCE controls.
 
-Require the **protocol-owned** lane fields cleared for that chain —
-`chainSelectorOf[chainId] == 0` and `remoteMessengerOf[chainId] == address(0)` —
+Require, for that chain: **EITHER** protocol-owned lane field cleared —
+`chainSelectorOf[chainId] == 0` **or** `remoteMessengerOf[chainId] ==
+address(0)`, since `_resolveDestination` reverts on either alone
+(`UnconfiguredChain` / `NoRemoteMessenger`) and both setters clear
+independently, so demanding both would hold the mesh over an already-dead lane —
 **and** the chain absent from `getBroadcastDestinations()` (which closes the
 fan-out path the standing check never guards) **and absent from
 `getExpectedSourceChainIds()`** (which stops it acquiring new standing from its
 next accepted report). The exemption must negate every disjunct of the
-definition, not the one being discussed. Either cleared mapping already
+definition, not the one being discussed — and each condition should be no
+stronger than what actually makes the path unreachable. Either cleared mapping already
 makes `_resolveDestination` revert before the router is consulted.
 
 **Do NOT require `isChainSupported` to be false.** That is the CCIP router's
