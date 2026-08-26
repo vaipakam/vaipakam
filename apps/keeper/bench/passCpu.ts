@@ -287,16 +287,37 @@ async function main(): Promise<void> {
     );
   }
 
+  // Daily-window passes (dailyWindow: true) share the 1-minute cadence but
+  // return immediately outside 00:00–00:09 UTC; the runner pins the clock INTO
+  // that window to measure the active path. Their full cost is a once-a-day
+  // PEAK, not what an ordinary minute pays, so it is excluded from the
+  // cadence-1 total and reported on its own line (Codex #1945 r7).
   const everyTick = rows.filter(
     (r) =>
       r.rpc > 0 &&
-      KEEPER_PASSES.find((p) => p.name === r.name && p.cadenceMinutes === 1),
+      KEEPER_PASSES.find(
+        (p) => p.name === r.name && p.cadenceMinutes === 1 && !p.dailyWindow,
+      ),
   );
   const tickTotal = everyTick.reduce((s, r) => s + r.median, 0);
+  const windowPasses = rows.filter(
+    (r) =>
+      r.rpc > 0 &&
+      KEEPER_PASSES.find(
+        (p) => p.name === r.name && p.cadenceMinutes === 1 && p.dailyWindow,
+      ),
+  );
+  const windowTotal = windowPasses.reduce((s, r) => s + r.median, 0);
   console.log(
     `\ntotal across all passes        ${total.toFixed(1)} ms CPU\n` +
       `the ${everyTick.length} cadence-1 passes alone  ${tickTotal.toFixed(1)} ms CPU  ` +
-      `— MEASURED cadence-1 passes only\n`,
+      `— MEASURED cadence-1 passes only (excludes daily-window)\n` +
+      (windowPasses.length > 0
+        ? `${windowPasses.length} daily-window pass(es)        ${windowTotal.toFixed(1)} ms CPU  ` +
+          `— ${windowPasses
+            .map((r) => r.name)
+            .join(', ')}, measured in-window; a once-a-day peak, NOT part of an ordinary minute\n`
+        : ''),
   );
 
   const unmeasured = rows.filter((r) => r.rpc === 0 && r.hung === 0);

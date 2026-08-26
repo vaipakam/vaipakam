@@ -335,6 +335,14 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
     if (/^starttime$/i.test(p.name ?? '')) {
       return BigInt(Math.floor(Date.now() / 1000) - 12 * 60 * 60);
     }
+    // Commitment day indices: `getInteractionCurrentDay.day` must sit a few days
+    // ABOVE `getGovernorCommitState.armedFromDay`, or reportFromMirror raises
+    // `from` to `armedFromDay == currentDay` and `dayList` is empty — leaving
+    // commitmentReport's readiness / reward-scan / batch / send work unmeasured
+    // (Codex #1945 r7). Kept a SMALL gap (5 days) so the bounded per-day
+    // backscan stays well under the call budget.
+    if (/getinteractioncurrentday/i.test(fnName)) return 20000n;
+    if (/getgovernorcommitstate/i.test(fnName)) return 19995n;
     // Non-trivial magnitude otherwise: a zero everywhere would let a pass
     // early-return on "nothing to do" and profile as free, which is the
     // failure mode this harness exists to avoid. Clamp to the type's width so a
