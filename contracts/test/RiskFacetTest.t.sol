@@ -1181,6 +1181,28 @@ contract RiskFacetTest is Test {
         uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
         uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
 
+        // The resolver must be keyed on the CURRENT position-NFT holder
+        // (Codex #1957 r5 P2). The `Full` stamp this test injects is LOAN-scoped
+        // and identical for every address, so it cannot distinguish the holder
+        // from `loan.lender` — swapping the facet's `ownerOf` argument for the
+        // stored field would leave the balance assertions green. Asserting the
+        // host call's `settlingLender` argument proves the key directly, without
+        // staging an aged hold tier in a suite that has no staking machinery.
+        // Only in the STAMPED run: with no stamp and no consent the loan is
+        // ineligible, so `LibLenderYieldFeeHost.resolve` short-circuits before
+        // the host call and the reference replay never routes at all. Expecting
+        // it in both runs asserts two calls where exactly one happens.
+        if (stampFull) {
+            vm.expectCall(
+                address(diamond),
+                abi.encodeWithSelector(
+                    VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
+                    loanId,
+                    VaipakamNFTFacet(address(diamond)).ownerOf(ln.lenderTokenId)
+                )
+            );
+        }
+
         // The borrower's collateral MUST actually be withdrawn. This suite mocks
         // `vaultWithdrawERC20` (six sites) and `deal`s the Diamond's balance, so
         // a regression that stopped withdrawing entirely would leave this test
@@ -1223,6 +1245,26 @@ contract RiskFacetTest is Test {
         // Interest must accrue or the treasury takes only the handling fee and
         // both replays measure the same thing.
         vm.warp(block.timestamp + 15 days);
+
+        // TRANSFER the lender position and force the consolidation to decline.
+        // Without this `loan.lender == ownerOf(lenderTokenId)`, so an assertion
+        // on the resolver's settling-lender argument cannot discriminate between
+        // them — verified: with the addresses identical, swapping the facet's
+        // `ownerOf` for `loan.lender` left this test green. The transfer is what
+        // makes the resolver's key observable at all.
+        LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address splitHolder = makeAddr("splitHolder1955");
+        vm.prank(l0.lender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(
+            l0.lender, splitHolder, l0.lenderTokenId
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector, loanId
+            ),
+            abi.encode()
+        );
 
         uint256 snap = vm.snapshotState();
         (uint256 baseTreasury, uint256 baseLender) =
@@ -4495,7 +4537,7 @@ contract RiskFacetTest is Test {
         uint256 loanId,
         address treasuryEoa,
         bool stampFull
-    ) private returns (uint256 toTreasury) {
+    ) private returns (uint256 toTreasury, uint256 toLender) {
         LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
         if (stampFull) {
             TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
@@ -4516,9 +4558,13 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(this), 4000 ether);
         IERC20(mockERC20).approve(address(diamond), 4000 ether);
 
+        address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
         uint256 before = IERC20(mockERC20).balanceOf(treasuryEoa);
+        uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
         RiskFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
         toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - before;
+        lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
     }
 
     /// @notice #1955 — the Full stamp reaches the interest a DISCOUNTED
@@ -4541,15 +4587,26 @@ contract RiskFacetTest is Test {
         vm.warp(block.timestamp + 15 days);
 
         uint256 snap = vm.snapshotState();
-        uint256 baseTreasury = _discountedLiqTreasury(loanId, treasuryEoa, false);
+        (uint256 baseTreasury, uint256 baseLender) =
+            _discountedLiqTreasury(loanId, treasuryEoa, false);
         vm.revertToState(snap);
-        uint256 fullTreasury = _discountedLiqTreasury(loanId, treasuryEoa, true);
+        (uint256 fullTreasury, uint256 fullLender) =
+            _discountedLiqTreasury(loanId, treasuryEoa, true);
 
         assertGt(baseTreasury, 0, "reference run took a cut on recovered interest");
         assertEq(
             fullTreasury,
             baseTreasury - (baseTreasury * 1_000) / LibVaipakam.BASIS_POINTS,
             "Full lender keeps exactly the +10% on this path"
+        );
+        // The saving must REACH the lender (Codex #1957 r5 P2). Reducing the
+        // treasury transfer without crediting `lenderProceeds` would satisfy the
+        // assertion above while the message claims the lender keeps the 10% —
+        // and no other test in this suite observes the lender on this path.
+        assertEq(
+            baseTreasury - fullTreasury,
+            fullLender - baseLender,
+            "every wei the treasury gave up reached the lender"
         );
         vm.clearMockedCalls();
     }
