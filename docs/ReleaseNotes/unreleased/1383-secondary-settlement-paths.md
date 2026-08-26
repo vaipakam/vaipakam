@@ -28,12 +28,8 @@ and early-close routes, so the recovery routes were absent from that
 IMPLEMENTATION list — not from the entitlement itself, which the frozen rule
 already extends to every settlement of a lender's interest.
 
-Two of those routes do not even end the loan. A partial liquidation leaves it
-running and still takes a cut from the interest it recovers on the way; and when
-a periodically-paid loan misses a payment, collateral is sold to cover it and the
-proceeds passed on — again without the arrangement being consulted — inside a
-component whose ordinary path does honour it, which is precisely why it read as
-covered.
+One of those routes does not even end the loan: a partial liquidation leaves it
+running and still takes a cut from the interest it recovers on the way.
 
 Two more routes are not recoveries at all. When an NFT collateral position is
 sold through the prepayment route — an ordinary, orderly close — the settlement

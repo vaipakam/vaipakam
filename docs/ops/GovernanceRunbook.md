@@ -795,8 +795,17 @@ Establish both by hand on the TARGET Diamond before scheduling anything:
 - **PR-6 / #1947 (settlement sweep)** — confirm the DEPLOYED bytecode of
   `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet`, `PrepayListingFacet`
   and `RefinanceFacet` is the fixed version, again by loupe-resolving their
-  selectors and comparing against the build you intend. While #1947 is open there
-  is no such build, so this readback cannot pass and the step cannot proceed.
+  selectors and comparing against the build you intend.
+- **PR-6 / #1947, the NON-FACET half** — the loan-keyed prepay-sale terminal
+  executes inside `CollateralListingExecutor`, a **standalone UUPS proxy**, not a
+  facet. The loupe cannot see it and resolving `PrepayListingFacet` proves
+  nothing about it: read `PrepayListingFacet.getCollateralListingExecutor()` to
+  get the proxy address, then read that proxy's ERC-1967 implementation slot and
+  compare THAT against the intended build. Skipping this leaves a proper-close
+  route paying the raw fee while every facet readback above passes.
+
+  While #1947 is open there is no fixed build for any of these, so this readback
+  cannot pass and the step cannot proceed.
 
 ```
 ConfigFacet.setFeeEntitlementEnabled(true)      # ADMIN_ROLE

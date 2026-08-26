@@ -1503,7 +1503,8 @@ flowchart LR
   end
   PR5c --> FEE[M7.4 feeEntitlementEnabled]
   FEE --> ARM
-  PR6[#1354 PR-6 settlement sweep] --> FEE
+  PR6["#1354 PR-6 settlement sweep<br/>repayment + early-close ONLY"] --> PR6R
+  PR6R["#1947 PR-6 REOPENED — OPEN<br/>5 recovery entries + 2 prepay-sale terminals + refinance"] --> FEE
   GATE --> FEE
   PR2 -. one wire evolution .-> M3[M3 #1222 B1..B4]
   M1b -.-> M3
@@ -1533,9 +1534,12 @@ constituent cards below remain the working tickets.
 ## 6. Definition of done — "VPFI recycling complete"
 
 1. **Absorption**: notification tariff (M1) + Full tariff (M2) live and
-   crediting the bucket — **including the #1369 origination-auth slice**
-   (signed-offer maker Full authorization + matched fills honoring the
-   lender offer's `creatorFull`): the Full channel is not complete while
+   crediting the bucket — **including the #1949 origination-auth slice**
+   (signed-offer maker Full authorization). The matched-fill half of the
+   original #1369 card LANDED and that card is CLOSED; naming #1369 here
+   would let a maintainer treat a closed card as satisfying this condition
+   and close M2 over the signed-offer slice, which is still open at
+   `OfferCreateFacet:1780-1785`. The Full channel is not complete while
    whole origination paths cannot enter it; forfeit/expiry classes live
    (already);
    **spend-gated perks (#1204) in a DECIDED state** — legal glance passed
