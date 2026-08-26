@@ -182,8 +182,23 @@ as sufficient for mainnet enablement?
   asset. This is **disclosed and consent-gated in the frontend**:
   - [`apps/www/src/i18n/locales/en.json`](../../apps/www/src/i18n/locales/en.json#L523) `riskDisclosures.section1Heading`: "If liquidation of liquid collateral fails (like in Abnormal Market conditions, when slippage > 6%, thin liquidity, DEX revert, or any other runtime failure)"
   - `riskDisclosures.section1Point1`: "Lender receives the collateral in-kind — NOT the lending asset."
-  - `riskAndTermsConsentRequired`: "You must agree to the abnormal-market liquidation fallback terms before creating an offer." (gates the `createOffer` UI flow.)
-  - **Citation note (#1854):** these three lines were cited against `apps/defi/src/i18n/locales/en.json` (lines 543 / 544 / 729). `apps/defi` has been deleted; the strings above are the surviving copies in `apps/www`. **Before circulating to signers, re-verify the CONSENT-GATING claim itself against the live connected app `apps/app` (`ConsentLabel.tsx` / `copy.consentParts.*`)** — the disclosure text is confirmed, the gate is not.
+  - `riskAndTermsConsentRequired`: "You must agree to the abnormal-market liquidation fallback terms before creating an offer."
+  - The **gate itself** lives in the connected app, not in the
+    marketing copy above:
+    [`apps/app/src/lib/offerSchema.ts`](../../apps/app/src/lib/offerSchema.ts#L309-L311)
+    refuses the form with `riskAndTermsConsentRequired` whenever the
+    consent flag is false. Both offer-creation surfaces run that
+    validator before submitting
+    ([`OfferFlow.tsx`](../../apps/app/src/components/OfferFlow.tsx#L760),
+    [`desk/OrderTicket.tsx`](../../apps/app/src/components/desk/OrderTicket.tsx#L408)),
+    and the accepted consent is carried on-chain as the offer's
+    `creatorRiskAndTermsConsent` field — so the record of consent
+    survives on the position, not just in the browser session.
+  - **Citation note (#1854):** these lines were previously cited
+    against `apps/defi/src/i18n/locales/en.json` (lines 543 / 544 /
+    729). `apps/defi` has been deleted; the disclosure strings above
+    are the surviving copies in `apps/www`, and the gating claim was
+    re-verified against `apps/app` at the paths given.
 - **Claim-time retry**: lender or their keeper bot supplies a ranked
   retry try-list (0x → 1inch → UniV3 → Balancer) at claim time via
   [`ClaimFacet.claimAsLenderWithRetry`](../../contracts/src/facets/ClaimFacet.sol#L162-L178).
