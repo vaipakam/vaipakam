@@ -9,6 +9,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {VPFIDiscountAccumulatorFacet} from "../src/facets/VPFIDiscountAccumulatorFacet.sol";
 import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {FeeEntitlementFacet} from "../src/facets/FeeEntitlementFacet.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
@@ -259,6 +260,26 @@ contract FeeEntitlementFacetTest is SetupTest {
         );
         assertEq(fe.borrowerTariffPaid, 0, "no tariff charged on a rental");
         assertEq(fe.lenderTariffPaid, 0, "no tariff charged on a rental");
+    }
+
+    /// @dev #1955 PROBE — does a staked party actually resolve a NON-ZERO hold
+    ///      tier in this fixture? `effectiveTierAndBps` dispatches on
+    ///      `isCanonicalVpfiChain` and the canonical branch has a SILENT (0,0)
+    ///      fallback when `VPFIDiscountAccumulatorFacet` is not cut. A refinance
+    ///      test built on a fixture that silently returns 0 would pass
+    ///      vacuously — the stale lender's tier would read 0 too — so this
+    ///      proves the mechanism before anything is built on it.
+    function test_1955_probe_stakedPartyResolvesNonZeroTier() public {
+        _stakeVpfi(lender, PARTY_VPFI_STAKE); // 5_000 ether => tier 3
+        // Read through the CALLER-FACING view: the accumulator's
+        // `effectiveTierAndBps` is `InternalCallerOnly` (diamond-internal), so a
+        // test cannot observe it directly — `getVPFIDiscountTier` is the surface
+        // `VPFIDiscountFacetTest` already uses for exactly this.
+        (uint8 tier, uint256 bal, uint256 bps) =
+            VPFIDiscountFacet(address(diamond)).getVPFIDiscountTier(lender);
+        assertGt(bal, 0, "stake landed in the vault");
+        assertGt(tier, 0, "staked party must resolve a non-zero tier here");
+        assertGt(bps, 0, "and a non-zero discount bps");
     }
 
     // ─── quoteCStar ───────────────────────────────────────────────────────────
