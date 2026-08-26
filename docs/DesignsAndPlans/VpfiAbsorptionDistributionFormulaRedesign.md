@@ -319,6 +319,33 @@ feeAsset = baseFeeAsset * (BPS - d) / BPS
 // tryApplyYieldFee remains dormant while peg unset
 ```
 
+> **IN-PLACE SUPERSESSION (2026-08-26) — the SETTLING LENDER is the CURRENT
+> position-NFT holder, not `loan.lender`.** The rev-8 pseudocode above is kept
+> verbatim as the ratified rule for *how* `d` is computed; the two lookups that
+> resolve *whose* tier and consent are read are superseded. Read them as
+> `vpfiDiscountConsent[ownerOf(loan.lenderTokenId)]` and the time-weighted tier
+> of that same holder. `d_tariff` is unaffected — the Full slice is loan-scoped
+> (`feeEntitlementByLoanId[loan.id]`) and holder-independent, so `loan.lenderMode`
+> stays correct.
+>
+> **Why:** `loan.lender` is a bookkeeping field that goes stale. Every settlement
+> path attempts a Tier-2 consolidation first, and that consolidation is
+> deliberately *skip-not-block* — it declines rather than reverting for a
+> sanctioned holder or an excluded lender state — so a call to it is not proof
+> the field is fresh. Meanwhile `ClaimFacet.claimAsLender` is `ownerOf`-gated, so
+> the current holder is who is actually paid. Keying `d` on the stored address
+> prices the discount off the PREVIOUS lender's hold tier and, once the peg is
+> set, debits that party's VPFI vault for a reduction the current holder
+> receives.
+>
+> This is not a new decision: the shipped settlement sweep already keys on
+> `ownerOf(lenderTokenId)` throughout (#1354, #1383 parts B/B2/B3, #1391, #1392,
+> driven by Codex #1390 P1 ×2). This document is simply behind that work, and an
+> implementer following the pseudocode literally for the reopened paths (#1947)
+> would rebuild the exact defect those PRs removed. **Flagged for owner
+> acknowledgement at the next ratification** — recorded here rather than
+> rewritten silently because the block is frozen.
+
 **Accept tests:** lender None ⇒ full 2% yield fee; lender HoldOnly T2 ⇒ 15% off; lender Full T2 ⇒ 25% off; lender Full T4 ⇒ 34% off; **borrower** mode never appears in lender `d`.
 
 ### F3 — Borrower LIF (frozen — rev 8 dual-fee)
@@ -1639,7 +1666,28 @@ Runtime disable remains a kill switch. **Package ship order (C3):** HoldOnly (PR
 
 | ID | Decision |
 | --- | --- |
-| **C1** | Mainnet `feeEntitlementEnabled` **Enabled only after PR-5c (or rewards-dark)**; compile default **false** until then (rev 14). |
+| **C1** | Mainnet `feeEntitlementEnabled` **Enabled only after PR-5c (or rewards-dark) AND after PR-6 is complete — see the C1 supersession note below**; compile default **false** until then (rev 14). |
+
+> **IN-PLACE SUPERSESSION (2026-08-26) — C1 additionally requires PR-6, which
+> has REOPENED.** Every statement of this gate in this document (`C1` above, the
+> `cfgFeeEntitlementEnabled` and `feeEntitlementEnabled` parameter rows, and the
+> owner-calibration item) names PR-5c or rewards-dark as the sole precondition.
+> That was written when PR-6 was believed complete. It is not: #1354/#1383
+> delivered the repayment and early-close families only, and **#1947** reopened
+> the rest — five recovery entry points that take the ordinary cut from recovered
+> lender interest without consulting the stamp, and refinance, which honours the
+> stamp but resolves it against the stored lender.
+>
+> **One of those is not a discount defect at all and no supersession of the
+> recovery family reaches it:** `RiskFacet.triggerPartialLiquidation` credits the
+> whole recovered lender share to `loan.lender` and deliberately writes no claim
+> record, so on a transferred position the previous lender keeps the principal
+> and interest outright and the current holder has nothing to claim against.
+>
+> Enabling `feeEntitlementEnabled` on the gate as literally stated would
+> therefore permit mainnet Full over an open fund-loss path. Read C1 as requiring
+> PR-5c (or rewards-dark) **and** #1947 closed, including that payout re-key.
+> **Flagged for owner acknowledgement at the next ratification.**
 | **C2** | `USER_SIDE_SHARE_CAP` default **2000 bps (20%)**. |
 | **C3** | Ship **Full package together** (PR-4 → PR-5). |
 | **C5** | **Double absorption** — each Full party pays `C*`. |

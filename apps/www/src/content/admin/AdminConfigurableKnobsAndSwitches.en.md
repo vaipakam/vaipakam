@@ -634,9 +634,55 @@ optional:
 - **Do not enable before the loan-side reward cap and the lender-side
   settlement sweep are live on the deployment.** Enabling earlier lets
   a Full loan pay `C*` for a discount the settlement paths would not
-  yet honour, and arms an uncapped loan-side reward. Both are live as
-  of this cycle (#1353, #1354 and the #1383 family), so on a current
-  deployment this is a check, not a blocker.
+  yet honour, and arms an uncapped loan-side reward. The loan-side cap
+  (#1353) and the settlement sweep across the repayment paths (#1354,
+  #1383) are live — but the RECOVERY paths are not: time-based default,
+  liquidation, split liquidation and partial liquidation each take the
+  ordinary cut from recovered lender interest without honouring the
+  stamp — five entry points in all: time-based default, liquidation,
+  DISCOUNTED liquidation (separately gated, beside the ordinary one),
+  split liquidation, and partial liquidation (which leaves the loan
+  Active, and which additionally pays the lender share to the STORED
+  lender with no claim record — so on a transferred position the
+  previous lender keeps the proceeds themselves, not merely the
+  discount). The periodic-interest auto-liquidation leg is NOT one of
+  them — an earlier revision of this note counted it as a sixth; it
+  deducts a handling fee on swap PROCEEDS and charges no lender yield
+  fee at all, so the bump has nothing to reduce there. The collateral
+  prepay-SALE terminals were listed here too and are also REMOVED: they
+  do pay a raw treasury leg with no eligibility call, but that leg is an
+  ADDITIVE consideration item funded from the sale price — the lender
+  receives principal plus interest GROSS and the BORROWER's residual
+  bears the fee — so there is no lender discount to deliver, and
+  applying the bump would subsidise the borrower. And refinance is a further
+  concern: it honours the stamp but resolves it against the STORED
+  lender, so a transferred position can have the previous lender's
+  vault fund the buyer's discount.
+  The frozen §F2 rule — `VpfiAbsorptionDistributionFormulaRedesign.md`,
+  not `TokenomicsTechSpec` — is "at every lender-yield settlement", so
+  that is a divergence rather than a scope boundary, and it is a
+  **blocker** until it is closed or explicitly superseded — **except for
+  one part, which no supersession reaches.** Partial liquidation does
+  not merely skip the discount: it credits the lender share to the
+  STORED lender and writes no claim record, so on a transferred
+  position the previous lender keeps the principal and interest and the
+  current holder has nothing to claim against. That is misrouted money,
+  not a fee discount, so a decision that recovered interest is out of
+  F2 scope does not excuse it. Do not enable the switch until
+  `triggerPartialLiquidation` pays or parks for the current
+  position-NFT holder, whatever has been superseded. Do not read
+  the #1383 family as covering it, and do not read PR-6 (#1354) as
+  discharging it. Do not read the deploy assertions as bearing on it
+  either: the only one touching this flag pins it OFF on a fresh
+  deploy, and observes no settlement path at all. What the test corpus
+  DOES cover is the source behaviour of the paths already swept —
+  `VPFIDiscountFacetTest` drives Full-stamped repay and partial-repay
+  settlements and asserts the exact treasury discount, and
+  `SwapToRepayFacetTest` covers the swap terminal. What no automated
+  check can establish is that a PARTICULAR deployed Diamond routes that
+  bytecode, and no test covers the recovery paths or refinance at all —
+  which is why they are open. The setter checks only the chain role, so
+  the deployment side of this precondition is a manual readback.
 
 Disabling is always allowed, from any chain role.
 

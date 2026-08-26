@@ -754,10 +754,93 @@ settlement-reachability condition. Gate A constrains **both** branches.
 **Prove two code slices are live on THIS Diamond first.** The setter does not
 enforce them and will enable happily without them: the loan-side reward cap
 (PR-5c) and the settlement sweep that honours the lender Full stamp (PR-6).
+
+**⛔ PR-6 is NOT discharged, and no deploy assertion bears on whether it is.**
+The only deploy assertion touching this flag pins it OFF on a fresh deploy
+(`DeployDiamondIntegrationTest.t.sol`); it observes no settlement path at all,
+and the setter checks only the chain role. Treat the whole of this step as a
+MANUAL readback. The test corpus does cover the source behaviour of the swept
+paths (`VPFIDiscountFacetTest`, `SwapToRepayFacetTest`), but no test can show
+that THIS Diamond routes that bytecode, and none covers the recovery paths or
+refinance at all — so a green suite is not evidence for this step. The RECOVERY paths — time-based
+default, liquidation, discounted liquidation, split and partial (FIVE, not the
+six an earlier revision of this step named — the periodic-interest
+auto-liquidation leg deducts a handling fee on swap PROCEEDS and charges no
+lender yield fee at all, so there is nothing there for the bump to reduce) —
+still take the ordinary cut from recovered lender interest without consulting
+the stamp; and refinance resolves the stamp against the STORED lender rather
+than the current holder. **Partial liquidation is worse than the others**: it
+deposits the lender share to `loan.lender` and deliberately writes no claim
+record, so on a transferred position the previous lender keeps the proceeds
+outright and the current holder has nothing to claim against — the discount is
+the smaller half of that defect. (The collateral prepay-SALE terminals were named here
+in an earlier revision and are REMOVED: their treasury leg is an ADDITIVE
+consideration item funded from the sale price — the lender receives principal
+plus interest GROSS and the BORROWER's residual bears the fee — so there is no
+lender discount to deliver and applying the bump would subsidise the borrower.) Frozen §F2
+is "at every lender-yield settlement", so that is a live divergence and a hard
+precondition for this step, not a scope boundary. Enabling here while it stands
+collects `C*` for a discount a lender can lose depending on how their loan ends.
+The frozen rule is `### F2 — Lender yield fee (frozen — rev 8)` in
+`docs/DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md` (read its two
+IN-PLACE SUPERSESSION notes before acting on it: the F2 pseudocode keys the
+discount on `loan.lender` and must be read as the current position-NFT holder,
+and its C1 gate names PR-5c alone and must be read as also requiring #1947) — NOT
+`TokenomicsTechSpec`, which has no §F2 of its own. The open implementation card
+is **#1947**; #1383 is the COMPLETED repayment/early-close family and is not the
+blocker. See also `TokenomicsTechSpec`'s lender-settlement section for the
+discharge criterion.
 Without the cap, a Full loan enters the uncapped reward path; without the sweep,
 a user can pay `C*` for a discount settlement then ignores. This bites on partial
 or stacked upgrades, where a Diamond can have M1b live and still be missing
-either. Read back the deploy assertions for both before scheduling anything.
+either.
+
+**Do NOT "read back the deploy assertions" for these** — an earlier revision of
+this step said to, and there is nothing to read: the only deploy assertion
+touching this flag pins it OFF on a fresh deploy and observes no settlement path.
+Establish both by hand on the TARGET Diamond before scheduling anything:
+
+- **PR-5c (loan-side reward cap) — this is NOT one facet.** The per-loan cap is
+  STAMPED by `FeeEntitlementFacet` and ENFORCED through `LibInteractionRewards`,
+  which is a library and is therefore inlined into **every** reward-counting
+  facet — `RewardClaimFacet` and `RewardHorizonSweepFacet` among them. An old
+  stamping facet leaves new loans unstamped; an old payout or sweep facet ignores
+  the cap. Resolving one selector and reading the haircut knob proves neither.
+  On a partial or stacked target, verify that the whole set was refreshed
+  together (this is what `RefreshAllFacetsInPlace` exists for) rather than
+  spot-checking a facet, and read the cap knob as well.
+- **PR-6, the ALREADY-LANDED family** — an upgrade that installs the #1947 fix
+  says nothing about whether THIS Diamond ever received #1354/#1383. Loupe-resolve
+  and compare `RepayFacet`, `RepayPeriodicFacet`, `PrecloseFacet`,
+  `SwapToRepayFacet`, `SwapToRepayIntentFacet`, `IntentDispatchFacet`,
+  `AutoLifecycleFacet`, `RefinanceFacet`, and the shared resolver host
+  `VPFIDiscountFacet`. Skip this and Full can be enabled on a Diamond whose
+  ordinary repayment and early-close settlements still ignore the purchased bump
+  — the failure this step exists to prevent, on the paths it already calls done.
+- **PR-6 / #1947, the REOPENED family** — confirm the DEPLOYED bytecode of
+  `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet` and `RefinanceFacet`
+  is the fixed version, the same way.
+
+**Two branches out of this step, not one.** While #1947 is open and unsuperseded
+there is no fixed build for the reopened family, so that readback cannot pass and
+the step cannot proceed. If the owner has instead recorded an explicit
+**superseding decision** against the frozen §F2 (the alternative the spec's
+discharge criterion allows, for the recovery family), then for the superseded
+family there is deliberately no implementation to verify: check that the decision
+is recorded and in force, and require fixed bytecode only for the families that
+remain implementation obligations.
+
+**One requirement survives ANY supersession, and it is inside the recovery
+family, so it is easy to lose here.** The partial-liquidation PAYOUT re-key is
+not a discount matter — it is misrouted principal and interest, with no claim
+record for the current holder to recover through — so a decision about whether
+recovered interest earns the Full bump has no bearing on it. Even on the
+superseded branch, require `RiskFacet` bytecode in which
+`triggerPartialLiquidation` pays or parks for `ownerOf(lenderTokenId)`. Passing
+this step without it leaves the previous lender holding the proceeds of a
+transferred position. Without this branch a granted supersession
+would leave `feeEntitlementEnabled` blocked forever by a readback that can never
+be satisfied.
 
 ```
 ConfigFacet.setFeeEntitlementEnabled(true)      # ADMIN_ROLE
