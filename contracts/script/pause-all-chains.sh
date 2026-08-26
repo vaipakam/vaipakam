@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# FIRST statement, before ANY assignment: every name's DECLARATION as this
+# script found it. `load_env_file` compares each `.env` name against this, and
+# a declaration that has changed means the script created or reassigned it —
+# the set `.env` may not replace. Declarations rather than names, because a
+# name INHERITED as exported is already present and reassigning it changes no
+# name and no attribute (Codex #1938 r15/r16).
+__lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #
 # pause-all-chains.sh — production-grade simultaneous-pause helper.
 #
@@ -41,20 +48,66 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-DEPLOY_ROOT="$CONTRACTS_DIR/deployments"
-SENTINEL_DIR="$CONTRACTS_DIR/.pause-runs"
-PAUSE_BUDGET_S=300
+# shellcheck source=lib/load-env.sh
+source "$SCRIPT_DIR/lib/load-env.sh"
 
-mkdir -p "$SENTINEL_DIR"
 
 # ── Args ──────────────────────────────────────────────────────────────
 
+# Load .env BEFORE the flags below, for the same two reasons as the deploy
+# wrappers (#1932 / #1938): it is read as DATA so it cannot execute, and it is
+# read FIRST so a plain `CHAINS_FILTER=base` in the file cannot replace what
+# the operator passed with `--chains`. It sat after this block until #1938 r5.
+#
+# Optional here: calldata and unpause modes need no RPC, and the --check
+# branch enforces presence per-chain.
+# Initialised on EVERY path. It was not, and under `set -euo pipefail` this
+# script then aborted with "unbound variable" whenever `.env` was absent or
+# loaded cleanly — i.e. normally. I shipped that: the assignment was added
+# with a text replace I did not assert, in the same commit where I asserted
+# the others, and `bash -n` cannot see an unset variable (Codex #1938 r11).
+__env_load_failed=0
+if [ -f "$CONTRACTS_DIR/.env" ]; then
+  # NON-FATAL here, unlike the deploy wrappers. This is the emergency pause
+  # path: `calldata` and `--unpause-calldata` need no RPC at all, and a
+  # malformed or undocumented `.env` must not stop an operator producing
+  # pause calldata during an incident (Codex #1938 r6). The `--check` branch
+  # enforces per-chain RPC presence itself, so a skipped load surfaces there
+  # as a specific error rather than as a silent gap.
+  load_env_file "$CONTRACTS_DIR/.env" || __env_load_failed=1
+fi
+
+# Script-owned state, initialised AFTER the load — deliberately.
+#
+# `.env` setting `DEPLOY_ROOT`, `SENTINEL_DIR` or `PAUSE_BUDGET_S` used to
+# overwrite these, which during an incident means calldata generated from the
+# wrong deployment tree, a sentinel written to the wrong path, or an
+# over-budget pause certified under an inflated limit (Codex #1938 r10).
+#
+# Assigning them after the load fixes the whole class rather than adding three
+# more names to a reserved list — the loader only has to reserve what MUST
+# exist before it runs (`SCRIPT_DIR`, `CONTRACTS_DIR`), and everything else is
+# simply set later and wins by ordering, which is the same principle the CLI
+# flags use.
+DEPLOY_ROOT="$CONTRACTS_DIR/deployments"
+SENTINEL_DIR="$CONTRACTS_DIR/.pause-runs"
+PAUSE_BUDGET_S=300
+mkdir -p "$SENTINEL_DIR"
+
 MODE="calldata"
 CHAINS_FILTER=""
+SELF_TEST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --check)             MODE="check" ;;
     --unpause-calldata)  MODE="unpause" ;;
+    # Runs the ordinary calldata path and stops before the sentinel write. The
+    # run-the-scripts guard needs the early path exercised, not an audit record
+    # invented for an incident that never happened — and it was previously
+    # relying on its own output truncation to stop us getting that far, which is
+    # not a property of this script at all (Codex #1938 r15). A FLAG rather than
+    # an environment variable, so it cannot be reached from `.env`.
+    --self-test)         SELF_TEST=1 ;;
     --chains)            shift; CHAINS_FILTER="$1" ;;
     *)
       echo "Unknown flag: $1" >&2
@@ -64,11 +117,50 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# Load .env if present so --check has the RPC URLs. .env is optional;
-# calldata + unpause modes don't need it. The --check branch
-# enforces presence per-chain.
-if [ -f "$CONTRACTS_DIR/.env" ]; then
-  set -a; source "$CONTRACTS_DIR/.env"; set +a
+
+# A rejected `.env` is tolerable for pause calldata and NOT for unpause.
+#
+# Atomic staging means a rejected file imports nothing — including
+# `POST_HANDOVER`. Unpause reads that to decide whether ownership has moved to
+# the timelock, so an unset value silently defaults to pre-handover and the
+# script would label direct calls valid after a handover (Codex #1938 r10). My
+# own atomicity fix created that: partial import became no import, and the
+# missing declaration then read as a safe default.
+#
+# Pausing is the action an incident needs and it consults no such declaration,
+# so it still proceeds.
+if [ "$MODE" = "unpause" ]; then
+  # Validated for the mode that READS it, and whatever its source. Without this,
+  # `POST_HANDOVER=true` passed the non-empty test below and then failed the
+  # `= "1"` test at the emit site, labelling pre-handover direct calls valid on a
+  # handed-over chain — the failure the fallback exists to prevent (r13).
+  #
+  # Scoped to unpause, because r13 put it before the mode dispatch and a stale
+  # `.env` then aborted PAUSE calldata over a declaration the pause path never
+  # reads — breaking the incident path the comment below promises still proceeds,
+  # which is a worse outcome than the one being fixed (r14).
+  env_assert_bool POST_HANDOVER || exit 1
+fi
+
+if [ "$__env_load_failed" = "1" ]; then
+  case "$MODE" in
+    unpause)
+      # An explicitly EXPORTED value is trusted and the run continues: the
+      # loader never applied anything from the rejected file, so this came from
+      # the operator's own environment, which is the documented fallback the
+      # error message itself recommends. Refusing it would tell an operator to
+      # do something and then reject them for doing it (Codex #1938 r11).
+      if [ -n "${POST_HANDOVER:-}" ]; then
+        echo "Warning: .env was not loaded; using POST_HANDOVER from the environment." >&2
+      else
+        echo "Error: .env could not be loaded, and --unpause-calldata depends on" >&2
+        echo "       POST_HANDOVER to choose between direct and timelock calls." >&2
+        echo "       Fix .env, or set POST_HANDOVER explicitly in the environment." >&2
+        exit 1
+      fi ;;
+    *)
+      echo "Warning: .env was not loaded; --check will report any RPC it needs." >&2 ;;
+  esac
 fi
 
 # Map chain-slug → RPC env var. Mirrors deploy-{chain,mainnet,
@@ -204,6 +296,11 @@ BANNER
     # Stamp a sentinel so --check knows when this run started. One
     # sentinel per run — keeps the audit trail across multiple
     # incidents.
+    if [ "$SELF_TEST" = "1" ]; then
+      echo "(--self-test: stopping before the sentinel write)"
+      exit 0
+    fi
+
     SENTINEL="$SENTINEL_DIR/run-$RUN_ID.epoch"
     date +%s > "$SENTINEL"
     {

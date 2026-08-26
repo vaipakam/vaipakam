@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# FIRST statement, before ANY assignment: every name's DECLARATION as this
+# script found it. `load_env_file` compares each `.env` name against this, and
+# a declaration that has changed means the script created or reassigned it —
+# the set `.env` may not replace. Declarations rather than names, because a
+# name INHERITED as exported is already present and reassigning it changes no
+# name and no attribute (Codex #1938 r15/r16).
+__lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #
 # deploy-mainnet.sh — mainnet tiered deploy.
 #
@@ -184,6 +191,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/load-env.sh
+source "$SCRIPT_DIR/lib/load-env.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -268,6 +277,29 @@ For testnet rehearsals (mirrors this tiered phase model + adds a
 pause-rehearsal phase), use deploy-testnet.sh.
 For Anvil + dev quick-iteration, use deploy-chain.sh.
 EOF
+  exit 1
+fi
+
+# ── Load .env BEFORE parsing anything the operator typed ──────────────
+#
+# BOTH halves are needed and each fixes a different failure:
+#
+#   READ AS DATA (lib/load-env.sh) — `source` executes the file in this
+#   shell, and no ordering survives that: it can `set -- …` and supply the
+#   command line itself.
+#
+#   LOAD FIRST — data-loading alone does NOT stop a plain `FRESH=1` from
+#   overwriting a parsed 0. #1938 r4 caught me removing this ordering after
+#   the data-loader landed, on the reasoning that position no longer
+#   mattered; it does, for exactly the case #1932 was filed about. Parsing
+#   afterwards means what the operator typed is assigned last.
+#
+# Placed after the usage guard so `--help` and a no-argument run still exit
+# without requiring a `.env`.
+if [ -f "$CONTRACTS_DIR/.env" ]; then
+  load_env_file "$CONTRACTS_DIR/.env"
+else
+  echo "Error: $CONTRACTS_DIR/.env not found." >&2
   exit 1
 fi
 
@@ -370,36 +402,6 @@ esac
 
 # ── Load .env ─────────────────────────────────────────────────────────
 
-# #884 — flags parsed above must SURVIVE this block. `set -a; source`
-# exports every assignment in the shared .env, so a `CONFIGURE_VPFI_PEG_OPT=`
-# line there overwrites what the operator just typed on the command line —
-# silently, and in BOTH directions: a stale `=1` prices VPFI on a run that
-# never asked, and a `=0` discards an explicit `--configure-vpfi-peg`.
-#
-# That is precisely the failure the flag was chosen to avoid. The flag's own
-# rationale above says an env var is unsafe here "because the wrappers source
-# a shared .env" — and then the parsed flag sat in an ordinary shell variable
-# that the same source overwrites. The reasoning was right and the ordering
-# defeated it (Codex #1920 r4).
-#
-# So the CLI value is snapshotted and restored: whatever .env says about this
-# name is inert, and the only thing that prices VPFI is this run's flag.
-#
-# NOT yet extended to the other flag-set variables in the case block
-# (CONFIRM_PURGE_MAINNET, CONFIRM_MULTISIG, CONFIRM_HW_SIGNER,
-# CONFIRM_ORPHANS, CONFIRM_DEADLINE_RESET, FRESH, PHASE). They have the same
-# exposure and it is tracked separately — widening a launch-posture fix into
-# the mainnet purge/handover confirmations is a change that deserves its own
-# review, not a mid-review expansion of this one.
-__cli_configure_vpfi_peg_opt="$CONFIGURE_VPFI_PEG_OPT"
-
-if [ -f "$CONTRACTS_DIR/.env" ]; then
-  set -a; source "$CONTRACTS_DIR/.env"; set +a
-  CONFIGURE_VPFI_PEG_OPT="$__cli_configure_vpfi_peg_opt"
-else
-  echo "Error: $CONTRACTS_DIR/.env not found." >&2
-  exit 1
-fi
 
 RPC="${!RPC_VAR:-}"
 if [ -z "$RPC" ]; then

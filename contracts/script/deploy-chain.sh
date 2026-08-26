@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# FIRST statement, before ANY assignment: every name's DECLARATION as this
+# script found it. `load_env_file` compares each `.env` name against this, and
+# a declaration that has changed means the script created or reassigned it —
+# the set `.env` may not replace. Declarations rather than names, because a
+# name INHERITED as exported is already present and reassigning it changes no
+# name and no attribute (Codex #1938 r15/r16).
+__lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #
 # deploy-chain.sh — testnet one-shot deployment / quick-iteration script.
 #
@@ -181,6 +188,8 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTRACTS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/load-env.sh
+source "$SCRIPT_DIR/lib/load-env.sh"
 REPO_ROOT="$(cd "$CONTRACTS_DIR/.." && pwd)"
 
 # ── Provenance snapshot — MUST be taken BEFORE this script writes anything ──
@@ -248,6 +257,45 @@ EOF
   exit 1
 fi
 
+# ── The anvil playground delegates BEFORE any configuration is read ───
+#
+# `deploy-chain.sh anvil` hands off to the self-contained anvil-bootstrap.sh,
+# which brings its own keys, RPC and mocks. Loading `.env` first contaminated
+# it even when the file was perfectly VALID — a stale `DEPLOY_SKIP_ARTIFACTS=true`
+# makes DeployDiamond skip writing `addresses.json` so the bootstrap configures
+# a stale recorded Diamond, and `ANVIL_WETH` replaces the mock it would create
+# (Codex #1938 r9). Deferring the MISSING and MALFORMED cases, as earlier rounds
+# did, left the ordinary case doing the damage.
+#
+# Reading `$1` here does not reopen the override problem: `.env` is data now, so
+# it cannot rewrite the caller's arguments the way a sourced file could.
+if [ "${1:-}" = "anvil" ]; then
+  # `anvil-bootstrap.sh` takes no arguments, and moving this delegation ahead of
+  # the parsing loop (r9) meant anything trailing was silently DISCARDED rather
+  # than rejected — `deploy-chain.sh anvil --definitely-invalid` bootstrapped
+  # happily, where every other invocation gets `Unknown flag`. Validate here, so
+  # the delegation stays env-free without losing the rejection (Codex #1938 r15).
+  if [ "$#" -gt 1 ]; then
+    shift
+    echo "Error: anvil takes no further arguments; got: $*" >&2
+    exit 1
+  fi
+  echo "anvil dev playground — delegating to anvil-bootstrap.sh (no .env read)"
+  exec bash "$SCRIPT_DIR/anvil-bootstrap.sh"
+fi
+
+# ── Load .env BEFORE parsing anything the operator typed ───────────────
+#
+# BOTH halves are needed: read as DATA (lib/load-env.sh) so the file cannot
+# execute or rewrite `$@`, and read FIRST so a plain `FRESH=1` cannot overwrite
+# a parsed 0.
+__env_missing=0
+if [ -f "$CONTRACTS_DIR/.env" ]; then
+  load_env_file "$CONTRACTS_DIR/.env" || __env_missing=1
+else
+  __env_missing=1
+fi
+
 CHAIN_SLUG="$1"; shift
 
 SKIP_DEFI=0
@@ -299,6 +347,11 @@ fi
 
 case "$CHAIN_SLUG" in
   anvil)
+    # UNREACHABLE for `deploy-chain.sh anvil` since #1938 r9 — the delegation
+    # now happens before `.env` is read, so the playground cannot be
+    # contaminated by a valid-but-stale configuration. Kept as a backstop for
+    # any future path that reaches the chain table with this slug, and so the
+    # table stays a complete list of the chains this script accepts.
     echo "anvil dev playground — delegating to anvil-bootstrap.sh"
     exec bash "$SCRIPT_DIR/anvil-bootstrap.sh"
     ;;
@@ -334,15 +387,15 @@ EOF
     ;;
 esac
 
-# ── Load .env and resolve RPC ─────────────────────────────────────────
-
-if [ -f "$CONTRACTS_DIR/.env" ]; then
-  set -a; source "$CONTRACTS_DIR/.env"; set +a
-else
-  echo "Error: $CONTRACTS_DIR/.env not found." >&2
+# The anvil path has `exec`d by now; every other chain needs the file.
+if [ "$__env_missing" = "1" ]; then
+  echo "Error: $CONTRACTS_DIR/.env is missing or could not be loaded." >&2
   echo "Copy .env.example → .env and populate the keys for $CHAIN_SLUG." >&2
   exit 1
 fi
+
+# ── Load .env and resolve RPC ─────────────────────────────────────────
+
 
 RPC="${!RPC_VAR:-}"
 if [ -z "$RPC" ]; then
