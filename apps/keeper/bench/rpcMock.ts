@@ -286,6 +286,12 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
       if (/^side$/i.test(p.name ?? '')) return 0n;
     }
 
+    // The on-chain keeper tier must DIFFER from the aggregate the quote resolves
+    // to (tier 1), or liquidityConfidence logs `(no change)` and skips keeper
+    // signing + setKeeperTier. 2 > 1 is an immediate safety demotion — the
+    // transition this every-tick pass exists to perform (Codex #1945 r9).
+    if (/getkeepertier/i.test(fnName)) return 2n;
+
     // An ENUM is uint8 in practice, and a 1e18 enum silently discards work:
     // every mocked `getOffer` had `offerType = 1e18` while the matcher accepts
     // only 0 and 1, so the whole offer book was thrown away with no error

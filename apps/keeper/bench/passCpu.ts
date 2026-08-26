@@ -208,7 +208,26 @@ async function main(): Promise<void> {
     // is still marked.
     resetPages();
     resetD1();
-    await cpuMs(() => pass.run(makeEnv()));
+    const warmed = await cpuMs(() => pass.run(makeEnv()));
+    if (warmed === null) {
+      // The warm-up TIMED OUT. Its abandoned work (a pending RPC retry on a
+      // backoff timer) may still sit on the event loop, so a measured run now
+      // would not be isolated and would publish a polluted, non-comparable
+      // number. Mark the pass hung and skip measurement — the same treatment a
+      // hung measured rep gets below (Codex #1945 r9).
+      rows.push({
+        name: pass.name,
+        median: 0,
+        max: 0,
+        rpc: 0,
+        errors: 0,
+        hung: 1,
+        unbounded: false,
+        warmUpErrors: errors,
+      });
+      errors = 0;
+      continue;
+    }
 
     // Counters start AFTER the warm-up. Including it double-counted every
     // figure — `watcher` reported 3,120 calls for a pass that makes 1,560,

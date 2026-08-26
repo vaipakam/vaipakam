@@ -55,27 +55,33 @@ function rowsFor(table: string): Record<string, unknown>[] {
         notify_maturity_approaching: 1,
       }));
     case 'loans':
-    case 'offers':
+    case 'offers': {
       // fetchTrackedAssets (dailyOracleSnapshot) UNIONs lending_asset /
-      // collateral_asset from loans + offers into a single `asset` projection,
-      // filtered by chain_id. This stub returns raw rows without evaluating the
-      // SELECT projection, so the row must carry `asset` DIRECTLY (the outer
-      // column the pass reads) alongside chain_id for the bind filter. Without a
-      // seed here the daily snapshot found no tracked assets and captureForChain
-      // exited before creating clients / signing / submitting — the pass showed
-      // zero RPCs and NOT MEASURED (Codex #1945 r6). The extra loan columns
-      // (loan_id / borrower / borrower_current_owner) let the hf-band loans
-      // reader see rows too; chain_id = 84532 scopes them to the canonical
-      // fixture chain, same as user_thresholds.
-      return Array.from({ length: ROWS }, (_, i) => ({
-        chain_id: 84532,
-        asset: WALLET(i + 1),
-        lending_asset: WALLET(i + 1),
-        collateral_asset: WALLET(i + 100),
-        loan_id: i + 1,
-        borrower: WALLET(i + 1),
-        borrower_current_owner: WALLET(i + 1),
-      }));
+      // collateral_asset from loans + offers into a single `asset` projection.
+      // This stub returns raw rows without evaluating the SELECT projection, so
+      // each row carries `asset` DIRECTLY. Emit the lending AND the collateral
+      // asset as SEPARATE rows so the union yields 2N DISTINCT assets, not N
+      // (Codex #1945 r9). No chain_id: the fixture's books are active on every
+      // configured chain, so a chain_id filter passes for all three — a
+      // chain_id = 84532 seed made Arbitrum / BNB return none despite their
+      // mocked books. The loan columns (loan_id / borrower /
+      // borrower_current_owner) let the hf-band loans reader see rows too.
+      const out: Record<string, unknown>[] = [];
+      for (let i = 0; i < ROWS; i += 1) {
+        const lending = WALLET(i + 1);
+        const collateral = WALLET(i + 1000);
+        const common = {
+          lending_asset: lending,
+          collateral_asset: collateral,
+          loan_id: i + 1,
+          borrower: WALLET(i + 1),
+          borrower_current_owner: WALLET(i + 1),
+        };
+        out.push({ asset: lending, ...common });
+        out.push({ asset: collateral, ...common });
+      }
+      return out;
+    }
     default:
       // Unrecognised: empty. The pass will do nothing, and the runner will
       // say so rather than calling it cheap.
