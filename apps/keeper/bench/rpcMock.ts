@@ -175,20 +175,20 @@ for (const abi of [DIAMOND_ABI_VIEM, QUOTER_V2_ABI] as readonly Abi[]) {
  * caller then walks ~1e16 pages. That is precisely how preGraceWatcher came
  * out at 20,025 calls and 5.9 s and looked like the worst pass in the tree.
  */
-function defaultFor(p: AbiParameter, fnName = ''): unknown {
+function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
   const t = p.type;
   if (t.endsWith('[]')) {
     const inner = { ...p, type: t.slice(0, -2) } as AbiParameter;
-    return Array.from({ length: ARRAY_LEN }, () => defaultFor(inner, fnName));
+    return Array.from({ length: ARRAY_LEN }, () => defaultFor(inner, fnName, chainKey));
   }
   const fixed = t.match(/^(.*)\[(\d+)\]$/);
   if (fixed) {
     const inner = { ...p, type: fixed[1] } as AbiParameter;
-    return Array.from({ length: Number(fixed[2]) }, () => defaultFor(inner, fnName));
+    return Array.from({ length: Number(fixed[2]) }, () => defaultFor(inner, fnName, chainKey));
   }
   if (t === 'tuple') {
     const comps = (p as { components?: readonly AbiParameter[] }).components ?? [];
-    return comps.map((c) => defaultFor(c, fnName));
+    return comps.map((c) => defaultFor(c, fnName, chainKey));
   }
   if (t === 'address') return ADDRESS;
   if (t === 'bool') {
@@ -205,6 +205,14 @@ function defaultFor(p: AbiParameter, fnName = ''): unknown {
     // — made twice in this file, which is why both heuristics now read from
     // the same pair of sources.
     const where = `${p.name ?? ''} ${fnName}`;
+    // A canonical-reward-chain flag is a property of the CHAIN, not a blanket
+    // true. `runRewardBudgetRemit` is Base-only and returns immediately on
+    // mirrors, so answering `isCanonicalRewardChain` true on every endpoint
+    // profiled the Base remit workflow on all three chains and inflated the pass
+    // (Codex #1945 r5). Only the canonical fixture chain (Base Sepolia) is true.
+    if (/canonical/i.test(where)) {
+      return /base/i.test(chainKey);
+    }
     // Inverted gates first: `paused`/`frozen` true would BLOCK work, which is
     // the opposite of what an open gate means.
     if (/paused|blocked|frozen|sanction|banned|denied|revoked|expired/i.test(where)) {
@@ -243,15 +251,30 @@ function defaultFor(p: AbiParameter, fnName = ''): unknown {
     // logged (Codex #1945 r1). Small, in-range values for narrow ints and for
     // type/status/kind-shaped names.
     if (/^u?int8$/.test(t) || /type|status|kind|state|band|tier|role/i.test(p.name ?? '')) {
+      // Loan status and asset type must be the ACTIVE enum values — 0 = active
+      // loan, 0 = ERC20 — or `maybeAutonomousLiquidate` returns before quote /
+      // sign / submit, leaving the liquidation path unmeasured even with at-risk
+      // loans (Codex #1945 r5). Other enums (offerType etc.) keep the in-range
+      // ENUM_VALUE the matcher accepts.
+      if (/^status$|asset_?type|assetkind/i.test(p.name ?? '')) {
+        return 0n;
+      }
       return BigInt(ENUM_VALUE);
     }
     // A CHAIN-ID-shaped field must be a REAL fixture chain, or a pass that reads
     // it and then tries to act on that chain errors out per record with "no
     // configured RPC" — `remitAck` did exactly that on every remit's `dst`,
     // and once the pagination fix let it walk the whole set (Codex #1945 r3)
-    // that was hundreds of self-inflicted errors that floored its number. Base
-    // Sepolia is always in the fixture set.
-    if (/chain|^dst$|^src$|dest|source/i.test(p.name ?? '')) {
+    // that was hundreds of self-inflicted errors that floored its number. The
+    // FUNCTION name is consulted too, because `getExpectedSourceChainIds` /
+    // `getBroadcastDestinations` return UNNAMED `uint32[]` whose elements would
+    // otherwise fall through to the width-clamped max and fabricate a topology
+    // of remittances to a nonexistent chain (Codex #1945 r5). Base Sepolia is
+    // always in the fixture set.
+    if (
+      /chain|^dst$|^src$|dest|source/i.test(p.name ?? '') ||
+      /chainids?|sourcechain|broadcastdest|destination|expectedsource|remotechain/i.test(fnName)
+    ) {
       return 84532n;
     }
     // A HEALTH FACTOR must come back BELOW the 1e18 liquidation line, or
@@ -360,9 +383,9 @@ function answerCall(data: string, chainKey = ''): string {
   }
 
   const values = fn.outputs.map((o) => {
-    if (!o.type.endsWith('[]')) return defaultFor(o, fn.name);
+    if (!o.type.endsWith('[]')) return defaultFor(o, fn.name, chainKey);
     const inner = { ...o, type: o.type.slice(0, -2) } as AbiParameter;
-    return Array.from({ length: pageLen }, () => defaultFor(inner, fn.name));
+    return Array.from({ length: pageLen }, () => defaultFor(inner, fn.name, chainKey));
   });
   return encodeFunctionResult({
     abi: [fn] as Abi,

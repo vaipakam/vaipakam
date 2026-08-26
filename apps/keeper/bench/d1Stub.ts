@@ -40,7 +40,12 @@ function rowsFor(table: string): Record<string, unknown>[] {
         tg_chat_id: null,
         push_channel: null,
         locale: 'en',
-        notify_maturity_approaching: 0,
+        // Opted IN to maturity alerts. `checkLoan` returns immediately when this
+        // is 0, before its throttle lookup / message format / dispatch / state
+        // write, so an all-zero seed left preGraceWatcher's notification half
+        // unmeasured even once the RPC fixture reached a near-maturity loan
+        // (Codex #1945 r5).
+        notify_maturity_approaching: 1,
       }));
     default:
       // Unrecognised: empty. The pass will do nothing, and the runner will
