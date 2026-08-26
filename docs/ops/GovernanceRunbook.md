@@ -721,6 +721,17 @@ spend a borrower's collateral. This is a fund-safety gate, not an accounting one
   vulnerable claim path live. Assert the deployment, per chain, the same way the
   other code-slice gates in this section are asserted.
 
+  **And on the ACTIVE-MIRROR branch, deployment is not the gate — the per-day
+  funding property is.** Step 5 forbids propagation while any reachable mirror
+  lacks that property, and a mirror learns `D*` only through propagation. So
+  arming on "the fix is deployed" can leave an operator armed, with `D*`
+  immutable, and the ceremony's own prohibition blocking the only route to
+  completing the cutover. Before arming an active-mirror mesh, establish the
+  property — a claim against a day whose budget has not arrived cannot consume
+  value belonging to anything else — not merely that #1566's implementation is
+  routed. On the dark branch this does not apply: arming Base IS the cutover and
+  there is nothing to propagate.
+
 > **#1498 is not the card to check.** It reads `closed / completed` and was the
 > original number for this work; #1555's `Closes #1498` fired when only the
 > de-duplication half landed, and the fund-safety half was re-filed as #1566.
@@ -1359,6 +1370,18 @@ missing; it is never an instruction to disable a running one.
 RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)   # ADMIN_ROLE, canonical only
 ```
 
+**⛔ On the M3 / ACTIVE-MIRROR branch, do not execute this call until every
+reachable mirror ENFORCES THE PER-DAY FUNDING PROPERTY** — a claim against a day
+whose budget has not arrived cannot consume value belonging to anything else.
+Not "#1566 is deployed": see the warning in Step 5, and Gate A above.
+
+This is an arming gate and not merely a propagation one, because the two are the
+same gate. Step 5 forbids propagation while any reachable mirror lacks the
+property, and **a mirror learns `D*` only through propagation** — so arming
+without it leaves the cutover impossible to complete, with `D*` immutable and no
+second one to schedule. On the dark branch this does not apply: arming Base IS
+the cutover and there is nothing to propagate.
+
 **Read back that the D1 share-of-pool cap (M2 PR-2) is live on every Diamond
 this arm will actually reach.** On the **M3 / active-mirror** branch that is Base
 AND every mirror, not only the one you are calling: arming propagates, each
@@ -1455,6 +1478,59 @@ value.
 
 ### Step 5 — DRIVE the propagation and verify it (M3 / active-mirror branch only)
 
+**⛔ FIRST, the prohibition that governs everything in this step.** The broadcast
+entry points are PERMISSIONLESS with respect to the caller, and on a mesh where
+ANY REACHABLE mirror lacks the per-day funding property (a claim against a day whose budget has not arrived cannot consume value belonging to anything else — **not** merely "#1566 deployed") an early broadcast pays a claimant out
+of borrower collateral rather than reverting.
+
+**Reachable** = a LIVE OUTBOUND LANE **and** any one of:
+
+1. current membership of `getBroadcastDestinations()`;
+2. current membership of `getExpectedSourceChainIds()`;
+3. an UNAPPLIED historical standing day that can pass the V3 lapse-clock gate.
+
+**This is the one definition. Everything else in this runbook refers to it
+rather than restating it** — the two places that restated it drifted apart three
+times, which is most of what the review of this section found.
+
+Three disjuncts because three things make a mirror targetable. `broadcastGlobal`
+fans out to the CURRENT destination list and calls no standing assertion, so
+(1) suffices with no history at all. `broadcastGlobalTo` calls
+`_assertDayStanding`, so (3) is what makes a REMOVED mirror targetable. And (2)
+is PROSPECTIVE: `_finalizeAndWrite` sets `s.chainDailyIncluded[dayId][chainId] =
+true` for every participating chain, so a mirror still on the expected-source
+list acquires standing on its next accepted report and becomes targetable
+through `broadcastGlobalTo` afterwards — being absent from the destination list
+and having no history today does not make it safe tomorrow.
+
+The historical disjunct needs one more qualifier: `broadcastGlobalTo` checks
+`dayLapseClock[dayId].finalizedAt` FIRST and reverts `DayHasNoLapseClock`, so
+standing that exists only on days finalized before the V3 lapse-clock upgrade
+does not make a REMOVED mirror targetable at all. Require a standing day that can
+pass that gate; otherwise a mirror with nothing but pre-upgrade history would
+hold the mesh paused over a broadcast that cannot be sent.
+
+And the qualifying day must be **UNAPPLIED** there. A removed mirror whose every
+V3-clock standing day has already been applied and safely reconciled cannot be
+reopened by re-broadcasting one: `_applyBroadcastV2Core` takes the idempotent
+replay branch before installing `armedFromDay` or touching any gate. Provided it
+is also absent from the expected-source list — so no future day can acquire new
+standing — its finite history is spent and it must not block the mesh. Treating
+spent history as reachable is the same over-block as the two above. An earlier revision defined
+reachability on standing alone and would have permitted unpausing with exactly
+that mirror exposed. **Do not run the cycle
+below, and do not unpause the reward messenger, while that is true of any such
+mirror** — see "the one safe branch" and the dead-end list further down, which
+record five procedures that were each tried against this and refuted. The cycle
+below is for a mesh where every reachable mirror enforces the PER-DAY FUNDING PROPERTY (a claim against a day whose budget has not arrived cannot consume value belonging to anything else — **not** merely "#1566 deployed", see the warning in the propagation section).
+
+**Everything in this step — the promotion gate below, the propagation cycle, the
+pause discussion — sits under that prohibition.** An earlier revision placed it
+eighty lines down, after the promotion instructions, which is the same as not
+having it: the promotion preflight requires #1566 only on the promoted chain, so
+following it can have an operator reopen the global sender while another mirror
+is still targetable through `broadcastGlobalTo`.
+
 **Promoting a dark mirror later needs its own gate, and this runbook does not
 otherwise provide one.** Once Base is armed, EVERY subsequent broadcast carries
 its stored `armedFromDay`, and a mirror sitting at zero installs it on first
@@ -1471,7 +1547,7 @@ does not apply to it.
 **Promotion is a full Step 3 for that chain, not a short checklist.** Run the
 whole active-mirror preflight against it — `KEEPER_ROLE`, keeper funding, the
 deployment artifact's Diamond address, both lane rate-limiter states, watcher
-coverage — plus PR-2, PR-5c, PR-6 and the #1566 fix live on it, its clock
+coverage — plus PR-2, PR-5c, PR-6 and the PER-DAY FUNDING PROPERTY (a claim against a day whose budget has not arrived cannot consume value belonging to anything else — **not** merely "#1566 deployed", see the warning in the propagation section) enforced on it — the #1566 fix being *live* is not the same test, its clock
 agreeing with Base, and its `armedFromDay` reading zero. A mirror bootstrapped
 without those arms into a mesh that cannot report, fund or observe it; then expect it to arm on its first
 broadcast rather than on a day you choose. There is no second cutover to
@@ -1537,17 +1613,21 @@ script does not broadcast either. So an operator who arms and then waits for
 mirrors to show `D*` can wait until the cutover day arrives with every mirror
 still unarmed.
 
-After arming, drive the cycle explicitly: finalize a day that has not yet been
-applied on the mirrors, **remit that day to every destination and wait for each
-mirror to CONFIRM receipt**, and only then call the payable `broadcastGlobal` (or
-`broadcastGlobalTo` per destination) and pay the transport fee.
+**On a mesh where every reachable mirror enforces the per-day funding property**
+(not merely "has #1566" — see the warning further down), drive the cycle
+explicitly after arming: finalize a day that has
+not yet been applied on the mirrors, **remit that day to every destination and
+wait for each mirror to CONFIRM receipt**, and only then call the payable
+`broadcastGlobal` (or `broadcastGlobalTo` per destination) and pay the transport
+fee.
 
-**The broadcast is permissionless, so your ordering is not enforced.** Anyone
-willing to pay the CCIP fee can broadcast a newly finalized day between your
-remit submission and its arrival, opening the mirror's claim gate early. You
-cannot prevent that — you can only shrink the window by finalizing and remitting
-close together and confirming receipts promptly — so treat the order as your
-intent rather than a guarantee.
+**Your ordering is not enforced.** Anyone willing to pay the CCIP fee can
+broadcast a newly finalized day between your remit submission and its arrival,
+opening the mirror's claim gate early. Shortening the window by finalizing and
+remitting close together helps and does not close it — and an earlier revision of
+this paragraph presented shortening as the whole remedy, which is only tolerable
+on a mesh that enforces the per-day funding property, where the residue is an
+empty balance. A mesh that merely carries #1566 may not: see the warning below.
 
 **The propagation day must have fully ELAPSED, not merely be numerically below
 `D*`.** The force-finalization path does not check the reward clock, so "a day
@@ -1585,6 +1665,216 @@ it ARRIVES first — and it is the arrival that funds the mirror, while the
 broadcast opens its claim gate. Wait for each mirror's `RewardBudgetReceived`
 before broadcasting to it, rather than treating the send order as sufficient.
 
+**And that wait is a convention you keep, not an order you enforce — the
+broadcast is PERMISSIONLESS.** `broadcastGlobal` and `broadcastGlobalTo` are
+`onlyCanonical`, and that modifier checks `isCanonicalRewardChain` — a property
+of the CHAIN, not of the caller. Any account on Base willing to pay the CCIP fee
+can broadcast a finalized day. So between finalizing the day and the last
+`RewardBudgetReceived` landing, a third party can open every mirror's claim gate
+against a budget that has not arrived, and no amount of operator discipline
+prevents it. **While #1566 is undeployed on that mirror this is a fund-loss path,
+not an empty-balance revert** — see the containment note below; an earlier
+revision of this sentence said the opposite and it survived one round of the
+correction because only the paragraph below was rewritten.
+
+**This window cannot be closed by ordering, and an earlier revision of this
+paragraph was wrong to say it could.** Moving the remit and its receipts ahead of
+the arm does not help: `broadcastGlobal`'s only day-state prerequisite is
+`dailyGlobalFinalized[dayId]`, so a third party can broadcast the day the moment
+it is finalized, whichever side of the arm that falls on.
+
+**A pre-arm application spends the DAY, not the mirror.** If the day is applied
+on a mirror while Base is still unarmed, that mirror records
+`broadcastV2Applied[dayId]`, and `_applyBroadcastV2Core`'s replay branch
+**returns before installing `armedFromDay`** — so rebroadcasting *that day* after
+arming exits idempotently and installs nothing. Another day still works:
+`_assembleDayV2` stamps the CURRENT `s.governorCommitArmedFromDay` into every
+newly assembled payload, so any other unapplied eligible pre-`D*` day takes the
+fresh branch and installs the same `D*`. Permanent failure requires EXHAUSTING
+the eligible alternatives, not losing one. (An earlier revision of this paragraph
+said the mirror could not be armed at all; that was wrong and would have had an
+operator treat a recoverable cutover as irreparable.)
+
+**On a mirror that does NOT enforce the per-day funding property, do not run a propagation procedure at
+all.** Keep the reward messenger paused and leave that mirror out of the cutover
+until that property or a day-scoped protocol gate lands there (#1944). Everything below
+about pausing and unpausing applies ONLY to a mirror that already carries the
+property, where an early broadcast costs a user an empty balance until funding
+arrives rather than paying them out of borrower collateral. Read the dead-end
+list before reaching for any of it.
+
+**⚠ "#1566 deployed" is NOT the same as the property this scoping needs.** What
+makes an early broadcast survivable is a per-day funding property: *a claim
+against a day whose budget has not arrived cannot consume value belonging to
+anything else.* #1566 does not specify that.
+`Vpfi1566CanonicalDeliveredBoundDesign.md` leaves options B–E open, and only some
+deliver it — Option C, for instance, closes the gap by earmarking the USER-OWNED
+custody classes, which protects borrower collateral while still letting such a
+claim consume another day's reward funding, payroll custody, escrowed value or
+newly minted supply. Before treating any mirror as out of the block, confirm the
+DEPLOYED fix enforces the per-day property; where it only protects a subset of
+owners, containment stays for cross-day funding corruption even though borrower
+collateral is safe.
+
+**Sequence the pause AFTER report coverage, or the ceremony stalls.**
+`VaipakamRewardMessenger.onCrossChainMessage` is itself `whenNotPaused`, so
+pausing the canonical reward messenger REJECTS inbound mirror reports — they
+become failed, manually re-executable deliveries. `finalizeDay` then either stays
+below coverage or eventually grace-finalizes WITHOUT that destination, and the
+day is then excluded for it, which collides with this runbook's own requirement
+that every destination have a non-zero remittable slice. Confirm complete report
+coverage for the candidate day and read it back BEFORE pausing, then pause
+immediately before finalization. Otherwise the post-arm ceremony can run out of
+usable days against an immutable `D*`.
+
+**That ordering is best-effort and does not make the pause a gate for the
+candidate day.** The moment the last required report lands, `reportCount >=
+nExpected` makes `finalizeDay` permissionless — so between that block and the
+guardian's separate pause transaction being mined, anyone can finalize and
+broadcast, both from one helper contract. On a property-enforcing mesh the cost
+is a claim outage and a spent day rather than a loss, but the window is real and
+cannot be closed here: report completion and the pause are two transactions and
+nothing makes them atomic. A day-scoped protocol gate is what would (#1944).
+
+**Where that property IS enforced, the messenger pause is a usable gate.**
+`VaipakamRewardMessenger` is `GuardianPausable` — `pause()` is guardian-or-owner
+— and every V2/V3 broadcast sender on it is `whenNotPaused`, while reward-budget
+remittance and receipt run over the SEPARATE `crossChainMessenger` /
+`RewardRemittanceReceiver` path. So:
+
+1. pause the reward messenger;
+2. finalize the candidate day, remit to every destination, confirm every
+   `RewardBudgetReceived` — all while it stays paused, and none of it blocked by
+   the pause;
+3. unpause, then broadcast.
+
+**That closes the finalize→receipt window for the CANDIDATE day and nothing
+more** — on an unfixed mirror the residue is a fund-loss path, which is why the
+scoping above is not a formality. Five successive attempts to make this sequence
+safe on an UNFIXED mirror were each refuted, and they are recorded here as a
+DEAD-END LIST so the next person does not re-derive them under time pressure:
+
+| Attempted procedure | Why it does not hold |
+| --- | --- |
+| Remit + receipts BEFORE arming | `broadcastGlobal`'s only day-state gate is `dailyGlobalFinalized`; arming is irrelevant to it. Worse, a pre-arm application spends that day for propagation (`_applyBroadcastV2Core` replays without installing `armedFromDay`). |
+| Pause, fund the candidate, unpause, broadcast | `broadcastGlobal` accepts ANY finalized day, so unpausing re-opens every other unfunded finalized day at once. |
+| Reconcile every broadcastable day first | An applied-but-unfunded day is ALREADY open and pausing Base cannot close it; and `finalizeDay` is permissionless, so new broadcastable days can appear after the inventory. |
+| Contain the destination's claim path meanwhile | `AdminFacet.pause()` is the Diamond's single global flag: `claimInteractionRewards` and `onRewardBudgetReceived` are BOTH `whenNotPaused`, so pausing claims also blocks the remittance receipt. "Wait until every pending day is funded" is unreachable — funding cannot land while claims are stopped, and unpausing to admit it re-opens the race. |
+| Safe-only executor + fresh reconciliation before execution | Restricting the executor controls only WHO unpauses. It does not make reconciliation and unpause atomic, and `finalizeDay` — permissionless and not routed through the paused messenger — lets a new unfunded day be created after the inventory, including by front-running the Safe's own unpause. |
+
+**So there is ONE safe branch, and it is MESH-WIDE rather than per-mirror: while
+ANY REACHABLE mirror lacks the per-day funding property below, keep the reward
+messenger PAUSED for the whole mesh, reconcile every outstanding broadcast
+message to a SAFE state — not delivered and provably not re-executable, or
+delivered and its day FUNDED (or that destination secured) — and run no post-arm
+propagation at all.**
+
+Three parts, and each was added because leaving it out was tried:
+
+- **REACHABLE** is the definition given at the head of this step — a live
+  outbound lane and any of destination-list membership, expected-source
+  membership, or an unapplied V3-clock standing day. Deliberately NOT restated
+  here: the two copies of it drifted apart three times during review, so this
+  bullet points at the one statement instead of paraphrasing it.
+- **Reconciliation of outstanding broadcasts is part of the branch, not a
+  footnote — and "terminal" is not the test.** The pause does not reach a
+  broadcast already dispatched, and pausing the destination's ingress leaves it
+  failed and manually re-executable rather than cancelled. But a SUCCESSFUL
+  delivery is terminal too, and it is the one that opens that day's claim gate:
+  an applied-but-unfunded day keeps paying from unrelated custody while the Base
+  sender sits paused. So each outstanding message must end in one of two states —
+  **not delivered and provably not re-executable**, or **delivered and its day
+  FUNDED** (or that destination's claim path secured / the per-day property
+  enforced there). An earlier revision required only a terminal state, which
+  labels the continuing loss as safe.
+- **The condition is a PROPERTY, not "#1566 is closed".** See below.
+
+It cannot be scoped to the unfixed mirror, and an earlier revision implied it
+could. The sender's pause is GLOBAL — unpausing it to serve the fixed mirrors
+re-enables every broadcast entry point at once. And `broadcastGlobalTo` does not
+consult `getBroadcastDestinations()`: it takes `destChainId` as a parameter,
+asserts only that the day has standing there, and sends. So dropping an unfixed
+mirror from the destination list does not protect it — anyone can target it
+directly for any day with historical standing.**
+
+**Teardown exemption — an unfixed mirror whose LANE is gone is not reachable and
+must not block the mesh.** `broadcastDayV3Single` dispatches through
+`CcipMessenger.quoteMessageFee` / `sendMessage`, and `_resolveDestination`
+reverts before any send when the lane has been decommissioned:
+`UnconfiguredChain` on a cleared `chainSelectorOf`, `NoRemoteMessenger` on a
+cleared `remoteMessengerOf`, or `UnsupportedByRouter` when the router no longer
+supports the selector. So a mirror can be taken out of the block by a
+genuine teardown — but the exemption must be keyed to what GOVERNANCE controls.
+
+Require, for that chain: **EITHER** protocol-owned lane field cleared —
+`chainSelectorOf[chainId] == 0` **or** `remoteMessengerOf[chainId] ==
+address(0)`, since `_resolveDestination` reverts on either alone
+(`UnconfiguredChain` / `NoRemoteMessenger`) and both setters clear
+independently, so demanding both would hold the mesh over an already-dead lane —
+**and** the chain absent from `getBroadcastDestinations()` (which closes the
+fan-out path the standing check never guards) **and absent from
+`getExpectedSourceChainIds()`** (which stops it acquiring new standing from its
+next accepted report). The exemption must negate every disjunct of the
+definition, not the one being discussed — and each condition should be no
+stronger than what actually makes the path unreachable. Either cleared mapping already
+makes `_resolveDestination` revert before the router is consulted.
+
+**Do NOT require `isChainSupported` to be false.** That is the CCIP router's
+state, not ours: it reflects whether the router has an on-ramp for the selector,
+and governance cannot clear it. Requiring it would make the exemption
+unsatisfiable whenever Chainlink still supports the destination — holding the
+mesh paused over a lane we have completely decommissioned. Router non-support is
+an additional blocker where it happens to hold; it is never a condition of the
+exemption. An earlier revision said "read all three back as cleared", which had
+that defect. That is
+expensive — it stops all reward messaging on that messenger and leaves the mirror
+unarmed — and it is the only option in the list above that does not fail to an
+argument already written down. Prefer arming a mesh whose mirrors carry the
+property; where that is not yet true, the mirror waits.
+
+Two mechanical facts that survive whatever branch is taken:
+
+- **The pause does not reach a broadcast already IN FLIGHT.** It blocks future
+  sends on that messenger instance; a CCIP message dispatched a moment earlier
+  still reaches the mirror and applies the day. Pausing the mirror's ingress
+  does not cancel it either — the delivery is left FAILED and manually
+  re-executable, so it stays hazardous rather than being resolved.
+- **A queued unpause on an open-executor Timelock is public.**
+  `DeployTimelock.s.sol` defaults `TIMELOCK_EXECUTOR` to `address(0)`, so anyone
+  may execute once the delay expires. Scheduling late and watching for trouble
+  is not a mitigation: cancellation cannot outrun an attacker who executes the
+  ready operation themselves.
+
+Whether or not the pause is used:
+
+- **Pick a propagation day the target mirrors have NOT applied, and confirm it
+  per mirror immediately before broadcasting.** `broadcastV2Applied` is a private
+  storage mapping with **no external getter**, so this is read from the mirror's
+  LOGS — a `RewardBroadcastV2Applied(dayId, …)` event for that `dayId` means the
+  day is spent for arming purposes there. A getter would make this a readback
+  rather than a log scan; that is part of **#1944**.
+- **Have alternates ready.** Identify several unapplied pre-`D*` days before
+  arming, not one.
+- **Keep the finalize→broadcast interval short**, since finalization is what
+  makes a day broadcastable by anyone.
+- **If every eligible day has been applied on a mirror, stop and escalate** —
+  that is the exhaustion case, and it is a protocol question rather than a
+  runbook step.
+
+**⛔ While #1566 is open, an early broadcast is a FUND-LOSS exposure, not a UX
+one — and an earlier revision of this paragraph asserted the opposite.** The
+claim gate opening ahead of its funding does not simply revert on an empty
+balance: `LibVpfiRecycle.backingPosition` derives `unearmarked` from
+`balanceOf(address(this))` less the bucket, the stranded-recovery reservation and
+the recovery position — and NOT less the other owners of that same balance, which
+its own enumeration says include a live swap-to-repay intent's
+`custodialCollateral` and liquidation `fallbackSnapshot` custody. So a claimant
+reaching an early-opened gate on an unfixed mirror can be paid out of borrower
+collateral. Since broadcasting is independent of arming, this is reachable before
+the ceremony's deploy-before-arm check is ever performed. Treat a finalized,
+unapplied day on an active mirror that does not enforce the per-day funding property as an exposure to
+contain now, not a hazard scheduled for the ceremony.
+
 **One exception, and without it the wait never ends.** If the chosen day
 allocates zero budget to a destination, `remitRewardBudget` closes it locally,
 emits `RewardBudgetRemitted` with a zero message id and returns **without sending
@@ -1613,8 +1903,12 @@ it.
 
 The remit-first order is not a preference. The broadcast **opens the mirror's
 claim gate**, and it does so independently of the keeper's remittance cron — so a
-day broadcast before its budget lands leaves users hitting an empty-balance
-revert until funding arrives. The keeper narrows that gap on a best-effort basis
+day broadcast before its budget lands opens claims against funding that has not
+arrived. **On a mirror that does not enforce the per-day funding property that is a fund-loss path, not a
+revert**: the payout is measured against a balance whose other owners include
+borrower collateral (see the containment note in the propagation section). Where
+that property IS enforced, the harm reduces to users hitting an empty balance until
+funding arrives. The keeper narrows that gap on a best-effort basis
 and does not close it, which is exactly why a MANUAL broadcast has to remit
 first. A replay of an
 already-applied day exits through the idempotency branch **without** installing
@@ -1678,7 +1972,26 @@ verified live first:
   "the shared definition exists". While the expiry predicate and the claim gate
   measure different quantities, executable time accrues for claims that currently
   revert, so restored funding lets the next sweep expire entitlements on stale
-  elapsed time. Assert the deployed code slice per chain, as Steps 1 and 4 do.
+  elapsed time. Assert the deployed code slice per chain, as Steps 1 and 4 do;
+- **#1566 CLOSED and its fix deployed ON EVERY REWARD CHAIN** — per chain, the
+  same way the #1499 bullet above is worded and for the same reason: this setter
+  is a LOCAL write scheduled on each chain (see the closing note of this step),
+  so a mirror can receive the horizon while running its own expiry sweep against
+  its own balance-based backing. A Base-only verification does not satisfy this.
+  It is also the same gate Step 4 carries, and it
+  belongs here TOO rather than only there. Step 4's version reads *"the
+  fund-safety half is #1566, and it is OPEN. Do not arm until it closes"*, which
+  binds arming. This step is deliberately separate and can be performed later,
+  ad hoc — which is precisely the route by which a precondition gets skipped, and
+  the reason this list exists. While payouts are bounded by un-earmarked BALANCE
+  rather than by funding delivered for rewards, the bucket's backing shares one
+  fungible balance with claimants that include **user collateral**
+  (`LibVpfiRecycle`'s custody enumeration lists a live swap-to-repay intent's
+  `custodialCollateral` and liquidation `fallbackSnapshot` custody, and says
+  outright that a payout drawing on them spends a BORROWER's collateral).
+  Turning on the sweep moves more value through that shared balance, so enabling
+  RL-3 ahead of #1566 widens the exposure the arming gate was written to hold
+  shut. Deferring Step 6 does not defer this.
 
 The setter range-checks a non-zero value against the configured minimum, so a
 too-short horizon reverts rather than silently truncating a user's window.
@@ -1713,10 +2026,20 @@ Before mainnet:
   is social / operational: off-chain alerts on `CallScheduled` events
   give 48h for white-hat cancellation via the Safe's CANCELLER_ROLE
   (held by the Safe itself).
-- **Open execution vs Safe-only execution.** Open execution (executor
+- **Open execution vs Safe-only execution. The DEPLOYED default is OPEN, not
+  Safe-only** — `DeployTimelock.s.sol` reads
+  `vm.envOr("TIMELOCK_EXECUTOR", address(0))` and sets `executors[0] = executor`,
+  so omitting the variable grants `EXECUTOR_ROLE` to `address(0)`. An earlier
+  revision of this bullet said the default was Safe-only; an operator who
+  believed it would leave every scheduled operation publicly executable at delay
+  expiry, which the reward-messenger unpause procedure depends on NOT being the
+  case. Open execution (executor
   = `address(0)`) means anyone can execute after delay; useful if the
-  Safe is unavailable, but removes a cancellation checkpoint. Current
-  default is Safe-only; flip per chain if availability concerns dominate.
+  Safe is unavailable, but removes a cancellation checkpoint. **Set
+  `TIMELOCK_EXECUTOR` to the Safe explicitly if you want Safe-only execution —
+  it is not what you get by default.** An earlier revision of this bullet ended
+  by saying the current default was Safe-only, contradicting its own opening two
+  sentences after they were corrected.
 
 ---
 
