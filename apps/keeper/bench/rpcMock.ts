@@ -115,14 +115,55 @@ const MULTICALL3_ABI = [
   },
 ] as const satisfies Abi;
 
-/** selector -> function item, across the whole Diamond surface. */
+/**
+ * External contracts the passes call that are NOT on the Diamond. The keeper
+ * dispatches these to their own `to` address by their own ABI, so a
+ * Diamond-only selector map answers them `0x` and the pass silently discards
+ * the result: `liquidityConfidence` quotes PancakeSwap/Uniswap V3 through
+ * `QuoterV2.quoteExactInputSingle` (not on `DIAMOND_ABI_VIEM`), so every
+ * fee-tier quote returned `0x`, viem treated it as failed, and the pass skipped
+ * its whole tier state machine rather than profiling its core work
+ * (Codex #1945 r3). Answering the selector with a real, coherent quote lets the
+ * pass run — the only fixture chain of the three with a configured V3 quoter is
+ * BNB Testnet, so without this the pass has no successful route at all.
+ */
+const QUOTER_V2_ABI = [
+  {
+    type: 'function',
+    name: 'quoteExactInputSingle',
+    stateMutability: 'nonpayable',
+    inputs: [
+      {
+        name: 'params',
+        type: 'tuple',
+        components: [
+          { name: 'tokenIn', type: 'address' },
+          { name: 'tokenOut', type: 'address' },
+          { name: 'amountIn', type: 'uint256' },
+          { name: 'fee', type: 'uint24' },
+          { name: 'sqrtPriceLimitX96', type: 'uint160' },
+        ],
+      },
+    ],
+    outputs: [
+      { name: 'amountOut', type: 'uint256' },
+      { name: 'sqrtPriceX96After', type: 'uint160' },
+      { name: 'initializedTicksCrossed', type: 'uint32' },
+      { name: 'gasEstimate', type: 'uint256' },
+    ],
+  },
+] as const satisfies Abi;
+
+/** selector -> function item, across the Diamond surface plus external ABIs. */
 const BY_SELECTOR = new Map<string, AbiFunction>();
-for (const item of DIAMOND_ABI_VIEM as readonly AbiFunction[]) {
-  if (item.type !== 'function') continue;
-  try {
-    BY_SELECTOR.set(toFunctionSelector(item), item);
-  } catch {
-    // Overloads that fail to serialise are not worth aborting the harness for.
+for (const abi of [DIAMOND_ABI_VIEM, QUOTER_V2_ABI] as readonly Abi[]) {
+  for (const item of abi as readonly AbiFunction[]) {
+    if (item.type !== 'function') continue;
+    try {
+      BY_SELECTOR.set(toFunctionSelector(item), item);
+    } catch {
+      // Overloads that fail to serialise are not worth aborting the harness for.
+    }
   }
 }
 
@@ -204,10 +245,28 @@ function defaultFor(p: AbiParameter, fnName = ''): unknown {
     if (/^u?int8$/.test(t) || /type|status|kind|state|band|tier|role/i.test(p.name ?? '')) {
       return BigInt(ENUM_VALUE);
     }
+    // A CHAIN-ID-shaped field must be a REAL fixture chain, or a pass that reads
+    // it and then tries to act on that chain errors out per record with "no
+    // configured RPC" — `remitAck` did exactly that on every remit's `dst`,
+    // and once the pagination fix let it walk the whole set (Codex #1945 r3)
+    // that was hundreds of self-inflicted errors that floored its number. Base
+    // Sepolia is always in the fixture set.
+    if (/chain|^dst$|^src$|dest|source/i.test(p.name ?? '')) {
+      return 84532n;
+    }
     // Non-trivial magnitude otherwise: a zero everywhere would let a pass
     // early-return on "nothing to do" and profile as free, which is the
-    // failure mode this harness exists to avoid.
-    return 1_000_000_000_000_000_000n;
+    // failure mode this harness exists to avoid. Clamp to the type's width so a
+    // narrow output still ENCODES — the Quoter's `uint32 initializedTicksCrossed`
+    // would otherwise overflow `encodeFunctionResult` and throw (Codex #1945 r3).
+    const base = 1_000_000_000_000_000_000n;
+    const widthMatch = t.match(/^(u?)int(\d*)$/);
+    const bits = widthMatch && widthMatch[2] ? Number(widthMatch[2]) : 256;
+    const max =
+      widthMatch && widthMatch[1] === 'u'
+        ? (1n << BigInt(bits)) - 1n
+        : (1n << BigInt(bits - 1)) - 1n;
+    return base <= max ? base : max;
   }
   return 0n;
 }
@@ -236,28 +295,67 @@ function answerCall(data: string, chainKey = ''): string {
   const fn = BY_SELECTOR.get(selector);
   if (!fn || fn.outputs.length === 0) return '0x';
 
-  // Exhaust arrays after MAX_PAGES so pagination terminates — but ONLY for
-  // genuinely paginated reads, identified by a cursor/offset-shaped INPUT.
-  //
-  // Applying it to every array-returning function silently under-counted:
-  // `getUserActiveLoans(address)` is a per-user list, not a page, and emptying
-  // it after two calls meant 18 of 20 seeded users returned no loans at all.
-  // The watcher's measured cost came out a large multiple too low, and looked
-  // clean while doing it.
-  const paginated = fn.inputs.some((i) =>
+  // Size the TOP-LEVEL array output. Pagination is identified by a
+  // cursor/offset-shaped INPUT — a non-paginated array such as
+  // `getUserActiveLoans(address)` is a whole per-user list, not a page, and
+  // keeps ARRAY_LEN (emptying it after two calls dropped 18 of 20 seeded users
+  // and undercounted the watcher — Codex #1945 r1).
+  const returnsArray = fn.outputs.some((o) => o.type.endsWith('[]'));
+  const offsetIdx = fn.inputs.findIndex((i) =>
     /offset|start|cursor|page|index|from/i.test(i.name ?? ''),
   );
-  const returnsArray = fn.outputs.some((o) => o.type.endsWith('[]'));
-  let exhausted = false;
-  if (returnsArray && paginated) {
-    const pageKey = `${chainKey}|${selector}`;
-    const seen = (pageCounts.get(pageKey) ?? 0) + 1;
-    pageCounts.set(pageKey, seen);
-    exhausted = seen > MAX_PAGES;
-  }
-  const values = fn.outputs.map((o) =>
-    exhausted && o.type.endsWith('[]') ? [] : defaultFor(o, fn.name),
+  const limitIdx = fn.inputs.findIndex((i) =>
+    /limit|count|size|max|first|take|num/i.test(i.name ?? ''),
   );
+  const paginated = returnsArray && offsetIdx >= 0;
+
+  let pageLen = ARRAY_LEN;
+  if (paginated) {
+    // Serve a slice of ONE coherent COUNT_VALUE-sized dataset. The keeper reads
+    // a count (COUNT_VALUE) and then pages by its own limit; a page shorter than
+    // the requested limit is its stop signal. Returning a fixed ARRAY_LEN
+    // regardless of the limit made a count=50 / limit=200 loop stop after 25 and
+    // never scan the other half (Codex #1945 r3). Decode offset+limit and return
+    // exactly min(limit, remaining), so the loop walks the whole set and then
+    // terminates when it runs out.
+    let offset = 0;
+    let limit = ARRAY_LEN;
+    let decoded = false;
+    try {
+      const { args } = decodeFunctionData({
+        abi: [fn] as Abi,
+        data: data as `0x${string}`,
+      });
+      const a = args as readonly unknown[];
+      const off = Number(a[offsetIdx]);
+      if (Number.isFinite(off)) {
+        offset = off;
+        decoded = true;
+      }
+      if (limitIdx >= 0) {
+        const lim = Number(a[limitIdx]);
+        if (Number.isFinite(lim) && lim > 0) limit = lim;
+      }
+    } catch {
+      decoded = false;
+    }
+    if (decoded) {
+      pageLen = Math.max(0, Math.min(limit, COUNT_VALUE - offset));
+    } else {
+      // Cursor/opaque pagination we cannot decode: fall back to the per-(chain,
+      // selector) page counter so the read still terminates after MAX_PAGES.
+      const pageKey = `${chainKey}|${selector}`;
+      const seen = (pageCounts.get(pageKey) ?? 0) + 1;
+      pageCounts.set(pageKey, seen);
+      pageLen = seen > MAX_PAGES ? 0 : ARRAY_LEN;
+    }
+  }
+
+  const values = fn.outputs.map((o) => {
+    if (!o.type.endsWith('[]')) return defaultFor(o, fn.name);
+    const inner = { ...o, type: o.type.slice(0, -2) } as AbiParameter;
+    return Array.from({ length: pageLen }, () => defaultFor(inner, fn.name));
+  });
   return encodeFunctionResult({
     abi: [fn] as Abi,
     functionName: fn.name,

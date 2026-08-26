@@ -175,6 +175,20 @@ async function main(): Promise<void> {
     const samples: number[] = [];
     let errors = 0;
 
+    // Daily-cadence passes gate on the WALL CLOCK: `runDailyOracleSnapshot`
+    // returns at `minutesIntoDay >= 10` before touching D1 or an RPC, so
+    // profiling one at any other minute measures the gate, not the pass — and
+    // more than 99% of possible run times fall outside its 00:00–00:09 UTC
+    // window (Codex #1945 r3). Pin `Date.now` inside the window for the pass's
+    // whole profile. This moves only the wall clock, never the CPU meter
+    // (`process.cpuUsage`), and it is restored before the next pass.
+    const realNow = Date.now;
+    if (pass.dailyWindow) {
+      const midnightUtc = Math.floor(realNow() / 86_400_000) * 86_400_000;
+      const inWindow = midnightUtc + 5 * 60 * 1000; // 00:05 UTC
+      Date.now = () => inWindow;
+    }
+
     // BOTH streams. Several passes report caught RPC failures through
     // console.WARN — preGraceWatcher warns on count, page and offer-hydration
     // failures — so intercepting only console.error let a partially executed
@@ -226,6 +240,7 @@ async function main(): Promise<void> {
 
     console.error = realError;
     console.warn = realWarn;
+    Date.now = realNow;
     samples.sort((a, b) => a - b);
     rows.push({
       name: pass.name,
