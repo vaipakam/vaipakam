@@ -42,7 +42,10 @@ more, not the lender. Whether the arrangement should ever reach a charge the
 borrower bears is a question for the owner, not a defect to fix.
 
 One further route honours the arrangement but pays for it out of the wrong
-pocket: refinancing resolves it against whoever the records still name as lender.
+pocket: refinancing resolves it against whoever the records still name as
+lender. Where the position has been sold and the tidy-up step declined to run —
+it declines rather than failing, by design — the previous lender funds a
+reduction the buyer receives.
 
 One route that earlier drafts of this note counted among the recovery
 routes turns out not to belong there at all. When a periodic-interest
@@ -56,16 +59,13 @@ separate documents.
 
 Two things follow that the documents had not said. The condition for declaring
 this settled now spells out that a decision to leave recovered interest out of
-scope would settle only the recovery half — the sale routes close a loan
-normally, and the refinance defect is that the wrong party is billed, so neither
-is touched by that decision. And nothing automatic is checking any of it: the
-one deploy-time check on the master switch confirms only that it ships turned
-off, and the switch itself asks only which chain it is on. Confirming the
-settlement work is live is a manual step, and a clean automated run is not
-evidence for it.
-Where the position has been sold and the tidy-up step declined to run — it
-declines rather than failing, by design — the previous lender funds a reduction
-the buyer receives.
+scope would settle only the recovery routes — the refinance defect is that the
+wrong party is billed, which that decision does not reach, so it would remain to
+be fixed either way. And nothing automatic is checking any of it: the one
+deploy-time check on the master switch confirms only that it ships turned off,
+and the switch itself asks only which chain it is on. Confirming the settlement
+work is live is a manual step, and a clean automated run is not evidence for
+it.
 
 The specification now says that plainly, and says what kind of thing it is. The
 frozen rule is that the reduction applies at *every* moment a lender's interest
