@@ -1483,13 +1483,25 @@ entry points are PERMISSIONLESS with respect to the caller, and on a mesh where
 ANY REACHABLE mirror lacks the per-day funding property (a claim against a day whose budget has not arrived cannot consume value belonging to anything else — **not** merely "#1566 deployed") an early broadcast pays a claimant out
 of borrower collateral rather than reverting.
 
-**Reachable** = a LIVE OUTBOUND LANE **and** (current membership of
-`getBroadcastDestinations()` **or** historical day standing). Both disjuncts are
-needed because the two entry points differ: `broadcastGlobalTo` calls
-`_assertDayStanding`, so historical standing is what makes a REMOVED mirror
-targetable — but `broadcastGlobal` fans out to the CURRENT destination list and
-calls no such assertion, so a newly added or dark mirror with no history at all
-is reachable simply by being on the list.
+**Reachable** = a LIVE OUTBOUND LANE **and** any one of:
+
+1. current membership of `getBroadcastDestinations()`;
+2. current membership of `getExpectedSourceChainIds()`;
+3. an UNAPPLIED historical standing day that can pass the V3 lapse-clock gate.
+
+**This is the one definition. Everything else in this runbook refers to it
+rather than restating it** — the two places that restated it drifted apart three
+times, which is most of what the review of this section found.
+
+Three disjuncts because three things make a mirror targetable. `broadcastGlobal`
+fans out to the CURRENT destination list and calls no standing assertion, so
+(1) suffices with no history at all. `broadcastGlobalTo` calls
+`_assertDayStanding`, so (3) is what makes a REMOVED mirror targetable. And (2)
+is PROSPECTIVE: `_finalizeAndWrite` sets `s.chainDailyIncluded[dayId][chainId] =
+true` for every participating chain, so a mirror still on the expected-source
+list acquires standing on its next accepted report and becomes targetable
+through `broadcastGlobalTo` afterwards — being absent from the destination list
+and having no history today does not make it safe tomorrow.
 
 The historical disjunct needs one more qualifier: `broadcastGlobalTo` checks
 `dayLapseClock[dayId].finalizedAt` FIRST and reverts `DayHasNoLapseClock`, so
@@ -1759,10 +1771,11 @@ propagation at all.**
 
 Three parts, and each was added because leaving it out was tried:
 
-- **REACHABLE** is the full definition — a live outbound lane AND (current
-  `getBroadcastDestinations()` membership OR historical day standing on a day
-  that can pass the V3 lapse-clock gate). Not "historically reachable": the
-  fan-out form reaches current-list members with no history at all.
+- **REACHABLE** is the definition given at the head of this step — a live
+  outbound lane and any of destination-list membership, expected-source
+  membership, or an unapplied V3-clock standing day. Deliberately NOT restated
+  here: the two copies of it drifted apart three times during review, so this
+  bullet points at the one statement instead of paraphrasing it.
 - **Reconciliation of outstanding broadcasts is part of the branch, not a
   footnote — and "terminal" is not the test.** The pause does not reach a
   broadcast already dispatched, and pausing the destination's ingress leaves it
@@ -1795,8 +1808,11 @@ genuine teardown — but the exemption must be keyed to what GOVERNANCE controls
 
 Require the **protocol-owned** lane fields cleared for that chain —
 `chainSelectorOf[chainId] == 0` and `remoteMessengerOf[chainId] == address(0)` —
-**and** the chain absent from `getBroadcastDestinations()`, which closes the
-fan-out path the standing check never guards. Either cleared mapping already
+**and** the chain absent from `getBroadcastDestinations()` (which closes the
+fan-out path the standing check never guards) **and absent from
+`getExpectedSourceChainIds()`** (which stops it acquiring new standing from its
+next accepted report). The exemption must negate every disjunct of the
+definition, not the one being discussed. Either cleared mapping already
 makes `_resolveDestination` revert before the router is consulted.
 
 **Do NOT require `isChainSupported` to be false.** That is the CCIP router's
