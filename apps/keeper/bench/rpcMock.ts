@@ -535,12 +535,15 @@ function answerCall(data: string, chainKey = ''): string {
       return FIXTURE_CHAIN_IDS.map((c) => c);
     }
     if (fixedSizePage) {
-      // Real entries for the ids that exist (id = pageOffset + i < COUNT_VALUE),
-      // ZERO structs for the padding past the dataset — so submitSide's scan
-      // terminates on the first zero struct and every finalized day is processed
-      // (Codex #1945 r10, #1948), instead of spinning on empty pages.
+      // Reward-entry ids are allocated from 1, so the COUNT_VALUE-entry dataset
+      // is ids 1..COUNT_VALUE INCLUSIVE. Real entries for those ids
+      // (id = pageOffset + i <= COUNT_VALUE), ZERO structs for the padding past
+      // the dataset — so submitSide's scan terminates on the first zero struct
+      // and every finalized day is processed (Codex #1945 r10, #1948 r1),
+      // instead of spinning on empty pages. A strict `<` dropped the final id
+      // and, at boundary sizes like BENCH_COUNT=201, a whole extra batch tx.
       return Array.from({ length: pageLen }, (_, i) =>
-        pageOffset + i < COUNT_VALUE
+        pageOffset + i >= 1 && pageOffset + i <= COUNT_VALUE
           ? defaultFor(inner, fn.name, chainKey)
           : zeroFor(inner),
       );
