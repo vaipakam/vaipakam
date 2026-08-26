@@ -244,7 +244,15 @@ async function main(): Promise<void> {
     samples.sort((a, b) => a - b);
     rows.push({
       name: pass.name,
-      median: samples.length ? samples[Math.floor(samples.length / 2)] : 0,
+      // True median: the average of the two middle samples for an even count,
+      // not the upper-middle one. BENCH_REPS is a documented knob and an even
+      // value (2, 4) otherwise systematically overstates every median and can
+      // reorder the ranking (Codex #1945 r8).
+      median: samples.length
+        ? samples.length % 2 === 1
+          ? samples[(samples.length - 1) / 2]
+          : (samples[samples.length / 2 - 1] + samples[samples.length / 2]) / 2
+        : 0,
       max: samples.length ? samples[samples.length - 1] : 0,
       rpc: (rpcStats.calls - rpcBefore) / Math.max(samples.length, 1),
       errors: errors / Math.max(samples.length, 1),

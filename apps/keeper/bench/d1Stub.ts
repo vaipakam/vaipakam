@@ -37,7 +37,14 @@ function rowsFor(table: string): Record<string, unknown>[] {
         warn_hf: 2.0,
         alert_hf: 1.5,
         critical_hf: 1.1,
-        tg_chat_id: null,
+        // A real Telegram chat id (the env already carries TG_BOT_TOKEN), so
+        // watcher / preGrace actually build, serialize and dispatch the
+        // notification instead of skipping both send functions on a null
+        // channel — the user-facing send path was otherwise omitted while these
+        // rows were described as exercising dispatch (Codex #1945 r8). Push is
+        // left null: PUSH_CHANNEL_PK is not seeded, and the Telegram send alone
+        // covers the request-construction / serialization / response path.
+        tg_chat_id: String(100000 + i),
         push_channel: null,
         locale: 'en',
         // Opted IN to maturity alerts. `checkLoan` returns immediately when this

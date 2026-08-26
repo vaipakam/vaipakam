@@ -237,6 +237,14 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
     if (/paused|blocked|frozen|sanction|banned|denied|revoked|expired/i.test(where)) {
       return false;
     }
+    // A day's commitment-readiness must be FALSE so commitmentReport takes the
+    // continuation branch — funded/closed checks, reward-entry range scans,
+    // accumulation reads and batch submission — instead of the trivial
+    // send-immediately path. A blanket `is[A-Z]` true left only that cheap path
+    // measured (Codex #1945 r8). The funding STAMP, by contrast, must be true or
+    // the continuation returns at `!funding.stamped` before any batch work.
+    if (/daycommitmentready|commitmentready/i.test(fnName)) return false;
+    if (/^stamped$/i.test(p.name ?? '')) return true;
     return /enabled|active|allowed|valid|open|exists|\bis[A-Z]|\bhas[A-Z]|\bcan[A-Z]|success|approved|supported/i.test(
       where,
     );
@@ -262,6 +270,20 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
     const COUNTISH_FN = /Count$|Total$|Length$|^count$/;
     if (COUNTISH_PARAM.test(p.name ?? '') || COUNTISH_FN.test(fnName)) {
       return BigInt(COUNT_VALUE);
+    }
+
+    // A reward entry only COVERS a commitment day when `startDay <= day <
+    // endDay` and its `side` is 0 or 1. Left at the generic 1e18 default,
+    // `startDay > day` broke submitSide's scan on the first entry, so
+    // commitmentReport measured the reward-entry read but never reached
+    // submitCommitmentBatch (Codex #1945 r8). Scoped to getRewardEntriesRange so
+    // these common field names don't perturb other selectors. day range is
+    // 19995–19999 (see the currentDay/armedFromDay seeds below), so start 1 /
+    // end 30000 covers every seeded day; side 0 submits the lender batch.
+    if (/getrewardentriesrange/i.test(fnName)) {
+      if (/^startday$/i.test(p.name ?? '')) return 1n;
+      if (/^endday$/i.test(p.name ?? '')) return 30000n;
+      if (/^side$/i.test(p.name ?? '')) return 0n;
     }
 
     // An ENUM is uint8 in practice, and a 1e18 enum silently discards work:
@@ -343,6 +365,11 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
     // backscan stays well under the call budget.
     if (/getinteractioncurrentday/i.test(fnName)) return 20000n;
     if (/getgovernorcommitstate/i.test(fnName)) return 19995n;
+    // Commitment accumulation must be BELOW the day's totals, or submitSide sees
+    // `conservation === total` and skips the batch. 0 leaves the day unresolved
+    // so the reward-entry scan + submitCommitmentBatch path runs (Codex #1945
+    // r8). The cursor (same call's first element) at 0 is a valid scan start.
+    if (/getcommitmentaccumulation/i.test(fnName)) return 0n;
     // Non-trivial magnitude otherwise: a zero everywhere would let a pass
     // early-return on "nothing to do" and profile as free, which is the
     // failure mode this harness exists to avoid. Clamp to the type's width so a
