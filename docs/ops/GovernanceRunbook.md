@@ -1455,6 +1455,24 @@ value.
 
 ### Step 5 — DRIVE the propagation and verify it (M3 / active-mirror branch only)
 
+**⛔ FIRST, the prohibition that governs everything in this step.** The broadcast
+entry points are PERMISSIONLESS with respect to the caller, and on a mesh where
+ANY REACHABLE mirror lacks the #1566 fix an early broadcast pays a claimant out
+of borrower collateral rather than reverting. **Reachable** means it has
+historical day standing AND a live outbound lane — see the teardown exemption
+below. **Do not run the cycle
+below, and do not unpause the reward messenger, while that is true of any such
+mirror** — see "the one safe branch" and the dead-end list further down, which
+record five procedures that were each tried against this and refuted. The cycle
+below is for a mesh where every reachable mirror carries #1566.
+
+**Everything in this step — the promotion gate below, the propagation cycle, the
+pause discussion — sits under that prohibition.** An earlier revision placed it
+eighty lines down, after the promotion instructions, which is the same as not
+having it: the promotion preflight requires #1566 only on the promoted chain, so
+following it can have an operator reopen the global sender while another mirror
+is still targetable through `broadcastGlobalTo`.
+
 **Promoting a dark mirror later needs its own gate, and this runbook does not
 otherwise provide one.** Once Base is armed, EVERY subsequent broadcast carries
 its stored `armedFromDay`, and a mirror sitting at zero installs it on first
@@ -1537,16 +1555,7 @@ script does not broadcast either. So an operator who arms and then waits for
 mirrors to show `D*` can wait until the cutover day arrives with every mirror
 still unarmed.
 
-**⛔ FIRST, the prohibition that governs everything in this step.** The broadcast
-entry points are PERMISSIONLESS with respect to the caller, and on a mesh where
-ANY historically reachable mirror lacks the #1566 fix an early broadcast pays a
-claimant out of borrower collateral rather than reverting. **Do not run the cycle
-below, and do not unpause the reward messenger, while that is true of any such
-mirror** — see "the one safe branch" and the dead-end list further down, which
-record five procedures that were each tried against this and refuted. The cycle
-below is for a mesh where every reachable mirror carries #1566.
-
-On such a mesh, drive the cycle explicitly after arming: finalize a day that has
+**On a mesh where every reachable mirror carries #1566**, drive the cycle explicitly after arming: finalize a day that has
 not yet been applied on the mirrors, **remit that day to every destination and
 wait for each mirror to CONFIRM receipt**, and only then call the payable
 `broadcastGlobal` (or `broadcastGlobalTo` per destination) and pay the transport
@@ -1670,7 +1679,19 @@ re-enables every broadcast entry point at once. And `broadcastGlobalTo` does not
 consult `getBroadcastDestinations()`: it takes `destChainId` as a parameter,
 asserts only that the day has standing there, and sends. So dropping an unfixed
 mirror from the destination list does not protect it — anyone can target it
-directly for any day with historical standing.** That is
+directly for any day with historical standing.**
+
+**Teardown exemption — an unfixed mirror whose LANE is gone is not reachable and
+must not block the mesh.** `broadcastDayV3Single` dispatches through
+`CcipMessenger.quoteMessageFee` / `sendMessage`, and `_resolveDestination`
+reverts before any send when the lane has been decommissioned:
+`UnconfiguredChain` on a cleared `chainSelectorOf`, `NoRemoteMessenger` on a
+cleared `remoteMessengerOf`, or `UnsupportedByRouter` when the router no longer
+supports the selector. So define the block as **historical day standing AND a
+live outbound lane**, and grant the exemption only against a VERIFIED teardown —
+read all three back as cleared for that chain. Without this a retired,
+unreachable mirror would hold the whole mesh paused indefinitely, which is a
+different way of never arming. That is
 expensive — it stops all reward messaging on that messenger and leaves the mirror
 unarmed — and it is the only option in the list above that does not fail to an
 argument already written down. Prefer arming a mesh whose mirrors carry the

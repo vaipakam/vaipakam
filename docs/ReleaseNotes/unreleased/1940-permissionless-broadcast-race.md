@@ -68,12 +68,12 @@ timelock as deployed by default lets *anyone* execute a scheduled action once it
 delay expires. Queuing the unpause in advance therefore hands away control of
 when it happens: if the funding is still in flight at that moment, someone else
 can execute the unpause and announce against an unfunded chain. The procedure now
-says to run this only on a timelock whose executor is the operator's own
-multi-signature wallet, with a fresh check immediately before execution. Queuing
-late and watching for trouble is **not** an alternative: closing a day off for
-accounting is itself something anyone can do, so during the waiting period
-someone can create a fresh unfunded day, execute the ready unpause themselves,
-and announce — faster than anyone watching could cancel.
+does not offer this route at all on a chain that is still unfixed. Restricting
+who may lift the pause controls only the lifting: closing a day off for
+accounting is itself something anyone can do, so a fresh day can appear after any
+check, including in the moment the lifting happens. Both the restricted-executor
+version and the queue-late-and-watch version are in the dead-end list below, with
+that reason.
 
 Two smaller things were wrong in the same direction. Pausing does not reach an
 announcement already on its way: one dispatched moments earlier still arrives and
