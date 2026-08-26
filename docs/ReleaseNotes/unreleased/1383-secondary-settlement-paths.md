@@ -28,9 +28,18 @@ and early-close routes, so the recovery routes were absent from that
 IMPLEMENTATION list — not from the entitlement itself, which the frozen rule
 already extends to every settlement of a lender's interest.
 
-One of those routes does not even end the loan: a partial liquidation leaves it
-running and still takes a cut from the interest it recovers on the way, so the
-gap is not confined to loans that terminate.
+Two of those routes do not even end the loan. A partial liquidation leaves it
+running and still takes a cut from the interest it recovers on the way; and when
+a periodically-paid loan misses a payment, collateral is sold to cover it and the
+proceeds passed on — again without the arrangement being consulted — inside a
+component whose ordinary path does honour it, which is precisely why it read as
+covered.
+
+One further route honours the arrangement but pays for it out of the wrong
+pocket: refinancing resolves it against whoever the records still name as lender.
+Where the position has been sold and the tidy-up step declined to run — it
+declines rather than failing, by design — the previous lender funds a reduction
+the buyer receives.
 
 The specification now says that plainly, and says what kind of thing it is. The
 frozen rule is that the reduction applies at *every* moment a lender's interest

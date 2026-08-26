@@ -754,6 +754,17 @@ settlement-reachability condition. Gate A constrains **both** branches.
 **Prove two code slices are live on THIS Diamond first.** The setter does not
 enforce them and will enable happily without them: the loan-side reward cap
 (PR-5c) and the settlement sweep that honours the lender Full stamp (PR-6).
+
+**⛔ PR-6 is NOT discharged by its deploy assertions.** Those prove the sweep is
+live on the REPAYMENT and early-close paths. The RECOVERY paths — time-based
+default, liquidation, discounted liquidation, split, partial, and the
+periodic-interest auto-liquidation leg — still take the ordinary cut from
+recovered lender interest without consulting the stamp, and refinance resolves
+the stamp against the STORED lender rather than the current holder. Frozen §F2
+is "at every lender-yield settlement", so that is a live divergence and a hard
+precondition for this step, not a scope boundary. Enabling here while it stands
+collects `C*` for a discount a lender can lose depending on how their loan ends.
+See `TokenomicsTechSpec` §F2 and #1383.
 Without the cap, a Full loan enters the uncapped reward path; without the sweep,
 a user can pay `C*` for a discount settlement then ignores. This bites on partial
 or stacked upgrades, where a Diamond can have M1b live and still be missing

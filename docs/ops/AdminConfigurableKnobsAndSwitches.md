@@ -639,10 +639,19 @@ optional:
   #1383) are live — but the RECOVERY paths are not: time-based default,
   liquidation, split liquidation and partial liquidation each take the
   ordinary cut from recovered lender interest without honouring the
-  stamp. The frozen §F2 rule is "at every lender-yield settlement", so
+  stamp — six entry points in all: time-based default, liquidation,
+  DISCOUNTED liquidation (separately gated, beside the ordinary one),
+  split liquidation, partial liquidation (which leaves the loan Active),
+  and the periodic-interest auto-liquidation leg. Refinance is a
+  seventh concern: it honours the stamp but resolves it against the
+  STORED lender, so a transferred position can have the previous
+  lender's vault fund the buyer's discount.
+  The frozen §F2 rule is "at every lender-yield settlement", so
   that is a divergence rather than a scope boundary, and it is a
   **blocker** until it is closed or explicitly superseded. Do not read
-  the #1383 family as covering it.
+  the #1383 family as covering it, and do not read PR-6 (#1354) as
+  discharging it — the deploy assertions prove the REPAYMENT sweep is
+  live and say nothing about the recovery paths.
 
 Disabling is always allowed, from any chain role.
 
