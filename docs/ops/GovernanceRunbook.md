@@ -1601,34 +1601,67 @@ the arm does not help: `broadcastGlobal`'s only day-state prerequisite is
 `dailyGlobalFinalized[dayId]`, so a third party can broadcast the day the moment
 it is finalized, whichever side of the arm that falls on.
 
-**And a pre-arm broadcast is WORSE than an early one.** If the day is applied on
-a mirror while Base is still unarmed, that mirror records
+**A pre-arm application spends the DAY, not the mirror.** If the day is applied
+on a mirror while Base is still unarmed, that mirror records
 `broadcastV2Applied[dayId]`, and `_applyBroadcastV2Core`'s replay branch
-**returns before installing `armedFromDay`**. The prescribed post-arm rebroadcast
-of that day then exits idempotently and **cannot arm that mirror at all** —
-permanently, because `D*` is one-shot and cannot be re-chosen. So the ordering
-that looked like a fix instead hands anyone a way to disrupt the irreversible
-cutover.
+**returns before installing `armedFromDay`** — so rebroadcasting *that day* after
+arming exits idempotently and installs nothing. Another day still works:
+`_assembleDayV2` stamps the CURRENT `s.governorCommitArmedFromDay` into every
+newly assembled payload, so any other unapplied eligible pre-`D*` day takes the
+fresh branch and installs the same `D*`. Permanent failure requires EXHAUSTING
+the eligible alternatives, not losing one. (An earlier revision of this paragraph
+said the mirror could not be armed at all; that was wrong and would have had an
+operator treat a recoverable cutover as irreparable.)
 
-What the ceremony can actually do:
+**There IS an enforceable gate, and an earlier revision was wrong to say there is
+not: pause the reward messenger.** `VaipakamRewardMessenger` is
+`GuardianPausable` — `pause()` is guardian-or-owner — and every V2/V3 broadcast
+sender on it is `whenNotPaused`, while reward-budget remittance and receipt run
+over the SEPARATE `crossChainMessenger` / `RewardRemittanceReceiver` path. So:
+
+1. pause the reward messenger;
+2. finalize the candidate day, remit to every destination, confirm every
+   `RewardBudgetReceived` — all while it stays paused, and none of it blocked by
+   the pause;
+3. unpause, then broadcast.
+
+That closes the finalize→receipt window rather than shrinking it. **Weigh the
+trade-offs rather than reaching for it reflexively:** the pause stops *all* reward
+messaging on that messenger for its duration, not just this day's broadcast; and
+`unpause` is owner-only, so post-handover it is a Timelock action with the full
+delay — the unpause must be scheduled in advance and its execution is what gates
+the broadcast. On a mesh already funding live mirror claims, that cost may exceed
+the exposure.
+
+Whether or not the pause is used:
 
 - **Pick a propagation day the target mirrors have NOT applied, and confirm it
-  per mirror immediately before broadcasting** — read `broadcastV2Applied[dayId]`
-  on each. A day already applied there is spent for arming purposes.
+  per mirror immediately before broadcasting.** `broadcastV2Applied` is a private
+  storage mapping with **no external getter**, so this is read from the mirror's
+  LOGS — a `RewardBroadcastV2Applied(dayId, …)` event for that `dayId` means the
+  day is spent for arming purposes there. A getter would make this a readback
+  rather than a log scan; that is part of **#1944**.
 - **Have alternates ready.** Identify several unapplied pre-`D*` days before
-  arming, not one, so a burnt candidate is an inconvenience rather than a dead
-  end.
+  arming, not one.
 - **Keep the finalize→broadcast interval short**, since finalization is what
   makes a day broadcastable by anyone.
-- **If every candidate day has been applied on a mirror before you can arm it,
-  stop and escalate.** That mirror cannot be armed through this path and the
-  recovery is not a runbook step — it is a protocol question.
+- **If every eligible day has been applied on a mirror, stop and escalate** —
+  that is the exhaustion case, and it is a protocol question rather than a
+  runbook step.
 
-A protocol-enforced gate (or a propagation mechanism that does not depend on an
-unapplied day) is the real fix and is **not** in this ceremony's gift. Tracked as
-**#1944**; the instructions above are mitigation, not closure. Nothing here is
-exploitable for profit — the costs are a user meeting an empty-balance revert on
-a gate opened early, and, in the pre-arm case, a mirror that cannot be armed.
+**⛔ While #1566 is open, an early broadcast is a FUND-LOSS exposure, not a UX
+one — and an earlier revision of this paragraph asserted the opposite.** The
+claim gate opening ahead of its funding does not simply revert on an empty
+balance: `LibVpfiRecycle.backingPosition` derives `unearmarked` from
+`balanceOf(address(this))` less the bucket, the stranded-recovery reservation and
+the recovery position — and NOT less the other owners of that same balance, which
+its own enumeration says include a live swap-to-repay intent's
+`custodialCollateral` and liquidation `fallbackSnapshot` custody. So a claimant
+reaching an early-opened gate on an unfixed mirror can be paid out of borrower
+collateral. Since broadcasting is independent of arming, this is reachable before
+the ceremony's deploy-before-arm check is ever performed. Treat a finalized,
+unapplied day on an active mirror that has not deployed #1566 as an exposure to
+contain now, not a hazard scheduled for the ceremony.
 
 **One exception, and without it the wait never ends.** If the chosen day
 allocates zero budget to a destination, `remitRewardBudget` closes it locally,

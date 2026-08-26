@@ -30,23 +30,37 @@ the day closes, on either side of the re-ordering.
 It would have made things worse because a chain that receives the announcement
 *before* the cutover records that it has already handled that day, and later
 handling of the same day stops early — before the part that would have told it
-the cutover date. The re-broadcast the procedure relied on would therefore be
-silently ineffective for that chain, and since the cutover date can only be set
-once, that chain could not be brought in at all. An ordering meant as a fix would
-have handed anyone a way to disrupt an irreversible step.
+the cutover date. The announcement the procedure relied on would therefore be
+silently ineffective for that day. An ordering meant as a fix would have given
+anyone a way to interfere with an irreversible step.
 
-What the procedure says instead is honest about what it can and cannot do: choose
-a day the receiving chains have not already handled, confirm that per chain right
-before announcing, line up several such days in advance rather than one, keep the
-gap between closing a day and announcing it short, and escalate rather than
-improvise if every candidate has been used up. A real fix belongs in the protocol
-— a restriction on who may announce, or a way of carrying the date that does not
-depend on an untouched day — and is recorded as follow-up work rather than
-pretended away here.
+Two further corrections landed on that correction, and both matter to an operator
+in the room.
 
-Nothing here is exploitable for gain. The costs are a user meeting a failed claim
-on a gate that opened early and, in the pre-cutover case, a chain that cannot be
-brought in.
+**A spent day is not a lost chain.** An earlier draft said a chain in that state
+could not be brought in at all. It can: every freshly assembled day carries the
+current cutover date, so announcing a different untouched day works normally.
+Only running out of eligible days is unrecoverable. Saying otherwise would have
+had someone treat a fixable situation as ruined.
+
+**And there is an enforceable gate after all.** The messenger that carries these
+announcements can be paused by its guardian, and pausing it does not stop the
+funding transfers, which travel a different path. So the funding and its
+confirmations can be completed while announcements are impossible, and the pause
+lifted immediately before announcing — which closes the gap rather than
+shortening it. It is not free: pausing stops every other announcement on that
+messenger, and lifting the pause is an owner action, meaning a scheduled and
+delayed one after governance handover. The procedure now lays out the trade-off
+instead of claiming no gate exists.
+
+**The severity was also understated.** While the outstanding fund-safety item is
+open, a claim arriving at a gate opened ahead of its funding does not simply
+fail: the figure the payout is measured against is computed from the contract's
+whole balance minus a few known reservations, and the balance has other owners —
+including collateral belonging to borrowers. So an early announcement can result
+in someone being paid out of that collateral, and it can happen before the
+ceremony's own check for the fix is ever performed. This is treated as something
+to contain now rather than a hazard scheduled for the activation day.
 
 
 ## A second gate that only bound one step
