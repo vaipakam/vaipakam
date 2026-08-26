@@ -87,7 +87,7 @@ async function cpuMs(fn: () => Promise<void>): Promise<number | null> {
   // `Promise.race` abandons the waiter, it does not cancel the work: the
   // abandoned pass kept burning process-wide CPU and mutating the mock's
   // counters while later samples were taken, so those deltas were not
-  // isolated (Codex #1945 r1). The call budget guarantees it terminates.
+  // isolated (Codex #1945 r1).
   const work = fn().then(
     () => 'ok' as const,
     () => 'ok' as const,
@@ -95,7 +95,22 @@ async function cpuMs(fn: () => Promise<void>): Promise<number | null> {
   try {
     const outcome = await Promise.race([work, timeout]);
     if (outcome === 'timeout') {
-      await work;
+      // The call budget does NOT guarantee `work` terminates: an RPC failure
+      // whose retry sits on a backoff timer keeps the pass pending without
+      // ever issuing (and so exhausting) another call, and an unconditional
+      // `await work` then hung the whole harness — `BENCH_TIMEOUT_S=2` still
+      // needed SIGTERM after 15s (Codex #1945 r3). Bound the post-timeout
+      // settle: give the abandoned pass a short grace to unwind on its own
+      // (which keeps the r1 isolation for the common budget-bounded case),
+      // then proceed regardless. The runner breaks its REPS loop on the first
+      // hang, so at most one pass per run is left un-settled, and it is
+      // reported as hung/NOT-measured either way.
+      const grace = new Promise<void>((res) => {
+        const g = setTimeout(res, Math.min(5, TIMEOUT_S) * 1000);
+        // Do not keep the event loop alive for the grace timer alone.
+        (g as unknown as { unref?: () => void }).unref?.();
+      });
+      await Promise.race([work.then(() => undefined), grace]);
       return null;
     }
   } finally {
@@ -323,7 +338,16 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+// Exit explicitly once the table is printed. A pass abandoned at the timeout
+// (see `cpuMs`) can leave RPC-retry timers on the event loop that would keep
+// the process alive for tens of seconds after the results are already out —
+// which is the very "BENCH_TIMEOUT_S is ineffective" symptom this harness is
+// meant to avoid. The measurement is complete at this point, so a hard exit is
+// correct rather than lossy.
+main().then(
+  () => process.exit(0),
+  (err) => {
+    console.error(err);
+    process.exit(1);
+  },
+);

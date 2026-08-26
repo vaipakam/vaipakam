@@ -66,15 +66,42 @@ export function d1Stub(): unknown {
     const table = tableOf(sql);
     d1Stats.tables.add(table);
     const isRead = /^\s*select/i.test(sql);
-    const rows = isRead ? rowsFor(table) : [];
-    if (isRead && rows.length === 0 && table) d1Stats.unseeded.add(table);
-    const res = { results: rows, success: true, meta: {} };
+    const allRows = isRead ? rowsFor(table) : [];
+    // The table IS seeded even if a later bound filter yields no rows, so the
+    // "unseeded" diagnostic keys on the RAW seed count, not the filtered one —
+    // otherwise a `WHERE chain_id = <arb>` on a Base-only fixture would be
+    // reported as an unseeded table rather than an empty chain.
+    if (isRead && allRows.length === 0 && table) d1Stats.unseeded.add(table);
+
+    // Honour the bind arguments. `bind` used to return `stmt` and discard its
+    // args, so `WHERE chain_id = ?` never filtered — a focused watcher replayed
+    // all 20 Base subscribers on every configured chain and did 3x the RPCs it
+    // should (Codex #1945 r3). Match each `col = ?` in the SQL to its bind arg
+    // positionally and keep only rows whose seeded value agrees; a column the
+    // fixture row does not carry is not filtered on.
+    const boundCols = [...sql.matchAll(/([a-z_][a-z0-9_]*)\s*=\s*\?/gi)].map((m) =>
+      m[1].toLowerCase(),
+    );
+    let boundArgs: unknown[] = [];
+    const rows = () => {
+      if (boundCols.length === 0 || boundArgs.length === 0) return allRows;
+      return allRows.filter((row) =>
+        boundCols.every((col, i) => {
+          if (i >= boundArgs.length) return true;
+          const seeded = (row as Record<string, unknown>)[col];
+          return seeded === undefined || String(seeded) === String(boundArgs[i]);
+        }),
+      );
+    };
     const stmt: Record<string, unknown> = {};
-    stmt.bind = () => stmt;
-    stmt.all = async () => res;
-    stmt.first = async () => rows[0] ?? null;
-    stmt.run = async () => res;
-    stmt.raw = async () => rows.map((r) => Object.values(r));
+    stmt.bind = (...args: unknown[]) => {
+      boundArgs = args;
+      return stmt;
+    };
+    stmt.all = async () => ({ results: rows(), success: true, meta: {} });
+    stmt.first = async () => rows()[0] ?? null;
+    stmt.run = async () => ({ results: rows(), success: true, meta: {} });
+    stmt.raw = async () => rows().map((r) => Object.values(r));
     return stmt;
   };
   return {
