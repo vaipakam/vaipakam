@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# FIRST statement, before ANY assignment: the names present now. `load_env_file`
-# subtracts this from the names present at load time, and the difference is
-# exactly what this script created — the set `.env` may not replace. Derived so
-# it cannot fall behind the variables added below (Codex #1938 r15).
-__lenv_baseline="$(compgen -v)"
+# FIRST statement, before ANY assignment: every name's DECLARATION as this
+# script found it. `load_env_file` compares each `.env` name against this, and
+# a declaration that has changed means the script created or reassigned it —
+# the set `.env` may not replace. Declarations rather than names, because a
+# name INHERITED as exported is already present and reassigning it changes no
+# name and no attribute (Codex #1938 r15/r16).
+__lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #
 # pause-all-chains.sh — production-grade simultaneous-pause helper.
 #

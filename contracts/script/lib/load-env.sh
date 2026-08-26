@@ -32,8 +32,6 @@ load_env_file() {
     echo "       statement of the calling script, before any assignment." >&2
     return 1
   fi
-  __lenv_owned="$(comm -13 <(printf '%s\n' "$__lenv_baseline" | sort -u) \
-                            <(compgen -v | sort -u))"
   local __lenv_file="$1" __lenv_line __lenv_name __lenv_value __lenv_no=0
   local __lenv_q __lenv_rest __lenv_i __lenv_decl
   local __lenv_names=() __lenv_vals=()
@@ -114,11 +112,40 @@ load_env_file() {
     # names present now is exactly what the script created. That covers every
     # wrapper variable, including ones added later, with nothing to maintain —
     # and it subsumes the three names above, which are simply members of it.
-    if ! grep -qx -- "$__lenv_name" <<<"$__lenv_owned"; then :; else
-      echo "Error: $__lenv_file:$__lenv_no sets a name this script created before" >&2
-      echo "       reading the file — refusing. (Name withheld.)" >&2
+    # Compare the name's DECLARATION against the baseline, not just its presence.
+    # r15 compared name SETS, which misses the case the whole rule exists for: a
+    # name INHERITED as exported is already in the baseline, so reassigning it
+    # adds no name and clears no attribute, and the difference excluded it — the
+    # `declare -x` arm below then let `.env` replace it. That is the r12
+    # condition, reopened by my own generalisation (Codex #1938 r16).
+    #
+    # A declaration differs when the script created the name OR changed its
+    # value or attributes, which is exactly "the script owns this".
+    __lenv_now_decl="$(declare -p "$__lenv_name" 2>/dev/null || true)"
+    __lenv_base_decl="$(printf '%s\n' "$__lenv_baseline" \
+      | grep -m1 -E "^declare -[a-zA-Z-]+ ${__lenv_name}=" || true)"
+    if [ "$__lenv_now_decl" != "$__lenv_base_decl" ]; then
+      echo "Error: $__lenv_file:$__lenv_no sets a name this script created or" >&2
+      echo "       changed before reading the file — refusing. (Name withheld.)" >&2
       return 1
     fi
+
+    # And the residual the comparison CANNOT reach: a name inherited as exported
+    # that the wrapper never reassigns, or reassigns to the value it already
+    # had, is byte-identical to operator configuration. For most names that is
+    # fine — an operator exporting an RPC URL is the case the `declare -x` arm
+    # deliberately serves. For the three paths this tooling RUNS FROM it is not,
+    # because `deploy-mainnet.sh` executes `$SCRIPT_DIR/predeploy-check.sh`.
+    #
+    # So this arm is NOT redundant with the derived rule and does not subsume
+    # it either; they cover different halves. r15 deleted it on the claim that
+    # the derived rule replaced it, and that claim was wrong.
+    case "$__lenv_name" in
+      SCRIPT_DIR|CONTRACTS_DIR|REPO_ROOT)
+        echo "Error: $__lenv_file:$__lenv_no sets a path this tooling runs from" >&2
+        echo "       — refusing. (Name withheld.)" >&2
+        return 1 ;;
+    esac
 
     __lenv_decl="$(declare -p "$__lenv_name" 2>/dev/null || true)"
     if [ -n "$__lenv_decl" ]; then
