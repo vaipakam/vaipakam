@@ -1225,10 +1225,15 @@ contract RiskFacetTest is Test {
             uint8(LibVaipakam.LoanStatus.Defaulted),
             "split liquidation drives the loan terminal"
         );
-        (address claimAsset, uint256 claimAmt, , , , , , ) =
+        (address claimAsset, uint256 claimAmt, bool claimTaken, , , , , ) =
             ClaimFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ true);
         assertEq(claimAsset, mockERC20, "lender claim recorded in the principal asset");
         assertGt(claimAmt, 0, "lender claim amount recorded");
+        // POPULATED is not ACTIONABLE (Codex #1957 r2 P2). A claim written with
+        // `claimed == true` satisfies the two assertions above while
+        // `ClaimFacet.claimAsLender` reverts `AlreadyClaimed`, leaving the
+        // lender unable to recover proceeds whose collateral has been sold.
+        assertFalse(claimTaken, "lender claim is unclaimed - actionable, not just recorded");
 
         vm.clearMockedCalls();
     }
