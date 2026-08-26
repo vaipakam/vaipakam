@@ -30,6 +30,22 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 /** How many entries every dynamic array result carries. */
 export const ARRAY_LEN = Number(process.env.BENCH_ARRAY_LEN ?? 25);
 
+/** What a count-shaped uint answers — bounds every pagination loop. */
+export const COUNT_VALUE = Number(process.env.BENCH_COUNT ?? 50);
+
+/**
+ * How many FULL pages one selector serves before it starts answering with an
+ * empty array. Without this a paginated read is infinite: every page comes
+ * back full, so the caller always asks for one more.
+ */
+export const MAX_PAGES = Number(process.env.BENCH_PAGES ?? 2);
+
+/** Per-selector call counter, reset between passes. */
+const pageCounts = new Map<string, number>();
+export function resetPages(): void {
+  pageCounts.clear();
+}
+
 const ADDRESS = '0x1111111111111111111111111111111111111111' as const;
 
 /**
@@ -104,9 +120,17 @@ function defaultFor(p: AbiParameter): unknown {
     return `0x${'11'.repeat(n)}`;
   }
   if (/^u?int\d*$/.test(t)) {
-    // Non-trivial magnitude: a zero everywhere would let a pass early-return
-    // on "nothing to do" and profile as free, which is the failure mode this
-    // harness exists to avoid.
+    // A COUNT and an AMOUNT need different magnitudes, and conflating them
+    // hung the first working run of this harness: `getActiveLoansCount`
+    // answered 1e18, so the liquidator's pagination loop had 1e18/200 pages
+    // to walk and never returned. Names are the only signal available here,
+    // and they are reliable enough for a profiling fixture.
+    if (/count|total|length|len|num|size|pages/i.test(p.name ?? '')) {
+      return BigInt(COUNT_VALUE);
+    }
+    // Non-trivial magnitude otherwise: a zero everywhere would let a pass
+    // early-return on "nothing to do" and profile as free, which is the
+    // failure mode this harness exists to avoid.
     return 1_000_000_000_000_000_000n;
   }
   return 0n;
@@ -135,7 +159,18 @@ function answerCall(data: string): string {
 
   const fn = BY_SELECTOR.get(selector);
   if (!fn || fn.outputs.length === 0) return '0x';
-  const values = fn.outputs.map(defaultFor);
+
+  // Exhaust arrays after MAX_PAGES so pagination terminates.
+  const returnsArray = fn.outputs.some((o) => o.type.endsWith('[]'));
+  let exhausted = false;
+  if (returnsArray) {
+    const seen = (pageCounts.get(selector) ?? 0) + 1;
+    pageCounts.set(selector, seen);
+    exhausted = seen > MAX_PAGES;
+  }
+  const values = fn.outputs.map((o) =>
+    exhausted && o.type.endsWith('[]') ? [] : defaultFor(o),
+  );
   return encodeFunctionResult({
     abi: [fn] as Abi,
     functionName: fn.name,

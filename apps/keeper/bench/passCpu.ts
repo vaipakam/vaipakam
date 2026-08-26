@@ -24,9 +24,11 @@
  */
 import { KEEPER_PASSES } from '../src/passSchedule';
 import { getChainConfigs, type Env } from '../src/env';
-import { installRpcMock, rpcStats, ARRAY_LEN } from './rpcMock';
+import { installRpcMock, rpcStats, resetPages, ARRAY_LEN } from './rpcMock';
 
 const REPS = Number(process.env.BENCH_REPS ?? 5);
+/** Seconds one pass may take before it is recorded as hung rather than slow. */
+const TIMEOUT_S = Number(process.env.BENCH_TIMEOUT_S ?? 30);
 
 /** A D1 stub that answers the shapes the passes actually use. */
 function d1Stub() {
@@ -81,10 +83,27 @@ function makeEnv(): Env {
   return env as unknown as Env;
 }
 
-/** ms of CPU (user+system) consumed by `fn`. */
-async function cpuMs(fn: () => Promise<void>): Promise<number> {
+/**
+ * ms of CPU (user+system) consumed by `fn`, or `null` if it hung.
+ *
+ * The timeout is not defensive padding. An unbounded pass is exactly what a
+ * fixture bug produces — a paginated read whose pages never empty, or a count
+ * answered as 1e18 — and the first working run of this harness sat for twenty
+ * minutes producing nothing rather than saying so. A hang has to be a
+ * reported result, not silence.
+ */
+async function cpuMs(fn: () => Promise<void>): Promise<number | null> {
   const before = process.cpuUsage();
-  await fn();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<'timeout'>((resolve) => {
+    timer = setTimeout(() => resolve('timeout'), TIMEOUT_S * 1000);
+  });
+  try {
+    const outcome = await Promise.race([fn().then(() => 'ok' as const), timeout]);
+    if (outcome === 'timeout') return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   const d = process.cpuUsage(before);
   return (d.user + d.system) / 1000;
 }
@@ -95,6 +114,7 @@ type Row = {
   max: number;
   rpc: number;
   errors: number;
+  hung: number;
 };
 
 async function main(): Promise<void> {
@@ -136,20 +156,28 @@ async function main(): Promise<void> {
       if (process.env.BENCH_VERBOSE) realError('   ', ...args);
     };
 
+    let hung = 0;
     for (let i = 0; i < REPS; i += 1) {
+      resetPages();
       const env = makeEnv();
       // eslint-disable-next-line no-await-in-loop
-      samples.push(await cpuMs(() => pass.run(env)));
+      const ms = await cpuMs(() => pass.run(env));
+      if (ms === null) {
+        hung += 1;
+        break; // a hung pass will hang again; do not spend REPS × timeout on it
+      }
+      samples.push(ms);
     }
 
     console.error = realError;
     samples.sort((a, b) => a - b);
     rows.push({
       name: pass.name,
-      median: samples[Math.floor(samples.length / 2)],
-      max: samples[samples.length - 1],
-      rpc: (rpcStats.calls - rpcBefore) / REPS,
-      errors: errors / REPS,
+      median: samples.length ? samples[Math.floor(samples.length / 2)] : 0,
+      max: samples.length ? samples[samples.length - 1] : 0,
+      rpc: (rpcStats.calls - rpcBefore) / Math.max(samples.length, 1),
+      errors: errors / Math.max(samples.length, 1),
+      hung,
     });
   }
 
@@ -190,6 +218,16 @@ async function main(): Promise<void> {
     throw new Error(
       'no pass issued a single RPC call — the mock was never reached, so ' +
         'these numbers measure nothing. Do not read the table above.',
+    );
+  }
+
+  const stuck = rows.filter((r) => r.hung > 0);
+  if (stuck.length > 0) {
+    console.log(
+      `PASSES THAT HUNG past ${TIMEOUT_S}s (recorded as 0, NOT measured):\n  ` +
+        stuck.map((r) => r.name).join('\n  ') +
+        '\n  Almost always a fixture bug — an unbounded loop the mock feeds ' +
+        'forever — not a slow pass.\n',
     );
   }
 
