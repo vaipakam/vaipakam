@@ -1595,20 +1595,40 @@ against a budget that has not arrived, and no amount of operator discipline
 prevents it. Nothing here is exploitable for profit; the harm is that users meet
 an empty-balance revert on a gate the ceremony opened early.
 
-**Close the window rather than policing it: do the remit and its receipts BEFORE
-arming.** The chosen day is pre-`D*` and a pre-`D*` remit does not need the
-commitment report, so nothing about it depends on Base being armed. Finalize the
-day, remit it to every destination, and confirm every `RewardBudgetReceived` —
-all of it before `setGovernorCommitArmedFromDay`. Then the only thing the
-post-arm broadcast does is install `D*` on an already-funded day, and there is no
-interval in which a finalized-but-unfunded day is sitting there for anyone to
-broadcast.
+**This window cannot be closed by ordering, and an earlier revision of this
+paragraph was wrong to say it could.** Moving the remit and its receipts ahead of
+the arm does not help: `broadcastGlobal`'s only day-state prerequisite is
+`dailyGlobalFinalized[dayId]`, so a third party can broadcast the day the moment
+it is finalized, whichever side of the arm that falls on.
 
-Where that is not possible, treat a third-party broadcast as an expected event
-rather than a violation: keep the finalize→receipt interval as short as you can,
-and know that discovering an early broadcast is not a reason to pause the
-ceremony — the day still funds when the remit lands, and pausing extends exactly
-the window you are trying to shrink.
+**And a pre-arm broadcast is WORSE than an early one.** If the day is applied on
+a mirror while Base is still unarmed, that mirror records
+`broadcastV2Applied[dayId]`, and `_applyBroadcastV2Core`'s replay branch
+**returns before installing `armedFromDay`**. The prescribed post-arm rebroadcast
+of that day then exits idempotently and **cannot arm that mirror at all** —
+permanently, because `D*` is one-shot and cannot be re-chosen. So the ordering
+that looked like a fix instead hands anyone a way to disrupt the irreversible
+cutover.
+
+What the ceremony can actually do:
+
+- **Pick a propagation day the target mirrors have NOT applied, and confirm it
+  per mirror immediately before broadcasting** — read `broadcastV2Applied[dayId]`
+  on each. A day already applied there is spent for arming purposes.
+- **Have alternates ready.** Identify several unapplied pre-`D*` days before
+  arming, not one, so a burnt candidate is an inconvenience rather than a dead
+  end.
+- **Keep the finalize→broadcast interval short**, since finalization is what
+  makes a day broadcastable by anyone.
+- **If every candidate day has been applied on a mirror before you can arm it,
+  stop and escalate.** That mirror cannot be armed through this path and the
+  recovery is not a runbook step — it is a protocol question.
+
+A protocol-enforced gate (or a propagation mechanism that does not depend on an
+unapplied day) is the real fix and is **not** in this ceremony's gift. Tracked as
+a follow-up; the instructions above are mitigation, not closure. Nothing here is
+exploitable for profit — the costs are a user meeting an empty-balance revert on
+a gate opened early, and, in the pre-arm case, a mirror that cannot be armed.
 
 **One exception, and without it the wait never ends.** If the chosen day
 allocates zero budget to a destination, `remitRewardBudget` closes it locally,
@@ -1704,7 +1724,12 @@ verified live first:
   measure different quantities, executable time accrues for claims that currently
   revert, so restored funding lets the next sweep expire entitlements on stale
   elapsed time. Assert the deployed code slice per chain, as Steps 1 and 4 do;
-- **#1566 CLOSED and its fix deployed** — the same gate Step 4 carries, and it
+- **#1566 CLOSED and its fix deployed ON EVERY REWARD CHAIN** — per chain, the
+  same way the #1499 bullet above is worded and for the same reason: this setter
+  is a LOCAL write scheduled on each chain (see the closing note of this step),
+  so a mirror can receive the horizon while running its own expiry sweep against
+  its own balance-based backing. A Base-only verification does not satisfy this.
+  It is also the same gate Step 4 carries, and it
   belongs here TOO rather than only there. Step 4's version reads *"the
   fund-safety half is #1566, and it is OPEN. Do not arm until it closes"*, which
   binds arming. This step is deliberately separate and can be performed later,

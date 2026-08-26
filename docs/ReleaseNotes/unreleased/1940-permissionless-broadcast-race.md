@@ -17,21 +17,36 @@ to pay the messaging fee can announce it, and every claim gate opens early. No
 amount of care on the operator's part prevents that, because the ordering was
 never theirs to enforce.
 
-The fix is to remove the window rather than police it. The day used for this is
-deliberately one from before the cutover, and funding such a day does not depend
-on the cutover having happened — so the funding and its confirmations can all be
-done *before* the irreversible step, leaving the announcement afterwards with
-nothing to do but carry the date to a day that is already funded. There is then
-no interval in which a finalized, unfunded day is sitting there for anyone to
-announce.
+The first attempt at a remedy was to remove the window by re-ordering the
+ceremony — doing the funding and its confirmations before the irreversible step,
+so the announcement afterwards had nothing left to open early. Review showed that
+does not work, and would have made things worse.
 
-Where that ordering is not possible, the procedure now says what to do instead:
-keep the gap short, and treat an early announcement by someone else as an
-expected event rather than an emergency — the day still funds when the transfer
-lands, and stopping to investigate lengthens exactly the gap that caused it.
+It does not work because the only thing an announcement needs is for the day to
+have been closed off for accounting; whether the cutover has happened is
+irrelevant to it. So the announcement remains available to anyone from the moment
+the day closes, on either side of the re-ordering.
 
-Nothing here is exploitable for gain. The cost of the race is a user meeting a
-failed claim on a gate that opened a few minutes early.
+It would have made things worse because a chain that receives the announcement
+*before* the cutover records that it has already handled that day, and later
+handling of the same day stops early — before the part that would have told it
+the cutover date. The re-broadcast the procedure relied on would therefore be
+silently ineffective for that chain, and since the cutover date can only be set
+once, that chain could not be brought in at all. An ordering meant as a fix would
+have handed anyone a way to disrupt an irreversible step.
+
+What the procedure says instead is honest about what it can and cannot do: choose
+a day the receiving chains have not already handled, confirm that per chain right
+before announcing, line up several such days in advance rather than one, keep the
+gap between closing a day and announcing it short, and escalate rather than
+improvise if every candidate has been used up. A real fix belongs in the protocol
+— a restriction on who may announce, or a way of carrying the date that does not
+depend on an untouched day — and is recorded as follow-up work rather than
+pretended away here.
+
+Nothing here is exploitable for gain. The costs are a user meeting a failed claim
+on a gate that opened early and, in the pre-cutover case, a chain that cannot be
+brought in.
 
 
 ## A second gate that only bound one step
