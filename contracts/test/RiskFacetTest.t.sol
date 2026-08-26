@@ -4292,6 +4292,74 @@ contract RiskFacetTest is Test {
     ///         `LoanLiquidated`.
     ///       - `LiquidationDiscounted` emitted with the precise
     ///         (totalDebt, collateralSeized, borrowerSurplus) triple.
+    /// @dev #1955 — run ONE discounted liquidation on an existing loan,
+    ///      optionally stamping the lender `Full` first, and return what the
+    ///      treasury took. Mocks live in here (not the caller) because the
+    ///      caller replays from a snapshot and `vm.revertToState` restores chain
+    ///      state but NOT mocks — and the HF mock would block loan creation.
+    function _discountedLiqTreasury(
+        uint256 loanId,
+        address treasuryEoa,
+        bool stampFull
+    ) private returns (uint256 toTreasury) {
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        if (stampFull) {
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+        _mockDiscountPathHappy(loanId);
+        deal(mockERC20, address(this), 4000 ether);
+        IERC20(mockERC20).approve(address(diamond), 4000 ether);
+
+        uint256 before = IERC20(mockERC20).balanceOf(treasuryEoa);
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
+        toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - before;
+    }
+
+    /// @notice #1955 — the Full stamp reaches the interest a DISCOUNTED
+    ///         liquidation recovers. This is the recovery entry that sits beside
+    ///         the ordinary one and is easy to miss; #1383 swept it.
+    ///
+    /// @dev    Asserted EXACTLY, not by conservation. Unlike every other
+    ///         recovery entry, this path charges NO handling fee — the collateral
+    ///         discount IS the liquidator's compensation — so the treasury
+    ///         receives precisely `treasuryInterestFee` and the `+10%` is
+    ///         directly observable as `base - base*1000/BPS`.
+    function test_1955_discountedLiquidation_lenderFull_TenPercentOff() public {
+        address treasuryEoa = makeAddr("treasuryEoaFor1955Disc");
+        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+
+        uint256 loanId = createAndAcceptOffer();
+        // Interest must accrue or the treasury cut is zero and both replays
+        // measure nothing (the fixture this borrows from notes only "slight
+        // headroom for accrued interest if any" — it does not warp).
+        vm.warp(block.timestamp + 15 days);
+
+        uint256 snap = vm.snapshotState();
+        uint256 baseTreasury = _discountedLiqTreasury(loanId, treasuryEoa, false);
+        vm.revertToState(snap);
+        uint256 fullTreasury = _discountedLiqTreasury(loanId, treasuryEoa, true);
+
+        assertGt(baseTreasury, 0, "reference run took a cut on recovered interest");
+        assertEq(
+            fullTreasury,
+            baseTreasury - (baseTreasury * 1_000) / LibVaipakam.BASIS_POINTS,
+            "Full lender keeps exactly the +10% on this path"
+        );
+        vm.clearMockedCalls();
+    }
+
     function testTriggerLiquidationDiscounted_HappyPath_Tier3() public {
         uint256 loanId = createAndAcceptOffer();
         _mockDiscountPathHappy(loanId);
