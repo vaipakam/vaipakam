@@ -825,7 +825,17 @@ the step cannot proceed. If the owner has instead recorded an explicit
 discharge criterion allows, for the recovery family), then for the superseded
 family there is deliberately no implementation to verify: check that the decision
 is recorded and in force, and require fixed bytecode only for the families that
-remain implementation obligations. Without this branch a granted supersession
+remain implementation obligations.
+
+**One requirement survives ANY supersession, and it is inside the recovery
+family, so it is easy to lose here.** The partial-liquidation PAYOUT re-key is
+not a discount matter — it is misrouted principal and interest, with no claim
+record for the current holder to recover through — so a decision about whether
+recovered interest earns the Full bump has no bearing on it. Even on the
+superseded branch, require `RiskFacet` bytecode in which
+`triggerPartialLiquidation` pays or parks for `ownerOf(lenderTokenId)`. Passing
+this step without it leaves the previous lender holding the proceeds of a
+transferred position. Without this branch a granted supersession
 would leave `feeEntitlementEnabled` blocked forever by a readback that can never
 be satisfied.
 

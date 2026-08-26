@@ -66,9 +66,11 @@ separate documents.
 
 Two things follow that the documents had not said. The condition for declaring
 this settled now spells out that a decision to leave recovered interest out of
-scope would settle only the recovery routes — the refinance defect is that the
-wrong party is billed, which that decision does not reach, so it would remain to
-be fixed either way. And nothing automatic is checking any of it: the one
+scope would settle only the recovery routes' missing reduction. Two things
+outlive it. The refinance defect is that the wrong party is billed, which such a
+decision does not reach. And the misrouted payment on the partial route is not
+about the reduction at all — it is money going to the wrong person — so it
+remains to be fixed even though the route it sits on would be the one excused. And nothing automatic is checking any of it: the one
 deploy-time check on the master switch confirms only that it ships turned off,
 and the switch itself asks only which chain it is on. Confirming the settlement
 work is live is a manual step, and a clean automated run is not evidence for
