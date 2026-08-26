@@ -82,6 +82,23 @@ function rowsFor(table: string): Record<string, unknown>[] {
       }
       return out;
     }
+    case 'indexer_cursor':
+      // A FRESH `notified` watermark so the liquidator's recordHfBandNotifications
+      // phase passes its staleness gate (watermark age <= 900s) and its tip gate,
+      // instead of returning at the missing-watermark check — so its prune /
+      // prior-band load / recipient load / batch-write work is measured (Codex
+      // #1945 r9, #1948). `updated_at` is stamped LIVE (Date.now) so the 900s
+      // freshness window always holds during the pass. No `diamond` row is seeded,
+      // so the tip gate (`watermark.last_block < diamond.last_block`) is skipped.
+      // No chain_id: the watermark applies on every configured chain (a
+      // chain_id = 84532 seed would leave Arb / BNB at the skip).
+      return [
+        {
+          kind: 'notified',
+          last_block: 1_000_000,
+          updated_at: Math.floor(Date.now() / 1000),
+        },
+      ];
     default:
       // Unrecognised: empty. The pass will do nothing, and the runner will
       // say so rather than calling it cheap.
