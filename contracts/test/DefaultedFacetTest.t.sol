@@ -806,6 +806,25 @@ contract DefaultedFacetTest is Test {
             );
         }
 
+        // The resolver must key on the CURRENT position-NFT holder. The `Full`
+        // stamp above is LOAN-scoped and identical for every address, so it
+        // cannot distinguish the holder from `loan.lender` — swapping
+        // `DefaultedFacet`'s `ownerOf(loan.lenderTokenId)` for the stored field
+        // would leave every balance assertion green (Codex #1957 r7 P2).
+        // Asserting the host call's settling-lender argument pins the key, and
+        // only works because the caller TRANSFERRED the position: with the two
+        // addresses equal an argument matcher cannot tell them apart.
+        if (stampFull) {
+            vm.expectCall(
+                address(diamond),
+                abi.encodeWithSelector(
+                    VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
+                    loanId,
+                    VaipakamNFTFacet(address(diamond)).ownerOf(ln.lenderTokenId)
+                )
+            );
+        }
+
         vm.warp(uint256(ln.startTime) + uint256(ln.durationDays) * 1 days
             + LibVaipakam.gracePeriod(ln.durationDays) + 1);
         vm.mockCall(
@@ -856,6 +875,30 @@ contract DefaultedFacetTest is Test {
             mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
             1000 ether, 2000 ether, 30, 0, 0
         );
+
+        // Make the stored lender and the position HOLDER diverge, which is the
+        // only state in which keying the resolver on `ownerOf` differs
+        // observably from keying it on `loan.lender`.
+        //
+        // A plain transfer does NOT achieve this: `markDefaulted` runs
+        // `LibConsolidation.consolidateToHolder(..., Ctx.Tier2CloseOut)` first,
+        // which re-points `loan.lender` AT the new holder — after which the two
+        // are equal and the mutation is undetectable. (Verified: with a bare
+        // transfer this test passed against `ownerOf -> loan.lender`.)
+        //
+        // The divergence needs consolidation to SKIP. At Tier-2 a SANCTIONED
+        // current holder returns `Result.Skipped` — skip-not-block, so the
+        // close-out still completes while `loan.lender` stays stale. That is
+        // exactly the case the `ownerOf` keying at DefaultedFacet:497 exists for.
+        LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address dHolder = makeAddr("defaultHolder1955");
+        vm.prank(l0.lender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(
+            l0.lender, dHolder, l0.lenderTokenId
+        );
+        MockSanctionsList dSanc = new MockSanctionsList();
+        dSanc.setFlagged(dHolder, true);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(dSanc));
 
         uint256 snap = vm.snapshotState();
         (uint256 baseTreasury, uint256 baseLender) =

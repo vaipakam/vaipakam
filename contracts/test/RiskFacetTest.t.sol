@@ -1179,6 +1179,7 @@ contract RiskFacetTest is Test {
                 address(new MockZeroExLegacyAdapter(address(mockZeroExProxy)))
             );
         }
+        address venueA = AdminFacet(address(diamond)).getSwapAdapters()[0];
         address venueB = AdminFacet(address(diamond)).getSwapAdapters()[1];
         uint256 legA = (ln.collateralAmount * 60) / 100;
         LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](2);
@@ -1206,6 +1207,12 @@ contract RiskFacetTest is Test {
         // clamping the execution loop's `adapterIdx` to 0 left them green.
         // Asserting the SECOND adapter is actually called is what proves per-leg
         // venue dispatch.
+        // BOTH adapters, not just the second (Codex #1957 r7 P2). Expecting only
+        // `venueB` is satisfied by a regression that ignores every `adapterIdx`
+        // and routes BOTH legs through slot 1 — the aggregate proceeds are
+        // identical because both adapters wrap the same proxy. Requiring each
+        // slot to execute is what pins per-leg routing in both directions.
+        vm.expectCall(venueA, "");
         vm.expectCall(venueB, "");
 
         // Only in the STAMPED run: with no stamp and no consent the loan is
@@ -1222,6 +1229,29 @@ contract RiskFacetTest is Test {
                 )
             );
         }
+
+        // BOTH position NFTs must be status-updated (Codex #1957 r7 P2). This
+        // helper mocks every `updateNFTStatus` call, so removing either
+        // production update leaves the loan `Defaulted` while an NFT still reads
+        // active. Expect each exact call.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                ln.lenderTokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanLiquidated
+            )
+        );
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                ln.borrowerTokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanLiquidated
+            )
+        );
 
         // The borrower's collateral MUST actually be withdrawn. This suite mocks
         // `vaultWithdrawERC20` (six sites) and `deal`s the Diamond's balance, so
@@ -1317,6 +1347,23 @@ contract RiskFacetTest is Test {
             ClaimFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ true);
         assertEq(claimAsset, mockERC20, "lender claim recorded in the principal asset");
         assertGt(claimAmt, 0, "lender claim amount recorded");
+        // ABSOLUTE, not just positive (Codex #1957 r7 P2). Every other assertion
+        // in this test is RELATIVE — a base-vs-stamped delta — and a relative
+        // check is structurally blind to a UNIFORM error: computing
+        // `lenderProceeds` as (say) half of `allocated` underpays both replays
+        // equally, preserves `fullLender - baseLender == baseTreasury -
+        // fullTreasury`, and still leaves a positive funded claim.
+        //
+        // The invariant that catches it: this fixture recovers FULLY (1980e
+        // proceeds against ~1020e debt), so `allocated == totalDebt` and
+        // `lenderProceeds = allocated - treasuryInterestFee`. The treasury's cut
+        // is taken from INTEREST only, so the lender must come away with at
+        // least the whole principal.
+        assertGe(
+            claimAmt,
+            l0.principal,
+            "fully-recovered split returns at least the principal to the lender"
+        );
         // POPULATED is not ACTIONABLE (Codex #1957 r2 P2). A claim written with
         // `claimed == true` satisfies the two assertions above while
         // `ClaimFacet.claimAsLender` reverts `AlreadyClaimed`, leaving the
@@ -1334,6 +1381,18 @@ contract RiskFacetTest is Test {
         assertEq(bAsset, mockERC20, "borrower surplus claim in the principal asset");
         assertGt(bAmt, 0, "borrower surplus recorded");
         assertFalse(bTaken, "borrower surplus claim is unclaimed - actionable");
+        // FUNDED, not merely recorded (Codex #1957 r7 P2). Dropping the
+        // borrower-side `depositLocked` leaves the row populated and unclaimed
+        // while the tokens stay in the Diamond, and `claimAsBorrower` reverts
+        // later trying to withdraw from an empty vault.
+        address bVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(l0.borrower);
+        assertTrue(bVault != address(0), "borrower vault exists");
+        assertGe(
+            IERC20(mockERC20).balanceOf(bVault),
+            bAmt,
+            "borrower surplus is FUNDED in their vault, not just recorded"
+        );
 
         vm.clearMockedCalls();
     }

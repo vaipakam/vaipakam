@@ -339,11 +339,19 @@ contract FeeEntitlementFacetTest is SetupTest {
         // Name the silent zero: if the holder has no tier the control below
         // fails as "fixture cannot discount", which is indistinguishable from
         // the resolver reading the wrong party.
-        (uint8 hTier, uint256 hBal, uint256 hBps) =
+        // `getVPFIDiscountTier` is the RAW `tierOf(vaultVpfiBalance)` read: it
+        // never calls `effectiveTierAndBps`, so it stays green in exactly the
+        // silent-zero (unaged stake / cold accumulator) this probe exists to
+        // detect. `getEffectiveDiscount` is what the settlement paths gate on,
+        // so the liveness claim has to be made against THAT.
+        (uint8 hTier, uint256 hBal, ) =
             VPFIDiscountFacet(address(diamond)).getVPFIDiscountTier(holder);
         assertGt(hBal, 0, "holder's VPFI stake landed in their vault");
-        assertGt(hTier, 0, "holder resolves a non-zero tier");
-        assertGt(hBps, 0, "holder resolves a non-zero discount bps");
+        assertGt(hTier, 0, "holder's raw balance maps to a tier");
+        (uint8 hEffTier, uint16 hEffBps) =
+            VPFIDiscountFacet(address(diamond)).getEffectiveDiscount(holder);
+        assertGt(hEffTier, 0, "holder's EFFECTIVE tier resolves - accumulator is live");
+        assertGt(hEffBps, 0, "holder's EFFECTIVE discount bps is non-zero");
         assertTrue(
             VPFIDiscountFacet(address(diamond)).getVPFIDiscountConsent(holder),
             "holder consented"
