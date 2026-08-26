@@ -153,11 +153,19 @@ ac.hasRole(PAUSER_ROLE, deployerEOA)            == false
 
 // VPFIToken (canonical only)
 Ownable2Step(vpfiToken).owner()                 == timelock
+Ownable2Step(vpfiToken).pendingOwner()          == address(0)
 
 // Each GuardianPausable cross-chain contract
 Ownable2Step(target).owner()                    == timelock
+Ownable2Step(target).pendingOwner()             == address(0)
 GuardianPausable(target).guardian()             == guardian
 ```
+
+**The `pendingOwner()` lines are not decoration.** `Ownable2Step` completes a
+transfer in two steps and only the second clears the pending address, so
+`owner() == timelock` holds perfectly well while some other key is still able to
+call `acceptOwnership()`. Checking the owner alone accepts a handover that has
+not finished.
 
 A Foundry test `test/GovernanceHandover.t.sol` can drive all of these
 in one pass against a fork of the target chain; add that to CI as a
@@ -947,6 +955,7 @@ enumerate it and read all of it back:
 | | `vpfiToken()` | **no — read it** |
 | `CcipMessenger` | chain selectors, `remoteMessengerOf`, channel peers | yes, in the topology pass |
 | | `channelOf` / `handlerOf` | yes, above |
+| | `channelOfPeer` (the REVERSE index) | **no — read it** |
 | | `getRouter()` | **no — read it, and see below** |
 | *all three* | `owner()`, `pendingOwner()` | **no — read them** |
 | | `guardian()` | **no — read it** |
@@ -960,9 +969,15 @@ and authorise a UUPS upgrade, and a guardian can pause the transport — after t
 preflight and after the irreversible arm. The handover check earlier in this
 runbook establishes ownership of the Diamond, the token and the timelock targets;
 it says nothing about a cross-chain contract REPLACED since, which is precisely
-the case this section exists for. Read `owner()` and `pendingOwner()` against the
-governance address on each, `guardian()` against the current guardian key, and
-each proxy's implementation against the one you intend to be running.
+the case this section exists for. Two EXACT values, not one comparison: `owner() ==
+the governance address` **and `pendingOwner() == address(0)`**. A completed
+transfer clears the pending owner, so a non-zero one means a handover is still
+open and that address can call `acceptOwnership()` whenever it likes — including
+after `D*`, at which point it holds every setter above and the UUPS upgrade
+authority. "Owned by the timelock" is true of that state too, which is why the
+pending value has to be named rather than folded into the owner check. Then
+`guardian()` against the current guardian key, and each proxy's implementation
+against the one you intend to be running.
 
 What each of the newly-required ones costs if it is wrong:
 
@@ -982,6 +997,21 @@ What each of the newly-required ones costs if it is wrong:
   entry and minting pool you just checked. After a token rotation the channel,
   registry and pool all read healthy while every delivery reverts `TokenMismatch`
   inside the receiver, and the pre-`D*` receipt gate simply never completes.
+- **`channelOfPeer[remoteChainId][peer]` for every forward peer**, and not just
+  the forward `channelPeerOf` entries the topology pass already compared. The
+  reverse index was APPENDED to this contract, so on a proxy upgraded from the
+  earlier implementation it starts EMPTY while the forward map is fully
+  populated — and until `backfillChannelPeerIndex` has run over every pair, the
+  one-peer-to-one-channel invariant `setChannelPeer` advertises does not hold:
+  its duplicate check reads an empty reverse entry and admits an address that is
+  already another channel's live peer. A rotation performed during this ceremony
+  can therefore bind a live peer to a second channel and leave one lane
+  rejecting messages. The contract is explicit that completeness here is the
+  OPERATOR's, because mappings are not enumerable and it cannot discover its own
+  configured pairs: derive the pair list from this proxy's `ChannelPeerSet`
+  event log, not from memory, and confirm
+  `channelOfPeer[remoteChainId][peer] == channelId` for each. Three deployments
+  are already in that state.
 - **`getRouter()` on every adapter**, and this one is not proxy storage at all —
   the router is a CONSTRUCTOR immutable baked into the implementation, so an
   implementation upgrade can change it while every storage readback in this pass

@@ -79,6 +79,25 @@ covers the main contracts as they were handed over, and says nothing about one
 replaced since — which is exactly the situation this section is about. Those are
 now read back too.
 
+Two more followed from those additions. The first is that "check who owns it"
+was not precise enough to be safe: ownership transfers here happen in two steps,
+and only the second one clears the name of whoever was about to take over. A
+contract can therefore be owned by governance and still have another key waiting
+to claim it — at any moment, including after the switch, at which point that key
+holds every setting and the power to replace the contract. The procedure now
+names both expected values rather than one, and the same omission in the earlier
+ownership check elsewhere in the document is fixed with it.
+
+The second concerns a lookup the transport keeps in both directions. The reverse
+direction was added later, so a contract upgraded from the earlier version
+carries it empty until a migration is run over a list of pairs the operator has
+to reconstruct from the event history — the contract cannot enumerate its own
+configuration. While it is empty, the rule that one counterpart belongs to one
+channel is not enforced, and a replacement performed during this very ceremony
+can quietly attach a live counterpart to a second channel and leave one route
+rejecting everything. Three existing deployments are in that state today, so this
+is a migration to confirm rather than a hypothetical.
+
 All of this is read back before the switch, in the same pass that already
 verifies the wiring rather than the components, and the design record carries the
 same additions so the two documents do not drift apart.
