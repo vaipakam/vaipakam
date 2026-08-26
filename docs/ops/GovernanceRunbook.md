@@ -155,9 +155,18 @@ ac.hasRole(PAUSER_ROLE, deployerEOA)            == false
 Ownable2Step(vpfiToken).owner()                 == timelock
 Ownable2Step(vpfiToken).pendingOwner()          == address(0)
 
-// Each GuardianPausable cross-chain contract
+// EVERY cross-chain target `Handover.s.sol` transfers — not only the
+// GuardianPausable ones. `_transferCrossChainOwnership` covers: ccipMessenger,
+// vpfiTokenPool, vpfiPoolRateGovernor, rewardMessenger, vpfiMirror,
+// buybackRemittanceReceiver, rewardRemittanceReceiver, vpfiReturnSender,
+// vpfiReturnReceiver.
 Ownable2Step(target).owner()                    == timelock
 Ownable2Step(target).pendingOwner()             == address(0)
+
+// guardian() ONLY where the contract carries GuardianPausable.
+// `VpfiPoolRateGovernor` does NOT — it is Ownable2Step alone, and its owner
+// sets every lane's rate limits and authorizes UUPS upgrades, so scoping the
+// ownership assertions to "the GuardianPausable ones" silently exempts it.
 GuardianPausable(target).guardian()             == guardian
 ```
 
@@ -926,9 +935,15 @@ Both states pass every readback in this pass.
 The contract says so itself and points here: the drain "is the control, and it is
 documented in the admin runbook rather than enforced here". So it belongs in this
 ceremony, not in a comment. For every binding changed by a rotation: quiesce the
-channel, let in-flight deliveries land on the OLD handler, then clear and
-re-register — and resolve any delivery that already failed before accepting the
-new bindings. The peer rejection is recoverable (clear the new peer, re-install
+channel, then RECONCILE rather than wait — "let in-flight deliveries land" is not
+a condition an operator can observe, and a delayed or already-failed delivery
+leaves the lane in exactly the state that forwards tokens to the replacement.
+Take every outbound message id sent on that channel since the last known-good
+point, and require each one to have either EXECUTED successfully at its
+destination or been explicitly resolved (manually re-executed, or abandoned with
+the reason recorded). Only then clear and re-register. A pending id is a blocker,
+not a delay — CCIP will deliver it eventually, and eventually is after the
+rotation. The peer rejection is recoverable (clear the new peer, re-install
 the old, manually re-execute the stranded message, then repeat the rotation), but
 running that recovery re-points a live lane's trust anchor backwards, which is a
 worse thing to be doing than waiting was — and worse still with `D*` immutable.
@@ -953,7 +968,10 @@ enumerate it and read all of it back:
 | `RewardRemittanceReceiver` | `messenger()` | **no — read it** |
 | | `diamond()` | **no — read it** |
 | | `vpfiToken()` | **no — read it** |
-| `CcipMessenger` | chain selectors, `remoteMessengerOf`, channel peers | yes, in the topology pass |
+| `CcipMessenger` | `remoteMessengerOf` | yes, in the topology pass |
+| | `chainSelectorOf` / `chainIdOf` (both directions) | **no — read them** |
+| | reward-channel peers | yes, in the topology pass |
+| | reward-BUDGET channel peers | **no — read them** |
 | | `channelOf` / `handlerOf` | yes, above |
 | | `channelOfPeer` (the REVERSE index) | **no — read it** |
 | | `getRouter()` | **no — read it, and see below** |
@@ -997,6 +1015,25 @@ What each of the newly-required ones costs if it is wrong:
   entry and minting pool you just checked. After a token rotation the channel,
   registry and pool all read healthy while every delivery reverts `TokenMismatch`
   inside the receiver, and the pre-`D*` receipt gate simply never completes.
+- **both selector mappings, in both directions.** Outbound resolution reads
+  `chainSelectorOf[destinationChainId]` and inbound authentication derives the
+  source identity from `chainIdOf[sourceChainSelector]` — and nothing else in
+  this ceremony reads either. The `eth_chainId`, peer, router and lane checks all
+  pass with a missing or stale selector binding, and the first send after the arm
+  then resolves to no lane or to the wrong one. Require
+  `chainSelectorOf[chainId] == expectedSelector` AND
+  `chainIdOf[expectedSelector] == chainId` for every live lane. This row was
+  marked covered by the topology pass in the first version of this table and it
+  was not: `grep` the ceremony for either name and it appears nowhere else.
+- **the reward-BUDGET channel's peer on each mirror**, separately from the reward
+  channel's. The pairing check earlier in Step 3 is about the reward messenger
+  that broadcasts carry; the remittance arrives on its own channel, and
+  `_ccipReceive` rejects the Base Diamond as an unauthorized peer if that entry
+  is missing or stale — with every receiver, handler, token, router and ownership
+  readback above still passing. Require each mirror's
+  `channelPeerOf[<reward-budget channel>][baseChainId]` to equal the live Base
+  Diamond. "Channel peers" as a single line covered one channel and read as
+  covering both.
 - **`channelOfPeer[remoteChainId][peer]` for every forward peer**, and not just
   the forward `channelPeerOf` entries the topology pass already compared. The
   reverse index was APPENDED to this contract, so on a proxy upgraded from the

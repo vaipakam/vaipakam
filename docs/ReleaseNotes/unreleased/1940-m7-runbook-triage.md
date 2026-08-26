@@ -98,6 +98,29 @@ can quietly attach a live counterpart to a second channel and leave one route
 rejecting everything. Three existing deployments are in that state today, so this
 is a migration to confirm rather than a hypothetical.
 
+A further round found that the table's own right-hand column — the one marking
+which entries earlier steps already cover — had not itself been checked. Two of
+those "already covered" marks were wrong. The pair of lookups that translate
+between a chain's ordinary identifier and the one the transport uses are read
+nowhere in the procedure, in either direction, and every other check passes with
+a stale one; and the entry authorising the chain that sends the funds arrives on
+a different channel from the one carrying the announcements, so a single line
+about "the peers" covered one and read as covering both. Both are now their own
+requirements. The lesson is the obvious one: a table that records what is already
+covered has to have each of those claims verified, or it becomes a more confident
+version of the list it replaced.
+
+Two smaller corrections came with it. The ownership assertions were scoped to the
+contracts that carry a pause guardian, which quietly exempted the one that sets
+every lane's rate limits and can authorise its own replacement — they now apply
+to every contract the handover transfers, with the guardian check kept only where
+there is a guardian. And the instruction to let in-flight deliveries finish
+before changing a binding was not something an operator can observe: it is now a
+reconciliation of every message sent since the last known-good point, each of
+which must have arrived or been explicitly dealt with. A message still pending is
+a blocker rather than a delay, because the transport will deliver it eventually
+and eventually is after the change.
+
 All of this is read back before the switch, in the same pass that already
 verifies the wiring rather than the components, and the design record carries the
 same additions so the two documents do not drift apart.
