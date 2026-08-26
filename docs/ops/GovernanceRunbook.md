@@ -759,8 +759,10 @@ enforce them and will enable happily without them: the loan-side reward cap
 live on the REPAYMENT and early-close paths. The RECOVERY paths — time-based
 default, liquidation, discounted liquidation, split, partial, and the
 periodic-interest auto-liquidation leg — still take the ordinary cut from
-recovered lender interest without consulting the stamp, and refinance resolves
-the stamp against the STORED lender rather than the current holder. Frozen §F2
+recovered lender interest without consulting the stamp; both collateral
+prepay-SALE terminals pay a raw treasury leg on a PROPER close with no
+eligibility call; and refinance resolves the stamp against the STORED lender
+rather than the current holder. Frozen §F2
 is "at every lender-yield settlement", so that is a live divergence and a hard
 precondition for this step, not a scope boundary. Enabling here while it stands
 collects `C*` for a discount a lender can lose depending on how their loan ends.

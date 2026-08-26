@@ -642,10 +642,12 @@ optional:
   stamp — six entry points in all: time-based default, liquidation,
   DISCOUNTED liquidation (separately gated, beside the ordinary one),
   split liquidation, partial liquidation (which leaves the loan Active),
-  and the periodic-interest auto-liquidation leg. Refinance is a
-  seventh concern: it honours the stamp but resolves it against the
-  STORED lender, so a transferred position can have the previous
-  lender's vault fund the buyer's discount.
+  and the periodic-interest auto-liquidation leg. Two PROPER-CLOSE
+  routes are open as well: both collateral prepay-SALE terminals pay a
+  raw treasury leg with no eligibility call. And refinance is a further
+  concern: it honours the stamp but resolves it against the STORED
+  lender, so a transferred position can have the previous lender's
+  vault fund the buyer's discount.
   The frozen §F2 rule is "at every lender-yield settlement", so
   that is a divergence rather than a scope boundary, and it is a
   **blocker** until it is closed or explicitly superseded. Do not read

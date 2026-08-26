@@ -35,6 +35,12 @@ proceeds passed on — again without the arrangement being consulted — inside 
 component whose ordinary path does honour it, which is precisely why it read as
 covered.
 
+Two more routes are not recoveries at all. When an NFT collateral position is
+sold through the prepayment route — an ordinary, orderly close — the settlement
+pays a fee computed the plain way, on both the loan-keyed and the offer-keyed
+flow, and neither consults the arrangement. A lender who paid for the reduction
+pays the full fee anyway.
+
 One further route honours the arrangement but pays for it out of the wrong
 pocket: refinancing resolves it against whoever the records still name as lender.
 Where the position has been sold and the tidy-up step declined to run — it
