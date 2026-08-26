@@ -33,6 +33,16 @@ export const ARRAY_LEN = Number(process.env.BENCH_ARRAY_LEN ?? 25);
 /** What a count-shaped uint answers — bounds every pagination loop. */
 export const COUNT_VALUE = Number(process.env.BENCH_COUNT ?? 50);
 
+/**
+ * The fixture's configured chains, mirroring passCpu's RPC_KEYS
+ * (Base Sepolia, Arbitrum Sepolia, BNB Testnet). A reward-topology chain-id
+ * list (`getExpectedSourceChainIds` etc.) must be these UNIQUE ids, not
+ * ARRAY_LEN copies of one — `remitFromCanonical` does not dedupe, so filling
+ * the array with one mirror ran its remittance workflow ARRAY_LEN times and
+ * reported ARRAY_LEN/ARRAY_LEN for a two-mirror fixture (Codex #1945 r11).
+ */
+const FIXTURE_CHAIN_IDS = [84532n, 421614n, 97n] as const;
+
 /** What an enum-shaped uint answers — must be IN RANGE or work is discarded. */
 export const ENUM_VALUE = Number(process.env.BENCH_ENUM ?? 1);
 
@@ -476,6 +486,15 @@ function answerCall(data: string, chainKey = ''): string {
   const values = fn.outputs.map((o) => {
     if (!o.type.endsWith('[]')) return defaultFor(o, fn.name, chainKey);
     const inner = { ...o, type: o.type.slice(0, -2) } as AbiParameter;
+    // The reward-topology chain-id lists are the fixture's UNIQUE configured
+    // chains, not ARRAY_LEN copies of one mirror (Codex #1945 r11). The caller
+    // filters its own local id out of this set.
+    if (
+      /expectedsource|sourcechain|broadcastdest|remotechain/i.test(fn.name) &&
+      /^u?int(8|16|32|64|128|256)?$/.test(inner.type)
+    ) {
+      return FIXTURE_CHAIN_IDS.map((c) => c);
+    }
     return Array.from({ length: pageLen }, () => defaultFor(inner, fn.name, chainKey));
   });
   return encodeFunctionResult({
