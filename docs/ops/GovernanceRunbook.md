@@ -755,8 +755,12 @@ settlement-reachability condition. Gate A constrains **both** branches.
 enforce them and will enable happily without them: the loan-side reward cap
 (PR-5c) and the settlement sweep that honours the lender Full stamp (PR-6).
 
-**⛔ PR-6 is NOT discharged by its deploy assertions.** Those prove the sweep is
-live on the REPAYMENT and early-close paths. The RECOVERY paths — time-based
+**⛔ PR-6 is NOT discharged, and no deploy assertion bears on whether it is.**
+The only deploy assertion touching this flag pins it OFF on a fresh deploy
+(`DeployDiamondIntegrationTest.t.sol`); it observes no settlement path at all,
+and the setter checks only the chain role. Treat the whole of this step as a
+MANUAL readback — a green deploy-sanity suite is not evidence for any part of
+it. The RECOVERY paths — time-based
 default, liquidation, discounted liquidation, split, partial, and the
 periodic-interest auto-liquidation leg — still take the ordinary cut from
 recovered lender interest without consulting the stamp; both collateral

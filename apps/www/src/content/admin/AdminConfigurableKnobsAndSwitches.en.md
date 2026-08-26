@@ -652,8 +652,11 @@ optional:
   that is a divergence rather than a scope boundary, and it is a
   **blocker** until it is closed or explicitly superseded. Do not read
   the #1383 family as covering it, and do not read PR-6 (#1354) as
-  discharging it — the deploy assertions prove the REPAYMENT sweep is
-  live and say nothing about the recovery paths.
+  discharging it. Do not read the deploy assertions as bearing on it
+  either: the only one touching this flag pins it OFF on a fresh
+  deploy, and observes no settlement path at all. Nothing automated
+  checks that any settlement path honours the stamp, and the setter
+  checks only the chain role — the precondition is a manual readback.
 
 Disabling is always allowed, from any chain role.
 

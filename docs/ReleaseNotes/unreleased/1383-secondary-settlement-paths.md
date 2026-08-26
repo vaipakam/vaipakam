@@ -43,6 +43,16 @@ pays the full fee anyway.
 
 One further route honours the arrangement but pays for it out of the wrong
 pocket: refinancing resolves it against whoever the records still name as lender.
+
+Two things follow that the documents had not said. The condition for declaring
+this settled now spells out that a decision to leave recovered interest out of
+scope would settle only the recovery half — the sale routes close a loan
+normally, and the refinance defect is that the wrong party is billed, so neither
+is touched by that decision. And nothing automatic is checking any of it: the
+one deploy-time check on the master switch confirms only that it ships turned
+off, and the switch itself asks only which chain it is on. Confirming the
+settlement work is live is a manual step, and a clean automated run is not
+evidence for it.
 Where the position has been sold and the tidy-up step declined to run — it
 declines rather than failing, by design — the previous lender funds a reduction
 the buyer receives.
