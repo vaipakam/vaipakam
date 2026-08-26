@@ -721,6 +721,17 @@ spend a borrower's collateral. This is a fund-safety gate, not an accounting one
   vulnerable claim path live. Assert the deployment, per chain, the same way the
   other code-slice gates in this section are asserted.
 
+  **And on the ACTIVE-MIRROR branch, deployment is not the gate — the per-day
+  funding property is.** Step 5 forbids propagation while any reachable mirror
+  lacks that property, and a mirror learns `D*` only through propagation. So
+  arming on "the fix is deployed" can leave an operator armed, with `D*`
+  immutable, and the ceremony's own prohibition blocking the only route to
+  completing the cutover. Before arming an active-mirror mesh, establish the
+  property — a claim against a day whose budget has not arrived cannot consume
+  value belonging to anything else — not merely that #1566's implementation is
+  routed. On the dark branch this does not apply: arming Base IS the cutover and
+  there is nothing to propagate.
+
 > **#1498 is not the card to check.** It reads `closed / completed` and was the
 > original number for this work; #1555's `Closes #1498` fired when only the
 > de-duplication half landed, and the fund-safety half was re-filed as #1566.

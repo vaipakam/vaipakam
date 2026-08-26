@@ -55,8 +55,11 @@ That closes the gap for the day being prepared, and only for that day. An
 announcement may name any day that has been closed off for accounting, so the
 moment the pause lifts, someone can announce a different one that is neither
 funded nor yet handled on that chain — reaching the same exposure by another
-route. The procedure therefore says to leave the messenger paused until the underlying
-fund-safety fix is deployed — for the whole mesh, not one chain, because the
+route. The procedure therefore says to leave the messenger paused until the
+property that matters holds — that a claim against a day whose funding has not
+arrived cannot consume value belonging to anything else, which deploying the
+outstanding fund-safety item does not by itself guarantee — for the whole mesh,
+not one chain, because the
 pause is global and the single-destination form of the announcement can name a
 chain that was removed from the list. Reconciling every announceable day first
 was considered and does not work; the reasons are below with the rest of the
