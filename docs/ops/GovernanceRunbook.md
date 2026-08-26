@@ -1479,7 +1479,7 @@ that mirror exposed. **Do not run the cycle
 below, and do not unpause the reward messenger, while that is true of any such
 mirror** — see "the one safe branch" and the dead-end list further down, which
 record five procedures that were each tried against this and refuted. The cycle
-below is for a mesh where every reachable mirror carries #1566.
+below is for a mesh where every reachable mirror enforces the PER-DAY FUNDING PROPERTY (a claim against a day whose budget has not arrived cannot consume value belonging to anything else — **not** merely "#1566 deployed", see the warning in the propagation section).
 
 **Everything in this step — the promotion gate below, the propagation cycle, the
 pause discussion — sits under that prohibition.** An earlier revision placed it
@@ -1504,7 +1504,7 @@ does not apply to it.
 **Promotion is a full Step 3 for that chain, not a short checklist.** Run the
 whole active-mirror preflight against it — `KEEPER_ROLE`, keeper funding, the
 deployment artifact's Diamond address, both lane rate-limiter states, watcher
-coverage — plus PR-2, PR-5c, PR-6 and the #1566 fix live on it, its clock
+coverage — plus PR-2, PR-5c, PR-6 and the PER-DAY FUNDING PROPERTY (a claim against a day whose budget has not arrived cannot consume value belonging to anything else — **not** merely "#1566 deployed", see the warning in the propagation section) enforced on it — the #1566 fix being *live* is not the same test, its clock
 agreeing with Base, and its `armedFromDay` reading zero. A mirror bootstrapped
 without those arms into a mesh that cannot report, fund or observe it; then expect it to arm on its first
 broadcast rather than on a day you choose. There is no second cutover to
@@ -1583,7 +1583,8 @@ broadcast a newly finalized day between your remit submission and its arrival,
 opening the mirror's claim gate early. Shortening the window by finalizing and
 remitting close together helps and does not close it — and an earlier revision of
 this paragraph presented shortening as the whole remedy, which is only tolerable
-on a #1566-fixed mesh where the residue is an empty balance.
+on a mesh that enforces the per-day funding property, where the residue is an
+empty balance. A mesh that merely carries #1566 may not: see the warning below.
 
 **The propagation day must have fully ELAPSED, not merely be numerically below
 `D*`.** The force-finalization path does not check the reward clock, so "a day
@@ -1672,6 +1673,17 @@ DEPLOYED fix enforces the per-day property; where it only protects a subset of
 owners, containment stays for cross-day funding corruption even though borrower
 collateral is safe.
 
+**Sequence the pause AFTER report coverage, or the ceremony stalls.**
+`VaipakamRewardMessenger.onCrossChainMessage` is itself `whenNotPaused`, so
+pausing the canonical reward messenger REJECTS inbound mirror reports — they
+become failed, manually re-executable deliveries. `finalizeDay` then either stays
+below coverage or eventually grace-finalizes WITHOUT that destination, and the
+day is then excluded for it, which collides with this runbook's own requirement
+that every destination have a non-zero remittable slice. Confirm complete report
+coverage for the candidate day and read it back BEFORE pausing, then pause
+immediately before finalization. Otherwise the post-arm ceremony can run out of
+usable days against an immutable `D*`.
+
 **Where that property IS enforced, the messenger pause is a usable gate.**
 `VaipakamRewardMessenger` is `GuardianPausable` — `pause()` is guardian-or-owner
 — and every V2/V3 broadcast sender on it is `whenNotPaused`, while reward-budget
@@ -1709,10 +1721,17 @@ Three parts, and each was added because leaving it out was tried:
   `getBroadcastDestinations()` membership OR historical day standing on a day
   that can pass the V3 lapse-clock gate). Not "historically reachable": the
   fan-out form reaches current-list members with no history at all.
-- **Terminal reconciliation is part of the branch, not a footnote.** The pause
-  does not reach a broadcast already dispatched, and pausing the destination's
-  ingress leaves it failed and manually re-executable rather than cancelled. A
-  paused sender with an in-flight message outstanding is not contained.
+- **Reconciliation of outstanding broadcasts is part of the branch, not a
+  footnote — and "terminal" is not the test.** The pause does not reach a
+  broadcast already dispatched, and pausing the destination's ingress leaves it
+  failed and manually re-executable rather than cancelled. But a SUCCESSFUL
+  delivery is terminal too, and it is the one that opens that day's claim gate:
+  an applied-but-unfunded day keeps paying from unrelated custody while the Base
+  sender sits paused. So each outstanding message must end in one of two states —
+  **not delivered and provably not re-executable**, or **delivered and its day
+  FUNDED** (or that destination's claim path secured / the per-day property
+  enforced there). An earlier revision required only a terminal state, which
+  labels the continuing loss as safe.
 - **The condition is a PROPERTY, not "#1566 is closed".** See below.
 
 It cannot be scoped to the unfixed mirror, and an earlier revision implied it
