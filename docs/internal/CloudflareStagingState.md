@@ -26,6 +26,15 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 
 ## Workers (all currently serving placeholder 503)
 
+> **STALE since #1854 — operator reconciliation needed.** The dApp Worker is
+> now `vaipakam-app` on `app.vaipakam.com`, built from `apps/app`
+> (`@vaipakam/app`). The `vaipakam-defi` / `defi.vaipakam.com` rows below —
+> and the `defi.vaipakam.com` custom-domain binding in the next section —
+> record what was provisioned on 2026-05-07 and have NOT been re-verified
+> against the account since the rename. `apps/defi`, `apps/alpha` and
+> `apps/alpha01` no longer exist in the tree; whether their Workers and
+> hostname bindings are still present in Cloudflare is an operator check.
+
 | Worker | Domain | Lane | Cron | D1 binding |
 |---|---|---|---|---|
 | `vaipakam-www` | `www.vaipakam.com` ✅ + `vaipakam.com` (apex) ✅ | Marketing static site (renamed from `vaipakam-labs` at the labs → www cutover; `labs.vaipakam.com` now serves a 301 Bulk Redirect to www) | none | none |

@@ -1,4 +1,7 @@
-# alpha02 — translatable interpolated copy (i18n interpolation support)
+# Connected app — translatable interpolated copy (i18n interpolation support)
+
+*(The app was `apps/alpha02` while this doc was written; #1854 renamed it to
+`apps/app` / `app.vaipakam.com`. References below are to that same app.)*
 
 **Status:** Phase 1 (platform + pilot) delivered; domain migration in
 progress
@@ -9,7 +12,7 @@ progress
 
 ## Problem
 
-After #1329/#1330/#1343, every **static** user-visible string in alpha02
+After #1329/#1330/#1343, every **static** user-visible string in the app
 is routed through the `copy.*` catalog and translates with the display
 language. But a large class of user-visible text still renders **English
 in every locale, no matter how complete the locale bundle is**:
@@ -128,17 +131,18 @@ never displayed raw — so the **contract source stays English** (changing
 it changes audited bytecode). But the frontend copy users actually SEE
 when a transaction reverts is `FRIENDLY_ERROR_MESSAGES` in
 `packages/lib/src/decodeContractError.ts` — **~287 hardcoded-English
-messages** keyed by error name/selector, displayed by alpha02
-(`submitErrorText` → `decodeContractError`) AND apps/defi. These are
+messages** keyed by error name/selector, displayed by the connected app
+(`submitErrorText` → `decodeContractError`) — and, when this was written,
+also by the since-deleted `apps/defi`. These are
 website-displayed text, so per the "displayed → translated" rule they
 DO need translation.
 
 Because they live in a **shared** lib, this is its own workstream, not
 part of the copy.ts sweep.
 
-**Implemented (dedicated PR, alpha02-only).** `apps/defi` is slated for
-retirement, so this shipped for the connected app only; defi stays on the
-English default until it is retired. The mechanism:
+**Implemented (dedicated PR, connected-app-only).** `apps/defi` was slated
+for retirement, so this shipped for the connected app only; defi stayed on
+the English default and was deleted in #1854. The mechanism:
 
 - `decodeContractError` keeps English as its single source and resolves
   each error to a **stable key** — the Solidity error NAME, or the 4-byte
@@ -149,7 +153,7 @@ English default until it is retired. The mechanism:
 - `@vaipakam/lib` exports `contractErrorCatalog()` (key → English, mirroring
   the decoder's runtime precedence) so the English lives in the lib **once**
   and is never re-listed app-side.
-- alpha02's `submitErrorText` passes a `translate` that resolves
+- The app's `submitErrorText` passes a `translate` that resolves
   `contractError.<key>` from the active i18next bundle, with the lib English
   as the `defaultValue`. The `contractError.*` keys are seeded into
   `en.json` from `contractErrorCatalog()` by the template exporter (a second
@@ -159,8 +163,11 @@ English default until it is retired. The mechanism:
   table). Plus the #780 gas-estimate rewrite under `_gasEstimateUnavailable`.
 
 Backfill (translating the `contractError.*` values per locale) follows the
-same English-first model as `copy.*`. Follow-up: the decoder's unit suite
-still lives in the retiring `apps/defi` and should move to `@vaipakam/lib`.
+same English-first model as `copy.*`. Follow-up (still open, and now more
+urgent): the decoder's unit suite lived in `apps/defi/test/lib/` and was
+**deleted with that app in #1854 rather than moved** — `@vaipakam/lib` carries
+only the drift and i18n tests, so the decoder needs its unit suite
+re-established there.
 
 ## Special cases to handle
 

@@ -1,21 +1,22 @@
 # alpha02 RPC Read Diet — Signal-Driven Freshness, Timer-Free Chain Reads
 
 **Status:** Design — pending owner sign-off on phase ordering
-**Module:** apps/alpha02 (phase 1), apps/indexer (phase 2)
+**Module:** apps/app (phase 1), apps/indexer (phase 2)
 **Priority:** P2 — RPC quota pressure grows linearly with active tabs
 **Origin:** Owner request 2026-07-13: reduce direct blockchain reads to near
 zero by serving reads from the indexer without compromising update speed —
 improving both chain→D1 ingest and D1→browser delivery — with the Claims
 surface explicitly allowed to keep proper chain reads.
 **Governing spec:** [`docs/FunctionalSpecs/Alpha02ConnectedApp.md`](../FunctionalSpecs/Alpha02ConnectedApp.md)
-(the alpha02 spec; `WebsiteReadme.md` governs apps/defi and is deliberately
-NOT a constraint source for this design).
+(the connected-app spec, for `apps/app`; `WebsiteReadme.md` governed the
+since-deleted `apps/defi` and is deliberately NOT a constraint source for
+this design).
 
 ---
 
 ## 1. Problem
 
-Every active alpha02 tab spends RPC quota on a recurring schedule, whether or
+Every active app tab spends RPC quota on a recurring schedule, whether or
 not anything on chain changed. The cost has three drivers, in descending
 order:
 
@@ -537,9 +538,13 @@ lacking context entirely (older worker version) fall back the same way —
 degraded, never wrong.
 
 **2.3 Claimable-candidate hint — new route, ADDITIVE only, never an
-intersection.** The existing `GET /claimables/:address` is still consumed by
+intersection.** The existing `GET /claimables/:address` was consumed by
 `apps/defi` (`indexerClient.ts`, typed `{asLender, asBorrower}`); changing
-its shape would silently break that consumer (Codex #1224). Add a separate
+its shape would silently break that consumer (Codex #1224). **#1854 deleted
+`apps/defi` and `apps/app` does not call that route, so the
+don't-break-the-consumer half of this constraint has lapsed — re-decide
+whether the separate route is still worth it before building PR C.** As
+designed, add a separate
 `GET /claim-candidates/:address` (or a versioned response). **How it may and
 may not narrow (Codex #1224 r2):** it must never *suppress* a
 chain-enumerated candidate — a fresh position-NFT transfer or a pure
@@ -677,7 +682,7 @@ The requested pipeline improvements are mostly **hardening what shipped with
    rule).
 6. Re-measure; decide 2.4/phase 3 with the owner.
 
-Each PR updates `apps/alpha02/e2e/COVERAGE.md`, carries a release-note
+Each PR updates `apps/app/e2e/COVERAGE.md`, carries a release-note
 fragment, and lands the matching intent edits in `Alpha02ConnectedApp.md`
 (the freshness section gains one sentence: signal-driven refresh with polling
 as the degraded fallback — which is already its spirit at L65–66).

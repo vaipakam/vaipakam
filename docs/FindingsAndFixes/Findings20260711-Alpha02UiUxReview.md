@@ -12,14 +12,15 @@ since been fixed and in which batch — unmarked findings are OPEN.
 Three evidence streams, cross-checked:
 
 1. **Live sweep** — the committed driver
-   `apps/alpha02/e2e/live/live-ux-sweep.mjs` (added with this review)
+   `apps/app/e2e/live/live-ux-sweep.mjs` (added with this review; it was
+   `apps/alpha02/e2e/live/` until #1854)
    visited all 17 routes with the dev lender wallet connected, in three
    passes (Basic desktop 1440px, Basic mobile 390px, Advanced desktop),
    capturing full-page screenshots, the console stream, network
    failures/heavy assets, landmark probes, and a per-route DevTools
    probe (storage, IndexedDB, cookies, service worker, nav/paint
    timings, JS heap, long tasks). Evidence regenerates into
-   `apps/alpha02/e2e/live/shots/ux-sweep/` (gitignored).
+   `apps/app/e2e/live/shots/ux-sweep/` (gitignored).
 2. **Screenshot review** — every capture reviewed visually (desktop +
    mobile + advanced sets).
 3. **Static code review** — all 17 pages + the shared flow/desk/shell

@@ -77,7 +77,14 @@ it in memory, stores only `wallet_hash` + the redacted display, and
 All additions are additive — no column rewrite, safe to apply ahead
 of the endpoints shipping.
 
-### 4.2 Capture-path change — `apps/agent/src/diagRecord.ts` + `apps/defi/src/lib/journeyLog.ts`
+### 4.2 Capture-path change — `apps/agent/src/diagRecord.ts` + the app's journey log
+
+> **#1854 note:** the frontend half described here was
+> `apps/defi/src/lib/journeyLog.ts`, deleted with `apps/defi`. No app
+> currently POSTs `/diag/record`, so the client side of this section has to
+> be re-established in `apps/app` (its `DiagnosticsDrawer` /
+> `diagnostics/lastError.ts` are the natural home). The Worker side below is
+> unaffected.
 
 The frontend's `/diag/record` payload gains a `wallet` field — the
 **full** connected address (null when not connected). The Worker, in
@@ -114,7 +121,8 @@ timestamp, so a signature can't be lifted onto a different action or
 a different document). Authorization is **on-chain**: the
 Worker recovers the signer and requires it to hold `ADMIN_ROLE` on
 the Vaipakam Diamond (`diagAdminAuth.ts` → `AccessControlFacet.hasRole`
-— the exact check `apps/defi`'s protocol console runs). There is no
+— the exact check the protocol console ran in the since-deleted
+`apps/defi`). There is no
 `DIAG_ADMIN_TOKEN` or any other admin secret in the Worker's env —
 the contract's access-control state is the single source of truth
 for "who is an admin". The endpoint is naturally inert before
@@ -159,7 +167,7 @@ audit action:
 
 **The upload flow** (`diagLegalDoc.ts` is the Worker-side receiver):
 
-1. The protocol admin, in the `apps/defi` protocol console, selects
+1. The protocol admin, in the protocol console, selects
    the PDF (e-signed order / scanned letter). The browser computes
    its SHA-256 locally and folds it into the message the admin
    signs (`buildLegalHoldMessage` carries the *hash*, not the
@@ -211,7 +219,7 @@ for the other crons) and that the admin's wallet holds `ADMIN_ROLE`.
 
 When a valid retention obligation lands for a wallet (from a court /
 regulator order — the order names the **address**), the admin acts
-from the `apps/defi` protocol console: connect the admin wallet,
+from the protocol console: connect the admin wallet,
 choose the action, **upload the order PDF** (for a `place`), and sign
 the prompted `buildLegalHoldMessage` message. The console POSTs the
 signed request to `/diag/legal-hold`; the Worker verifies the signer
@@ -275,11 +283,17 @@ gates on `VITE_DIAG_RECORD_ENABLED`.
 
 ## 8. Follow-ups (not in this change)
 
+> **#1854 note:** both frontend follow-ups below have to land in `apps/app`.
+> The interactive `/protocol-console` dashboard lived in `apps/defi` and was
+> deleted with it, so the legal-hold panel now means building the console
+> surface as well as the panel. (`apps/www` hosts only the read-only
+> `/protocol-console/docs` reference page.)
+
 - **Frontend erasure UI** — a "Erase my diagnostics records" action
   (likely in the Diagnostics Drawer / Privacy settings) that prompts
   the wallet signature and calls the endpoint. Move
   `buildErasureMessage` to `packages/lib` at that point.
-- **Protocol-console legal-hold UI** — a panel in the `apps/defi`
+- **Protocol-console legal-hold UI** — a panel in the interactive
   protocol console (admin-only, behind `useIsProtocolAdmin`) for the
   place / lift / set-disclosure actions: a file picker for the order
   PDF, client-side SHA-256, the wallet-sign step, the multipart POST

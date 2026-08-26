@@ -133,8 +133,9 @@ kept; what changed afterwards is annotated in place:
   reconciliation path had been removed.
 - **`scanProxy.ts`** — deleted in PR #41. The pre-sign transaction
   preview began as Blockaid, briefly became a GoPlus proxy, and is now a
-  frontend-only viem `eth_call`
-  (`apps/defi/src/hooks/useTxSimulation.ts`). `apps/agent` has no scan
+  frontend-only viem `eth_call` (`apps/app/src/contracts/useTxSimulation.ts`;
+  it was `apps/defi/src/hooks/useTxSimulation.ts` until #1854).
+  `apps/agent` has no scan
   proxy and no `/scan/blockaid` route.
 - **`push.ts` / `telegram.ts` / `i18n.ts`** — landed on `apps/agent` as
   planned, but copies also exist under `apps/keeper/src/`, and

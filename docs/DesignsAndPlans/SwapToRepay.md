@@ -455,9 +455,11 @@ Per the facet-addition 7-site checklist in memory:
 
 Out of scope for the contracts PR. Sketch:
 
-- `apps/defi/src/components/loan/LoanDetailsActions/RepayPanel.tsx` —
-  add a "Swap collateral to repay" tab alongside the existing
-  "Repay" tab.
+- The repay surface in `apps/app` — `pages/PositionDetails.tsx` /
+  `components/EarlyRepayOptionsCard.tsx` — gains a "Swap collateral to
+  repay" option alongside the existing repay action. (This sketch
+  originally named `apps/defi/src/components/loan/LoanDetailsActions/RepayPanel.tsx`;
+  `apps/defi` was deleted in #1854.)
 - New hook `useSwapToRepayQuote(loanId)` — fetches a ranked
   `AdapterCall[]` try-list from the existing quote-proxy Worker
   (re-using the 4-DEX failover quote infrastructure from Phase 7a).

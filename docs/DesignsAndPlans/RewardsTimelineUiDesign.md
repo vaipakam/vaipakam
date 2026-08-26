@@ -53,5 +53,5 @@ A user with (a) an open loan, (b) a capped day, (c) an un-broadcast day,
 not (`awaiting funding` — the claim button must NOT render as claimable,
 since the claim would revert on empty budget), and (e) a long catch-up
 backlog can explain each of the five from the UI alone. E2E spec under
-`apps/alpha02/e2e/` + COVERAGE.md row per the verification directive,
+`apps/app/e2e/` + COVERAGE.md row per the verification directive,
 with an explicit broadcast-landed/unfunded-mirror fixture for (d).

@@ -24,7 +24,7 @@ That single fact reshapes how PRs are scoped:
 - **ABI-breaking changes are cheap.** Renaming a function, dropping a
   struct field, changing an event signature — none of these need
   transition shims, deprecation overloads, or `_v2`-suffixed
-  duplicates. If an in-tree consumer (`apps/defi`, the Workers under
+  duplicates. If an in-tree consumer (`apps/app`, the Workers under
   `apps/{keeper,indexer,agent}`) reads the symbol, co-update it in
   the **same PR** — the monorepo's `pnpm` typecheck catches the
   drift at merge time. The sibling `vaipakam-keeper-bot` repo is a
@@ -77,7 +77,7 @@ Two repos work together:
 
 | Repo | Visibility | Purpose |
 |---|---|---|
-| `vaipakam/vaipakam` | **public** | Monorepo. Solidity contracts, frontend (apps/defi), Workers (apps/{keeper,indexer,agent,www}), shared packages, docs. |
+| `vaipakam/vaipakam` | **public** | Monorepo. Solidity contracts, connected app (apps/app), Workers (apps/{keeper,indexer,agent,www}), shared packages, docs. |
 | `vaipakam/vaipakam-keeper-bot` | **public** (flipped 2026-05-20) | Reference keeper bot — sibling of the monorepo, MIT-licensed, single-author. ABI JSONs sync'd from monorepo via `contracts/script/exportAbis.sh`. |
 
 Both repos enforce near-identical `Protect main` rulesets — same rule
@@ -160,9 +160,10 @@ final stage.
 ☐ Locally green:
    `cd contracts && nice -n -10 ionice -c 2 -n 0 forge build && bash script/predeploy-check.sh`
    then (from repo root) per-workspace typechecks matching CI —
-   `pnpm --filter @vaipakam/keeper typecheck && pnpm --filter @vaipakam/indexer typecheck && pnpm --filter @vaipakam/agent typecheck && pnpm --filter @vaipakam/defi exec tsc -b --noEmit && pnpm --filter @vaipakam/www typecheck`
-   (don't use `pnpm -r typecheck` — it silently skips workspaces
-   without a `typecheck` script, e.g. `apps/defi`)
+   `pnpm --filter @vaipakam/keeper typecheck && pnpm --filter @vaipakam/indexer typecheck && pnpm --filter @vaipakam/agent typecheck && pnpm --filter @vaipakam/app typecheck && pnpm --filter @vaipakam/www typecheck`
+   (don't use `pnpm -r typecheck` — the fan-out silently passes if a
+   workspace loses its `typecheck` script; CI runs one step per
+   workspace for exactly that reason)
 ☐ gh pr create with body covering: What, Why, Verification, Closes #N
 ☐ Card on @vaipakam-labs moved to "In review" (§5.3 — happens after the PR exists)
 ☐ Codex review request: `@codex review <mode>` (§3.2 — mode ∈ `normal` / `adversarial` / `full` / `full security-critical`)
@@ -1222,7 +1223,7 @@ to a decision. Listed by category.
   `contracts/script/exportFrontendDeployments.sh`, then the
   per-workspace typechecks listed in §3.1's PR checklist (NOT
   `pnpm -r typecheck` — that command skips workspaces without a
-  `typecheck` script, missing the apps/defi tsc invocation).
+  `typecheck` script, so a workspace that loses one goes unchecked).
 
 - **Cloudflare Workers Static Assets — NEVER use `/*` catch-all in
   `_redirects`.** Status-200 rewrites fire unconditionally and

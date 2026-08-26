@@ -1,5 +1,16 @@
 # Alpha01 — Naive-First Connected App (`alpha01.vaipakam.com`)
 
+> **SUPERSEDED — historical record (#1854).** Everything below describes the
+> plan as written in 2026-06. `apps/alpha01` was superseded by `apps/alpha02`,
+> and **#1854 deleted `apps/defi`, `apps/alpha` and `apps/alpha01` outright**
+> and renamed `apps/alpha02` → **`apps/app`** (`app.vaipakam.com`,
+> `@vaipakam/app`, Worker `vaipakam-app`). `defi.vaipakam.com`,
+> `alpha.vaipakam.com` and `alpha01.vaipakam.com` are retired. The naive-first
+> product principles this doc set out live on in `apps/app`; the paths,
+> package names, URLs, retirement targets and open checkboxes below are kept
+> verbatim as the record of what was planned and are **not** current
+> instructions.
+
 **Status:** draft (E1 — Issue #864)  
 **Epic:** #863  
 **Companion docs:**

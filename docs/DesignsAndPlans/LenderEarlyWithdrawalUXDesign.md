@@ -253,16 +253,16 @@ page in both modes, strictly informational:
 
 ### Layer 2 — the tools (Advanced mode, existing flows hardened)
 
-Both sale flows already exist **in alpha02** — the instant-sell picker
-is `apps/alpha02/src/components/EarlyExitFlow.tsx` (it calls
+Both sale flows already exist **in the connected app** — the instant-sell
+picker is `apps/app/src/components/EarlyExitFlow.tsx` (it calls
 `sellLoanViaBuyOffer` and quotes net-to-seller from the shared
 `sellerEconomics` settlement mirror) and the listing form is
 `LoanSaleFlow.tsx` with its `LoanSalePendingCard`. Both already meet
 the §9 frontend-warning requirement: net proceeds after
 forfeiture/top-up are shown before confirmation, from the same mirror
-the submit re-checks. (The older `apps/defi` surface implements only
-the listing path — this design targets alpha02, so "harden the
-existing flow" is accurate here and would not be for that app.) This
+the submit re-checks. (The older `apps/defi` surface implemented only
+the listing path; it was deleted in #1854, so `apps/app` is the only
+target and "harden the existing flow" is accurate throughout.) This
 design adds the framing rules, not new mechanics — except where the
 Contract-level prerequisites below say a path cannot be made safe by
 framing at all:

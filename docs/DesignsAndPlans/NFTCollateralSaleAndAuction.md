@@ -2,6 +2,20 @@
 
 **Status:** Round 4 RATIFIED + SHIPPED (PRs #300 / #302 / #303 / #304 / #307 / #308 / #310 / #312 / #317 / #318 / #319 / #321). · Round 5 RATIFIED via PR #322 (2026-06-02). · **Round 5.1 errata** (this revision) — addresses Codex's post-merge review against `bc55c3f7` (5 P2 — corrected on-chain event names, sim-preflight feasibility, builder math precision, batched-cut deploy requirement). Spec-only; no semantic change to the Round-5 design. · Tracking Issue [#279](https://github.com/vaipakam/vaipakam/issues/279) · Round-5 follow-ups: fee-legs [#313](https://github.com/vaipakam/vaipakam/issues/313), auction modes [#309](https://github.com/vaipakam/vaipakam/issues/309) · Multi-marketplace expansion: [#281](https://github.com/vaipakam/vaipakam/issues/281)
 
+> **#1854 — the frontend half of this design no longer exists.** Every
+> `apps/defi` work item below (A.8, B.7, C.2, D.3, §14.4's post-UI signal,
+> §19's toggle) shipped into `apps/defi`, which was **deleted** along with
+> `apps/alpha` / `apps/alpha01` when `apps/alpha02` was renamed to
+> `apps/app` (`app.vaipakam.com`). The prepay-listing surface —
+> `useNFTPrepayListing`, `useOpenSeaOffers`, `openseaFeeSchedule.ts`,
+> `openseaPublish.ts`, `PrepayListingActions` / `PrepayListingBanner` /
+> `OpenSeaOffersPanel` / `OpenSeaOffersSection` — went with it and has **no
+> equivalent in `apps/app`**. The contracts, the executor, the indexer
+> columns and the agent endpoints are all still live, so this is a missing
+> UI, not a retired feature: re-reading any `apps/defi` line below as a
+> to-build item in `apps/app` is the right reading. The Solidity, indexer
+> and agent references are unaffected.
+>
 > **History:**
 > - Round 1 explored four approaches and recommended a Vaipakam-native marketplace.
 > - Round 2 pivoted (per user direction) to Seaport ERC-1271 + protocol-controlled post-grace auction (Scenario B).
@@ -764,7 +778,7 @@ A.5. **Selector replacement via diamondCut.** Adding `FeeLeg[]` to `postPrepayLi
 - ADD the new selectors via `FacetCutAction.Add`,
 - REMOVE the old selectors via `FacetCutAction.Remove`.
 Update `DeployDiamond.s.sol._getNFTPrepayListingFacetSelectors()` and `SelectorCoverageTest._populateRoutedSet()` to emit the new shape. `DiamondFacetNames.cutFacetNames()` is unchanged (same facet).
-A.6. **ABI re-export + consumer typecheck.** Run `exportFrontendAbis.sh`; `pnpm --filter @vaipakam/{defi,indexer,agent} exec tsc -b --noEmit` MUST fail at consumer call sites — co-update the apps in the same PR.
+A.6. **ABI re-export + consumer typecheck.** Run `exportFrontendAbis.sh`; `pnpm --filter @vaipakam/{app,indexer,agent} exec tsc -b --noEmit` MUST fail at consumer call sites — co-update the apps in the same PR.
 A.7. **`apps/agent`** — TWO new endpoints (Round 5.1 errata round-3 — Codex P2 line 457: the sim-transfer pre-flight CANNOT live on the Collection proxy because the proxy lacks loan/principalAsset/amount context):
 - `GET /opensea/collection/{slug}` — pure Collection API proxy returning the full Collection API body (fees array lives inside the response, NOT a separate `/fees` endpoint). CORS-locked, rate-limited, uses server-side `OPENSEA_API_KEY`. Stateless; no per-loan context.
 - `POST /opensea/feeRecipientPreflight` — accepts `{chainId, principalAsset, askPrice, feeLegs: [{recipient, basisPoints}]}` from the dapp; runs the state-override sim-transfer (§14.4) against the `RECIPIENT_VALIDATING_TOKENS[chainId][principalAsset]` allow-list entry; returns per-recipient verdicts. CORS-locked, rate-limited, no API key needed (the call is direct RPC against the chain's public/configured RPC). Same allow-list config flows in here as in §14.4; tokens off the list return `"not_applicable"` per-recipient.

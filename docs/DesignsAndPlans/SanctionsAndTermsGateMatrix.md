@@ -239,8 +239,11 @@ gate-disabled — a route-gate bypass.)
   selectors). Added in `VPFIDiscountFacetTest.t.sol` next to that facet's
   fixture.
 - Frontend: `SanctionsBanner` renders for a flagged address and renders nothing
-  for a clean address / while loading / when the wallet is unset
-  (`apps/defi/test/components/SanctionsBanner.test.tsx`).
+  for a clean address / while loading / when the wallet is unset. **The test
+  that pinned this (`apps/defi/test/components/SanctionsBanner.test.tsx`) was
+  deleted with `apps/defi` in #1854 and was NOT ported** — the live banner is
+  `apps/app/src/components/SanctionsBanner.tsx` and currently has no unit
+  coverage. Add it to the test-gap list below.
 
 **Open gaps (tracked follow-up, not blockers):**
 

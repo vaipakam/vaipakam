@@ -122,7 +122,7 @@ jq -r 'select(.truncated)|.causes|to_entries[]|select(.value)|.key' \
 
 The fraction of frames a healthy idle tab can SKIP is the fraction that
 are BOTH un-truncated AND irrelevant to that wallet — the client-side
-`pushHintScope` rule (`apps/alpha02/src/chain/pushHintScope.ts`). The
+`pushHintScope` rule (`apps/app/src/chain/pushHintScope.ts`). The
 server-side proxy for "skippable-in-principle" is the un-truncated
 fraction:
 
