@@ -24,6 +24,9 @@ import {OfferMatchFacet} from "../src/facets/OfferMatchFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
+import {DefaultedFacet} from "../src/facets/DefaultedFacet.sol";
+import {ClaimFacet} from "../src/facets/ClaimFacet.sol";
+import {defaultAdapterCalls} from "./helpers/AdapterCallHelpers.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {LibFeeEntitlement} from "../src/libraries/LibFeeEntitlement.sol";
@@ -1178,4 +1181,198 @@ contract FeeEntitlementFacetTest is SetupTest {
         // Disabling stays allowed on a mirror chain.
         _config().setFeeEntitlementEnabled(false);
     }
+
+    /// @dev #1955 (Codex #1957 r7 P2) — the RENTAL PREPAY leg of `triggerDefault`.
+    ///
+    ///      `DefaultedFacet` resolves the lender yield-fee discount TWICE on the
+    ///      same entry point: once on the ERC-20 residual leg and once on the
+    ///      NFT-rental prepay leg. The ERC-20 replay in `DefaultedFacetTest`
+    ///      pins only the first, so deleting the rental branch's
+    ///      `LibLenderYieldFeeHost.resolve` left every recovery test green.
+    ///
+    ///      This branch cannot be reached the way the ERC-20 one is. A rental
+    ///      NEVER carries the paid Full stamp — the tariff rides an ERC-20
+    ///      origination's LIF and a rental pays none — so `d_tariff` is always
+    ///      zero here and the loan-scoped stamp injection does nothing. The only
+    ///      discount that reaches this leg is the consent-gated HOLD tier, which
+    ///      needs a real stake aged past `cfgTwaMinStakedDays`.
+    ///
+    ///      The conservation assertion is the load-bearing one. Unlike the
+    ///      ERC-20 leg, `prepayToLender` is RETURNED by `splitTreasury` rather
+    ///      than derived as a residual, so the branch must fold BOTH returned
+    ///      terms. Folding only `rentNewTreasury` still shrinks the treasury cut
+    ///      — a treasury-only assertion passes while the lender never receives
+    ///      the wei the treasury gave up.
+    function test_1955_rentalDefault_lenderHoldTier_shiftsPrepayFeeToLender() public {
+        uint256 rentalOffer = _createLenderRentalOffer();
+        uint256 loanId = LibAcceptTestSigner.signAndAccept(
+            address(diamond), borrower, borrowerPk, rentalOffer
+        );
+
+        // Mocks are set BEFORE the snapshot on purpose: `vm.revertToState`
+        // restores chain state but NOT mocks, so setting them here keeps both
+        // replays on identical plumbing without a `clearMockedCalls` (which is
+        // GLOBAL and would take out the shared oracle mocks with it).
+        deal(mockERC20, address(diamond), 5_000 ether);
+        vm.mockCall(address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true));
+        vm.mockCall(address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultSetNFTUser.selector),
+            abi.encode(true));
+        vm.mockCall(address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector), "");
+
+        uint256 snap = vm.snapshotState();
+
+        // ── Replay 1: no stake, no consent — the undiscounted baseline. ──
+        vm.warp(block.timestamp + 33 days + 3);
+        uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 baseTreasury = IERC20(mockERC20).balanceOf(treasuryRecipient) - tBefore;
+        (, uint256 baseClaim, ) =
+            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+
+        // ── Replay 2: the lender holds an AGED, consented stake. ──
+        vm.revertToState(snap);
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+        vm.prank(lender);
+        VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
+        // The stake must be placed BEFORE time passes: `effectiveTierAndBps`
+        // returns a silent (0,0) until the stake has aged past
+        // `cfgTwaMinStakedDays`. The 33-day warp to the default also ages it.
+        vm.warp(block.timestamp + 33 days + 3);
+
+        // Name the silent zero. Without this a discount of zero would make the
+        // strict-inequality assertion below fail as "fixture never discounted",
+        // which is indistinguishable from a deleted resolve call.
+        (uint8 effTier, uint16 effBps) =
+            VPFIDiscountFacet(address(diamond)).getEffectiveDiscount(lender);
+        assertGt(effTier, 0, "lender's EFFECTIVE tier resolves - accumulator is live");
+        assertGt(effBps, 0, "lender's EFFECTIVE discount bps is non-zero");
+
+        tBefore = IERC20(mockERC20).balanceOf(treasuryRecipient);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+        uint256 heldTreasury = IERC20(mockERC20).balanceOf(treasuryRecipient) - tBefore;
+        (, uint256 heldClaim, ) =
+            ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
+
+        // The discount reached the rental leg at all.
+        assertLt(heldTreasury, baseTreasury,
+            "an aged hold tier reduces the treasury cut on the rental prepay fee");
+        assertGt(baseClaim, 0, "baseline rental default pays the lender a prepay claim");
+
+        // ...and every wei the treasury gave up landed on the lender. This is
+        // what dies if the branch folds only the treasury term.
+        assertEq(baseTreasury - heldTreasury, heldClaim - baseClaim,
+            "every wei the treasury gave up reached the lender's prepay claim");
+    }
+
+
+    /// @dev #1955 (Codex #1957 r7 P2) — the VPFI-PAID refinance branch.
+    ///
+    ///      `RefinanceFacet` is the one settlement path that calls
+    ///      `LibVPFIDiscount` directly instead of through `VPFIDiscountFacet`,
+    ///      so it emits its OWN `VPFIYieldFeeDiscountApplied` passthrough and
+    ///      has to carry the settling lender to it (RefinanceFacet:885-896).
+    ///      That emit is guarded by `if (yieldVpfiDeducted > 0)`, and
+    ///      `yieldVpfiDeducted` is non-zero ONLY when `_feeAssetWeiToVpfi` can
+    ///      quote — which needs BOTH `vpfiDiscountWeiPerVpfi` and
+    ///      `vpfiDiscountEthPriceAsset` set.
+    ///
+    ///      The sibling holder test configures neither, so `tryApplyYieldFee`
+    ///      always falls back to direct reduction, the whole block is dead, and
+    ///      reverting that emit's argument to the stale `oldLoan.lender` is
+    ///      undetectable — indexers would attribute the CURRENT holder's VPFI
+    ///      debit to the PREVIOUS lender. This replay arms the peg so both the
+    ///      debit and the emit are exercised.
+    ///
+    ///      Note on what is asserted: `_refinanceTreasuryCut` mocks
+    ///      `vaultWithdrawERC20` wholesale, and that is the very call
+    ///      `tryApplyYieldFee` uses to move the VPFI, so no token actually
+    ///      leaves the holder's vault here and a BALANCE check would be
+    ///      vacuous. `vm.expectCall` on the withdrawal's debited party pins the
+    ///      same attribution property and is immune to the mock.
+    function test_1955_refinance_pegged_vpfiDebitAttributedToHolder() public {
+        address treasuryEoa = makeAddr("treasuryEoaFor1955Peg");
+        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+        (address holder, ) = makeAddrAndKey("pegHolder1955");
+        (address newLender, uint256 newLenderPk) = makeAddrAndKey("pegNewLender1955");
+        for (uint256 i = 0; i < 2; i++) {
+            address a = i == 0 ? holder : newLender;
+            ERC20Mock(mockERC20).mint(a, PRINCIPAL * 4);
+            ERC20Mock(mockCollateralERC20).mint(a, PRINCIPAL * 4);
+            vm.startPrank(a);
+            IERC20(mockERC20).approve(address(diamond), type(uint256).max);
+            IERC20(mockCollateralERC20).approve(address(diamond), type(uint256).max);
+            vpfiToken.approve(address(diamond), type(uint256).max);
+            vm.stopPrank();
+        }
+
+        uint256 oldOffer = _createLenderErc20Offer();
+        uint256 oldLoanId = _signAndAcceptOffer(borrower, borrowerPk, oldOffer, true, 0);
+        uint256 borrowerOfferId = _createBorrowerErc20Offer();
+
+        LibVaipakam.Loan memory ol = LoanFacet(address(diamond)).getLoanDetails(oldLoanId);
+        vm.prank(ol.lender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(ol.lender, holder, ol.lenderTokenId);
+
+        // ARM THE PEG. `weiPerVpfi` is deliberately large (1 ETH per VPFI) so
+        // the quoted `vpfiRequired` stays far inside the holder's stake — a
+        // quote above the stake makes `tryApplyYieldFee` return false and takes
+        // the direct-reduction path, which is the branch this test is escaping.
+        VPFIDiscountFacet(address(diamond)).setVPFIDiscountRate(1e18);
+        VPFIDiscountFacet(address(diamond)).setVPFIDiscountETHPriceAsset(mockERC20);
+
+        // The HOLDER carries the tier — the resolver keys on `ownerOf`.
+        vpfiToken.transfer(holder, PARTY_VPFI_STAKE);
+        _stakeVpfi(holder, PARTY_VPFI_STAKE);
+        vm.prank(holder);
+        VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
+        vm.warp(block.timestamp + 15 days);
+
+        (uint8 hTier, uint16 hBps) =
+            VPFIDiscountFacet(address(diamond)).getEffectiveDiscount(holder);
+        assertGt(hTier, 0, "holder's EFFECTIVE tier resolves - accumulator is live");
+        assertGt(hBps, 0, "holder's EFFECTIVE discount bps is non-zero");
+
+        // The VPFI debit must be taken from the HOLDER. Prefix-matching on
+        // (owner, token) is enough to discriminate holder from stored lender,
+        // and avoids pinning the quoted amount.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                holder,
+                address(vpfiToken)
+            )
+        );
+
+        vm.recordLogs();
+        _refinanceTreasuryCut(oldLoanId, borrowerOfferId, newLender, newLenderPk, treasuryEoa);
+
+        // The passthrough emit must name the holder. Finding it at all also
+        // proves `yieldVpfiDeducted > 0`, i.e. that the VPFI-paid branch really
+        // ran — if the peg were mis-set the loop below reports "never emitted"
+        // rather than failing as a wrong-address mismatch.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 sig = keccak256(
+            "VPFIYieldFeeDiscountApplied(uint256,address,address,uint256)"
+        );
+        bool seen;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics.length == 4 && logs[i].topics[0] == sig
+                && uint256(logs[i].topics[1]) == oldLoanId) {
+                seen = true;
+                assertEq(
+                    address(uint160(uint256(logs[i].topics[2]))),
+                    holder,
+                    "VPFI yield-fee debit is attributed to the CURRENT holder"
+                );
+            }
+        }
+        assertTrue(seen,
+            "the VPFI-paid branch ran - peg armed and yieldVpfiDeducted > 0");
+    }
+
 }
