@@ -6,8 +6,10 @@ programme (see the M7 runbook triage).
 The procedure tells an operator to send each chain its funding, wait for each to
 confirm arrival, and only then announce the cutover day — because the
 announcement is what opens the door for users to claim, and the funding is what
-makes claims succeed. Doing it the other way round leaves people meeting an
-empty balance.
+makes claims succeed. Doing it the other way round opens claims against funding
+that has not arrived — and while the outstanding fund-safety item is undeployed
+on a chain, that is not a harmless failed claim but a payout measured against a
+balance that includes collateral belonging to borrowers.
 
 The step that announces the day, though, can be triggered by anyone. It is
 restricted to the main chain, not to the operator — the check is about which
@@ -65,8 +67,19 @@ delay expires. Queuing the unpause in advance therefore hands away control of
 when it happens: if the funding is still in flight at that moment, someone else
 can execute the unpause and announce against an unfunded chain. The procedure now
 says to run this only on a timelock whose executor is the operator's own
-multi-signature wallet, or to queue the unpause only once every confirmation is
-final and to be ready to cancel it.
+multi-signature wallet, with a fresh check immediately before execution. Queuing
+late and watching for trouble is **not** an alternative: closing a day off for
+accounting is itself something anyone can do, so during the waiting period
+someone can create a fresh unfunded day, execute the ready unpause themselves,
+and announce — faster than anyone watching could cancel.
+
+Two smaller things were wrong in the same direction. Pausing does not reach an
+announcement already on its way: one dispatched moments earlier still arrives and
+takes effect, so the outstanding ones have to be accounted for individually
+before the pause counts as a gate. And a day that has already been announced
+without funding is not "handled" — its door is already open, and pausing the
+sending side does not close it; only funding it, or containing the receiving
+chain's claim path, does.
 
 **The severity was also understated.** While the outstanding fund-safety item is
 open, a claim arriving at a gate opened ahead of its funding does not simply

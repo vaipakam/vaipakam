@@ -1635,9 +1635,17 @@ finalized day that is unapplied and unfunded on that mirror — reaching the sam
 #1566 borrower-collateral path. Funding one candidate closes one door.
 
 So before unpausing, either **reconcile every broadcastable finalized day** on
-each target mirror — funded, or already applied, or otherwise unable to open an
-unfunded gate — or **keep the messenger paused** until #1566 is deployed there or
-a day-scoped gate exists. On a mesh with real history the first option may not be
+each target mirror, or **keep the messenger paused** until #1566 is deployed
+there or a day-scoped gate exists.
+
+**"Already applied" is NOT a reconciliation state**, and an earlier revision of
+this list wrongly allowed it. An applied-but-unfunded day means the claim gate on
+that mirror is ALREADY OPEN; pausing Base's reward messenger does nothing to
+close it, and while #1566 is absent claimants can keep drawing against a balance
+that includes borrower collateral. Replay idempotency only stops that day opening
+the gate a second time — it does not contain what is already open. Count a day
+reconciled only when it is FUNDED, or when the mirror's own claim path is paused
+or #1566-fixed. On a mesh with real history the first option may not be
 achievable, and the second is then the honest answer even though it is expensive.
 
 **Weigh the trade-offs rather than reaching for the pause reflexively:** it stops
@@ -1645,16 +1653,29 @@ achievable, and the second is then the honest answer even though it is expensive
 broadcast. On a mesh already funding live mirror claims, that cost may exceed the
 exposure.
 
-**And do NOT pre-schedule the unpause as a convenience.** `unpause` is
-owner-only, so post-handover it is a Timelock action with the full delay — but
-`DeployTimelock.s.sol` defaults `TIMELOCK_EXECUTOR` to `address(0)`, which is
-**open execution: anyone may execute once the delay expires**. A queued unpause
-therefore leaves operator control at the moment it becomes executable, and if
-remittance or receipts are still incomplete then, someone else can execute it and
-broadcast against an unfunded mirror. Either run this procedure on a Timelock
-whose executor is the Safe, or schedule the unpause only once every receipt is
-final and be prepared to CANCEL it if that stops being true. The delay is the
-window; do not start it before you can afford it to end.
+**The pause does not reach a broadcast already IN FLIGHT.** It blocks future
+sends on that messenger instance; a CCIP message dispatched a moment earlier
+still reaches the mirror and applies the day during the remit wait. Pausing the
+mirror's ingress instead only leaves that delivery FAILED and manually
+re-executable, so it stays hazardous after unpause rather than being cancelled.
+Before treating the pause as a gate, inventory the outbound broadcast message ids
+and require each to have reached a terminal state — or keep the destination's
+ingress and claim path contained until every pending day is funded.
+
+**And do NOT pre-schedule the unpause as a convenience — on an open-executor
+Timelock it cannot be made safe by timing.** `unpause` is owner-only, so
+post-handover it is a Timelock action with the full delay, and
+`DeployTimelock.s.sol` defaults `TIMELOCK_EXECUTOR` to `address(0)` — **open
+execution: anyone may execute once the delay expires**. Scheduling only after
+receipts are final does not fix it either: `finalizeDay` is itself
+`onlyCanonical` and therefore permissionless, so during the delay someone can
+create a NEW unfunded finalized day, wait for the operation to become ready,
+execute the unpause themselves, and broadcast — faster than any off-chain
+cancellation can intervene. **Cancellation monitoring does not secure this
+branch.** Either run the procedure on a Timelock whose executor is the Safe, with
+a fresh reconciliation immediately before execution, or keep the messenger paused
+until #1566 or a day-scoped protocol gate is deployed. An earlier revision of
+this paragraph offered schedule-late-and-cancel as an alternative; it is not one.
 
 Whether or not the pause is used:
 
@@ -1714,8 +1735,12 @@ it.
 
 The remit-first order is not a preference. The broadcast **opens the mirror's
 claim gate**, and it does so independently of the keeper's remittance cron — so a
-day broadcast before its budget lands leaves users hitting an empty-balance
-revert until funding arrives. The keeper narrows that gap on a best-effort basis
+day broadcast before its budget lands opens claims against funding that has not
+arrived. **On a mirror where #1566 is undeployed that is a fund-loss path, not a
+revert**: the payout is measured against a balance whose other owners include
+borrower collateral (see the containment note in the propagation section). Where
+#1566 IS deployed, the harm reduces to users hitting an empty balance until
+funding arrives. The keeper narrows that gap on a best-effort basis
 and does not close it, which is exactly why a MANUAL broadcast has to remit
 first. A replay of an
 already-applied day exits through the idempotency branch **without** installing
@@ -1833,7 +1858,14 @@ Before mainnet:
   is social / operational: off-chain alerts on `CallScheduled` events
   give 48h for white-hat cancellation via the Safe's CANCELLER_ROLE
   (held by the Safe itself).
-- **Open execution vs Safe-only execution.** Open execution (executor
+- **Open execution vs Safe-only execution. The DEPLOYED default is OPEN, not
+  Safe-only** — `DeployTimelock.s.sol` reads
+  `vm.envOr("TIMELOCK_EXECUTOR", address(0))` and sets `executors[0] = executor`,
+  so omitting the variable grants `EXECUTOR_ROLE` to `address(0)`. An earlier
+  revision of this bullet said the default was Safe-only; an operator who
+  believed it would leave every scheduled operation publicly executable at delay
+  expiry, which the reward-messenger unpause procedure depends on NOT being the
+  case. Open execution (executor
   = `address(0)`) means anyone can execute after delay; useful if the
   Safe is unavailable, but removes a cancellation checkpoint. Current
   default is Safe-only; flip per chain if availability concerns dominate.
