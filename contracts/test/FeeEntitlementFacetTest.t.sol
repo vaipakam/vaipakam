@@ -2,6 +2,8 @@
 pragma solidity ^0.8.29;
 
 import {SetupTest} from "./SetupTest.t.sol";
+import {Vm} from "forge-std/Vm.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -129,12 +131,134 @@ contract FeeEntitlementFacetTest is SetupTest {
         );
     }
 
+    /// @dev #1955 — the same lender offer as {_createLenderErc20Offer} but as an
+    ///      NFT RENTAL (the lent asset is the ERC-721; the fee is prepaid in an
+    ///      ERC-20). Used to pin the asset-type gate that keeps rentals out of
+    ///      the Full tariff.
+    function _createLenderRentalOffer() internal returns (uint256) {
+        vm.prank(lender);
+        IERC721(mockNft721).setApprovalForAll(address(diamond), true);
+        vm.prank(lender);
+        return OfferCreateFacet(address(diamond)).createOffer(
+            LibVaipakam.CreateOfferParams({
+                offerType: LibVaipakam.OfferType.Lender,
+                lendingAsset: mockNft721,
+                amount: 10 ether, // rental fee
+                interestRateBps: 0,
+                collateralAsset: mockCollateralERC20,
+                collateralAmount: PRINCIPAL * 2,
+                durationDays: 30,
+                assetType: LibVaipakam.AssetType.ERC721,
+                tokenId: 1,
+                quantity: 1,
+                creatorRiskAndTermsConsent: true,
+                prepayAsset: mockERC20,
+                collateralAssetType: LibVaipakam.AssetType.ERC20,
+                collateralTokenId: 0,
+                collateralQuantity: 0,
+                allowsPartialRepay: false,
+                allowsPrepayListing: false,
+                allowsParallelSale: false,
+                amountMax: 10 ether,
+                interestRateBpsMax: 0,
+                collateralAmountMax: PRINCIPAL * 2,
+                periodicInterestCadence: LibVaipakam.PeriodicInterestCadence.None,
+                expiresAt: 0,
+                fillMode: LibVaipakam.FillMode.Partial,
+                refinanceTargetLoanId: 0,
+                useFullTermInterest: false
+            })
+        );
+    }
+
     function _cStar() internal view returns (uint256 c) {
         (c, ) = _feFacet().quoteCStar(mockERC20, PRINCIPAL, 30);
     }
 
     function _vault(address who) internal returns (address) {
         return VaultFactoryFacet(address(diamond)).getOrCreateUserVault(who);
+    }
+
+    // ─── #1955 — the asset-type gate that keeps rentals out of the tariff ────
+
+    /// @notice #1955 — a RENTAL origination can never be Full-stamped, even with
+    ///         the master switch on and a party able to pay `C*`.
+    ///
+    /// @dev    This pins the assumption `DefaultedFacet`'s rental settlement leg
+    ///         rests on. That leg applies the lender yield-fee discount, and
+    ///         #1383 justified treating its `d_tariff` as structurally zero on
+    ///         the grounds that a rental pays no LIF for a tariff to ride. The
+    ///         enforcement is `OfferAcceptFacet._fullTariffShouldRun`:
+    ///
+    ///             if (offer.assetType != AssetType.ERC20) return false;
+    ///
+    ///         **What this kills, and what it does not.** Deleting that line
+    ///         alone does NOT flip the outcome — verified by mutation. A rental
+    ///         has a SECOND, independent defense: `computeCStar` cannot price an
+    ///         NFT `lendingAsset`, so it returns `numeraireOk == false` and
+    ///         `_resolveParty` refuses Full on that ground too. The mode
+    ///         assertions below therefore pin the OUTCOME (defense in depth) and
+    ///         would survive the loss of either guard singly.
+    ///
+    ///         The event assertion is what pins the GATE: with the asset-type
+    ///         line removed, `chargeFullTariff` is entered and stamps — emitting
+    ///         `FeeEntitlementStamped` even while resolving None — so requiring
+    ///         its ABSENCE fails on that mutation (verified). It is unaffected
+    ///         by the numeraire guard, which cannot be reached while the gate
+    ///         stands — so the two assertions cover different guards rather than
+    ///         doubling up on one.
+    ///
+    ///         **Paired on purpose.** The ERC-20 half is the positive control:
+    ///         it proves this exact configuration DOES produce a Full stamp, so
+    ///         the rental assertion cannot pass merely because the fixture is
+    ///         incapable of stamping anything. Without it, disabling the switch
+    ///         would make the test green and meaningless.
+    function test_1955_rentalOrigination_cannotBeFullStamped() public {
+        _config().setFeeEntitlementEnabled(true);
+        _stakeVpfi(borrower, PARTY_VPFI_STAKE);
+
+        // Positive control: same config, ERC-20 origination => Full stamped.
+        uint256 erc20Offer = _createLenderErc20Offer();
+        uint256 erc20Loan = LibAcceptTestSigner.signAndAcceptFull(
+            address(diamond), borrower, borrowerPk, erc20Offer, _cStar(), false
+        );
+        assertEq(
+            uint8(_feFacet().getFeeEntitlement(erc20Loan).borrowerMode),
+            uint8(LibVaipakam.FeeEntitlementMode.Full),
+            "control: an ERC-20 origination IS Full-stamped under this config"
+        );
+
+        // The property: a rental under the same config is not.
+        uint256 rentalOffer = _createLenderRentalOffer();
+        vm.recordLogs();
+        uint256 rentalLoan = LibAcceptTestSigner.signAndAcceptFull(
+            address(diamond), borrower, borrowerPk, rentalOffer, _cStar(), true
+        );
+
+        // The tariff facet must not be ENTERED at all. This is the assertion
+        // that dies when the asset-type gate is removed; the mode checks below
+        // survive it, because the numeraire guard catches the rental anyway.
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 stamped = keccak256(
+            "FeeEntitlementStamped(uint256,uint8,uint8,uint256,uint256,uint256)"
+        );
+        for (uint256 i = 0; i < logs.length; i++) {
+            assertTrue(
+                logs[i].topics.length == 0 || logs[i].topics[0] != stamped,
+                "chargeFullTariff must not run for a rental origination"
+            );
+        }
+        LibVaipakam.FeeEntitlement memory fe = _feFacet().getFeeEntitlement(rentalLoan);
+        assertTrue(
+            fe.borrowerMode != LibVaipakam.FeeEntitlementMode.Full,
+            "rental borrower must not be Full-stamped"
+        );
+        assertTrue(
+            fe.lenderMode != LibVaipakam.FeeEntitlementMode.Full,
+            "rental lender must not be Full-stamped"
+        );
+        assertEq(fe.borrowerTariffPaid, 0, "no tariff charged on a rental");
+        assertEq(fe.lenderTariffPaid, 0, "no tariff charged on a rental");
     }
 
     // ─── quoteCStar ───────────────────────────────────────────────────────────
