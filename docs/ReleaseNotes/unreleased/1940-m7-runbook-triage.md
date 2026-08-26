@@ -121,6 +121,33 @@ which must have arrived or been explicitly dealt with. A message still pending i
 a blocker rather than a delay, because the transport will deliver it eventually
 and eventually is after the change.
 
+Three corrections then landed on those corrections, and each is the kind that
+only shows up when someone tries to actually perform the step.
+
+The ownership check had become an instruction that cannot be carried out on one
+of its nine targets. Eight of them are built on one widely used ownership
+library, which lets anyone read who is waiting to take over; the ninth uses the
+transport vendor's own version, which keeps that value hidden and offers no way
+to read it. The blanket instruction would simply fail there — and an operator who
+hits that either stops, or quietly drops the check on the one contract that
+controls the token's transfer pools. It now has its own path, established from
+that contract's published history of ownership handovers instead.
+
+A second transfer had been missed entirely. Alongside the ordinary ownership
+handovers there is a separate two-step handover of the right to designate which
+pool the transport uses for the token. None of the ownership readings touch it,
+so skipping its second step leaves the original deployer able to swap that pool —
+after every check has passed, and after the switch. Both of its values are now
+read back.
+
+And the drain instruction had grown an escape hatch that does not close anything.
+It allowed a stuck delivery to be "abandoned with the reason recorded". A failed
+delivery here stays re-executable indefinitely and there is no way to cancel one,
+so an abandoned message can arrive after the rebinding and be handed, with
+whatever it carries, to the replacement — the exact outcome the drain exists to
+prevent. The only terminal state is a delivery that succeeded, and the procedure
+now says so.
+
 All of this is read back before the switch, in the same pass that already
 verifies the wiring rather than the components, and the design record carries the
 same additions so the two documents do not drift apart.

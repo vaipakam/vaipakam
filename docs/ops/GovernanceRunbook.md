@@ -163,11 +163,32 @@ Ownable2Step(vpfiToken).pendingOwner()          == address(0)
 Ownable2Step(target).owner()                    == timelock
 Ownable2Step(target).pendingOwner()             == address(0)
 
+// EXCEPT vpfiTokenPool. Eight of the nine are OpenZeppelin
+// `Ownable2StepUpgradeable` and expose `pendingOwner()`. The pool is
+// CHAINLINK's `Ownable2Step` (via `Ownable2StepMsgSender`), where
+// `s_pendingOwner` is PRIVATE and the only external surface is `owner()`,
+// `transferOwnership()` and `acceptOwnership()` — so the call above REVERTS
+// on it, and an operator who hits that revert either stalls or skips the
+// pending-takeover check entirely. Establish it from the log instead:
+//   the LAST OwnershipTransferRequested(from, to) on the pool
+//   must be followed by OwnershipTransferred(from, to) with the SAME `to`
+//   and no later Requested event outstanding.
+// Both events are emitted by that base, so this is decidable from the chain.
+
 // guardian() ONLY where the contract carries GuardianPausable.
 // `VpfiPoolRateGovernor` does NOT — it is Ownable2Step alone, and its owner
 // sets every lane's rate limits and authorizes UUPS upgrades, so scoping the
 // ownership assertions to "the GuardianPausable ones" silently exempts it.
 GuardianPausable(target).guardian()             == guardian
+
+// The CCT ADMINISTRATOR, where CCIP_TOKEN_ADMIN_REGISTRY is configured. This is
+// a SEPARATE two-step transfer from any of the above — `transferAdminRole` is
+// leg one and the Timelock `acceptAdminRole`s later — and no Ownable readback
+// touches it. Skip the accept and the deployer can still call `setPool`; leave a
+// stale pending and that address can accept afterwards and replace the live VPFI
+// pool, including after `D*`.
+registry.getTokenConfig(vpfiToken).administrator        == timelock
+registry.getTokenConfig(vpfiToken).pendingAdministrator == address(0)
 ```
 
 **The `pendingOwner()` lines are not decoration.** `Ownable2Step` completes a
@@ -939,11 +960,18 @@ channel, then RECONCILE rather than wait — "let in-flight deliveries land" is 
 a condition an operator can observe, and a delayed or already-failed delivery
 leaves the lane in exactly the state that forwards tokens to the replacement.
 Take every outbound message id sent on that channel since the last known-good
-point, and require each one to have either EXECUTED successfully at its
-destination or been explicitly resolved (manually re-executed, or abandoned with
-the reason recorded). Only then clear and re-register. A pending id is a blocker,
-not a delay — CCIP will deliver it eventually, and eventually is after the
-rotation. The peer rejection is recoverable (clear the new peer, re-install
+point, and require each one to have **EXECUTED successfully at its
+destination**. That is the only terminal state, and the round-4 wording here was
+wrong to offer "abandoned with the reason recorded" as an alternative: a FAILED
+CCIP message stays manually re-executable indefinitely, and `CcipMessenger` has
+no cancellation and no per-message-id tombstone — so a re-execution after the
+rotation resolves `handlerOf[channelId]` to the REPLACEMENT and hands it the old
+message and its tokens. That is the precise hazard this drain exists to prevent,
+and an operator note does not close it. Re-execute a failed message to success
+before rotating, or do not rotate. Only then clear and re-register.
+
+A pending id is a blocker, not a delay — CCIP will deliver it eventually, and
+eventually is after the rotation. The peer rejection is recoverable (clear the new peer, re-install
 the old, manually re-execute the stranded message, then repeat the rotation), but
 running that recovery re-points a live lane's trust anchor backwards, which is a
 worse thing to be doing than waiting was — and worse still with `D*` immutable.
