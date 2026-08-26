@@ -205,6 +205,17 @@ contract FeeEntitlementFacetTest is SetupTest {
         // everything this run needs — including the consolidation decline,
         // which must hold for all three.
         vm.clearMockedCalls();
+        // `clearMockedCalls` is GLOBAL — it also removes the oracle liquidity and
+        // price mocks `SetupTest` installs (`SetupTest:1001-1009`). Without them
+        // both ERC-20 legs read ILLIQUID, and `LoanFacet._maybeRunInitialRiskGates`
+        // takes its mutual-illiquid-consent early return instead of the liquid
+        // LTV/HF admission path — so the replays would compare illiquid
+        // replacement loans (Codex #1957 r3 P2). Restore the baseline first.
+        mockOracleLiquidity(mockERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOracleLiquidity(mockCollateralERC20, LibVaipakam.LiquidityStatus.Liquid);
+        mockOraclePrice(mockERC20, 1e8, 8);
+        mockOraclePrice(mockCollateralERC20, 1e8, 8);
+
         vm.mockCall(address(diamond),
             abi.encodeWithSelector(ConsolidationFacet.eagerConsolidateToHolder.selector),
             abi.encode());

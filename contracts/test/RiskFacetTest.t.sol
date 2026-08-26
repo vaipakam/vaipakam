@@ -1172,6 +1172,23 @@ contract RiskFacetTest is Test {
         uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
         uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
 
+        // The borrower's collateral MUST actually be withdrawn. This suite mocks
+        // `vaultWithdrawERC20` (six sites) and `deal`s the Diamond's balance, so
+        // a regression that stopped withdrawing entirely would leave this test
+        // green with the loan terminalized, the claims funded, and the borrower
+        // still holding the pledged collateral (Codex #1957 r3 P2). Assert the
+        // withdrawal is attempted with the exact borrower / asset / amount
+        // rather than diverging from the suite's mocking convention.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                ln.borrower,
+                ln.collateralAsset,
+                address(diamond),
+                ln.collateralAmount
+            )
+        );
         RiskSplitLiquidationFacet(address(diamond)).triggerLiquidationSplit(loanId, splits);
 
         lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
