@@ -130,10 +130,13 @@ because that controls only the lifting, not what someone else may have created i
 the meantime.
 
 The procedure therefore stops offering alternatives and states the one branch
-that survives: on a chain without the fund-safety fix, leave the messenger paused
-and do not propagate to that chain until it enforces the property that matters —
-that a claim against a day whose funding has not arrived cannot consume value
-belonging to anything else. The outstanding fund-safety item does not by itself
+that survives, and it is **mesh-wide, not per chain**: while any chain the
+announcements can reach lacks the property that matters — that a claim against a
+day whose funding has not arrived cannot consume value belonging to anything
+else — the whole sender stays paused and nothing is propagated anywhere. It
+cannot be narrowed to the unsafe chain, because the pause is a single switch and
+lifting it for the others also re-enables the single-destination form, which can
+name the unsafe chain directly. The outstanding fund-safety item does not by itself
 guarantee that; some of its permitted remedies protect borrowers' collateral
 while still letting such a claim take another day's reward funding.
 
