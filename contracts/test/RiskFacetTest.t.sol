@@ -4225,6 +4225,101 @@ contract RiskFacetTest is Test {
         ZeroExProxyMock(address(mockZeroExProxy)).setRate(8, 10);
     }
 
+    /// @notice #1383 — `triggerPartialLiquidation` must pay the CURRENT
+    ///         lender-position holder, not the stored `loan.lender`.
+    ///
+    /// @dev    Unlike every other recovery entry, this one deliberately writes
+    ///         NO `s.lenderClaims[loanId]` (claims are reserved for terminal
+    ///         events; the loan stays Active). So the deposit recipient is the
+    ///         FINAL word — there is no `ownerOf`-gated claim behind it to
+    ///         correct a stale address, and paying `loan.lender` handed the
+    ///         previous lender the principal and interest outright.
+    ///
+    ///         **The consolidation must actually SKIP for this to test
+    ///         anything.** `_eagerConsolidateBothSides` normally re-anchors
+    ///         `loan.lender` to the holder, and on that happy path the fix is
+    ///         invisible — old and new code both pay the holder. The skip is
+    ///         forced here with a sanctioned holder, which is precisely the
+    ///         Tier-2 `Result.Skipped` case the consolidation is designed for
+    ///         ("skip, never block the close-out"). The assertion that
+    ///         `loan.lender` is STILL the stale address after the call is what
+    ///         proves the fixture is live rather than silently exercising the
+    ///         consolidated path.
+    function test_1383_partialLiquidation_paysCurrentHolder_notStoredLender()
+        public
+    {
+        uint256 loanId = _setupPartialSizing(0.65e8);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 0);
+
+        LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address storedLender = l0.lender;
+        address newHolder = address(0xF1A6);
+
+        vm.prank(storedLender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(
+            storedLender, newHolder, l0.lenderTokenId
+        );
+
+        // The holder needs a vault BEFORE being flagged: `depositLocked`
+        // refuses to CREATE one for a sanctioned recipient
+        // (`SanctionedRecipientHasNoVault`), and vault creation is itself a
+        // Tier-1 sanctions-gated entry point. This ordering is the realistic
+        // one too — a lender who buys a position has a vault, and is flagged
+        // afterwards.
+        vm.prank(newHolder);
+        VaultFactoryFacet(address(diamond)).getOrCreateUserVault(newHolder);
+
+        // Force the Tier-2 consolidation to DECLINE on the lender side.
+        MockSanctionsList sanctions = new MockSanctionsList();
+        sanctions.setFlagged(newHolder, true);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(sanctions));
+
+        // ── fixture is live ────────────────────────────────────────────────
+        assertEq(
+            VaipakamNFTFacet(address(diamond)).ownerOf(l0.lenderTokenId),
+            newHolder,
+            "holder is the transferee"
+        );
+        assertTrue(storedLender != newHolder, "holder differs from stored lender");
+
+        address storedVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(storedLender);
+        uint256 storedBefore =
+            storedVault == address(0) ? 0 : IERC20(mockERC20).balanceOf(storedVault);
+
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId, 2_000, defaultAdapterCalls()
+        );
+
+        // The consolidation really did skip — without this the test would pass
+        // on the consolidated path and prove nothing about the fix.
+        assertEq(
+            LoanFacet(address(diamond)).getLoanDetails(loanId).lender,
+            storedLender,
+            "consolidation skipped, so `loan.lender` is STALE (fixture live)"
+        );
+
+        // ── the property ──────────────────────────────────────────────────
+        address holderVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(newHolder);
+        assertTrue(holderVault != address(0), "holder vault created for the payout");
+        assertGt(
+            IERC20(mockERC20).balanceOf(holderVault),
+            0,
+            "current holder received the recovered lender share"
+        );
+
+        storedVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(storedLender);
+        assertEq(
+            storedVault == address(0) ? 0 : IERC20(mockERC20).balanceOf(storedVault),
+            storedBefore,
+            "stored lender received NOTHING"
+        );
+
+        vm.clearMockedCalls();
+    }
+
     /// @dev HF_SCALE-relative ceiling the routine guard enforces (default 1.20).
     function _ceiling() private pure returns (uint256) {
         return (HF_SCALE * 12_000) / 10_000;
