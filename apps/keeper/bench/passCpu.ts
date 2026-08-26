@@ -24,28 +24,13 @@
  */
 import { KEEPER_PASSES } from '../src/passSchedule';
 import { getChainConfigs, type Env } from '../src/env';
-import { installRpcMock, rpcStats, resetPages, ARRAY_LEN } from './rpcMock';
+import { installRpcMock, rpcStats, resetPages, budget, CALL_BUDGET, ARRAY_LEN } from './rpcMock';
+import { d1Stub, resetD1, d1Stats, ROWS } from './d1Stub';
 
 const REPS = Number(process.env.BENCH_REPS ?? 5);
 /** Seconds one pass may take before it is recorded as hung rather than slow. */
 const TIMEOUT_S = Number(process.env.BENCH_TIMEOUT_S ?? 30);
 
-/** A D1 stub that answers the shapes the passes actually use. */
-function d1Stub() {
-  const result = { results: [] as unknown[], success: true, meta: {} };
-  const stmt: Record<string, unknown> = {};
-  stmt.bind = () => stmt;
-  stmt.all = async () => result;
-  stmt.first = async () => null;
-  stmt.run = async () => result;
-  stmt.raw = async () => [];
-  return {
-    prepare: () => stmt,
-    batch: async (s: unknown[]) => s.map(() => result),
-    exec: async () => ({ count: 0, duration: 0 }),
-    dump: async () => new ArrayBuffer(0),
-  } as unknown as Env['DB'];
-}
 
 /**
  * ARMED on purpose. The gated passes return immediately at `passIsArmed`
@@ -67,7 +52,7 @@ const RPC_KEYS = ['RPC_BASE_SEPOLIA', 'RPC_ARB_SEPOLIA', 'RPC_BNB_TESTNET'] as c
 
 function makeEnv(): Env {
   const env: Record<string, unknown> = {
-    DB: d1Stub(),
+    DB: d1Stub() as Env['DB'],
     KEEPER_ENABLED: 'true',
     REWARD_REMIT_ENABLED: 'true',
     REWARD_COMMIT_ENABLED: 'true',
@@ -115,6 +100,7 @@ type Row = {
   rpc: number;
   errors: number;
   hung: number;
+  unbounded: boolean;
 };
 
 async function main(): Promise<void> {
@@ -146,7 +132,16 @@ async function main(): Promise<void> {
   // the #1924 review.
   const realError = console.error;
 
-  for (const pass of KEEPER_PASSES) {
+  const only = process.env.BENCH_ONLY;
+  const selected = only
+    ? KEEPER_PASSES.filter((p) => p.name === only)
+    : KEEPER_PASSES;
+  if (selected.length === 0) {
+    restore();
+    throw new Error(`BENCH_ONLY=${only} matches no pass`);
+  }
+
+  for (const pass of selected) {
     const samples: number[] = [];
     let errors = 0;
     const rpcBefore = rpcStats.calls;
@@ -157,8 +152,10 @@ async function main(): Promise<void> {
     };
 
     let hung = 0;
+    let unbounded = false;
     for (let i = 0; i < REPS; i += 1) {
       resetPages();
+      resetD1();
       const env = makeEnv();
       // eslint-disable-next-line no-await-in-loop
       const ms = await cpuMs(() => pass.run(env));
@@ -167,6 +164,10 @@ async function main(): Promise<void> {
         break; // a hung pass will hang again; do not spend REPS × timeout on it
       }
       samples.push(ms);
+      if (budget.exceeded) {
+        unbounded = true;
+        break;
+      }
     }
 
     console.error = realError;
@@ -178,6 +179,7 @@ async function main(): Promise<void> {
       rpc: (rpcStats.calls - rpcBefore) / Math.max(samples.length, 1),
       errors: errors / Math.max(samples.length, 1),
       hung,
+      unbounded,
     });
   }
 
@@ -204,20 +206,49 @@ async function main(): Promise<void> {
     );
   }
 
-  const everyTick = rows.filter((r) =>
-    KEEPER_PASSES.find((p) => p.name === r.name && p.cadenceMinutes === 1),
+  const wild = rows.filter((r) => r.unbounded);
+  if (wild.length > 0) {
+    console.log(
+      `PASSES THAT EXHAUSTED THE ${CALL_BUDGET}-CALL BUDGET (unbounded against ` +
+        `the fixture — their CPU number is a FLOOR):\n  ` +
+        wild.map((r) => r.name).join('\n  ') +
+        '\n',
+    );
+  }
+
+  const everyTick = rows.filter(
+    (r) =>
+      r.rpc > 0 &&
+      KEEPER_PASSES.find((p) => p.name === r.name && p.cadenceMinutes === 1),
   );
   const tickTotal = everyTick.reduce((s, r) => s + r.median, 0);
   console.log(
     `\ntotal across all passes        ${total.toFixed(1)} ms CPU\n` +
       `the ${everyTick.length} cadence-1 passes alone  ${tickTotal.toFixed(1)} ms CPU  ` +
-      `— this is what an ORDINARY minute costs\n`,
+      `— MEASURED cadence-1 passes only\n`,
   );
 
+  const unmeasured = rows.filter((r) => r.rpc === 0 && r.hung === 0);
+  if (unmeasured.length > 0) {
+    console.log(
+      'NOT MEASURED — these passes issued ZERO RPC calls, so their number is\n' +
+        'not a cost, it is an absence. Almost always the D1 fixture: a pass\n' +
+        'whose work list comes from a table this stub does not seed returns\n' +
+        'immediately. Seed the table in bench/d1Stub.ts to measure them.\n  ' +
+        unmeasured.map((r) => r.name).join('\n  ') +
+        '\n',
+    );
+  }
   if (rows.every((r) => r.rpc === 0)) {
     throw new Error(
-      'no pass issued a single RPC call — the mock was never reached, so ' +
-        'these numbers measure nothing. Do not read the table above.',
+      'NO pass issued a single RPC call — nothing here was measured at all.',
+    );
+  }
+  if (d1Stats.unseeded.size > 0) {
+    console.log(
+      `tables read but not seeded (${ROWS} rows each where seeded): ` +
+        [...d1Stats.unseeded].filter(Boolean).join(', ') +
+        '\n',
     );
   }
 

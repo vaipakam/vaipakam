@@ -40,10 +40,31 @@ export const COUNT_VALUE = Number(process.env.BENCH_COUNT ?? 50);
  */
 export const MAX_PAGES = Number(process.env.BENCH_PAGES ?? 2);
 
+/**
+ * Hard ceiling on RPC calls one pass may make before the mock refuses to
+ * answer.
+ *
+ * A timeout cannot fix a runaway loop here: `Promise.race` abandons the
+ * waiter, it does not cancel the pass, so a spinning pass keeps burning CPU in
+ * the background and the next pass profiles on a loaded machine. Bounding it
+ * at the SOURCE is what actually stops it — the mock throws, the pass's own
+ * catch unwinds it, and the run continues.
+ *
+ * Exceeding this is itself a finding, not a harness failure: a pass issuing
+ * thousands of calls per tick against three chains is the CPU problem.
+ */
+export const CALL_BUDGET = Number(process.env.BENCH_CALL_BUDGET ?? 3000);
+
 /** Per-selector call counter, reset between passes. */
 const pageCounts = new Map<string, number>();
+let budgetLeft = CALL_BUDGET;
+/** Set when a pass blew the budget, so the runner can report it as unbounded. */
+export const budget = { exceeded: false };
+
 export function resetPages(): void {
   pageCounts.clear();
+  budgetLeft = CALL_BUDGET;
+  budget.exceeded = false;
 }
 
 const ADDRESS = '0x1111111111111111111111111111111111111111' as const;
@@ -160,10 +181,20 @@ function answerCall(data: string): string {
   const fn = BY_SELECTOR.get(selector);
   if (!fn || fn.outputs.length === 0) return '0x';
 
-  // Exhaust arrays after MAX_PAGES so pagination terminates.
+  // Exhaust arrays after MAX_PAGES so pagination terminates — but ONLY for
+  // genuinely paginated reads, identified by a cursor/offset-shaped INPUT.
+  //
+  // Applying it to every array-returning function silently under-counted:
+  // `getUserActiveLoans(address)` is a per-user list, not a page, and emptying
+  // it after two calls meant 18 of 20 seeded users returned no loans at all.
+  // The watcher's measured cost came out a large multiple too low, and looked
+  // clean while doing it.
+  const paginated = fn.inputs.some((i) =>
+    /offset|start|cursor|page|index|from/i.test(i.name ?? ''),
+  );
   const returnsArray = fn.outputs.some((o) => o.type.endsWith('[]'));
   let exhausted = false;
-  if (returnsArray) {
+  if (returnsArray && paginated) {
     const seen = (pageCounts.get(selector) ?? 0) + 1;
     pageCounts.set(selector, seen);
     exhausted = seen > MAX_PAGES;
@@ -266,6 +297,14 @@ export function installRpcMock(): () => void {
       });
     }
     rpcStats.calls += 1;
+    budgetLeft -= 1;
+    if (budgetLeft < 0) {
+      budget.exceeded = true;
+      throw new Error(
+        `[bench] RPC call budget of ${CALL_BUDGET} exhausted — this pass is ` +
+          'unbounded against the fixture. That is the finding, not a bug.',
+      );
+    }
     const body = JSON.parse(init?.body ?? '{}');
     const out = Array.isArray(body) ? body.map(answer) : answer(body);
     return new Response(JSON.stringify(out), {
