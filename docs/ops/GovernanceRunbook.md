@@ -1370,6 +1370,18 @@ missing; it is never an instruction to disable a running one.
 RewardAggregatorFacet.setGovernorCommitArmedFromDay(D*)   # ADMIN_ROLE, canonical only
 ```
 
+**⛔ On the M3 / ACTIVE-MIRROR branch, do not execute this call until every
+reachable mirror ENFORCES THE PER-DAY FUNDING PROPERTY** — a claim against a day
+whose budget has not arrived cannot consume value belonging to anything else.
+Not "#1566 is deployed": see the warning in Step 5, and Gate A above.
+
+This is an arming gate and not merely a propagation one, because the two are the
+same gate. Step 5 forbids propagation while any reachable mirror lacks the
+property, and **a mirror learns `D*` only through propagation** — so arming
+without it leaves the cutover impossible to complete, with `D*` immutable and no
+second one to schedule. On the dark branch this does not apply: arming Base IS
+the cutover and there is nothing to propagate.
+
 **Read back that the D1 share-of-pool cap (M2 PR-2) is live on every Diamond
 this arm will actually reach.** On the **M3 / active-mirror** branch that is Base
 AND every mirror, not only the one you are calling: arming propagates, each
