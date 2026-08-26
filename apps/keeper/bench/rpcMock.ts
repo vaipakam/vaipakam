@@ -33,6 +33,9 @@ export const ARRAY_LEN = Number(process.env.BENCH_ARRAY_LEN ?? 25);
 /** What a count-shaped uint answers — bounds every pagination loop. */
 export const COUNT_VALUE = Number(process.env.BENCH_COUNT ?? 50);
 
+/** What an enum-shaped uint answers — must be IN RANGE or work is discarded. */
+export const ENUM_VALUE = Number(process.env.BENCH_ENUM ?? 1);
+
 /**
  * How many FULL pages one selector serves before it starts answering with an
  * empty array. Without this a paginated read is infinite: every page comes
@@ -55,7 +58,14 @@ export const MAX_PAGES = Number(process.env.BENCH_PAGES ?? 2);
  */
 export const CALL_BUDGET = Number(process.env.BENCH_CALL_BUDGET ?? 3000);
 
-/** Per-selector call counter, reset between passes. */
+/**
+ * Per-(chain, selector) page counter, reset between passes.
+ *
+ * Keying on the selector ALONE shared exhaustion across independent chain
+ * scans: with MAX_PAGES=2 and three chains, the third chain's FIRST page was
+ * served as page 3 and came back empty, so affected passes profiled two
+ * chains out of three (Codex #1945 r1).
+ */
 const pageCounts = new Map<string, number>();
 let budgetLeft = CALL_BUDGET;
 /** Set when a pass blew the budget, so the runner can report it as unbounded. */
@@ -140,7 +150,16 @@ function defaultFor(p: AbiParameter, fnName = ''): unknown {
     return comps.map((c) => defaultFor(c, fnName));
   }
   if (t === 'address') return ADDRESS;
-  if (t === 'bool') return false;
+  if (t === 'bool') {
+    // A blanket `false` closes every on-chain gate, so a pass returns after
+    // one RPC per chain and — because its RPC count is non-zero — is reported
+    // as MEASURED rather than gated. `autoLifecycle` read
+    // `getAutoExtendEnabled`, got false, and its 3.9 ms was a closed kill
+    // switch presented as a cost (Codex #1945 r1). Gate-shaped names open.
+    return /enabled|active|allowed|valid|open|exists|is[A-Z]|has[A-Z]|can[A-Z]|ok|success/.test(
+      p.name ?? '',
+    );
+  }
   if (t === 'string') return 'x';
   if (t === 'bytes') return '0x';
   if (/^bytes\d+$/.test(t)) {
@@ -153,9 +172,24 @@ function defaultFor(p: AbiParameter, fnName = ''): unknown {
     // answered 1e18, so the liquidator's pagination loop had 1e18/200 pages
     // to walk and never returned. Names are the only signal available here,
     // and they are reliable enough for a profiling fixture.
-    const COUNTISH = /count|total|length|len|num|size|pages/i;
-    if (COUNTISH.test(p.name ?? '') || COUNTISH.test(fnName)) {
+    // Parameter names may match loosely; FUNCTION names must not. Testing the
+    // whole function name for `len` matched `getActiveLenderIntents` and
+    // `getAutoExtendLenderCaps` inside the word "Lender", so amounts, rates,
+    // durations and expiries all came back as COUNT_VALUE and drove matcher /
+    // lifecycle control flow off fixture artifacts (Codex #1945 r1).
+    const COUNTISH_PARAM = /^(count|total|length|len|num|size|pages)$|Count$|Total$|Length$/;
+    const COUNTISH_FN = /Count$|Total$|Length$|^count$/;
+    if (COUNTISH_PARAM.test(p.name ?? '') || COUNTISH_FN.test(fnName)) {
       return BigInt(COUNT_VALUE);
+    }
+
+    // An ENUM is uint8 in practice, and a 1e18 enum silently discards work:
+    // every mocked `getOffer` had `offerType = 1e18` while the matcher accepts
+    // only 0 and 1, so the whole offer book was thrown away with no error
+    // logged (Codex #1945 r1). Small, in-range values for narrow ints and for
+    // type/status/kind-shaped names.
+    if (/^u?int8$/.test(t) || /type|status|kind|state|band|tier|role/i.test(p.name ?? '')) {
+      return BigInt(ENUM_VALUE);
     }
     // Non-trivial magnitude otherwise: a zero everywhere would let a pass
     // early-return on "nothing to do" and profile as free, which is the
@@ -166,7 +200,7 @@ function defaultFor(p: AbiParameter, fnName = ''): unknown {
 }
 
 /** ABI-encode a plausible result for whatever selector was called. */
-function answerCall(data: string): string {
+function answerCall(data: string, chainKey = ''): string {
   const selector = data.slice(0, 10).toLowerCase();
 
   if (selector === toFunctionSelector(MULTICALL3_ABI[0]).toLowerCase()) {
@@ -177,7 +211,7 @@ function answerCall(data: string): string {
     const calls = args[0] as readonly { callData: string }[];
     const results = calls.map((c) => ({
       success: true,
-      returnData: answerCall(c.callData) as `0x${string}`,
+      returnData: answerCall(c.callData, chainKey) as `0x${string}`,
     }));
     return encodeFunctionResult({
       abi: MULTICALL3_ABI,
@@ -203,8 +237,9 @@ function answerCall(data: string): string {
   const returnsArray = fn.outputs.some((o) => o.type.endsWith('[]'));
   let exhausted = false;
   if (returnsArray && paginated) {
-    const seen = (pageCounts.get(selector) ?? 0) + 1;
-    pageCounts.set(selector, seen);
+    const pageKey = `${chainKey}|${selector}`;
+    const seen = (pageCounts.get(pageKey) ?? 0) + 1;
+    pageCounts.set(pageKey, seen);
     exhausted = seen > MAX_PAGES;
   }
   const values = fn.outputs.map((o) =>
@@ -220,7 +255,10 @@ function answerCall(data: string): string {
 const HEX = (n: number | bigint) => `0x${n.toString(16)}`;
 
 /** Answer one JSON-RPC request object. */
-function answer(req: { method: string; params?: unknown[]; id?: unknown }): unknown {
+function answer(
+  req: { method: string; params?: unknown[]; id?: unknown },
+  chainKey = '',
+): unknown {
   const { method, params = [] } = req;
   const ok = (result: unknown) => ({ jsonrpc: '2.0', id: req.id ?? 1, result });
   switch (method) {
@@ -229,7 +267,9 @@ function answer(req: { method: string; params?: unknown[]; id?: unknown }): unkn
     case 'eth_blockNumber':
       return ok(HEX(20_000_000));
     case 'eth_call':
-      return ok(answerCall(((params[0] as { data?: string })?.data ?? '0x') as string));
+      return ok(
+        answerCall(((params[0] as { data?: string })?.data ?? '0x') as string, chainKey),
+      );
     case 'eth_getBlockByNumber':
     case 'eth_getBlockByHash':
       return ok({
@@ -289,6 +329,24 @@ function answer(req: { method: string; params?: unknown[]; id?: unknown }): unkn
 /** Counts requests served, so a pass that did nothing cannot look cheap. */
 export const rpcStats = { calls: 0 };
 
+/**
+ * Serialized-response cache, keyed on (chain, request body).
+ *
+ * THE MEASUREMENT DEPENDS ON THIS. Without it every mocked request runs
+ * `answerCall` -> `encodeFunctionResult` -> `JSON.stringify` inside the same
+ * `process.cpuUsage()` interval as the keeper — but in production that ABI
+ * encoding and serialization is done by the REMOTE RPC SERVER, not by the
+ * Worker. At 1,560 calls each encoding a 25-element array, that fixture work
+ * plausibly dominated the reported figure and flattered whichever pass made
+ * the most calls (Codex #1945 r1).
+ *
+ * With the cache plus a warm-up run (see `warmUp` in passCpu.ts), the measured
+ * interval pays a Map lookup instead of an encode. Residual fixture cost that
+ * is still inside the interval, and therefore still a known floor: the
+ * `JSON.parse` of the request body and the `Response` construction.
+ */
+const responseCache = new Map<string, string>();
+
 /** Install the mock as global fetch. Returns a restore function. */
 export function installRpcMock(): () => void {
   const real = globalThis.fetch;
@@ -313,9 +371,18 @@ export function installRpcMock(): () => void {
           'unbounded against the fixture. That is the finding, not a bug.',
       );
     }
-    const body = JSON.parse(init?.body ?? '{}');
-    const out = Array.isArray(body) ? body.map(answer) : answer(body);
-    return new Response(JSON.stringify(out), {
+    const raw = init?.body ?? '{}';
+    const cacheKey = `${url}|${raw}`;
+    let payload = responseCache.get(cacheKey);
+    if (payload === undefined) {
+      const body = JSON.parse(raw);
+      const out = Array.isArray(body)
+        ? body.map((b) => answer(b, url))
+        : answer(body, url);
+      payload = JSON.stringify(out);
+      responseCache.set(cacheKey, payload);
+    }
+    return new Response(payload, {
       status: 200,
       headers: { 'content-type': 'application/json' },
     });

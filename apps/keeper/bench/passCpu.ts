@@ -83,9 +83,21 @@ async function cpuMs(fn: () => Promise<void>): Promise<number | null> {
   const timeout = new Promise<'timeout'>((resolve) => {
     timer = setTimeout(() => resolve('timeout'), TIMEOUT_S * 1000);
   });
+  // Held so a timed-out pass can be SETTLED before the next one is profiled.
+  // `Promise.race` abandons the waiter, it does not cancel the work: the
+  // abandoned pass kept burning process-wide CPU and mutating the mock's
+  // counters while later samples were taken, so those deltas were not
+  // isolated (Codex #1945 r1). The call budget guarantees it terminates.
+  const work = fn().then(
+    () => 'ok' as const,
+    () => 'ok' as const,
+  );
   try {
-    const outcome = await Promise.race([fn().then(() => 'ok' as const), timeout]);
-    if (outcome === 'timeout') return null;
+    const outcome = await Promise.race([work, timeout]);
+    if (outcome === 'timeout') {
+      await work;
+      return null;
+    }
   } finally {
     if (timer) clearTimeout(timer);
   }
@@ -131,6 +143,7 @@ async function main(): Promise<void> {
   // broken pass as an innocent one — the single most repeated defect class in
   // the #1924 review.
   const realError = console.error;
+  const realWarn = console.warn;
 
   const only = process.env.BENCH_ONLY;
   const selected = only
@@ -146,10 +159,26 @@ async function main(): Promise<void> {
     let errors = 0;
     const rpcBefore = rpcStats.calls;
 
-    console.error = (...args: unknown[]) => {
+    // BOTH streams. Several passes report caught RPC failures through
+    // console.WARN — preGraceWatcher warns on count, page and offer-hydration
+    // failures — so intercepting only console.error let a partially executed
+    // pass print its failures and still report err/run = 0.0 with no floor
+    // marker (Codex #1945 r1).
+    const count = (...args: unknown[]) => {
       errors += 1;
       if (process.env.BENCH_VERBOSE) realError('   ', ...args);
     };
+    console.error = count;
+    console.warn = count;
+
+    // WARM-UP, untimed. Populates the mock's response cache so the measured
+    // interval pays a Map lookup rather than an ABI encode + JSON.stringify —
+    // work a real RPC server does remotely, not work the Worker does
+    // (Codex #1945 r1). Its own errors are counted, so a pass that only fails
+    // is still marked.
+    resetPages();
+    resetD1();
+    await cpuMs(() => pass.run(makeEnv()));
 
     let hung = 0;
     let unbounded = false;
@@ -171,6 +200,7 @@ async function main(): Promise<void> {
     }
 
     console.error = realError;
+    console.warn = realWarn;
     samples.sort((a, b) => a - b);
     rows.push({
       name: pass.name,

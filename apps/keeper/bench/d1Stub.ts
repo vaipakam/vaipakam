@@ -51,9 +51,14 @@ function rowsFor(table: string): Record<string, unknown>[] {
 
 /** Tracks which tables were asked for, so gaps are visible not silent. */
 export const d1Stats = { tables: new Set<string>(), unseeded: new Set<string>() };
+/**
+ * Reset the PER-RUN view only. `unseeded` deliberately ACCUMULATES across
+ * passes and repetitions: it is printed once at the end, so clearing it every
+ * repetition meant the final diagnostic described only the last repetition of
+ * the last pass and erased every gap seen earlier (Codex #1945 r1).
+ */
 export function resetD1(): void {
   d1Stats.tables.clear();
-  d1Stats.unseeded.clear();
 }
 
 export function d1Stub(): unknown {
