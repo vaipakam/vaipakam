@@ -24,8 +24,9 @@ ends **without being repaid**. When a loan defaults, or is liquidated, whatever
 interest is recovered still has the ordinary cut taken from it — and none of
 those routes consults the lender's arrangement, so a lender who paid for the
 reduction does not receive it. The original enumeration named only the repayment
-and early-close routes, so the recovery routes were never in scope and never
-decided against either.
+and early-close routes, so the recovery routes were absent from that
+IMPLEMENTATION list — not from the entitlement itself, which the frozen rule
+already extends to every settlement of a lender's interest.
 
 One of those routes does not even end the loan: a partial liquidation leaves it
 running and still takes a cut from the interest it recovers on the way, so the
