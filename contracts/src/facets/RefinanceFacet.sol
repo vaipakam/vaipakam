@@ -436,10 +436,19 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // stale address priced the discount off the PREVIOUS lender's hold tier
         // and — once the peg is set — debited that party's VPFI vault for a
         // reduction the buyer receives.
+        // Held in a local because the analytics passthrough below must name the
+        // SAME party: this facet calls the library directly rather than through
+        // `VPFIDiscountFacet`, so unlike every other settlement path it emits
+        // its own `emitYieldFeeDiscountApplied` and has to carry the settling
+        // lender to it. Reporting `oldLoan.lender` there while charging the
+        // holder here would have indexers attribute the VPFI debit to the
+        // previous lender — precisely the transferred-position case this fix is
+        // about (Codex #1953 r1 P2).
+        address settlingLender = LibERC721.ownerOf(oldLoan.lenderTokenId);
         (uint256 lenderExtra, uint256 newTreasuryFee, uint256 yieldVpfiDeducted) =
             LibVPFIDiscount.resolveLenderYieldFeeFor(
                 oldLoan,
-                LibERC721.ownerOf(oldLoan.lenderTokenId),
+                settlingLender,
                 interestPortion,
                 treasuryFee
             );
@@ -878,7 +887,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 abi.encodeWithSelector(
                     VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector,
                     oldLoanId,
-                    oldLoan.lender,
+                    settlingLender,
                     oldLoan.principalAsset,
                     yieldVpfiDeducted
                 ),
