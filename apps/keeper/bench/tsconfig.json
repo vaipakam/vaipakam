@@ -1,0 +1,10 @@
+{
+  // The benchmark is typechecked in its OWN program so its `process` shim
+  // (bench/globals.d.ts) stays scoped to bench/ and does not leak the Node
+  // global into src/**, where Cloudflare Workers do not provide it and an
+  // accidental `process.env`/`process.exit` must still fail the src typecheck
+  // (Codex #1945 r4). Both programs run under `pnpm typecheck`, so the harness
+  // is still covered — it just no longer contaminates the Worker's type world.
+  "extends": "../tsconfig.json",
+  "include": ["**/*.ts"]
+}

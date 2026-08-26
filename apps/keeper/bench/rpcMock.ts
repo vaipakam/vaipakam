@@ -254,6 +254,14 @@ function defaultFor(p: AbiParameter, fnName = ''): unknown {
     if (/chain|^dst$|^src$|dest|source/i.test(p.name ?? '')) {
       return 84532n;
     }
+    // A HEALTH FACTOR must come back BELOW the 1e18 liquidation line, or
+    // scanChain classifies every loan as safe and the liquidator skips its
+    // sort / cap / sign / submit path — the active liquidation work this profile
+    // most needs — reporting atRisk=0 with no honesty marker (Codex #1945 r4).
+    // 0.95e18 flags every scanned loan as liquidatable.
+    if (/healthfactor/i.test(fnName) || /^hf$|healthfactor/i.test(p.name ?? '')) {
+      return 950_000_000_000_000_000n;
+    }
     // Non-trivial magnitude otherwise: a zero everywhere would let a pass
     // early-return on "nothing to do" and profile as free, which is the
     // failure mode this harness exists to avoid. Clamp to the type's width so a

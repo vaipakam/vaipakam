@@ -15,4 +15,6 @@ declare const process: {
     system: number;
   };
   exit(code: number): never;
+  readonly stdout: { write(chunk: string, cb?: () => void): boolean };
+  readonly stderr: { write(chunk: string, cb?: () => void): boolean };
 };

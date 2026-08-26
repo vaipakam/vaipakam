@@ -358,11 +358,23 @@ async function main(): Promise<void> {
 // the process alive for tens of seconds after the results are already out —
 // which is the very "BENCH_TIMEOUT_S is ineffective" symptom this harness is
 // meant to avoid. The measurement is complete at this point, so a hard exit is
-// correct rather than lossy.
+// correct rather than lossy — but DRAIN both streams first: when the output is
+// piped or redirected, `process.exit` can otherwise truncate the results table
+// still buffered in the pipe (Codex #1945 r4).
+function flushAndExit(code: number): void {
+  let pending = 2;
+  const done = () => {
+    pending -= 1;
+    if (pending === 0) process.exit(code);
+  };
+  process.stdout.write('', done);
+  process.stderr.write('', done);
+}
+
 main().then(
-  () => process.exit(0),
+  () => flushAndExit(0),
   (err) => {
     console.error(err);
-    process.exit(1);
+    flushAndExit(1);
   },
 );

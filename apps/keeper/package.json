@@ -8,7 +8,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --keep-vars",
     "build": "pnpm run typecheck",
-    "typecheck": "tsc -p . --noEmit && node scripts/check-deploy-invocations.mjs",
+    "typecheck": "tsc -p . --noEmit && tsc -p bench --noEmit && node scripts/check-deploy-invocations.mjs",
     "test": "vitest run",
     "check-deploy-invocations": "node scripts/check-deploy-invocations.mjs",
     "bench:cpu": "tsx bench/passCpu.ts"
