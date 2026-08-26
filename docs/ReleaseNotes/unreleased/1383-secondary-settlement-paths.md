@@ -27,9 +27,22 @@ reduction does not receive it. The original enumeration named only the repayment
 and early-close routes, so the recovery routes were never in scope and never
 decided against either.
 
-The specification now says that plainly: five routes honour it, rentals are
-outside it by construction, and the outstanding question — the one the switch
-stays blocked on — is whether interest recovered after a default is lender
-interest for this purpose. Answering it either way resolves the block. What could
-not stand was leaving a lender's entitlement dependent on how their loan happened
-to end, without anyone having chosen that.
+One of those routes does not even end the loan: a partial liquidation leaves it
+running and still takes a cut from the interest it recovers on the way, so the
+gap is not confined to loans that terminate.
+
+The specification now says that plainly, and says what kind of thing it is. The
+frozen rule is that the reduction applies at *every* moment a lender's interest
+is settled; the four routes named beside it are the ones that were built, not a
+definition of where the promise reaches. Recovered interest is lender interest —
+the ordinary cut is taken from it — so the recovery routes are inside the rule
+and simply do not honour it yet. That is a gap between the code and a decision
+already made, not a question still open, and only the owner can narrow the
+decision instead of closing the gap.
+
+Two other documents said the opposite and are corrected with it: an internal
+audit recorded this work as complete across *every* settlement path, and the
+operator's switch reference told whoever throws the switch that this was "a
+check, not a blocker". Either would have led someone to enable the arrangement
+while a lender who paid for the reduction could still lose it, depending only on
+how their loan happened to end.
