@@ -1168,13 +1168,25 @@ contract RiskFacetTest is Test {
         // requires `sum(splits[i].splitAmount)` to equal the input, so the two
         // legs are a 60/40 partition of the collateral with the remainder given
         // to the second leg so the sum is exact for any amount.
+        // DISTINCT adapters, not two legs on slot 0 (Codex #1957 r5 P2). With
+        // both legs on the same adapter the fixture kills a loop-clamp mutation
+        // but stays green if the execution loop ignores `splits[i].adapterIdx`,
+        // reuses the first adapter, or mishandles approvals between venues —
+        // which is the multi-VENUE behaviour this entry point exists for.
+        // Registered lazily so the suite's other tests keep exactly one adapter.
+        if (AdminFacet(address(diamond)).getSwapAdapters().length < 2) {
+            AdminFacet(address(diamond)).addSwapAdapter(
+                address(new MockZeroExLegacyAdapter(address(mockZeroExProxy)))
+            );
+        }
+        address venueB = AdminFacet(address(diamond)).getSwapAdapters()[1];
         uint256 legA = (ln.collateralAmount * 60) / 100;
         LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](2);
         splits[0] = LibSwap.SplitCall({
             adapterIdx: 0, splitAmount: legA, data: bytes("")
         });
         splits[1] = LibSwap.SplitCall({
-            adapterIdx: 0, splitAmount: ln.collateralAmount - legA, data: bytes("")
+            adapterIdx: 1, splitAmount: ln.collateralAmount - legA, data: bytes("")
         });
 
         address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
@@ -1188,6 +1200,14 @@ contract RiskFacetTest is Test {
         // stored field would leave the balance assertions green. Asserting the
         // host call's `settlingLender` argument proves the key directly, without
         // staging an aged hold tier in a suite that has no staking machinery.
+        // Distinct SLOTS are not enough on their own: both adapters wrap the
+        // same `mockZeroExProxy`, so routing everything through slot 0 produces
+        // identical proceeds and the balance assertions cannot tell. Verified —
+        // clamping the execution loop's `adapterIdx` to 0 left them green.
+        // Asserting the SECOND adapter is actually called is what proves per-leg
+        // venue dispatch.
+        vm.expectCall(venueB, "");
+
         // Only in the STAMPED run: with no stamp and no consent the loan is
         // ineligible, so `LibLenderYieldFeeHost.resolve` short-circuits before
         // the host call and the reference replay never routes at all. Expecting
