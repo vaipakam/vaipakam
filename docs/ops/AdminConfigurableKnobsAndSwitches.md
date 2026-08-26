@@ -645,12 +645,13 @@ optional:
   Active). The periodic-interest auto-liquidation leg is NOT one of
   them — an earlier revision of this note counted it as a sixth; it
   deducts a handling fee on swap PROCEEDS and charges no lender yield
-  fee at all, so the bump has nothing to reduce there. Two PROPER-CLOSE
-  routes are open as well: both collateral prepay-SALE terminals pay a
-  raw treasury leg with no eligibility call — and only the
-  treasury-yield HALF of that leg is discountable, since it is
-  `interest × (treasuryFeeBps + precloseFeeBps)` and the second summand
-  is a separate preclose fee that merely reads zero today. And refinance is a further
+  fee at all, so the bump has nothing to reduce there. The collateral
+  prepay-SALE terminals were listed here too and are also REMOVED: they
+  do pay a raw treasury leg with no eligibility call, but that leg is an
+  ADDITIVE consideration item funded from the sale price — the lender
+  receives principal plus interest GROSS and the BORROWER's residual
+  bears the fee — so there is no lender discount to deliver, and
+  applying the bump would subsidise the borrower. And refinance is a further
   concern: it honours the stamp but resolves it against the STORED
   lender, so a transferred position can have the previous lender's
   vault fund the buyer's discount.

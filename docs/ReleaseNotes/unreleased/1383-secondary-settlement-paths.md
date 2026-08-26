@@ -31,11 +31,15 @@ already extends to every settlement of a lender's interest.
 One of those routes does not even end the loan: a partial liquidation leaves it
 running and still takes a cut from the interest it recovers on the way.
 
-Two more routes are not recoveries at all. When an NFT collateral position is
-sold through the prepayment route — an ordinary, orderly close — the settlement
-pays a fee computed the plain way, on both the loan-keyed and the offer-keyed
-flow, and neither consults the arrangement. A lender who paid for the reduction
-pays the full fee anyway.
+A second pair of routes was added to this list during review and then taken
+back off it, and the reason is worth recording. When an NFT collateral position
+is sold through the prepayment route, the settlement does pay its fee the plain
+way without consulting the arrangement — but on that route the lender is not the
+one paying it. The sale pays the lender the principal and the whole of the
+interest, and the fee is a separate charge taken out of the sale price, which
+comes off what returns to the borrower. Reducing it would hand the borrower
+more, not the lender. Whether the arrangement should ever reach a charge the
+borrower bears is a question for the owner, not a defect to fix.
 
 One further route honours the arrangement but pays for it out of the wrong
 pocket: refinancing resolves it against whoever the records still name as lender.
@@ -49,12 +53,6 @@ would either discount an unrelated service charge or introduce a fee the
 route does not levy. The count of affected recovery routes is five, not six.
 The mistake is recorded rather than quietly amended: it had reached six
 separate documents.
-
-A related precision on the sale routes: the charge they pay is really two
-charges added together, and only the first is the one this arrangement
-reduces. The second reads as nothing today, so an implementation that passed
-the combined figure through would look correct and would silently begin
-discounting the wrong charge the day the second is switched on.
 
 Two things follow that the documents had not said. The condition for declaring
 this settled now spells out that a decision to leave recovered interest out of

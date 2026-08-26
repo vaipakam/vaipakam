@@ -766,10 +766,12 @@ six an earlier revision of this step named — the periodic-interest
 auto-liquidation leg deducts a handling fee on swap PROCEEDS and charges no
 lender yield fee at all, so there is nothing there for the bump to reduce) —
 still take the ordinary cut from recovered lender interest without consulting
-the stamp; both collateral
-prepay-SALE terminals pay a raw treasury leg on a PROPER close with no
-eligibility call; and refinance resolves the stamp against the STORED lender
-rather than the current holder. Frozen §F2
+the stamp; and refinance resolves the stamp against the STORED lender rather
+than the current holder. (The collateral prepay-SALE terminals were named here
+in an earlier revision and are REMOVED: their treasury leg is an ADDITIVE
+consideration item funded from the sale price — the lender receives principal
+plus interest GROSS and the BORROWER's residual bears the fee — so there is no
+lender discount to deliver and applying the bump would subsidise the borrower.) Frozen §F2
 is "at every lender-yield settlement", so that is a live divergence and a hard
 precondition for this step, not a scope boundary. Enabling here while it stands
 collects `C*` for a discount a lender can lose depending on how their loan ends.
@@ -789,23 +791,37 @@ this step said to, and there is nothing to read: the only deploy assertion
 touching this flag pins it OFF on a fresh deploy and observes no settlement path.
 Establish both by hand on the TARGET Diamond before scheduling anything:
 
-- **PR-5c (loan-side reward cap)** — confirm the facet carrying it is the one
-  routed for its selectors on this Diamond (`facetAddress(bytes4)` via the
-  loupe), and that the cap knob reads its intended value.
-- **PR-6 / #1947 (settlement sweep)** — confirm the DEPLOYED bytecode of
-  `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet`, `PrepayListingFacet`
-  and `RefinanceFacet` is the fixed version, again by loupe-resolving their
-  selectors and comparing against the build you intend.
-- **PR-6 / #1947, the NON-FACET half** — the loan-keyed prepay-sale terminal
-  executes inside `CollateralListingExecutor`, a **standalone UUPS proxy**, not a
-  facet. The loupe cannot see it and resolving `PrepayListingFacet` proves
-  nothing about it: read `PrepayListingFacet.getCollateralListingExecutor()` to
-  get the proxy address, then read that proxy's ERC-1967 implementation slot and
-  compare THAT against the intended build. Skipping this leaves a proper-close
-  route paying the raw fee while every facet readback above passes.
+- **PR-5c (loan-side reward cap) — this is NOT one facet.** The per-loan cap is
+  STAMPED by `FeeEntitlementFacet` and ENFORCED through `LibInteractionRewards`,
+  which is a library and is therefore inlined into **every** reward-counting
+  facet — `RewardClaimFacet` and `RewardHorizonSweepFacet` among them. An old
+  stamping facet leaves new loans unstamped; an old payout or sweep facet ignores
+  the cap. Resolving one selector and reading the haircut knob proves neither.
+  On a partial or stacked target, verify that the whole set was refreshed
+  together (this is what `RefreshAllFacetsInPlace` exists for) rather than
+  spot-checking a facet, and read the cap knob as well.
+- **PR-6, the ALREADY-LANDED family** — an upgrade that installs the #1947 fix
+  says nothing about whether THIS Diamond ever received #1354/#1383. Loupe-resolve
+  and compare `RepayFacet`, `RepayPeriodicFacet`, `PrecloseFacet`,
+  `SwapToRepayFacet`, `SwapToRepayIntentFacet`, `IntentDispatchFacet`,
+  `AutoLifecycleFacet`, `RefinanceFacet`, and the shared resolver host
+  `VPFIDiscountFacet`. Skip this and Full can be enabled on a Diamond whose
+  ordinary repayment and early-close settlements still ignore the purchased bump
+  — the failure this step exists to prevent, on the paths it already calls done.
+- **PR-6 / #1947, the REOPENED family** — confirm the DEPLOYED bytecode of
+  `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet` and `RefinanceFacet`
+  is the fixed version, the same way.
 
-  While #1947 is open there is no fixed build for any of these, so this readback
-  cannot pass and the step cannot proceed.
+**Two branches out of this step, not one.** While #1947 is open and unsuperseded
+there is no fixed build for the reopened family, so that readback cannot pass and
+the step cannot proceed. If the owner has instead recorded an explicit
+**superseding decision** against the frozen §F2 (the alternative the spec's
+discharge criterion allows, for the recovery family), then for the superseded
+family there is deliberately no implementation to verify: check that the decision
+is recorded and in force, and require fixed bytecode only for the families that
+remain implementation obligations. Without this branch a granted supersession
+would leave `feeEntitlementEnabled` blocked forever by a readback that can never
+be satisfied.
 
 ```
 ConfigFacet.setFeeEntitlementEnabled(true)      # ADMIN_ROLE

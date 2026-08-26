@@ -595,14 +595,24 @@ Lender rules:
 - **the VPFI-debit delivery is consent-only.** Because settlement consolidates the lender slot to the current position-NFT holder, the VPFI-payment delivery (which debits that holder's vault) requires that holder's own consent — an unsolicited transfer of a Full-stamped position can never spend a non-consenting recipient's VPFI. A Full lender without consent always receives the `+10%` through the no-token-move direct-reduction path regardless of peg state
 - the bump is honored on the **primary** lender-yield settlement paths (terminal repay, preclose direct close, refinance, auto-lifecycle held by the recorded lender) and on the **swap-to-repay** paths (full close-out, partial, and the Fusion swap-to-repay intent fill). On the paths that do not consolidate the lender to the current position-NFT holder — swap-to-repay-partial, the intent fill, and the secondary paths still pending below — the discount is keyed on the **current holder**, since the hold-tier discount is an instantaneous per-address read and the Full `+10%` is loan-scoped. Of the paths once listed as pending, five now honor it: preclose obligation-transfer, preclose offset, **partial repay**, **periodic-interest** (its ordinary leg), and the **auto-lifecycle transferred-position** case each resolve the lender's eligibility the same way, keyed on the settling party.
 
-**And the collateral prepay-SALE terminals honor it nowhere.** When an NFT
-collateral position is sold through the prepay route, the settlement pays a raw
-treasury leg computed from `LibCollateralSettlement.treasuryAndPrecloseFee` —
-both on the loan-keyed flow through the Seaport listing executor and on the
-offer-keyed parallel flow — and neither consults the stamp. These are
-**proper-close** settlements, not recoveries: a Full lender whose collateral is
-sold this way pays the full yield fee on a discount they bought. They belong in
-the blocker alongside the recovery set.
+**The collateral prepay-SALE terminals are NOT part of this blocker, and an
+earlier revision of this section wrongly put them in it.** They do pay a raw
+`LibCollateralSettlement.treasuryAndPrecloseFee` leg with no eligibility call —
+that observation was correct — but the lender does not bear that fee, so there
+is no lender discount to deliver. The sale waterfall pays **three separate
+consideration legs**: the lender receives `principal + accrued interest`
+**gross** (`principalPlusAccruedInterest`, whose `settlementInterestNet` is net
+of `loan.interestSettled` — interest already paid — not net of any fee), the
+treasury leg is **added on top** out of the sale price, and the **borrower's**
+residual is what it reduces. On a repayment the lender receives interest minus
+the cut; on a prepay sale the lender receives the whole of it.
+
+Applying the Full bump to that treasury leg would therefore shrink the treasury
+take and **enlarge the borrower's residual** — a lender-purchased entitlement
+subsidising the borrower. That is an accounting change, not the F2 rule, and it
+would need an explicit owner decision widening the entitlement before any
+implementation. The earlier revision verified the mechanism (a raw fee leg, no
+resolver) and inferred the harm without checking who pays.
 
 **Refinance is a separate case and is NOT safe.** It honors the stamp, but resolves it against the STORED lender rather than the current position-NFT holder. It attempts a Tier-2 consolidation first — and that consolidation is skip-not-block, declining rather than reverting for a sanctioned holder or an excluded lender state — so on a transferred position the stored field can still be stale when the resolve runs. With the peg configured, the previous lender's vault funds a discount the buyer receives. Refinance therefore belongs in the current-holder blocker below, not in the list above. **Rental-prepay is no longer a blocker and never could have been** — a rental cannot carry the paid Full stamp at all, because the tariff is charged only on ERC-20 originations and a rental pays no loan-initiation fee to be tariffed alongside. There is no rental lender who paid `C*` and could be owed the bump.
 
@@ -612,15 +622,14 @@ What IS outstanding is the **recovery** set, and it has **five** entry points: *
 
 **This is a CODE DIVERGENCE from a frozen decision, not an open question.** The rev-8 §F2 statement (`VpfiAbsorptionDistributionFormulaRedesign.md` → `### F2 — Lender yield fee`, the frozen source; this document has no §F2 of its own) is *"at every lender-yield settlement"*, and the PR-6 requirements forbid settlement math that ignores Full; the four-item enumeration above is a list of the paths that were implemented, not a definition of where the entitlement applies. Recovered interest is lender interest — this section itself has the ordinary yield-fee cut taken from it — so the recovery paths are inside the frozen rule and are simply not honoring it yet. Recording them as an "intended exclusion" would silently narrow a ratified product decision, and only the owner can do that.
 
-**The divergence is the remaining hard blocker on the `feeEntitlementEnabled` cut-over,** and it is discharged only by clearing **three independent families**, not one:
+**The divergence is the remaining hard blocker on the `feeEntitlementEnabled` cut-over,** and it is discharged only by clearing **two independent families**:
 
   1. **the five recovery entry points** must honor the bump on recovered lender interest;
-  2. **both collateral prepay-sale terminals** must honor it — these settle a **proper close**, so no decision about recovered interest can reach them. The bump applies to the **treasury-yield component only**: `LibCollateralSettlement.treasuryAndPrecloseFee` returns `interest × (effectiveTreasuryFeeBps + precloseFeeBps)`, and `precloseFeeBps` is a *separate* preclose fee that merely reads `0` today. Passing that combined leg through the resolver would work by accident now and silently discount the preclose fee the moment it is configured — the two summands must be split and only the treasury-yield portion reduced;
-  3. **refinance** must be re-keyed onto the current holder — its defect is that the wrong party is debited, which is independent of whether recovered interest is entitled at all.
+  2. **refinance** must be re-keyed onto the current holder — its defect is that the wrong party is debited, which is independent of whether recovered interest is entitled at all.
 
 Every resolver must key on the **current position-NFT holder** (`ownerOf(lenderTokenId)`), not the stored lender. Every recovery entry attempts a Tier-2 consolidation, and that consolidation is deliberately *skip-not-block*: it declines rather than reverting for a sanctioned holder or an excluded lender state, leaving the stored field stale. A resolver keyed on the stored lender would then price the previous lender's hold tier and, once the peg is set, debit that party's VPFI vault for a discount the current holder receives — the exact defect the repayment-path sweep was corrected for.
 
-**An owner decision that recovered interest is out of scope discharges family (1) ONLY** — and only as an explicit superseding decision recorded against the frozen §F2 in `VpfiAbsorptionDistributionFormulaRedesign.md` first, with the enumeration above amended to match. It cannot reach (2) or (3), which must be fixed or separately superseded whatever is decided about recovery. What must not happen is enabling Full while a lender's entitlement depends on how their loan happened to end
+**An owner decision that recovered interest is out of scope discharges family (1) ONLY** — and only as an explicit superseding decision recorded against the frozen §F2 in `VpfiAbsorptionDistributionFormulaRedesign.md` first, with the enumeration above amended to match. It cannot reach (2), whose defect is that the wrong party is debited and which must be fixed or separately superseded whatever is decided about recovery. What must not happen is enabling Full while a lender's entitlement depends on how their loan happened to end
 - **a loan extended in place is repriced for the new term.** The `+10%` bump is delivered **per term** — the current term's interest is settled (with the Full stamp intact) at the extension boundary before the loan rolls onto its new term. Because an extension pays **no fresh `C*` tariff** for the added term, the lender Full stamp is **downgraded** on extension so no unpriced `+10%` survives on the added term. The lender's ordinary consent-gated hold discount is unaffected. Everything else is left intact: the loan-side reward-cap budget is a per-loan **lifetime** ceiling funded by the single `C*` and consumed lazily as rewards are counted, so it is **not** reset on extension (resetting it would wipe an unclaimed original-term reward budget; the per-day proration already clamps at the origination term so no over-crediting is possible). The **borrower** stamp is not repriced — no settlement path reads the borrower mode, so there is no per-term borrower benefit to adjust
 - this bump is **dark** until the Full opt-in path (`feeEntitlementEnabled`) is enabled: no loan carries a `Full` lender stamp before then, so every current settlement resolves to exactly the pre-existing consent-gated hold discount
 
