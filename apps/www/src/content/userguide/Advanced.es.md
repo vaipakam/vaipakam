@@ -549,7 +549,7 @@ que la aplicación NO automatiza hoy:
    dividir las tarifas como la colección requiere. Los usuarios
    avanzados deben consulta el calendario de tarifas obligatorias
    de OpenSea para la colección (el parser de tarifas in-repo en
-   `apps/defi/src/lib/openseaFeeSchedule.ts` (retired in #1854 — recover from git history) es la referencia) y pasar
+   `apps/agent/src/openseaCollectionProxy.ts` es la referencia) y pasar
    montos absolutos derivados contra el ask antes de llamar. El
    facet internamente construye los `OrderComponents` canónicos
    de Seaport a partir de esos inputs (plus valores que retiene
@@ -613,8 +613,7 @@ que la aplicación NO automatiza hoy:
    el campo solo-API `parameters.totalOriginalConsiderationItems`
    — la API de OpenSea lo requiere aunque NO sea parte del struct
    Seaport que produce el hash canónico; los publishers in-repo
-   (`apps/defi/src/lib/openseaPublish.ts` (retired in #1854 — recover from git history) +
-   `apps/indexer/src/openseaPublish.ts`) lo inyectan antes de
+   (`apps/indexer/src/openseaPublish.ts`) lo inyectan antes de
    llamar al endpoint. Para órdenes validadas por ERC-1271,
    OpenSea acepta el campo `signature` como `0x` (bytes vacíos)
    — el callback on-chain del vault `isValidSignature(orderHash,

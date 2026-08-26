@@ -464,7 +464,7 @@ Seaport الأصلية، وتُطلق عملية ملء سوق لاحقة قبل
    مفقودة)، وملء Seaport المباشر يُوجِّه ask الكامل إلى البائع
    بدلاً من تقسيم الرسوم كما تطلب المجموعة. يجب على المستخدمين
    المتقدمين جلب جدول الرسوم المطلوبة من OpenSea للمجموعة
-   (محلل الرسوم in-repo في `apps/defi/src/lib/openseaFeeSchedule.ts` (retired in #1854 — recover from git history) هو
+   (محلل الرسوم in-repo في `apps/agent/src/openseaCollectionProxy.ts` هو
    المرجع) وتمرير مبالغ مطلقة مشتقة مقابل ask قبل الاستدعاء.
    يبني facet داخلياً Seaport OrderComponents القانونية من تلك
    المدخلات (بالإضافة إلى القيم التي يحتفظ بها في
@@ -518,8 +518,7 @@ Seaport الأصلية، وتُطلق عملية ملء سوق لاحقة قبل
    `parameters.totalOriginalConsiderationItems` — تطلبه API
    OpenSea رغم أنه ليس جزءاً من struct Seaport الذي ينتج hash
    القانوني؛ يُحقنه الناشرون in-repo
-   (`apps/defi/src/lib/openseaPublish.ts` (retired in #1854 — recover from git history) +
-   `apps/indexer/src/openseaPublish.ts`) قبل استدعاء endpoint.
+   (`apps/indexer/src/openseaPublish.ts`) قبل استدعاء endpoint.
    للطلبات المُصادق عليها بـ ERC-1271، تقبل OpenSea حقل
    `signature` كـ `0x` (بايتات فارغة) — يتجاهل callback on-chain
    لـ vault `isValidSignature(orderHash, '')` بايتات التوقيع

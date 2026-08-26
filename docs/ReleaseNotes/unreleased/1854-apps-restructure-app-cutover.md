@@ -36,6 +36,23 @@ updated by hand. Their files were renamed and every path filter and
 package filter inside them was updated — only the two check-context
 strings were left alone, each with a comment saying why.
 
+Documentation that cited the deleted app by file path was repointed at
+live successors rather than at git history. The published user guide told
+advanced users to read two source files for the OpenSea listing path; both
+died with `apps/defi`, so the guide now names the surviving reference for
+each — the collection proxy the app reads collection fees through, and the
+indexer-side publisher. The same sweep removed an English editorial note
+that had been inserted into all ten translations of that guide. On the
+internal side, the risk-committee sign-off questionnaire cited the deleted
+app for its abnormal-market consent disclosure; its disclosure strings were
+repointed to the marketing site, and the claim that consent *gates* offer
+creation was re-verified against the connected app, where the refusal
+actually lives. That correction matters on its own: the gate was previously
+attributed to the disclosure text, but text cannot gate anything — the
+validator refuses the form, and the accepted consent is recorded on-chain
+with the offer, so it is auditable on the position rather than only in a
+browser session.
+
 Three follow-ups are left open rather than folded in. The operator must
 create the app.vaipakam.com DNS binding and retire the four Workers whose
 sources are now gone (`vaipakam-defi`, `vaipakam-alpha`, `vaipakam-alpha01`,
