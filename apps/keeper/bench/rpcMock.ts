@@ -330,6 +330,13 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
     // transition this every-tick pass exists to perform (Codex #1945 r9).
     if (/getkeepertier/i.test(fnName)) return 2n;
 
+    // A preview/quote ERROR CODE of 0 means "no error / fillable". The matcher
+    // abandons a pair on any non-zero previewMatch.errorCode and the intent-fill
+    // pass abandons on any non-zero previewIntent code, so the 1e18 default made
+    // every preview look like an error and never reached matchOffers / matchIntent
+    // (Codex #1948 matcher).
+    if (/error_?code/i.test(p.name ?? '')) return 0n;
+
     // An ENUM is uint8 in practice, and a 1e18 enum silently discards work:
     // every mocked `getOffer` had `offerType = 1e18` while the matcher accepts
     // only 0 and 1, so the whole offer book was thrown away with no error
@@ -541,8 +548,12 @@ function answerCall(data: string, chainKey = ''): string {
     // 1e18 id matched no seeded row, so recordHfBandNotifications resolved no
     // recipient and never exercised its notification-row construction or its
     // batched writes (Codex #1948 liquidator r1).
+    // `getActiveOffersPaginated` is the same shape — a 1-based id list the
+    // matcher then hydrates via getOffer(id). Distinct sequential ids let
+    // getOffer split the book into lender/borrower buckets with distinct
+    // creators (Codex #1948 matcher).
     if (
-      /getactiveloanspaginated/i.test(fn.name) &&
+      /getactive(loans|offers)paginated/i.test(fn.name) &&
       /^u?int(256)?$/.test(inner.type)
     ) {
       return Array.from({ length: pageLen }, (_, i) => BigInt(pageOffset + i + 1));
@@ -563,6 +574,33 @@ function answerCall(data: string, chainKey = ''): string {
     }
     return Array.from({ length: pageLen }, () => defaultFor(inner, fn.name, chainKey));
   });
+
+  // getOffer(id): make the offer's identity depend on its id so the matcher's
+  // book splits into BOTH a lender and a borrower bucket with DISTINCT creators.
+  // The matcher needs a lender×borrower pair whose creators differ to clear the
+  // self-trade pre-filter and reach previewMatch / matchOffers; a constant
+  // offerType put every offer in one bucket and a constant creator made every
+  // pair a self-trade (Codex #1948 matcher). offerType alternates 0 (lender) /
+  // 1 (borrower) by id parity; creator is derived from the id.
+  if (/^getoffer$/i.test(fn.name) && fn.outputs.length === 1 && Array.isArray(values[0])) {
+    const comps = (fn.outputs[0] as { components?: readonly AbiParameter[] }).components;
+    if (comps) {
+      try {
+        const { args } = decodeFunctionData({ abi: [fn] as Abi, data: data as `0x${string}` });
+        const id = BigInt((args as readonly unknown[])[0] as bigint | number);
+        const tuple = values[0] as unknown[];
+        comps.forEach((c, i) => {
+          const n = c.name ?? '';
+          if (/^offertype$/i.test(n)) tuple[i] = id % 2n;
+          else if (/^id$/i.test(n)) tuple[i] = id;
+          else if (/^creator$/i.test(n)) tuple[i] = `0x${id.toString(16).padStart(40, '0')}`;
+        });
+      } catch {
+        /* undecodable id — leave the defaults */
+      }
+    }
+  }
+
   return encodeFunctionResult({
     abi: [fn] as Abi,
     functionName: fn.name,
