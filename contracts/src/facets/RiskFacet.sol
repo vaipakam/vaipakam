@@ -10,6 +10,8 @@ import {LibFacet} from "../libraries/LibFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
+import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {OracleFacet} from "./OracleFacet.sol";
@@ -819,6 +821,20 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             uint256 interestRecovered = allocated - loan.principal;
             if (interestRecovered > interestPortion) interestRecovered = interestPortion;
             (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
+            // #1383 — recovered interest IS lender interest and the frozen F2
+            // rule applies to every lender-yield settlement, so honor the
+            // lender's hold + Full stamps here too. Keyed on the CURRENT
+            // position-NFT holder: the Tier-2 consolidation above is
+            // skip-not-block, so `loan.lender` can be stale, and `claimAsLender`
+            // pays `ownerOf`. `lenderProceeds` is a RESIDUAL of the cut, so only
+            // the treasury term moves — folding `lenderExtra` in would
+            // double-count (see {LibLenderYieldFeeHost.resolve}).
+            (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
+                loanId,
+                LibERC721.ownerOf(loan.lenderTokenId),
+                interestRecovered,
+                treasuryInterestFee
+            );
             lenderProceeds = allocated - treasuryInterestFee;
         } else {
             lenderProceeds = allocated;
@@ -1192,6 +1208,15 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
             (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRepaid);
             principalRepaid = 0;
         }
+        // #1383 — one resolve for both branches above. Same rule as the
+        // terminal path; this entry does not end the loan but still takes the
+        // ordinary cut from the interest it recovers.
+        (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
+            loanId,
+            LibERC721.ownerOf(loan.lenderTokenId),
+            interestRepaid,
+            treasuryInterestFee
+        );
 
         // Partial can't fully retire principal — that's a full liquidation.
         // The keeper retries with `triggerLiquidation` which closes the
@@ -1210,11 +1235,47 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // do NOT write `s.lenderClaims[loanId]` — claims are reserved
         // for terminal events (the lender NFT is still Active, the
         // claim flow runs at proper close / full liquidation / default).
+        //
+        // #1383 — and BECAUSE no claim is written, the recipient here is the
+        // final word: there is no `ownerOf`-gated claim behind it to correct a
+        // stale address. This paid `loan.lender`, which the skip-not-block
+        // consolidation can leave pointing at the PREVIOUS lender — handing them
+        // the principal and interest outright, with nothing for the current
+        // holder to claim against. Every other recovery entry pairs its deposit
+        // with a `lenderClaims` write and is saved by that gate; this one is
+        // not, so it must pay the holder directly. This is misrouted principal,
+        // not a fee discount: it stands whatever is decided about whether
+        // recovered interest earns the Full bump.
         uint256 lenderProceeds = afterFees - treasuryInterestFee;
-        // #821 — vault-lock the lender's share (self-guards a zero amount).
-        LibSanctionedLock.depositLocked(
-            s, loan.lender, loanId, loan.principalAsset, lenderProceeds
-        );
+        // #1383 — pay-or-freeze through the #998 S10 Class B host rather than a
+        // raw locked deposit. Same shape as `RepayPeriodicFacet`'s
+        // auto-liquidation leg: an ACTIVE loan, funds already in the Diamond, no
+        // claim record behind it. The host resolves `ownerOf` itself, pays a
+        // clean holder directly, and FREEZES fail-closed (park into the stored
+        // lender's vault + `heldForLender` + encumber + marker) for a
+        // registry-flagged one.
+        //
+        // A raw `depositLocked(ownerOf(...))` was the first attempt and is
+        // WRONG here: `getOrCreateUserVault` refuses to mint a vault for a
+        // flagged wallet (`SanctionedRecipientHasNoVault`), so a flagged holder
+        // who never opened one would revert the liquidation outright — blocking
+        // a close-out, which is exactly what Tier-2 handling exists to avoid.
+        // Paying the stale `loan.lender` instead was the original bug.
+        //
+        // `deliveredThroughAt` is 0: this payout settles no interest period, and
+        // the host's NatSpec asks for 0 from such callers.
+        if (lenderProceeds > 0) {
+            LibFacet.crossFacetCall(
+                abi.encodeWithSelector(
+                    EncumbranceMutateFacet.freezeOrPayActiveLenderResident.selector,
+                    loanId,
+                    loan.principalAsset,
+                    lenderProceeds,
+                    uint256(0)
+                ),
+                bytes4(0)
+            );
+        }
 
         // #395 (Codex r1 P1 #2) — snapshot the PRE-partial position value
         // BEFORE the mutation below. The dust waiver keys off this pre-existing
@@ -1531,6 +1592,14 @@ contract RiskFacet is DiamondReentrancyGuard, DiamondPausable, DiamondAccessCont
         // the liquidator's compensation, paid in collateral, not a
         // separate principal-asset bonus.
         (uint256 treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestPortion);
+        // #1383 — same rule as the atomic path. Separately gated entry, easy to
+        // miss because it sits beside the ordinary one.
+        (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
+            loanId,
+            LibERC721.ownerOf(loan.lenderTokenId),
+            interestPortion,
+            treasuryInterestFee
+        );
         uint256 lenderProceeds = totalDebt - treasuryInterestFee;
 
         address treasury = s.treasury;

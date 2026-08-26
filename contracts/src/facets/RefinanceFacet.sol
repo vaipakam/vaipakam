@@ -423,11 +423,32 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
         // #1354 §F2 / #1383 — eligibility is `consent OR lenderMode == Full` (a
         // Full lender earns the +10% even without hold-discount consent). The
         // shared resolve helper runs the whole VPFI-payment-then-direct-reduction
-        // delivery against `oldLoan` (consolidated to the current lender holder
-        // earlier in the refinance), returning the deltas to fold in.
+        // delivery, returning the deltas to fold in.
+        //
+        // #1947 — keyed EXPLICITLY on the current position-NFT holder. This used
+        // the `resolveLenderYieldFee(oldLoan, ...)` form, which resolves
+        // `oldLoan.lender` internally, on the stated grounds that the refinance
+        // had consolidated the slot to the current holder earlier. It attempts
+        // that consolidation, but the consolidation is Tier-2 *skip-not-block*:
+        // it declines rather than reverting for a sanctioned holder or an
+        // excluded lender state, so a call to it is NOT proof the field is
+        // fresh. On a transferred position that fell through the skip, the
+        // stale address priced the discount off the PREVIOUS lender's hold tier
+        // and — once the peg is set — debited that party's VPFI vault for a
+        // reduction the buyer receives.
+        // Held in a local because the analytics passthrough below must name the
+        // SAME party: this facet calls the library directly rather than through
+        // `VPFIDiscountFacet`, so unlike every other settlement path it emits
+        // its own `emitYieldFeeDiscountApplied` and has to carry the settling
+        // lender to it. Reporting `oldLoan.lender` there while charging the
+        // holder here would have indexers attribute the VPFI debit to the
+        // previous lender — precisely the transferred-position case this fix is
+        // about (Codex #1953 r1 P2).
+        address settlingLender = LibERC721.ownerOf(oldLoan.lenderTokenId);
         (uint256 lenderExtra, uint256 newTreasuryFee, uint256 yieldVpfiDeducted) =
-            LibVPFIDiscount.resolveLenderYieldFee(
+            LibVPFIDiscount.resolveLenderYieldFeeFor(
                 oldLoan,
+                settlingLender,
                 interestPortion,
                 treasuryFee
             );
@@ -866,7 +887,7 @@ contract RefinanceFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 abi.encodeWithSelector(
                     VPFIDiscountFacet.emitYieldFeeDiscountApplied.selector,
                     oldLoanId,
-                    oldLoan.lender,
+                    settlingLender,
                     oldLoan.principalAsset,
                     yieldVpfiDeducted
                 ),
