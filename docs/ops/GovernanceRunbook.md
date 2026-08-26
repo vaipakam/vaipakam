@@ -1537,17 +1537,27 @@ script does not broadcast either. So an operator who arms and then waits for
 mirrors to show `D*` can wait until the cutover day arrives with every mirror
 still unarmed.
 
-After arming, drive the cycle explicitly: finalize a day that has not yet been
-applied on the mirrors, **remit that day to every destination and wait for each
-mirror to CONFIRM receipt**, and only then call the payable `broadcastGlobal` (or
-`broadcastGlobalTo` per destination) and pay the transport fee.
+**⛔ FIRST, the prohibition that governs everything in this step.** The broadcast
+entry points are PERMISSIONLESS with respect to the caller, and on a mesh where
+ANY historically reachable mirror lacks the #1566 fix an early broadcast pays a
+claimant out of borrower collateral rather than reverting. **Do not run the cycle
+below, and do not unpause the reward messenger, while that is true of any such
+mirror** — see "the one safe branch" and the dead-end list further down, which
+record five procedures that were each tried against this and refuted. The cycle
+below is for a mesh where every reachable mirror carries #1566.
 
-**The broadcast is permissionless, so your ordering is not enforced.** Anyone
-willing to pay the CCIP fee can broadcast a newly finalized day between your
-remit submission and its arrival, opening the mirror's claim gate early. You
-cannot prevent that — you can only shrink the window by finalizing and remitting
-close together and confirming receipts promptly — so treat the order as your
-intent rather than a guarantee.
+On such a mesh, drive the cycle explicitly after arming: finalize a day that has
+not yet been applied on the mirrors, **remit that day to every destination and
+wait for each mirror to CONFIRM receipt**, and only then call the payable
+`broadcastGlobal` (or `broadcastGlobalTo` per destination) and pay the transport
+fee.
+
+**Your ordering is not enforced.** Anyone willing to pay the CCIP fee can
+broadcast a newly finalized day between your remit submission and its arrival,
+opening the mirror's claim gate early. Shortening the window by finalizing and
+remitting close together helps and does not close it — and an earlier revision of
+this paragraph presented shortening as the whole remedy, which is only tolerable
+on a #1566-fixed mesh where the residue is an empty balance.
 
 **The propagation day must have fully ELAPSED, not merely be numerically below
 `D*`.** The force-finalization path does not check the reward clock, so "a day
@@ -1649,9 +1659,18 @@ DEAD-END LIST so the next person does not re-derive them under time pressure:
 | Contain the destination's claim path meanwhile | `AdminFacet.pause()` is the Diamond's single global flag: `claimInteractionRewards` and `onRewardBudgetReceived` are BOTH `whenNotPaused`, so pausing claims also blocks the remittance receipt. "Wait until every pending day is funded" is unreachable — funding cannot land while claims are stopped, and unpausing to admit it re-opens the race. |
 | Safe-only executor + fresh reconciliation before execution | Restricting the executor controls only WHO unpauses. It does not make reconciliation and unpause atomic, and `finalizeDay` — permissionless and not routed through the paused messenger — lets a new unfunded day be created after the inventory, including by front-running the Safe's own unpause. |
 
-**So there is ONE safe branch on a mirror where #1566 is not deployed: keep the
-reward messenger PAUSED, and do not run the post-arm propagation to that mirror
-until #1566 or a day-scoped protocol gate lands there (#1944).** That is
+**So there is ONE safe branch, and it is MESH-WIDE rather than per-mirror: while
+ANY historically reachable mirror lacks #1566, keep the reward messenger PAUSED
+for the whole mesh and run no post-arm propagation at all until every such mirror
+is fixed or covered by a day-scoped protocol gate (#1944).**
+
+It cannot be scoped to the unfixed mirror, and an earlier revision implied it
+could. The sender's pause is GLOBAL — unpausing it to serve the fixed mirrors
+re-enables every broadcast entry point at once. And `broadcastGlobalTo` does not
+consult `getBroadcastDestinations()`: it takes `destChainId` as a parameter,
+asserts only that the day has standing there, and sends. So dropping an unfixed
+mirror from the destination list does not protect it — anyone can target it
+directly for any day with historical standing.** That is
 expensive — it stops all reward messaging on that messenger and leaves the mirror
 unarmed — and it is the only option in the list above that does not fail to an
 argument already written down. Prefer arming a mesh whose mirrors carry the
