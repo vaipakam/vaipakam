@@ -47,6 +47,28 @@ function rowsFor(table: string): Record<string, unknown>[] {
         // (Codex #1945 r5).
         notify_maturity_approaching: 1,
       }));
+    case 'loans':
+    case 'offers':
+      // fetchTrackedAssets (dailyOracleSnapshot) UNIONs lending_asset /
+      // collateral_asset from loans + offers into a single `asset` projection,
+      // filtered by chain_id. This stub returns raw rows without evaluating the
+      // SELECT projection, so the row must carry `asset` DIRECTLY (the outer
+      // column the pass reads) alongside chain_id for the bind filter. Without a
+      // seed here the daily snapshot found no tracked assets and captureForChain
+      // exited before creating clients / signing / submitting — the pass showed
+      // zero RPCs and NOT MEASURED (Codex #1945 r6). The extra loan columns
+      // (loan_id / borrower / borrower_current_owner) let the hf-band loans
+      // reader see rows too; chain_id = 84532 scopes them to the canonical
+      // fixture chain, same as user_thresholds.
+      return Array.from({ length: ROWS }, (_, i) => ({
+        chain_id: 84532,
+        asset: WALLET(i + 1),
+        lending_asset: WALLET(i + 1),
+        collateral_asset: WALLET(i + 100),
+        loan_id: i + 1,
+        borrower: WALLET(i + 1),
+        borrower_current_owner: WALLET(i + 1),
+      }));
     default:
       // Unrecognised: empty. The pass will do nothing, and the runner will
       // say so rather than calling it cheap.

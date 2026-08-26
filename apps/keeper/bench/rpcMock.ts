@@ -78,6 +78,17 @@ export function resetPages(): void {
 }
 
 const ADDRESS = '0x1111111111111111111111111111111111111111' as const;
+// A loan's asset pair must NOT collide with the generic offer-book asset
+// (`ADDRESS`), or preGraceWatcher's viable-lender pre-check finds a match and
+// skips the warning before `ownerOf` / dispatch — leaving the notification
+// half unmeasured (Codex #1945 r6). `getLoanDetails` is the only reader that
+// compares an asset it fetched against the offer book.
+const ADDRESS_ALT = '0x2222222222222222222222222222222222222222' as const;
+// The pre-grace borrower resolved by `ownerOf` must be a SEEDED subscriber or
+// `checkLoan` returns at `subsByWallet.get(...)`. This is `WALLET(0)` from
+// bench/d1Stub.ts (`0x…01`), so the seeded `user_thresholds` row is found and
+// the throttle / format / state-write path runs (Codex #1945 r6).
+const SUBSCRIBER = '0x0000000000000000000000000000000000000001' as const;
 
 /**
  * Multicall3's `aggregate3`, which viem uses for `publicClient.multicall`.
@@ -190,7 +201,15 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
     const comps = (p as { components?: readonly AbiParameter[] }).components ?? [];
     return comps.map((c) => defaultFor(c, fnName, chainKey));
   }
-  if (t === 'address') return ADDRESS;
+  if (t === 'address') {
+    // `ownerOf` resolves the borrower NFT holder; it must be a seeded
+    // subscriber so preGraceWatcher's notification half runs (Codex #1945 r6).
+    if (/ownerof/i.test(fnName)) return SUBSCRIBER;
+    // A loan's own asset pair is deliberately OFF the offer-book asset so the
+    // viable-lender pre-check does not skip the warning (Codex #1945 r6).
+    if (/getloandetails/i.test(fnName)) return ADDRESS_ALT;
+    return ADDRESS;
+  }
   if (t === 'bool') {
     // A blanket `false` closes every on-chain gate, so a pass returns after
     // one RPC per chain and — because its RPC count is non-zero — is reported
@@ -256,6 +275,15 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
       // sign / submit, leaving the liquidation path unmeasured even with at-risk
       // loans (Codex #1945 r5). Other enums (offerType etc.) keep the in-range
       // ENUM_VALUE the matcher accepts.
+      // A remit reservation's ACTIONABLE status is 1 (Pending): remitAck treats
+      // status 0 as terminal tail and 2/3 as already-acked, doing its
+      // receipt / quote / sign / ack-send work ONLY on Pending. A blanket
+      // status 0 left all 200 reservations looking terminal and the ack half
+      // unmeasured (Codex #1945 r6). Loan status / asset type stay 0
+      // (Active / ERC20).
+      if (/^status$/i.test(p.name ?? '') && /remit|reservation/i.test(fnName)) {
+        return 1n;
+      }
       if (/^status$|asset_?type|assetkind/i.test(p.name ?? '')) {
         return 0n;
       }
@@ -275,6 +303,16 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
       /chain|^dst$|^src$|dest|source/i.test(p.name ?? '') ||
       /chainids?|sourcechain|broadcastdest|destination|expectedsource|remotechain/i.test(fnName)
     ) {
+      // `getExpectedSourceChainIds` enumerates the REMOTE reward mirrors, and
+      // rewardBudgetRemit drops the local (Base) id before planning; if every
+      // element is Base the mirror list is empty and it exits before a single
+      // remittance (Codex #1945 r6). For the expected-source / mirror topology
+      // return a non-Base configured mirror; a scalar chain-id (dst / src /
+      // localChainId) stays the canonical fixture chain so the mirror-config
+      // lookup that drives remitAck still resolves.
+      if (/expectedsource|sourcechain|broadcastdest|remotechain|mirror/i.test(fnName)) {
+        return 421614n; // Arbitrum Sepolia — a configured non-Base mirror
+      }
       return 84532n;
     }
     // A HEALTH FACTOR must come back BELOW the 1e18 liquidation line, or
@@ -284,6 +322,18 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
     // 0.95e18 flags every scanned loan as liquidatable.
     if (/healthfactor/i.test(fnName) || /^hf$|healthfactor/i.test(p.name ?? '')) {
       return 950_000_000_000_000_000n;
+    }
+    // Loan TIME fields must place `endTime = startTime + durationDays*86400`
+    // INSIDE preGraceWatcher's 24h pre-grace window, or `checkLoan` returns at
+    // the window test before `ownerOf` and the notification path (Codex #1945
+    // r6). durationDays = 1 with startTime 12h ago puts endTime 12h out — past
+    // `now`, inside the 24h window. (Date.now is real for this pass; it is only
+    // pinned for the daily-window pass, which reads no loan times.)
+    if (/^durationdays?$|^termdays?$/i.test(p.name ?? '')) {
+      return 1n;
+    }
+    if (/^starttime$/i.test(p.name ?? '')) {
+      return BigInt(Math.floor(Date.now() / 1000) - 12 * 60 * 60);
     }
     // Non-trivial magnitude otherwise: a zero everywhere would let a pass
     // early-return on "nothing to do" and profile as free, which is the
