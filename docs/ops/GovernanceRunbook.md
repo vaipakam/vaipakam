@@ -139,6 +139,24 @@ For each 2-step target, from the Governance Safe UI:
 Repeat for every 2-step target on the chain. These can be batched into
 a single Safe multi-send to avoid N separate signing ceremonies.
 
+**And the CCT administrator, which is NOT an `acceptOwnership()` call.** Where
+`CCIP_TOKEN_ADMIN_REGISTRY` is configured, `Handover.s.sol` also runs
+`transferAdminRole` on the CCIP `TokenAdminRegistry` for VPFI — a two-step
+transfer on a different contract, with a different accept function. Schedule and
+execute it the same way, with the registry as the target:
+
+```
+TimelockController.schedule(
+  target = <CCIP TokenAdminRegistry>,
+  data   = acceptAdminRole(<vpfiToken>),
+  ... same predecessor / salt / 48h delay as above)
+```
+
+Miss this and step 6's administrator readback fails with no step in this runbook
+able to fix it — the deployer stays administrator and can still call `setPool` on
+the live VPFI token. It batches into the same multi-send as the ownership
+acceptances.
+
 ### 6. Readback verification
 
 Per chain, confirm:
@@ -174,6 +192,15 @@ Ownable2Step(target).pendingOwner()             == address(0)
 //   must be followed by OwnershipTransferred(from, to) with the SAME `to`
 //   and no later Requested event outstanding.
 // Both events are emitted by that base, so this is decidable from the chain.
+//
+// ONE terminal exception: `to == address(0)` is how an outstanding pool
+// handover is CANCELLED. Chainlink's `_transferOwnership` rejects only
+// `to == msg.sender`, so zero is stored and a Requested event is emitted —
+// and no Transferred can ever follow it, because address(0) cannot call
+// `acceptOwnership()`. A last Requested naming zero, together with
+// `owner() == timelock`, is therefore a SAFE cleared state, not an
+// unfinished one. Requiring a matching Transferred for every request would
+// make a correctly cancelled transfer unpassable.
 
 // guardian() ONLY where the contract carries GuardianPausable.
 // `VpfiPoolRateGovernor` does NOT — it is Ownable2Step alone, and its owner

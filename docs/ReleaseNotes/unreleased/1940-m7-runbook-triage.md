@@ -148,6 +148,34 @@ whatever it carries, to the replacement — the exact outcome the drain exists t
 prevent. The only terminal state is a delivery that succeeded, and the procedure
 now says so.
 
+Three more followed, and one of them moved this work out of documentation for
+the first time.
+
+The procedure had grown a check with no step able to satisfy it. The separate
+handover of the right to designate the token's transfer pool has a second leg,
+on a different contract and with a different name from all the others, and the
+step that walks an operator through completing handovers only ever mentioned the
+common one. So the new verification would correctly report the problem and leave
+the operator with nothing in the document to do about it. That second leg is now
+written out where the others are.
+
+The instruction for reading the one contract whose pending owner cannot be read
+directly needed an exception. Cancelling an outstanding handover there is done by
+requesting a transfer to nobody — which is recorded like any other request, and
+can never be followed by a completion, because nobody cannot accept. Read
+literally, the rule would have failed a contract whose handover had been safely
+cancelled. That case is now named as a settled one.
+
+And the test that the procedure names as its pre-release gate did not test any of
+this. Its stand-ins were two contracts of one shape; it never checked whether
+anyone was still waiting to take ownership, never included a contract without a
+pause guardian, never covered the one whose pending owner is unreadable, and did
+not know about the pool-designation handover at all. It now carries all four
+shapes and asserts each of the readbacks this work added — and, deliberately, the
+before-state as well, so a passing run is known to mean the checks can fail.
+Removing either newly added completion step from the simulated handover was
+confirmed to turn the relevant assertions red.
+
 All of this is read back before the switch, in the same pass that already
 verifies the wiring rather than the components, and the design record carries the
 same additions so the two documents do not drift apart.

@@ -49,6 +49,13 @@ contract GovernanceHandoverTest is Test {
     CrossChainGuardianHarness internal oappA; // stand-in for a cross-chain contract
     CrossChainGuardianHarness internal oappB; // stand-in for a 2nd cross-chain contract
     OwnableERC20Stub internal vpfiToken; // stand-in for VPFIToken (Ownable2Step)
+    // The three authority shapes the runbook's step-6 readbacks must cover and
+    // this harness did not (Codex #1941 r4-r6): a target with no guardian, a
+    // target whose pending owner CANNOT be read, and the CCT administrator —
+    // a separate two-step transfer on a different contract.
+    PlainOwnable2StepHarness internal rateGovernor;
+    ChainlinkStyleOwnable2StepHarness internal tokenPool;
+    TokenAdminRegistryStub internal cctRegistry;
 
     // ─── Setup ──────────────────────────────────────────────────────────────
 
@@ -73,6 +80,10 @@ contract GovernanceHandoverTest is Test {
         oappA = _deployOappHarness(deployer);
         oappB = _deployOappHarness(deployer);
         vpfiToken = new OwnableERC20Stub(deployer);
+        rateGovernor = new PlainOwnable2StepHarness(deployer);
+        tokenPool = new ChainlinkStyleOwnable2StepHarness(deployer);
+        cctRegistry = new TokenAdminRegistryStub();
+        cctRegistry.seed(address(vpfiToken), deployer);
 
         // Timelock with Safe as proposer + executor. Minimum delay 1h
         // compressed from the 48h production default so the test doesn't
@@ -164,6 +175,9 @@ contract GovernanceHandoverTest is Test {
         oappB.setGuardian(guardianSafe);
         oappB.transferOwnership(address(timelock));
         vpfiToken.transferOwnership(address(timelock));
+        rateGovernor.transferOwnership(address(timelock));
+        tokenPool.transferOwnership(address(timelock));
+        cctRegistry.transferAdminRole(address(vpfiToken), address(timelock));
         vm.stopPrank();
     }
 
@@ -183,6 +197,27 @@ contract GovernanceHandoverTest is Test {
         vm.stopPrank();
     }
 
+    /// @dev The CCT administrator's second leg is `acceptAdminRole(token)` on
+    ///      the REGISTRY — a different target and a different selector from
+    ///      every `acceptOwnership()` above. Scheduling only the ownership
+    ///      accepts leaves the deployer administrator and still able to call
+    ///      `setPool` on the live token, which is what the runbook's step 5
+    ///      omitted until #1941 r6.
+    function _runSafeScheduledAcceptAdminRole(address token) internal {
+        bytes memory data = abi.encodeWithSignature("acceptAdminRole(address)", token);
+        bytes32 salt = keccak256(abi.encode(address(cctRegistry), token, block.number));
+
+        vm.startPrank(governanceSafe);
+        timelock.schedule(address(cctRegistry), 0, data, bytes32(0), salt, 1 hours);
+        vm.stopPrank();
+
+        vm.warp(block.timestamp + 1 hours + 1);
+
+        vm.startPrank(governanceSafe);
+        timelock.execute(address(cctRegistry), 0, data, bytes32(0), salt);
+        vm.stopPrank();
+    }
+
     function _runFullHandover() internal {
         _runGrantOpsRoles();
         _runTransferAdminToTimelock();
@@ -190,6 +225,9 @@ contract GovernanceHandoverTest is Test {
         _runSafeScheduledAcceptOwnership(address(oappA));
         _runSafeScheduledAcceptOwnership(address(oappB));
         _runSafeScheduledAcceptOwnership(address(vpfiToken));
+        _runSafeScheduledAcceptOwnership(address(rateGovernor));
+        _runSafeScheduledAcceptOwnership(address(tokenPool));
+        _runSafeScheduledAcceptAdminRole(address(vpfiToken));
     }
 
     // ─── Readback invariants (match GovernanceRunbook.md step 6) ────────────
@@ -246,6 +284,82 @@ contract GovernanceHandoverTest is Test {
         _runFullHandover();
         assertEq(oappA.guardian(), guardianSafe);
         assertEq(oappB.guardian(), guardianSafe);
+    }
+
+    /// @notice Step 6 requires `pendingOwner() == address(0)` on every OZ
+    ///         two-step target, not just `owner() == timelock`. A completed
+    ///         transfer clears the pending owner, so a NON-ZERO one means a
+    ///         handover is still open and that address can `acceptOwnership()`
+    ///         at any later moment — holding every setter and the UUPS upgrade
+    ///         authority. `owner() == timelock` is true of that state too, which
+    ///         is why the owner check alone cannot catch it (Codex #1941 r3).
+    function test_EveryOZTarget_HasNoPendingOwner() public {
+        _runFullHandover();
+        assertEq(oappA.pendingOwner(), address(0), "oappA pending");
+        assertEq(oappB.pendingOwner(), address(0), "oappB pending");
+        assertEq(vpfiToken.pendingOwner(), address(0), "vpfiToken pending");
+        assertEq(rateGovernor.pendingOwner(), address(0), "rateGovernor pending");
+    }
+
+    /// @notice The non-guardian target is covered by the SAME assertions. It
+    ///         exists because scoping them to "the GuardianPausable contracts"
+    ///         exempted the one contract whose owner sets every lane's rate
+    ///         limits and authorizes UUPS upgrades (Codex #1941 r4).
+    function test_NonGuardianTarget_IsFullyHandedOver() public {
+        _runFullHandover();
+        assertEq(rateGovernor.owner(), address(timelock), "rateGovernor owner");
+        assertEq(rateGovernor.pendingOwner(), address(0), "rateGovernor pending");
+    }
+
+    /// @notice A dangling first leg must be VISIBLE. Reverting the accept for
+    ///         one target leaves `owner() == timelock` false and the pending
+    ///         owner set — the state the gate has to reject rather than accept.
+    ///         Without this the pendingOwner assertions above could pass
+    ///         vacuously on a harness that never creates a pending owner at all.
+    function test_PendingOwner_IsNonZeroBeforeAccept() public {
+        _runGrantOpsRoles();
+        _runTransferAdminToTimelock();
+        _runMigrateOAppGovernance();
+        // Deliberately NOT running the accepts.
+        assertEq(rateGovernor.pendingOwner(), address(timelock), "pending must be set");
+        assertEq(rateGovernor.owner(), deployer, "owner must still be deployer");
+    }
+
+    /// @notice The Chainlink-shaped pool has NO `pendingOwner()` getter — its
+    ///         `s_pendingOwner` is private — so step 6 establishes its state
+    ///         from `owner()` plus the ownership event log instead. Pinning the
+    ///         shape here means the gate fails if the runbook is ever
+    ///         "simplified" back to a blanket `pendingOwner()` call, which
+    ///         reverts on this target (Codex #1941 r5).
+    function test_ChainlinkStylePool_HasNoPendingOwnerGetter() public {
+        _runFullHandover();
+        assertEq(tokenPool.owner(), address(timelock), "pool owner");
+        (bool ok, ) = address(tokenPool).staticcall(abi.encodeWithSignature("pendingOwner()"));
+        assertFalse(ok, "pool must NOT expose pendingOwner() - the runbook's log path exists for this");
+    }
+
+    /// @notice The CCT administrator is a SEPARATE two-step transfer on a
+    ///         different contract with a different accept selector. Miss its
+    ///         second leg and the deployer stays administrator and can still
+    ///         call `setPool` on the live token, while every ownership readback
+    ///         passes (Codex #1941 r5/r6).
+    function test_CctAdministrator_IsTimelockWithNothingPending() public {
+        _runFullHandover();
+        TokenAdminRegistryStub.TokenConfig memory cfg = cctRegistry.getTokenConfig(address(vpfiToken));
+        assertEq(cfg.administrator, address(timelock), "cct administrator");
+        assertEq(cfg.pendingAdministrator, address(0), "cct pending administrator");
+    }
+
+    /// @notice And the same state before the accept, so the assertion above is
+    ///         known to be capable of failing rather than passing on a registry
+    ///         that was never transferred.
+    function test_CctAdministrator_IsPendingBeforeAccept() public {
+        _runGrantOpsRoles();
+        _runTransferAdminToTimelock();
+        _runMigrateOAppGovernance();
+        TokenAdminRegistryStub.TokenConfig memory cfg = cctRegistry.getTokenConfig(address(vpfiToken));
+        assertEq(cfg.administrator, deployer, "administrator still deployer");
+        assertEq(cfg.pendingAdministrator, address(timelock), "timelock pending");
     }
 
     function test_VPFIToken_OwnerIsTimelock() public {
@@ -427,5 +541,105 @@ contract OwnableERC20Stub is Ownable2StepUpgradeable {
         // transfer/accept semantics still work against this direct-
         // initialized owner.
         _transferOwnership(owner_);
+    }
+}
+
+/**
+ * @dev A handover target with NO guardian — `VpfiPoolRateGovernor`'s shape.
+ *      It exists because scoping the ownership assertions to "the
+ *      GuardianPausable contracts" silently exempted the one contract whose
+ *      owner sets every lane's rate limits and authorizes UUPS upgrades
+ *      (Codex #1941 r4). Without a non-guardian target in this harness, that
+ *      scoping bug passes the gate.
+ */
+contract PlainOwnable2StepHarness is Ownable2StepUpgradeable {
+    constructor(address owner_) {
+        _transferOwnership(owner_);
+    }
+}
+
+/**
+ * @dev CHAINLINK's two-step ownership shape, which the CCIP `TokenPool` uses
+ *      via `Ownable2StepMsgSender`: the pending owner is PRIVATE and there is
+ *      no `pendingOwner()` getter, so an OZ-style readback REVERTS on it and
+ *      the state is only observable from the events (Codex #1941 r5).
+ *
+ *      Deliberately a re-implementation rather than an import: the point is to
+ *      pin the SHAPE the runbook must cope with — a target whose pending owner
+ *      cannot be read — so the gate fails if someone "simplifies" the runbook
+ *      back to a blanket `pendingOwner()` call.
+ */
+contract ChainlinkStyleOwnable2StepHarness {
+    address private s_owner;
+    address private s_pendingOwner;
+
+    event OwnershipTransferRequested(address indexed from, address indexed to);
+    event OwnershipTransferred(address indexed from, address indexed to);
+
+    error MustBeProposedOwner();
+    error OnlyCallableByOwner();
+    error CannotTransferToSelf();
+
+    constructor(address owner_) {
+        s_owner = owner_;
+    }
+
+    function owner() external view returns (address) {
+        return s_owner;
+    }
+
+    function transferOwnership(address to) external {
+        if (msg.sender != s_owner) revert OnlyCallableByOwner();
+        if (to == msg.sender) revert CannotTransferToSelf();
+        // NOTE: zero is PERMITTED — that is how an outstanding transfer is
+        // cancelled, and it emits a Requested event that can never be
+        // followed by a Transferred.
+        s_pendingOwner = to;
+        emit OwnershipTransferRequested(s_owner, to);
+    }
+
+    function acceptOwnership() external {
+        if (msg.sender != s_pendingOwner) revert MustBeProposedOwner();
+        address old = s_owner;
+        s_owner = msg.sender;
+        s_pendingOwner = address(0);
+        emit OwnershipTransferred(old, msg.sender);
+    }
+}
+
+/**
+ * @dev The CCIP `TokenAdminRegistry` administrator surface. A SEPARATE
+ *      two-step transfer from any ownership handover, with its own accept
+ *      function on a different contract — which is exactly why it was missed
+ *      (Codex #1941 r5/r6).
+ */
+contract TokenAdminRegistryStub {
+    struct TokenConfig {
+        address administrator;
+        address pendingAdministrator;
+    }
+
+    mapping(address => TokenConfig) private configs;
+
+    error OnlyAdministrator();
+    error OnlyPendingAdministrator();
+
+    function seed(address token, address administrator_) external {
+        configs[token].administrator = administrator_;
+    }
+
+    function getTokenConfig(address token) external view returns (TokenConfig memory) {
+        return configs[token];
+    }
+
+    function transferAdminRole(address token, address to) external {
+        if (msg.sender != configs[token].administrator) revert OnlyAdministrator();
+        configs[token].pendingAdministrator = to;
+    }
+
+    function acceptAdminRole(address token) external {
+        if (msg.sender != configs[token].pendingAdministrator) revert OnlyPendingAdministrator();
+        configs[token].administrator = msg.sender;
+        configs[token].pendingAdministrator = address(0);
     }
 }
