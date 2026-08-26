@@ -113,6 +113,8 @@ type Row = {
   errors: number;
   hung: number;
   unbounded: boolean;
+  /** Failures during the untimed warm-up — a pass that only ever fails. */
+  warmUpErrors: number;
 };
 
 async function main(): Promise<void> {
@@ -157,7 +159,6 @@ async function main(): Promise<void> {
   for (const pass of selected) {
     const samples: number[] = [];
     let errors = 0;
-    const rpcBefore = rpcStats.calls;
 
     // BOTH streams. Several passes report caught RPC failures through
     // console.WARN — preGraceWatcher warns on count, page and offer-hydration
@@ -179,6 +180,15 @@ async function main(): Promise<void> {
     resetPages();
     resetD1();
     await cpuMs(() => pass.run(makeEnv()));
+
+    // Counters start AFTER the warm-up. Including it double-counted every
+    // figure — `watcher` reported 3,120 calls for a pass that makes 1,560,
+    // exactly 2x — which is the same shape of self-inflicted wrong number
+    // this harness keeps producing, so it is fixed before the numbers are
+    // published rather than after.
+    const warmUpErrors = errors;
+    errors = 0;
+    const rpcBefore = rpcStats.calls;
 
     let hung = 0;
     let unbounded = false;
@@ -210,6 +220,7 @@ async function main(): Promise<void> {
       errors: errors / Math.max(samples.length, 1),
       hung,
       unbounded,
+      warmUpErrors,
     });
   }
 
@@ -289,6 +300,16 @@ async function main(): Promise<void> {
         stuck.map((r) => r.name).join('\n  ') +
         '\n  Almost always a fixture bug — an unbounded loop the mock feeds ' +
         'forever — not a slow pass.\n',
+    );
+  }
+
+  const warmOnly = rows.filter((r) => r.errors === 0 && r.warmUpErrors > 0);
+  if (warmOnly.length > 0) {
+    console.log(
+      'PASSES THAT FAILED ONLY DURING WARM-UP (still a floor — the warm-up is\n' +
+        'a real invocation, and a pass that fails there did not do its work):\n  ' +
+        warmOnly.map((r) => `${r.name} (${r.warmUpErrors})`).join('\n  ') +
+        '\n',
     );
   }
 
