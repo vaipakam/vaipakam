@@ -1466,7 +1466,14 @@ needed because the two entry points differ: `broadcastGlobalTo` calls
 `_assertDayStanding`, so historical standing is what makes a REMOVED mirror
 targetable — but `broadcastGlobal` fans out to the CURRENT destination list and
 calls no such assertion, so a newly added or dark mirror with no history at all
-is reachable simply by being on the list. An earlier revision defined
+is reachable simply by being on the list.
+
+The historical disjunct needs one more qualifier: `broadcastGlobalTo` checks
+`dayLapseClock[dayId].finalizedAt` FIRST and reverts `DayHasNoLapseClock`, so
+standing that exists only on days finalized before the V3 lapse-clock upgrade
+does not make a REMOVED mirror targetable at all. Require a standing day that can
+pass that gate; otherwise a mirror with nothing but pre-upgrade history would
+hold the mesh paused over a broadcast that cannot be sent. An earlier revision defined
 reachability on standing alone and would have permitted unpausing with exactly
 that mirror exposed. **Do not run the cycle
 below, and do not unpause the reward messenger, while that is true of any such
@@ -1563,7 +1570,9 @@ script does not broadcast either. So an operator who arms and then waits for
 mirrors to show `D*` can wait until the cutover day arrives with every mirror
 still unarmed.
 
-**On a mesh where every reachable mirror carries #1566**, drive the cycle explicitly after arming: finalize a day that has
+**On a mesh where every reachable mirror enforces the per-day funding property**
+(not merely "has #1566" — see the warning further down), drive the cycle
+explicitly after arming: finalize a day that has
 not yet been applied on the mirrors, **remit that day to every destination and
 wait for each mirror to CONFIRM receipt**, and only then call the payable
 `broadcastGlobal` (or `broadcastGlobalTo` per destination) and pay the transport
@@ -1650,7 +1659,20 @@ about pausing and unpausing applies ONLY to a mirror that already carries the
 arrives rather than paying them out of borrower collateral. Read the dead-end
 list before reaching for any of it.
 
-**On a #1566-FIXED mirror, the messenger pause is a usable gate.**
+**⚠ "#1566 deployed" is NOT the same as the property this scoping needs.** What
+makes an early broadcast survivable is a per-day funding property: *a claim
+against a day whose budget has not arrived cannot consume value belonging to
+anything else.* #1566 does not specify that.
+`Vpfi1566CanonicalDeliveredBoundDesign.md` leaves options B–E open, and only some
+deliver it — Option C, for instance, closes the gap by earmarking the USER-OWNED
+custody classes, which protects borrower collateral while still letting such a
+claim consume another day's reward funding, payroll custody, escrowed value or
+newly minted supply. Before treating any mirror as out of the block, confirm the
+DEPLOYED fix enforces the per-day property; where it only protects a subset of
+owners, containment stays for cross-day funding corruption even though borrower
+collateral is safe.
+
+**Where that property IS enforced, the messenger pause is a usable gate.**
 `VaipakamRewardMessenger` is `GuardianPausable` — `pause()` is guardian-or-owner
 — and every V2/V3 broadcast sender on it is `whenNotPaused`, while reward-budget
 remittance and receipt run over the SEPARATE `crossChainMessenger` /
@@ -1677,9 +1699,21 @@ DEAD-END LIST so the next person does not re-derive them under time pressure:
 | Safe-only executor + fresh reconciliation before execution | Restricting the executor controls only WHO unpauses. It does not make reconciliation and unpause atomic, and `finalizeDay` — permissionless and not routed through the paused messenger — lets a new unfunded day be created after the inventory, including by front-running the Safe's own unpause. |
 
 **So there is ONE safe branch, and it is MESH-WIDE rather than per-mirror: while
-ANY historically reachable mirror lacks #1566, keep the reward messenger PAUSED
-for the whole mesh and run no post-arm propagation at all until every such mirror
-is fixed or covered by a day-scoped protocol gate (#1944).**
+ANY REACHABLE mirror lacks the per-day funding property below, keep the reward
+messenger PAUSED for the whole mesh, reconcile every outstanding broadcast
+message to a terminal state, and run no post-arm propagation at all.**
+
+Three parts, and each was added because leaving it out was tried:
+
+- **REACHABLE** is the full definition — a live outbound lane AND (current
+  `getBroadcastDestinations()` membership OR historical day standing on a day
+  that can pass the V3 lapse-clock gate). Not "historically reachable": the
+  fan-out form reaches current-list members with no history at all.
+- **Terminal reconciliation is part of the branch, not a footnote.** The pause
+  does not reach a broadcast already dispatched, and pausing the destination's
+  ingress leaves it failed and manually re-executable rather than cancelled. A
+  paused sender with an in-flight message outstanding is not contained.
+- **The condition is a PROPERTY, not "#1566 is closed".** See below.
 
 It cannot be scoped to the unfixed mirror, and an earlier revision implied it
 could. The sender's pause is GLOBAL — unpausing it to serve the fixed mirrors
