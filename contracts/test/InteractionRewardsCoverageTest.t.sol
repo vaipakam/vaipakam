@@ -93,7 +93,7 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
     // ─── #921 item 1 — Tier-1 sanctions gate ───────────────────────────────
 
     /// @dev A flagged wallet cannot claim interaction rewards from ANY client;
-    ///      the gate lives on-chain, not just in the alpha02 UI. Clearing the
+    ///      the gate lives on-chain, not just in the connected-app UI. Clearing the
     ///      flag restores the claim, proving the gate is the only blocker.
     function testClaimRevertsWhenCallerSanctioned() public {
         _mut().setDailyLenderInterest(1, alice, 100e18, 100e18);

@@ -546,7 +546,7 @@ SÉPARÉE que la application n'automatise PAS aujourd'hui :
    complet au vendeur au lieu de répartir les frais comme requis.
    Les utilisateurs avancés doivent récupérer le calendrier des
    frais requis OpenSea pour la collection (le parser de frais
-   in-repo à `apps/defi/src/lib/openseaFeeSchedule.ts` est la référence) et
+   in-repo à `apps/defi/src/lib/openseaFeeSchedule.ts` (retired in #1854 — recover from git history) est la référence) et
    passer des montants absolus dérivés contre l'ask avant
    d'appeler. Le facet construit en interne les OrderComponents
    canoniques Seaport à partir de ces entrées (plus des valeurs
@@ -611,7 +611,7 @@ SÉPARÉE que la application n'automatise PAS aujourd'hui :
    ajoutez le champ API-only `parameters.totalOriginalConsiderationItems`
    — l'API OpenSea le requiert bien qu'il ne fasse PAS partie du
    struct Seaport qui produit le hash canonique ; les publishers
-   in-repo (`apps/defi/src/lib/openseaPublish.ts` +
+   in-repo (`apps/defi/src/lib/openseaPublish.ts` (retired in #1854 — recover from git history) +
    `apps/indexer/src/openseaPublish.ts`) l'injectent avant l'appel
    endpoint. Pour les ordres validés par ERC-1271, OpenSea
    accepte le champ `signature` comme `0x` (octets vides) — le

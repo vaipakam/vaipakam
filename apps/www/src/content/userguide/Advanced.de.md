@@ -548,7 +548,7 @@ ZWEI-TEILE-Schritt, den die dapp heute NICHT automatisiert:
    Verkäufer, statt die Fees aufzuteilen, wie es die Collection
    verlangt. Erfahrene Benutzer müssen den OpenSea-Required-Fee-
    Zeitplan für die Collection fetchen (der In-Repo-Fee-Parser
-   bei `apps/defi/src/lib/openseaFeeSchedule.ts` ist die Referenz) und
+   bei `apps/defi/src/lib/openseaFeeSchedule.ts` (retired in #1854 — recover from git history) ist die Referenz) und
    absolute, gegen den Ask abgeleitete Beträge vor dem Aufruf
    übergeben. Der Facet baut intern die kanonischen Seaport
    OrderComponents aus diesen Eingaben (plus Werte, die er in
@@ -616,7 +616,7 @@ ZWEI-TEILE-Schritt, den die dapp heute NICHT automatisiert:
    `parameters.totalOriginalConsiderationItems` hinzu — die
    OpenSea-API verlangt es, obwohl es NICHT Teil des Seaport-
    Structs ist, das den kanonischen Hash produziert; die
-   In-Repo-Publisher (`apps/defi/src/lib/openseaPublish.ts` +
+   In-Repo-Publisher (`apps/defi/src/lib/openseaPublish.ts` (retired in #1854 — recover from git history) +
    `apps/indexer/src/openseaPublish.ts`) injizieren es vor dem
    Endpoint-Aufruf. Für ERC-1271-validierte Orders akzeptiert
    OpenSea das `signature`-Feld als `0x` (leere Bytes) — der

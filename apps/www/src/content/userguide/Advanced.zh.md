@@ -417,7 +417,7 @@ GTT 报价，此到期是报价的原始 GTT 到期时间；出借人接受不�
    缺失），并且直接的 Seaport 填充将把完整 ask 路由到卖方，
    而不是按集合要求分割费用。高级用户必须获取集合的 OpenSea
    required-fee 时间表（in-repo fee parser
-   `apps/defi/src/lib/openseaFeeSchedule.ts` 是参考）并在调用前传递
+   `apps/defi/src/lib/openseaFeeSchedule.ts` (retired in #1854 — recover from git history) 是参考）并在调用前传递
    针对 ask 派生的绝对金额。Facet 在内部从这些输入（加上它在
    `CollateralListingExecutor.offerContext` 中保留的值 —
    借款人 vault 地址、本金资产、抵押品字段、startTime、
@@ -464,7 +464,7 @@ GTT 报价，此到期是报价的原始 GTT 到期时间；出借人接受不�
    的内容。POST 之前，添加仅 API 字段
    `parameters.totalOriginalConsiderationItems` — OpenSea 的
    API 需要它，尽管它不是产生规范哈希的 Seaport 结构体的一
-   部分；in-repo 发布器（`apps/defi/src/lib/openseaPublish.ts`
+   部分；in-repo 发布器（`apps/defi/src/lib/openseaPublish.ts` (retired in #1854 — recover from git history)
    + `apps/indexer/src/openseaPublish.ts`）在调用 endpoint 之
    前注入它。对于 ERC-1271 验证的订单，OpenSea 接受
    `signature` 字段为 `0x`（空字节）— vault 的链上

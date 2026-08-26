@@ -515,7 +515,7 @@ listing OpenSea पर लाना एक SEPARATE TWO-PART step है जि�
    route करेगा बजाय fees को split करने के जैसा collection
    चाहता है। Advanced users को OpenSea required-fee schedule
    collection के लिए fetch करना होगा (in-repo fee parser
-   `apps/defi/src/lib/openseaFeeSchedule.ts` reference है) और call करने
+   `apps/defi/src/lib/openseaFeeSchedule.ts` (retired in #1854 — recover from git history) reference है) और call करने
    से पहले ask के विरुद्ध derived absolute amounts pass करने
    होंगे। Facet internally उन inputs से canonical Seaport
    OrderComponents build करता है (साथ ही values जो वह
@@ -579,7 +579,7 @@ listing OpenSea पर लाना एक SEPARATE TWO-PART step है जि�
    add करें — OpenSea की API इसे require करती है भले ही यह
    canonical hash produce करने वाले Seaport struct का हिस्सा
    नहीं है; in-repo publishers
-   (`apps/defi/src/lib/openseaPublish.ts` +
+   (`apps/defi/src/lib/openseaPublish.ts` (retired in #1854 — recover from git history) +
    `apps/indexer/src/openseaPublish.ts`) endpoint call करने से
    पहले इसे inject करते हैं। ERC-1271-validated orders के लिए
    OpenSea `signature` field को `0x` (empty bytes) के रूप में

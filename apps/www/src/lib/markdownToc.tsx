@@ -172,7 +172,7 @@ interface HeadingProps {
  * explicit deep link silently landed at the top of a very long guide
  * instead of its section — including the one the signed recovery
  * declaration points at. Caught in production by
- * `apps/alpha02/e2e/live/live-recover.mjs`.
+ * `apps/app/e2e/live/live-recover.mjs`.
  */
 function explicitAnchor(id: string | undefined, slug: string): ReactNode {
   if (!id || id === slug) return null;

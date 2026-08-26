@@ -19,7 +19,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /**
  * @title DeployTestnetMocks
- * @notice Deploys the **faucet-facing** testnet mock assets the alpha02
+ * @notice Deploys the **faucet-facing** testnet mock assets the connected app
  *         website's `/faucet` route mints, and wires the LIQUID one into
  *         the Diamond's oracle so it actually classifies liquid. One
  *         reproducible script behind everything the naive-user testnet

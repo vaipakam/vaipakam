@@ -2,13 +2,13 @@
  * `crossDomainPref` — read/write user UI preferences in cookies
  * scoped to the parent eTLD+1 (`.vaipakam.com`) so the value is
  * shared between every Vaipakam subdomain (labs.vaipakam.com,
- * defi.vaipakam.com, …).
+ * app.vaipakam.com, …).
  *
  * Two preference cookies (one per category) — `vaipakam_theme`
  * and `vaipakam_lang` — emitted with attributes:
  *
  *     Domain=.vaipakam.com   (auto-promoted up to the eTLD+1 of the
- *                              current host so a `defi.vaipakam.com`
+ *                              current host so a `app.vaipakam.com`
  *                              write is visible from
  *                              `labs.vaipakam.com` and vice-versa)
  *     Path=/
@@ -59,7 +59,7 @@ export const LANG_COOKIE = 'vaipakam_lang';
  * same parent.
  *
  * Logic:
- *   - `defi.vaipakam.com`  → `.vaipakam.com`
+ *   - `app.vaipakam.com`  → `.vaipakam.com`
  *   - `labs.vaipakam.com`  → `.vaipakam.com`
  *   - `vaipakam.com`       → `.vaipakam.com`
  *   - `localhost`          → `null`  (browsers ignore Domain on a

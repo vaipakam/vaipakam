@@ -512,7 +512,7 @@ SEPARATE TWO-PART step ஆகும்:
    செய்கின்றபடி fees-ஐ split செய்வதற்கு பதிலாக full ask-ஐ
    seller-க்கு route செய்யும். Advanced users collection-க்கான
    OpenSea required-fee schedule-ஐ fetch செய்ய வேண்டும் (in-repo
-   fee parser `apps/defi/src/lib/openseaFeeSchedule.ts` reference) மற்றும்
+   fee parser `apps/defi/src/lib/openseaFeeSchedule.ts` (retired in #1854 — recover from git history) reference) மற்றும்
    call செய்வதற்கு முன் ask-க்கு எதிராக derived absolute amounts-ஐ
    pass செய்ய வேண்டும். Facet internally அந்த inputs-இல் இருந்து
    canonical Seaport OrderComponents-ஐ build செய்கிறது (plus
@@ -579,7 +579,7 @@ SEPARATE TWO-PART step ஆகும்:
    add செய்யவும் — OpenSea-வின் API இதை require செய்கிறது,
    canonical hash-ஐ produce செய்யும் Seaport struct-இன் பகுதி
    அல்ல என்றாலும்; in-repo publishers
-   (`apps/defi/src/lib/openseaPublish.ts` +
+   (`apps/defi/src/lib/openseaPublish.ts` (retired in #1854 — recover from git history) +
    `apps/indexer/src/openseaPublish.ts`) endpoint call செய்வதற்கு
    முன் இதை inject செய்கின்றனர். ERC-1271-validated orders-க்கு
    OpenSea `signature` field-ஐ `0x` (empty bytes)-ஆக accept

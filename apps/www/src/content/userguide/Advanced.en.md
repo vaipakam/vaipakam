@@ -509,7 +509,7 @@ the dapp does NOT automate today:
    rather than splitting the fees as the collection requires.
    Advanced users must fetch the OpenSea required-fee schedule
    for the collection (the in-repo fee parser at
-   `apps/defi/src/lib/openseaFeeSchedule.ts` is the reference) and pass
+   `apps/defi/src/lib/openseaFeeSchedule.ts` (retired in #1854 — recover from git history) is the reference) and pass
    absolute amounts derived against the ask before calling. The facet internally builds the
    canonical Seaport OrderComponents from those inputs, the
    OfferContext values it records for the executor (borrower
@@ -567,7 +567,7 @@ the dapp does NOT automate today:
    add the API-only `parameters.totalOriginalConsiderationItems`
    field — OpenSea's API requires it even though it's NOT part
    of the Seaport struct that produces the canonical hash; the
-   in-repo publishers (`apps/defi/src/lib/openseaPublish.ts` +
+   in-repo publishers (`apps/defi/src/lib/openseaPublish.ts` (retired in #1854 — recover from git history) +
    `apps/indexer/src/openseaPublish.ts`) inject it before
    calling the endpoint. For ERC-1271-validated orders OpenSea
    accepts the `signature` field as `0x` (empty bytes) — the

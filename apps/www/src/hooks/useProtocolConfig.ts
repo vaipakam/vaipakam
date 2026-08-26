@@ -30,7 +30,7 @@
  *     `GET /config/:chainId` display snapshot, refreshed on governance
  *     events with a slow backstop, served with open CORS, and already
  *     the FIRST source the connected app consults for display figures
- *     (`apps/alpha02/src/data/fees.ts`). Reading it here is one
+ *     (`apps/app/src/data/fees.ts`). Reading it here is one
  *     `fetch` and no new dependency.
  *
  * What that buys, precisely: the figures now follow a retune instead of
@@ -72,7 +72,7 @@ const env = (import.meta as { env?: Record<string, string | undefined> }).env;
  * bundled. A misconfiguration that presents as "working, just not live"
  * is one nobody goes looking for.
  *
- * `apps/alpha02/src/data/indexer.ts` normalises for the same reason;
+ * `apps/app/src/data/indexer.ts` normalises for the same reason;
  * this strips one-or-more so a doubled slash cannot slip through either.
  */
 const INDEXER_ORIGIN = (env?.VITE_INDEXER_ORIGIN ?? 'https://indexer.vaipakam.com').replace(
@@ -212,7 +212,7 @@ function publish() {
  * already wrong.
  *
  * Four seconds matches the connected app's indexer client
- * (`apps/alpha02/src/data/indexer.ts`) — deliberately the same number
+ * (`apps/app/src/data/indexer.ts`) — deliberately the same number
  * rather than a second opinion about the same rail — and leaves the
  * prerenderer 26 s of headroom to reach networkidle with the bundled
  * default in place.

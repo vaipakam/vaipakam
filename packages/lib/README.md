@@ -14,7 +14,7 @@ Current scope (Stage 2a of the source-tree refactor):
 - `decodeContractError` — error normaliser for revert reasons across facets.
 - `chainPlatforms` — `chainId → CoinGecko platform slug` mapping.
 - `canonicalAssets` — per-chain ERC-20 allow-lists.
-- `crossDomainPref` — parent-domain cookie helper for theme + language sync between `defi.vaipakam.com` and `www.vaipakam.com`.
+- `crossDomainPref` — parent-domain cookie helper for theme + language sync between `app.vaipakam.com` and `www.vaipakam.com`.
 
 **Non-goals:** anything that needs React (use `packages/ui`), anything that needs Vite env vars (stays in the consumer), anything contract-specific (use `packages/contracts`). Two candidate modules (`format` with i18n, `journeyLog` with contracts/config) are deferred until their Vite-coupled deps are extracted.
 
