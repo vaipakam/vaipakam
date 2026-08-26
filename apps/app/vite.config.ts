@@ -20,7 +20,7 @@ process.env.VITE_BUILD_TIME = new Date().toISOString();
 
 // The Cloudflare plugin boots a workerd sandbox with the dev server —
 // unnecessary for the fork-tier e2e (plain SPA serving is enough) and
-// slow/fragile on CI runners. The e2e webServer sets ALPHA02_E2E=1 to
+// slow/fragile on CI runners. The e2e webServer sets APP_E2E=1 to
 // serve without it; every normal dev/build/deploy path is unchanged.
 
 // Deploy-env guard (live-review incident 2026-07-14): a production
@@ -48,7 +48,7 @@ function checkIndexerOrigin(mode: string, command: string): void {
 export default defineConfig(({ mode, command }) => {
   checkIndexerOrigin(mode, command);
   return {
-  plugins: process.env.ALPHA02_E2E
+  plugins: process.env.APP_E2E
     ? [react()]
     : [react(), cloudflare()],
   build: {

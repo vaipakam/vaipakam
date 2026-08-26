@@ -592,7 +592,7 @@ nothing like an ABI mismatch from the user's side.
 
 ```bash
 bash contracts/script/exportFrontendAbis.sh   # runs its own --skip test build
-cd apps/defi
+cd apps/app
 node_modules/.bin/tsc -b --noEmit   # confirm the frontend still typechecks
 git diff ../../packages/contracts/src/abis/    # review the change
 git commit -am 'Sync frontend ABIs with contracts@<commit>'
@@ -620,7 +620,7 @@ those in sync with the canonical artifacts is one command:
 
 ```bash
 bash contracts/script/exportFrontendDeployments.sh
-cd apps/defi && node_modules/.bin/tsc -b --noEmit && cd ../..
+cd apps/app && node_modules/.bin/tsc -b --noEmit && cd ../..
 pnpm --filter @vaipakam/keeper exec tsc -p . --noEmit
 pnpm --filter @vaipakam/indexer exec tsc -p . --noEmit
 pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
@@ -637,11 +637,11 @@ no upstream changes leaves the output byte-identical.
 
 This replaces the previous fan-out of
 `VITE_<CHAIN>_DIAMOND_ADDRESS` /
-`VITE_<CHAIN>_*_FACET_ADDRESS` env vars in `apps/defi/.env.local`
+`VITE_<CHAIN>_*_FACET_ADDRESS` env vars in `apps/app/.env.local`
 and the empty `DIAMOND_ADDR_*` placeholders in
 `apps/keeper/wrangler.jsonc:vars` — both surfaces are now
 read from the consolidated JSON. After running the script:
-- `cd apps/defi && npm run deploy` — vite inlines the new
+- `cd apps/app && npm run deploy` — vite inlines the new
   addresses into the JS bundle.
 - redeploy ALL THREE Workers, since each bundles the shared
   deployment JSON at build time — stopping after the keeper leaves

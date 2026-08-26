@@ -42,7 +42,7 @@ Vaipakam is a non-custodial DeFi protocol where lenders and borrowers negotiate 
 | --- | --- |
 | [`contracts/`](contracts/) | The protocol: Diamond, facets, libraries, vaults, cross-chain, Foundry tests & deploy scripts |
 | [`apps/www`](apps/www/) | Public website — docs, technical whitepaper, analytics |
-| [`apps/defi`](apps/defi/) | Wallet-connected app — offers, loans, claims, vaults |
+| [`apps/app`](apps/app/) | Wallet-connected app — offers, loans, claims, vaults |
 | [`apps/keeper`](apps/keeper/) / [`apps/indexer`](apps/indexer/) / [`apps/agent`](apps/agent/) | Cloudflare Workers — watching, indexing, notifications |
 | [`packages/`](packages/) | Shared TypeScript packages — ABIs, deployments, UI, client libs |
 | [`ops/`](ops/) | Operational watchers, archives, and tooling |
@@ -71,7 +71,7 @@ Frontends and Workers (pnpm workspace, from the repo root):
 ```bash
 pnpm install
 pnpm --filter @vaipakam/www dev       # public website
-pnpm --filter @vaipakam/defi dev      # connected app
+pnpm --filter @vaipakam/app dev       # connected app
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and [AGENTS.md](AGENTS.md) for the AI-assisted review workflow used on this repo.

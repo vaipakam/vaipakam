@@ -83,7 +83,7 @@ jobs:
           # Falls back to the public endpoint when the secret is unset —
           # set BASE_SEPOLIA_RPC_URL in repo secrets for a keyed fork
           # source if the public one throttles the fork's lazy reads.
-          ALPHA02_E2E_FORK_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
+          APP_E2E_FORK_URL: ${{ secrets.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org' }}
         run: pnpm --filter @vaipakam/app run e2e
 
       - name: Upload traces on failure

@@ -97,7 +97,7 @@ export function deepMerge(base: Bundle, patch: Bundle): Bundle {
  *
  * OPT-IN, not automatic. Applying it to a bundle whose order has
  * already drifted from the template rewrites most of the file, which is
- * the opposite of what it is for: on the alpha02 locales it turned a
+ * the opposite of what it is for: on the connected app's locales it turned a
  * clean ~130-line insertion into 1100 insertions and 950 deletions per
  * locale, burying the actual translations. Reach for it as a deliberate
  * mechanical normalisation on its own commit, so the reordering is
@@ -391,7 +391,7 @@ export function unknownKeys(source: Bundle, subject: Bundle, prefix = ''): strin
  * (Codex #1563 r6).
  *
  * Not always a defect, which is why this reports rather than decides:
- * Japanese moves the verb to the end, so alpha02's consent sentence
+ * Japanese moves the verb to the end, so the connected app's consent sentence
  * legitimately has an empty `prefix` with the agreement carried in
  * `suffix`. Callers pair this with a narrow per-`<locale>:<path>`
  * exemption.

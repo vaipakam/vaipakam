@@ -2,7 +2,7 @@
 
 Shared internationalisation core for every Vaipakam app surface
 (apps/www, apps/app, future surfaces). Hoisted out of apps/www so
-the third consumer (alpha02) didn't become the third copy.
+the third consumer (the connected app) didn't become the third copy.
 
 ## What lives here (must never drift between apps)
 
@@ -46,7 +46,7 @@ ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
 locale forward: the default mode skips anything that isn't an empty
 placeholder, and the overwrite modes re-translate the whole bundle to
 add a handful of keys — churning reviewed strings and burying the new
-ones. That missing mode is why nine alpha02 locales silently froze at
+ones. That missing mode is why nine the connected app's locales silently froze at
 their first-generated key set and drifted 291 keys behind (#1560); each
 bundle looked complete the whole time.
 

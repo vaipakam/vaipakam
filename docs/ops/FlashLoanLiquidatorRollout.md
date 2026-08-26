@@ -192,7 +192,7 @@ Run all four downstream typechecks to confirm nothing else
 shifts:
 
 ```bash
-pnpm --filter @vaipakam/defi    exec tsc -b --noEmit
+pnpm --filter @vaipakam/app    exec tsc -b --noEmit
 pnpm --filter @vaipakam/keeper  exec tsc -p . --noEmit
 pnpm --filter @vaipakam/indexer exec tsc -p . --noEmit
 pnpm --filter @vaipakam/agent   exec tsc -p . --noEmit

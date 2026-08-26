@@ -16,7 +16,7 @@ The **read-API Worker** of the Vaipakam off-chain stack. Stage 3 PR3 of the Work
   - `/claimables/:addr`
   - `/config/:chainId` — the governance-knob display snapshot
 
-The connected app (`apps/defi`) reads from this Worker via `VITE_INDEXER_ORIGIN`.
+The connected app (`apps/app`) reads from this Worker via `VITE_INDEXER_ORIGIN`.
 
 The marketing site (`apps/www`) reads exactly one route: `/config/:chainId`, for the fee and tier figures quoted in its documentation (#1612). `apps/www` remains **on-chain-read-free** — it carries no wallet, no viem and no ABI, and this snapshot is precisely how it states current figures without any of that. Treat that route as having a marketing-site consumer when changing its shape, its CORS policy, or its availability: `apps/www` bounds the request at 4 s and falls back to bundled defaults, so an outage degrades rather than breaks it, but a silent change to the bundle's field ORDER would publish wrong numbers under a "live" badge.
 
@@ -84,7 +84,7 @@ Any schema change — even for a table only keeper or agent writes — lands as 
 
 ## Related
 
-- `apps/defi` — primary consumer (frontend reads loan / offer data from here).
+- `apps/app` — primary consumer (frontend reads loan / offer data from here).
 - `apps/agent` — proactive-notifications Worker; reads from this indexer for stats.
 - `apps/keeper` — signing Worker; doesn't read from this surface (uses RPC direct).
 - `packages/contracts` — ABI / deployment source.

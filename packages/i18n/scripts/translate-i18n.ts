@@ -30,7 +30,7 @@
  * `--all` re-translates the entire file to add a handful of keys —
  * churning hundreds of reviewed strings and burying the new ones in an
  * unreviewable diff. The gap that created (#1560: 291 keys missing
- * across nine alpha02 locales, including a whole page) stayed invisible
+ * across nine the connected app's locales, including a whole page) stayed invisible
  * precisely because every bundle looked complete.
  *
  * What it does NOT do: auto-commit. Always review the diff before
@@ -420,7 +420,7 @@ async function main() {
   // An unknown `--…` token USED to be ignored silently, and the default
   // it fell back to is the expensive one: mistype `--missing-only` as
   // `--missing-onyl` and the run quietly becomes a full-catalog
-  // translation of every placeholder bundle — 24 of them in alpha02's
+  // translation of every placeholder bundle — 24 of them in the connected app's
   // locales dir — instead of a gap top-up (Codex #1563 r15). Paid API
   // calls and overwritten files are not a recoverable default, so
   // anything unrecognised aborts before a single target is chosen.

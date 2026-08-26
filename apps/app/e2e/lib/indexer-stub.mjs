@@ -21,8 +21,8 @@ import {
 } from 'viem';
 
 const CHAIN_ID = 84532;
-const ANVIL_URL = process.env.ALPHA02_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
-const PORT = Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788);
+const ANVIL_URL = process.env.APP_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
+const PORT = Number(process.env.APP_E2E_STUB_PORT ?? 8788);
 
 // fs-load the app's own contract artifacts (Node ESM refuses the
 // workspace barrel's attribute-less JSON imports; vite doesn't mind).

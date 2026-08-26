@@ -491,7 +491,7 @@ const PINNED = new Map([
   ["docs/ops/BaseSepoliaDeploy.md", [31, "LIVE-TEXT — known debt, PLUS a #884 retraction banner on §4 (+5). The banner is why the count rose: it names the removed knobs (VPFI_BUY_GLOBAL_CAP / _PER_WALLET_CAP / _ENABLED, getVPFIBuyConfig, DeployVPFIBuyReceiver) in order to tell an operator they no longer exist, and to stop §4's hand-invocation of ConfigureVPFIBuy walking around the peg gate. The residue BELOW the banner is untouched and still debt", "10b5b32f287c"]],
   ["docs/ops/CcipCutoverRunbook.md", [6, "RETRACTION — #1719 swept the dead steps and left the notes", "ab9aa52ffbe1"]],
   ["docs/ops/ChainByChainChecks.md", [6, "LIVE-TEXT — known debt", "874f9b73f212"]],
-  ["docs/ops/DeploymentRunbook.md", [46, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner. #884 LOWERED 47→46: the configure-phase prose no longer lists ConfigureVPFIBuy as a launch child", "4df2e707e667"]],
+  ["docs/ops/DeploymentRunbook.md", [46, "LIVE-TEXT — known debt; §\"VPFIBuyAdapter — payment-token mode\" still carries an actionable pre-flight checklist under a Historical banner. #884 LOWERED 47→46: the configure-phase prose no longer lists ConfigureVPFIBuy as a launch child", "a9a143e09512"]],
   ["docs/ops/IncidentRunbook.md", [4, "HISTORICAL — past-incident record", "967c59306dff"]],
   ["docs/ops/VPFITokenRotationRunbook.md", [1, "HISTORICAL — rotation-scope note", "03bb064feed2"]],
   ["docs/ops/tenderly-paste/Diamond-full.json", [45, "HISTORICAL — a captured ABI artifact; regenerate rather than hand-edit", "9256252cfcc1"]],

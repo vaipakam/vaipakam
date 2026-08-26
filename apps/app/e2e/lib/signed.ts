@@ -24,7 +24,7 @@ import {
 } from './chain';
 import { accountFor, type Role } from './wallets';
 
-const STUB_ORIGIN = `http://127.0.0.1:${Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788)}`;
+const STUB_ORIGIN = `http://127.0.0.1:${Number(process.env.APP_E2E_STUB_PORT ?? 8788)}`;
 
 /** The 28-field wire order as the book serves it (mirror of the app's
  *  `SignedOrderWire` — decimal-string uints, lowercase addresses). */

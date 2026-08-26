@@ -1,7 +1,7 @@
 /**
  * Shared i18next bootstrap factory — the exact bootstrap extracted
  * from apps/www/src/i18n/index.ts, parameterised so every Vaipakam
- * surface (www, alpha02, and any future app) initialises identically:
+ * surface (www, the connected app, and any future app) initialises identically:
  *
  *   - English is loaded eagerly (it's the fallback target — needs to
  *     be available synchronously for the first paint). Every other

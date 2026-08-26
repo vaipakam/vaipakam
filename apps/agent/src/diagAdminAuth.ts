@@ -9,7 +9,7 @@
  * the request is signed by a wallet, and that wallet must hold the
  * on-chain `ADMIN_ROLE` on the Diamond.
  *
- * This is the exact check `apps/defi`'s protocol console already runs
+ * This is the exact check `apps/app`'s protocol console already runs
  * client-side (`useIsProtocolAdmin.ts` →
  * `AccessControlFacet.hasRole(ADMIN_ROLE, addr)`). Doing it here, on
  * the Worker, makes it a real authorization gate (the client-side

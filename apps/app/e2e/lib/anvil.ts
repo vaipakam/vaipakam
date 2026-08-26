@@ -6,7 +6,7 @@
  * or chain config is needed for control operations.
  */
 
-export const ANVIL_URL = process.env.ALPHA02_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
+export const ANVIL_URL = process.env.APP_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
 
 let rpcId = 1;
 

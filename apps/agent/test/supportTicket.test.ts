@@ -38,7 +38,7 @@ function fakeDb(opts: { failInsert?: boolean } = {}) {
 function envWith(overrides: Partial<Env>): Env {
   return {
     DB: fakeDb().db,
-    FRONTEND_ORIGIN: 'https://alpha02.vaipakam.com',
+    FRONTEND_ORIGIN: 'https://app.vaipakam.com',
     ...overrides,
   } as Env;
 }
@@ -167,7 +167,7 @@ describe('handleSupportTicket', () => {
     const res = await handleSupportTicket(
       req({ message: 'something broke', chainId: 84532, page: '/lend' }),
       envWith({ DB: db }),
-      'https://alpha02.vaipakam.com',
+      'https://app.vaipakam.com',
       ctx,
     );
     expect(res.status).toBe(200);
@@ -189,7 +189,7 @@ describe('handleSupportTicket', () => {
     const res = await handleSupportTicket(
       req({ message: 'm'.repeat(400), diagnostics: 'block' }),
       envWith({ DB: db, TG_OPS_BOT_TOKEN: 'ops-token', TG_OPS_CHAT_ID: '42' }),
-      'https://alpha02.vaipakam.com',
+      'https://app.vaipakam.com',
       ctx,
     );
     // The response never waits on Telegram (Codex round-1 P2): the
@@ -218,7 +218,7 @@ describe('handleSupportTicket', () => {
     const res = await handleSupportTicket(
       req({ message: 'slow telegram' }),
       envWith({ DB: db, TG_OPS_BOT_TOKEN: 't', TG_OPS_CHAT_ID: '1' }),
-      'https://alpha02.vaipakam.com',
+      'https://app.vaipakam.com',
       ctx,
     );
     expect(res.status).toBe(200);
@@ -241,7 +241,7 @@ describe('handleSupportTicket', () => {
     const res = await handleSupportTicket(
       req({ message: 'm' }),
       envWith({ DB: db, TG_OPS_BOT_TOKEN: 't', TG_OPS_CHAT_ID: '1' }),
-      'https://alpha02.vaipakam.com',
+      'https://app.vaipakam.com',
     );
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: 'unavailable' });
@@ -269,7 +269,7 @@ describe('handleSupportTicket', () => {
     const bad = await handleSupportTicket(
       req({ message: '' }),
       envWith({}),
-      'https://alpha02.vaipakam.com',
+      'https://app.vaipakam.com',
     );
     expect(bad.status).toBe(400);
 
@@ -280,7 +280,7 @@ describe('handleSupportTicket', () => {
           limit: async () => ({ success: false }),
         },
       }),
-      'https://alpha02.vaipakam.com',
+      'https://app.vaipakam.com',
     );
     expect(limited.status).toBe(429);
   });

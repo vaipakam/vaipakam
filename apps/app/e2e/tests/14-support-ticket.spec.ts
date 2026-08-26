@@ -33,7 +33,7 @@ import { ANVIL_URL } from '../lib/anvil';
 const APP_PORT = 4176;
 const APP_BASE = `http://127.0.0.1:${APP_PORT}`;
 const AGENT_PORT = 8790;
-const STUB_PORT = Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788);
+const STUB_PORT = Number(process.env.APP_E2E_STUB_PORT ?? 8788);
 
 interface CapturedTicket {
   message: string;
@@ -109,7 +109,7 @@ test.beforeAll(async () => {
     {
       env: {
         ...process.env,
-        ALPHA02_E2E: '1',
+        APP_E2E: '1',
         VITE_DEFAULT_CHAIN_ID: '84532',
         VITE_BASE_SEPOLIA_RPC_URL: ANVIL_URL,
         VITE_INDEXER_ORIGIN: `http://127.0.0.1:${STUB_PORT}`,

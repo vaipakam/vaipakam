@@ -19,7 +19,7 @@ export interface UserThresholds {
    *  `'en'` when the user hasn't explicitly set one. */
   locale: string;
   /** #1033 — 1 = send the periodic-interest pre-notify (default),
-   *  0 = user opted out via the alpha02 Alerts card. */
+   *  0 = user opted out via the connected app Alerts card. */
   notify_maturity_approaching: number;
 }
 
@@ -447,7 +447,7 @@ export async function sweepExpiredLinks(db: D1Database): Promise<void> {
   await db.prepare(`DELETE FROM telegram_links WHERE expires_at < ?`).bind(now).run();
 }
 
-/** #1040 phase 1 — persist a support ticket captured by the alpha02
+/** #1040 phase 1 — persist a support ticket captured by the connected app
  *  support widget. The ticket row is the durable record: the
  *  ops-Telegram notify and the user's mailto escalation are both
  *  best-effort layers on top of it. Throws on D1 failure (including

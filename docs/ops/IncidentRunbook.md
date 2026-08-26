@@ -876,21 +876,23 @@ is `wrangler tail`, so verify there rather than assuming success.
    pnpm --filter @vaipakam/keeper exec wrangler deploy --keep-vars
    ```
 4. **Point the app at the new channel.** Set `VITE_PUSH_CHANNEL_ADDRESS` to
-   the new EOA and redeploy `apps/defi`. Leaving it on the old address sends
+   the new EOA and redeploy `apps/app`. Leaving it on the old address sends
    every user who opens the Alerts page to subscribe to a channel the
    platform no longer posts to — and that subscribe succeeds, so nothing
    signals the mistake.
 
    This is a BUILD-time value, so it has to be present when the bundle is
-   built — a shell comment does nothing, and `apps/defi/.env.production`
-   does not currently carry the key at all (only `.env.example` and
-   `.env.local` do, and Vite loads neither for a production build). Set it
-   in the production env file, then deploy:
+   built — a shell comment does nothing. `apps/app` reads its build env
+   from `apps/app/.env.local` (gitignored, operator-held); the deploy runs
+   locally, so Vite loads that file itself. There is no `.env.production`:
+   the retired `apps/defi` needed one because Cloudflare Workers Builds
+   pulled from git and could not see a gitignored file, and `apps/app` is
+   built and pushed by the operator instead. Set the key, then deploy:
 
    ```bash
-   # Add (or update) in apps/defi/.env.production:
+   # Add (or update) in apps/app/.env.local:
    #   VITE_PUSH_CHANNEL_ADDRESS=<new EOA address>
-   pnpm --filter @vaipakam/defi run deploy
+   pnpm --filter @vaipakam/app run deploy
    ```
 
    (`run` is required: bare `pnpm --filter <pkg> deploy` is pnpm's

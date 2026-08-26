@@ -221,7 +221,7 @@ async function pushIfSubscribed(
     sub = legacy ? { ...legacy, notify_maturity_approaching: 1 } : null;
   }
   if (!sub) return 'none';
-  // #1033 — the alpha02 Alerts card exposes this as a real opt-out;
+  // #1033 — the connected app Alerts card exposes this as a real opt-out;
   // honor it before any rail fires. Reported distinctly so the
   // caller can leave the checkpoint unstamped (a re-enable before
   // the deadline must still get its reminder).

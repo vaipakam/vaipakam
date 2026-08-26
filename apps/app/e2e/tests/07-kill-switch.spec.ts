@@ -18,7 +18,7 @@ import { ANVIL_URL } from '../lib/anvil';
 
 const KILL_PORT = 4174;
 const KILL_BASE = `http://127.0.0.1:${KILL_PORT}`;
-const STUB_PORT = Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788);
+const STUB_PORT = Number(process.env.APP_E2E_STUB_PORT ?? 8788);
 const KILL_COPY = /switched off right now/i;
 
 let killServer: ChildProcess | undefined;
@@ -50,7 +50,7 @@ test.beforeAll(async () => {
     {
       env: {
         ...process.env,
-        ALPHA02_E2E: '1',
+        APP_E2E: '1',
         VITE_DEFAULT_CHAIN_ID: '84532',
         VITE_BASE_SEPOLIA_RPC_URL: ANVIL_URL,
         VITE_INDEXER_ORIGIN: `http://127.0.0.1:${STUB_PORT}`,

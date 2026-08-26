@@ -5,7 +5,7 @@
  *   3. generate + fund the four ephemeral role wallets
  *   4. seed their WETH + tLIQ balances
  * PIDs land in e2e/.state/pids.json for global-teardown. The fork URL
- * comes from ALPHA02_E2E_FORK_URL (defaults to the public endpoint —
+ * comes from APP_E2E_FORK_URL (defaults to the public endpoint —
  * fine on CI runners; use a keyed RPC locally if the public one
  * throttles).
  */
@@ -21,7 +21,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 const STATE_DIR = path.join(HERE, '.state');
 const PIDS_FILE = path.join(STATE_DIR, 'pids.json');
-const STUB_PORT = Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788);
+const STUB_PORT = Number(process.env.APP_E2E_STUB_PORT ?? 8788);
 
 async function waitForHttp(url: string, timeoutMs = 30_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -62,12 +62,12 @@ export default async function globalSetup(): Promise<void> {
   const pids: number[] = [];
 
   const forkUrl =
-    process.env.ALPHA02_E2E_FORK_URL ?? 'https://sepolia.base.org';
+    process.env.APP_E2E_FORK_URL ?? 'https://sepolia.base.org';
   await assertNothingListening(ANVIL_URL, 'anvil');
   await assertNothingListening(`http://127.0.0.1:${STUB_PORT}/`, 'indexer stub');
   // Spawn on the SAME endpoint every helper (and the browser via
   // playwright.config's VITE_BASE_SEPOLIA_RPC_URL) resolves from
-  // ALPHA02_E2E_ANVIL_URL — a fixed port here would split the suite
+  // APP_E2E_ANVIL_URL — a fixed port here would split the suite
   // across two RPCs the moment someone overrides the URL.
   const anvilEndpoint = new URL(ANVIL_URL);
   const anvil = spawn(

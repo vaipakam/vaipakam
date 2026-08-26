@@ -3,7 +3,7 @@
  *
  * Native-language labels live HERE (a language's own name for itself
  * doesn't vary by app); per-locale picker VISIBILITY stays app-side —
- * www may show all 10 translated locales while alpha02 shows only the
+ * www may show all 10 translated locales while the connected app shows only the
  * codes its operator has readied — so each app composes its own
  * `LOCALE_DISPLAY_CONFIG` from these labels plus its own flags.
  */

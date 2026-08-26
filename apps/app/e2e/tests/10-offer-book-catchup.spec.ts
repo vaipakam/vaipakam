@@ -22,7 +22,7 @@ import { postLenderOffer, newestOfferIdFor } from '../lib/flows';
 import { increaseTime, mine } from '../lib/anvil';
 import { pub, DIAMOND, DIAMOND_ABI_VIEM } from '../lib/chain';
 
-const STUB = `http://127.0.0.1:${Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788)}`;
+const STUB = `http://127.0.0.1:${Number(process.env.APP_E2E_STUB_PORT ?? 8788)}`;
 
 async function stubServesOffer(offerId: bigint): Promise<boolean> {
   const res = await fetch(`${STUB}/offers/active?chainId=84532`);

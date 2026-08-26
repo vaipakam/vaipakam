@@ -21,7 +21,7 @@ const API_INDEX = {
     'Public read-only JSON API for Vaipakam — decentralized P2P lending, borrowing and NFT rental. Data is indexed from the on-chain Diamond contract. All endpoints are keyless GETs with open CORS.',
   docs: 'https://vaipakam.com/llms.txt',
   website: 'https://vaipakam.com/',
-  app: 'https://alpha02.vaipakam.com/',
+  app: 'https://app.vaipakam.com/',
   conventions: {
     chainParam:
       "Most endpoints accept ?chainId=<id> (e.g. 84532 for Base Sepolia); omitting it defaults to Base mainnet (8453). Amounts are decimal strings in the asset's smallest unit unless a field says otherwise.",

@@ -469,7 +469,7 @@ then deploy.
    >   about to verify.
    >
    > Deploy the Workers here so bindings validate, and bind
-   > `agent.vaipakam.com`, `defi.vaipakam.com`, the apex and `www` in **§7
+   > `agent.vaipakam.com`, `app.vaipakam.com`, the apex and `www` in **§7
    > step 4**, which exists for exactly this ("update DNS / frontend env
    > vars to point at the new Worker subdomains") and sits after the smoke
    > test. Having to activate the zone early for the indexer's sake is not a
@@ -477,7 +477,7 @@ then deploy.
 
    Every OTHER Worker is the opposite shape: it declares no route, so its
    hostname must be bound by hand in the dashboard after deploy. That
-   includes both public surfaces — `apps/defi` and `apps/www` are
+   includes both public surfaces — `apps/app` and `apps/www` are
    **Workers Static Assets** deployments, NOT Pages projects, so nothing
    in their configs attaches a domain and deploying them leaves the sites
    reachable only on their `*.workers.dev` URLs.
@@ -494,7 +494,7 @@ then deploy.
 
    Reaching the Workers before then is still necessary — the §7 smoke test
    has to hit them — so use their `*.workers.dev` origins for every
-   pre-cutover build and check, and switch `apps/defi/.env.production` to
+   pre-cutover build and check, and switch `apps/app/.env.local` to
    the real hostnames as part of the §7 cutover. Leaving the zone inactive
    without staging those temporary origins is the failure in the other
    direction: the smoke test then has nothing to reach.
@@ -502,7 +502,7 @@ then deploy.
    The inventory, for §7 step 4:
 
    - `agent.vaipakam.com` → `vaipakam-agent`
-   - `defi.vaipakam.com` → `vaipakam-defi`
+   - `app.vaipakam.com` → `vaipakam-app`
    - `vaipakam.com` (apex — the canonical, indexable hostname) →
      `vaipakam-www`, plus `labs.vaipakam.com` → `vaipakam-www` if the
      legacy hostname is still wanted
@@ -627,15 +627,15 @@ then deploy.
 
    > **ORDER MATTERS for the frontend, and it is not obvious.** Vite
    > embeds `VITE_INDEXER_ORIGIN` and `VITE_AGENT_ORIGIN` at BUILD time,
-   > and `apps/defi/.env.production` still carries the OLD account's
-   > hosts. So a `defi` bundle built here calls hosts that no longer
+   > and `apps/app/.env.local` still carries the OLD account's
+   > hosts. So an `app` bundle built here calls hosts that no longer
    > answer, and editing the env afterwards changes nothing until it is
    > rebuilt. `apps/agent` additionally needs an operator-created
    > custom-domain binding — its Wrangler config declares no route.
    >
    > Deploy the WORKERS here, then choose the new origins and create the
-   > agent's custom domain, then update `apps/defi/.env.production` and
-   > **rebuild and redeploy `defi` and `www`** before the smoke test.
+   > agent's custom domain, then update `apps/app/.env.local` and
+   > **rebuild and redeploy `app` and `www`** before the smoke test.
    > The smoke-test step assumes the frontend already points at the
    > restored Workers; it does not do the rebuild for you.
 
@@ -675,14 +675,14 @@ then deploy.
      for the pre-cutover build and bind the real hostname in §7;
    - note the new `indexer` subdomain, and the agent's `workers.dev` origin;
    - set `VITE_INDEXER_ORIGIN` / `VITE_AGENT_ORIGIN` in
-     `apps/defi/.env.production`.
+     `apps/app/.env.local`.
 
    ONLY THEN build and deploy the frontends. Vite embeds those origins at
    BUILD time, so a bundle produced before this point calls the lost
    account's hosts and editing the env afterwards changes nothing:
 
    ```bash
-   pnpm --filter @vaipakam/defi run deploy
+   pnpm --filter @vaipakam/app run deploy
    pnpm --filter @vaipakam/www run deploy
    ```
 

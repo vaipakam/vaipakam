@@ -10,10 +10,10 @@
  */
 import { defineConfig } from '@playwright/test';
 
-const STUB_PORT = Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788);
+const STUB_PORT = Number(process.env.APP_E2E_STUB_PORT ?? 8788);
 // Single source for the fork RPC the BROWSER talks to — must match
 // the anvil instance global-setup spawns (see e2e/lib/anvil.ts).
-const ANVIL_URL = process.env.ALPHA02_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
+const ANVIL_URL = process.env.APP_E2E_ANVIL_URL ?? 'http://127.0.0.1:8545';
 
 export default defineConfig({
   testDir: './e2e/tests',
@@ -31,7 +31,7 @@ export default defineConfig({
   },
   webServer: {
     // Direct vite invocation (no pnpm indirection) with the Cloudflare
-    // plugin disabled via ALPHA02_E2E — workerd startup stalled the
+    // plugin disabled via APP_E2E — workerd startup stalled the
     // first CI run's 120s readiness window with zero output.
     command: 'node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 4173 --strictPort',
     url: 'http://127.0.0.1:4173',
@@ -45,7 +45,7 @@ export default defineConfig({
     stdout: 'pipe',
     stderr: 'pipe',
     env: {
-      ALPHA02_E2E: '1',
+      APP_E2E: '1',
       VITE_DEFAULT_CHAIN_ID: '84532',
       VITE_BASE_SEPOLIA_RPC_URL: ANVIL_URL,
       VITE_INDEXER_ORIGIN: `http://127.0.0.1:${STUB_PORT}`,

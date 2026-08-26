@@ -1,6 +1,6 @@
 /**
  * #1040 phase 1 — `POST /support/ticket`: capture a support request
- * from the alpha02 support widget into the shared D1 and notify the
+ * from the connected app support widget into the shared D1 and notify the
  * operator over the ops-internal Telegram bot.
  *
  * Design notes:

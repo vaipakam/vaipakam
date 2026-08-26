@@ -45,7 +45,7 @@ import {
   seedDeskOffer,
 } from '../lib/desk';
 
-const STUB_ORIGIN = `http://127.0.0.1:${Number(process.env.ALPHA02_E2E_STUB_PORT ?? 8788)}`;
+const STUB_ORIGIN = `http://127.0.0.1:${Number(process.env.APP_E2E_STUB_PORT ?? 8788)}`;
 
 interface CandleBucket {
   t: number;
