@@ -852,7 +852,15 @@ said was fine. Bound the keeper's cap by the live bucket capacities, not by the
 largest single-day slice.
 
 **Verify the WIRING, not the components — as one pass, because they fail the
-same way.** Every check above inspects a component you believe is in use. The
+same way.** **M3 / ACTIVE-MIRROR BRANCH ONLY**, like the rest of 3e. On the
+Base-only / dark-mirror branch the reward transport this pass inspects — each
+mirror's `VaipakamRewardMessenger` and `RewardRemittanceReceiver`, the reward and
+reward-budget channels, the mirror pools — need not exist at all, and requiring
+them makes the ceremony unreachable on a branch Gate B explicitly permits (see
+the branch split at the head of Step 3). What survives on the dark branch is
+Base's own side: Base is not a mirror, has no remittance receiver, and sends
+nothing, so nothing here applies to it either. Skip the whole block; do not
+perform it "just in case". Every check above inspects a component you believe is in use. The
 protocol dispatches through what is actually STORED and REGISTERED, and a
 `ConfigureCcip` or `ConfigureRewardReporter` that stopped partway leaves those
 disagreeing while each component reads back healthy on its own. Before the arm,
@@ -898,6 +906,25 @@ read back on every chain:
   of it — so an emergency pause left on after a partial recovery passes every
   wiring readback and then stops the propagation the arm depends on.
 
+**If ANY of this was rotated, matching readbacks are not enough — the lane has
+to be DRAINED first.** `CcipMessenger` resolves the destination handler at
+DELIVERY time and the envelope names no intended handler, so a message sent while
+the old handler was live — with any tokens it carries — is forwarded to the
+REPLACEMENT if it lands after the re-registration. In the other direction,
+installing a new channel peer makes `_ccipReceive` reject a delayed message that
+the old peer had already sent, because the originator on the wire is the old one.
+Both states pass every readback in this pass.
+
+The contract says so itself and points here: the drain "is the control, and it is
+documented in the admin runbook rather than enforced here". So it belongs in this
+ceremony, not in a comment. For every binding changed by a rotation: quiesce the
+channel, let in-flight deliveries land on the OLD handler, then clear and
+re-register — and resolve any delivery that already failed before accepting the
+new bindings. The peer rejection is recoverable (clear the new peer, re-install
+the old, manually re-execute the stranded message, then repeat the rotation), but
+running that recovery re-points a live lane's trust anchor backwards, which is a
+worse thing to be doing than waiting was — and worse still with `D*` immutable.
+
 **Read every mutable pointer FROM THE CONTRACT THAT HOLDS IT — the list above
 walks outward from the Diamond, and each hop's far side is settable too.** Every
 bullet above reads what the Diamond, or the local `CcipMessenger`, believes. The
@@ -921,6 +948,21 @@ enumerate it and read all of it back:
 | `CcipMessenger` | chain selectors, `remoteMessengerOf`, channel peers | yes, in the topology pass |
 | | `channelOf` / `handlerOf` | yes, above |
 | | `getRouter()` | **no — read it, and see below** |
+| *all three* | `owner()`, `pendingOwner()` | **no — read them** |
+| | `guardian()` | **no — read it** |
+| | the proxy's implementation | **no — read it** |
+
+The table above is the settable STATE. It is not the whole answer, and saying it
+enumerated everything was too strong: the last three rows are the PRINCIPALS who
+can rewrite that state after you have read it. All three contracts are
+`Ownable2Step` + `GuardianPausable`, so an owner can rewrite every field above
+and authorise a UUPS upgrade, and a guardian can pause the transport — after this
+preflight and after the irreversible arm. The handover check earlier in this
+runbook establishes ownership of the Diamond, the token and the timelock targets;
+it says nothing about a cross-chain contract REPLACED since, which is precisely
+the case this section exists for. Read `owner()` and `pendingOwner()` against the
+governance address on each, `guardian()` against the current guardian key, and
+each proxy's implementation against the one you intend to be running.
 
 What each of the newly-required ones costs if it is wrong:
 

@@ -51,6 +51,34 @@ steps already cover. The list of things to check is now derived from what the
 contracts can actually be told to point at, rather than from what someone
 remembered to write down.
 
+Review then made three further points about that table, and the first is the one
+that would have hurt an operator soonest: the procedure explicitly permits a
+simpler variant of this ceremony in which the other chains carry none of this
+machinery, and the new block did not say it was for the fuller variant only. An
+operator following the simpler path would have been asked to inspect contracts
+that were never deployed, and would have had no way to finish. It is now marked
+for the branch it belongs to, with an instruction to skip rather than attempt it.
+
+The second is that matching readings are not sufficient when something has just
+been replaced. Deliveries already in flight are directed at their destination
+when they arrive rather than when they were sent, so one sent to the old
+contract, and anything it carries, is handed to the replacement instead — and
+every reading still agrees. The contract itself says this is a procedure to be
+written down here rather than something it can enforce, so the procedure is now
+written down here: quiet the channel, let what is in flight arrive, then change
+the binding, and settle anything that already failed before trusting the new
+readings.
+
+The third corrects a claim in our own new text, which said the table enumerated
+everything settable. It enumerates the settings — not the people who can change
+them afterwards. Each of these contracts has an owner who can rewrite every one
+of those fields and authorise a replacement of the contract itself, and a
+guardian who can halt the transport, and both can act after the check has passed
+and after the switch is thrown. The earlier ownership check in the procedure
+covers the main contracts as they were handed over, and says nothing about one
+replaced since — which is exactly the situation this section is about. Those are
+now read back too.
+
 All of this is read back before the switch, in the same pass that already
 verifies the wiring rather than the components, and the design record carries the
 same additions so the two documents do not drift apart.
