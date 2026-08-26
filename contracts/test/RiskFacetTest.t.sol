@@ -1161,11 +1161,20 @@ contract RiskFacetTest is Test {
         deal(mockERC20, address(diamond), 1800 ether);
         deal(mockCollateralERC20, address(diamond), 1800 ether);
 
-        LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](1);
+        // TWO routes, not one (Codex #1957 r4 P2). Multi-venue execution is the
+        // DEFINING behaviour of this entry point, and a single-element array
+        // stays green if the implementation processes only `splits[0]`, fails to
+        // aggregate later outputs, or mishandles per-leg approvals. `LibSwap`
+        // requires `sum(splits[i].splitAmount)` to equal the input, so the two
+        // legs are a 60/40 partition of the collateral with the remainder given
+        // to the second leg so the sum is exact for any amount.
+        uint256 legA = (ln.collateralAmount * 60) / 100;
+        LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](2);
         splits[0] = LibSwap.SplitCall({
-            adapterIdx: 0,
-            splitAmount: ln.collateralAmount,
-            data: bytes("")
+            adapterIdx: 0, splitAmount: legA, data: bytes("")
+        });
+        splits[1] = LibSwap.SplitCall({
+            adapterIdx: 0, splitAmount: ln.collateralAmount - legA, data: bytes("")
         });
 
         address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
@@ -1251,6 +1260,18 @@ contract RiskFacetTest is Test {
         // `ClaimFacet.claimAsLender` reverts `AlreadyClaimed`, leaving the
         // lender unable to recover proceeds whose collateral has been sold.
         assertFalse(claimTaken, "lender claim is unclaimed - actionable, not just recorded");
+
+        // The BORROWER side too (Codex #1957 r4 P2). This fixture's 1.1x swap
+        // leaves a positive surplus, which the facet records in a separate
+        // `borrowerClaims` row (`RiskSplitLiquidationFacet:336`). Asserting only
+        // the lender leaves that write unguarded: deleting it, or marking it
+        // claimed, would leave this test green with the borrower unable to
+        // recover their surplus after their collateral was sold.
+        (address bAsset, uint256 bAmt, bool bTaken, , , , , ) =
+            ClaimFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ false);
+        assertEq(bAsset, mockERC20, "borrower surplus claim in the principal asset");
+        assertGt(bAmt, 0, "borrower surplus recorded");
+        assertFalse(bTaken, "borrower surplus claim is unclaimed - actionable");
 
         vm.clearMockedCalls();
     }
