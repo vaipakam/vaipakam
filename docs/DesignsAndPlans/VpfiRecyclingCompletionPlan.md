@@ -196,7 +196,7 @@ numeraire linkage at all.
 
 > **D1 DECIDED: (b)** — owner, 2026-07-18. The
 > `VpfiAbsorptionDistributionFormulaRedesign.md` LIF·year dual-fee
-> package at rev 15 (the D1-approved revision) governs M2; option (a) is retired
+> package at rev 15 (the D1-approved revision, now carrying two IN-PLACE SUPERSESSION notes — the F2 keying and the C1 gate; see them before implementing from it) governs M2; option (a) is retired
 > (the governor §4.2 formula gets its supersession note; the unwired
 > `recycleTariffKPer1e18EthDay` knob is deleted once no caller remains).
 > The divergence table is retained below for the record.

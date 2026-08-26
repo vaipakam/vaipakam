@@ -782,7 +782,10 @@ is "at every lender-yield settlement", so that is a live divergence and a hard
 precondition for this step, not a scope boundary. Enabling here while it stands
 collects `C*` for a discount a lender can lose depending on how their loan ends.
 The frozen rule is `### F2 — Lender yield fee (frozen — rev 8)` in
-`docs/DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md` — NOT
+`docs/DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md` (read its two
+IN-PLACE SUPERSESSION notes before acting on it: the F2 pseudocode keys the
+discount on `loan.lender` and must be read as the current position-NFT holder,
+and its C1 gate names PR-5c alone and must be read as also requiring #1947) — NOT
 `TokenomicsTechSpec`, which has no §F2 of its own. The open implementation card
 is **#1947**; #1383 is the COMPLETED repayment/early-close family and is not the
 blocker. See also `TokenomicsTechSpec`'s lender-settlement section for the
