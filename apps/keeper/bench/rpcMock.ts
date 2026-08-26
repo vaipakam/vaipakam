@@ -116,21 +116,28 @@ for (const item of DIAMOND_ABI_VIEM as readonly AbiFunction[]) {
   }
 }
 
-/** A plausible, correctly-typed value for one ABI output parameter. */
-function defaultFor(p: AbiParameter): unknown {
+/**
+ * A plausible, correctly-typed value for one ABI output parameter.
+ *
+ * `fnName` is not decoration: `getActiveLoansCount`'s output is UNNAMED in the
+ * ABI, so a parameter-name-only heuristic misses it, answers 1e18, and the
+ * caller then walks ~1e16 pages. That is precisely how preGraceWatcher came
+ * out at 20,025 calls and 5.9 s and looked like the worst pass in the tree.
+ */
+function defaultFor(p: AbiParameter, fnName = ''): unknown {
   const t = p.type;
   if (t.endsWith('[]')) {
     const inner = { ...p, type: t.slice(0, -2) } as AbiParameter;
-    return Array.from({ length: ARRAY_LEN }, () => defaultFor(inner));
+    return Array.from({ length: ARRAY_LEN }, () => defaultFor(inner, fnName));
   }
   const fixed = t.match(/^(.*)\[(\d+)\]$/);
   if (fixed) {
     const inner = { ...p, type: fixed[1] } as AbiParameter;
-    return Array.from({ length: Number(fixed[2]) }, () => defaultFor(inner));
+    return Array.from({ length: Number(fixed[2]) }, () => defaultFor(inner, fnName));
   }
   if (t === 'tuple') {
     const comps = (p as { components?: readonly AbiParameter[] }).components ?? [];
-    return comps.map(defaultFor);
+    return comps.map((c) => defaultFor(c, fnName));
   }
   if (t === 'address') return ADDRESS;
   if (t === 'bool') return false;
@@ -146,7 +153,8 @@ function defaultFor(p: AbiParameter): unknown {
     // answered 1e18, so the liquidator's pagination loop had 1e18/200 pages
     // to walk and never returned. Names are the only signal available here,
     // and they are reliable enough for a profiling fixture.
-    if (/count|total|length|len|num|size|pages/i.test(p.name ?? '')) {
+    const COUNTISH = /count|total|length|len|num|size|pages/i;
+    if (COUNTISH.test(p.name ?? '') || COUNTISH.test(fnName)) {
       return BigInt(COUNT_VALUE);
     }
     // Non-trivial magnitude otherwise: a zero everywhere would let a pass
@@ -200,7 +208,7 @@ function answerCall(data: string): string {
     exhausted = seen > MAX_PAGES;
   }
   const values = fn.outputs.map((o) =>
-    exhausted && o.type.endsWith('[]') ? [] : defaultFor(o),
+    exhausted && o.type.endsWith('[]') ? [] : defaultFor(o, fn.name),
   );
   return encodeFunctionResult({
     abi: [fn] as Abi,
