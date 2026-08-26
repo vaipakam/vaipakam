@@ -1615,11 +1615,19 @@ the eligible alternatives, not losing one. (An earlier revision of this paragrap
 said the mirror could not be armed at all; that was wrong and would have had an
 operator treat a recoverable cutover as irreparable.)
 
-**There IS an enforceable gate, and an earlier revision was wrong to say there is
-not: pause the reward messenger.** `VaipakamRewardMessenger` is
-`GuardianPausable` — `pause()` is guardian-or-owner — and every V2/V3 broadcast
-sender on it is `whenNotPaused`, while reward-budget remittance and receipt run
-over the SEPARATE `crossChainMessenger` / `RewardRemittanceReceiver` path. So:
+**On a mirror where #1566 is NOT deployed, do not run a propagation procedure at
+all.** Keep the reward messenger paused and leave that mirror out of the cutover
+until #1566 or a day-scoped protocol gate lands there (#1944). Everything below
+about pausing and unpausing applies ONLY to a mirror that already carries the
+#1566 fix, where an early broadcast costs a user an empty balance until funding
+arrives rather than paying them out of borrower collateral. Read the dead-end
+list before reaching for any of it.
+
+**On a #1566-FIXED mirror, the messenger pause is a usable gate.**
+`VaipakamRewardMessenger` is `GuardianPausable` — `pause()` is guardian-or-owner
+— and every V2/V3 broadcast sender on it is `whenNotPaused`, while reward-budget
+remittance and receipt run over the SEPARATE `crossChainMessenger` /
+`RewardRemittanceReceiver` path. So:
 
 1. pause the reward messenger;
 2. finalize the candidate day, remit to every destination, confirm every
@@ -1627,10 +1635,11 @@ over the SEPARATE `crossChainMessenger` / `RewardRemittanceReceiver` path. So:
    the pause;
 3. unpause, then broadcast.
 
-That closes the finalize→receipt window for the CANDIDATE day and **nothing
-more**, and five successive attempts to build a safe procedure on top of it have
-each been refuted. They are recorded here as a DEAD-END LIST so the next person
-does not re-derive them:
+**That closes the finalize→receipt window for the CANDIDATE day and nothing
+more** — on an unfixed mirror the residue is a fund-loss path, which is why the
+scoping above is not a formality. Five successive attempts to make this sequence
+safe on an UNFIXED mirror were each refuted, and they are recorded here as a
+DEAD-END LIST so the next person does not re-derive them under time pressure:
 
 | Attempted procedure | Why it does not hold |
 | --- | --- |
