@@ -99,6 +99,34 @@ const ADDRESS_ALT = '0x2222222222222222222222222222222222222222' as const;
 // bench/d1Stub.ts (`0x…01`), so the seeded `user_thresholds` row is found and
 // the throttle / format / state-write path runs (Codex #1945 r6).
 const SUBSCRIBER = '0x0000000000000000000000000000000000000001' as const;
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000' as const;
+
+/**
+ * A fully ZEROED value for an ABI parameter — the shape a Solidity view returns
+ * for an unallocated slot (address 0, uint 0, empty bytes/arrays). Fixed-size
+ * paginated views (`getRewardEntriesRange`) pad past the end of the dataset with
+ * these, and their consumers stop at the first zero struct; a truncated/empty
+ * page instead spun the scan on empty reads (Codex #1945 r10, tracked in #1948).
+ */
+function zeroFor(p: AbiParameter): unknown {
+  const t = p.type;
+  if (t.endsWith('[]')) return [];
+  const fixed = t.match(/^(.*)\[(\d+)\]$/);
+  if (fixed) {
+    const inner = { ...p, type: fixed[1] } as AbiParameter;
+    return Array.from({ length: Number(fixed[2]) }, () => zeroFor(inner));
+  }
+  if (t === 'tuple') {
+    const comps = (p as { components?: readonly AbiParameter[] }).components ?? [];
+    return comps.map((c) => zeroFor(c));
+  }
+  if (t === 'address') return ZERO_ADDRESS;
+  if (t === 'bool') return false;
+  if (t === 'string') return '';
+  if (t === 'bytes') return '0x';
+  if (/^bytes\d+$/.test(t)) return `0x${'00'.repeat(Number(t.slice(5)))}`;
+  return 0n;
+}
 
 /**
  * Multicall3's `aggregate3`, which viem uses for `publicClient.multicall`.
@@ -440,8 +468,16 @@ function answerCall(data: string, chainKey = ''): string {
     /limit|count|size|max|first|take|num/i.test(i.name ?? ''),
   );
   const paginated = returnsArray && offsetIdx >= 0;
+  // `getRewardEntriesRange` allocates the requested `count` every call and pads
+  // past the allocated id sequence with zero structs; its consumer terminates on
+  // the first zero struct. So it must NOT be truncated to the remaining dataset
+  // (which returned an empty page past the end and spun submitSide on empty
+  // reads, processing only the first finalized day). Serve the full requested
+  // size and zero-pad in the values map below (Codex #1945 r10, #1948).
+  const fixedSizePage = returnsArray && /getrewardentriesrange/i.test(fn.name);
 
   let pageLen = ARRAY_LEN;
+  let pageOffset = 0;
   if (paginated) {
     // Serve a slice of ONE coherent COUNT_VALUE-sized dataset. The keeper reads
     // a count (COUNT_VALUE) and then pages by its own limit; a page shorter than
@@ -472,7 +508,10 @@ function answerCall(data: string, chainKey = ''): string {
       decoded = false;
     }
     if (decoded) {
-      pageLen = Math.max(0, Math.min(limit, COUNT_VALUE - offset));
+      pageOffset = offset;
+      pageLen = fixedSizePage
+        ? Math.max(0, limit)
+        : Math.max(0, Math.min(limit, COUNT_VALUE - offset));
     } else {
       // Cursor/opaque pagination we cannot decode: fall back to the per-(chain,
       // selector) page counter so the read still terminates after MAX_PAGES.
@@ -494,6 +533,20 @@ function answerCall(data: string, chainKey = ''): string {
       /^u?int(8|16|32|64|128|256)?$/.test(inner.type)
     ) {
       return FIXTURE_CHAIN_IDS.map((c) => c);
+    }
+    if (fixedSizePage) {
+      // Reward-entry ids are allocated from 1, so the COUNT_VALUE-entry dataset
+      // is ids 1..COUNT_VALUE INCLUSIVE. Real entries for those ids
+      // (id = pageOffset + i <= COUNT_VALUE), ZERO structs for the padding past
+      // the dataset — so submitSide's scan terminates on the first zero struct
+      // and every finalized day is processed (Codex #1945 r10, #1948 r1),
+      // instead of spinning on empty pages. A strict `<` dropped the final id
+      // and, at boundary sizes like BENCH_COUNT=201, a whole extra batch tx.
+      return Array.from({ length: pageLen }, (_, i) =>
+        pageOffset + i >= 1 && pageOffset + i <= COUNT_VALUE
+          ? defaultFor(inner, fn.name, chainKey)
+          : zeroFor(inner),
+      );
     }
     return Array.from({ length: pageLen }, () => defaultFor(inner, fn.name, chainKey));
   });
