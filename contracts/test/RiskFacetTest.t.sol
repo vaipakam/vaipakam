@@ -20,6 +20,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
@@ -256,7 +257,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -378,6 +379,40 @@ contract RiskFacetTest is Test {
             functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
 
         });
+
+
+        // #1955 — `triggerLiquidationSplit` is one of the five recovery entry
+
+
+        // points #1383 swept, and it had ZERO happy-path coverage anywhere in
+
+
+        // the tree: its only call sat inside an `expectRevert`. This suite
+
+
+        // already stages everything a split needs (swap mock, oracle mocks,
+
+
+        // treasury), so cutting the facet here is cheaper than porting that
+
+
+        // machinery into a suite that already cuts it.
+
+
+        cuts[21] = IDiamondCut.FacetCut({
+
+
+            facetAddress: address(new RiskSplitLiquidationFacet()),
+
+
+            action: IDiamondCut.FacetCutAction.Add,
+
+
+            functionSelectors: helperTest.getRiskSplitLiquidationFacetSelectors()
+
+
+        });
+
 
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -1073,6 +1108,104 @@ contract RiskFacetTest is Test {
             "reference run taxed recovered INTEREST, not just the handling fee"
         );
 
+        assertLt(fullTreasury, baseTreasury, "Full stamp reduced the treasury cut");
+        assertEq(
+            baseTreasury - fullTreasury,
+            fullLender - baseLender,
+            "every wei the treasury gave up reached the lender"
+        );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1955 — run ONE split liquidation on an existing loan, optionally
+    ///      stamping the lender `Full` first. Mocks live in here because the
+    ///      caller replays from a snapshot and `vm.revertToState` restores chain
+    ///      state but NOT mocks, and an HF mock set before the loan exists
+    ///      blocks its creation.
+    function _splitLiquidateAndMeasure(
+        uint256 loanId,
+        address treasuryEoa,
+        bool stampFull
+    ) private returns (uint256 toTreasury, uint256 toLender) {
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        if (stampFull) {
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
+            abi.encode(true)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](1);
+        splits[0] = LibSwap.SplitCall({
+            adapterIdx: 0,
+            splitAmount: ln.collateralAmount,
+            data: bytes("")
+        });
+
+        address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
+        uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
+
+        RiskSplitLiquidationFacet(address(diamond)).triggerLiquidationSplit(loanId, splits);
+
+        lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
+        toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
+    }
+
+    /// @notice #1955 — a Full-stamped lender keeps the `+10%` on the interest a
+    ///         SPLIT liquidation recovers.
+    ///
+    /// @dev    This entry point had **no happy-path coverage anywhere in the
+    ///         tree** before this test — its only call sat inside an
+    ///         `expectRevert` in `InternalMatchPriorityWindow`. So this is the
+    ///         first end-to-end exercise of `triggerLiquidationSplit`'s
+    ///         settlement, not merely of its discount.
+    function test_1955_splitLiquidation_lenderFull_shiftsInterestFeeToLender()
+        public
+    {
+        address treasuryEoa = makeAddr("treasuryEoaFor1955Split");
+        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+
+        uint256 loanId = createAndAcceptOffer();
+        // Interest must accrue or the treasury takes only the handling fee and
+        // both replays measure the same thing.
+        vm.warp(block.timestamp + 15 days);
+
+        uint256 snap = vm.snapshotState();
+        (uint256 baseTreasury, uint256 baseLender) =
+            _splitLiquidateAndMeasure(loanId, treasuryEoa, false);
+        vm.revertToState(snap);
+        (uint256 fullTreasury, uint256 fullLender) =
+            _splitLiquidateAndMeasure(loanId, treasuryEoa, true);
+
+        assertGt(baseTreasury, 0, "reference run paid a treasury cut");
         assertLt(fullTreasury, baseTreasury, "Full stamp reduced the treasury cut");
         assertEq(
             baseTreasury - fullTreasury,
