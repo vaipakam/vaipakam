@@ -8,6 +8,8 @@ import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
 import {ConsolidationFacet} from "./ConsolidationFacet.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibInteractionRewards} from "../libraries/LibInteractionRewards.sol";
 import {LibPrepayCleanup} from "../libraries/LibPrepayCleanup.sol";
 import {LibVPFIDiscount} from "../libraries/LibVPFIDiscount.sol";
@@ -274,6 +276,15 @@ contract RiskSplitLiquidationFacet is
             uint256 interestRecovered = allocated - loan.principal;
             if (interestRecovered > interestPortion) interestRecovered = interestPortion;
             (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
+            // #1383 — same rule as the atomic and discounted liquidation paths.
+            // Keyed on the CURRENT position-NFT holder; `lenderProceeds` is a
+            // residual of the cut, so only the treasury term moves.
+            (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
+                loanId,
+                LibERC721.ownerOf(loan.lenderTokenId),
+                interestRecovered,
+                treasuryInterestFee
+            );
             lenderProceeds = allocated - treasuryInterestFee;
         } else {
             lenderProceeds = allocated;

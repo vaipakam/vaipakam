@@ -8,6 +8,8 @@ import {SwapToRepayIntentFacet} from "./SwapToRepayIntentFacet.sol";
 import {LibEncumbrance} from "../libraries/LibEncumbrance.sol";
 import {LibFallback} from "../libraries/LibFallback.sol";
 import {LibEntitlement} from "../libraries/LibEntitlement.sol";
+import {LibLenderYieldFeeHost} from "../libraries/LibLenderYieldFeeHost.sol";
+import {LibERC721} from "../libraries/LibERC721.sol";
 import {LibFacet} from "../libraries/LibFacet.sol";
 import {EncumbranceMutateFacet} from "./EncumbranceMutateFacet.sol";
 import {LibSanctionedLock} from "../libraries/LibSanctionedLock.sol";
@@ -485,6 +487,17 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                     uint256 interestRecovered = allocated - loan.principal;
                     if (interestRecovered > interestPortion) interestRecovered = interestPortion;
                     (treasuryInterestFee, ) = LibEntitlement.splitTreasury(loan, interestRecovered);
+                    // #1383 — recovered interest is lender interest, so the
+                    // frozen F2 rule reaches it. Keyed on the CURRENT
+                    // position-NFT holder (the consolidation is skip-not-block).
+                    // `lenderProceeds` is a residual of the cut, so only the
+                    // treasury term moves.
+                    (, treasuryInterestFee) = LibLenderYieldFeeHost.resolve(
+                        loanId,
+                        LibERC721.ownerOf(loan.lenderTokenId),
+                        interestRecovered,
+                        treasuryInterestFee
+                    );
                     lenderProceeds = allocated - treasuryInterestFee;
                 } else {
                     lenderProceeds = allocated;
@@ -699,6 +712,25 @@ contract DefaultedFacet is DiamondReentrancyGuard, DiamondPausable, IVaipakamErr
                 loan,
                 loan.prepayAmount
             );
+            // #1383 — the rental prepay leg of the SAME entry point. A rental
+            // can never carry the paid Full stamp (the tariff rides an ERC-20
+            // origination's LIF and a rental pays none), so `d_tariff` is always
+            // zero here — but the consent-gated HOLD discount is independent of
+            // Full and does apply, exactly as it does on the landed
+            // preclose-rental legs. Unlike the ERC-20 leg above, `prepayToLender`
+            // is returned by `splitTreasury` rather than derived as a residual,
+            // so BOTH terms have to be folded in.
+            {
+                (uint256 rentLenderExtra, uint256 rentNewTreasury) =
+                    LibLenderYieldFeeHost.resolve(
+                        loanId,
+                        LibERC721.ownerOf(loan.lenderTokenId),
+                        loan.prepayAmount,
+                        treasuryFee
+                    );
+                prepayToLender += rentLenderExtra;
+                treasuryFee = rentNewTreasury;
+            }
 
             // Withdraw full prepay from borrower vault
             LibFacet.crossFacetCall(
