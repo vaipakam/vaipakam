@@ -634,9 +634,15 @@ optional:
 - **Do not enable before the loan-side reward cap and the lender-side
   settlement sweep are live on the deployment.** Enabling earlier lets
   a Full loan pay `C*` for a discount the settlement paths would not
-  yet honour, and arms an uncapped loan-side reward. Both are live as
-  of this cycle (#1353, #1354 and the #1383 family), so on a current
-  deployment this is a check, not a blocker.
+  yet honour, and arms an uncapped loan-side reward. The loan-side cap
+  (#1353) and the settlement sweep across the repayment paths (#1354,
+  #1383) are live — but the RECOVERY paths are not: time-based default,
+  liquidation, split liquidation and partial liquidation each take the
+  ordinary cut from recovered lender interest without honouring the
+  stamp. The frozen §F2 rule is "at every lender-yield settlement", so
+  that is a divergence rather than a scope boundary, and it is a
+  **blocker** until it is closed or explicitly superseded. Do not read
+  the #1383 family as covering it.
 
 Disabling is always allowed, from any chain role.
 
