@@ -1585,6 +1585,31 @@ it ARRIVES first — and it is the arrival that funds the mirror, while the
 broadcast opens its claim gate. Wait for each mirror's `RewardBudgetReceived`
 before broadcasting to it, rather than treating the send order as sufficient.
 
+**And that wait is a convention you keep, not an order you enforce — the
+broadcast is PERMISSIONLESS.** `broadcastGlobal` and `broadcastGlobalTo` are
+`onlyCanonical`, and that modifier checks `isCanonicalRewardChain` — a property
+of the CHAIN, not of the caller. Any account on Base willing to pay the CCIP fee
+can broadcast a finalized day. So between finalizing the day and the last
+`RewardBudgetReceived` landing, a third party can open every mirror's claim gate
+against a budget that has not arrived, and no amount of operator discipline
+prevents it. Nothing here is exploitable for profit; the harm is that users meet
+an empty-balance revert on a gate the ceremony opened early.
+
+**Close the window rather than policing it: do the remit and its receipts BEFORE
+arming.** The chosen day is pre-`D*` and a pre-`D*` remit does not need the
+commitment report, so nothing about it depends on Base being armed. Finalize the
+day, remit it to every destination, and confirm every `RewardBudgetReceived` —
+all of it before `setGovernorCommitArmedFromDay`. Then the only thing the
+post-arm broadcast does is install `D*` on an already-funded day, and there is no
+interval in which a finalized-but-unfunded day is sitting there for anyone to
+broadcast.
+
+Where that is not possible, treat a third-party broadcast as an expected event
+rather than a violation: keep the finalize→receipt interval as short as you can,
+and know that discovering an early broadcast is not a reason to pause the
+ceremony — the day still funds when the remit lands, and pausing extends exactly
+the window you are trying to shrink.
+
 **One exception, and without it the wait never ends.** If the chosen day
 allocates zero budget to a destination, `remitRewardBudget` closes it locally,
 emits `RewardBudgetRemitted` with a zero message id and returns **without sending
