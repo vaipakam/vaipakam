@@ -1212,6 +1212,24 @@ contract RiskFacetTest is Test {
             fullLender - baseLender,
             "every wei the treasury gave up reached the lender"
         );
+
+        // Codex #1957 r1 P2 — this is the ONLY successful `triggerLiquidationSplit`
+        // in the tree, so balance deltas alone are not enough: removing the claim
+        // write, the `terminalize` call or the NFT-status updates would leave the
+        // test green with the collateral SOLD and the loan still Active or
+        // unclaimable. Assert the close-out actually completed.
+        LibVaipakam.Loan memory after_ =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(
+            uint8(after_.status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "split liquidation drives the loan terminal"
+        );
+        (address claimAsset, uint256 claimAmt, , , , , , ) =
+            ClaimFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ true);
+        assertEq(claimAsset, mockERC20, "lender claim recorded in the principal asset");
+        assertGt(claimAmt, 0, "lender claim amount recorded");
+
         vm.clearMockedCalls();
     }
 

@@ -195,6 +195,20 @@ contract FeeEntitlementFacetTest is SetupTest {
         uint256 newLenderPk,
         address treasuryEoa
     ) private returns (uint256 cut) {
+        // Codex #1957 r1 P2 — `vm.revertToState` does NOT clear mocks, so on
+        // runs 2 and 3 the acceptance below would execute with run 1's mocks
+        // still installed (the `vaultWithdrawERC20` prefix mock intercepts
+        // `OfferAcceptFeeFacet`'s fee + delivery withdrawals; the HF and LTV
+        // mocks alter acceptance checks). Run 1 would accept in a clean world
+        // and the others in a mocked one, so the treasury cuts being compared
+        // would come from different worlds. Clear first, then re-install
+        // everything this run needs — including the consolidation decline,
+        // which must hold for all three.
+        vm.clearMockedCalls();
+        vm.mockCall(address(diamond),
+            abi.encodeWithSelector(ConsolidationFacet.eagerConsolidateToHolder.selector),
+            abi.encode());
+
         _fundActorVault(newLenderAddr, mockERC20, PRINCIPAL);
         _signAndAcceptOffer(newLenderAddr, newLenderPk, borrowerOfferId, true, 0);
 
@@ -380,7 +394,28 @@ contract FeeEntitlementFacetTest is SetupTest {
         );
 
         // The property: a rental under the same config is not.
+        //
+        // BOTH sides must genuinely WANT Full, or the assertions below are
+        // vacuous (Codex #1957 r1 P2). `resolveAndCharge` returns non-Full at
+        // its `wantsFull == false` branch before any rental defence is reached,
+        // so a lender who never authorized creator-side Full and holds no VPFI
+        // proves nothing about rentals. Stake the lender and authorize the
+        // creator side so the rejection is attributable to the rental, not to
+        // the absence of an opt-in.
+        _stakeVpfi(lender, PARTY_VPFI_STAKE);
+        vm.prank(lender);
+        VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
         uint256 rentalOffer = _createLenderRentalOffer();
+        // `_cStar()` makes an external `quoteCStar` staticcall, and arguments
+        // are evaluated BEFORE the call — so inlining it here consumes the
+        // prank and `setOfferCreatorFullTariff` runs as the test contract,
+        // failing its creator check (which reverts as `NotNFTOwner`, a
+        // misleading name for `msg.sender != offer.creator`). Resolve first.
+        uint256 cStarForRental = _cStar();
+        vm.prank(lender);
+        ProfileFacet(address(diamond)).setOfferCreatorFullTariff(
+            rentalOffer, true, cStarForRental, /*allowDowngrade=*/ true
+        );
         vm.recordLogs();
         uint256 rentalLoan = LibAcceptTestSigner.signAndAcceptFull(
             address(diamond), borrower, borrowerPk, rentalOffer, _cStar(), true
@@ -421,15 +456,27 @@ contract FeeEntitlementFacetTest is SetupTest {
     ///      proves the mechanism before anything is built on it.
     function test_1955_probe_stakedPartyResolvesNonZeroTier() public {
         _stakeVpfi(lender, PARTY_VPFI_STAKE); // 5_000 ether => tier 3
-        // Read through the CALLER-FACING view: the accumulator's
-        // `effectiveTierAndBps` is `InternalCallerOnly` (diamond-internal), so a
-        // test cannot observe it directly — `getVPFIDiscountTier` is the surface
-        // `VPFIDiscountFacetTest` already uses for exactly this.
-        (uint8 tier, uint256 bal, uint256 bps) =
+        vm.prank(lender);
+        VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
+        // Age past `cfgTwaMinStakedDays` (default 3) — `effectiveTierAndBps`
+        // returns (0,0) until the stake has aged, then takes a ring-buffer MIN.
+        vm.warp(block.timestamp + 15 days);
+
+        // The raw view is NOT the right probe (Codex #1957 r1 P2).
+        // `getVPFIDiscountTier` is `tierOf(vaultVpfiBalance(user))` — it never
+        // calls `effectiveTierAndBps`, never applies the min-staking window and
+        // never touches `VPFIDiscountAccumulatorFacet`, so it stays green in
+        // exactly the silent-zero condition this probe exists to detect.
+        // `getEffectiveDiscount` mirrors what the settlement paths gate on.
+        (uint8 rawTier, uint256 bal, ) =
             VPFIDiscountFacet(address(diamond)).getVPFIDiscountTier(lender);
         assertGt(bal, 0, "stake landed in the vault");
-        assertGt(tier, 0, "staked party must resolve a non-zero tier here");
-        assertGt(bps, 0, "and a non-zero discount bps");
+        assertGt(rawTier, 0, "raw balance maps to a tier");
+
+        (uint8 effTier, uint16 effBps) =
+            VPFIDiscountFacet(address(diamond)).getEffectiveDiscount(lender);
+        assertGt(effTier, 0, "EFFECTIVE tier resolves - accumulator is live");
+        assertGt(effBps, 0, "EFFECTIVE discount bps is non-zero");
     }
 
     // ─── quoteCStar ───────────────────────────────────────────────────────────
