@@ -1458,9 +1458,17 @@ value.
 **⛔ FIRST, the prohibition that governs everything in this step.** The broadcast
 entry points are PERMISSIONLESS with respect to the caller, and on a mesh where
 ANY REACHABLE mirror lacks the #1566 fix an early broadcast pays a claimant out
-of borrower collateral rather than reverting. **Reachable** means it has
-historical day standing AND a live outbound lane — see the teardown exemption
-below. **Do not run the cycle
+of borrower collateral rather than reverting.
+
+**Reachable** = a LIVE OUTBOUND LANE **and** (current membership of
+`getBroadcastDestinations()` **or** historical day standing). Both disjuncts are
+needed because the two entry points differ: `broadcastGlobalTo` calls
+`_assertDayStanding`, so historical standing is what makes a REMOVED mirror
+targetable — but `broadcastGlobal` fans out to the CURRENT destination list and
+calls no such assertion, so a newly added or dark mirror with no history at all
+is reachable simply by being on the list. An earlier revision defined
+reachability on standing alone and would have permitted unpausing with exactly
+that mirror exposed. **Do not run the cycle
 below, and do not unpause the reward messenger, while that is true of any such
 mirror** — see "the one safe branch" and the dead-end list further down, which
 record five procedures that were each tried against this and refuted. The cycle
@@ -1687,11 +1695,23 @@ must not block the mesh.** `broadcastDayV3Single` dispatches through
 reverts before any send when the lane has been decommissioned:
 `UnconfiguredChain` on a cleared `chainSelectorOf`, `NoRemoteMessenger` on a
 cleared `remoteMessengerOf`, or `UnsupportedByRouter` when the router no longer
-supports the selector. So define the block as **historical day standing AND a
-live outbound lane**, and grant the exemption only against a VERIFIED teardown —
-read all three back as cleared for that chain. Without this a retired,
-unreachable mirror would hold the whole mesh paused indefinitely, which is a
-different way of never arming. That is
+supports the selector. So a mirror can be taken out of the block by a
+genuine teardown — but the exemption must be keyed to what GOVERNANCE controls.
+
+Require the **protocol-owned** lane fields cleared for that chain —
+`chainSelectorOf[chainId] == 0` and `remoteMessengerOf[chainId] == address(0)` —
+**and** the chain absent from `getBroadcastDestinations()`, which closes the
+fan-out path the standing check never guards. Either cleared mapping already
+makes `_resolveDestination` revert before the router is consulted.
+
+**Do NOT require `isChainSupported` to be false.** That is the CCIP router's
+state, not ours: it reflects whether the router has an on-ramp for the selector,
+and governance cannot clear it. Requiring it would make the exemption
+unsatisfiable whenever Chainlink still supports the destination — holding the
+mesh paused over a lane we have completely decommissioned. Router non-support is
+an additional blocker where it happens to hold; it is never a condition of the
+exemption. An earlier revision said "read all three back as cleared", which had
+that defect. That is
 expensive — it stops all reward messaging on that messenger and leaves the mirror
 unarmed — and it is the only option in the list above that does not fail to an
 argument already written down. Prefer arming a mesh whose mirrors carry the
