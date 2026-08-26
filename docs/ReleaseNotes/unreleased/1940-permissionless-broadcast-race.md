@@ -128,7 +128,18 @@ the meantime.
 
 The procedure therefore stops offering alternatives and states the one branch
 that survives: on a chain without the fund-safety fix, leave the messenger paused
-and do not propagate to that chain until the fix is deployed there. That is
+and do not propagate to that chain until it enforces the property that matters —
+that a claim against a day whose funding has not arrived cannot consume value
+belonging to anything else. The outstanding fund-safety item does not by itself
+guarantee that; some of its permitted remedies protect borrowers' collateral
+while still letting such a claim take another day's reward funding.
+
+Two chains are exempt from that block rather than caught by it, and saying so
+matters as much as the block itself: one whose route has been fully dismantled
+cannot be reached at all, and one that was removed from the lists and whose
+qualifying history has already been used up cannot be reopened. Without those
+exemptions an operator would stop all reward messaging indefinitely over a
+retired chain. That is
 expensive — it stops other reward messaging and leaves the chain out of the
 cutover — and it is the only option in the list that has not been argued away.
 The five that were is kept in the document as a dead-end list, with the reason

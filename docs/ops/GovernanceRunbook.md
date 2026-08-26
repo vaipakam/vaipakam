@@ -1457,7 +1457,7 @@ value.
 
 **⛔ FIRST, the prohibition that governs everything in this step.** The broadcast
 entry points are PERMISSIONLESS with respect to the caller, and on a mesh where
-ANY REACHABLE mirror lacks the #1566 fix an early broadcast pays a claimant out
+ANY REACHABLE mirror lacks the per-day funding property (a claim against a day whose budget has not arrived cannot consume value belonging to anything else — **not** merely "#1566 deployed") an early broadcast pays a claimant out
 of borrower collateral rather than reverting.
 
 **Reachable** = a LIVE OUTBOUND LANE **and** (current membership of
@@ -1473,7 +1473,15 @@ The historical disjunct needs one more qualifier: `broadcastGlobalTo` checks
 standing that exists only on days finalized before the V3 lapse-clock upgrade
 does not make a REMOVED mirror targetable at all. Require a standing day that can
 pass that gate; otherwise a mirror with nothing but pre-upgrade history would
-hold the mesh paused over a broadcast that cannot be sent. An earlier revision defined
+hold the mesh paused over a broadcast that cannot be sent.
+
+And the qualifying day must be **UNAPPLIED** there. A removed mirror whose every
+V3-clock standing day has already been applied and safely reconciled cannot be
+reopened by re-broadcasting one: `_applyBroadcastV2Core` takes the idempotent
+replay branch before installing `armedFromDay` or touching any gate. Provided it
+is also absent from the expected-source list — so no future day can acquire new
+standing — its finite history is spent and it must not block the mesh. Treating
+spent history as reachable is the same over-block as the two above. An earlier revision defined
 reachability on standing alone and would have permitted unpausing with exactly
 that mirror exposed. **Do not run the cycle
 below, and do not unpause the reward messenger, while that is true of any such
@@ -1652,11 +1660,11 @@ the eligible alternatives, not losing one. (An earlier revision of this paragrap
 said the mirror could not be armed at all; that was wrong and would have had an
 operator treat a recoverable cutover as irreparable.)
 
-**On a mirror where #1566 is NOT deployed, do not run a propagation procedure at
+**On a mirror that does NOT enforce the per-day funding property, do not run a propagation procedure at
 all.** Keep the reward messenger paused and leave that mirror out of the cutover
-until #1566 or a day-scoped protocol gate lands there (#1944). Everything below
+until that property or a day-scoped protocol gate lands there (#1944). Everything below
 about pausing and unpausing applies ONLY to a mirror that already carries the
-#1566 fix, where an early broadcast costs a user an empty balance until funding
+property, where an early broadcast costs a user an empty balance until funding
 arrives rather than paying them out of borrower collateral. Read the dead-end
 list before reaching for any of it.
 
@@ -1683,6 +1691,15 @@ that every destination have a non-zero remittable slice. Confirm complete report
 coverage for the candidate day and read it back BEFORE pausing, then pause
 immediately before finalization. Otherwise the post-arm ceremony can run out of
 usable days against an immutable `D*`.
+
+**That ordering is best-effort and does not make the pause a gate for the
+candidate day.** The moment the last required report lands, `reportCount >=
+nExpected` makes `finalizeDay` permissionless — so between that block and the
+guardian's separate pause transaction being mined, anyone can finalize and
+broadcast, both from one helper contract. On a property-enforcing mesh the cost
+is a claim outage and a spent day rather than a loss, but the window is real and
+cannot be closed here: report completion and the pause are two transactions and
+nothing makes them atomic. A day-scoped protocol gate is what would (#1944).
 
 **Where that property IS enforced, the messenger pause is a usable gate.**
 `VaipakamRewardMessenger` is `GuardianPausable` — `pause()` is guardian-or-owner
@@ -1713,7 +1730,9 @@ DEAD-END LIST so the next person does not re-derive them under time pressure:
 **So there is ONE safe branch, and it is MESH-WIDE rather than per-mirror: while
 ANY REACHABLE mirror lacks the per-day funding property below, keep the reward
 messenger PAUSED for the whole mesh, reconcile every outstanding broadcast
-message to a terminal state, and run no post-arm propagation at all.**
+message to a SAFE state — not delivered and provably not re-executable, or
+delivered and its day FUNDED (or that destination secured) — and run no post-arm
+propagation at all.**
 
 Three parts, and each was added because leaving it out was tried:
 
@@ -1768,7 +1787,7 @@ that defect. That is
 expensive — it stops all reward messaging on that messenger and leaves the mirror
 unarmed — and it is the only option in the list above that does not fail to an
 argument already written down. Prefer arming a mesh whose mirrors carry the
-#1566 fix; where that is not yet true, the mirror waits.
+property; where that is not yet true, the mirror waits.
 
 Two mechanical facts that survive whatever branch is taken:
 
@@ -1810,7 +1829,7 @@ its own enumeration says include a live swap-to-repay intent's
 reaching an early-opened gate on an unfixed mirror can be paid out of borrower
 collateral. Since broadcasting is independent of arming, this is reachable before
 the ceremony's deploy-before-arm check is ever performed. Treat a finalized,
-unapplied day on an active mirror that has not deployed #1566 as an exposure to
+unapplied day on an active mirror that does not enforce the per-day funding property as an exposure to
 contain now, not a hazard scheduled for the ceremony.
 
 **One exception, and without it the wait never ends.** If the chosen day
@@ -1842,10 +1861,10 @@ it.
 The remit-first order is not a preference. The broadcast **opens the mirror's
 claim gate**, and it does so independently of the keeper's remittance cron — so a
 day broadcast before its budget lands opens claims against funding that has not
-arrived. **On a mirror where #1566 is undeployed that is a fund-loss path, not a
+arrived. **On a mirror that does not enforce the per-day funding property that is a fund-loss path, not a
 revert**: the payout is measured against a balance whose other owners include
 borrower collateral (see the containment note in the propagation section). Where
-#1566 IS deployed, the harm reduces to users hitting an empty balance until
+that property IS enforced, the harm reduces to users hitting an empty balance until
 funding arrives. The keeper narrows that gap on a best-effort basis
 and does not close it, which is exactly why a MANUAL broadcast has to remit
 first. A replay of an
