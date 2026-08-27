@@ -48,32 +48,43 @@ credentials, expire the old bucket) is an operator decision recorded in the
 issue rather than something to take unilaterally.
 
 One thing is worth recording rather than smoothing over, because it is the
-most transferable part. The mechanism did not work first time. Review found
-the same defect it was built to prevent — a second copy of the count that
-nothing reads — six times **inside the mechanism itself**: the wrap-tolerant
-matcher applied to one pattern and not the rest, so a wrapped restatement went
-undetected and the gate reported clean over it; the authority file's own
-summary left unpinned; the summary parser reading only the first of a
-duplicated section; the inventory parser keeping only the last of a duplicated
-row; a committed-vs-live comparison loose enough to accept every value; and a
-plain-prose restatement three paragraphs below the summary that pins it.
+most transferable part. **The mechanism did not work first time, or for many
+times after.** Twelve review rounds found the same defect it was built to
+prevent — a claim about the account that nothing checks — again and again
+*inside the mechanism itself*, and the interesting thing is not the count but
+that the misses fell into four repeating shapes:
 
-Review then found two more of the same kind, and they are worth naming because
-they are different in shape. A row the parser could not read was skipped in
-silence, so bolding a Worker's name removed it from the inventory without a
-word — and the gate's own test suite contained a case asserting that skip as
-correct behaviour. And two files stated the OUTCOME of the capacity check in
-prose rather than a number, which every pattern missed because they all look
-for counts. Both are now covered: an unreadable row inside the table is a
-finding, and a verdict asserted in the present tense is treated as the
-restatement it is, while the conditional form that belongs in a runbook is
-explicitly allowed.
+- **Closed worlds keep reopening.** A list of file extensions, a class of
+  Markdown prefixes, a set of phrasings gathered from the tree: each was an
+  enumeration of what somebody might write, each leaked twice, and each was
+  finally fixed by replacing the enumeration with a decidable test rather than
+  extending it a third time.
+- **Fixing one member of a family and leaving its sibling**, five times — a
+  wrap-tolerant matcher applied to one pattern and not the rest; a short-row
+  guard added beside the malformed-row finding it belonged with; one file
+  extension added while its sibling stayed out.
+- **Closing one direction and opening the reverse.** Requiring every
+  reservation to be named, without rejecting a name for a reservation that no
+  longer exists. Dropping an anchor so a hidden duplicate could not escape,
+  thereby accepting a stamp no reader can see.
+- **Answering a question with the neighbouring question's test.** Counting
+  well-formed stamps to decide whether there were two. Checking that a
+  paragraph is *about* cron to decide whether a sentence *claims* something
+  about it.
 
-Each was written carefully, by someone actively thinking about this exact
-failure. That is the argument for the gate rather than an embarrassment to it:
-if the defect reproduces this readily under maximum attention, it was never
-going to be prevented by care, and the ten copies that started this were not a
-lapse.
+Two findings landed outside the mechanism and mattered more than any of the
+above. The restore runbook concluded from two armed cron schedules that both
+backup buckets held every recent night; armed is not uploaded, and an operator
+restoring under pressure would have taken it as licence to skip the listing.
+And a mistyped `--live` flag printed "OK" and exited zero without contacting
+the account at all — in the procedure whose next step is a deploy that fails
+if the check was wrong.
+
+Every one of these was written carefully, by someone actively thinking about
+this exact failure. That is the argument for the gate rather than an
+embarrassment to it: if the defect reproduces this readily under maximum
+attention, it was never going to be prevented by care, and the ten copies that
+started this were not a lapse.
 
 **#1977 stays open**, deliberately. This change is the repository half of it;
 the account half — confirm, unschedule, delete, rotate the credentials that
