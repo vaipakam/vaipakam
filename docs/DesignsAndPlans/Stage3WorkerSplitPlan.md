@@ -33,10 +33,13 @@ The split unblocks four follow-on changes that are awkward today:
    economics independent of HF / indexing. It has since SHIPPED on
    `apps/keeper`, but **this requirement was abandoned in the process, not
    met**: `runMatcher` is invoked from the same `scheduled()` handler and
-   the same `* * * * *` trigger as the HF passes, so it has neither an
-   independent deployment nor an independent schedule. The coupling is
-   real — a matcher fault shares a tick with liquidation — and is recorded
-   here rather than presented as satisfied.
+   the same trigger as the HF passes, so it has neither an independent
+   deployment nor an independent schedule. The coupling is real — a
+   matcher fault would share a tick with liquidation — and is recorded
+   here rather than presented as satisfied. Note the tense: that trigger
+   was `* * * * *` and is now `[]` (#1896), so nothing on this Worker
+   ticks today. The coupling is a property of the code and unchanged;
+   the execution is not happening at all.
 
 ## 2. Current state — `ops/hf-watcher/src/`
 
@@ -253,8 +256,11 @@ After PR2 / PR3 / PR4 have all been validated in production:
 > **Status correction (#1720 round 15).** This section was written as
 > future scope and stayed that way after the matcher shipped.
 > `apps/keeper/src/index.ts:141-146` schedules `runMatcher` on every tick of
-> the `* * * * *` cron. The matcher PASS is live; do not re-implement or
-> re-schedule it.
+> the keeper's cron. The matcher pass is IMPLEMENTED — do not re-implement
+> or re-schedule it — but it does not EXECUTE today: that cron is committed
+> as `[]` under #1896, so the Worker takes no ticks for `runMatcher` to
+> ride. Read "live" here as shipped code, not as running work, and do not
+> diagnose an absence of matches as a matcher fault.
 >
 > Two things this banner previously overstated, both corrected:
 > the cross-Worker `offers` read is **NOT** shipped (`matcher.ts:41-43`
