@@ -70,37 +70,72 @@ export default async function globalSetup(): Promise<void> {
   // APP_E2E_ANVIL_URL — a fixed port here would split the suite
   // across two RPCs the moment someone overrides the URL.
   const anvilEndpoint = new URL(ANVIL_URL);
-  const anvil = spawn(
-    'anvil',
-    [
-      '--fork-url', forkUrl,
-      '--chain-id', '84532',
-      '--host', anvilEndpoint.hostname,
-      '--port', anvilEndpoint.port || '8545',
-      '--silent',
-      // Generous gas + instant mining keep UI waits short.
-      '--gas-limit', '60000000',
-    ],
-    { stdio: ['ignore', 'inherit', 'inherit'], detached: false },
-  );
-  if (anvil.pid) pids.push(anvil.pid);
-  // Record the PID IMMEDIATELY: if a readiness wait below throws while
-  // the child is alive, teardown must still find something to kill —
-  // otherwise the orphan squats the port and every following run dies
-  // on the stale-listener guard.
-  fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
-  // A child death before readiness (bad fork URL, port race) must be
-  // fatal — resolves (never rejects) so the loser of the race can't
-  // become an unhandled rejection.
-  const anvilDied = new Promise<number>((resolve) =>
-    anvil.on('exit', (code) => resolve(code ?? -1)),
-  );
-  const anvilOutcome = await Promise.race([
-    waitForAnvil(120_000).then(() => 'ready' as const),
-    anvilDied,
-  ]);
-  if (anvilOutcome !== 'ready') {
-    throw new Error(`anvil exited before ready (code ${anvilOutcome})`);
+
+  // Retry ONLY the transient class: anvil forks at HEAD, so the upstream
+  // can advertise a block whose state a load-balanced peer cannot serve
+  // yet, and anvil exits during genesis with "Unknown block". That is an
+  // RPC hiccup, not a repo defect — but it fails the whole job and lands
+  // as a red required check on whatever PR happens to be in flight
+  // (#1973). A fast exit is retryable; a readiness TIMEOUT is not, since
+  // that indicates something structurally wrong rather than a bad
+  // moment, and retrying it would triple the wait before reporting.
+  const attempts = Number(process.env.APP_E2E_ANVIL_ATTEMPTS ?? 3);
+  let anvilStarted = false;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const anvil = spawn(
+      'anvil',
+      [
+        '--fork-url', forkUrl,
+        '--chain-id', '84532',
+        '--host', anvilEndpoint.hostname,
+        '--port', anvilEndpoint.port || '8545',
+        '--silent',
+        // Generous gas + instant mining keep UI waits short.
+        '--gas-limit', '60000000',
+      ],
+      { stdio: ['ignore', 'inherit', 'inherit'], detached: false },
+    );
+    if (anvil.pid) pids.push(anvil.pid);
+    // Record the PID IMMEDIATELY: if a readiness wait below throws while
+    // the child is alive, teardown must still find something to kill —
+    // otherwise the orphan squats the port and every following run dies
+    // on the stale-listener guard.
+    fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
+    // Resolves (never rejects) so the loser of the race can't become an
+    // unhandled rejection.
+    const anvilDied = new Promise<number>((resolve) =>
+      anvil.on('exit', (code) => resolve(code ?? -1)),
+    );
+    const anvilOutcome = await Promise.race([
+      waitForAnvil(120_000).then(() => 'ready' as const),
+      anvilDied,
+    ]);
+    if (anvilOutcome === 'ready') {
+      anvilStarted = true;
+      break;
+    }
+    if (attempt === attempts) {
+      throw new Error(
+        `anvil exited before ready (code ${anvilOutcome}) after ${attempts} ` +
+          `attempt(s). If the log above says "failed to create genesis" / ` +
+          `"Unknown block", the fork RPC could not serve state for the head ` +
+          `block; see #1973.`,
+      );
+    }
+    // Say it out loud. A silent retry turns a degrading RPC into an
+    // invisible slowdown, and the next person debugging a slow job has
+    // no way to know it happened.
+    console.warn(
+      `[e2e] anvil exited before ready (code ${anvilOutcome}) — ` +
+        `attempt ${attempt}/${attempts}, retrying`,
+    );
+    await new Promise((r) => setTimeout(r, 2_000 * attempt));
+    // The dead child released the port; re-assert it is free so a retry
+    // cannot silently attach to something else that grabbed it.
+    await assertNothingListening(ANVIL_URL, 'anvil');
+  }
+  if (!anvilStarted) {
+    throw new Error('anvil did not start'); // unreachable; keeps types honest
   }
   console.log('[e2e] anvil fork ready (chainId 84532)');
 
