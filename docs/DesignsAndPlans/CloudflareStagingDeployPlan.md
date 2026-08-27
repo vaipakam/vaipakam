@@ -26,7 +26,8 @@ unaffected.
 | **vaipakam-app** | `app.vaipakam.com` | The connected app — wallet connect, the intent-first Home at root (NOT a dashboard), Offer Book, loan flows, Claim Center, the VPFI fee-discount vault at `/vpfi` (deposits and withdrawals for fee tiers only — the app exposes no purchase surface of any kind), plus the wallet-free NFT verifier at `/nft`. NOTE (#1854): `/analytics` and `/protocol-console` were NOT ported — they remain on the retired `apps/defi` Worker, and the marketing site links them there deliberately, so do not test or redirect them against this Worker (#1959). `/nft-verifier` was the legacy path for the verifier; here it is `/nft`. | No |
 | **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of **borrower-authorised, on-chain-bound** Seaport listings to OpenSea (posted with an empty `0x` signature; the vault's ERC-1271 check validates against a hash bound on-chain). | No on-chain key |
 | **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain transaction key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications, whose EOA owns the channel's 50 PUSH stake and gas |
-| **vaipakam-keeper** | (no public domain — internal Worker, cron-only; **currently UNSCHEDULED** — `wrangler.jsonc:269` commits `"crons": []` under #1896, so none of the duties listed here run today) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, **live** offer/intent matcher, auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — sole holder of an ON-CHAIN TRANSACTION key. Not "the only signing key": the agent row above holds `PUSH_CHANNEL_PK`, a real Ethereum key. The qualifier is what makes this inventory usable for threat modelling |
+| **vaipakam-keeper** | (no public domain — internal Worker, cron-only; **currently UNSCHEDULED** — `wrangler.jsonc:269` commits `"crons": []` under #1896, so none of the duties listed here run today) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, offer/intent matcher (SHIPPED, not currently
+executing — see the schedule note in this row's Domain cell), auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — sole holder of an ON-CHAIN TRANSACTION key. Not "the only signing key": the agent row above holds `PUSH_CHANNEL_PK`, a real Ethereum key. The qualifier is what makes this inventory usable for threat modelling |
 
 The split was **designed** around a read/index vs write/act axis. What it
 actually achieves is narrower than that, and narrower than the "strict
@@ -54,8 +55,11 @@ as a privilege boundary:
 
   **Treat this list as a floor, not an inventory.** It said "three
   signing tasks: HF liquidation, daily oracle snapshot, **future**
-  offer matching" while the matcher was already live and nine other
-  signed calls existed. The correction that replaced it then missed the
+  offer matching" while the matcher had already SHIPPED and nine other
+  signed calls existed. (Shipped, not executing: the keeper's schedule is
+  `[]` under #1896. The point being made here is about the SIGNING
+  SURFACE, which the code carries whether or not a tick fires — a floor
+  is a floor either way.) The correction that replaced it then missed the
   two flash-loan calls, because they are dispatched through a
   *variable* (`functionName: fnName`) and a grep for literal function
   names cannot see them. Re-derive from `writeContract` call sites and

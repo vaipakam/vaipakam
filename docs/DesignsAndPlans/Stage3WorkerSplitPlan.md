@@ -363,7 +363,7 @@ and Stage 3 is about the FIRST-party one.
 
 | Surface | Repo | Purpose |
 | --- | --- | --- |
-| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper Worker on Cloudflare. Runs as a single privileged operator with project-funded gas. Hosts the offer matcher (§7) — shipped, running on the keeper cron — alongside the HF watcher + liquidation triggers and the daily oracle snapshot. |
+| **`apps/keeper`** (this Stage 3 work) | This monorepo | Vaipakam's own first-party keeper Worker on Cloudflare. Runs as a single privileged operator with project-funded gas. Hosts the offer matcher (§7) — shipped, and wired to the keeper cron, though that cron is `[]` today under #1896 so it does not currently run — alongside the HF watcher + liquidation triggers and the daily oracle snapshot. |
 | **`vaipakam-keeper-bot`** | Sibling repo at `~/Codes/Vaipakam/vaipakam-keeper-bot` (per [`CLAUDE.md`](../../CLAUDE.md)) | Public reference implementation of a keeper bot for third-party operators to run themselves. Read-only ABI surface, OSS-licensed, designed for community liquidators. |
 
 They share the contract surface (same `RiskFacet.calculateHealthFactor`
