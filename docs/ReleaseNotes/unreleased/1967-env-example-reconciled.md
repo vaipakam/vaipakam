@@ -84,9 +84,14 @@ marked not to be executed. And the workspace's own architecture map, the
 first thing a new contributor reads, had the canonical host and its
 redirect the wrong way round, promised a redirect on the retired hostname
 that cannot exist without a DNS record, and gave the keeper a public
-hostname it deliberately does not have — the keeper is cron-only and
-holds the only signing key, so a hostname there would be a mistake rather
-than an omission.
+hostname it deliberately does not have — the keeper is cron-only and is
+the only holder of an on-chain transaction key, so a hostname there would
+be a mistake rather than an omission. That qualifier is load-bearing and
+this sentence originally dropped it: the notifications Worker is not
+keyless either, holding a real key that signs as the notification channel
+and whose account carries a stake and its gas. An inventory that says
+"the only signing key" understates what a compromise of that Worker would
+reach, which is exactly the error being corrected here.
 
 One further setting turned out to sit outside the file entirely, and it
 is the sharpest of them. The build's SEO step runs before every build and

@@ -32,9 +32,20 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 > current. The heading used to assert that every Worker served a
 > placeholder 503, which was true at provisioning and is not true now:
 > `vaipakam.com`, `defi.vaipakam.com` and `indexer.vaipakam.com` all
-> answer **200**, and `agent.vaipakam.com` answers **403** to a bare
-> `GET /`, which is correct for it rather than an outage. `app.vaipakam.com`
-> does not resolve at all — it is not bound.
+> answer **200**. `app.vaipakam.com` does not resolve at all — it is not
+> bound.
+>
+> **`agent.vaipakam.com` answers 403 `Forbidden` to EVERYTHING, and that
+> is a discrepancy to investigate, not a status to bless (#1971).** An
+> earlier version of this banner called it "correct for an authenticated
+> API"; the Worker's code refutes that. `apps/agent/src/index.ts` has no
+> global authentication gate and ends with
+> `new Response('Not found', { status: 404 })`, so an unmatched path
+> should 404 — yet `/`, the defined `/thresholds` route and a nonsense
+> path all return the same 403 with a 9-byte `Forbidden` body the Worker
+> never produces. Something in front of the Worker is answering. It is
+> not a blanket block on the observing client either: the other three
+> hostnames on this zone answer 200 through the same egress.
 >
 > **Reconciled for #1854.** The dApp Worker is
 > now `vaipakam-app`, built from `apps/app`; its intended hostname is
