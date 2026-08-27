@@ -2014,7 +2014,7 @@ Telegram + Push Protocol. This section is one-time setup and does
 3. Register the webhook so Telegram pushes inbound DMs into the worker:
    ```bash
    curl "https://api.telegram.org/bot<TG_BOT_TOKEN>/setWebhook" \
-        --data-urlencode "url=https://api.vaipakam.com/tg/webhook"
+        --data-urlencode "url=https://agent.vaipakam.com/tg/webhook"
    ```
    Verify with `getWebhookInfo`.
 
@@ -2043,11 +2043,20 @@ Telegram + Push Protocol. This section is one-time setup and does
 4. **Frontend env.** Set on every frontend deploy:
    ```
    VITE_PUSH_CHANNEL_ADDRESS=0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b
-   VITE_API_ORIGIN=https://api.vaipakam.com
+   VITE_AGENT_ORIGIN=https://agent.vaipakam.com
    ```
    Without these, the Alerts page falls closed gracefully; with them,
    the "Subscribe on Push →" deep link and the Push rail enable
    button both render correctly.
+
+   This block said `VITE_API_ORIGIN=https://api.vaipakam.com` until
+   #1969. **Both halves were dead:** `VITE_API_ORIGIN` is read by no
+   source file in any app — it was split into `VITE_INDEXER_ORIGIN` and
+   `VITE_AGENT_ORIGIN` at the Stage 3 Worker split — and
+   `api.vaipakam.com` was the retired `vaipakam-hf-watcher`'s hostname
+   and no longer resolves. An operator following it set a variable
+   nothing reads, pointed at a host that does not answer, and got
+   exactly the falls-closed Alerts page this step promises to avoid.
 
 ### 8c. Smoke test the watcher
 
@@ -2106,7 +2115,7 @@ all three Stage 3 Workers bind.
    ```bash
    # From a shell on a host the FRONTEND_ORIGIN allows (or via
    # `curl --resolve` to bypass DNS):
-   curl -X POST https://api.vaipakam.com/diag/record \
+   curl -X POST https://agent.vaipakam.com/diag/record \
      -H 'origin: https://vaipakam.com' \
      -H 'content-type: application/json' \
      -d '{
