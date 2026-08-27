@@ -161,9 +161,32 @@ the whole failure mode this file is here for — shows up as a difference
 rather than as nothing at all.
 
 Without `--live` the script runs offline and checks the other half: that
-no file outside this one has gone back to restating the count. CI runs
-that half, because it has no account credentials and because the
-restating is the part a reviewer cannot see happening.
+no file outside this one has gone back to restating the count, and that
+this file agrees with itself. CI runs that half, because it has no account
+credentials and because the restating is the part a reviewer cannot see
+happening.
+
+### What each half can and cannot tell you
+
+The two halves check two links of one chain — the summary is pinned to the
+inventory, and the inventory is pinned to the account — so neither alone
+means "this file is right". Measured by mutating this document and running
+both:
+
+| This document is… | offline | `--live` |
+|---|---|---|
+| correct | pass | pass |
+| **self-consistent, but stale against the account** | **pass** | **fail** |
+| account-correct, but contradicting itself | fail | fail |
+
+**Row two is the one to remember.** A document whose table and summary agree
+perfectly can still be describing an account that changed underneath it, and
+CI will be green — because CI has no credentials and cannot ask. That is not
+a gap to be closed; it is the reason the `Verified:` stamp exists and the
+reason it carries a timestamp rather than a tick.
+
+So: a green CI run means *nobody re-copied the count*. Only `--live` means
+*the count is right*, and only as of the moment it ran.
 
 ## Related
 
