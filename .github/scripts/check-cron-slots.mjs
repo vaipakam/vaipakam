@@ -688,21 +688,35 @@ async function cfOne(path, token) {
 }
 
 /**
- * Every page of a list endpoint.
+ * A list endpoint, complete.
  *
- * Codex #1978 r15: the script read `?per_page=100` and stopped, while this
- * file's authority promises `--live` lists EVERY Worker in the account. Past
- * a hundred scripts an armed Worker simply would not appear, and the command
- * would print "matches the account" — the single most dangerous output it
- * has, because the account-only Worker is the exact thing #1977 was.
+ * Codex #1978 r15 reported that `--live` read `?per_page=100` and stopped
+ * while the authority promises it lists EVERY Worker — so past a hundred
+ * scripts an armed Worker would be absent and the command would still print
+ * "matches the account", the all-clear on the exact condition #1977 is.
  *
- * The account holds nowhere near 100 scripts today, which is precisely why
- * this was invisible: a limit that has never been reached looks identical to
- * no limit. It is the same shape as the count this whole PR is about — a fact
- * about the account that the code assumed rather than read.
+ * The concern is right. The pagination fix I wrote for it was WRONG, which I
+ * found by asking the API instead of reasoning about it (2026-08-27):
  *
- * Terminates on `result_info.total_count` when the endpoint sends it, and
- * falls back to "a short page is the last page" when it does not.
+ *     GET /workers/scripts?per_page=5&page=1  -> 11 results
+ *     GET /workers/scripts?per_page=5&page=2  -> the SAME 11 results
+ *     GET /workers/scripts                    -> 11 results, no result_info
+ *
+ * The endpoint IGNORES both parameters and returns the whole list, and sends
+ * no `result_info` because there is nothing to page through. A page loop
+ * against it is worse than the single call it replaced: past 100 scripts each
+ * "next page" returns the identical full list, so the accumulator fills with
+ * duplicates until the runaway guard throws — a hundred pointless requests to
+ * reach a wrong answer.
+ *
+ * So: one request, because one request is already complete. The `result_info`
+ * branch stays as a hinge rather than dead code — if Cloudflare ever does
+ * paginate this, it will say so there, and this reads every page on the day
+ * that changes instead of silently truncating.
+ *
+ * Recording the MEASUREMENT rather than the conclusion is the point. "This
+ * endpoint is not paginated" is a claim about a live service, which is the
+ * category this whole PR exists because nobody re-checks.
  */
 async function cfList(path, token, perPage = 100) {
   const joiner = path.includes('?') ? '&' : '?';
@@ -712,11 +726,11 @@ async function cfList(path, token, perPage = 100) {
     const batch = body.result ?? [];
     all.push(...batch);
     const total = body.result_info?.total_count;
-    if (Number.isFinite(total)) {
-      if (all.length >= total || batch.length === 0) return all;
-    } else if (batch.length < perPage) {
-      return all;
-    }
+    // NO result_info: the endpoint does not paginate, and this response is
+    // already the whole list. Returning here is what makes the >100 case
+    // correct rather than a duplicate-accumulating spin.
+    if (!Number.isFinite(total)) return all;
+    if (all.length >= total || batch.length === 0) return all;
     if (page > 100) throw new Error(`${path}: pagination did not terminate`);
   }
 }
