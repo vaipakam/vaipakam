@@ -458,7 +458,16 @@
     // purpose: their Workers still serve real users until the operator
     // converts them to redirects. Remove them in the same change that
     // retires those hosts, not before. (#1958 Codex F5.)
-    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com",
+    // The trailing `*.workers.dev` entry is the PRE-CUTOVER REVIEW target.
+    // CLAUDE.md requires a live review of the deployment just made, and
+    // until `app.vaipakam.com` is bound that deployment is only reachable
+    // on its workers.dev URL. Without it here, every agent-backed flow
+    // (alerts, support ticket, diagnostics/erasure) fails CORS on the
+    // mandated review target, so the review cannot exercise them. It is a
+    // single exact origin, not a wildcard. REMOVE IT once the custom
+    // domain is bound — see step 5 of the cutover checklist in
+    // apps/www/src/lib/appUrl.ts.
+    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev",
     "DIAG_SAMPLE_RATE": "1.0",
     "DIAG_RETENTION_DAYS": "90",
   },

@@ -1,10 +1,16 @@
-# Connected-app vitest — blocking gate (#1076).
+# Connected-app vitest — NOT a required status check.
 #
 # Origin: the apps/defi unit suite rotted to 256 failures unnoticed because
 # no CI job ever ran it (only typecheck). It was repaired under #1076 and
-# has run as a REAL gate ever since: the `vitest` job fails (and blocks the
-# merge, being listed as a required check in branch protection) if any unit
-# test here fails.
+# this workflow has run it since.
+#
+# Be precise about its force, though: the `Protect main` ruleset requires
+# `detect-changes`, `contracts-fast`, `workspaces`, Slither and the D1
+# consistency check — NOT this job (see the transcription in
+# docs/internal/ProjectProcedures.md). A red run here is visible and should
+# be treated as blocking by REVIEWERS, but it does not mechanically stop a
+# merge. Do not describe it as a gate that does; someone will rely on it.
+# Adding the context to branch protection is the fix if that is wanted.
 #
 # apps/defi was retired in #1854 and the connected app is now apps/app
 # (developed as apps/alpha02). Its pure-logic suite inherited this gate's

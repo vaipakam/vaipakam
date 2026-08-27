@@ -1,9 +1,11 @@
-## Thread — the connected app becomes `apps/app` at app.vaipakam.com (PR #TBD)
+## Thread — the connected app becomes `apps/app` (PR #TBD)
 
-The connected app finished its cutover. What shipped for two months as
-`apps/alpha02` on alpha02.vaipakam.com is now simply the app: folder
-`apps/app`, package `@vaipakam/app`, Cloudflare Worker `vaipakam-app`,
-served at **app.vaipakam.com**. The three surfaces it superseded are
+The connected app takes its final name. What shipped for two months as
+`apps/alpha02` is now simply the app: folder `apps/app`, package
+`@vaipakam/app`, Cloudflare Worker `vaipakam-app`, destined for
+**app.vaipakam.com** — a hostname this change deliberately stops short of
+switching users onto, for reasons set out below. The three surfaces it
+superseded are
 deleted — `apps/defi` (frozen since the redesign began, previously at
 defi.vaipakam.com) and the two earlier prototypes `apps/alpha` and
 `apps/alpha01`. Nothing named "alpha" survives on any surface a user
@@ -13,10 +15,17 @@ The marketing site needed no structural change, which is worth recording
 because it was the part everyone expected to be hard. `apps/www` never
 imported the connected app: every "Launch App" button and every link to a
 public-read tool (analytics, NFT verifier, protocol console) resolved
-through a single URL helper. Rehoming the app was therefore a one-line
-change of that helper's default plus an environment-variable rename, with
-no call site touched. A cross-domain link turned out to be the entire
-coupling between the two sites, exactly as intended when they were split.
+through a single URL helper, and a cross-domain link turned out to be the
+entire coupling between the two sites, exactly as intended when they were
+split.
+
+That helper did need reworking, though not for the reason expected. The
+two surfaces do not agree on their paths — the verifier and the VPFI
+vault each answer on a different route in each app — so moving the host
+without moving the paths breaks the links just as thoroughly as moving
+neither. It happened twice during review before the shape changed: call
+sites now name a destination rather than a path, and one setting selects
+the host and the route table together, so the two cannot drift apart.
 
 Two consequences operators and users should expect. First, browser-stored
 preferences do not survive the move: theme, Basic/Advanced mode, dismissed
@@ -72,16 +81,21 @@ scripted deploy paths were routing around the same guard, and no longer
 do.
 
 Finishing the cutover is not a one-line flip, and it would be a
-disservice to describe it as one. Two things must be built first. The
+disservice to describe it as one. Three things must be built first. The
 successor has no Terms-of-Service gate: the retired app refused every
 connected route until the wallet had accepted the current version, the
 contracts delegate that enforcement to the client rather than checking
 it per action, and nothing in the new app does it — so switching users
 across while a Terms version is in force would leave that requirement
-quietly unenforced for everybody. And two public tools, Analytics and
-the Protocol Console, were never ported, which is why the marketing
-site still points those particular links at the old surface and why
-that surface cannot yet be retired or redirected wholesale.
+quietly unenforced for everybody. The successor also has no Data Rights
+page, and the marketing site's export-and-erase controls cannot stand in
+for one: browser storage is per-origin, so they can neither read nor
+clear what the app keeps on its own — moving users across before that is
+ported would take away a privacy control they have today. And two public
+tools, Analytics and the Protocol Console, were never ported, which is
+why the marketing site still points those particular links at the old
+surface and why that surface cannot yet be retired or redirected
+wholesale.
 
 Only then does the mechanical part apply, and it is more than the
 hostname: the app's own deploy, the binding, the link helper's target,
