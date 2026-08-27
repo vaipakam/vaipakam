@@ -2011,10 +2011,26 @@ Telegram + Push Protocol. This section is one-time setup and does
    # wrangler prompts for the value — paste the BotFather token.
    ```
    `TG_BOT_USERNAME` is committed in `wrangler.jsonc` as a public var.
-3. Register the webhook so Telegram pushes inbound DMs into the worker:
+3. Register the webhook so Telegram pushes inbound DMs into the worker.
+
+   > **SECURITY — read before running this step.** `handleTelegramWebhook`
+   > (`apps/agent/src/index.ts:654`) verifies only that `TG_BOT_TOKEN` is
+   > configured; it does **not** verify that a request actually came from
+   > Telegram. The route sits before the Origin gate and carries no rate
+   > limiter, so it accepts update JSON from any caller. Telegram supports
+   > a `secret_token` parameter on `setWebhook` and echoes it back in the
+   > `X-Telegram-Bot-Api-Secret-Token` header on every delivery — **the
+   > agent does not check that header today.** Setting the parameter alone
+   > therefore buys nothing; the handler has to reject mismatches first.
+   >
+   > This is not created by registering the webhook — the endpoint is
+   > already public and `POST /link/telegram` already issues handshake
+   > codes regardless — but do not treat this step as making the linking
+   > flow safe. Tracked privately per SECURITY.md; do not open a public
+   > issue for it.
    ```bash
    curl "https://api.telegram.org/bot<TG_BOT_TOKEN>/setWebhook" \
-        --data-urlencode "url=https://api.vaipakam.com/tg/webhook"
+        --data-urlencode "url=https://agent.vaipakam.com/tg/webhook"
    ```
    Verify with `getWebhookInfo`.
 
@@ -2043,11 +2059,60 @@ Telegram + Push Protocol. This section is one-time setup and does
 4. **Frontend env.** Set on every frontend deploy:
    ```
    VITE_PUSH_CHANNEL_ADDRESS=0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b
-   VITE_API_ORIGIN=https://api.vaipakam.com
+   VITE_AGENT_ORIGIN=<the agent Worker for THIS environment>
    ```
+
+   **There is only ONE agent today, and every environment shares it.**
+   `apps/agent/wrangler.jsonc` declares a single Worker, `vaipakam-agent`,
+   with no environment blocks, and the staging plan deliberately points
+   staging at `https://agent.vaipakam.com` for that reason. So use that
+   origin — do not go looking for a per-environment agent URL, because
+   none exists.
+
+   **Know what that costs, because it is not obvious.** The agent's
+   allow-list already accepts staging and legacy frontend origins, so a
+   non-production build reaches production state through three surfaces,
+   not one:
+
+   - `PUT /thresholds` writes REAL users' alert settings — not a copy —
+     to `vaipakam-archive`. **Do not let that database's name reassure
+     you.** Both Worker configs label it the STAGING database, and
+     `vaipakam-alerts-db` is the production-named one; but
+     `vaipakam-alerts-db` belongs to the retired `vaipakam-hf-watcher`,
+     and `vaipakam-archive` is what the LIVE agent on
+     `agent.vaipakam.com` actually binds. So it holds the records of
+     people using the live site, whatever it is called.
+   - The Telegram-link endpoints bind real chats.
+   - **Support tickets page real operators.** The support client
+     (`apps/app/src/data/support.ts`) posts to the same origin, and the
+     handler (`apps/agent/src/supportTicket.ts`) writes the shared
+     `support_tickets` table and notifies the ops Telegram chat through
+     `TG_OPS_BOT_TOKEN` / `TG_OPS_CHAT_ID`. A test ticket typed into a
+     preview build is a durable row and a real page.
+
+   **Using a test wallet does not help with that last one** — tickets
+   carry no wallet identity, so there is nothing for the test wallet to
+   isolate. Treat every one of these as production-affecting from any
+   environment; for support specifically, the only real protection is
+   not exercising the form outside production.
+
+   Leaving `VITE_AGENT_ORIGIN` unset is a safe choice rather than a
+   broken one: `apps/app/src/data/alerts.ts:28-32` fails closed, hiding
+   the feature behind an honest "not set up in this build" message and
+   firing no request. Per-environment isolation for the agent does not
+   exist yet — it is a real gap, not an operator error.
    Without these, the Alerts page falls closed gracefully; with them,
    the "Subscribe on Push →" deep link and the Push rail enable
    button both render correctly.
+
+   This block said `VITE_API_ORIGIN=https://api.vaipakam.com` until
+   #1969. **Both halves were dead:** `VITE_API_ORIGIN` is read by no
+   source file in any app — it was split into `VITE_INDEXER_ORIGIN` and
+   `VITE_AGENT_ORIGIN` at the Stage 3 Worker split — and
+   `api.vaipakam.com` was the retired `vaipakam-hf-watcher`'s hostname
+   and no longer resolves. An operator following it set a variable
+   nothing reads, pointed at a host that does not answer, and got
+   exactly the falls-closed Alerts page this step promises to avoid.
 
 ### 8c. Smoke test the watcher
 
@@ -2077,12 +2142,21 @@ take a few minutes; nothing else to do.
 
 ### 8d. Server-side error capture
 
+> **DORMANT — nothing calls this today (#1969).** The endpoint is
+> deployed and works, but `apps/app` contains no reference to
+> `/diag/record`, `VITE_APP_VERSION` or `VITE_DIAG_DRAWER_ENABLED`; the
+> only clients lived in the retired connected app. **Everything below
+> describes how capture behaves WHEN a consumer exists.** An operator
+> checking whether capture is healthy will find an empty table, and that
+> is correct rather than an outage. Porting a consumer is part of
+> #1959's unported-surface work.
+
 `POST /diag/record` is served by the AGENT Worker
-(`apps/agent/src/index.ts`) — the frontend fires-and-forgets one
-POST per UI failure event so support has a server-side audit trail
-(UUID embedded in any GitHub-issue prefill cross-references back to
-a real session). It writes to the shared `vaipakam-archive` D1 that
-all three Stage 3 Workers bind.
+(`apps/agent/src/index.ts`). The design is fire-and-forget: one POST per
+UI failure event, giving support a server-side audit trail whose UUID
+cross-references any GitHub-issue prefill back to a real session. It
+writes to the shared `vaipakam-archive` D1 that all three Stage 3
+Workers bind.
 
 **One-time setup (per environment)**:
 
@@ -2103,26 +2177,75 @@ all three Stage 3 Workers bind.
    ```
 
 3. Smoke test the endpoint:
+   There is one agent and one shared database behind it, so this test
+   necessarily writes a row to `vaipakam-archive` — the database the
+   live agent binds — whichever environment prompted the check. (That
+   database is labelled STAGING in both Worker configs. The
+   production-named `vaipakam-alerts-db` is the retired watcher's and is
+   bound by nothing today; see the note in §8b.) That is
+   accepted — the row is a marked `smoke-test` record, pruned on the
+   same 90-day schedule as any other — but it does mean this smoke test
+   verifies the shared agent, not an environment-specific deployment,
+   because there is no such thing to verify.
+
+   Two values must be **fresh on every run**, for different reasons.
+
+   The **id**, because `diag_errors.id` is a `TEXT PRIMARY KEY`
+   (`apps/indexer/migrations/0003_diag_errors.sql:35`) and
+   `apps/agent/src/diagRecord.ts:384` does a plain `INSERT` with no
+   conflict handling — a fixed UUID succeeds once per database and then
+   fails with a constraint error on every later run.
+
+   The **fingerprint**, because a fresh id is not enough. `diagRecord.ts`
+   dedups on a hash of `area|flow|step|errorType|errorName|errorSelector`
+   and suppresses the write when the **last five rows in the whole table**
+   share it (`exceedsConsecutiveCap`, lines 224-241). That check is
+   global, not per-user, and this endpoint has no shipping consumer to
+   interleave anything else — so on a quiet environment the sixth
+   consecutive smoke test with constant `area`/`flow` answers
+   `{"recorded":false,"reason":"streak_cap"}` and the verification query
+   comes back empty. That is the dedup working, not a broken deploy.
+   Varying `step` per run keeps each smoke test its own fingerprint.
+
    ```bash
-   # From a shell on a host the FRONTEND_ORIGIN allows (or via
-   # `curl --resolve` to bypass DNS):
-   curl -X POST https://api.vaipakam.com/diag/record \
-     -H 'origin: https://vaipakam.com' \
+   # One agent serves every environment (see the note above), so this is
+   # the same URL whichever environment you are verifying. Angle-bracket
+   # placeholders are deliberately absent: the shell reads `<env>` as a
+   # file redirect, so a line carrying one fails on paste.
+   AGENT=https://agent.vaipakam.com
+   ORIGIN=https://vaipakam.com   # any origin in that agent's FRONTEND_ORIGIN
+   # Node is already required for pnpm and wrangler; uuidgen is NOT
+   # always installed (it ships in uuid-runtime, absent on minimal hosts).
+   ID=$(node -e 'console.log(crypto.randomUUID())')
+   [ -n "$ID" ] || { echo "could not generate a UUID"; exit 1; }
+
+   curl -X POST "$AGENT/diag/record" \
+     -H "origin: $ORIGIN" \
      -H 'content-type: application/json' \
      -d '{
-       "id":"123e4567-e89b-42d3-a456-426614174000",
+       "id":"'"$ID"'",
        "client_at":'"$(date +%s)"',
        "area":"smoke-test",
-       "flow":"runbook-8d"
+       "flow":"runbook-8d",
+       "step":"'"$ID"'"
      }'
-   # Expect: {"recorded":true,"id":"123e4567-…"}
+   # Expect: {"recorded":true,"id":"<the same $ID>"}
    ```
 
-   Then verify the row landed:
+   **Two healthy responses are NOT `recorded:true`, and both look like a
+   failure.** Check `DIAG_SAMPLE_RATE` before concluding anything:
+
+   | Response | Meaning |
+   |---|---|
+   | `{"recorded":false,"reason":"sampled_out"}` | Sampling dropped it (`diagRecord.ts:303-313`). At the documented `0.1` this happens ~90% of the time, and at `0` it can never pass. Set the rate to `1` for the duration of the check, or retry. |
+   | `{"recorded":false,"reason":"streak_cap"}` | The dedup described above. Vary `step`, which the payload already does. |
+
+   Then verify **that** row landed — matching on the id you just sent,
+   not on "the most recent row", which can be someone else's:
    ```bash
    cd apps/indexer   # owner of the shared vaipakam-archive database
    npx wrangler d1 execute vaipakam-archive --remote \
-     --command "SELECT id, area, flow, recorded_at FROM diag_errors ORDER BY recorded_at DESC LIMIT 1"
+     --command "SELECT id, area, flow, recorded_at FROM diag_errors WHERE id = '$ID'"
    ```
 
 **Tunable knobs** (all in `apps/agent/wrangler.jsonc` — the agent
@@ -2135,21 +2258,31 @@ override per-environment via `wrangler vars` or the dashboard):
 | `DIAG_RETENTION_DAYS` | `90` | Cron-driven prune deletes rows older than this. Bumped on every 5-min tick. |
 | `DIAG_RECORD_RATELIMIT.simple.limit` / `period` | `60 / 60` | Per-IP rate limit. Tune in the `unsafe.bindings` block. |
 
-**Frontend coupling**:
+**Frontend coupling** — **none today, and that is the important part.**
 
-The frontend reads `VITE_API_ORIGIN` (already set —
-same origin as the Alerts page uses). No new frontend env var
-is required for capture itself; the optional
-`VITE_APP_VERSION` (CI-injected commit hash) gets stamped on
+`/diag/record` has **no consumer in `apps/app`**: its only clients lived
+in the retired connected app, so no shipping surface posts to it
+(`apps/agent/README.md:107-110`). Nothing below will fire until a
+consumer is built.
+
+This paragraph previously said the frontend reads `VITE_API_ORIGIN` and
+that it was "already set". Both halves were wrong: that variable is read
+by no source file in any app — it was split into `VITE_INDEXER_ORIGIN`
+and `VITE_AGENT_ORIGIN` at the Stage 3 Worker split — and it pointed at
+`api.vaipakam.com`, which no longer resolves (#1969). The endpoint's own
+origin, when a consumer exists, is `VITE_AGENT_ORIGIN`, set per
+environment.
+
+The optional `VITE_APP_VERSION` (CI-injected commit hash) gets stamped on
 each captured row for release-correlation.
 
-A second frontend var, `VITE_DIAG_DRAWER_ENABLED` (default
-`true`), gates the user-facing Diagnostics drawer + FAB. Set
-to `"false"` once server capture is observed healthy in
-production to hide the drawer entirely — server capture
-keeps running regardless. The user can still grab their
-session journey log from the Data Rights page when the
-drawer is hidden.
+`VITE_DIAG_DRAWER_ENABLED` used to be documented here as a way to hide
+the Diagnostics drawer and FAB once server capture looked healthy.
+**Do not try it — the variable does nothing.** `apps/app` contains no
+reference to it, and `AppShell.tsx` mounts `DiagnosticsDrawer`
+unconditionally, so setting it changes nothing today and would not hide
+the drawer even after a `/diag/record` consumer is ported. Hiding the
+drawer would need the gate to be implemented first.
 
 **GitHub-issue cross-reference workflow** (support team):
 
@@ -2527,13 +2660,20 @@ lives. Set it per environment in the dapp's `.env.production` /
 `.env.staging`:
 
 ```
-VITE_AGENT_ORIGIN=https://agent-production.<account>.workers.dev
+VITE_AGENT_ORIGIN=https://agent.vaipakam.com
 ```
 
-Set this to the URL `wrangler deploy` prints for the agent
-Worker. Missing var → the offers panel and the click-time
-fulfillment-data fetch both noop; the dapp behaves as if no
-OpenSea offers exist on any prepay-listing.
+**One agent serves every environment** — `apps/agent/wrangler.jsonc`
+declares a single Worker with no environment blocks, and the staging
+plan points staging at this same origin. This section previously showed
+a per-environment `agent-production.<account>.workers.dev` form; no such
+deployment exists, so an operator following it configured a hostname
+that answers nothing. See the shared-origin warning in §8b for what
+using one agent everywhere costs.
+
+Missing var → the offers panel and the click-time fulfillment-data fetch
+both noop; the dapp behaves as if no OpenSea offers exist on any
+prepay-listing.
 
 ### Indexer D1 migrations (auto-applied)
 
