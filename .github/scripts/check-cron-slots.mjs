@@ -158,7 +158,11 @@ const GAP = String.raw`(?:\s|\*|\/\/|#|>)*`;
  * account\b` — those state the cap. See the admission criterion above.
  */
 /** Number words the counts are written with, spelled or numeric. */
-const N = String.raw`(?:\d+|one|two|three|four|five)`;
+// `zero` included: Codex #1978 r14 — zero live triggers is a real account
+// state and "the account currently has zero live cron triggers" goes stale in
+// exactly the way "four" does. Numeric 0 was already covered by `\d+`; only
+// the word was missing.
+const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
 
 const OCCUPANCY = [
   // "3 of 5", "5/5", "4 of five", "three of 5"
@@ -396,13 +400,21 @@ function trackedFiles() {
  * a limitation as correct, the exact trap recorded above MUST_NOT_FIRE.
  */
 function hasVisibleStamp(md) {
-  let fenced = false;
+  // Codex #1978 r14: a fence closes only on its OWN delimiter. Toggling a
+  // boolean on either marker let a `~~~` line inside a ``` block read as the
+  // close, so everything after it — including a fenced example stamp — counted
+  // as visible. Markdown says the delimiters do not interchange; a boolean
+  // cannot represent that, and the fix is to remember which one opened.
+  let openedWith = null;
   for (const line of md.split('\n')) {
-    if (/^\s*(```|~~~)/.test(line)) {
-      fenced = !fenced;
+    const fence = /^\s*(```+|~~~+)/.exec(line);
+    if (fence) {
+      const kind = fence[1][0];
+      if (openedWith === null) openedWith = kind;
+      else if (openedWith === kind) openedWith = null;
       continue;
     }
-    if (!fenced && /^\*\*Verified:/.test(line)) return true;
+    if (openedWith === null && /^\*\*Verified:/.test(line)) return true;
   }
   return false;
 }
@@ -429,7 +441,12 @@ export function checkStamp(md) {
   // enumerated the prefixes somebody might use, and Markdown affords more than
   // an enumeration can hold. The LABEL is the marker; where it sits on the line
   // is not this gate's business, and a reader sees it rendered either way.
-  const markers = [...md.matchAll(/\*\*Verified:\s*([^*]*?)\.?\*\*/g)];
+  // Codex #1978 r14: the marker is the LABEL, terminated or not. Requiring the
+  // closing `**` meant `**Verified: yesterday` — reader-visible, and plainly a
+  // second claim — was counted as nothing at all. Three rounds have now found
+  // the same thing: whatever makes a stamp malformed must not also make it
+  // invisible to the count.
+  const markers = [...md.matchAll(/\*\*Verified:/g)];
   if (markers.length === 0) {
     return [
       'the "**Verified: <ISO-8601>.**" stamp is missing; it is the only ' +
@@ -458,7 +475,14 @@ export function checkStamp(md) {
     ];
   }
 
-  const raw = markers[0][1].trim();
+  const canonical = /^\*\*Verified:\s*([^*]*?)\.?\*\*/m.exec(md);
+  if (!canonical) {
+    return [
+      'the "Verified:" stamp is present but its markup is unterminated; it must ' +
+        'read `**Verified: <ISO-8601>.**`',
+    ];
+  }
+  const raw = canonical[1].trim();
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(raw)) {
     return [`the "Verified:" stamp reads "${raw}", which is not an ISO-8601 instant`];
   }
@@ -798,6 +822,19 @@ export function parseInventory(md) {
   // regex silently matched nothing, so the parser saw an empty inventory and
   // the summary check reported "0 triggers". Sliced by index instead, which
   // has no such trap.
+  // Codex #1978 r14: exactly ONE inventory heading. Slicing the first match
+  // meant a second `## The inventory` with a contradictory table produced no
+  // finding of any kind — the rendered authority would show two inventories
+  // and every check would keep reading only the first. The same "exactly one"
+  // discipline the summary anchors and the stamp already have; this was the
+  // one structural element without it.
+  const headings = [...md.matchAll(/^##\s+The inventory\b/gm)];
+  if (headings.length > 1) {
+    problems.push(
+      `the authority has ${headings.length} "## The inventory" sections; there ` +
+        'must be exactly one, or the checks read a different table than the reader',
+    );
+  }
   const start = md.search(/^##\s+The inventory\b/m);
   let region = md;
   if (start !== -1) {
@@ -895,7 +932,14 @@ export function parseInventory(md) {
     // `0 1,13 * * *` became the two nonsense fragments `0 1` and `13 * * *`,
     // overcounting the budget offline and reporting a schedule disagreement in
     // `--live` against a table that exactly reproduced the account.
-    const spans = [...scheduleCell.matchAll(/`([^`]+)`/g)].map((m) => m[1].trim());
+    // Codex #1978 r14: `.filter(Boolean)` — erasing a cron expression while
+    // leaving its backticks produced `['']`, an empty string counted as a live
+    // trigger. The totals stay put, so the offline gate passes over a row with
+    // no schedule at all; `--live` would catch it, but this is a malformed
+    // table rather than account staleness and belongs to the offline half.
+    const spans = [...scheduleCell.matchAll(/`([^`]+)`/g)]
+      .map((m) => m[1].trim())
+      .filter(Boolean);
     // Only a cell that is NOTHING BUT spans and separators is a schedule.
     // `*(would be `*/15 * * * *`)*` contains a span and is not one.
     const residue = scheduleCell.replace(/`[^`]+`/g, '').replace(/[\s,]/g, '');
@@ -1155,6 +1199,7 @@ const MUST_FIRE = [
   ['slash form', 'the account sits at 4/5 cron triggers'],
   // Codex #1978 r5: the shape nobody had written yet, and the most natural one.
   ['direct live count', 'The account currently has four live cron triggers.'],
+  ['zero is a live-account state too', 'The account currently has zero live cron triggers.'],
   ['has N triggers', 'This account has 5 cron triggers today.'],
   ['the org holds N', '// the org holds three triggers today'],
   // Capacity verdicts — the claim with the number removed entirely. Self-found
@@ -1371,6 +1416,14 @@ const INVENTORY_CASES = [
   // Codex #1978 r3: a comma is CRON SYNTAX. Splitting one span on commas made
   // this ordinary expression two nonsense fragments, overcounting the budget
   // and reporting a false SCHEDULE disagreement against a correct table.
+  // Codex #1978 r14: backticks left around nothing are not a schedule.
+  [
+    'an emptied schedule span is not a trigger',
+    '| `vaipakam-e` | `` | `ops/e` | reserved — parked |',
+    {},
+    ['vaipakam-e'],
+    0,
+  ],
   [
     'a comma INSIDE one expression is one trigger',
     '| `vaipakam-w` | `0 1,13 * * *` | `ops/w` | live |',
@@ -1439,6 +1492,12 @@ const STAMP_CASES = [
   // right for duplicates and wrong for existence.
   ['commented out — invisible to a reader', '<!-- **Verified: 2026-08-27T16:21:53Z.** -->', 1],
   ['only inside a code fence — an example, not the stamp', '```\n**Verified: 2026-08-27T16:21:53Z.**\n```', 1],
+  // Codex #1978 r14: a `~~~` line does not close a ``` fence, so a boolean
+  // toggle read everything after it as visible.
+  ['a mismatched fence delimiter does not close the block', '```\n~~~\n**Verified: 2026-08-27T16:21:53Z.**\n```', 1],
+  // The label is the marker, terminated or not.
+  ['an unterminated second stamp still counts', '**Verified: 2026-08-27T16:21:53Z.**\n\n**Verified: yesterday', 1],
+  ['the only stamp is unterminated', '**Verified: yesterday', 1],
   [
     'duplicated',
     '**Verified: 2026-08-27T16:21:53Z.**\n\n**Verified: 2026-01-01T00:00:00Z.**',

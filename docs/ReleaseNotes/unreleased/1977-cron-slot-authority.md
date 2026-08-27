@@ -49,10 +49,10 @@ issue rather than something to take unilaterally.
 
 One thing is worth recording rather than smoothing over, because it is the
 most transferable part. **The mechanism did not work first time, or for many
-times after.** Twelve review rounds found the same defect it was built to
+times after.** Fourteen review rounds found the same defect it was built to
 prevent — a claim about the account that nothing checks — again and again
 *inside the mechanism itself*, and the interesting thing is not the count but
-that the misses fell into four repeating shapes:
+that the misses fell into five repeating shapes:
 
 - **Closed worlds keep reopening.** A list of file extensions, a class of
   Markdown prefixes, a set of phrasings gathered from the tree: each was an
@@ -71,6 +71,12 @@ that the misses fell into four repeating shapes:
   well-formed stamps to decide whether there were two. Checking that a
   paragraph is *about* cron to decide whether a sentence *claims* something
   about it.
+- **Two fixes, each right alone, contradictory together.** One round added a
+  procedure for refreshing the authority after a deploy and, in the same
+  commit, a check rejecting the wording that procedure produces — so no
+  document satisfied both and the step could not be completed. This is the
+  one shape the others do not cover: nothing was individually wrong, and no
+  per-change review asks whether the state a fix *produces* is reachable.
 
 Two findings landed outside the mechanism and mattered more than any of the
 above. The restore runbook concluded from two armed cron schedules that both

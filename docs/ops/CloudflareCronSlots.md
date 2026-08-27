@@ -125,10 +125,14 @@ during exactly the cleanup the rest of this file anticipates.
   fits is `Genuinely spare` above: if that is zero, deploying it spends
   `apps/keeper`'s reservation, and the keeper's later re-arm is the deploy
   that fails with 10072.
-- **`apps/keeper`'s re-arm needs no spare trigger.** It already holds a
-  reservation, and re-arming CONVERTS that reservation into a live trigger —
+- **A Worker that already holds a reservation needs no spare trigger to
+  re-arm.** Re-arming CONVERTS its reservation into a live trigger, so
   `committed` does not move. Its procedure still begins by confirming a
   trigger is free, because a reservation only helps if nobody has spent it.
+  **Whether `apps/keeper` is currently such a Worker is the table's answer,
+  not this paragraph's** — once its re-arm lands, its row reads `live` and it
+  holds no reservation, and a bullet asserting otherwise would contradict the
+  checked table while every gate stayed green.
 - **Both fit when `Genuinely spare` is at least 1**, not 2 — the keeper's
   half is already committed. Below that, exactly one of the two can proceed
   and whichever goes first takes it. **Read the current value off the

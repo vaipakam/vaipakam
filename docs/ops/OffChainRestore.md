@@ -807,9 +807,15 @@ then deploy.
 >   supported path, and its Worker is the one whose source is in this
 >   repository (`ops/offchain-data-warm`). The old Worker's source is not
 >   in the tree at all, so nothing here describes what it writes today.
-> - **Fall back to `vaipakam-offchain-data-archive`** only if the warm
->   bucket does not list your date, and say so in the incident record — a
->   gap in the supported bucket is itself a finding.
+> - **Fall back to `vaipakam-offchain-data-archive`** if the warm bucket
+>   does not list your date **or lists it and the object fails
+>   verification** — checksum, length or decryption. Both are fallback
+>   conditions, and both are findings for the incident record. An earlier
+>   revision allowed only the missing-listing case, which would have sent a
+>   restore backwards through the warm bucket's older nights while an
+>   independently written copy of the night you actually want sat in the
+>   other bucket. That copy exists precisely because both Workers are
+>   scheduled; it is the one upside of the state #1977 is about.
 > - **An empty listing in ONE bucket is still not "no backups exist"** —
 >   that part stands. Re-run against the other before concluding anything.
 > - The compromise reasoning further down assumes ONE holder of a
@@ -1603,7 +1609,12 @@ caught at the cheapest stage.
    4. Deploy from the keeper's directory, with the flag — the command shown
       in branch A above.
    5. Read the schedule back trigger-aware — the `/schedules` query below.
-      Here a NON-empty `result` is the pass condition.
+      **A non-empty `result.schedules` ARRAY is the pass condition**, not a
+      non-empty `result`. That endpoint always returns `result` as an object
+      — `{"schedules": []}` when nothing is armed — so "non-empty result" is
+      true of the exact missing-trigger state this step exists to reject. An
+      earlier revision of this line said `result`, and the detailed check
+      further down was already correct.
    6. **Update the authority, in the same sitting.** Arming the keeper
       converts its reservation into a live trigger, and
       [`CloudflareCronSlots.md`](CloudflareCronSlots.md) still describes the
@@ -1613,7 +1624,11 @@ caught at the cheapest stage.
       `**Committed, live only:**` — the checker recognises exactly those two
       forms and requires the one matching the table — refresh the `Verified:`
       stamp, and re-run the `--live` command from step 3 to confirm the file
-      and the account agree.
+      and the account agree. **Then COMMIT those edits**, for the reason step
+      2 gives about the schedule: a working-tree change that passes `--live`
+      and is never committed leaves the branch carrying the pre-re-arm
+      inventory, so the next clean checkout restores exactly the staleness
+      this step exists to prevent.
 
       This step is easy to skip and hard to notice skipped: the conversion
       leaves **committed and spare unchanged**, so the offline CI check keeps
@@ -1987,6 +2002,16 @@ caught at the cheapest stage.
    If any of that fails, roll back instead: restore `"crons": []`, **commit
    that**, and redeploy. Nothing is armed yet, so the rollback costs nothing
    — which is precisely why it belongs before this command and not after.
+
+   **Roll the authority back with it.** Step 6 already moved the keeper row
+   to `live` and switched the summary to `Committed, live only`; a rollback
+   that leaves those in place puts
+   [`CloudflareCronSlots.md`](CloudflareCronSlots.md) back into exactly the
+   stale state step 6 was added to prevent — and the offline check stays
+   green through it, because the conversion does not move `committed` or
+   `spare` in either direction. Restore the row to `reserved`, the label to
+   `Committed, live plus the keeper's reserve`, refresh the stamp, re-run
+   `--live`, and commit.
 
    ```bash
    ( cd apps/keeper
