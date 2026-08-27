@@ -24,9 +24,38 @@ Both halves are corrected, with a note recording what the line used to
 say, since anyone comparing against an older deployment will find the
 old form in their notes.
 
+Repointing them turned out to need more care than swapping a hostname,
+and review caught two ways a naive substitution goes wrong.
+
+The frontend step says "set on every frontend deploy", so writing the
+production address into it tells an operator to point a staging or
+preview build at the live service — and the alerts code carries an
+explicit invariant against exactly that, because the live service's
+allow-list accepts those origins and one of its endpoints writes real
+users' settings. It now says to use the deployment under test, with
+production named only as the production case.
+
+The smoke test had the same shape and a second flaw underneath it. Aimed
+at the live service, it returns a healthy answer even when the
+deployment being tested is broken — a green result that proves nothing.
+And its payload carried a fixed identifier while the table treats that
+column as a primary key with no conflict handling, so the test worked
+once per database and then failed with a constraint error that looks
+like a fault in the service. It now generates a fresh identifier per run
+and verifies that specific row rather than whatever landed most
+recently.
+
 The third was a diagnostics smoke test. It would fail cleanly, which is
 the best of the three outcomes, but reads as an outage of a service that
 is healthy.
+
+One correction went further than repointing. The section describing how
+the frontend connects to that endpoint said a now-retired variable was
+read and already configured. Neither was true, and the endpoint has no
+consumer in the shipping app at all — its only callers lived in the
+retired connected app. The section now leads with that, because an
+operator configuring something nothing calls will be confused by
+silence, not by an error.
 
 Left alone deliberately: the incident runbook already tells operators to
 use the correct host and explicitly not this one, the staging plan

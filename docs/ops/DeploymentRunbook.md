@@ -2043,8 +2043,19 @@ Telegram + Push Protocol. This section is one-time setup and does
 4. **Frontend env.** Set on every frontend deploy:
    ```
    VITE_PUSH_CHANNEL_ADDRESS=0x6F5847A0CA1F2cB1bbEf944124cE5995988a1D6b
-   VITE_AGENT_ORIGIN=https://agent.vaipakam.com
+   VITE_AGENT_ORIGIN=<the agent Worker for THIS environment>
    ```
+
+   **Set the origin per environment — never paste the production one
+   into a staging or preview build.** `apps/app/src/data/alerts.ts:28-32`
+   states the invariant: a build must never silently point at
+   production. The agent's allow-list includes staging and legacy
+   frontend origins, and `PUT /thresholds` mutates shared D1 — so a
+   preview build aimed at `agent.vaipakam.com` writes real users'
+   settings and Telegram links. Production uses
+   `https://agent.vaipakam.com`; everything else uses the `workers.dev`
+   URL its own `wrangler deploy` printed. See "Required:
+   `VITE_AGENT_ORIGIN`" below, which has always said per-environment.
    Without these, the Alerts page falls closed gracefully; with them,
    the "Subscribe on Push →" deep link and the Push rail enable
    button both render correctly.
@@ -2112,26 +2123,41 @@ all three Stage 3 Workers bind.
    ```
 
 3. Smoke test the endpoint:
+   Post to **the agent you just deployed**, not to production — a
+   healthy live agent will answer `{"recorded":true}` and write to its
+   own D1 even when the environment under test is broken, which is a
+   false green. `AGENT` below is `https://agent.vaipakam.com` only when
+   the environment under test IS production.
+
+   The id must be **fresh on every run**: `diag_errors.id` is a
+   `TEXT PRIMARY KEY` (`apps/indexer/migrations/0003_diag_errors.sql:35`)
+   and `apps/agent/src/diagRecord.ts:384` does a plain `INSERT` with no
+   conflict handling, so a fixed UUID succeeds once per database and
+   then fails with a constraint error on every later run.
+
    ```bash
-   # From a shell on a host the FRONTEND_ORIGIN allows (or via
-   # `curl --resolve` to bypass DNS):
-   curl -X POST https://agent.vaipakam.com/diag/record \
-     -H 'origin: https://vaipakam.com' \
+   AGENT=https://agent-<env>.<account>.workers.dev   # production: https://agent.vaipakam.com
+   ORIGIN=https://vaipakam.com                       # any origin in that agent's FRONTEND_ORIGIN
+   ID=$(uuidgen | tr 'A-Z' 'a-z')
+
+   curl -X POST "$AGENT/diag/record" \
+     -H "origin: $ORIGIN" \
      -H 'content-type: application/json' \
      -d '{
-       "id":"123e4567-e89b-42d3-a456-426614174000",
+       "id":"'"$ID"'",
        "client_at":'"$(date +%s)"',
        "area":"smoke-test",
        "flow":"runbook-8d"
      }'
-   # Expect: {"recorded":true,"id":"123e4567-…"}
+   # Expect: {"recorded":true,"id":"<the same $ID>"}
    ```
 
-   Then verify the row landed:
+   Then verify **that** row landed — matching on the id you just sent,
+   not on "the most recent row", which can be someone else's:
    ```bash
    cd apps/indexer   # owner of the shared vaipakam-archive database
    npx wrangler d1 execute vaipakam-archive --remote \
-     --command "SELECT id, area, flow, recorded_at FROM diag_errors ORDER BY recorded_at DESC LIMIT 1"
+     --command "SELECT id, area, flow, recorded_at FROM diag_errors WHERE id = '$ID'"
    ```
 
 **Tunable knobs** (all in `apps/agent/wrangler.jsonc` — the agent
@@ -2144,12 +2170,22 @@ override per-environment via `wrangler vars` or the dashboard):
 | `DIAG_RETENTION_DAYS` | `90` | Cron-driven prune deletes rows older than this. Bumped on every 5-min tick. |
 | `DIAG_RECORD_RATELIMIT.simple.limit` / `period` | `60 / 60` | Per-IP rate limit. Tune in the `unsafe.bindings` block. |
 
-**Frontend coupling**:
+**Frontend coupling** — **none today, and that is the important part.**
 
-The frontend reads `VITE_API_ORIGIN` (already set —
-same origin as the Alerts page uses). No new frontend env var
-is required for capture itself; the optional
-`VITE_APP_VERSION` (CI-injected commit hash) gets stamped on
+`/diag/record` has **no consumer in `apps/app`**: its only clients lived
+in the retired connected app, so no shipping surface posts to it
+(`apps/agent/README.md:107-110`). Nothing below will fire until a
+consumer is built.
+
+This paragraph previously said the frontend reads `VITE_API_ORIGIN` and
+that it was "already set". Both halves were wrong: that variable is read
+by no source file in any app — it was split into `VITE_INDEXER_ORIGIN`
+and `VITE_AGENT_ORIGIN` at the Stage 3 Worker split — and it pointed at
+`api.vaipakam.com`, which no longer resolves (#1969). The endpoint's own
+origin, when a consumer exists, is `VITE_AGENT_ORIGIN`, set per
+environment.
+
+The optional `VITE_APP_VERSION` (CI-injected commit hash) gets stamped on
 each captured row for release-correlation.
 
 A second frontend var, `VITE_DIAG_DRAWER_ENABLED` (default
