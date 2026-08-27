@@ -77,6 +77,29 @@ it will behave when something calls it. An empty table is the correct
 observation today, and an operator checking capture health deserves to
 know that before reading three pages about it.
 
+One instruction had to be walked back after review, and the correction
+is worth recording because the first attempt was reasonable and wrong.
+Warned that the frontend step should not point a preview build at the
+live service, I told operators to use the deployment for their own
+environment — but there is only one such service, shared by every
+environment, and nothing per-environment exists to point at. The step now
+says that plainly, and states the consequence instead of pretending it
+away: alert settings written from any environment reach real users,
+because there is one database behind that one service. Leaving the
+setting empty is a safe choice rather than a broken one, since the app
+hides the feature and sends nothing. That per-environment isolation does
+not exist is a genuine gap, and saying so is more useful than inventing a
+URL.
+
+The published privacy policy turned out to describe this same dormant
+capture as though it were running — telling every visitor their errors,
+redacted wallet and chain are transmitted and kept for ninety days. That
+is over-disclosure rather than under-disclosure, but it is still wrong on
+a page whose whole purpose is accuracy. It is raised separately rather
+than folded in here: it is public legal copy, it needs a decision rather
+than a mechanical edit, and burying it in an operations change is how it
+would go unread.
+
 Left alone deliberately: the incident runbook already tells operators to
 use the correct host and explicitly not this one, the staging plan
 describes decommissioning it, and the release notes record the migration

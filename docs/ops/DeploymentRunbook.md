@@ -2046,16 +2046,26 @@ Telegram + Push Protocol. This section is one-time setup and does
    VITE_AGENT_ORIGIN=<the agent Worker for THIS environment>
    ```
 
-   **Set the origin per environment — never paste the production one
-   into a staging or preview build.** `apps/app/src/data/alerts.ts:28-32`
-   states the invariant: a build must never silently point at
-   production. The agent's allow-list includes staging and legacy
-   frontend origins, and `PUT /thresholds` mutates shared D1 — so a
-   preview build aimed at `agent.vaipakam.com` writes real users'
-   settings and Telegram links. Production uses
-   `https://agent.vaipakam.com`; everything else uses the `workers.dev`
-   URL its own `wrangler deploy` printed. See "Required:
-   `VITE_AGENT_ORIGIN`" below, which has always said per-environment.
+   **There is only ONE agent today, and every environment shares it.**
+   `apps/agent/wrangler.jsonc` declares a single Worker, `vaipakam-agent`,
+   with no environment blocks, and the staging plan deliberately points
+   staging at `https://agent.vaipakam.com` for that reason. So use that
+   origin — do not go looking for a per-environment agent URL, because
+   none exists.
+
+   **Know what that costs, because it is not obvious.** `PUT /thresholds`
+   and the Telegram-link endpoints write the shared `vaipakam-archive`
+   D1, and the agent's allow-list already accepts staging and legacy
+   frontend origins. A staging or preview build therefore writes REAL
+   users' alert settings and Telegram links — not a copy. Treat alert
+   flows as production-affecting from any environment, and prefer test
+   wallets.
+
+   Leaving `VITE_AGENT_ORIGIN` unset is a safe choice rather than a
+   broken one: `apps/app/src/data/alerts.ts:28-32` fails closed, hiding
+   the feature behind an honest "not set up in this build" message and
+   firing no request. Per-environment isolation for the agent does not
+   exist yet — it is a real gap, not an operator error.
    Without these, the Alerts page falls closed gracefully; with them,
    the "Subscribe on Push →" deep link and the Push rail enable
    button both render correctly.
@@ -2132,11 +2142,13 @@ Workers bind.
    ```
 
 3. Smoke test the endpoint:
-   Post to **the agent you just deployed**, not to production — a
-   healthy live agent will answer `{"recorded":true}` and write to its
-   own D1 even when the environment under test is broken, which is a
-   false green. `AGENT` below is `https://agent.vaipakam.com` only when
-   the environment under test IS production.
+   There is one agent and one shared database behind it, so this test
+   necessarily writes a row to the SAME `vaipakam-archive` D1 that
+   production uses, whichever environment prompted the check. That is
+   accepted — the row is a marked `smoke-test` record, pruned on the
+   same 90-day schedule as any other — but it does mean this smoke test
+   verifies the shared agent, not an environment-specific deployment,
+   because there is no such thing to verify.
 
    Two values must be **fresh on every run**, for different reasons.
 
@@ -2158,9 +2170,16 @@ Workers bind.
    Varying `step` per run keeps each smoke test its own fingerprint.
 
    ```bash
-   AGENT=https://agent-<env>.<account>.workers.dev   # production: https://agent.vaipakam.com
-   ORIGIN=https://vaipakam.com                       # any origin in that agent's FRONTEND_ORIGIN
-   ID=$(uuidgen | tr 'A-Z' 'a-z')
+   # One agent serves every environment (see the note above), so this is
+   # the same URL whichever environment you are verifying. Angle-bracket
+   # placeholders are deliberately absent: the shell reads `<env>` as a
+   # file redirect, so a line carrying one fails on paste.
+   AGENT=https://agent.vaipakam.com
+   ORIGIN=https://vaipakam.com   # any origin in that agent's FRONTEND_ORIGIN
+   # Node is already required for pnpm and wrangler; uuidgen is NOT
+   # always installed (it ships in uuid-runtime, absent on minimal hosts).
+   ID=$(node -e 'console.log(crypto.randomUUID())')
+   [ -n "$ID" ] || { echo "could not generate a UUID"; exit 1; }
 
    curl -X POST "$AGENT/diag/record" \
      -H "origin: $ORIGIN" \
@@ -2174,6 +2193,14 @@ Workers bind.
      }'
    # Expect: {"recorded":true,"id":"<the same $ID>"}
    ```
+
+   **Two healthy responses are NOT `recorded:true`, and both look like a
+   failure.** Check `DIAG_SAMPLE_RATE` before concluding anything:
+
+   | Response | Meaning |
+   |---|---|
+   | `{"recorded":false,"reason":"sampled_out"}` | Sampling dropped it (`diagRecord.ts:303-313`). At the documented `0.1` this happens ~90% of the time, and at `0` it can never pass. Set the rate to `1` for the duration of the check, or retry. |
+   | `{"recorded":false,"reason":"streak_cap"}` | The dedup described above. Vary `step`, which the payload already does. |
 
    Then verify **that** row landed — matching on the id you just sent,
    not on "the most recent row", which can be someone else's:
