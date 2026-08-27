@@ -236,10 +236,22 @@ const OCCUPANCY = [
   // cron backstop", sits within the context window of the word `cron` while
   // being about DO writes. The noun is what makes it admissible.
   new RegExp(String.raw`\b(?:cron|trigger)s?${WRAP}budget${WRAP}is${WRAP}(?:full|exhausted|spent)\b`, 'i'),
-  /\bat\s+capacity\b/i,
-  /\bno\s+room\s+for\s+(?:a|an|another|one\s+more)?\s*(?:new\s+)?(?:cron|trigger|schedule|worker)\b/i,
-  /\broom\s+for\s+(?:one\s+more|another)\b/i,
-  /\bcan\s+(?:still\s+)?(?:take|fit|hold)\s+(?:one\s+more|another)\b/i,
+  // Codex #1978 r6: every verdict must name the cron budget as its OWN
+  // subject. The first cut of these leaned entirely on the ±200-character
+  // CONTEXT window, which any nearby `cron` satisfies — so "when the ingestion
+  // queue is at capacity, the cron trigger retries", "room for one more B2
+  // write" and "can still take another row before the cron tick ends" all
+  // fired, three findings about nothing in patterns I had added while claiming
+  // to apply the criterion forward. Context can say the paragraph is about
+  // cron; only the phrase can say the CLAIM is.
+  new RegExp(
+    String.raw`\b(?:cron|trigger)s?${WRAP}(?:budget${WRAP})?(?:is|are)?${WRAP}?at${WRAP}capacity\b`,
+    'i',
+  ),
+  /\bat\s+capacity\s+for\s+(?:cron\s+)?(?:triggers?|schedules?)\b/i,
+  /\bno\s+room\s+for\s+(?:a|an|another|one\s+more)?\s*(?:new\s+|cron\s+|scheduled\s+)*(?:trigger|schedule|worker)s?\b/i,
+  /\broom\s+for\s+(?:one\s+more|another)\s+(?:cron\s+|scheduled\s+)*(?:trigger|schedule|worker)s?\b/i,
+  /\bcan\s+(?:still\s+)?(?:take|fit|hold)\s+(?:one\s+more|another)\s+(?:cron\s+|scheduled\s+)*(?:trigger|schedule|worker)s?\b/i,
 ];
 
 /**
@@ -607,7 +619,12 @@ export function parseInventory(md) {
     // reserved Worker has no account schedule to compare against. The early-out
     // was performing the exact silent skip the finding below exists to stop,
     // one branch earlier and out of its reach.
-    if (cells.length < 4) {
+    // Codex #1978 r6: EXACTLY four, not at least four. A fifth cell was
+    // accepted and then ignored — `| … | undeployed | reserved |` parsed as
+    // undeployed with no reservation, while the rendered table showed the
+    // reservation to anyone reading it. "At least" is how a parser disagrees
+    // with the document it is parsing.
+    if (cells.length !== 4) {
       problems.push(
         `an inventory row has ${cells.length} column(s), not 4: ${line.trim().slice(0, 80)}`,
       );
@@ -917,6 +934,7 @@ const MUST_FIRE = [
   // once every numeric shape is covered.
   ['budget is full', '// The cron budget is full.'],
   ['at capacity', '// The account is at capacity for cron triggers.'],
+  ['at capacity, subject first', '// The cron triggers are at capacity.'],
   ['no room for another', '// There is no room for another cron trigger.'],
   ['room for one more', '// The account has room for one more scheduled Worker; the cron cap allows it.'],
   ['can still take another', '// The account can still take one more scheduled Worker before the cron cap binds.'],
@@ -1000,6 +1018,12 @@ const MUST_NOT_FIRE = [
   // inside the context window of the word `cron`, about something else.
   ['exhausted, a different budget', '    // Both budgets exhausted — defer the rest to the cron backstop.'],
   ['exhausted, a reward cap', 'Once the 69,000,000 VPFI category cap is exhausted, emissions stop.'],
+  // Codex #1978 r6: OTHER bounded resources described beside cron prose. The
+  // first cut of the capacity verdicts fired on all three, because CONTEXT can
+  // say the paragraph is about cron and only the phrase can say the CLAIM is.
+  ['another budget at capacity', 'When the ingestion queue is at capacity, the cron trigger retries on the next tick.'],
+  ['room for a different write', 'The cron handler batches uploads while there is room for one more B2 write.'],
+  ['another budget can take one', 'The D1 write budget can still take another row before the cron tick ends.'],
   [
     'headroom, retention beside a cron interval',
     ' * ticks that is ~112, so 130 (~32.5h) leaves headroom. RETUNE THIS if\n * you change the cron interval.',
@@ -1122,6 +1146,15 @@ const INVENTORY_CASES = [
   [
     'a row missing a column is a finding',
     '| `vaipakam-keeper` | *(none)* | `apps/keeper` |',
+    {},
+    [],
+    1,
+  ],
+  // Codex #1978 r6: a FIFTH cell was accepted and then ignored, so the parser
+  // read `undeployed` while the rendered table showed a reservation.
+  [
+    'a row with an extra column is a finding',
+    '| `vaipakam-keeper` | *(none)* | `apps/keeper` | undeployed | reserved |',
     {},
     [],
     1,
