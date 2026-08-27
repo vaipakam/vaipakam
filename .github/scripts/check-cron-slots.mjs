@@ -51,7 +51,7 @@
  * "the inventory is current" — it means "nobody re-copied the inventory".
  */
 
-import { readFileSync, existsSync, openSync, fstatSync, readSync, closeSync } from 'node:fs';
+import { readFileSync, existsSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -88,19 +88,63 @@ const SCOPE = ['apps', 'ops', 'packages', 'docs/ops', 'docs/DesignsAndPlans'];
  */
 const MAX_SCAN_BYTES = 2 * 1024 * 1024;
 
-function isScannableText(path) {
-  let fd;
+/**
+ * Paths git itself classifies as BINARY, from `git ls-files --eol`: the `i/`
+ * field reads `-text` for a blob git treats as binary, and honours
+ * `.gitattributes` over git's own sniffing.
+ *
+ * Codex #1978 r15: the previous test was "no NUL byte in the first 8 KiB",
+ * which excluded `ops/mesh-watcher/src/finding.ts` — tracked, marked text by
+ * `.gitattributes`, and containing a perfectly valid `join('\0')`. An
+ * occupancy claim in that file's comments would have passed the blocking
+ * gate.
+ *
+ * The irony is worth keeping: a stray `join('\0')` I wrote into THIS script
+ * earlier in the same PR made the whole file read as binary to grep, which is
+ * how I learned NUL-in-source is a real thing — and I then wrote a classifier
+ * that assumed it was not. Git already answers this question, and asking the
+ * tool that owns the fact beats re-deriving it, which is this PR's thesis.
+ */
+function binaryTrackedPaths() {
+  const out = execFileSync('git', ['ls-files', '--eol', '-z'], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const binary = new Set();
+  for (const rec of out.split('\0')) {
+    if (!rec) continue;
+    // Record shape: `i/<eol> w/<eol> attr/<attrs>\t<path>`.
+    const tab = rec.indexOf('\t');
+    if (tab === -1) continue;
+    const fields = rec.slice(0, tab);
+    const path = rec.slice(tab + 1);
+    const attr = /attr\/(\S*)/.exec(fields)?.[1] ?? '';
+
+    // An EXPLICIT `.gitattributes` setting wins over git's sniffing, in both
+    // directions. This is not a detail: `ops/mesh-watcher/src/finding.ts` is
+    // declared `text eol=lf` and STILL reports `i/-text`, because the blob
+    // contains a valid `join('\0')` and git's index heuristic sees the NUL.
+    // Keying on the index field alone would have left that file excluded —
+    // the very file Codex named — so the fix would have shipped looking
+    // correct and changing nothing. I only caught it by checking the file the
+    // finding was about rather than trusting the mechanism I had just written.
+    if (/(^|,)-text(,|$)/.test(attr)) {
+      binary.add(path);
+      continue;
+    }
+    if (/(^|,)text(=|,|$)/.test(attr)) continue; // declared text: scan it
+    if (/(^|\s)i\/-text(\s|$)/.test(fields)) binary.add(path);
+  }
+  return binary;
+}
+
+function isScannableText(path, binary) {
+  if (binary?.has(path)) return false;
   try {
-    fd = openSync(path, 'r');
-    const { size } = fstatSync(fd);
-    if (size > MAX_SCAN_BYTES) return false;
-    const head = Buffer.alloc(Math.min(size, 8192));
-    if (head.length) readSync(fd, head, 0, head.length, 0);
-    return !head.includes(0);
+    if (statSync(path).size > MAX_SCAN_BYTES) return false;
+    return true;
   } catch {
     return false; // unreadable is not this gate's business
-  } finally {
-    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -375,9 +419,10 @@ function trackedFiles() {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
+  const binary = binaryTrackedPaths();
   return out
     .split('\0')
-    .filter((p) => p && p !== AUTHORITY && isScannableText(p));
+    .filter((p) => p && p !== AUTHORITY && isScannableText(p, binary));
 }
 
 /**
@@ -492,6 +537,25 @@ export function checkStamp(md) {
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().replace(/\.\d{3}Z$/, 'Z') !== raw) {
     return [`the "Verified:" stamp reads "${raw}", which is not a real instant`];
   }
+  // Codex #1978 r15: a real instant in the FUTURE. `2099-…` is a plausible
+  // typo — one digit — and it defeats the only thing this stamp is for. The
+  // authority says the count is trustworthy only as of the moment `--live`
+  // ran, and a reader judges that by subtracting the stamp from now; a future
+  // stamp makes an arbitrarily stale inventory read as freshly verified, and
+  // keeps reading that way indefinitely rather than degrading. Every other
+  // check here asks "is this well-formed"; this is the one that asks whether
+  // the claim is possible.
+  //
+  // The tolerance is for clock skew between an operator's machine and CI, not
+  // for a stamp written ahead of time.
+  const SKEW_MS = 5 * 60 * 1000;
+  if (parsed.getTime() > Date.now() + SKEW_MS) {
+    return [
+      `the "Verified:" stamp reads "${raw}", which is in the future; it records ` +
+        `when the account was last READ, so it cannot postdate now (allowing ` +
+        `5 minutes of clock skew)`,
+    ];
+  }
   return [];
 }
 
@@ -550,7 +614,9 @@ function runOffline() {
     ...checkStamp(authorityMd),
     ...inv.problems,
     ...checkSources(inv.sources),
-    ...checkSummary(authorityMd, countTriggers(inv.live), inv.reserved),
+    ...checkSummary(authorityMd, countTriggers(inv.live), inv.reserved, [
+      ...inv.sources.keys(),
+    ]),
   ];
   if (summaryProblems.length) {
     console.error(`Cron-slot gate: ${AUTHORITY} disagrees with itself.\n`);
@@ -613,7 +679,46 @@ async function cf(path, token) {
       `Cloudflare API ${path} failed: ${JSON.stringify(body.errors ?? body)}`,
     );
   }
-  return body.result;
+  return body;
+}
+
+/** One page, unwrapped — the shape every non-list caller wants. */
+async function cfOne(path, token) {
+  return (await cf(path, token)).result;
+}
+
+/**
+ * Every page of a list endpoint.
+ *
+ * Codex #1978 r15: the script read `?per_page=100` and stopped, while this
+ * file's authority promises `--live` lists EVERY Worker in the account. Past
+ * a hundred scripts an armed Worker simply would not appear, and the command
+ * would print "matches the account" — the single most dangerous output it
+ * has, because the account-only Worker is the exact thing #1977 was.
+ *
+ * The account holds nowhere near 100 scripts today, which is precisely why
+ * this was invisible: a limit that has never been reached looks identical to
+ * no limit. It is the same shape as the count this whole PR is about — a fact
+ * about the account that the code assumed rather than read.
+ *
+ * Terminates on `result_info.total_count` when the endpoint sends it, and
+ * falls back to "a short page is the last page" when it does not.
+ */
+async function cfList(path, token, perPage = 100) {
+  const joiner = path.includes('?') ? '&' : '?';
+  const all = [];
+  for (let page = 1; ; page += 1) {
+    const body = await cf(`${path}${joiner}per_page=${perPage}&page=${page}`, token);
+    const batch = body.result ?? [];
+    all.push(...batch);
+    const total = body.result_info?.total_count;
+    if (Number.isFinite(total)) {
+      if (all.length >= total || batch.length === 0) return all;
+    } else if (batch.length < perPage) {
+      return all;
+    }
+    if (page > 100) throw new Error(`${path}: pagination did not terminate`);
+  }
 }
 
 /**
@@ -645,7 +750,7 @@ const CAP = 5;
  * silently matches nothing is the inventory parser's failure mode with the
  * loudness removed — it would report agreement it never tested.
  */
-export function checkSummary(md, liveTriggers, reservedNames) {
+export function checkSummary(md, liveTriggers, reservedNames, allNames = reservedNames) {
   // Exactly one of each line. Not the first match — this whole change exists
   // because a second, unchecked copy of a count went unnoticed, and `exec`
   // reading only the first would reproduce that defect inside the check meant
@@ -679,9 +784,18 @@ export function checkSummary(md, liveTriggers, reservedNames) {
     return { value: Number(m[1]) };
   };
 
+  // Codex #1978 r15: the MARKER omits the closing `**` on purpose, exactly as
+  // the stamp's duplicate check does. Requiring it made an unterminated second
+  // claim — `**Live right now: three of five`, a dropped `**` — invisible to
+  // the duplicate arm while staying perfectly visible to a reader. Counting
+  // WELL-FORMED copies to answer HOW MANY copies there are is the same
+  // question-substitution the stamp check was fixed for one round earlier; I
+  // fixed the stamp and left its sibling, which is this PR's most-repeated
+  // shape. The canonical regex below still demands the full markup — existence
+  // and validity are separate questions asked separately.
   const live = read(
     'Live right now',
-    /\*\*Live right now:\*\*/,
+    /\*\*Live right now:/,
     /^-\s+\*\*Live right now:\*\*\s+(\d+)\s+of\s+5\s*$/m,
   );
   // Codex #1978 r7: the label is matched EXACTLY. `Committed[^:]*` accepted
@@ -690,7 +804,7 @@ export function checkSummary(md, liveTriggers, reservedNames) {
   // and computed it another, with the gate reporting agreement. The file says
   // its anchors are load-bearing and that rewording one must fail; a wildcard
   // in the middle of the anchor is that promise not being kept.
-  const committedLabel = (/\*\*Committed[^*]*:\*\*/.exec(md) ?? [''])[0];
+  const committedLabel = (/\*\*Committed[^*:]*:/.exec(md) ?? [''])[0];
   // TWO canonical labels, because there are two states. Codex #1978 r13: with
   // only the reserve form canonical, the runbook's post-arm refresh had NO
   // satisfiable answer — remove the reserve wording and the canonical check
@@ -704,12 +818,12 @@ export function checkSummary(md, liveTriggers, reservedNames) {
   // reserved.
   const committed = read(
     'Committed',
-    /\*\*Committed[^*]*:\*\*/,
+    /\*\*Committed[^*:]*:/,
     /^-\s+\*\*Committed, (?:live only|live plus [^*:]+):\*\*\s+(\d+)\s+of\s+5\s*$/m,
   );
   const spare = read(
     'Genuinely spare',
-    /\*\*Genuinely spare:\*\*/,
+    /\*\*Genuinely spare:/,
     /^-\s+\*\*Genuinely spare:\*\*\s+(\d+)\s*$/m,
   );
 
@@ -747,13 +861,42 @@ export function checkSummary(md, liveTriggers, reservedNames) {
   // Each reserved Worker must be NAMED in the committed label: cheap to
   // satisfy, impossible to satisfy by accident, and moving a reservation now
   // forces the prose to move with it.
+  // Codex #1978 r15: this must be an EQUALITY between two sets, not a
+  // one-way `includes`. Checking only that every reserved Worker is named
+  // let the label name a Worker that holds no reservation — `live plus the
+  // keeper and mesh-watcher's reserve` passed with only the keeper reserved,
+  // because the string contains "keeper". That is r11/r12's one-direction
+  // mistake for the third time: r11 required every reservation to be named,
+  // r12 added the reverse for reservations that no longer exist, and neither
+  // asked whether a name in the label corresponds to a reservation at all.
+  //
+  // The candidate set is every Worker IN THE TABLE, which is a closed world
+  // this script may legitimately assume — the authority states outright that
+  // a Worker not listed holds no trigger, and `--live` enforces exactly that.
+  // Closing the world over the inventory is sound; closing it over prose,
+  // which is what the earlier substring test effectively did, is not.
+  const distinctiveOf = (n) => n.replace(/^vaipakam-/, '').toLowerCase();
+  const label = committedLabel.toLowerCase();
+  const reservedSet = new Set(reservedNames);
+  const namedInLabel = new Set(
+    [...allNames].filter((n) => label.includes(distinctiveOf(n))),
+  );
   for (const name of reservedNames) {
-    const distinctive = name.replace(/^vaipakam-/, '');
-    if (!committedLabel.toLowerCase().includes(distinctive.toLowerCase())) {
+    if (!namedInLabel.has(name)) {
       problems.push(
         `the inventory reserves a trigger for \`${name}\` but the "Committed" line ` +
           `does not name it — the summary and the table disagree about WHO holds ` +
           `the reservation`,
+      );
+    }
+  }
+  for (const name of namedInLabel) {
+    if (!reservedSet.has(name)) {
+      problems.push(
+        `the "Committed" line names \`${name}\` as holding a reservation, but the ` +
+          `inventory does not reserve one for it — a reservation the table does ` +
+          `not grant cannot be spent, and the deployment ordering this file ` +
+          `protects would be read off the wrong Worker`,
       );
     }
   }
@@ -1063,10 +1206,10 @@ async function runLive() {
     return 2;
   }
 
-  const scripts = await cf(`/accounts/${account}/workers/scripts?per_page=100`, token);
+  const scripts = await cfList(`/accounts/${account}/workers/scripts`, token);
   const live = new Map();
   for (const s of scripts) {
-    const r = await cf(
+    const r = await cfOne(
       `/accounts/${account}/workers/scripts/${s.id}/schedules`,
       token,
     );
@@ -1086,7 +1229,9 @@ async function runLive() {
   // Same self-consistency check the offline half runs. Without it, `--live`
   // could compare the account to the inventory rows, find them equal, and
   // print "matches the account" over a summary saying something else.
-  for (const p of checkSummary(authorityMd, countTriggers(committed), inv.reserved)) {
+  for (const p of checkSummary(authorityMd, countTriggers(committed), inv.reserved, [
+    ...inv.sources.keys(),
+  ])) {
     problems.push(`SUMMARY       ${p}`);
   }
   // Compared as multisets, not as joined strings: two schedules in one cell are
@@ -1528,6 +1673,8 @@ const STAMP_CASES = [
   // Shape is not existence.
   ['shaped like an instant but impossible', '**Verified: 2026-99-99T99:99:99Z.**', 1],
   ['a day February does not have', '**Verified: 2026-02-30T00:00:00Z.**', 1],
+  // Codex #1978 r15: real, well-formed, and impossible as a record of a READ.
+  ['a real instant in the future', '**Verified: 2099-08-27T16:21:53Z.**', 1],
 ];
 
 /** Source-cell fixtures: `[name, cell, expected readSource value]`. */
@@ -1555,6 +1702,41 @@ const GOOD_SUMMARY = [
 
 const SUMMARY_CASES = [
   ['agrees with its inventory', GOOD_SUMMARY, 4, 1, 0],
+  // Codex #1978 r15: the label naming a holder the table does not reserve.
+  // Substring matching passed this because the string contains "keeper".
+  [
+    'the label names an unreserved Worker as a holder',
+    GOOD_SUMMARY.replace(
+      "live plus the keeper's reserve",
+      "live plus the keeper and mesh-watcher's reserve",
+    ),
+    4,
+    1,
+    1,
+  ],
+  // Codex #1978 r15: an unterminated SECOND claim, reader-visible, invisible
+  // to a duplicate check that counted only well-formed labels.
+  [
+    'a second Live line with its closing markup dropped',
+    `${GOOD_SUMMARY}\n\n**Live right now: three of five`,
+    4,
+    1,
+    1,
+  ],
+  [
+    'a second Committed line with its closing markup dropped',
+    `${GOOD_SUMMARY}\n\n**Committed, live only: 3 of 5`,
+    4,
+    1,
+    1,
+  ],
+  [
+    'a second Genuinely spare line with its closing markup dropped',
+    `${GOOD_SUMMARY}\n\n**Genuinely spare: 2`,
+    4,
+    1,
+    1,
+  ],
   ['live disagrees with the trigger count', GOOD_SUMMARY, 3, 1, 2], // live wrong, committed then wrong too
   [
     'spare does not follow from committed',
@@ -1578,11 +1760,17 @@ const SUMMARY_CASES = [
     GOOD_SUMMARY,
     4,
     0,
-    // TWO problems, and both are real: committed no longer follows from the
-    // inventory, AND the label still names a reserve that no row holds. The
-    // second is Codex #1978 r12's reverse direction, which this fixture
-    // reached first by accident.
-    2,
+    // THREE problems, and all three are real and distinct: committed no longer
+    // follows from the inventory; the label names `vaipakam-keeper` as a holder
+    // the table does not reserve (r15's owner-identity check); and the label
+    // claims a reserve when no row is marked reserved at all (r12's reverse
+    // direction, which this fixture reached first by accident).
+    //
+    // The last two overlap on this input without being redundant — r12's fires
+    // for an UNNAMED reserve ("live plus a reserve"), which r15's cannot see,
+    // and r15's names the specific Worker, which is what an editor needs to fix
+    // it. Collapsing them would lose one case each way.
+    3,
   ],
   ['a line is missing', '- **Live right now:** 4 of 5', 4, 1, 2],
   ['a line was reworded', GOOD_SUMMARY.replace('Genuinely spare', 'Spare'), 4, 1, 1],
@@ -1651,7 +1839,11 @@ function runSelftest() {
     // names so the identity check is satisfied by the canonical label and the
     // fixtures keep testing what they were written to test.
     const names = Array.from({ length: reservedRows }, () => 'vaipakam-keeper');
-    const got = checkSummary(md, liveTriggers, names).length;
+    // The UNIVERSE the label is read against is every Worker in the table, not
+    // just the reserved ones — that is what makes "names a Worker that holds
+    // no reservation" detectable at all (Codex #1978 r15).
+    const universe = ['vaipakam-keeper', 'vaipakam-mesh-watcher', 'vaipakam-agent'];
+    const got = checkSummary(md, liveTriggers, names, universe).length;
     if (got !== expected) {
       console.error(`selftest: summary case "${name}" reported ${got} problem(s), expected ${expected}`);
       bad++;

@@ -824,15 +824,31 @@ then deploy.
 >   other bucket. That copy exists precisely because both Workers are
 >   scheduled; it is the one upside of the state #1977 is about.
 >
->   **NOT after a compromise.** There, a verification failure is a signal,
->   not an inconvenience, and the second bucket is a second place the
->   attacker can write: its Worker holds a `writeFiles` key and its own copy
->   of `BACKUP_ENCRYPTION_KEY`, so an object it serves can verify perfectly
->   and still be theirs. "Verification failed, try the other bucket" is the
->   newest-that-verifies move the next box exists to forbid, wearing a
->   different hat. Select by TIME on both sides, per that box's step 2, and
->   treat a failure in the warm bucket as evidence about the window rather
->   than as a reason to source the same night from elsewhere.
+>   **After a compromise, this trigger is suspended — but the other bucket is
+>   not off-limits.** The distinction is what you are reacting to:
+>
+>   - **A verification failure is NOT a reason to reach for the other
+>     bucket.** That is the reflex the next box exists to forbid, wearing a
+>     different hat: the old Worker holds a `writeFiles` key and its own copy
+>     of `BACKUP_ENCRYPTION_KEY`, so an object it serves can verify perfectly
+>     and still be theirs. "This one failed, try the other" selects on
+>     verifiability, and verification proves integrity, not provenance.
+>   - **A copy whose OWN version timestamp predates the compromise window is
+>     a legitimate candidate, from either bucket.** That is not the reflex —
+>     it is the next box's step 2 applied to a second set of versions, and
+>     the rule there is already "every object uploaded at or after the
+>     boundary is attacker-controlled", which says nothing about which bucket
+>     it sits in. Capture its file ID from a `--versions` listing and
+>     download by ID, exactly as you would in the warm bucket.
+>
+>   So: a corrupt pre-window warm object does not force you backwards through
+>   older nights if the archive bucket independently wrote that same night and
+>   that copy is itself pre-window. Refusing it would trade a night of data
+>   for no security gain — the object is admissible on the *same* test the
+>   warm one passed. An earlier revision of this carve-out forbade the other
+>   bucket outright, which read the "suspend the fallback" rule as "the other
+>   bucket is untrusted"; those are different claims, and only the first is
+>   true.
 >
 >   This carve-out was missing when the verification-failure condition was
 >   first added, and the omission has a shape worth naming: the fallback was
