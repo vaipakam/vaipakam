@@ -60,6 +60,14 @@ async function assertNothingListening(url: string, what: string): Promise<void> 
 export default async function globalSetup(): Promise<void> {
   fs.mkdirSync(STATE_DIR, { recursive: true });
   const pids: number[] = [];
+  // Truncate the PID file FIRST, before anything that can throw. A stale
+  // list from an earlier run is not merely useless — teardown kills every
+  // PID it finds, and the OS reuses those numbers, so an unrelated
+  // process can be killed. Several checks below (the two stale-listener
+  // guards, the attempts validation) exit before the first real write, so
+  // clearing here is what makes them safe rather than each one
+  // remembering to.
+  fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
 
   const forkUrl =
     process.env.APP_E2E_FORK_URL ?? 'https://sepolia.base.org';

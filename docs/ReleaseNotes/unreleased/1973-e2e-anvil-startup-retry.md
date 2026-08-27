@@ -49,7 +49,13 @@ withdrawn — it would have thrown away the underlying error the timeout
 message carries, which is the most useful thing in it.
 
 Retrying also meant being careful about what the teardown step is told
-to clean up. Each attempt's process id is recorded as soon as it starts,
+to clean up, in two places rather than one. The record of running
+processes is now emptied at the very start of setup, before any check
+that can abort it — a list left over from an earlier run is not merely
+useless, because cleanup kills whatever it finds and the operating
+system reuses those numbers. Several checks abort before the first real
+write, so clearing once at the top is what makes all of them safe,
+rather than each one having to remember. Each attempt's process id is recorded as soon as it starts,
 so a live one is always killable — but a dead one has to come back out
 again the moment it is seen to have exited. Leaving it would be worse
 than untidy: the cleanup step kills every recorded id, tolerating one
