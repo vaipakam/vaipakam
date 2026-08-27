@@ -210,7 +210,14 @@ Pre-existing primary infra (untouched until staging is proven):
 
 ## 4. Per-Worker configuration
 
-### 4.1 `vaipakam-defi` (frontend)
+### 4.1 `vaipakam-app` (frontend)
+
+This was `vaipakam-defi` when the plan was written. #1854 retired that
+app and renamed its successor `apps/app` / `vaipakam-app`; the source
+behind `vaipakam-defi` is **deleted**, so it can no longer be built and
+nothing here applies to it. `apps/app/.env.local` is the authoritative
+list — it carries sixteen variables, not the six shown — and the deploy
+is `cd apps/app && pnpm run deploy` (§6 step 6), never a bare build.
 
 Static-asset deploy, build-time env vars (Vite injects at
 `pnpm build`, baked into the JS bundle):
@@ -485,16 +492,22 @@ Single source-tree per Worker; no environment-flag gymnastics:
 
 ```
 apps/
-  defi/wrangler.jsonc           # vaipakam-defi
-  labs/wrangler.jsonc           # vaipakam-labs
+  app/wrangler.jsonc            # vaipakam-app   (was defi/ → vaipakam-defi, #1854)
+  www/wrangler.jsonc            # vaipakam-www   (was labs/ → vaipakam-labs)
   indexer/wrangler.jsonc        # vaipakam-indexer
     migrations/                  # D1 schema migrations (moved from ops/hf-watcher)
   agent/wrangler.jsonc           # vaipakam-agent
   keeper/wrangler.jsonc          # vaipakam-keeper
 ```
 
-Each `wrangler.jsonc` declares the right cron, D1 binding, vars,
-and (for indexer + agent) custom-domain `routes`. The previous
+Each `wrangler.jsonc` declares the right cron, D1 binding and vars.
+Custom domains are NOT among them, with one exception: `apps/indexer`
+is the only config in the tree carrying a `routes` key. Every other
+hostname — including `agent.vaipakam.com`, which this section used to
+claim was declared here — is attached out-of-band as a Cloudflare
+Custom Domain, so the repository is not where you look to find out what
+serves a hostname. `docs/ops/DeploymentRunbook.md` carries that map
+(#1854). The previous
 `ops/hf-watcher/` monolith is decommissioned in source as part of
 Stage 3 PR5.
 
@@ -512,7 +525,7 @@ Stage 3 PR5.
 | 8 | Operator | **HOLD (#1896): this step cannot pass while the keeper is unscheduled, and that is expected — not a failure to work around.** The canonical schedule is currently `[]`, so skip the readback and the `KEEPER_ENABLED` arming, and record the hold in the run log; step 9's window will be quiet for the keeper by design. Resume this step only after #1896's CPU work lands and the schedule is restored, following the re-enable sequence kept beside the empty list in `apps/keeper/wrangler.jsonc` (which includes `--keep-vars`, a trigger-aware readback, and the propagation wait). The original instruction, for when that happens: read back the keeper's cron and confirm it is the canonical `* * * * *` from `apps/keeper/wrangler.jsonc` — **not merely that some trigger exists**, since a hand-recreated daily schedule would pass a presence check while exercising the keeper far less than intended, leaving step 9's window just as falsely quiet. Only removed if step 7 took the write-free path. Then arm the keeper with `( cd apps/keeper && wrangler secret put KEEPER_ENABLED )`, entering `true` — it is a per-Worker secret, not a var, so there is no `--var` form (§4.5(b)). The flag alone arms nothing without a schedule to run on. |
 | 9 | Both | Run for N days observing for divergence vs prod. |
 | 10 | Both | If green: bind `vaipakam.com` + `www.vaipakam.com` to `vaipakam-labs` (replacing the older `vaipakam` Worker); decommission `vaipakam-hf-watcher` + unbind `api.vaipakam.com`. |
-|   |   | If issues: revert (env-var rollback on `vaipakam-defi`); no prod impact. |
+|   |   | If issues: revert by rebuilding the frontend against the prod origins and redeploying — `cd apps/app && pnpm run deploy` with `apps/app/.env.local` restored. **Not** an env-var edit in the Cloudflare dashboard: these are Vite build-time variables baked into the bundle, so nothing on the Worker side changes them. This row named `vaipakam-defi` until #1854; that Worker's source is deleted and it cannot be rebuilt at all, which is precisely why the rollback target had to move. No prod impact either way. |
 
 ## 7. Open questions / known gaps
 
