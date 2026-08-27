@@ -38,6 +38,7 @@
 import { createPublicClient, http, type Abi, type Address } from 'viem';
 import { MetricsFacetABI, RiskFacetABI } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import { MULTICALL3_ADDRESS } from './multicall3';
 import { getChainConfigs } from './env';
 import { maybeAutonomousLiquidate, passIsArmed, resetKeeperDedupe } from './keeper';
 import { recordHfBandNotifications, type HfReading } from './hfBandNotifications';
@@ -215,6 +216,12 @@ async function liquidatePassForChain(
         contracts,
         allowFailure: true,
         blockNumber: pinnedBlock,
+        // REQUIRED, not optional. This client is chainless, so without an
+        // explicit address viem throws `client chain not configured` locally,
+        // the catch below swallows it, and every chunk falls through to the
+        // serial fallback — one subrequest per loan, on every chain, forever.
+        // See src/multicall3.ts (#1946).
+        multicallAddress: MULTICALL3_ADDRESS,
       })) as typeof results;
     } catch (err) {
       console.error(
