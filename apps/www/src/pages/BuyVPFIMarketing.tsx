@@ -5,7 +5,7 @@ import {
   ArrowRight,
   Coins,
 } from 'lucide-react';
-import { appUrl } from '../lib/appUrl';
+import { appUrl, legacyToolUrl } from '../lib/appUrl';
 import { usePageMeta } from '../lib/usePageMeta';
 
 /**
@@ -90,7 +90,7 @@ export default function BuyVPFIMarketing() {
               standard for public-read DeFi dashboards). Open in a new
               tab so the marketing page stays open behind. */}
           <a
-            href={appUrl('/analytics')}
+            href={legacyToolUrl('/analytics')}
             target="_blank"
             rel="noopener noreferrer"
             style={{ color: 'var(--brand)' }}

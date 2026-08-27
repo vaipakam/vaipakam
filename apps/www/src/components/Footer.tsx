@@ -2,7 +2,7 @@ import { L as Link } from './L';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../context/ThemeContext';
 import { openConsentBanner } from '../lib/consent';
-import { appUrl } from '../lib/appUrl';
+import { appUrl, legacyToolUrl } from '../lib/appUrl';
 import './Footer.css';
 
 const GITHUB_URL = 'https://github.com/vaipakam';
@@ -50,21 +50,21 @@ export default function Footer() {
                 — see Navbar for the rationale. Plain `<a>` with
                 `target="_blank"` so the marketing tab stays open. */}
             <a
-              href={appUrl('/analytics#transparency')}
+              href={legacyToolUrl('/analytics#transparency')}
               target="_blank"
               rel="noopener noreferrer"
             >
               {t('footer.smartContracts')}
             </a>
             <a
-              href={appUrl('/protocol-console')}
+              href={legacyToolUrl('/protocol-console')}
               target="_blank"
               rel="noopener noreferrer"
             >
               {t('footer.protocolConsole', 'Protocol Console')}
             </a>
             <a
-              href={appUrl('/nft-verifier')}
+              href={appUrl('/nft')}
               target="_blank"
               rel="noopener noreferrer"
             >

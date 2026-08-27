@@ -31,3 +31,36 @@ export function appUrl(path: string): string {
   const normalised = path.startsWith('/') ? path : `/${path}`;
   return `${APP_URL}${normalised}`;
 }
+
+/**
+ * Link builder for the public-read tools that have NOT been ported to
+ * the connected app yet — currently Analytics and the Protocol Console.
+ *
+ * #1854 renamed the connected app and rehomed it, but it did not port
+ * every surface the retired one served: `apps/app` defines no
+ * `/analytics` and no `/protocol-console` route, so pointing these
+ * links at the new host lands users on the app's in-shell NotFound
+ * page. They keep resolving to the legacy surface, which still serves
+ * them, until the tools are ported.
+ *
+ * Two consequences worth stating plainly, because they are easy to get
+ * wrong later:
+ *
+ *  - `defi.vaipakam.com` CANNOT be retired — or blanket-redirected to
+ *    `app.vaipakam.com` — while it is the only host serving these two
+ *    tools. Port them first, then retire.
+ *  - When they are ported, delete this helper and move the call sites
+ *    back to `appUrl`. It exists to be removed, not to become a second
+ *    permanent surface.
+ *
+ * The NFT Verifier is deliberately NOT here: it WAS ported, as `/nft`,
+ * so its links use `appUrl('/nft')`.
+ */
+const LEGACY_TOOL_URL = (
+  import.meta.env.VITE_LEGACY_TOOL_URL ?? 'https://defi.vaipakam.com'
+).replace(/\/$/, '');
+
+export function legacyToolUrl(path: string): string {
+  const normalised = path.startsWith('/') ? path : `/${path}`;
+  return `${LEGACY_TOOL_URL}${normalised}`;
+}

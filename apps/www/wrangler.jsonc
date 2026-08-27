@@ -4,8 +4,12 @@
   // Landing, Buy-VPFI explainer, Whitepaper, Overview, User Guide
   // (basic + advanced), Terms, Privacy, Data Rights, Discord, Help
   // Search. Wallet-free; cross-domain link-outs to the connected-
-  // app surface via the `defiUrl(...)` helper (env-driven by
-  // `VITE_DEFI_URL`, defaults `https://app.vaipakam.com`).
+  // app surface via the `appUrl(...)` helper (env-driven by
+  // `VITE_APP_URL`, defaults `https://app.vaipakam.com`). Both the
+  // helper and the variable were renamed from `defiUrl` /
+  // `VITE_DEFI_URL` in #1854; the old variable name is no longer
+  // read, so a preview or local build that still sets it silently
+  // gets the production default instead of the override.
   //
   // Custom-domain bindings (apex-canonical setup):
   //   - vaipakam.com       CANONICAL user-facing URL. Apex is the

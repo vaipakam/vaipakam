@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import './Navbar.css';
 import { LanguagePicker } from './LanguagePicker';
-import { appUrl } from '../lib/appUrl';
+import { appUrl, legacyToolUrl } from '../lib/appUrl';
 
 type NavLink = {
   labelKey: string;
@@ -71,9 +71,9 @@ const NAV_GROUPS: NavGroup[] = [
       // app subdomain alongside the wallet-bearing write flows).
       // Linked out via `appUrl(...)` and opened in a new tab so the
       // marketing tab stays open behind.
-      { labelKey: 'nav.analytics', href: appUrl('/analytics'), newTab: true },
-      { labelKey: 'nav.nftVerifier', href: appUrl('/nft-verifier'), newTab: true },
-      { labelKey: 'nav.protocolConsole', href: appUrl('/protocol-console'), newTab: true },
+      { labelKey: 'nav.analytics', href: legacyToolUrl('/analytics'), newTab: true },
+      { labelKey: 'nav.nftVerifier', href: appUrl('/nft'), newTab: true },
+      { labelKey: 'nav.protocolConsole', href: legacyToolUrl('/protocol-console'), newTab: true },
     ],
   },
 ];

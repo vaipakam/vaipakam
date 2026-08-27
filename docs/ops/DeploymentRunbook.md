@@ -1740,11 +1740,34 @@ and go hunting for a broader token.
 cd apps/<app> && pnpm run build && pnpm exec wrangler deploy
 ```
 
-The build must run first: `assets.directory` points at `./dist`, and
-wrangler fails on a clean checkout without it. The Worker is created on
-first deploy from the `name` in `wrangler.jsonc` — there is no separate
-"create the Worker" step in the dashboard. The scripted equivalent is
-`deploy-{chain,testnet,mainnet}.sh --phase cf-app`.
+Use `pnpm run deploy`, **not** `pnpm run build && wrangler deploy`. The
+`deploy` script sets `REQUIRE_INDEXER_ORIGIN=1`, which turns the missing
+`VITE_INDEXER_ORIGIN` check in `apps/app/vite.config.ts` from a warning
+into a hard failure. A bare `build` only warns — by design, so CI and
+preview builds without operator env still pass — which means the
+build-then-deploy form will happily publish a production app with no
+offer-book feed, no push rail and no config snapshot. Populate
+`apps/app/.env.local` first; a build with no operator env is a preview
+build, not a deployable one.
+
+The build must run first regardless: `assets.directory` points at
+`./dist`, and wrangler fails on a clean checkout without it. The Worker
+is created on first deploy from the `name` in `wrangler.jsonc` — there
+is no separate "create the Worker" step in the dashboard.
+
+The scripted equivalents differ by script, and the two forms are not
+interchangeable:
+
+```bash
+# Phased scripts — cf-app is a named phase:
+bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-app
+bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-app
+
+# One-shot script — runs end to end; it has no --phase and rejects it
+# as an unknown flag. Use the skip flags to narrow it instead:
+bash contracts/script/deploy-chain.sh <chain-slug>
+bash contracts/script/deploy-chain.sh <chain-slug> --skip-app
+```
 
 Deploying is safe to do **before** merging the branch that renames a
 surface: a newly created Worker has no hostname pointing at it, so it
@@ -1754,16 +1777,32 @@ advertises a hostname that nothing answers.
 
 ### Retiring a surface — redirect, don't delete
 
-When a hostname has had real users, converting its Worker into a
+**`defi.vaipakam.com` is not retirable yet, and not just for bookmark
+reasons.** The #1854 rename rehomed the connected app but did not port
+every surface the old one served: `apps/app` defines no `/analytics`
+and no `/protocol-console`, so that host is still the only thing
+serving those two public tools, and the marketing site links to them
+there on purpose. Retiring it — or blanket-redirecting it to
+`app.vaipakam.com`, which would land those links on the app's NotFound
+page — breaks them. Port the tools first, then retire. (The NFT
+Verifier is fine: it WAS ported, as `/nft`.)
+
+For a host that is genuinely superseded, converting its Worker into a
 redirect beats deleting it: bookmarks and external links keep working,
 and per-origin browser storage is lost on an origin change regardless,
 so a redirect at least lands people on a working app instead of a dead
-host. `defi.vaipakam.com` and `alpha02.vaipakam.com` both qualify —
-the latter was the live testnet-review target for months and is cited
-throughout `docs/FindingsAndFixes/`, so a redirect keeps those
-write-ups navigable. Give the redirects a bounded life rather than
-leaving them forever. Prototype hosts with no audience
-(`alpha.vaipakam.com`, `alpha01.vaipakam.com`) can just be deleted.
+host. `alpha02.vaipakam.com` qualifies today — it was the live
+testnet-review target for months and is cited throughout
+`docs/FindingsAndFixes/`, so a redirect keeps those write-ups
+navigable. Give redirects a bounded life rather than leaving them
+forever. Prototype hosts with no audience (`alpha.vaipakam.com`,
+`alpha01.vaipakam.com`) can just be deleted.
+
+Before retiring ANY origin, check what still depends on it. At minimum:
+`FRONTEND_ORIGIN` in `apps/agent/wrangler.jsonc` (an origin dropped
+from that CSV does not get a clean CORS rejection — `resolveAllowedOrigin`
+falls back to the first entry, so the browser blocks the call), and the
+link helpers in `apps/www/src/lib/appUrl.ts`.
 
 ---
 

@@ -427,11 +427,31 @@
   //   - TG_BOT_USERNAME          — public bot handle.
   //   - FRONTEND_ORIGIN          — CSV of allowed CORS origins for
   //                                the frontend-facing endpoints.
+  //                                An origin NOT on this list is not
+  //                                rejected outright: resolveAllowedOrigin
+  //                                falls back to the FIRST entry, so the
+  //                                browser sees a mismatched
+  //                                Access-Control-Allow-Origin and blocks
+  //                                the call. Dropping a still-live origin
+  //                                therefore breaks that site's agent
+  //                                calls the next time this Worker is
+  //                                deployed. Retire an origin only after
+  //                                the surface behind it is actually gone.
   //   - DIAG_SAMPLE_RATE         — 0.0–1.0; default 1.0.
   //   - DIAG_RETENTION_DAYS      — int days; default 90.
   "vars": {
     "TG_BOT_USERNAME": "",
-    "FRONTEND_ORIGIN": "https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com",
+    // ORDER IS LOAD-BEARING: frames.ts derives its link host from
+    // `FRONTEND_ORIGIN.split(',')[0]`, so the FIRST entry is where every
+    // Frame's "Open Vaipakam" / "Open NFT Verifier" action points. Keep
+    // the connected app first; reordering this CSV silently rehomes
+    // those buttons.
+    //
+    // `defi.` and `alpha02.` are RETAINED past the #1854 rename on
+    // purpose: their Workers still serve real users until the operator
+    // converts them to redirects. Remove them in the same change that
+    // retires those hosts, not before. (#1958 Codex F5.)
+    "FRONTEND_ORIGIN": "https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://defi.vaipakam.com,https://alpha02.vaipakam.com",
     "DIAG_SAMPLE_RATE": "1.0",
     "DIAG_RETENTION_DAYS": "90",
   },

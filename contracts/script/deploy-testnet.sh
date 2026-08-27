@@ -1583,7 +1583,14 @@ phase_cf_app() {
   echo "═══════════════════════════════════════════════════════════════"
   echo "deploy-testnet.sh — cf-app"
   echo "═══════════════════════════════════════════════════════════════"
-  ( cd "$APP_DIR" && pnpm run build && pnpm exec wrangler deploy )
+  # `pnpm run deploy`, NOT `build && wrangler deploy`: the package's
+  # deploy script sets REQUIRE_INDEXER_ORIGIN=1, which promotes the
+  # missing-VITE_INDEXER_ORIGIN check in vite.config.ts from a warning
+  # to a hard failure. A bare build only warns (deliberately, so CI and
+  # preview builds without operator env still pass), so the old form
+  # would publish a production app with no offer-book feed, no push
+  # rail and no config snapshot — silently. (#1958 Codex F4.)
+  ( cd "$APP_DIR" && pnpm run deploy )
   mark_phase_done "cf-app"
 }
 
