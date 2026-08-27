@@ -14,7 +14,10 @@ The **public marketing + docs surface** served at `vaipakam.com` (apex; `www.vai
 - NO wallet connect / wagmi / `wallet_*` JSON-RPC.
 - NO on-chain reads (every value the page shows is statically content-baked or sourced from a sibling Worker, not from a chain RPC).
 - NO connectkit / react-query / per-action permissioning.
-- Public-read tools that live on the connected-app domain by industry convention (analytics, NFT verifier, protocol console) are linked out via `defiUrl()` to `defi.vaipakam.com` rather than duplicated here.
+- Public-read tools that live on the connected-app domain by industry convention (analytics, NFT verifier, protocol console) are linked OUT rather than duplicated here. Since #1854 that routing is SPLIT across two helpers in `src/lib/appUrl.ts`, and the split is deliberate:
+  - `appUrl(destination)` — the cutover-aware builder. Takes a named destination, never a raw path, and one `APP_TARGET` constant selects the host AND the route table together (the two surfaces disagree on paths: `/nft-verifier` vs `/nft`, `/vpfi-vault#step-2` vs `/vpfi`). The NFT Verifier goes through this.
+  - `legacyToolUrl(path)` — Analytics and the Protocol Console, which were NOT ported to `apps/app` (#1959) and so still resolve to the surface that serves them. It exists to be deleted once they are ported.
+  Note the connected app's own hostname is not bound yet, so `appUrl` currently resolves to the legacy host too; the cutover checklist lives beside `APP_TARGET`.
 
 This deliberate dependency-surface narrowing means a marketing-only change has a tighter blast radius — `apps/www` can't accidentally regress the connected app, and vice versa.
 
@@ -49,7 +52,7 @@ No on-chain test surface — by design.
 
 - Stage 4 source-tree refactor (labs → www): [`docs/DesignsAndPlans/Stage3WorkerSplitPlan.md`](../../docs/DesignsAndPlans/Stage3WorkerSplitPlan.md).
 - Whitepaper authoring + sync: [`docs/internal/ProjectProcedures.md` §6.5](../../docs/internal/ProjectProcedures.md).
-- Cloudflare static-assets deploy shape: same as `apps/defi`, dependency-trimmed.
+- Cloudflare static-assets deploy shape: same as `apps/app`, dependency-trimmed.
 
 ## Configuration
 
@@ -59,6 +62,6 @@ No secrets — there's nothing here that requires server-side credentials. `apps
 
 ## Related
 
-- `apps/defi` — the connected app at `defi.vaipakam.com`. Shares a marketing-content base; the connected app overlays wallet + on-chain reads on top.
-- `packages/ui` — primitives shared between `apps/defi` + `apps/www`.
-- `packages/lib` — `crossDomainPref` (parent-domain cookie helper for theme + language sync between this domain and `defi.vaipakam.com`).
+- `apps/app` — the connected app. An INDEPENDENT tree, not an overlay: it was developed separately and shares no source with this one (which is why, as noted above, neither can regress the other). The only coupling is the cross-domain links in `src/lib/appUrl.ts`. The "overlay on a shared marketing base" description belonged to the app this one replaced.
+- `packages/ui` — React primitives, ORPHANED since #1854: nothing imports them (this app keeps only an unused dependency entry), and nothing typechecks the package either. See its README and #1963.
+- `packages/lib` — `crossDomainPref` (parent-domain cookie helper for preference sync across the two surfaces). LANGUAGE-only in practice today: the connected app reads the language cookie but not the theme one (see the note in `src/context/ThemeContext.tsx`).

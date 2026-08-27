@@ -65,7 +65,12 @@ interface BaseEnv {
 
   // Connected-app origin for deep-links inside push / Telegram
   // notifications (e.g. "View this loan" → `<FRONTEND_ORIGIN>/loans/{id}`).
-  // Defaults to `https://defi.vaipakam.com` when unset.
+  // OPTIONAL and there is no domain default: the consumers fall back to
+  // the EMPTY string, so an unset value renders the alert with a bare
+  // relative path rather than a wrong host. Set it to the connected app's
+  // origin (`https://app.vaipakam.com`) on any deploy whose notifications
+  // should be clickable. (This comment claimed a `defi.vaipakam.com`
+  // default before #1854; no such default was ever implemented.)
   FRONTEND_ORIGIN?: string;
 
   // Phase 7a.4 — autonomous-keeper enable flag. When

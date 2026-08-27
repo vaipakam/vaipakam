@@ -1503,10 +1503,13 @@ the chain-free marketing and documentation surface: protocol education, FAQs and
 whitepaper and docs, the public VPFI utility page, public Terms and Privacy routes, and links into
 the transparency surfaces. It loads no wallet context, no active-chain state, and no per-user
 lookups; any "verify on chain" affordance hands off to the connected app's public transparency
-route. The **connected app** (`defi.vaipakam.com`) hosts wallet-connected actions — dashboard, offer
+route. The **connected app** hosts wallet-connected actions — dashboard, offer
 book, offer creation, loan details, claim center, activity, VPFI vault, rewards, allowances, and
-alerts — plus public-read shells (analytics, NFT verifier, protocol console) that work without
-connecting a wallet. The app ships in ten locales with a Basic / Advanced mode toggle that controls
+alerts — plus public-read shells that work without connecting a wallet. Those read-only shells are
+currently split across two deployments while the connected app completes a move to its final
+hostname: the NFT verifier ships with the app, while analytics and the protocol console are still
+served from the surface the app is replacing. Every link the marketing site emits resolves to
+whichever deployment actually serves the destination, so the split is invisible in use. The app ships in ten locales with a Basic / Advanced mode toggle that controls
 visibility and density, never policy. The technical whitepaper itself is maintained in English only;
 long-form legal and guide content shows a clear English-only notice in other locales until locale-matched source text exists.
 

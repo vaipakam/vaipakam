@@ -55,7 +55,7 @@
 # ---------------------------------------------------------------------------
 # Frontend surfaces
 # ---------------------------------------------------------------------------
-/apps/defi/                                        @Raja4Shekar
+/apps/app/                                        @Raja4Shekar
 /apps/www/                                         @Raja4Shekar
 /apps/labs/                                        @Raja4Shekar
 

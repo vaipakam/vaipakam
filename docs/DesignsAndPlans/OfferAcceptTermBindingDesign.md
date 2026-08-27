@@ -301,8 +301,11 @@ creator consent to the created terms too, but this is **not** required to close
   `AcceptTerms.linkedLoanId` binds that target so the wallet-rendered prompt
   reflects which position is bought/closed; `_acceptOffer` reverts if the bound
   `linkedLoanId` ≠ the mapping's value.
-- **Frontend:** `OfferBook` accept call + `AcceptReviewModal`
-  ([`apps/defi/src/pages/OfferBook.tsx`](../../apps/defi/src/pages/OfferBook.tsx))
+- **Frontend:** the accept call + its review modal
+  (`apps/defi/src/pages/OfferBook.tsx` when this was written; that app was
+  deleted in #1854 — the live surface is `apps/app`'s
+  [`OfferFlow.tsx`](../../apps/app/src/components/OfferFlow.tsx) over
+  [`contracts/useAcceptTerms.ts`](../../apps/app/src/contracts/useAcceptTerms.ts))
   pass `AcceptTerms` (the modal already shows these exact terms) + the
   illiquid-asset identities; the single consent checkbox is unchanged.
 - **FunctionalSpec update (same PR as code, per convention):**

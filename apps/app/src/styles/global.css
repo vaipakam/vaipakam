@@ -1,0 +1,2268 @@
+/*
+ * app global styles — mobile-first.
+ *
+ * Structure:
+ *   1. Reset + base typography
+ *   2. App shell (top bar, sidebar >=720px, bottom tab bar <720px)
+ *   3. Shared primitives (cards, buttons, inputs, badges, banners)
+ *   4. Flow components (steps, receipt, checklist)
+ *   5. Utilities
+ *
+ * Every color/space value comes from tokens.css. No component ever
+ * hardcodes a hex value — that is what keeps light/dark honest.
+ */
+
+@import './tokens.css';
+
+/* ---------- 1. Reset + base ---------- */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text-body);
+  background: var(--surface-page);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  color: var(--text-strong);
+  line-height: 1.25;
+  margin: 0 0 var(--space-2);
+}
+
+h1 {
+  font-size: 1.5rem;
+}
+h2 {
+  font-size: 1.2rem;
+}
+h3 {
+  font-size: 1.05rem;
+}
+
+p {
+  margin: 0 0 var(--space-3);
+}
+
+a {
+  color: var(--brand);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ---------- 2. App shell ---------- */
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.shell-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  padding-top: calc(var(--space-3) + env(safe-area-inset-top));
+  background: var(--surface-nav);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.shell-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
+  font-size: 1.05rem;
+  color: var(--text-strong);
+}
+
+.shell-brand .brand-mark {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--brand);
+  color: var(--text-on-brand);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.shell-brand .brand-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--brand);
+  background: var(--brand-soft);
+  border-radius: var(--radius-full);
+  padding: 1px 8px;
+}
+
+.shell-topbar-spacer {
+  flex: 1;
+}
+
+/* UX-031 — skip-to-content link: off-screen until keyboard-focused,
+ * then pinned top-left so the first Tab reveals it. */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 8px 14px;
+  background: var(--brand);
+  color: #fff;
+  border-radius: 0 0 var(--radius-sm) 0;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.skip-link:focus {
+  left: 0;
+}
+
+/* Programmatic focus of the main region on route change (UX-031) must
+ * not draw a persistent focus ring — keyboard focus of real controls
+ * still shows its own :focus-visible outline. */
+.shell-main:focus {
+  outline: none;
+}
+
+/* UX-013 — persistent network indicator beside the wallet chip. */
+.net-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin-right: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-body);
+  white-space: nowrap;
+}
+
+.net-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--ok);
+}
+
+/* In-app notification bell (#1213) — a topbar dropdown inbox. */
+.notif {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.notif-bell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  color: var(--text-body);
+  cursor: pointer;
+}
+.notif-bell:hover {
+  background: var(--surface-hover);
+}
+.notif-bell svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Unread-count pill anchored to the bell's top-right. */
+.notif-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+/* Full-viewport catcher so an outside click / tap light-dismisses. */
+.notif-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: transparent;
+}
+
+.notif-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 46;
+  width: min(360px, calc(100vw - 2 * var(--space-3)));
+  max-height: min(70vh, 520px);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.notif-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.notif-panel-title {
+  font-weight: 700;
+  color: var(--text-strong);
+}
+
+.notif-list {
+  overflow-y: auto;
+}
+
+.notif-empty {
+  margin: 0;
+  padding: var(--space-4) var(--space-3);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.notif-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-bottom: 1px solid var(--border);
+  color: var(--text-body);
+  text-decoration: none;
+}
+.notif-row:last-child {
+  border-bottom: none;
+}
+a.notif-row:hover {
+  background: var(--surface-hover);
+}
+.notif-row-static {
+  cursor: default;
+}
+.notif-row-unread {
+  background: var(--brand-soft);
+}
+a.notif-row-unread:hover {
+  background: var(--brand-soft);
+}
+
+.notif-row-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.notif-row-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.notif-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.notif-row-title {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+.notif-row-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.notif-row-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--brand);
+}
+
+/* On a narrow header the bell sits LEFT of the wallet chip, so a
+ * bell-anchored `right: 0` panel that is nearly viewport-wide would
+ * hang off the left edge and clip (Codex #1295 r1). Anchor it to the
+ * VIEWPORT instead — fixed, inset from both sides, just under the
+ * header — so it's fully readable regardless of the bell's position. */
+@media (max-width: 560px) {
+  .notif-panel {
+    position: fixed;
+    /* header height: space-3 top+bottom (12+12) + the 38px bell control,
+     * plus the safe-area the topbar's padding-top also carries. */
+    top: calc(var(--space-3) * 2 + 38px + env(safe-area-inset-top));
+    left: var(--space-3);
+    right: var(--space-3);
+    width: auto;
+  }
+}
+
+/* UX2-001 — the connected header must be STRUCTURALLY unable to widen
+ * the page: every route at 390px scrolled ~71px sideways because the
+ * brand cluster + network dot + wallet chip's intrinsic widths summed
+ * past the viewport (flex items refuse to shrink below content size
+ * by default). Let the chip shrink and ellipsize its label instead. */
+.connect-btn {
+  min-width: 0;
+  flex-shrink: 1;
+}
+.connect-addr,
+.connect-label {
+  display: inline-block;
+  vertical-align: bottom;
+  /* Flex items inside the inline-flex .btn — min-width:0 lets the
+   * label actually give way when the header squeezes the button;
+   * without it the ellipsis rules below never engage. */
+  min-width: 0;
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The chain name is supporting context — hide it wherever the wallet
+ * chip needs the room; the dot remains. 560px (not the previous
+ * 400px): with the name shown the header's intrinsic width still
+ * exceeded viewports in the 400–560px band even after the phone-tier
+ * trims below, so the old threshold only moved the overflow. */
+@media (max-width: 560px) {
+  .net-chip-name {
+    display: none;
+  }
+}
+
+/* Phone-tier header trims (UX2-001/006): the alpha badge and the
+ * wallet glyph are decoration at this width — dropping them buys the
+ * address its room, and the "Connect wallet" label no longer wraps
+ * onto two lines. */
+@media (max-width: 430px) {
+  .shell-topbar {
+    gap: var(--space-2);
+  }
+  .shell-topbar .brand-tag {
+    display: none;
+  }
+  .shell-topbar .connect-btn-icon {
+    display: none;
+  }
+  .shell-topbar .connect-btn {
+    padding-inline: 10px;
+  }
+}
+
+.shell-body {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+}
+
+.shell-main {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-4);
+  /* Leave room for the bottom tab bar on phones */
+  padding-bottom: calc(72px + env(safe-area-inset-bottom));
+}
+
+/* Sidebar — hidden on phones, shown from 720px */
+.shell-sidenav {
+  display: none;
+}
+
+/* Bottom tab bar — phones only */
+.shell-tabbar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  display: flex;
+  justify-content: space-around;
+  background: var(--surface-nav);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.tabbar-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  min-height: var(--taptarget);
+  padding: var(--space-2) 0 var(--space-1);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.tabbar-item svg {
+  width: 22px;
+  height: 22px;
+}
+
+.tabbar-item.active {
+  color: var(--brand);
+}
+
+.tabbar-item:hover {
+  text-decoration: none;
+}
+
+/* The More tab is a BUTTON (opens the sheet), not a link — strip the
+   default button chrome so it matches its NavLink siblings. */
+button.tabbar-item {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* UX-011 — phone More sheet: every destination without a tab, one tap
+   away, plus the mode switch. Sits above the tab bar. */
+.more-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the support FAB (z 40) — the FAB must not steal taps from
+     the open sheet (Codex #1168 r1). The diagnostics drawer can't be
+     open at the same time: its own overlay covers the tab bar. */
+  z-index: 43;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.more-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  z-index: 44;
+  display: flex;
+  flex-direction: column;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border-top: 1px solid var(--border);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-2);
+  box-shadow: var(--shadow-pop);
+}
+
+.more-sheet-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--taptarget);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  color: var(--text-body);
+  font-weight: 500;
+}
+
+.more-sheet-item svg {
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+}
+
+.more-sheet-item.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.more-sheet-item:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+
+.more-sheet-mode {
+  border-top: 1px solid var(--border);
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+}
+
+/* UX-011 — the persistent Basic/Advanced segmented switch. */
+.mode-switch {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+}
+
+.mode-switch button {
+  flex: 1;
+  min-height: 32px;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mode-switch button.active {
+  background: var(--surface-raised);
+  color: var(--brand);
+  box-shadow: var(--shadow-card);
+}
+
+/* Sidebar footer (mode switch) — desktop only; phones get it in the
+   More sheet instead. */
+.sidenav-footer {
+  display: none;
+}
+
+/* UX-008 — activity rows: the action + substance sub-line take the
+   row, with a compact explorer link pinned to the trailing edge. */
+.activity-row {
+  gap: var(--space-2);
+}
+.activity-row-link {
+  flex: 1;
+  min-width: 0;
+  color: inherit;
+}
+.activity-row-link:hover {
+  text-decoration: none;
+}
+.activity-tx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--taptarget);
+  min-height: var(--taptarget);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.activity-tx:hover {
+  color: var(--brand);
+}
+
+@media (min-width: 720px) {
+  .shell-tabbar {
+    display: none;
+  }
+
+  .more-sheet,
+  .more-sheet-backdrop {
+    display: none;
+  }
+
+  .sidenav-footer {
+    display: block;
+    margin-top: auto;
+    padding-top: var(--space-4);
+  }
+
+  .shell-main {
+    padding: var(--space-6);
+    padding-bottom: var(--space-8);
+  }
+
+  .shell-sidenav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    width: 220px;
+    flex-shrink: 0;
+    padding: var(--space-6) var(--space-3);
+    border-right: 1px solid var(--border);
+  }
+
+  .sidenav-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    color: var(--text-body);
+    font-weight: 500;
+    font-size: 0.95rem;
+  }
+
+  .sidenav-item svg {
+    width: 18px;
+    height: 18px;
+    color: var(--text-muted);
+  }
+
+  .sidenav-item:hover {
+    background: var(--surface-hover);
+    text-decoration: none;
+  }
+
+  .sidenav-item.active {
+    background: var(--brand-soft);
+    color: var(--brand-soft-text);
+    font-weight: 600;
+  }
+
+  .sidenav-item.active svg {
+    color: var(--brand-soft-text);
+  }
+
+  .sidenav-section {
+    margin-top: var(--space-4);
+    padding: var(--space-2) var(--space-3) var(--space-1);
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+  }
+}
+
+/* ---------- 3. Shared primitives ---------- */
+
+.card {
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  padding: var(--space-4);
+}
+
+.card + .card {
+  margin-top: var(--space-4);
+}
+
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.card-title svg {
+  width: 20px;
+  height: 20px;
+  color: var(--brand);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--taptarget);
+  padding: 0 var(--space-5);
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-decoration: none;
+}
+
+.btn:hover {
+  text-decoration: none;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* UX-017 — a disabled PRIMARY button kept the brand (lavender) fill and
+ * only dropped opacity, so it read as "almost active". Desaturate it to
+ * a plainly-inactive surface so disabled is unmistakable. */
+.btn-primary:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-faint);
+}
+
+.btn-primary {
+  background: var(--brand);
+  color: var(--text-on-brand);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--brand-strong);
+}
+
+/* UX-029 — a full-width toggle ROW for a load-bearing opt-in (VPFI fee
+ * discount): the label carries the weight, the control sits at the end,
+ * the whole row is the click target. */
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+
+.toggle-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.toggle-row-title {
+  font-weight: 600;
+}
+
+.toggle-row-sub {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* UX2-004 — an actual switch, not a bare checkbox: the toggle-row
+ * pattern (title + explanation + control) promised a switch and
+ * rendered a 20px native box. Track + sliding thumb, keyboard focus
+ * ring preserved via :focus-visible. */
+.toggle-input {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.toggle-input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--surface-raised);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  transition: transform 0.15s ease;
+}
+
+.toggle-input:checked {
+  background: var(--brand);
+  border-color: var(--brand);
+}
+
+.toggle-input:checked::after {
+  transform: translateX(18px);
+}
+
+.toggle-input:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+
+.toggle-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggle-input,
+  .toggle-input::after {
+    transition: none;
+  }
+}
+
+/* UX-048 — a common min-width so the faucet's mint buttons form an
+ * aligned column despite varying labels ("Mint 10,000 tLIQ" vs "Mint an
+ * NFT"). At ≤480px the shared item-row rule stacks the CTA full-width,
+ * so this only shapes the desktop column. */
+.faucet-mint-btn {
+  min-width: 150px;
+  justify-content: center;
+}
+
+.btn-secondary {
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+  color: var(--text-strong);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--brand);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--brand-soft);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: var(--text-on-brand);
+}
+
+.btn-block {
+  width: 100%;
+}
+
+.btn-sm {
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  font-size: 0.85rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.field .field-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.input,
+select.input,
+textarea.input {
+  width: 100%;
+  min-height: var(--taptarget);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  color: var(--text-strong);
+  font-size: 1rem;
+}
+
+.input:focus {
+  border-color: var(--brand);
+  outline: none;
+}
+
+.input-invalid {
+  border-color: var(--danger);
+}
+
+/* SelectMenu — the app dropdown (see components/SelectMenu.tsx).
+ * The trigger reuses .input so closed controls sit flush with text
+ * inputs; the list is a raised popover with generous, two-line-capable
+ * rows — the "premium line items" the native <option> can't render. */
+.select-menu {
+  position: relative;
+}
+
+.select-menu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+
+.select-menu-trigger:focus-visible {
+  border-color: var(--brand);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.select-menu-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-menu-placeholder {
+  color: var(--text-muted);
+}
+
+.select-menu-chevron {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  color: var(--text-muted);
+  transition: transform 120ms ease;
+}
+
+.select-menu-chevron[data-open='true'] {
+  transform: rotate(180deg);
+}
+
+.select-menu-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: var(--space-1);
+  list-style: none;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-pop);
+  max-height: 320px;
+  overflow-y: auto;
+  animation: select-menu-in 120ms ease;
+}
+
+@keyframes select-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .select-menu-list {
+    animation: none;
+  }
+  .select-menu-chevron {
+    transition: none;
+  }
+}
+
+.select-menu-option {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: relative;
+  padding: 10px var(--space-3);
+  padding-right: calc(var(--space-3) + 24px); /* room for the check */
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.select-menu-option.is-active {
+  background: var(--surface-hover);
+}
+
+.select-menu-option[aria-selected='true'] {
+  background: var(--brand-soft);
+}
+
+.select-menu-option[aria-selected='true'].is-active {
+  background: var(--brand-soft);
+  outline: 1px solid var(--brand);
+  outline-offset: -1px;
+}
+
+.select-menu-option-main {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.select-menu-option-label {
+  font-weight: 500;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-menu-option[aria-selected='true'] .select-menu-option-label {
+  color: var(--brand-soft-text);
+}
+
+.select-menu-option-sub {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.select-menu-option-check {
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 16px;
+  height: 16px;
+  color: var(--brand);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-full);
+  padding: 2px 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.badge svg {
+  width: 13px;
+  height: 13px;
+}
+
+.badge-ok {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+.badge-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.badge-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+.badge-info {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.badge-neutral {
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.banner {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  font-size: 0.9rem;
+  margin-bottom: var(--space-4);
+}
+
+.banner svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.banner-info {
+  background: var(--info-soft);
+  color: var(--info);
+}
+.banner-warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+.banner-danger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.banner .banner-body {
+  color: var(--text-body);
+}
+
+.banner .banner-title {
+  font-weight: 600;
+  color: inherit;
+}
+
+/* ---------- 4. Flow components ---------- */
+
+.intent-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-3);
+}
+
+@media (min-width: 560px) {
+  .intent-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.intent-card {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  color: inherit;
+  box-shadow: var(--shadow-card);
+  transition:
+    border-color 0.15s ease,
+    transform 0.1s ease;
+}
+
+/* Intent cards render as <a> for routes and <button> for in-page
+ * path choices — normalize the button form. */
+button.intent-card {
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+
+.intent-card:hover {
+  text-decoration: none;
+  border-color: var(--brand);
+  transform: translateY(-1px);
+}
+
+.intent-card .intent-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
+}
+
+.intent-card .intent-icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.intent-card h3 {
+  margin-bottom: 2px;
+}
+
+.intent-card p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.steps-nav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+
+.steps-nav .step-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.steps-nav .step-dot::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.steps-nav .step-dot.done::before,
+.steps-nav .step-dot.current::before {
+  background: var(--brand);
+}
+
+.steps-nav .step-dot.current {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+/* UX-039 — five step labels wrap awkwardly at phone widths, orphaning
+   the last one. Swap to a compact "Step N of M — Label" line. */
+.steps-nav .steps-compact {
+  display: none;
+}
+
+@media (max-width: 480px) {
+  .steps-nav .step-dot {
+    display: none;
+  }
+  .steps-nav .steps-compact {
+    display: inline;
+    color: var(--text-strong);
+    font-weight: 600;
+  }
+}
+
+.receipt {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.receipt-row {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.9rem;
+}
+
+.receipt-row:last-child {
+  border-bottom: none;
+}
+
+.receipt-row dt {
+  flex-shrink: 0;
+  width: 118px;
+  margin: 0;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.receipt-row dd {
+  margin: 0;
+  color: var(--text-strong);
+}
+
+.receipt-row.receipt-risk dd {
+  color: var(--warn);
+}
+
+.checklist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.checklist li {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-start;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  font-size: 0.9rem;
+}
+
+.checklist li svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.checklist li.check-pass svg {
+  color: var(--ok);
+}
+.checklist li.check-fail svg {
+  color: var(--danger);
+}
+.checklist li.check-pending svg {
+  color: var(--text-faint);
+}
+
+.checklist .check-fix {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.empty-state {
+  text-align: center;
+  padding: var(--space-8) var(--space-4);
+  color: var(--text-muted);
+}
+
+.empty-state svg {
+  width: 36px;
+  height: 36px;
+  color: var(--text-faint);
+  margin-bottom: var(--space-3);
+}
+
+/* UX-031 — the title may be an h1 (full-page empty states, e.g. 404) or
+ * an h3 (inline). Normalize the visual size so the heading level is a
+ * semantics/a11y choice, not a styling one. */
+.empty-state-title {
+  font-size: 1.05rem;
+}
+
+.empty-state .btn {
+  margin-top: var(--space-4);
+}
+
+/* Position / offer / claim rows */
+.row-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.item-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: inherit;
+}
+
+a.item-row:hover {
+  text-decoration: none;
+  border-color: var(--brand);
+}
+
+/* UX-019 — beside-the-text CTAs crush list cards when the CARD is
+   narrow (titles wrap mid-token, meta shatters into fragments). Stack:
+   text full-width, then the action button full-width below.
+
+   Two triggers on purpose (Codex #1157 r1): the row-list container
+   query keys on the list's OWN width, so the 720–768px viewport band
+   — where the 220px sidebar appears and content drops to ~450px while
+   a viewport media query stops matching — stacks correctly too. The
+   viewport fallback covers item-rows outside a .row-list (e.g. the
+   Faucet's single-row cards) on true phones. */
+.row-list {
+  container-type: inline-size;
+}
+
+@container (max-width: 480px) {
+  .row-list .item-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .row-list .item-row .row-main {
+    min-width: 0;
+  }
+  .row-list .item-row .btn {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+@media (max-width: 480px) {
+  .item-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .item-row .row-main {
+    min-width: 0;
+  }
+  .item-row .btn {
+    width: 100%;
+    text-align: center;
+  }
+}
+
+.item-row .row-main {
+  flex: 1;
+  min-width: 180px;
+}
+
+.item-row .row-title {
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.item-row .row-sub {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+/* ---------- 5. Utilities ---------- */
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.cluster {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.spread {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+
+.page-title {
+  margin-bottom: var(--space-1);
+}
+
+.page-lede {
+  color: var(--text-muted);
+  margin-bottom: var(--space-5);
+}
+
+/* UX-042 — copyable address chips: comfortable targets, 44px on
+   touch devices. */
+.copy-address {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.copy-address-chip,
+.copy-address-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  min-height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.copy-address-chip:hover,
+.copy-address-link:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+  text-decoration: none;
+}
+
+@media (pointer: coarse) {
+  .copy-address-chip,
+  .copy-address-link {
+    min-height: 44px;
+    padding: 8px 12px;
+  }
+  /* The icon-only explorer anchor needs WIDTH too — 14px icon + 24px
+     padding is ~38px, under the 44px target this block guarantees. */
+  .copy-address-link {
+    min-width: 44px;
+    justify-content: center;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Segmented control (theme + mode switches) */
+.segmented {
+  display: inline-flex;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-md);
+  padding: 3px;
+  gap: 2px;
+}
+
+.segmented button {
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  padding: 6px 14px;
+  min-height: 36px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.segmented button.active {
+  background: var(--surface-raised);
+  color: var(--text-strong);
+  box-shadow: var(--shadow-card);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+
+  .intent-card,
+  .intent-card:hover {
+    transition: none;
+    transform: none;
+  }
+}
+
+/* Support drawer (#1028 item 4) — the app's first slide-over. The FAB
+   sits above the phone tab bar; the drawer is a right-side panel on
+   wide screens and near-full-width on phones. */
+.diag-fab {
+  position: fixed;
+  /* Phones: bottom-LEFT. List-card CTAs (Claim / Use this offer) are
+     right-aligned, so a right-side FAB always covers whichever card's
+     button is scrolled into its zone and steals the tap (UX-007).
+     Nothing interactive lives bottom-left above the tab bar. Desktop
+     (min-width block below) returns it to the conventional right. */
+  left: var(--space-4);
+  /* Clear the fixed tab bar on phones. */
+  bottom: calc(72px + env(safe-area-inset-bottom) + var(--space-3));
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+}
+
+.diag-fab:hover {
+  color: var(--brand);
+}
+
+.diag-fab svg {
+  width: 22px;
+  height: 22px;
+}
+
+@media (min-width: 720px) {
+  .diag-fab {
+    left: auto;
+    right: var(--space-4);
+    bottom: var(--space-4);
+  }
+}
+
+.diag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 41;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.diag-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 42;
+  width: min(420px, 100vw);
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border-left: 1px solid var(--border);
+  padding: var(--space-4);
+}
+
+.diag-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-2);
+}
+
+.diag-rows {
+  display: grid;
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.diag-row dt {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.diag-row dd {
+  margin: 2px 0 0;
+  font-size: 0.92rem;
+  color: var(--text-body);
+  word-break: break-word;
+}
+
+.diag-ok {
+  color: var(--ok);
+}
+
+.diag-warn {
+  color: var(--warn);
+}
+
+.diag-muted {
+  color: var(--text-muted);
+}
+
+/* ---------- Rate Desk (#1129) ---------- */
+
+/* The desk's layout breakpoints key on the CONTAINER's width, not
+ * the viewport: the app shell's sidebar consumes ~350px, so viewport
+ * media queries overstate the desk's real estate by that much — at a
+ * 1280px viewport the desk has only ~810px, and the three-column
+ * template crushed the ladder's minmax(0,1fr) rate cells to zero
+ * width (spec 17's first phase-2 fork-tier failure). The thresholds
+ * below are therefore what the desk ACTUALLY has to lay out in. */
+.desk-container {
+  container-type: inline-size;
+  container-name: desk;
+}
+
+/* Mobile-first: the ladder and the ticket sit SIDE-BY-SIDE as the
+ * primary view (the highest-frequency loop — tap a rate, adjust the
+ * ticket — stays on one screen); the chart AND tape sit behind the
+ * bottom Book|Chart segmented toggle (`.desk-view-toggle`, the
+ * ratified mobile pattern — density changes, capability never).
+ * container >= 720px: chart panel full-width on top, book + ticket
+ * below. container >= 1080px: the full terminal — chart center-left,
+ * ladder, ticket. */
+.desk-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  margin-top: var(--space-4);
+}
+
+.desk-book-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.desk-ticket-col {
+  min-width: 0;
+}
+
+.desk-chart-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+  grid-column: 1 / -1;
+}
+
+/* UX-006 — at phone widths the side-by-side ladder+ticket crushes
+   both columns to ~150px (wrapped headers, overlapping buttons).
+   Below 560px stack them full-width: ladder first (scan the market),
+   ticket below (act on it). The Book|Chart toggle is unaffected. */
+@container desk (max-width: 559.98px) {
+  .desk-main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@container desk (max-width: 719.98px) {
+  /* Book view (default): chart + tape hidden behind the toggle. The
+   * chart stays MOUNTED (display:none) so switching back is instant —
+   * lightweight-charts' autoSize re-measures when shown. */
+  .desk-main .desk-chart-col {
+    display: none;
+  }
+
+  .desk-main.desk-mobile-chart .desk-chart-col {
+    display: flex;
+  }
+
+  .desk-main.desk-mobile-chart .desk-book-col,
+  .desk-main.desk-mobile-chart .desk-ticket-col {
+    display: none;
+  }
+}
+
+@container desk (min-width: 720px) {
+  .desk-main {
+    grid-template-columns: minmax(0, 1.4fr) minmax(300px, 400px);
+    gap: var(--space-4);
+  }
+}
+
+@container desk (min-width: 1080px) {
+  .desk-main {
+    grid-template-columns: minmax(0, 1.6fr) minmax(0, 1.1fr) minmax(300px, 380px);
+  }
+
+  /* Auto-placement: chart col 1 (center-left, per the reference
+   * terminals), ladder col 2, ticket col 3. */
+  .desk-chart-col {
+    grid-column: auto;
+  }
+}
+
+/* Mobile-only bottom-center Book|Chart toggle. Sticky so it stays
+ * reachable while scrolling the main view; hidden once every column
+ * renders (container >= 720px). */
+.desk-view-toggle {
+  position: sticky;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  display: flex;
+  justify-content: center;
+  z-index: 5;
+  margin-top: var(--space-3);
+  pointer-events: none;
+}
+
+.desk-view-toggle .segmented {
+  pointer-events: auto;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-card);
+  background: var(--surface-raised);
+}
+
+@container desk (min-width: 720px) {
+  .desk-view-toggle {
+    display: none;
+  }
+}
+
+/* Executed-rate chart (#1130) */
+.desk-chart-card {
+  min-width: 0;
+}
+
+.desk-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--space-3);
+}
+
+.desk-chart-lastfill {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  margin: 0;
+}
+
+.desk-chart-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  align-items: flex-end;
+}
+
+.desk-chart-plot {
+  position: relative;
+}
+
+.desk-chart-canvas {
+  height: 300px;
+  min-width: 0;
+}
+
+.desk-chart-tooltip {
+  display: none;
+  position: absolute;
+  z-index: 4;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  white-space: pre-line;
+  pointer-events: none;
+  max-width: 280px;
+}
+
+.desk-chart-sparse-note {
+  font-size: 0.78rem;
+  margin-bottom: var(--space-2);
+}
+
+.desk-chart-midhint {
+  font-size: 0.72rem;
+  margin-top: var(--space-2);
+}
+
+/* lightweight-charts Apache-2.0 text credit — always visible. */
+.desk-chart-attribution {
+  margin-top: var(--space-2);
+  text-align: right;
+  font-size: 0.68rem;
+}
+
+.desk-chart-attribution a {
+  color: var(--text-faint);
+  text-decoration: none;
+}
+
+.desk-chart-attribution a:hover,
+.desk-chart-attribution a:focus-visible {
+  text-decoration: underline;
+}
+
+.desk-header .desk-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+}
+
+.desk-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.desk-stat-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.desk-stat-value {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--text-strong);
+}
+
+/* Tenor / expiry / fill-mode chips */
+.desk-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.desk-chip {
+  padding: 5px 11px;
+  min-height: 32px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+/* Tenors with live offers are emphasized; empty tenors stay muted
+ * (honest — they are selectable but the book will say it's empty).
+ * UX-036 — the liquidity cue is a small "live" dot + readable text, NOT
+ * a strong border: a bordered non-selected chip read as a second
+ * selection beside the brand-filled active one. Only .active carries
+ * selection weight now. */
+.desk-chip.has-liquidity {
+  color: var(--text-body);
+}
+
+.desk-chip.has-liquidity::after {
+  content: '';
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-left: 6px;
+  border-radius: var(--radius-full);
+  background: var(--ok);
+  vertical-align: middle;
+}
+
+.desk-chip.active {
+  background: var(--brand-soft);
+  color: var(--brand-soft-text);
+  border-color: transparent;
+}
+
+/* Keep the liquidity dot legible on the selected (brand-filled) chip. */
+.desk-chip.active.has-liquidity::after {
+  background: currentColor;
+}
+
+/* The rate ladder */
+.desk-ladder {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.desk-ladder-head,
+.desk-ladder-row {
+  display: grid;
+  /* min-content floors: rate/size/depth text must never collapse to
+   * zero width under a squeezed parent — a too-narrow ladder should
+   * overflow visibly, not silently hide the numbers. */
+  grid-template-columns:
+    minmax(min-content, 1fr) minmax(min-content, 1fr)
+    minmax(min-content, 1fr) auto;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 3px 6px;
+}
+
+.desk-ladder-head {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+}
+
+/* UX-028 — the numeric columns (rate / size / depth) right-align so the
+ * decimal points line up down the ladder; the last (action) cell keeps
+ * its own flex alignment. */
+.desk-ladder-head > span {
+  text-align: right;
+}
+
+.desk-ladder-row {
+  border-radius: var(--radius-sm);
+}
+
+/* Row hover is a scannability aid only — the row is no longer clickable
+ * (the rate cell is the button), so no pointer cursor here. */
+.desk-ladder-row:hover {
+  background: var(--surface-hover);
+}
+
+/* UX-028 — right-aligned, tabular-figure numeric cells. */
+.desk-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* UX-028 — the rate cell is the ladder's pick button: a real, focusable
+ * control that inherits the ladder's mono font, right-aligned with
+ * tabular figures like the other numeric columns. */
+.desk-rate-btn {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+  cursor: pointer;
+}
+
+.desk-rate-btn:hover {
+  text-decoration: underline;
+}
+
+.desk-rate-btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.desk-ladder-row.desk-own {
+  background: var(--brand-soft);
+}
+
+/* Book delta pulse (#1131 phase 3): a level whose size changed (or
+   that just appeared) plays ONE background flash. The row's render
+   key embeds the size, so a delta remounts the node and the mount
+   animation fires — no timers. Only `from` is keyframed: the pulse
+   decays to the row's OWN resting background (transparent, or
+   --brand-soft for own orders). */
+.desk-ladder-row.desk-row-flash {
+  animation: desk-row-flash 800ms ease-out;
+}
+
+@keyframes desk-row-flash {
+  from {
+    background-color: var(--surface-hover);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desk-ladder-row.desk-row-flash {
+    animation: none;
+  }
+}
+
+.desk-own-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--brand);
+}
+
+.desk-ladder-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  justify-content: flex-end;
+  min-width: 12px;
+}
+
+/* UX-028 — neutral ask/bid palette: asks used the alarm error-red (a
+ * resting lender offer is not an error), bids the success-green. The
+ * side is carried by the section labels ("Lender offers (asks)" /
+ * "Borrow requests (bids)") and the ladder position, not by an
+ * alarm colour. */
+.desk-rate-ask,
+.desk-rate-bid {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+
+.desk-ladder-side-label {
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+  padding: 6px 6px 2px;
+}
+
+.desk-mid-row {
+  text-align: center;
+  padding: 5px 6px;
+  margin: 2px 0;
+  border-top: 1px dashed var(--border);
+  border-bottom: 1px dashed var(--border);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+
+/* Crossable-band previewMatch strip (#1131 slice B) — a distinct band
+   at the mid row, visually apart from ladder rows (sans font, brand
+   tint) so it can never be misread as book depth. */
+.desk-match-band {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: 2px 0;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--brand-soft);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+}
+
+.desk-match-band-main {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.desk-match-band-done {
+  color: var(--ok);
+}
+
+.desk-match-band-error {
+  flex-basis: 100%;
+  color: var(--danger);
+}
+
+/* Gasless signed-order badge (#1131 slice D) — marks indexer-sourced
+   signed rows in the ladder and the Open orders signed block. */
+.desk-signed-chip {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  line-height: 1.6;
+}
+
+/* Inline signed-fill confirm — regular text, not the ladder's mono. */
+.desk-signed-confirm {
+  font-family: var(--font-sans);
+}
+
+/* Tape */
+.desk-tape {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+}
+
+.desk-tape-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
+  gap: var(--space-2);
+  padding: 3px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.desk-tape-row:nth-child(odd) {
+  background: var(--surface-sunken);
+}
+
+/* Open orders: fill-progress meter */
+.desk-fill-bar {
+  display: block;
+  height: 4px;
+  margin-top: 6px;
+  max-width: 260px;
+  background: var(--surface-sunken);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.desk-fill-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--brand);
+  border-radius: 2px;
+}
+
+/* UX-027 — label row with a right-aligned "Max" affordance. */
+.field-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.input-max {
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--brand);
+}
+
+.input-max:hover {
+  text-decoration: underline;
+}
+
+/* UX-027 — the order ticket's fee & commitment summary before consent. */
+.desk-fee-preview {
+  margin: 12px 0 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  font-size: 0.85rem;
+}
+
+.desk-fee-preview p {
+  margin: 0;
+}
+
+.desk-fee-preview p + p {
+  margin-top: 4px;
+}
+
+.desk-fee-preview-title {
+  font-weight: 600;
+}
+
+/* Amend inline form */
+.desk-amend-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+@media (min-width: 720px) {
+  .desk-amend-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

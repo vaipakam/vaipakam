@@ -515,7 +515,7 @@ listing OpenSea पर लाना एक SEPARATE TWO-PART step है जि�
    route करेगा बजाय fees को split करने के जैसा collection
    चाहता है। Advanced users को OpenSea required-fee schedule
    collection के लिए fetch करना होगा (in-repo fee parser
-   `apps/defi/src/lib/openseaFeeSchedule.ts` reference है) और call करने
+   `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]** reference है) और call करने
    से पहले ask के विरुद्ध derived absolute amounts pass करने
    होंगे। Facet internally उन inputs से canonical Seaport
    OrderComponents build करता है (साथ ही values जो वह
@@ -579,8 +579,7 @@ listing OpenSea पर लाना एक SEPARATE TWO-PART step है जि�
    add करें — OpenSea की API इसे require करती है भले ही यह
    canonical hash produce करने वाले Seaport struct का हिस्सा
    नहीं है; in-repo publishers
-   (`apps/defi/src/lib/openseaPublish.ts` +
-   `apps/indexer/src/openseaPublish.ts`) endpoint call करने से
+   (`apps/indexer/src/openseaPublish.ts`) endpoint call करने से
    पहले इसे inject करते हैं। ERC-1271-validated orders के लिए
    OpenSea `signature` field को `0x` (empty bytes) के रूप में
    accept करती है — vault का on-chain
@@ -1712,7 +1711,7 @@ permission हो; initiate step खुद user-only ही रहता है�
 
 ### रिकवरी फ्लो (Recovery flow)
 
-1. [रिकवरी पेज](https://alpha02.vaipakam.com/recover) पर जाएं।
+1. [रिकवरी पेज](https://defi.vaipakam.com/recover) पर जाएं।
 2. टोकन कॉन्ट्रैक्ट एड्रेस, वह सोर्स जिससे आपने भेजा था, और राशि दर्ज करें।
 3. स्क्रीन पर दी गई पावती (acknowledgment) को ध्यान से पढ़ें।
 4. साइनिंग सक्षम करने के लिए "CONFIRM" टाइप करें।

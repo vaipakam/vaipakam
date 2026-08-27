@@ -14,7 +14,7 @@ import type { Env } from '../src/env';
 // ─── Fixtures ──────────────────────────────────────────────────────
 
 const HMAC_KEY = 'unit-test-hmac-key';
-const CORS = 'https://defi.vaipakam.com';
+const CORS = 'https://app.vaipakam.com';
 
 // Anvil's first two well-known dev keys — fine in a test, never a
 // real key.

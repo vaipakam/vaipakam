@@ -2,16 +2,25 @@
  * Chain-config TYPE + pure helpers.
  *
  * Lives in @vaipakam/contracts (alongside the ABI bundle and
- * deployments JSON) so consumers in any app — apps/defi,
+ * deployments JSON) so consumers in any app — apps/app,
  * apps/www, apps/agent, apps/keeper, apps/indexer — can describe
- * a chain config without pulling apps/defi's Vite-bundled runtime
+ * a chain config without pulling apps/app's Vite-bundled runtime
  * registry.
  *
- * The runtime instantiation (CHAIN_REGISTRY, DEFAULT_CHAIN, etc.)
- * stays in apps/defi/src/contracts/config.ts because it references
- * `import.meta.env.VITE_*_RPC_URL` which is Vite-specific. That
- * file re-exports {ChainConfig} and {compareChainsForDisplay} from
- * here so existing import paths keep working.
+ * The connected app's runtime chain registry lives separately, in
+ * apps/app/src/chain/chains.ts, because it reads
+ * `import.meta.env.VITE_*_RPC_URL`, which is Vite-specific.
+ *
+ * Do NOT assume that file is a thin re-export of this one — it is
+ * not, and an earlier version of this comment said otherwise. It
+ * declares its OWN `SupportedChain` shape and builds
+ * `SUPPORTED_CHAINS` / `DEFAULT_CHAIN` from it, taking only
+ * `getDeployment` from this package. Neither {ChainConfig} nor
+ * {compareChainsForDisplay} is re-exported there.
+ *
+ * So when you register a new chain, expect to touch BOTH: the
+ * descriptor type and pure helpers here, and the runtime registry
+ * there. Editing only this file leaves the app unaware of the chain.
  */
 
 /**
@@ -66,7 +75,7 @@ export interface ChainConfig {
    *  #1651: added by T-038 alongside the two CoinGecko slugs below, for
    *  the BuyVPFI card that #687-A removed. It currently has NO reader —
    *  it is declared and copied, never rendered. Kept anyway, unlike the
-   *  slugs, because `apps/alpha02` declares its own `nativeGasSymbol`
+   *  slugs, because `apps/app` declares its own `nativeGasSymbol`
    *  independently: whether this shape is still wanted is a question
    *  about that app, not about the excision. Decide it there. */
   nativeGasSymbol: string;
@@ -77,7 +86,7 @@ export interface ChainConfig {
   // and its `buyAssetInfo.ts` resolver, leaving the fields declared across
   // three packages and populated for every chain with no reader anywhere.
   // `nativeGasSymbol` above is NOT removed with them: it is also declared in
-  // apps/alpha02's own chain config, so its fate is a separate question from
+  // apps/app's own chain config, so its fate is a separate question from
   // this excision.
   /** Canonical wrapped-native ERC20 address on this chain (WETH on
    *  ETH-side chains, WBNB on BNB, WPOL/WMATIC on Polygon PoS, etc.).
@@ -118,7 +127,7 @@ export interface ChainConfig {
 // L1/testnet pairs here if future chainIds deserve the same
 // placement. Hard-coded EIP-155 chainIds (1 = mainnet, 11155111 =
 // Sepolia) since this constant is type-only and shouldn't depend on
-// the apps/defi runtime registry.
+// the apps/app runtime registry.
 const ETHEREUM_FAMILY_CHAIN_IDS: ReadonlySet<number> = new Set([
   1,        // Ethereum mainnet
   11155111, // Sepolia testnet

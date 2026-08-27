@@ -35,8 +35,11 @@ chains; the cron processes one chain per tick, round-robin) to **seconds**,
 **Non-goals / invariants (do not regress).**
 
 - Indexer stays a **cache, not an oracle**: the dapp reads it indexer-first and
-  falls back to in-browser log-scan (`apps/defi/src/lib/logIndex.ts`) → direct
-  RPC. Every new layer degrades to today's behaviour.
+  falls back to chain reads. Every new layer degrades to today's behaviour.
+  (The in-browser log-scan tier this originally named,
+  `apps/defi/src/lib/logIndex.ts`, went away with `apps/defi` in #1854;
+  `apps/app` has no equivalent, so the fallback chain is now indexer →
+  direct RPC.)
 - Reads stay on **dRPC (paid)**; Alchemy is **trigger-only** (push), never read
   through.
 - Push (Phase B) carries an **invalidation key only**, never authoritative data.

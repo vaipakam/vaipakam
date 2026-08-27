@@ -1,0 +1,208 @@
+/**
+ * Live review — #1112 early under-collateral warning on the borrow terms step.
+ *
+ * Drives the deployed post-own-borrow flow to the terms step and asserts the
+ * "Before you continue —" precheck banner:
+ *   • POSITIVE: 100 liquidToken2 collateral against a 100,000 liquidToken borrow
+ *     breaches the borrower-offer ceiling → `createOffer` reverts
+ *     `MaxLendingAboveCeiling` (one of collateralPrecheck's
+ *     UNDER_COLLATERAL_ERROR_NAMES) → banner shows.
+ *   • NEGATIVE: raising the collateral far past the ceiling clears the banner
+ *     (the sim then reverts only "approval-needed", which #1112 downgrades).
+ *
+ * Read-only: the throwaway wallet never signs a state tx — the precheck is a
+ * `createOffer` eth_call. It also needs NO funds/approval: the bound is checked
+ * BEFORE the collateral transfer, so `MaxLendingAboveCeiling` surfaces ahead of
+ * the allowance error even for a fresh wallet.
+ *
+ * NB the collateral must be non-trivial ($-value > 0): a dust amount
+ * (e.g. 0.0001) rounds the collateral USD value to zero, which trips
+ * `maxLendingForCollateral`'s no-ceiling sentinel — the offer is then accepted
+ * and (correctly) no under-collateral banner shows. 100 units clears that.
+ *
+ * Requires the refreshed base-sepolia faucet mocks to classify Liquid on-chain
+ * (issue #1118 / #1119); addresses are read from the deployments bundle so this
+ * driver survives future mock refreshes.
+ */
+import {
+  blocked,
+  blockedSync,
+  launch,
+  ensureConnected,
+  requireSiteUrl,
+  SITE,
+  visit,
+  pasteAssetLive,
+  watchPageRpc,
+} from './driver.mjs';
+
+// Entry-point guard: this executable reads SITE directly, which can run
+// before any guarded driver function. Without it an omitted SITE_URL
+// surfaces as an opaque URL/fetch error and the batch runner can
+// misclassify a configuration mistake as a product FAIL.
+requireSiteUrl();
+import deployments from '@vaipakam/contracts/deployments.json' with { type: 'json' };
+
+const mocks = deployments['84532']?.testnetMocks;
+// Validated as ADDRESSES, not merely present (Codex #1621 r4). A
+// non-empty but malformed value (`liquidToken: "stale"`) passes a
+// truthiness check and is then pasted into the product UI, where the
+// flow fails and — now that this driver is registered as honouring the
+// contract — the batch reports a stale deployment artifact as a product
+// regression on the precheck banner.
+const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+if (!ADDRESS_RE.test(mocks?.liquidToken ?? '') || !ADDRESS_RE.test(mocks?.liquidToken2 ?? '')) {
+  // BLOCKED, not FAIL (#1581): the drive needs these fixtures to have
+  // anything to assert against, so a bundle that does not carry them
+  // means this surface went UNREVIEWED — not that the app regressed.
+  blockedSync(
+    'base-sepolia testnetMocks (liquidToken/liquidToken2) missing or not a' +
+      ' 0x-40-hex address in the deployments bundle — no usable fixture pair' +
+      ` to drive the precheck with.\n  liquidToken:  ${JSON.stringify(mocks?.liquidToken)}` +
+      `\n  liquidToken2: ${JSON.stringify(mocks?.liquidToken2)}`,
+  );
+}
+const TLIQ = mocks.liquidToken; // asset to borrow (Liquid, Tier 1)
+const MUSDC = mocks.liquidToken2; // collateral (Liquid)
+
+const { page, done, shot, account } = await launch({ role: 'borrower' });
+const step = (m) => console.log(`  · ${m}`);
+
+// Is the endpoint the PAGE uses actually answering? (Codex #1621 r13.)
+//
+// Every assertion here reads its verdict out of a `createOffer`
+// simulation: the precheck banner is rendered FROM that eth_call. So when
+// that RPC is unavailable the banner never appears, the 45s `waitFor`
+// expires, and the catch at the bottom exits 1 — and this driver IS
+// registered in THREE_VERDICT_DRIVERS, so the batch trusts that code and
+// reports an outage as a #1112 regression.
+//
+// Window-scoped on purpose. My first pass at this counted successful RPC
+// for the WHOLE session, which the page-load reads (asset symbols, the
+// config bundle, balances) satisfy immediately — so an endpoint that
+// answered on load and then died or started throttling, exactly when the
+// banner's own reads go out, disarmed the guard and fell through to FAIL
+// regardless. `reset()` below moves the window to the reads that matter.
+const rpc = watchPageRpc(page);
+// True only while awaiting something whose arrival DEPENDS on the RPC.
+// The zero-answer fallback in the catch must not cover the whole try:
+// a missing collateral picker or amount input is a concrete UI defect on
+// a page that was served and driven, and reporting that as BLOCKED
+// because no simulation happened to run would mask a real finding behind
+// an infrastructure excuse — the inverse of the mislabelling this
+// contract exists to prevent (Codex #1621 r16).
+let awaitingSimulation = false;
+try {
+  console.log('wallet:', account.address, '| site:', SITE);
+  step(`goto ${SITE}/borrow`);
+  await visit(page, '/borrow');
+  await ensureConnected(page);
+  step('connected');
+
+  // Details: borrow a large amount of tLIQ.
+  await pasteAssetLive(page, 'lending-asset', TLIQ);
+  await page.locator('#amount').fill('100000');
+  const see = page.getByRole('button', { name: /see matching offers/i });
+  await see.waitFor({ state: 'visible' });
+  await see.click();
+  step('saw matching offers');
+
+  // Post our own borrow request instead of accepting a match.
+  await page.getByRole('button', { name: /post my own borrow request/i }).click();
+  step('post-own borrow → terms step');
+
+  // Terms: rate + a materially-under-collateralised amount.
+  await page.locator('input[placeholder="5"]').fill('5');
+  // The window opens BEFORE the inputs that trigger the simulation, not
+  // after. `reset()` orphans everything already in flight, so a reset
+  // placed after the fill would drop the very createOffer round-trip it
+  // means to observe whenever the app's debounce fired first — and a
+  // dropped answer reads as "no RPC", i.e. BLOCKED over a real regression.
+  rpc.reset();
+  await pasteAssetLive(page, 'collateral-asset', MUSDC);
+  await page.locator('#collateral-amount').fill('100');
+
+  // POSITIVE: the under-collateral banner must appear — and assert the
+  // DISTINCTIVE friendly sentence, not just the "Before you continue —"
+  // lead-in. A regression that rendered a raw decoded error name / selector
+  // would keep the same prefix, so matching only the prefix would false-pass.
+  // From here on, RPC health is what separates "the banner regressed" from
+  // "the simulation never ran"; the window was opened above, before the
+  // inputs that trigger it.
+  const banner = page.getByText(/before you continue/i);
+  awaitingSimulation = true;
+  await banner.waitFor({ state: 'visible', timeout: 45_000 });
+  awaitingSimulation = false;
+  const text = (await banner.textContent())?.trim() ?? '';
+  if (!/collateral is too low for the amount you want to borrow/i.test(text)) {
+    throw new Error(`banner shown but the friendly under-collateral copy regressed: "${text}"`);
+  }
+  if (/MaxLendingAboveCeiling|MinCollateralBelowFloor|0x[0-9a-fA-F]{8}/.test(text)) {
+    throw new Error(`banner leaked a raw contract error name / selector: "${text}"`);
+  }
+  console.log(`\nPASS ✓ under-collateral precheck banner shown with friendly copy:\n  "${text}"`);
+  await shot('1112-precheck-warn');
+
+  // NEGATIVE: sufficient collateral must CLEAR the banner (no crying wolf).
+  // Changing the field immediately resets useTxSimulation to `loading`, which
+  // unmounts CollateralPrecheck — so a bare waitFor('hidden') can pass in that
+  // transient gap BEFORE the recomputed, debounced createOffer eth_call settles
+  // (Codex #1121 P2). Wait out the debounce + settle, then require the banner to
+  // STAY absent across a stability window so a re-rendered verdict can't slip by.
+  //
+  // The clearing simulation must be OBSERVED, not merely awaited (Codex
+  // #1621 r14). Changing the field hides the banner instantly — the
+  // loading state unmounts it — so if the RPC works for the positive case
+  // and then dies, the absence checks below all pass against a banner that
+  // is missing because nothing recomputed, and the drive exits 0 claiming
+  // it verified the negative case. A false PASS, and the only reason the
+  // r13 guard did not catch it is that `rpc.settled()` was consulted only
+  // on the exception path.
+  rpc.reset();
+  await page.locator('#collateral-amount').fill('1000000000');
+  awaitingSimulation = true;
+  await banner.waitFor({ state: 'hidden', timeout: 45_000 });
+  await page.waitForTimeout(9_000); // debounce + createOffer eth_call round-trip
+  awaitingSimulation = false;
+  if ((await rpc.settled()) === 0) {
+    await done();
+    await blocked(
+      'the collateral was raised but the page received no answer from its' +
+        ' JSON-RPC endpoint afterwards, so the clearing simulation never ran.' +
+        ' The banner is absent because nothing recomputed — that is not the' +
+        ' negative case being verified.',
+    );
+  }
+  for (let i = 0; i < 4; i++) {
+    if (await banner.isVisible().catch(() => false)) {
+      throw new Error('under-collateral banner re-appeared after the recomputed simulation settled — negative case failed');
+    }
+    await page.waitForTimeout(1_000);
+  }
+  console.log('PASS ✓ banner stays cleared after the recomputed simulation settled');
+  await shot('1112-precheck-clear');
+
+  console.log('\nLIVE REVIEW PASSED — #1112 verified on', SITE);
+  await done();
+} catch (e) {
+  // A 200 carrying a JSON-RPC ERROR counts as answered — for this drive the
+  // revert IS the expected result, so requiring `result` would have missed
+  // the one call the verdict rests on and mislabelled every run.
+  const answered = awaitingSimulation ? await rpc.settled() : 1;
+  if (answered === 0) {
+    await shot('1112-precheck-blocked').catch(() => {});
+    // `done()` FIRST, then the shared blocked exit: `blocked()` ends the
+    // process, so anything after it never runs.
+    await done();
+    await blocked(
+      'the page received no successful JSON-RPC response, so the createOffer' +
+        ' simulation this drive reads its verdict from never ran. Nothing was' +
+        ' observed about the precheck banner either way.',
+      e,
+    );
+  }
+  console.error('\nLIVE REVIEW FAILED:', e.message);
+  await shot('1112-precheck-fail').catch(() => {});
+  await done();
+  process.exit(1);
+}

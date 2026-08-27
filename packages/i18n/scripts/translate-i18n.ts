@@ -1,13 +1,14 @@
 /**
  * Translate an app's canonical English locale bundle into other
- * supported locales via the Claude API. Generalised from
- * apps/defi/scripts/translate-i18n.ts so every surface shares one
- * script (and one glossary + prompt).
+ * supported locales via the Claude API. Generalised from the connected
+ * app's own copy of this script — `apps/defi/scripts/translate-i18n.ts`,
+ * retired with that app in #1854 — so every surface shares one script
+ * (and one glossary + prompt).
  *
  * Usage (from the repo root or the package dir):
  *
  *     ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
- *         --locales-dir apps/alpha02/src/i18n/locales [codes...]
+ *         --locales-dir apps/app/src/i18n/locales [codes...]
  *
  *   - No codes            → translate every locale whose JSON is
  *                           missing OR is an empty placeholder `{}`.
@@ -30,7 +31,7 @@
  * `--all` re-translates the entire file to add a handful of keys —
  * churning hundreds of reviewed strings and burying the new ones in an
  * unreviewable diff. The gap that created (#1560: 291 keys missing
- * across nine alpha02 locales, including a whole page) stayed invisible
+ * across nine the connected app's locales, including a whole page) stayed invisible
  * precisely because every bundle looked complete.
  *
  * What it does NOT do: auto-commit. Always review the diff before
@@ -72,7 +73,7 @@ function readFlagValue(flag: string): string | undefined {
 const localesDirArg = readFlagValue('--locales-dir');
 if (!localesDirArg) {
   console.error(
-    'Missing --locales-dir <path> (e.g. apps/alpha02/src/i18n/locales).',
+    'Missing --locales-dir <path> (e.g. apps/app/src/i18n/locales).',
   );
   process.exit(1);
 }
@@ -420,7 +421,7 @@ async function main() {
   // An unknown `--…` token USED to be ignored silently, and the default
   // it fell back to is the expensive one: mistype `--missing-only` as
   // `--missing-onyl` and the run quietly becomes a full-catalog
-  // translation of every placeholder bundle — 24 of them in alpha02's
+  // translation of every placeholder bundle — 24 of them in the connected app's
   // locales dir — instead of a gap top-up (Codex #1563 r15). Paid API
   // calls and overwritten files are not a recoverable default, so
   // anything unrecognised aborts before a single target is chosen.

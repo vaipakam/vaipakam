@@ -540,7 +540,7 @@ export async function handleActivity(req: Request, env: Env): Promise<Response> 
  *
  * 'settled' loans are skipped — that status means BOTH sides already
  * claimed (LoanSettled event flipped them). 'internal_matched' IS
- * included (#1234): it is terminal AND claimable — apps/defi's
+ * included (#1234): it is terminal AND claimable — apps/app's
  * ClaimCenter verifies it status-agnostically (live getLoanDetails +
  * getClaimable) and labels it "Internally Matched"; omitting it here
  * hid internally-matched claims from the defi claim surface's indexer
@@ -585,8 +585,9 @@ export async function handleClaimables(
     // the union's true top-CAP is re-derived in JS (any row in the
     // union's top-CAP is necessarily in its own side's top-CAP, so
     // the merge loses nothing). `truncated` is additive — the typed
-    // apps/defi consumer ignores it, and its Claim Center layers an
-    // on-chain verify over this discovery anyway.
+    // no current consumer reads it (the client was removed in #988 —
+    // see the note on this endpoint further down), and the Claim Center
+    // layers an on-chain verify over this discovery anyway.
     // Each side also excludes rows whose claim ALREADY fired (r4): a
     // claim burns the position NFT so the owner projection normally
     // evicts the row, but if that projection lags, claimed rows would
@@ -716,7 +717,11 @@ export async function handleClaimables(
  * spec keeps the current holder's claim discoverable from chain).
  *
  * Deliberately separate from GET /claimables/:addr — that shape is a
- * typed apps/defi contract ({asLender, asBorrower} of full rows);
+ * typed {asLender, asBorrower} response of full rows. Note it has no
+ * current consumer: the client was removed in #988 (claimables are
+ * on-chain-authoritative now) and `apps/app` uses this hint plus
+ * on-chain verification instead, so do not treat that endpoint as a
+ * compatibility constraint on the app;
  * this one returns a flat (loanId, role, status) list ordered by
  * most-recently-touched first (verification priority). No
  * already-claimed activity filter here: a claim burns the position

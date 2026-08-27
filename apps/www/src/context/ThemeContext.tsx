@@ -15,11 +15,18 @@ import {
  *     explicitly toggles.
  *   - The first toggle is treated as a user choice. From that moment
  *     on, the value is persisted to BOTH a parent-domain cookie
- *     (`vaipakam_theme`, scoped to `.vaipakam.com` so the choice
- *     follows the user across labs.vaipakam.com ↔ defi.vaipakam.com)
+ *     (`vaipakam_theme`, scoped to `.vaipakam.com`)
  *     AND localStorage (belt-and-suspenders for cookie-disabled
  *     clients), and the system listener is ignored. Subsequent OS
  *     theme switches don't override what the user picked.
+ *
+ * NOTE — the cookie is written but NOT currently read by the connected
+ * app. `apps/defi` consumed it; `apps/app` does not: its ThemeContext and
+ * boot script read only that origin's own `localStorage`. So a theme
+ * picked here does NOT follow the user into the app today. Unported
+ * behaviour from #1854, not a design choice — the cookie is kept written
+ * so restoring it is a read on the other side, nothing more. Language
+ * sync through the same helper IS live.
  *
  * This is the same shape as macOS / iOS / GNOME / Windows app theming —
  * apps default to "system", and only break out into manual mode after
@@ -132,8 +139,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   //
   // Dual-write to cookie + localStorage:
   //   - Cookie (`Domain=.vaipakam.com`) is the cross-domain source
-  //     of truth — picking dark on labs.vaipakam.com makes
-  //     defi.vaipakam.com also dark on the next navigation.
+  //     of truth for surfaces that READ it. The connected app does
+  //     not: `apps/defi` did, `apps/app` does not (see the note at
+  //     the top of this file), so picking dark here does NOT make
+  //     the app dark today. The write is kept so restoring that is
+  //     a one-sided change.
   //   - localStorage is the belt-and-suspenders fallback for
   //     cookie-disabled clients (private mode, strict cookie
   //     blockers) and pre-existing same-origin users.

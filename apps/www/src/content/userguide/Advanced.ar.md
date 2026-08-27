@@ -464,7 +464,7 @@ Seaport الأصلية، وتُطلق عملية ملء سوق لاحقة قبل
    مفقودة)، وملء Seaport المباشر يُوجِّه ask الكامل إلى البائع
    بدلاً من تقسيم الرسوم كما تطلب المجموعة. يجب على المستخدمين
    المتقدمين جلب جدول الرسوم المطلوبة من OpenSea للمجموعة
-   (محلل الرسوم in-repo في `apps/defi/src/lib/openseaFeeSchedule.ts` هو
+   (محلل الرسوم in-repo في `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]** هو
    المرجع) وتمرير مبالغ مطلقة مشتقة مقابل ask قبل الاستدعاء.
    يبني facet داخلياً Seaport OrderComponents القانونية من تلك
    المدخلات (بالإضافة إلى القيم التي يحتفظ بها في
@@ -518,8 +518,7 @@ Seaport الأصلية، وتُطلق عملية ملء سوق لاحقة قبل
    `parameters.totalOriginalConsiderationItems` — تطلبه API
    OpenSea رغم أنه ليس جزءاً من struct Seaport الذي ينتج hash
    القانوني؛ يُحقنه الناشرون in-repo
-   (`apps/defi/src/lib/openseaPublish.ts` +
-   `apps/indexer/src/openseaPublish.ts`) قبل استدعاء endpoint.
+   (`apps/indexer/src/openseaPublish.ts`) قبل استدعاء endpoint.
    للطلبات المُصادق عليها بـ ERC-1271، تقبل OpenSea حقل
    `signature` كـ `0x` (بايتات فارغة) — يتجاهل callback on-chain
    لـ vault `isValidSignature(orderHash, '')` بايتات التوقيع
@@ -1555,7 +1554,7 @@ RPC + البلوك + عنوان البروتوكول + اسم الدالة — �
 
 ### مسار الاستعادة
 
-1. قم بزيارة [صفحة الاستعادة](https://alpha02.vaipakam.com/recover).
+1. قم بزيارة [صفحة الاستعادة](https://defi.vaipakam.com/recover).
 2. أدخل عنوان عقد الرمز، والمصدر الذي أرسلت منه، والمبلغ.
 3. راجع الإقرار الذي يظهر على السلسلة بعناية.
 4. اكتب كلمة "CONFIRM" لتفعيل التوقيع.

@@ -1,0 +1,168 @@
+# Connected-app vitest — NOT a required status check.
+#
+# Origin: the apps/defi unit suite rotted to 256 failures unnoticed because
+# no CI job ever ran it (only typecheck). It was repaired under #1076 and
+# this workflow has run it since.
+#
+# Be precise about its force, though: the `Protect main` ruleset requires
+# `detect-changes`, `contracts-fast`, `workspaces`, Slither and the D1
+# consistency check — NOT this job (see the transcription in
+# docs/internal/ProjectProcedures.md). A red run here is visible and should
+# be treated as blocking by REVIEWERS, but it does not mechanically stop a
+# merge. Do not describe it as a gate that does; someone will rely on it.
+# Adding the context to branch protection is the fix if that is wanted.
+#
+# apps/defi was retired in #1854 and the connected app is now apps/app
+# (developed as apps/alpha02). Its pure-logic suite inherited this gate's
+# connected-app slot; the job also runs the shared @vaipakam/lib (#1099)
+# and apps/indexer (#1149) suites. See the `vitest` job for the rationale
+# on gating the suites together.
+#
+# The workflow's display name stays `defi vitest` even though nothing named
+# defi survives. A required status check is keyed on
+# "<workflow name> / <job name>", so renaming it would strand
+# `defi vitest / vitest` and `defi vitest / detect-changes` as permanently
+# PENDING and block the merge of every PR. Renaming is an operator action:
+# update branch protection first, then rename here. The FILE was renamed
+# (defi-vitest.yml → app-vitest.yml) because the filename is not part of
+# the check context.
+#
+# Required-check shape (Codex #1098): this workflow runs on EVERY PR to
+# main — it is NOT scoped with `on.pull_request.paths`. A workflow that
+# never triggers (because its `paths` filter didn't match) produces NO
+# check run at all, so a required status check keyed to it sits PENDING
+# forever and blocks the merge of every PR that doesn't touch those
+# paths. Instead the scoping lives on the `vitest` JOB via a
+# `detect-changes` `if:` guard: when apps/app (and the packages it
+# imports) are untouched, `vitest` is `if:`-skipped, which branch
+# protection treats as SUCCESS — the same pattern ci.yml uses for its
+# conditionally-required jobs. Wire `defi vitest / vitest` (and, as the
+# defensive backstop ci.yml documents, `defi vitest / detect-changes`)
+# into the branch's required status checks.
+name: defi vitest
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# One run per ref; a new push cancels the previous.
+concurrency:
+  group: defi-vitest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── detect-changes ──────────────────────────────────────────────────────
+  # Emits a single boolean output (`defi`) — true when this PR touches
+  # apps/app, the packages it imports, or the workspace/lockfile inputs
+  # that can break the suite without touching app source. Always runs and
+  # always reports a conclusion, so the downstream `if:` guard resolves to
+  # SUCCESS (skipped) rather than leaving a required check pending.
+  detect-changes:
+    name: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      defi: ${{ steps.diff.outputs.defi }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Full history so git diff can resolve the PR base sha.
+          fetch-depth: 0
+
+      - name: Determine changed paths
+        id: diff
+        run: |
+          set -eu
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            # `push` event — diff the pushed commit against its parent.
+            BASE="${{ github.event.before }}"
+            HEAD="${{ github.sha }}"
+            # First commit on a branch → `before` is all-zeros; fall back.
+            if [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+              BASE=$(git rev-parse HEAD~1 2>/dev/null || git rev-parse HEAD)
+            fi
+          fi
+          echo "Diff range: $BASE..$HEAD"
+          CHANGED=$(git diff --name-only "$BASE" "$HEAD" || git diff --name-only HEAD~1 HEAD)
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          # apps/app + apps/indexer source + the packages they import
+          # (a lib/contracts/ui change can break any suite), plus the root
+          # dependency / workspace inputs a Vitest/jsdom/React/wagmi bump
+          # rides in on, plus this workflow file itself. packages/i18n
+          # joined post-#1563: the connected-app suite asserts token
+          # semantics imported from it
+          # (containsToken decides whether a translated confirmation
+          # prompt still carries the word the signing gate compares
+          # against), so a PR touching only that package could change
+          # the answer while this job was skipped — the workspace
+          # typecheck compiles those tests but never runs them.
+          # apps/indexer joined post-#1149: its vitest suite
+          # (route SQL semantics + the SQL-vs-schema guard) previously ran
+          # nowhere in CI, so the exact statement that wedged production
+          # ingest had no gate.
+          DEFI_RE='^(apps/(app|indexer)/|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
+          if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
+            echo "defi=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "defi=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  vitest:
+    name: vitest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.defi == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Blocking: a failing unit test fails this job. Both suites are
+      # deterministic and green on main (#1076, #1099), so a red run means a
+      # real regression the change introduced — fix it, don't ignore it.
+      #
+      # The shared @vaipakam/lib suite (#1099: multicall + chainPlatforms)
+      # runs in the SAME job: `detect-changes` already flags a packages/lib
+      # edit as `defi=true`, and a lib regression breaks apps/app (its
+      # primary consumer), so the two suites gate together rather than in a
+      # second workflow.
+      - name: Run @vaipakam/lib vitest
+        run: pnpm --filter @vaipakam/lib test
+
+      # apps/app's pure-logic unit suite (#1111) runs in the SAME gate so it
+      # can't rot unrun (the #1076 lesson). Its Playwright e2e specs stay in the
+      # separate fork-tier job; this is `vitest run` over `src/**` only.
+      # It inherited this slot from the retired apps/defi suite at the #1854
+      # cutover — apps/app IS the connected app now, so this step is the gate
+      # #1076 built, not a second one beside it.
+      - name: Run @vaipakam/app vitest
+        run: pnpm --filter @vaipakam/app test
+
+      # apps/indexer's vitest suite (#1149) gates here too: it holds the
+      # real-SQLite route-semantics tests AND the SQL-vs-schema guard that
+      # prepares every static statement in apps/indexer/src against the
+      # exact migrated schema. Before this step existed the suite ran only
+      # on developer machines — the phantom-column UPDATE that wedged
+      # Base-Sepolia ingest for 17h sailed through CI because nothing here
+      # executed it. Needs Node >= 22 for node:sqlite (this job pins '22').
+      - name: Run @vaipakam/indexer vitest
+        run: pnpm --filter @vaipakam/indexer test

@@ -117,7 +117,7 @@ const PORT = server.address().port;
  *      tolerant — fine for a static snapshot pass, which exercises no
  *      bleeding-edge browser APIs).
  *   4. Self-heal: `npx playwright install chromium` (the same step
- *      the alpha02 e2e workflow runs), then retry (1). One-shot —
+ *      the app e2e workflow runs), then retry (1). One-shot —
  *      a runner without network/deps still fails loudly after this.
  */
 async function launchChromium() {

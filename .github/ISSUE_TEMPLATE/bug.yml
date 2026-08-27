@@ -20,7 +20,7 @@ body:
     attributes:
       label: Where in the system
       description: "Module (frontend page / contract facet / Worker / bot / runbook). Pick the closest match."
-      placeholder: "e.g. apps/defi pages/LoanDetails.tsx, or contracts/src/facets/RiskFacet.sol"
+      placeholder: "e.g. apps/app src/pages/PositionDetails.tsx, or contracts/src/facets/RiskFacet.sol"
     validations:
       required: true
 

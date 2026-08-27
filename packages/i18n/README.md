@@ -1,8 +1,8 @@
 # @vaipakam/i18n
 
 Shared internationalisation core for every Vaipakam app surface
-(apps/www, apps/alpha02, future surfaces). Hoisted out of apps/www so
-the third consumer (alpha02) didn't become the third copy.
+(apps/www, apps/app, future surfaces). Hoisted out of apps/www so
+the third consumer (the connected app) didn't become the third copy.
 
 ## What lives here (must never drift between apps)
 
@@ -34,7 +34,7 @@ the third consumer (alpha02) didn't become the third copy.
 
 ```bash
 ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
-  --locales-dir apps/alpha02/src/i18n/locales        # fill empty stubs
+  --locales-dir apps/app/src/i18n/locales        # fill empty stubs
 # or explicit codes (overwrites):
 #   ... translate -- --locales-dir <dir> es zh hi ja
 # or top up locales that fell behind en.json (never overwrites):
@@ -46,7 +46,7 @@ ANTHROPIC_API_KEY=... pnpm --filter @vaipakam/i18n translate -- \
 locale forward: the default mode skips anything that isn't an empty
 placeholder, and the overwrite modes re-translate the whole bundle to
 add a handful of keys — churning reviewed strings and burying the new
-ones. That missing mode is why nine alpha02 locales silently froze at
+ones. That missing mode is why nine the connected app's locales silently froze at
 their first-generated key set and drifted 291 keys behind (#1560); each
 bundle looked complete the whole time.
 
@@ -64,7 +64,7 @@ a bundle whose order has already drifted rewrites most of it, which is
 worth doing as its own mechanical commit but never alongside content.
 Each consuming app should also carry a coverage test that fails when a
 locale in its `TRANSLATED_LOCALES` falls behind `en.json` — see
-`apps/alpha02/scripts/check-locale-coverage.ts`.
+`apps/app/scripts/check-locale-coverage.ts`.
 
 Review the diff before committing — the glossary check flags missing
 verbatim terms as warnings, not failures. Hand-authored translations

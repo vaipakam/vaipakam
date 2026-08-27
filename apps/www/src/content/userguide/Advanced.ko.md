@@ -467,7 +467,7 @@ fill이 도착할 때까지 오퍼가 이미 `Accepted` 상태입니다;
    fill은 컬렉션이 요구하는 대로 수수료를 분할하는 대신 전체
    ask를 판매자에게 라우팅합니다. 고급 사용자는 컬렉션의
    OpenSea required-fee 일정을 조회해야 하며 (in-repo fee parser
-   `apps/defi/src/lib/openseaFeeSchedule.ts`가 참조), 호출 전 ask에 대해
+   `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]**가 참조), 호출 전 ask에 대해
    파생된 절대 금액을 전달해야 합니다. Facet은 내부적으로
    이러한 입력 (플러스
    `CollateralListingExecutor.offerContext`에 보유하는 값 —
@@ -522,8 +522,7 @@ fill이 도착할 때까지 오퍼가 이미 `Accepted` 상태입니다;
    `parameters.totalOriginalConsiderationItems`를 추가합니다 —
    OpenSea의 API는 canonical 해시를 생성하는 Seaport 구조체의
    일부가 아니지만 이를 요구합니다; in-repo 게시자
-   (`apps/defi/src/lib/openseaPublish.ts` +
-   `apps/indexer/src/openseaPublish.ts`)는 endpoint 호출 전에
+   (`apps/indexer/src/openseaPublish.ts`)는 endpoint 호출 전에
    이를 inject합니다. ERC-1271로 검증된 주문의 경우 OpenSea는
    `signature` 필드를 `0x` (빈 바이트)로 수락합니다 — 볼트의
    온체인 `isValidSignature(orderHash, '')` 콜백은 signature
@@ -1554,7 +1553,7 @@ user-only로 남습니다.
 
 ### 복구 흐름
 
-1. [복구 페이지](https://alpha02.vaipakam.com/recover)를 방문하십시오.
+1. [복구 페이지](https://defi.vaipakam.com/recover)를 방문하십시오.
 2. 토큰 컨트랙트 주소, 보낸 소스, 금액을 입력하십시오.
 3. 화면의 안내를 주의 깊게 검토하십시오.
 4. "CONFIRM"을 입력하여 서명을 활성화하십시오.

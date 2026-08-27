@@ -158,7 +158,8 @@ Confirmed against Cloudflare's Secrets Store → Workers documentation:
 
 ## 10. Out of scope
 
-- Frontend (`apps/defi`) — not a Worker; Secrets Store does not
+- The connected app (`apps/app`; `apps/defi` when this was written, deleted
+  in #1854) — not a Worker; Secrets Store does not
   apply. Its `VITE_*` values are bundled + public by design; the
   separate rule (no real secret in a `VITE_*` var; sensitive calls
   proxy through a Worker) is verified, not migrated, here.

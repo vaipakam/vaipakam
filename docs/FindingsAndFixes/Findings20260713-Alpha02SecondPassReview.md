@@ -12,7 +12,7 @@ anything the fix batches themselves regressed. New findings carry
 
 ## Method + evidence
 
-The committed sweep driver (`apps/alpha02/e2e/live/live-ux-sweep.mjs`)
+The committed sweep driver (today `apps/app/e2e/live/live-ux-sweep.mjs`)
 was extended for this pass from a single connected session to
 **sessions × passes** (committed with this review):
 

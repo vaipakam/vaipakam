@@ -97,7 +97,7 @@ const CONFIG_TIMEOUT_MS = 20_000;
  * says so on stderr and the artifacts are stamped as build-time
  * defaults rather than published values, so the fallback is legible in
  * the output itself and not just in a CI log nobody keeps. Same shape
- * as the existing `REQUIRE_INDEXER_ORIGIN` gate in alpha02's deploy
+ * as the existing `REQUIRE_INDEXER_ORIGIN` gate in app's deploy
  * script — a deliberate override, announced.
  */
 async function loadPublishedConfig() {
@@ -283,7 +283,7 @@ ${INDEXER_ORIGIN} — fetch these instead of scraping the app:
 ## Apps
 
 - [Marketing site + docs](${ORIGIN}/): this site (English at /, localized under /es/, /ta/, …)
-- [Connected app](https://alpha02.vaipakam.com/): the wallet-connected product surface
+- [Connected app](https://defi.vaipakam.com/): the wallet-connected product surface
 
 ## Optional
 

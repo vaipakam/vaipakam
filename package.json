@@ -8,13 +8,11 @@
   },
   "packageManager": "pnpm@10.4.1",
   "scripts": {
-    "dev": "pnpm --filter @vaipakam/defi dev",
+    "dev": "pnpm --filter @vaipakam/app dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "lint": "pnpm -r lint",
-    "alpha:dev": "pnpm --filter @vaipakam/alpha01 dev",
-    "alpha:build": "pnpm --filter @vaipakam/alpha01 build"
+    "lint": "pnpm -r lint"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

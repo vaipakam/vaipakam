@@ -6,7 +6,7 @@
 
 ## What is this
 
-The **lowest layer of shared off-chain code** — utilities that have no React / Vite / Worker-specific dependency, so every consumer can import them. Consumers today: `apps/defi`, `apps/www`, `apps/agent`, `apps/indexer`, `apps/keeper`.
+The **lowest layer of shared off-chain code** — utilities that have no React / Vite / Worker-specific dependency, so every consumer can import them. Consumers today: `apps/app`, `apps/www`, `apps/agent`, `apps/indexer`, `apps/keeper`.
 
 Current scope (Stage 2a of the source-tree refactor):
 
@@ -14,7 +14,7 @@ Current scope (Stage 2a of the source-tree refactor):
 - `decodeContractError` — error normaliser for revert reasons across facets.
 - `chainPlatforms` — `chainId → CoinGecko platform slug` mapping.
 - `canonicalAssets` — per-chain ERC-20 allow-lists.
-- `crossDomainPref` — parent-domain cookie helper for theme + language sync between `defi.vaipakam.com` and `www.vaipakam.com`.
+- `crossDomainPref` — parent-domain cookie helper for preference sync across the two surfaces. **Currently LANGUAGE-ONLY in practice:** the retired `apps/defi` also synced the theme through it, but `apps/app` does not — its `ThemeContext` and its boot script read and write only the app origin's `localStorage` and ignore the shared cookie, so a theme chosen on the marketing site does not follow the user into the connected app. That is an unported behaviour from #1854, not a design choice; the helper itself still supports both.
 
 **Non-goals:** anything that needs React (use `packages/ui`), anything that needs Vite env vars (stays in the consumer), anything contract-specific (use `packages/contracts`). Two candidate modules (`format` with i18n, `journeyLog` with contracts/config) are deferred until their Vite-coupled deps are extracted.
 

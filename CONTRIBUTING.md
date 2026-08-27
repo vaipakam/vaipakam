@@ -49,7 +49,7 @@ nice -n -10 ionice -c 2 -n 0 forge test
 pnpm --filter @vaipakam/keeper typecheck
 pnpm --filter @vaipakam/indexer typecheck
 pnpm --filter @vaipakam/agent typecheck
-pnpm --filter @vaipakam/defi exec tsc -b --noEmit
+pnpm --filter @vaipakam/app typecheck
 pnpm --filter @vaipakam/www typecheck
 ```
 

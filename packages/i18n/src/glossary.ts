@@ -17,7 +17,7 @@
  *
  * NOTE — `TRANSLATED_LOCALES` is deliberately NOT here. Which subset
  * of SUPPORTED_LOCALES ships an actual translation bundle differs per
- * app (www ships 10; alpha02 starts at English-only with placeholder
+ * app (www ships 10; the connected app starts at English-only with placeholder
  * bundles), and that subset drives each app's hreflang / sitemap /
  * SEO-shell surfaces. Each app owns its own TRANSLATED_LOCALES next
  * to its locales/ directory.
@@ -122,7 +122,7 @@ export const GLOSSARY_KEEP_VERBATIM = [
 
   // Typed-confirmation words. These are NOT prose — the app compares
   // the user's typed input against this exact literal (see
-  // `CONFIRM_WORD` in alpha02's Recover page). A locale that
+  // `CONFIRM_WORD` in the connected app's Recover page). A locale that
   // translates the word renders a friction gate the user cannot
   // pass: they type the translated word, it never matches, and the
   // sign button stays disabled forever.

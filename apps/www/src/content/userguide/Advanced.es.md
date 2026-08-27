@@ -549,7 +549,7 @@ que la aplicación NO automatiza hoy:
    dividir las tarifas como la colección requiere. Los usuarios
    avanzados deben consulta el calendario de tarifas obligatorias
    de OpenSea para la colección (el parser de tarifas in-repo en
-   `apps/defi/src/lib/openseaFeeSchedule.ts` es la referencia) y pasar
+   `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]** es la referencia) y pasar
    montos absolutos derivados contra el ask antes de llamar. El
    facet internamente construye los `OrderComponents` canónicos
    de Seaport a partir de esos inputs (plus valores que retiene
@@ -613,8 +613,7 @@ que la aplicación NO automatiza hoy:
    el campo solo-API `parameters.totalOriginalConsiderationItems`
    — la API de OpenSea lo requiere aunque NO sea parte del struct
    Seaport que produce el hash canónico; los publishers in-repo
-   (`apps/defi/src/lib/openseaPublish.ts` +
-   `apps/indexer/src/openseaPublish.ts`) lo inyectan antes de
+   (`apps/indexer/src/openseaPublish.ts`) lo inyectan antes de
    llamar al endpoint. Para órdenes validadas por ERC-1271,
    OpenSea acepta el campo `signature` como `0x` (bytes vacíos)
    — el callback on-chain del vault `isValidSignature(orderHash,
@@ -1791,7 +1790,7 @@ Enviaste los tokens tú mismo por error, controlas la billetera de origen y sabe
 
 ### Flujo de recuperación
 
-1. Visita la [página de recuperación](https://alpha02.vaipakam.com/recover).
+1. Visita la [página de recuperación](https://defi.vaipakam.com/recover).
 2. Ingresa la dirección del contrato del token, el origen desde el que enviaste y el monto.
 3. Revisa cuidadosamente el reconocimiento en pantalla.
 4. Escribe "CONFIRM" para habilitar la firma.

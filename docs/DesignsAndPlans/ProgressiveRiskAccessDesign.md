@@ -902,7 +902,8 @@ read-accessor mirror the existing bounded-knob pattern of
   stamp) are `state-change/risk-config`-class but are *not* loan/offer
   mutations, so they don't trip the indexer event-coverage guardrail;
   add handlers if the dashboard surfaces the consent trail (optional).
-- **Frontend (`apps/defi`):** a self-service "Risk access" settings
+- **Frontend (`apps/app`; `apps/defi` when this was written, deleted in
+  #1854 — the surface shipped as `apps/app/src/pages/RiskAccess.tsx`):** a self-service "Risk access" settings
   surface (the spending-limit analog) calling the EIP-712 setters; the
   accept/create flows show a derived "this offer needs Level N — raise
   your access" prompt that *links to the standalone unlock tx* (never

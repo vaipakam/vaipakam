@@ -24,14 +24,17 @@ guard body is shared. The table is an index; the headers are the source.
 
 | Package | Why a narrow guard | Deleted when |
 | --- | --- | --- |
-| `apps/defi` | full config reports ~277 errors, almost all `no-explicit-any`, so its lint had never been run — which is how a real hook-order crash reached production | the `no-explicit-any` backlog is cleared |
 | `apps/www` | had **no** lint configuration at all; the gap was found when a conditional hook survived in the copy of `LiveValue` that the docs actually render | www gets a full config |
-| `apps/alpha` | deployable Worker rendering React, with no config and no CI typecheck; missed by the first sweep, which checked the apps it was working in rather than enumerating `apps/*` | the app gets a full config |
-| `apps/alpha01` | **has** a full config, but `typecheck` never ran it, so it was decorative; enabling it wholesale fails on a react-hooks v7 backlog unrelated to hook order | the v7 backlog is cleared |
 | `packages/ui` | not deployed itself, but compiled **into** deployed surfaces; per-app guards run from their own directory and do not follow imports across the workspace boundary | the package gets a full config |
 
-`apps/alpha02` is absent on purpose — it runs a full `eslint .` with four
+`apps/app` is absent on purpose — it runs a full `eslint .` with four
 react-hooks rules promoted to error (#1520).
+
+The table lost three rows in #1854: `apps/defi`, `apps/alpha` and
+`apps/alpha01` were deleted when the connected app moved to `apps/app`.
+Their narrow guards existed for reasons that died with them — a
+`no-explicit-any` backlog nobody was going to clear on a frozen app, and
+two prototypes whose lint had never run.
 
 ### Two design choices that look like omissions
 
@@ -79,7 +82,7 @@ The three plugin packages are dependencies of *this* package, so consumers do
 not each carry them. `eslint` itself stays a devDependency of every consumer,
 because each runs the binary from its own directory.
 
-`apps/defi` and `apps/alpha01` still list the plugins directly — they also
-have a full `eslint.config.js` that imports them. Removing them there would
-break that config silently, since nothing runs it today. Drop them only when
-that package's full config is what `typecheck` runs.
+`apps/app` still lists the plugins directly — it also has a full
+`eslint.config.js` that imports them, and that config IS what its
+`typecheck` runs, so the direct listing is load-bearing rather than
+vestigial.

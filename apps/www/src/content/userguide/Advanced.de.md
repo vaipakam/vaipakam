@@ -548,7 +548,7 @@ ZWEI-TEILE-Schritt, den die dapp heute NICHT automatisiert:
    Verkäufer, statt die Fees aufzuteilen, wie es die Collection
    verlangt. Erfahrene Benutzer müssen den OpenSea-Required-Fee-
    Zeitplan für die Collection fetchen (der In-Repo-Fee-Parser
-   bei `apps/defi/src/lib/openseaFeeSchedule.ts` ist die Referenz) und
+   bei `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]** ist die Referenz) und
    absolute, gegen den Ask abgeleitete Beträge vor dem Aufruf
    übergeben. Der Facet baut intern die kanonischen Seaport
    OrderComponents aus diesen Eingaben (plus Werte, die er in
@@ -616,8 +616,7 @@ ZWEI-TEILE-Schritt, den die dapp heute NICHT automatisiert:
    `parameters.totalOriginalConsiderationItems` hinzu — die
    OpenSea-API verlangt es, obwohl es NICHT Teil des Seaport-
    Structs ist, das den kanonischen Hash produziert; die
-   In-Repo-Publisher (`apps/defi/src/lib/openseaPublish.ts` +
-   `apps/indexer/src/openseaPublish.ts`) injizieren es vor dem
+   In-Repo-Publisher (`apps/indexer/src/openseaPublish.ts`) injizieren es vor dem
    Endpoint-Aufruf. Für ERC-1271-validierte Orders akzeptiert
    OpenSea das `signature`-Feld als `0x` (leere Bytes) — der
    On-Chain-Callback des Vaults `isValidSignature(orderHash,
@@ -1788,7 +1787,7 @@ Du hast die Token versehentlich selbst gesendet, du kontrollierst das Quell-Wall
 
 ### Wiederherstellungs-Flow
 
-1. Besuche die [Wiederherstellungs-Seite](https://alpha02.vaipakam.com/recover).
+1. Besuche die [Wiederherstellungs-Seite](https://defi.vaipakam.com/recover).
 2. Gib die Token-Vertragsadresse, die Quelle, von der du gesendet hast, und den Betrag ein.
 3. Lies den Hinweis auf dem Bildschirm sorgfältig durch.
 4. Tippe "CONFIRM" ein, um das Signieren freizuschalten.

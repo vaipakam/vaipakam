@@ -264,7 +264,7 @@ export const FRIENDLY_ERROR_MESSAGES: Record<string, string> = {
  * selector). Name-keying is deliberately drift-proof: a selector is a hash of
  * the full signature, so a param-type tweak silently breaks a selector-keyed
  * entry, whereas the name is stable. `decodeContractError` resolves
- * selector → name (via `KNOWN_ERROR_SELECTORS`) → this map; the alpha02
+ * selector → name (via `KNOWN_ERROR_SELECTORS`) → this map; the connected app
  * pre-sign simulation resolves the name straight from the Diamond ABI and
  * looks it up here directly, so BOTH surfaces share one source of copy.
  *

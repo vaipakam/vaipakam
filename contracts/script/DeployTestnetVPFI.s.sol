@@ -11,7 +11,7 @@ import {Deployments} from "./lib/Deployments.sol";
 /**
  * @title DeployTestnetVPFI
  * @notice Enables the VPFI fee-discount surface on a TESTNET Diamond so
- *         the alpha02 `/vpfi` page (tiers, discounts) and the borrower
+ *         the app `/vpfi` page (tiers, discounts) and the borrower
  *         LIF-rebate path can be reviewed end-to-end. Mirrors
  *         `DeployTestnetMocks` in spirit: an operator-run, reproducible
  *         one-shot that wires + funds dormant machinery.

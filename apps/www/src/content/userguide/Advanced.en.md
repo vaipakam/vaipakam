@@ -508,8 +508,12 @@ the dapp does NOT automate today:
    direct Seaport fill will route the full ask to the seller
    rather than splitting the fees as the collection requires.
    Advanced users must fetch the OpenSea required-fee schedule
-   for the collection (the in-repo fee parser at
-   `apps/defi/src/lib/openseaFeeSchedule.ts` is the reference) and pass
+   for the collection (the in-repo fee parser that derived absolute
+   `FeeLeg` amounts, `apps/defi/src/lib/openseaFeeSchedule.ts`, was
+   retired in #1854 and has no live replacement — recover it from git
+   history for reference. The agent's `openseaCollectionProxy.ts` is not
+   a substitute: it relays OpenSea's Collection API body verbatim and
+   does not compute the split. Tracked in #1959.) and pass
    absolute amounts derived against the ask before calling. The facet internally builds the
    canonical Seaport OrderComponents from those inputs, the
    OfferContext values it records for the executor (borrower
@@ -567,8 +571,7 @@ the dapp does NOT automate today:
    add the API-only `parameters.totalOriginalConsiderationItems`
    field — OpenSea's API requires it even though it's NOT part
    of the Seaport struct that produces the canonical hash; the
-   in-repo publishers (`apps/defi/src/lib/openseaPublish.ts` +
-   `apps/indexer/src/openseaPublish.ts`) inject it before
+   in-repo publishers (`apps/indexer/src/openseaPublish.ts`) inject it before
    calling the endpoint. For ERC-1271-validated orders OpenSea
    accepts the `signature` field as `0x` (empty bytes) — the
    vault's on-chain `isValidSignature(orderHash, '')` callback
@@ -1966,7 +1969,7 @@ from, etc.).
 
 ### Recovery flow
 
-1. Visit the [recovery page](https://alpha02.vaipakam.com/recover).
+1. Visit the [recovery page](https://defi.vaipakam.com/recover).
 2. Enter the token contract address, the source you sent
    from, and the amount.
 3. Review the on-screen acknowledgment carefully.

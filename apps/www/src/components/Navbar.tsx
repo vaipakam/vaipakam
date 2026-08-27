@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import './Navbar.css';
 import { LanguagePicker } from './LanguagePicker';
-import { defiUrl } from '../lib/defiUrl';
+import { appUrl, legacyToolUrl } from '../lib/appUrl';
 
 type NavLink = {
   labelKey: string;
@@ -69,11 +69,14 @@ const NAV_GROUPS: NavGroup[] = [
       // convention (Uniswap / Morpho / dYdX all keep
       // their `/markets` / `/explore` / governance dashboards on the
       // app subdomain alongside the wallet-bearing write flows).
-      // Linked out via `defiUrl(...)` and opened in a new tab so the
-      // marketing tab stays open behind.
-      { labelKey: 'nav.analytics', href: defiUrl('/analytics'), newTab: true },
-      { labelKey: 'nav.nftVerifier', href: defiUrl('/nft-verifier'), newTab: true },
-      { labelKey: 'nav.protocolConsole', href: defiUrl('/protocol-console'), newTab: true },
+      // Linked out and opened in a new tab so the marketing tab stays
+      // open behind. TWO helpers, and the split matters: the NFT Verifier
+      // uses `appUrl(...)`, which follows the cutover; Analytics and the
+      // Protocol Console use `legacyToolUrl(...)` because they were never
+      // ported to `apps/app` and only one deployment serves them (#1959).
+      { labelKey: 'nav.analytics', href: legacyToolUrl('/analytics'), newTab: true },
+      { labelKey: 'nav.nftVerifier', href: appUrl('nftVerifier'), newTab: true },
+      { labelKey: 'nav.protocolConsole', href: legacyToolUrl('/protocol-console'), newTab: true },
     ],
   },
 ];
@@ -326,7 +329,7 @@ export default function Navbar() {
               Present only here (on Navbar) because AppLayout has its own
               internal nav and shouldn't show this CTA. */}
           <a
-            href={defiUrl('/')}
+            href={appUrl('home')}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-primary navbar-launch-mobile"
@@ -344,7 +347,7 @@ export default function Navbar() {
               marketing page stays open behind — same pattern as the
               VPFI dropdown's Buy / Stake-Unstake action items. */}
           <a
-            href={defiUrl('/')}
+            href={appUrl('home')}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-primary navbar-cta navbar-launch"

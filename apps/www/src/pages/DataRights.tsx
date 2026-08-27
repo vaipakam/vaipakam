@@ -87,12 +87,22 @@ export default function DataRights() {
       </div>
 
       {/* The Diagnostics drawer's "export journey log" affordance lived
-          here on the connected app — every chain-write step emits a
-          journey event that surfaces in support exports. The marketing
-          surface (labs.vaipakam.com) has no on-chain interactions and
-          therefore no journey buffer, so the card is intentionally
-          absent here. The connected-app DataRights page on
-          defi.vaipakam.com keeps the journey-log export. */}
+          on the connected app — every chain-write step emits a journey
+          event that surfaces in support exports. This marketing surface
+          has no on-chain interactions and therefore no journey buffer,
+          so the card is intentionally absent here.
+
+          GAP (#1960): the connected app no longer offers a counterpart.
+          `apps/app` defines no `/data-rights` route, and the export /
+          erase controls on THIS page cannot stand in for one — they run
+          on this origin, and same-origin isolation means they can
+          neither read nor clear storage belonging to the app's origin.
+          The app does keep per-origin state there (preferences, alert
+          settings, notification cursors, pending transactions,
+          diagnostics), so until that route is ported the user has no
+          in-product way to export or erase it. Do not reword this into
+          a claim that the connected app "keeps" the export; an earlier
+          version of this comment said exactly that and it was false. */}
 
       <div
         className="card"

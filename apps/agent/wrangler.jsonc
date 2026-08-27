@@ -427,11 +427,47 @@
   //   - TG_BOT_USERNAME          — public bot handle.
   //   - FRONTEND_ORIGIN          — CSV of allowed CORS origins for
   //                                the frontend-facing endpoints.
+  //                                An origin NOT on this list is not
+  //                                rejected outright: resolveAllowedOrigin
+  //                                falls back to the FIRST entry, so the
+  //                                browser sees a mismatched
+  //                                Access-Control-Allow-Origin and blocks
+  //                                the call. Dropping a still-live origin
+  //                                therefore breaks that site's agent
+  //                                calls the next time this Worker is
+  //                                deployed. Retire an origin only after
+  //                                the surface behind it is actually gone.
   //   - DIAG_SAMPLE_RATE         — 0.0–1.0; default 1.0.
   //   - DIAG_RETENTION_DAYS      — int days; default 90.
   "vars": {
     "TG_BOT_USERNAME": "",
-    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com",
+    // ORDER IS LOAD-BEARING: frames.ts derives its link host from
+    // `FRONTEND_ORIGIN.split(',')[0]`, and periodicPreNotify.ts builds
+    // notification deep links the same way, so the FIRST entry must be a
+    // host that actually SERVES those paths.
+    //
+    // It is `defi.` today, not `app.`, because `app.vaipakam.com` is not
+    // bound yet (see apps/app/wrangler.jsonc). Entry zero and the paths
+    // in frames.ts are ONE decision: the legacy app serves `/app` and
+    // `/nft-verifier`, the new one serves `/` and `/nft`. Move them
+    // together at cutover — same coupling `appUrl`'s APP_TARGET models
+    // on the marketing side — or the links break in whichever direction
+    // you half-changed.
+    //
+    // `defi.` and `alpha02.` are RETAINED past the #1854 rename on
+    // purpose: their Workers still serve real users until the operator
+    // converts them to redirects. Remove them in the same change that
+    // retires those hosts, not before. (#1958 Codex F5.)
+    // The trailing `*.workers.dev` entry is the PRE-CUTOVER REVIEW target.
+    // CLAUDE.md requires a live review of the deployment just made, and
+    // until `app.vaipakam.com` is bound that deployment is only reachable
+    // on its workers.dev URL. Without it here, every agent-backed flow
+    // (alerts, support ticket, diagnostics/erasure) fails CORS on the
+    // mandated review target, so the review cannot exercise them. It is a
+    // single exact origin, not a wildcard. REMOVE IT once the custom
+    // domain is bound — see step 5 of the cutover checklist in
+    // apps/www/src/lib/appUrl.ts.
+    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev",
     "DIAG_SAMPLE_RATE": "1.0",
     "DIAG_RETENTION_DAYS": "90",
   },

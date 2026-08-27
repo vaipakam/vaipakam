@@ -7,7 +7,7 @@
  * placeholder, and its only other mode overwrote a bundle wholesale. So
  * a locale that had been translated once froze at that day's key set —
  * every section added afterwards silently fell back to English, in a
- * bundle that looked complete. `apps/alpha02` accumulated 291 such keys
+ * bundle that looked complete. `apps/app` accumulated 291 such keys
  * across nine locales, including every string on the stuck-token
  * recovery page (see #1560).
  *
@@ -97,7 +97,7 @@ export function deepMerge(base: Bundle, patch: Bundle): Bundle {
  *
  * OPT-IN, not automatic. Applying it to a bundle whose order has
  * already drifted from the template rewrites most of the file, which is
- * the opposite of what it is for: on the alpha02 locales it turned a
+ * the opposite of what it is for: on the connected app's locales it turned a
  * clean ~130-line insertion into 1100 insertions and 950 deletions per
  * locale, burying the actual translations. Reach for it as a deliberate
  * mechanical normalisation on its own commit, so the reordering is
@@ -391,7 +391,7 @@ export function unknownKeys(source: Bundle, subject: Bundle, prefix = ''): strin
  * (Codex #1563 r6).
  *
  * Not always a defect, which is why this reports rather than decides:
- * Japanese moves the verb to the end, so alpha02's consent sentence
+ * Japanese moves the verb to the end, so the connected app's consent sentence
  * legitimately has an empty `prefix` with the agreement carried in
  * `suffix`. Callers pair this with a narrow per-`<locale>:<path>`
  * exemption.
@@ -496,7 +496,7 @@ export function leafAt(bundle: Bundle, dotted: string): unknown {
  * sailed through both (Codex #1563 r17). It has to be a rejection at
  * ingestion, in the SHARED scripts, because the surfaces at risk
  * include apps with no locale-coverage guard of their own:
- * `apps/defi`'s recovery page compares typed input against the same
+ * `apps/app`'s recovery page compares typed input against the same
  * literal and has nothing downstream to catch a translated prompt.
  */
 export function requiredLiteralProblems(
@@ -510,7 +510,7 @@ export function requiredLiteralProblems(
     // On a COMPLETE bundle an absent leaf is a failure of this check's
     // own question — "does this bundle carry the literals it must" —
     // and answering "yes" for a key that isn't there is wrong. It used
-    // to `continue` unconditionally, so apps/defi's translator (which
+    // to `continue` unconditionally, so apps/app's translator (which
     // runs no structural validation) wrote a response that omitted the
     // confirmation prompt and exited 0 (Codex #1563 r24).
     //

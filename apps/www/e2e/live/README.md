@@ -9,11 +9,11 @@ container setup below already are, but they are not all about the marketing
 site. Two kinds sit here:
 
 - **Marketing-site drives** — the rendered docs on `vaipakam.com`.
-- **Connected-app drives** — the wallet-connecting app. `alpha02` is the
+- **Connected-app drives** — the wallet-connecting app. `app` is the
   surface being promoted, so it is the target that matters; the drives take
   origins positionally and can still be pointed at a sibling app when there is
-  a reason to. `alpha02` has `@playwright/test` for its own `e2e` suite, so an
-  alpha02-only drive could live there instead; these sit here because they can
+  a reason to. `app` has `@playwright/test` for its own `e2e` suite, so an
+  app-only drive could live there instead; these sit here because they can
   be aimed at any origin and share the container setup below.
 
 The table further down says which is which, and how each takes its target.
@@ -53,7 +53,10 @@ positional arguments instead, because it checks several apps in one run and
 a single environment variable cannot express that:
 
 ```bash
-node apps/www/e2e/live/live-wallet-telemetry.mjs https://alpha02.vaipakam.com/
+# Pass the app deployment to check. `app.vaipakam.com` is the intended
+# host but is not bound yet (#1854) — use the workers.dev URL the app's
+# `pnpm run deploy` prints until it is.
+node apps/www/e2e/live/live-wallet-telemetry.mjs <deployed-app-origin>/
 ```
 
 It exits with a usage message if given no origins, rather than silently
@@ -141,7 +144,7 @@ surface and must not be taught to accept an unverified one.
 | File | Covers | Introduced by |
 | --- | --- | --- |
 | `live-worked-example.mjs` | The Overview's worked-example figures render as derived live values with the contract's integer arithmetic and honest provenance; the help search finds a page by a figure printed on it | #1751 (#1664 items 1 + 2) |
-| `live-wallet-telemetry.mjs` | A connected-app origin constructs the Coinbase SDK and sends nothing to its telemetry host on load, AND the deployed bundle carries both telemetry-off settings (#1840). Takes origins as POSITIONAL arguments; `alpha02` is the promoted target. Fails closed unless the SDK is witnessed as constructed | #1836 (#1824), #1840 |
+| `live-wallet-telemetry.mjs` | A connected-app origin constructs the Coinbase SDK and sends nothing to its telemetry host on load, AND the deployed bundle carries both telemetry-off settings (#1840). Takes origins as POSITIONAL arguments; `app` is the promoted target. Fails closed unless the SDK is witnessed as constructed | #1836 (#1824), #1840 |
 
 The second one lives here rather than under the app it checks because it takes
 any origin positionally rather than belonging to one app, and because this is

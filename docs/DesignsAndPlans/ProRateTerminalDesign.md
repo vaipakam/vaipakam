@@ -32,8 +32,8 @@ per pair; we have one market per pair **per tenor**. The terminal must therefore
 **tenor selector** (the guided flows' duration buckets: 7/14/30/60/90/180/365d) next to the pair selector — closer to a futures
 expiry picker than a perp market chip, and honest to the protocol's actual microstructure.
 
-**Recommended approach**: build it as an **alpha02 Advanced-mode route** (`/desk`), not a
-new app and not an apps/defi rework — phased, with the rate chart in phase 2. Rationale in §4.
+**Recommended approach**: build it as a **connected-app Advanced-mode route** (`/desk`) in `apps/app`, not a
+new app and not a rework of the then-live `apps/defi` (since deleted, #1854) — phased, with the rate chart in phase 2. Rationale in §4.
 
 ---
 
@@ -71,17 +71,21 @@ new app and not an apps/defi rework — phased, with the rate chart in phase 2. 
   start_at)` index, and a charting library (no viz dependency anywhere in the workspace).
 - **Realtime**: the live-ingest rail is **already rolled out** — the indexer's per-chain
   WebSocket push (`/ws/chain/:chainId` → `ChainIngestDO`) runs with
-  `CHAIN_INGEST_VIA_DO: "true"` (`apps/indexer/wrangler.jsonc:150`) and alpha02 mounts
+  `CHAIN_INGEST_VIA_DO: "true"` (`apps/indexer/wrangler.jsonc:150`) and the app mounts
   the client (`IndexerPushSync.tsx`) in the app shell. What's missing for the desk is
   only registering its query roots in the push `KEY_MAP` (§8 phase 3); until then its
   queries ride the 30s idle-aware poll.
 
 ### 1.3 UI: one order-book layout exists; the flagship app has none
 
-- `apps/defi/src/pages/OfferBook.tsx` (2.6k lines) is already a two-sided book: lender
+*(Scout finding as of 2026-07. `apps/defi` has since been deleted (#1854), so
+the reference layout below survives only in git history — nothing in the tree
+reimplements it.)*
+
+- `apps/defi/src/pages/OfferBook.tsx` (2.6k lines) was already a two-sided book: lender
   table above, borrower table below, a **market-anchor rate band** between them,
   pair/duration/liquidity filters, rank-by-distance-to-anchor, accept modal with Permit2.
-- `apps/alpha02` (the flagship redesign) has only a flat advanced-mode list
+- `apps/app` (the flagship redesign) had only a flat advanced-mode list
   (`pages/Offers.tsx`) — no table, no depth, no pair pivot.
 - `packages/ui` is deliberately thin (5 primitives). No dense multi-panel layout
   primitive, no chart. Both would be net-new.
@@ -159,15 +163,15 @@ Panel-by-panel, with the backing read/write:
 
 | Panel | Reads | Writes | Notes |
 |---|---|---|---|
-| Header strip | book (see Order book row); last trade from indexer `/loans/recent` with the **pair+tenor server filter (phase 1, §7)**; `getAssetPrice` for the collateral oracle chip | — | Tenor chips are the SAME duration set the guided Lend/Borrow flows offer — `OFFER_DURATION_BUCKETS_DAYS` (7/14/30/60/90/180/365d, 30d default, `apps/alpha02/src/lib/offerSchema.ts:63`) — single source of truth, so a tenor postable from the guided flows is always selectable on the desk (a 1d bucket is a planned future addition there and flows through automatically). Chips with live orders are visually emphasized; empty tenors render with an honest empty state. The "last" seed must be tenor-scoped: `useMarketAnchorRate` is pair-only today (`useMarketAnchorRate.ts:32-101`) and MUST NOT seed a tenor market as-is — extend it with a `durationDays` check or seed from the tenor-filtered tape instead (a 7d fill must never seed the 30d header). |
+| Header strip | book (see Order book row); last trade from indexer `/loans/recent` with the **pair+tenor server filter (phase 1, §7)**; `getAssetPrice` for the collateral oracle chip | — | Tenor chips are the SAME duration set the guided Lend/Borrow flows offer — `OFFER_DURATION_BUCKETS_DAYS` (7/14/30/60/90/180/365d, 30d default, `apps/app/src/lib/offerSchema.ts:63`) — single source of truth, so a tenor postable from the guided flows is always selectable on the desk (a 1d bucket is a planned future addition there and flows through automatically). Chips with live orders are visually emphasized; empty tenors render with an honest empty state. The "last" seed must be tenor-scoped: `useMarketAnchorRate` is pair-only today (`useMarketAnchorRate.ts:32-101`) and MUST NOT seed a tenor market as-is — extend it with a `durationDays` check or seed from the tenor-filtered tape instead (a 7d fill must never seed the 30d header). |
 | Order book | **two-step read**: `getActiveOffersByAssetPairRanked` for the pair's ids/ordering, then hydrate via `getOffersWithState(ids)` — the skinny `OfferRanking` DTO omits `amountFilled` (`MetricsFacet.sol:591-600`), so remaining depth is computable only from hydrated rows (`amountMax - amountFilled`). Hydration MUST be chunked at `MAX_BATCH_IDS = 250` (`MetricsDashboardFacet.sol:61` — the batch view reverts `BatchTooLarge` above it), so a busy pair degrades to a bounded ladder instead of blanking the book. Aggregate rate levels from **remaining** size, never `amountMax`; and **drop lazily-expired GTT rows** (`expiresAt != 0 && expiresAt <= chain time`) before computing best bid/ask, tenor chips, or depth — expiry is lazily enforced, so the ranked read can still return rows that `acceptOffer` rejects with `OfferExpired`. (Alternative: extend the ranking DTO with `amountFilled` — small contract change, phase-3 candidate.) | click a level → pre-fills the ticket at that rate (maker); taker affordance arms direct `acceptOffer` **only on unfilled, unexpired rows** — direct accept rejects partially-filled offers (`OfferAcceptFacet.sol:767-781`) and expired ones (`OfferExpired`); partially-filled rows are crossable only via the matcher | Fill-progress from hydrated `amountFilled/amountMax` (A.9); own orders highlighted |
 | Order ticket | `useTxSimulation` precheck (reuses the #1112 under-collateral banner), `quoteOfferRateBps` as a "suggested rate" hint | `createOffer` / `createOfferWithPermit` | Side toggle, amount (+ optional range), limit rate (+ optional band), collateral, tenor, expiry preset (GTC/24h/7d/custom), fill-mode chip (Partial/AON/IOC) |
 | Tape | indexer `/loans/recent` with the **pair+tenor server filter (phase 1, §7)** — the current handler is a global newest-first page capped at 200 rows (`loanRoutes.ts:764-774`, `:1171-1175`); client-filtering it misses any market not among the latest global fills, so the server filter is a phase-1 prerequisite, not a phase-2 nicety | — | Sparse-honest: shows "N fills this week" not a fake ticker |
-| Open orders | **union of created + held**: `getUserOffersByStatePaginated` (creator walk) ∪ `/offers/by-current-holder` / `getUserPositionOffers` — offers are position NFTs, so an open offer bought/received by a wallet is invisible to the creator walk alone; alpha02's existing hook already does this union | **`modifyOffer` / `setOfferRate` (first UI for #193)**, `cancelOffer` — both gated on `offer.creator === wallet` (the contracts authorize only the creator; held-not-created rows render read-only) | Amend = pencil → inline edit of rate/size/collateral, one tx, same offerId — **for rate-only or shrinking edits**. A grow (more lender principal / more borrower collateral) pulls via `_pullOrRefundErc20` → vault deposit, consuming Diamond allowance, and there is **no `modifyOfferWithPermit`** — the amend modal needs the same allowance precheck + classic-approve fallback as create/accept, or the "one tx" claim reverts for under-approved wallets |
+| Open orders | **union of created + held**: `getUserOffersByStatePaginated` (creator walk) ∪ `/offers/by-current-holder` / `getUserPositionOffers` — offers are position NFTs, so an open offer bought/received by a wallet is invisible to the creator walk alone; the app's existing hook already does this union | **`modifyOffer` / `setOfferRate` (first UI for #193)**, `cancelOffer` — both gated on `offer.creator === wallet` (the contracts authorize only the creator; held-not-created rows render read-only) | Amend = pencil → inline edit of rate/size/collateral, one tx, same offerId — **for rate-only or shrinking edits**. A grow (more lender principal / more borrower collateral) pulls via `_pullOrRefundErc20` → vault deposit, consuming Diamond allowance, and there is **no `modifyOfferWithPermit`** — the amend modal needs the same allowance precheck + classic-approve fallback as create/accept, or the "one tx" claim reverts for under-approved wallets |
 | Positions | **current-holder reads**, not historical parties: indexer `/loans/by-current-holder` (already exists) or position-NFT holder enumeration, hydrated via `getLoansBatch` + `calculateHealthFactor` overlay. `getUserDashboardLoans` walks historical `l.borrower`/`l.lender` (`MetricsDashboardFacet.sol:188-239`) and goes stale the moment a position NFT is transferred/sold — it would omit a buyer's position and show the seller dead manage actions | `repayLoan` / `repayPartial` / add-collateral | HF colour bands per B.1; accrued interest computed client-side (`LibEntitlement` mirror already exists in the dashboard flow) |
 | History | requires a **true server-side historical-participant route** (new indexer endpoint backed by **persisted participation rows** — e.g. `loan_participants(chain_id, loan_id, wallet, role, from_at)` — seeded at `LoanInitiated` from the current-owner projection and appended on every position-NFT transfer; the immutable `loans` party columns alone are NOT enough, because `loan.lender`/`loan.borrower` snapshot `offer.creator` + acceptor at init (`LoanFacet.sol:1169-1180`), so a wallet that bought the offer NFT before accept, or any later transferee, never appears in them. Participation is append-only history, never a mutable pointer) — every client-side composition falls short of permanent history: the actor feed misses lender fills (`LoanInitiated` has `actor = borrower`, `chainIndexer.ts:3110-3175`), `/loans/by-lender`/`by-borrower`/`by-current-holder` are **current-owner** filtered, and burns are written to `0x0` (`chainIndexer.ts:2770-2775`) — a lender whose loan was repaid+claimed disappears from all of them (the gap `Activity.tsx:72-74` already documents). The History tab therefore ships in **phase 2 alongside that route** (§8); phase 1 has no History tab rather than a silently incomplete one | — | |
 
-**Mobile (first-class, not a degraded stack).** alpha02 is mobile-first, and the
+**Mobile (first-class, not a degraded stack).** The app is mobile-first, and the
 reference perp terminals treat mobile as its own layout rather than a reflow (verified
 against the reference desk on a 390×844 viewport, 2026-07-10): a compact sticky market
 header, then the **rate ladder and the order ticket side-by-side as the primary view**
@@ -182,8 +186,8 @@ never capability. The honesty rules (§5.3) apply unchanged on the mobile chart 
 
 ## 4. Where it lives — decision
 
-**Option A (recommended): alpha02 Advanced-mode route `/desk`.**
-- alpha02 is the flagship; it already has the mode doctrine (advanced routes hidden from
+**Option A (recommended): connected-app Advanced-mode route `/desk`.**
+- The connected app is the flagship; it already has the mode doctrine (advanced routes hidden from
   Basic nav, deep-linkable), push-sync client, tx simulation, Permit2, kill-switch,
   GoPlus badges, EIP-712 accept — every flow the terminal composes is already built and
   live-reviewed there. The terminal becomes the *reveal payoff* of Advanced mode.
@@ -195,7 +199,7 @@ never capability. The honesty rules (§5.3) apply unchanged on the mobile chart 
 
 **Option B: rework apps/defi's OfferBook into the terminal.** Rejected: defi already has
 the two-sided book but is the legacy surface; investing the terminal there splits the
-roadmap and duplicates alpha02's newer flow plumbing (simulation, push, kill-switch).
+roadmap and duplicates the connected app's newer flow plumbing (simulation, push, kill-switch).
 
 **Option C: a new `apps/pro` app.** Rejected: a third SPA to deploy/maintain for one
 page; loses shared mode/session context; nothing about the terminal needs an app boundary.
@@ -244,7 +248,7 @@ table (tenor → best bid/ask/depth) can sit in the header dropdown for discover
 
 Testnet (and early mainnet) volumes are a handful of fills per day per pair. A
 candlestick chart pretending to be a liquid market would be theatre — and misleading
-theatre is exactly what alpha02's honesty rules (empty-state doctrine, F-20260702-001)
+theatre is exactly what the app's honesty rules (empty-state doctrine, F-20260702-001)
 exist to prevent. Rules:
 
 1. **Candles only when a bucket has ≥ 1 fill; no interpolation.** Gaps render as gaps.
@@ -317,7 +321,7 @@ zero network calls — CSP-clean, MIT-adjacent license (Apache-2.0), dark/light 
 It is the de-facto standard for exactly this aesthetic and supports candles, step-lines,
 and markers natively. Alternatives considered: recharts (SVG, wrong idiom for a
 terminal, heavier per-point), d3 (a toolkit, not a chart — highest build cost), visx
-(same). New dependency scoped to alpha02 only (`apps/alpha02/package.json`), lazy-loaded
+(same). New dependency scoped to the connected app only (`apps/app/package.json`), lazy-loaded
 with the `/desk` route chunk — users who never visit `/desk` (the Basic-nav default
 path) never download it; a Basic-mode user following a direct `/desk` link does, by
 design (§4 keeps the route URL-reachable in both modes).
@@ -333,7 +337,7 @@ a `durationDays` parameter.
 
 ## 8. Phasing
 
-**Phase 1 — Terminal shell (no chart), alpha02 `/desk`.** Header strip + pair/tenor
+**Phase 1 — Terminal shell (no chart), `apps/app` `/desk`.** Header strip + pair/tenor
 selectors, rate-ladder book (ranked ids + `getOffersWithState` hydration per §3 —
 remaining-size depth, never headline size), order ticket (createOffer with expiry +
 fill-mode chips, simulation precheck), tape, open-orders panel with **cancel + the
@@ -353,7 +357,7 @@ the filters need route-shaped market indexes (e.g. offers
 offer indexes cover only `(chain_id, status)` / creator / current-holder lookups, so a
 filter without its index devolves into a global scan exactly where the terminal depends
 on it. All data on the existing 30s idle-aware poll + push-sync invalidation.
-*Estimated: the largest single alpha02 page to date, but composed entirely of existing
+*Estimated: the largest single page in the app to date, but composed entirely of existing
 flows — comparable to the OfferFlow build.*
 
 **Phase 2 — Rate history + History tab.** Indexer OHLC endpoint + the
@@ -362,7 +366,7 @@ flows — comparable to the OfferFlow build.*
 historical-participant route + the desk's History tab (§3 History row).
 
 **Phase 3 — Live-ness + depth polish.** The live-ingest rail is **already rolled out**
-(`CHAIN_INGEST_VIA_DO: "true"` in `apps/indexer/wrangler.jsonc:150`; alpha02 mounts
+(`CHAIN_INGEST_VIA_DO: "true"` in `apps/indexer/wrangler.jsonc:150`; the app mounts
 `IndexerPushSync` in the app shell) — phase 3's job is to **register the terminal's
 query roots/keys in the push `KEY_MAP`** so book/tape/candle queries invalidate on
 `offer.*`/`loan.*` frames instead of waiting for the 30s poll; book delta animations;
@@ -378,12 +382,12 @@ Each phase is independently shippable and independently valuable; phase 1 alone 
 delivers the two things no UI currently offers (a real book view in the flagship app +
 amend-in-place).
 
-**Verification (per the alpha02 DoD)**: each phase ships the e2e checks for what that
+**Verification (per the connected-app DoD)**: each phase ships the e2e checks for what that
 phase actually builds. Phase 1: CI-Anvil specs (book rendering from seeded offers,
 ticket posting, amend, cancel) + a live driver under `e2e/live/` (post → amend → cancel
 a real testnet offer). Phase 2 adds the chart assertions (candles/step-line from seeded
 history, sparse-honesty behaviours) + History-tab coverage. Every phase updates
-`apps/alpha02/e2e/COVERAGE.md` in the same diff.
+`apps/app/e2e/COVERAGE.md` in the same diff.
 
 ---
 
@@ -407,7 +411,7 @@ UI here answers today — even 20 lifetime fills, drawn honestly (markers + step
 fill counts), beat the current nothing. But a candlestick pretending thin data is a
 liquid market misleads exactly the users a terminal attracts. §5.3 is the difference.
 
-**The risk to manage is persona confusion, not effort.** Vaipakam's thesis (alpha02) is
+**The risk to manage is persona confusion, not effort.** Vaipakam's thesis (the connected app) is
 naive-user-first; a terminal is the opposite persona. The Advanced-mode boundary already
 solves this — `/desk` stays out of Basic navigation (URL-reachable per the shell
 doctrine); the guided flows remain the front door.

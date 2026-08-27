@@ -1,10 +1,12 @@
-# alpha02 Regression Flows — the testnet-verified flow-path inventory
+# Connected-App Regression Flows — the testnet-verified flow-path inventory
 
 Every flow path below was **actually driven against a live deployment**
 of apps/alpha02 (Base Sepolia, Diamond `0xd89f…b995`) during the
 2026-06/07 review campaigns (PRs #887, #943, #982, #991), using four
 funded dev wallets and a Playwright harness with an injected wallet.
-This is the regression baseline: a change to apps/alpha02 (or a facet
+That app is now `apps/app` at `app.vaipakam.com` (renamed in #1854);
+the flows below are unchanged by the rename.
+This is the regression baseline: a change to apps/app (or a facet
 it reads) should re-drive the flows whose surface it touches, and a
 pre-deploy pass should re-drive all of them.
 
@@ -49,7 +51,7 @@ Conventions used below:
 |---|------|-------|--------|--------|
 | 1.1 | Connect wallet | Home → Connect wallet → injected provider | UI: address chip renders; jobs grid active | s01-connect |
 | 1.2 | Unsupported network gate | Connect on an unsupported chain | UI: named banner + Switch network action; write surfaces disabled | s01 (variant) |
-| 1.3 | Advanced-mode reveal | Settings toggle (persisted per-origin `alpha02.mode`) | UI: Offer Book, position-NFT ids, keeper surfaces appear; Basic surfaces unchanged | s04-advanced |
+| 1.3 | Advanced-mode reveal | Settings toggle (persisted per-origin `app.mode`; `alpha02.mode` at campaign time) | UI: Offer Book, position-NFT ids, keeper surfaces appear; Basic surfaces unchanged | s04-advanced |
 | 1.4 | Testnet faucet gating | Home nudge + sidebar link | UI: present ONLY when read chain is testnet AND bundle carries `testnetMocks`; mainnet slug route self-explains | s-faucet (gating asserts) |
 
 ## 2. Faucet (testnet-only)

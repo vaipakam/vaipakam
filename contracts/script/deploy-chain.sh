@@ -18,11 +18,11 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #   5. Deploys the reward messenger (also canonical-vs-mirror branched)
 #   6. Syncs per-facet ABIs + the consolidated deployments JSON via
 #      `packages/contracts/` — the single-source-of-truth bundle every
-#      consumer in the monorepo (apps/{defi,www,keeper,indexer,agent})
+#      consumer in the monorepo (apps/{app,www,keeper,indexer,agent})
 #      reads. No more dual-write to a Worker-side ABI directory; the
 #      Stage 3 split made `@vaipakam/contracts/abis` the only target.
 #   7. Builds + deploys the two SPAs to Cloudflare Workers Static Assets:
-#        apps/defi  → vaipakam-defi  (the dApp)
+#        apps/app  → vaipakam-app  (the dApp)
 #        apps/www   → vaipakam-www   (marketing site)
 #   8. Deploys the three Cloudflare Workers via wrangler:
 #        apps/keeper  → vaipakam-keeper   (HF watcher autonomous keeper)
@@ -83,14 +83,14 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #     polygon-amoy   — mirror testnet (80002 — native-gas mode acceptable)
 #
 #   flags:
-#     --skip-defi      — don't build / wrangler-deploy apps/defi
+#     --skip-app      — don't build / wrangler-deploy apps/app
 #     --skip-www       — don't build / wrangler-deploy apps/www
 #     --skip-keeper    — don't wrangler-deploy apps/keeper
 #     --skip-indexer   — don't wrangler-deploy apps/indexer (NB: also
 #                        skips D1 migrations + cursor seed for this run)
 #     --skip-agent     — don't wrangler-deploy apps/agent
 #     --skip-cf        — alias for ALL FIVE Cloudflare-deploy flags
-#                        (defi + www + keeper + indexer + agent)
+#                        (app + www + keeper + indexer + agent)
 #     --skip-vpfi      — skip the VPFI lane + reward messenger (handy when
 #                        re-running after a partial failure that already
 #                        landed those)
@@ -131,7 +131,7 @@ __lenv_baseline="$(declare -p $(compgen -v) 2>/dev/null)"
 #     `set -a` sources `.env` before any forge call so per-chain env
 #     vars surface.
 #   - Workspace install: `pnpm install` at the monorepo root has been
-#     run, so apps/{defi,www,keeper,indexer,agent} all have their
+#     run, so apps/{app,www,keeper,indexer,agent} all have their
 #     `node_modules` symlink chains in place. The script does NOT
 #     auto-install (deterministic deploy step).
 #   - Wrangler authentication: `npx wrangler whoami` works without
@@ -225,7 +225,7 @@ fi
 # `apps/<name>` with a wrangler.jsonc, and three Workers replace the
 # old monolithic `ops/hf-watcher`. Every Cloudflare deploy step in this
 # script `cd`s into one of these dirs.
-DEFI_DIR="$REPO_ROOT/apps/defi"
+APP_DIR="$REPO_ROOT/apps/app"
 WWW_DIR="$REPO_ROOT/apps/www"
 KEEPER_DIR="$REPO_ROOT/apps/keeper"
 INDEXER_DIR="$REPO_ROOT/apps/indexer"
@@ -243,7 +243,7 @@ Supported chain-slugs:
   anvil  base-sepolia  sepolia  arb-sepolia  op-sepolia  bnb-testnet  polygon-amoy
 
 Per-app skip flags (Cloudflare deploys):
-  --skip-defi      --skip-www       --skip-keeper
+  --skip-app      --skip-www       --skip-keeper
   --skip-indexer   --skip-agent     --skip-cf  (alias for all five)
 
 Other flags:
@@ -298,7 +298,7 @@ fi
 
 CHAIN_SLUG="$1"; shift
 
-SKIP_DEFI=0
+SKIP_APP=0
 SKIP_WWW=0
 SKIP_KEEPER=0
 SKIP_INDEXER=0
@@ -310,7 +310,7 @@ VERIFY_CONTRACTS=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --skip-defi)        SKIP_DEFI=1 ;;
+    --skip-app)        SKIP_APP=1 ;;
     --skip-www)         SKIP_WWW=1 ;;
     --skip-keeper)      SKIP_KEEPER=1 ;;
     --skip-indexer)     SKIP_INDEXER=1 ;;
@@ -319,7 +319,7 @@ while [ $# -gt 0 ]; do
       # Single switch for "no Cloudflare deploys at all" — common
       # when iterating purely on contracts and you don't want to wait
       # for five wrangler invocations.
-      SKIP_DEFI=1; SKIP_WWW=1
+      SKIP_APP=1; SKIP_WWW=1
       SKIP_KEEPER=1; SKIP_INDEXER=1; SKIP_AGENT=1
       ;;
     --skip-vpfi)        SKIP_VPFI=1 ;;
@@ -502,7 +502,7 @@ echo "  skip-vpfi:     $SKIP_VPFI"
 echo "  fresh:         $FRESH"
 echo "  resume:        $RESUME"
 echo "  verify-cts:    $VERIFY_CONTRACTS"
-echo "  skip-defi:     $SKIP_DEFI    skip-www:     $SKIP_WWW"
+echo "  skip-app:      $SKIP_APP    skip-www:     $SKIP_WWW"
 echo "  skip-keeper:   $SKIP_KEEPER    skip-indexer: $SKIP_INDEXER    skip-agent: $SKIP_AGENT"
 echo "═══════════════════════════════════════════════════════════════"
 echo
@@ -1103,7 +1103,7 @@ fi
 # ── 6. Sync ABIs + consolidated deployments JSON ──────────────────────
 # Single canonical export target after the Stage 3 split:
 # `packages/contracts/src/{abis,deployments.json}`. Every consumer in
-# the monorepo — apps/{defi,www} (the SPAs) and apps/{keeper,indexer,
+# the monorepo — apps/{app,www} (the SPAs) and apps/{keeper,indexer,
 # agent} (the Workers) — imports from `@vaipakam/contracts`. So this
 # one step keeps the entire downstream surface (SPA reads, Worker
 # event decode, sibling keeper-bot repo reads) on the same compiled-
@@ -1150,34 +1150,79 @@ fi
 mark_done "abi-sync"
 fi  # close step_done "abi-sync" else branch
 
-# ── 7. SPA Cloudflare deploys (defi + www) ────────────────────────────
+# ── 7. SPA Cloudflare deploys (app + www) ────────────────────────────
 # Stage 4 split (May 2026): the historical `frontend/` directory is
 # now two distinct apps:
-#   apps/defi → vaipakam-defi  (the dApp — connected wallet, OfferBook,
+#   apps/app → vaipakam-app  (the dApp — connected wallet, OfferBook,
 #                               LoanList, vault management)
 #   apps/www  → vaipakam-www   (marketing site — landing, docs, blog,
 #                               brand surfaces)
 # Each is its own Vite SPA with its own wrangler.jsonc, deployed as
 # Cloudflare Workers Static Assets. Per-app skip flags
-# (`--skip-defi` / `--skip-www`) gate them independently because
+# (`--skip-app` / `--skip-www`) gate them independently because
 # operators often iterate on one without touching the other.
 
-# 7a. apps/defi — the dApp.
-if [ "$SKIP_DEFI" = "0" ] && step_done "defi"; then
+# 7a. apps/app — the dApp.
+if [ "$SKIP_APP" = "0" ] && step_done "app"; then
   echo
-  echo "[7a] apps/defi deploy (skipped — marker exists)"
-elif [ "$SKIP_DEFI" = "0" ]; then
+  echo "[7a] apps/app deploy (skipped — marker exists)"
+elif [ "$SKIP_APP" = "0" ]; then
   echo
-  echo "[7a] apps/defi build + Cloudflare Workers Static Assets deploy"
-  if [ ! -d "$DEFI_DIR/node_modules" ]; then
-    echo "Error: $DEFI_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
+  echo "[7a] apps/app build + Cloudflare Workers Static Assets deploy"
+  if [ ! -d "$APP_DIR/node_modules" ]; then
+    echo "Error: $APP_DIR/node_modules missing — run \`pnpm install\` at the monorepo root first." >&2
     exit 1
   fi
-  ( cd "$DEFI_DIR" && pnpm run build && pnpm exec wrangler deploy )
-  mark_done "defi"
+  # `pnpm run deploy`, NOT `build && wrangler deploy`: the package's
+  # deploy script sets REQUIRE_INDEXER_ORIGIN=1, which promotes the
+  # missing-VITE_INDEXER_ORIGIN check in vite.config.ts from a warning
+  # to a hard failure. A bare build only warns (deliberately, so CI and
+  # preview builds without operator env still pass), so the old form
+  # would publish a production app with no offer-book feed, no push
+  # rail and no config snapshot — silently. (#1958 Codex F4.)
+  #
+  # CUTOVER ADVISORY (#1854). This phase publishes the `vaipakam-app`
+  # Worker. Whether users can REACH what it publishes depends on two
+  # operator-side facts no script can read from the repository: whether
+  # `app.vaipakam.com` is bound to that Worker, and whether apps/www was
+  # built with VITE_APP_TARGET=app. While either is outstanding, every
+  # Launch App link still resolves to the legacy host, so a contract
+  # redeploy's new addresses reach this Worker and the repo but NOT the
+  # surface users are actually on. There is no second frontend to fall
+  # back on: the retired app's source was deleted with #1854, so
+  # `vaipakam-defi` CANNOT be rebuilt to carry the new addresses. Hence a
+  # banner rather than a silent publish — and an advisory rather than a
+  # hard stop, because blocking every contract deploy until the cutover
+  # blockers (#1959 unported tools, #1960 Data Rights, #1961 ToS gate)
+  # clear would be a worse failure mode than an operator who has been
+  # told.
+  cat >&2 <<'ADVISORY'
+
+  ─────────────────────────────────────────────────────────────────────
+  NOTE — check the app cutover before trusting this deploy (#1854)
+
+  This publishes the `vaipakam-app` Worker. If `app.vaipakam.com` is
+  not yet bound to it, or apps/www was not built with
+  VITE_APP_TARGET=app, users are still being sent to the LEGACY host
+  and will not see any contract addresses this run changed.
+
+  The legacy frontend cannot be rebuilt to carry them — its source was
+  deleted with #1854. Until the cutover completes, treat an
+  address-changing deploy as reaching the repository and this Worker
+  only.
+
+  Cutover blockers: #1961 (ToS gate), #1960 (Data Rights), #1959
+  (Analytics + Protocol Console not ported).
+  Full sequence: the cutover checklist in apps/www/src/lib/appUrl.ts and
+  the hostname map in docs/ops/DeploymentRunbook.md.
+  ─────────────────────────────────────────────────────────────────────
+
+ADVISORY
+  ( cd "$APP_DIR" && pnpm run deploy )
+  mark_done "app"
 else
   echo
-  echo "[7a] Skipping apps/defi deploy (--skip-defi)"
+  echo "[7a] Skipping apps/app deploy (--skip-app)"
 fi
 
 # 7b. apps/www — the marketing site.

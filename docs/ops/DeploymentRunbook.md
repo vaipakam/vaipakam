@@ -58,7 +58,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | Target | Script | Notes |
 |---|---|---|
 | Local dev (anvil) | `bash contracts/script/anvil-bootstrap.sh` | Full local playground — diamond + mocks + Multicall3 etch + Range Orders flags ON + seed offers + ABI/JSON sync (one command). |
-| Testnet one-shot (anvil + dev quick-loop) | `bash contracts/script/deploy-chain.sh <chain-slug> [flags]` | Auto-chains every step. Stage 3/4-aware: deploys two SPAs (`apps/defi`, `apps/www`) + three Workers (`apps/keeper`, `apps/indexer`, `apps/agent`). Refuses mainnet slugs. |
+| Testnet one-shot (anvil + dev quick-loop) | `bash contracts/script/deploy-chain.sh <chain-slug> [flags]` | Auto-chains every step. Stage 3/4-aware: deploys two SPAs (`apps/app`, `apps/www`) + three Workers (`apps/keeper`, `apps/indexer`, `apps/agent`). Refuses mainnet slugs. |
 | Testnet rehearsal-grade (mirrors mainnet ceremony) | `bash contracts/script/deploy-testnet.sh <chain-slug> --phase <phase>` | Same tiered phase model as mainnet; lifted dirty-tree refusal; adds `--phase pause-rehearsal` (sub-5-min N-chain simultaneous-pause drill). Use this for the actual testnet rehearsal cycle, NOT deploy-chain.sh. |
 | Cross-chain CCIP wiring | `bash contracts/script/deploy-{testnet,mainnet}.sh <chain-slug> --phase ccip-wire` | Run on each chain ONCE after EVERY chain's `contracts` phase has landed (that phase deploys the CCIP stack via `DeployCrosschain.s.sol`). Runs `ConfigureCcip.s.sol`, which reads every chain's `deployments/<slug>/addresses.json` and registers chain selectors, remote messengers, channel peers, the per-lane VPFI TokenPool rate limits (through the bounds-checked `VpfiPoolRateGovernor`), and the `TokenAdminRegistry` CCT registration. Idempotent. (The LayerZero-era `deploy-peers.sh` script and the Buy lane are gone — T-068 / #687-A.) |
 | Mainnet | `bash contracts/script/deploy-mainnet.sh <chain-slug> --phase <phase>` | Tiered. Each phase is a deliberate operator action. Refuses `--phase pause-rehearsal` (testnet-only drill). Refuses testnet slugs. |
@@ -75,7 +75,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 | `configure` | — | `DiamondConfigSpell.s.sol` — composes ConfigureVPFIToken + ConfigureOracle + ConfigureRewardReporter + ConfigureNFTImageURIs into one operator-action. Requires per-chain Chainlink feed addresses + WETH. **ConfigureVPFIBuy is NOT in the launch path (#884)** — the VPFI discount peg stays unset. To opt in **through a wrapper**, pass `--configure-vpfi-peg`; the wrappers deliberately force the `CONFIGURE_VPFI_PEG` env var off, so exporting it does nothing there. The env var is for invoking `DiamondConfigSpell` directly. |
 | `handover` | `--confirm-i-have-multisig-ready` | `Handover.s.sol` — rotates DEFAULT_ADMIN_ROLE → governance Safe (direct), ADMIN/KYC/ORACLE/RISK/VAULT/UNPAUSER → Timelock, PAUSER → Pauser Safe (direct), ERC-173 → Timelock, OApp ownership → governance Safe (Ownable2Step first leg). ADMIN renounces every role. **Multisig-bytecode preflight runs first**: refuses if any of the three Safe addresses has zero bytecode on the target chain. Operator must drive `acceptOwnership()` on each OApp via the Safe UI to complete the second leg. |
 | `abi-sync` | — | Runs the export scripts: `exportFrontendAbis.sh` + `exportFrontendDeployments.sh` + `exportSubgraphAbis.sh` + `exportTenderlyAlerts.sh` + (sibling repo present) `exportAbis.sh` for the keeper-bot. |
-| `cf-defi` / `cf-www` | — | Build + `wrangler deploy` apps/defi (the dApp) / apps/www (marketing). |
+| `cf-app` / `cf-www` | — | Build + `wrangler deploy` apps/app (the dApp) / apps/www (marketing). |
 | `cf-keeper` / `cf-indexer` / `cf-agent` | — | wrangler deploy of each Worker. The indexer phase also runs D1 migrations against `vaipakam-archive`. Each verifies the chain-specific `RPC_<CHAIN>` secret is set on the Worker (hard-fail if missing). |
 | `verify` | — | Read-only smoke checks: `paused()`, `getTreasury()`, facet count (exact-matches the live `DiamondLoupe.facetAddresses().length` against `addresses.json` `.facetCount` recorded at deploy — fails on any mismatch, not just a low count), master flag state, and the VPFI TokenPool rate-limit **wiring**: the pool's `getRateLimitAdmin()` must be the `VpfiPoolRateGovernor` (which range-bounds every value and refuses to disable a lane's limit) and `getSupportedChains()` must be non-empty — refuses to mark verify-done otherwise. **Known limit of the automated check**: it does NOT read each lane's limiter config, so an interrupted `ccip-wire` run can leave a lane present but with its rate limit disabled (or zeroed) and still pass verify. **Manual operator step (required)**: after verify, for EVERY expected lane read the pool's per-lane limiter state (`cast call $POOL 'getCurrentOutboundRateLimiterState(uint64)((uint128,uint32,bool,uint128,uint128))' <remoteChainSelector>` and the `getCurrentInboundRateLimiterState` equivalent; the returned tuple is `(tokens, lastUpdated, isEnabled, capacity, rate)`) and confirm `isEnabled == true` with the finite capacity/rate values from the design §10 starting numbers (capacity 50,000 VPFI, refill ≈5.8 VPFI/s) before proceeding to handover. (Hardening follow-up: extend the verify phase to read per-lane limiter configs itself. The former BuyAdapter rate-limit-cap check is gone with the adapter, #687-A.) |
 | `pause-rehearsal` (testnet only) | `--mode {calldata\|check\|unpause-calldata}` | Sub-5-min N-chain simultaneous-pause drill. `--mode calldata` (default) prints `pause()` calldata for the operator to sign through the Pauser Safe UI; `--mode check` reads `paused()` on every contract and reports elapsed wall-clock vs the 300s budget; `--mode unpause-calldata` prints the inverse for cleanup. Refused on mainnet. |
@@ -83,7 +83,7 @@ Three deploy scripts after the 2026-05-10 modernization sweep
 ### Flags
 
 `deploy-chain.sh` (testnet one-shot, all flags optional):
-- `--skip-defi / --skip-www / --skip-keeper / --skip-indexer / --skip-agent / --skip-cf` — per-app gating for the Cloudflare deploys. `--skip-cf` is the alias for "skip all five".
+- `--skip-app / --skip-www / --skip-keeper / --skip-indexer / --skip-agent / --skip-cf` — per-app gating for the Cloudflare deploys. `--skip-cf` is the alias for "skip all five".
 - `--skip-vpfi` — skip the VPFI lane + Reward OApp.
 - `--fresh` — wipe `addresses.json` + step markers (testnet only; auto-archives prior state).
 - `--resume` — re-run after partial-fail; skips marker-completed steps.
@@ -335,10 +335,15 @@ manual follow-up required when the prerequisites are in place:
    Regenerates the consolidated `deployments.json` that every consumer
    — the React surfaces and all three Workers — reads, with the new
    diamond + facet addresses.
-2. **Frontend build + Cloudflare deploy** (step `[7]` /
-   `phase_cf_frontend`) — runs `npm run build` then
-   `npx wrangler deploy` from `apps/defi/`. Skip with
-   `--skip-frontend` if the build is intentionally lagging.
+2. **App build + Cloudflare deploy** (step `[7a]`) — runs
+   `pnpm run deploy` from `apps/app/`. Use that packaged script, NOT
+   `build` followed by a bare `wrangler deploy`: it sets
+   `REQUIRE_INDEXER_ORIGIN=1`, which turns a missing or misspelled
+   `VITE_INDEXER_ORIGIN` into a hard failure instead of a warning that
+   still ships an app with no offer-book feed, push rail or config
+   snapshot. Skip with `--skip-app` if the build is intentionally
+   lagging. (The flag was `--skip-frontend` and the phase
+   `phase_cf_frontend` before #1854; neither name exists now.)
 3. **Keeper Cloudflare deploy** (phase `cf-keeper`) —
    `pnpm run deploy` from `apps/keeper/`, plus the
    RPC-secret presence check (**hard-fails if a per-chain
@@ -816,14 +821,21 @@ four code edits**:
    `CCIP_REGISTRY_MODULE_OWNER_CUSTOM_<SLUG>` in `.env` alongside it, and
    add the chain id to `CCIP_LANE_CHAIN_IDS` on every chain that should
    route to it.
-4. **`apps/defi/src/contracts/config.ts`** — add the per-chain record,
-   literally spelling out the `VITE_<PREFIX>_*` keys it consumes
-   (`rpcUrl`, `diamondAddress`, `deployBlock`,
-   `metricsFacetAddress`; the historical `vpfiBuyAdapter` /
-   `vpfiBuyPaymentToken` keys are gone with the buy adapter, #687-A).
-   Each chain's env-var name is hardcoded in its record — there is no
-   general "for chainId N read `VITE_<PREFIX>_*`" rule, only the
-   per-chain literal.
+4. **`apps/app/src/chain/chains.ts`** — add the chain's DISPLAY
+   metadata to `CHAIN_META` (name, native gas symbol, and its
+   `rpcUrlEnvKey`, the `VITE_*` name its RPC URL is read from).
+   Addresses are NOT listed here: the connected app treats a chain as
+   supported iff `@vaipakam/contracts/deployments` carries a Diamond
+   for it, so `diamondAddress` / `deployBlock` / facet addresses flow
+   in from the bundle on the next build and this file never holds one.
+
+   > This step changed shape in #1854. The retired connected app kept a
+   > per-chain `ChainConfig` record (see git history before that PR) that
+   > spelled out every `VITE_<PREFIX>_*` key it consumed; miss it and
+   > the env vars were dead text. `apps/app` derives all of that from
+   > the deployments bundle, so only the display metadata and the RPC
+   > env-key name are hand-written. (The historical `vpfiBuyAdapter` /
+   > `vpfiBuyPaymentToken` keys went with the buy adapter, #687-A.)
 
 The `.env`, `.env.local`, `.env.example` files are **just storage** for
 the values those four code rows look up. **Without the four code edits,
@@ -843,7 +855,7 @@ forge script -vv --rpc-url $NEW_CHAIN_RPC_URL \
                                                        # are called in writeChainHeader.
 
 # Frontend side — should compile and the new chainId should appear in the picker
-cd apps/defi && node_modules/.bin/tsc -b --noEmit && npm run dev
+cd apps/app && node_modules/.bin/tsc -b --noEmit && npm run dev
 ```
 
 After those pass, the per-chain runbook (e.g.
@@ -1004,7 +1016,7 @@ cast wallet address --private-key "$KEEPER_PRIVATE_KEY"
 
 # 3. Fold it into the consolidated deployments.json the dapp reads:
 bash contracts/script/exportFrontendDeployments.sh
-pnpm --filter @vaipakam/defi exec tsc -b --noEmit   # consumer still typechecks
+pnpm --filter @vaipakam/app exec tsc -b --noEmit   # consumer still typechecks
 
 # 4. Review `git diff packages/contracts/src/deployments.json` and commit
 #    alongside the deploy.
@@ -1028,8 +1040,9 @@ single consolidated `deployments.json` keyed by `chainId`:
 
 - `packages/contracts/src/deployments.json` — read by
   [`packages/contracts/src/deployments.ts`](../../packages/contracts/src/deployments.ts)
-  (`getDeployment(chainId)`) and folded into the
-  `CHAIN_REGISTRY` by `apps/defi/src/contracts/config.ts`.
+  (`getDeployment(chainId)`) and read directly by
+  `apps/app/src/chain/chains.ts`, which treats a chain as supported iff
+  the bundle carries a Diamond for it.
   The Cloudflare Workers read this same file through
   `@vaipakam/contracts/deployments`; `getChainConfigs(env)` in each
   Worker's `env.ts` consumes it. There is no second copy — the
@@ -1053,7 +1066,7 @@ target. Idempotent: re-running with no upstream changes leaves the
 output byte-identical.
 
 Run it after every contract redeploy *before*:
-- `cd apps/defi && npm run deploy` (so new addresses inline into
+- `cd apps/app && npm run deploy` (so new addresses inline into
   the JS bundle), AND
 - the Worker deploys — `--filter` once per package, since brace
   expansion would hand pnpm `@vaipakam/indexer` as a script name:
@@ -1117,7 +1130,7 @@ What stays operator-side after this consolidation:
   `RPC_*` URLs (carry API keys), `TG_BOT_TOKEN`,
   `PUSH_CHANNEL_PK`, aggregator API keys, keeper private key.
 
-Caveat for CI: `apps/defi/.env.local` is gitignored. The
+Caveat for CI: `apps/app/.env.local` is gitignored. The
 addresses themselves are NOT in `.env.local` anymore, so a CI
 build that doesn't have the operator's local file will still get
 correct Diamond / facet addresses from the committed
@@ -1612,7 +1625,7 @@ deleted with it.
 # (a) Frontend — full Diamond surface (~27 facets). Run on every
 #     facet-touching deploy.
 bash contracts/script/exportFrontendAbis.sh
-cd apps/defi && node_modules/.bin/tsc -b --noEmit && cd ../..
+cd apps/app && node_modules/.bin/tsc -b --noEmit && cd ../..
 git diff packages/contracts/src/abis/
 git commit -am 'Sync frontend ABIs with contracts@<hash>'
 
@@ -1668,14 +1681,166 @@ so a contributor without that checkout still gets a clean run. For
 the production deploy path the sync stays manual on purpose so the
 operator can review each diff before committing.
 
-**Token-icon URL template** (`VITE_TOKEN_ICON_URL_TEMPLATE`) — not
-a deploy artefact; lives in `apps/defi/.env.local` like the RPC URLs
-and feature flags. Default points at the Trust Wallet CDN
-(`assets-cdn.trustwallet.com`); override to the GitHub raw repo or
-a self-hosted registry per the commented examples in
-`apps/defi/.env.example`. Any change requires a frontend rebuild +
-Cloudflare deploy to take effect — same as flipping any other
-`VITE_*` flag.
+**Token-icon URL template** (`VITE_TOKEN_ICON_URL_TEMPLATE`) — **currently
+inert; do not spend time setting it.** It is read only by
+`packages/ui/src/TokenIcon.tsx`, and `packages/ui` lost its last consumer
+when the retired connected app was deleted in #1854 (#1963). `apps/app` neither imports
+the package nor lists this variable in its `.env.example`, so setting it
+and rebuilding changes nothing. Historically it selected the icon source
+(Trust Wallet CDN by default, overridable to the GitHub raw repo or a
+self-hosted registry). Restore this step if and when a consumer adopts
+the package.
+
+---
+
+## Cloudflare surface topology — hostname → Worker
+
+Every public surface is a Cloudflare **Worker** (Workers Static Assets
+for the two Vite sites; plain Workers for the three services). This
+table is the operational record of which hostname serves which Worker;
+before #1854 that mapping existed only in the Cloudflare dashboard, so
+nothing in the repository could tell you what `alpha01.vaipakam.com`
+pointed at.
+
+| Hostname | Worker | Source | Notes |
+| --- | --- | --- | --- |
+| `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. **NOT BOUND YET** — the Worker exists, but the hostname awaits a deploy made with operator env. See the cutover note below. |
+| `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
+| `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Authenticated API — a bare `GET /` answering 403 is correct, not an outage. |
+| `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
+| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-triggered; deliberately unbound. |
+| — (no hostname) | `vaipakam-offchain-data-archive` / `-warm` | `ops/` | Scheduled ops Workers. |
+| `defi.vaipakam.com` | `vaipakam-defi` | *(source deleted #1854)* | Retire per the cutover note below. |
+| `alpha02.vaipakam.com` | `vaipakam-alpha02` | *(source deleted #1854)* | Retire per the cutover note below. |
+| `alpha.vaipakam.com` | `vaipakam-alpha` | *(source deleted #1854)* | Prototype — safe to delete outright. |
+| `alpha01.vaipakam.com` | `vaipakam-alpha01` | *(source deleted #1854)* | Prototype — safe to delete outright. |
+
+### How a hostname gets bound
+
+**For every surface in the table above except the indexer, the binding
+is NOT in `wrangler.jsonc`.** Those apps declare no `routes` key, so
+`wrangler deploy` publishes the script and nothing else — the hostname
+is attached out-of-band as a Workers **Custom Domain**, which
+provisions the DNS record and certificate for you. Prefer a Custom
+Domain over a Route: a Route needs a pre-existing proxied DNS record
+and only pattern-matches an existing zone setup.
+
+`apps/indexer` is the exception, and the only one in the tree: it
+declares `routes` with `custom_domain: true`, so `wrangler deploy`
+creates and maintains `indexer.vaipakam.com` itself. Do not hand-bind
+that one — you would be creating by API what its config already owns.
+Check for a `routes` key before reaching for the `curl` below; this
+paragraph said "no app declares one" until that was checked against
+the configs rather than assumed.
+
+Binding is idempotent, so re-running is safe:
+
+```bash
+curl -s -X PUT \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
+  --data '{"environment":"production","hostname":"<host>","service":"<worker>","zone_id":"<zone>"}'
+```
+
+List what is currently bound with `GET .../workers/domains`. Note that
+an account-scoped Workers token can create a Custom Domain — and so
+create its DNS record — while still being denied a direct read of
+`zones/<id>/dns_records`. Do not read that denial as "no DNS access"
+and go hunting for a broader token.
+
+### Deploying a static-assets surface
+
+```bash
+cd apps/app && pnpm run deploy
+```
+
+**Use `pnpm run deploy`. Do not hand-run `pnpm run build && wrangler
+deploy`.** The `deploy` script sets `REQUIRE_INDEXER_ORIGIN=1`, which
+turns the missing-`VITE_INDEXER_ORIGIN` check in
+`apps/app/vite.config.ts` from a warning into a hard failure. A bare
+`build` only warns — by design, so CI and preview builds without
+operator env still pass — so the build-then-deploy form will happily
+publish a production app with no offer-book feed, no push rail and no
+config snapshot. This is not hypothetical: it is how #1958 briefly put
+a config-empty build on the production hostname.
+
+Populate `apps/app/.env.local` first. A build with none of the sixteen
+`VITE_*` operator variables is a preview build, not a deployable one.
+Be precise about what that costs, because the failure is partial:
+chain reads still work — every chain in `apps/app/src/chain/chains.ts`
+carries a public `rpcUrlDefault` and `rpcUrlFor` falls back to it
+whenever the operator variable is empty — so what is missing is the
+KEYED RPC endpoints, not RPC connectivity. Public endpoints are rate
+limited and unsuitable for production traffic. The absent
+WalletConnect project ID is the harder loss: it removes WalletConnect
+pairing outright, while injected and Coinbase connectors keep working.
+So wallet connection is narrowed and reads are throttled, on top of
+the indexer-backed features being gone.
+
+`deploy` runs the build itself, and the build must happen before
+wrangler regardless: `assets.directory` points at `./dist`, and
+wrangler fails on a clean checkout without it. The Worker is created on
+first deploy from the `name` in `wrangler.jsonc` — there is no separate
+"create the Worker" step in the dashboard.
+
+The scripted equivalents differ by script, and the two forms are not
+interchangeable:
+
+```bash
+# Phased scripts — cf-app is a named phase:
+bash contracts/script/deploy-testnet.sh <chain-slug> --phase cf-app
+bash contracts/script/deploy-mainnet.sh <chain-slug> --phase cf-app
+
+# One-shot script — runs end to end; it has no --phase and rejects it
+# as an unknown flag. Use the skip flags to narrow it instead:
+bash contracts/script/deploy-chain.sh <chain-slug>
+bash contracts/script/deploy-chain.sh <chain-slug> --skip-app
+```
+
+Deploying is safe to do **before** merging the branch that renames a
+surface: a newly created Worker has no hostname pointing at it, so it
+can be verified on its `*.workers.dev` URL first, and the domain bound
+once it looks right. That ordering avoids a window where `main`
+advertises a hostname that nothing answers.
+
+### Retiring a surface — redirect, don't delete
+
+**`defi.vaipakam.com` is not retirable yet, and not just for bookmark
+reasons.** The #1854 rename rehomed the connected app but did not port
+every surface the old one served: `apps/app` defines no `/analytics`
+and no `/protocol-console`, so that host is still the only thing
+serving those two public tools, and the marketing site links to them
+there on purpose. Retiring it — or blanket-redirecting it to
+`app.vaipakam.com`, which would land those links on the app's NotFound
+page — breaks them. Port the tools first, then retire. (The NFT
+Verifier is fine: it WAS ported, as `/nft`.)
+
+For a host that is genuinely superseded, converting its Worker into a
+redirect beats deleting it: bookmarks and external links keep working,
+and per-origin browser storage is lost on an origin change regardless,
+so a redirect at least lands people on a working app instead of a dead
+host. `alpha02.vaipakam.com` qualifies today — it was the live
+testnet-review target for months and is cited throughout
+`docs/FindingsAndFixes/`, so a redirect keeps those write-ups
+navigable. Give redirects a bounded life rather than leaving them
+forever. Prototype hosts with no audience (`alpha.vaipakam.com`,
+`alpha01.vaipakam.com`) can just be deleted.
+
+Two user-facing capabilities have no counterpart on the successor and
+must be built before users are moved across, not after: the Terms-of-
+Service gate (#1961 — the contracts delegate that enforcement to the
+client, so its absence means a configured ToS applies to nobody) and the
+Data Rights export/erase controls (#1960 — the marketing site's copy
+cannot substitute, because browser storage is same-origin). Both are
+listed as blockers beside the cutover switch in
+`apps/www/src/lib/appUrl.ts`.
+
+Before retiring ANY origin, check what still depends on it. At minimum:
+`FRONTEND_ORIGIN` in `apps/agent/wrangler.jsonc` (an origin dropped
+from that CSV does not get a clean CORS rejection — `resolveAllowedOrigin`
+falls back to the first entry, so the browser blocks the call), and the
+link helpers in `apps/www/src/lib/appUrl.ts`.
 
 ---
 
@@ -2350,9 +2515,9 @@ the click-time fulfillment-data fetch gate aborts the
 For local `wrangler dev`, create the same secret WITHOUT the
 `--remote` flag so the local dev runtime can resolve it.
 
-### Required: `VITE_AGENT_ORIGIN` (apps/defi env)
+### Required: `VITE_AGENT_ORIGIN` (apps/app env)
 
-The dapp (`apps/defi`) needs to know where the agent Worker
+The dapp (`apps/app`) needs to know where the agent Worker
 lives. Set it per environment in the dapp's `.env.production` /
 `.env.staging`:
 

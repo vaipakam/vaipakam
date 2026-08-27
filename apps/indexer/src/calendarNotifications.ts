@@ -61,7 +61,7 @@ export interface GraceBucketJson {
 }
 
 /** Mirrors LibVaipakam.gracePeriod's zero-bucket default schedule
- *  (same table as apps/alpha02/src/lib/grace.ts). */
+ *  (same table as apps/app/src/lib/grace.ts). */
 export function defaultGraceSeconds(durationDays: number): number {
   if (durationDays < 7) return 3_600;
   if (durationDays < 30) return 86_400;

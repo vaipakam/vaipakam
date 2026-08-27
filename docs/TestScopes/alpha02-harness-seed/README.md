@@ -28,8 +28,10 @@ will not run as-is from this directory.
 - `../testnet-wallets/wallets.json` — four funded dev-wallet keys
   (`lender`, `borrower`, `newLender`, `newBorrower`). Operator-held;
   NEVER commit keys.
-- `SITE_URL` env — the alpha02 deployment to drive (production or a
-  Cloudflare branch preview).
+- `SITE_URL` env — the connected-app deployment to drive (production
+  `app.vaipakam.com`, or a Cloudflare branch preview). Note the
+  snapshot's `driver.mjs` still DEFAULTS to the retired
+  `alpha02.vaipakam.com` — set `SITE_URL` explicitly.
 - Some scripts import a session-local `proxy-setup.mjs` (sandbox
   egress plumbing) — delete that import when running outside such an
   environment.
@@ -41,7 +43,7 @@ will not run as-is from this directory.
 
 ## Promotion path (the intended future)
 
-Port into `apps/alpha02/e2e/` as a two-tier Playwright suite:
+Port into `apps/app/e2e/` as a two-tier Playwright suite:
 
 1. **Deterministic tier** against an Anvil fork of Base Sepolia
    (`anvil --fork-url …`): CI-able, seeds its own offers/loans, uses

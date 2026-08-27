@@ -1,7 +1,8 @@
 # Early-Repayment Options UX Design
 
-Status: Phase 1 implemented on alpha02 (branch
-`claude/early-repayment-options-ui-re7wc1`); later phases proposed.
+Status: Phase 1 implemented in the connected app — `apps/app`, then named
+`apps/alpha02` (branch `claude/early-repayment-options-ui-re7wc1`); later
+phases proposed.
 Companion to [`BasicUserUXSimplification.md`](BasicUserUXSimplification.md)
 (whose wording rules and mode boundary this document inherits) and to
 `docs/FunctionalSpecs/ProjectDetailsREADME.md` §8, the intended-behaviour

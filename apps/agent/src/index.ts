@@ -63,7 +63,8 @@
  * The `/thresholds`, `/link/telegram`, `/diag/record`,
  * `/diag/erasure`, `/diag/erasure/status` and `/diag/legal-hold`
  * endpoints are CORS-locked to `FRONTEND_ORIGIN` — `/diag/legal-hold`
- * is driven from the `apps/defi` protocol console, so it is a
+ * is driven from the protocol console — still on the legacy
+ * `apps/defi` deployment, not ported in #1854 (see #1959) — so it is a
  * browser-facing endpoint; its authorization is the signer's
  * on-chain `ADMIN_ROLE`, checked inside the handler. The Telegram
  * webhook + Frames + quote proxies have their own CORS posture (no
@@ -74,7 +75,7 @@
  * ET-001 — there is no transaction-scan proxy. The pre-sign
  * transaction preview runs entirely in the frontend as a viem
  * `eth_call` simulation against the chain's own RPC (no API key, so
- * no server-side proxy is needed); see `apps/defi`
+ * no server-side proxy is needed); see `apps/app`
  * `useTxSimulation`. The Blockaid → GoPlus migration was dropped:
  * GoPlus's Transaction Simulation API is mainnet-only (3 chains)
  * and Vaipakam runs on testnets — a free `eth_call` covers every
@@ -273,7 +274,7 @@ export default {
     if (url.pathname === '/telegram/test' && req.method === 'POST') {
       return handleTestTelegram(req, resolved);
     }
-    // #1040 phase 1 — support-ticket capture from the alpha02 support
+    // #1040 phase 1 — support-ticket capture from the connected app support
     // widget (rate limit + validation inside the handler).
     if (url.pathname === '/support/ticket' && req.method === 'POST') {
       return handleSupportTicket(req, resolved, resolveAllowedOrigin(req, resolved), ctx);
@@ -295,7 +296,8 @@ export default {
     }
 
     // Legal hold (T-075) — protocol admin places / lifts a hold from
-    // the apps/defi protocol console. Browser-facing, so Origin-gated
+    // the protocol console, which is still on the legacy `apps/defi`
+    // deployment (not ported in #1854; see #1959). Browser-facing, so Origin-gated
     // like the endpoints above; the request itself is signed and the
     // handler verifies the signer holds the on-chain ADMIN_ROLE.
     if (url.pathname === '/diag/legal-hold' && req.method === 'POST') {

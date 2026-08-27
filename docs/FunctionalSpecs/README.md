@@ -97,9 +97,10 @@ That gate is what keeps bugs out of the oracle.
   examples for developers.
 - `TokenomicsTechSpec.md` — VPFI token economics + multi-chain model.
 - `WebsiteReadme.md` — website / product UX.
-- `Alpha02ConnectedApp.md` — alpha02 connected-app behaviour, including guided
-  flows, data freshness, Rate Desk, token safety, support, alerts, and
-  operational controls.
+- `Alpha02ConnectedApp.md` — connected-app behaviour (`apps/app`,
+  `app.vaipakam.com`), including guided flows, data freshness, Rate Desk,
+  token safety, support, alerts, and operational controls. The filename
+  still carries the app's former `alpha02` name.
 
 The two cross-cutting **analysis matrices** (action × actor) now live under
 `docs/DesignsAndPlans/` — they are code-derived analysis of how the live gates

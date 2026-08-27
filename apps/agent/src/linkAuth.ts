@@ -44,8 +44,8 @@ const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 /**
  * Build the exact message a user signs to authorise linking Telegram
  * delivery for their wallet. This string MUST be byte-identical
- * between the wallet prompt the frontends show (`apps/alpha02`
- * `data/alerts.ts`, `apps/defi` `pages/Alerts.tsx`) and the
+ * between the wallet prompt the frontends show (`apps/app`
+ * `data/alerts.ts`, `apps/app` `components/AlertsCard.tsx`) and the
  * reconstruction here, or signature recovery yields a different
  * address and the request is rejected. The wallet is lower-cased so a
  * checksummed and an all-lowercase spelling produce the same message.

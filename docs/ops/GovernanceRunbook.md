@@ -551,10 +551,13 @@ re-opens.
    mirrored copy in `apps/www/src/pages/TermsPage.tsx`. Verify the two
    bodies are byte-identical (modulo HTML wrapping in the React file).
 2. Compute the canonical content hash. **No derivation utility exists
-   in the repo yet, and the frontend does not derive it** —
-   `apps/defi/src/hooks/useTosAcceptance.ts` only reads the on-chain
-   `currentTosHash` and echoes it back in `acceptTerms`, so whatever
-   bytes32 governance commits IS the hash of record. Before first
+   in the repo, and no frontend derives it** — so whatever bytes32
+   governance commits IS the hash of record. (The retired connected app
+   carried a `useTosAcceptance` hook that read the on-chain
+   `currentTosHash` and echoed it back in `acceptTerms`; it was deleted
+   with that app in #1854, and `apps/app` reads no ToS hash at all
+   today. That makes the point below stronger, not weaker: nothing in
+   the tree cross-checks the committed hash against the text.) Before first
    activation (the gate ships dormant, `currentTosVersion == 0`),
    governance must pick and record the derivation — e.g. keccak256
    over the exact committed bytes of `docs/Terms/TermsOfService.md` —

@@ -1,12 +1,16 @@
-# alpha02 Connected App Functional Specification
+# Connected App Functional Specification
 
-This document states the intended behaviour of the alpha02 connected app. It is
-the alpha02-specific functional spec distilled from the release notes through
-2026-08-12. It is intentionally written without implementation snippets.
+This document states the intended behaviour of the Vaipakam connected app —
+`apps/app`, whose destination hostname is `app.vaipakam.com` (not yet
+bound — see #1854). It is the app-specific functional
+spec distilled from the release notes through 2026-08-12. It is intentionally
+written without implementation snippets. (The app was called `alpha02` and
+served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old
+name only in its filename.)
 
 ## Purpose
 
-alpha02 is the beginner-first connected app for Vaipakam's pre-live testnet
+The connected app is the beginner-first surface for Vaipakam's pre-live testnet
 experience. It should let non-expert users borrow, lend, rent NFTs, manage
 positions, claim funds, and understand risks before signing. Advanced users can
 reveal denser market and management tools without leaving the same product.
@@ -46,7 +50,7 @@ reveal denser market and management tools without leaving the same product.
 
 ## Data Authority and Freshness
 
-alpha02 uses chain reads and indexed reads for different jobs.
+The app uses chain reads and indexed reads for different jobs.
 
 - Chain reads are authoritative for the connected wallet's current positions,
   claimability, offer and loan detail pages, ownership, and submit-time safety.
@@ -566,7 +570,7 @@ Thin-market honesty rules apply.
   every advertised language, and a second check asks the question key
   presence cannot: does the key hold anything other than the English
   string? Several hundred `(key, locale)` pairs still do — Hindi carries
-  the bulk of them, and `apps/alpha02/src/i18n/english-valued-baseline.json`
+  the bulk of them, and `apps/app/src/i18n/english-valued-baseline.json`
   is the current count, deliberately not restated here — and every one is
   recorded, dated, and enforced in both
   directions: a text that regresses to English fails the build, and one
@@ -672,14 +676,14 @@ Thin-market honesty rules apply.
   describe endpoints for market, loan, offer, activity, freshness, and
   transparency reads, but it must not expose wallet-private state,
   secrets, write authority, or action shortcuts.
-- The crawl policy for alpha02 must be consistent in both rendered
+- The crawl policy for the app must be consistent in both rendered
   pages and response headers: a crawler that does not execute
   JavaScript sees the same indexable / noindex decision that a browser
   sees after the app loads.
 
 ## Privacy and Legal Posture
 
-- alpha02 does not require KYC for the retail flow.
+- The app does not require KYC for the retail flow.
 - The Help page states that Vaipakam is decentralized and non-custodial, no KYC
   is required, and users are responsible for their own regulatory compliance.
 - Support reports and diagnostics minimize personal data.
@@ -688,7 +692,7 @@ Thin-market honesty rules apply.
 
 ## Regression Expectations
 
-alpha02 should maintain an executable regression tier that drives the real app
+The app should maintain an executable regression tier that drives the real app
 against a forked testnet state.
 
 Coverage should include:

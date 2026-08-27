@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "Shared internationalisation core for Vaipakam apps. Owns the pieces that must never drift between surfaces: the SUPPORTED_LOCALES registry + native-label map, the do-not-translate glossary + style notes fed to the translation engine, the RTL locale set + <html dir> applier, the i18next bootstrap factory (cookie-seeded cross-subdomain detection chain extracted from apps/www), and the generalised Claude-API translate script. Each app keeps ONLY what genuinely differs per surface: its locales/*.json bundles, its TRANSLATED_LOCALES subset (drives hreflang/sitemap/SEO shells), and its picker visibility flags. Third copy of this machinery (frontend → www → alpha02) was the trigger for the hoist — see docs/DesignsAndPlans/I18nPlan.md.",
+  "description": "Shared internationalisation core for Vaipakam apps. Owns the pieces that must never drift between surfaces: the SUPPORTED_LOCALES registry + native-label map, the do-not-translate glossary + style notes fed to the translation engine, the RTL locale set + <html dir> applier, the i18next bootstrap factory (cookie-seeded cross-subdomain detection chain extracted from apps/www), and the generalised Claude-API translate script. Each app keeps ONLY what genuinely differs per surface: its locales/*.json bundles, its TRANSLATED_LOCALES subset (drives hreflang/sitemap/SEO shells), and its picker visibility flags. Third copy of this machinery (frontend → www → the connected app) was the trigger for the hoist — see docs/DesignsAndPlans/I18nPlan.md.",
   "exports": {
     ".": {
       "types": "./src/index.ts",

@@ -55,7 +55,11 @@
  *
  * Usage (operator machine):
  *   node apps/www/e2e/live/live-wallet-telemetry.mjs \
- *     https://defi.vaipakam.com/ https://alpha01.vaipakam.com/ https://alpha02.vaipakam.com/
+ *     <deployed-app-origin>/
+ *
+ * Pass the app deployment you want checked. `app.vaipakam.com` is the
+ * intended host but is NOT bound yet (#1854), so today that means the
+ * workers.dev URL `pnpm run deploy` prints for `vaipakam-app`.
  *
  * From the agent container, add the two launch overrides and the
  * host-side setup described in this directory's README:
@@ -272,7 +276,7 @@ for (const url of targets) {
     navigatedOk = true;
 
     // Witness 1 — the APP rendered, not merely "#root has children".
-    // alpha02 ships a static `#boot-splash` INSIDE `#root` in its
+    // app ships a static `#boot-splash` INSIDE `#root` in its
     // server HTML, so a children-count test is already true before any
     // React render and would bless a bundle that never mounted (Codex
     // #1838 r3). React replaces `#root`'s children on mount, so the

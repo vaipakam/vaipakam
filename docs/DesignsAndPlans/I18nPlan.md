@@ -21,15 +21,17 @@ script (`pnpm --filter @vaipakam/i18n translate -- --locales-dir
 hreflang / sitemap / SEO shells), and its picker visibility flags.
 See `packages/i18n/README.md`.
 
-**alpha02's model differs from www's in one important way**: its
+**The connected app's model differs from www's in one important way**
+(the app was `alpha02` when this was written; it is `apps/app` /
+`@vaipakam/app` since #1854): its
 English strings live in the typed copy catalog
-(`apps/alpha02/src/content/copy.ts`), not in `en.json`. The exported
+(`apps/app/src/content/copy.ts`), not in `en.json`. The exported
 `copy` object is an i18n-aware Proxy (`src/i18n/reactiveCopy.ts`)
 that resolves every string leaf through i18next at access time with
 the English source as `defaultValue` — zero changes at the ~900
 call sites, and no second English catalog to drift.
 `locales/en.json` is the generated **translators' template**
-(`pnpm --filter @vaipakam/alpha02 i18n:template`, drift-checked by
+(`pnpm --filter @vaipakam/app i18n:template`, drift-checked by
 vitest); all 33 non-English locales ship as placeholder `{}` bundles
 that render English until filled in (the operator translates them —
 no machine translations were committed). A `<LanguageRemount>`
@@ -37,8 +39,8 @@ wrapper remounts the page tree on language change so non-subscribed
 components re-read the catalog. Wave-1 picker codes: en, es, zh, hi,
 ja. Parametrized strings (function values in copy.ts) are not yet
 translatable — converting them to i18next interpolation keys is the
-tracked follow-up. Locale URL prefixes + hreflang for alpha02 are
-deferred until the first translated bundle ships.
+tracked follow-up. Locale URL prefixes + hreflang for the connected app
+are deferred until the first translated bundle ships.
 
 ## Stack
 

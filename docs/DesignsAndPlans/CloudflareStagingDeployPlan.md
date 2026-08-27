@@ -22,8 +22,8 @@ unaffected.
 
 | Worker | Domain | What it does | Holds signing key? |
 |---|---|---|---|
-| **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `defi.vaipakam.com/`. Static, wallet-free. | No |
-| **vaipakam-defi** | `defi.vaipakam.com` | The connected app — wallet connect, Dashboard at root, Offer Book, loan flows, Buy-VPFI, Claim Center, plus three wallet-free public-read tools (`/analytics`, `/nft-verifier`, `/protocol-console`). | No |
+| **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `app.vaipakam.com/`. Static, wallet-free. | No |
+| **vaipakam-app** | `app.vaipakam.com` | The connected app — wallet connect, the intent-first Home at root (NOT a dashboard), Offer Book, loan flows, Claim Center, the VPFI fee-discount vault at `/vpfi` (deposits and withdrawals for fee tiers only — the app exposes no purchase surface of any kind), plus the wallet-free NFT verifier at `/nft`. NOTE (#1854): `/analytics` and `/protocol-console` were NOT ported — they remain on the retired `apps/defi` Worker, and the marketing site links them there deliberately, so do not test or redirect them against this Worker (#1959). `/nft-verifier` was the legacy path for the verifier; here it is `/nft`. | No |
 | **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of **borrower-authorised, on-chain-bound** Seaport listings to OpenSea (posted with an empty `0x` signature; the vault's ERC-1271 check validates against a hash bound on-chain). | No on-chain key |
 | **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain transaction key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications, whose EOA owns the channel's 50 PUSH stake and gas |
 | **vaipakam-keeper** | (no public domain — internal Worker, cron-only) | Active write-to-chain — HF watcher + autonomous liquidation (incl. flash-loan liquidation via a non-Diamond contract), daily oracle snapshot, **live** offer/intent matcher, auto-lifecycle extend/roll, keeper-tier writes, commitment batch + report, remit ack, reward-budget remit. See the signing inventory below — and treat it as a floor. | **YES** — single signing-key holder |
@@ -210,7 +210,14 @@ Pre-existing primary infra (untouched until staging is proven):
 
 ## 4. Per-Worker configuration
 
-### 4.1 `vaipakam-defi` (frontend)
+### 4.1 `vaipakam-app` (frontend)
+
+This was `vaipakam-defi` when the plan was written. #1854 retired that
+app and renamed its successor `apps/app` / `vaipakam-app`; the source
+behind `vaipakam-defi` is **deleted**, so it can no longer be built and
+nothing here applies to it. `apps/app/.env.local` is the authoritative
+list — it carries sixteen variables, not the six shown — and the deploy
+is `cd apps/app && pnpm run deploy` (§6 step 6), never a bare build.
 
 Static-asset deploy, build-time env vars (Vite injects at
 `pnpm build`, baked into the JS bundle):
@@ -299,7 +306,17 @@ NO secrets — the frontend bundle is static.
 - **Vars (non-secret):**
   ```
   TG_BOT_USERNAME=<staging bot @-handle>
-  FRONTEND_ORIGIN=https://defi.vaipakam.com,https://labs.vaipakam.com
+  # Entry ZERO is the Frame / notification link host (frames.ts and
+  # periodicPreNotify.ts read split(',')[0]), so it must be a host that
+  # SERVES those paths. It is `defi.` until `app.vaipakam.com` is bound
+  # (#1854). Keep this in lockstep with apps/agent/wrangler.jsonc, which
+  # is authoritative — and keep every still-live origin listed, or their
+  # sites' agent calls fail CORS.
+  # The trailing `workers.dev` entry is the #1854 review origin — the URL
+  # `cd apps/app && pnpm run deploy` prints, which is where the post-deploy
+  # live review runs until `app.vaipakam.com` is bound. Omitting it fails
+  # every agent call the review makes, on CORS.
+  FRONTEND_ORIGIN=https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev
   DIAG_SAMPLE_RATE=1.0
   DIAG_RETENTION_DAYS=90
   ```
@@ -475,16 +492,22 @@ Single source-tree per Worker; no environment-flag gymnastics:
 
 ```
 apps/
-  defi/wrangler.jsonc           # vaipakam-defi
-  labs/wrangler.jsonc           # vaipakam-labs
+  app/wrangler.jsonc            # vaipakam-app   (was defi/ → vaipakam-defi, #1854)
+  www/wrangler.jsonc            # vaipakam-www   (was labs/ → vaipakam-labs)
   indexer/wrangler.jsonc        # vaipakam-indexer
     migrations/                  # D1 schema migrations (moved from ops/hf-watcher)
   agent/wrangler.jsonc           # vaipakam-agent
   keeper/wrangler.jsonc          # vaipakam-keeper
 ```
 
-Each `wrangler.jsonc` declares the right cron, D1 binding, vars,
-and (for indexer + agent) custom-domain `routes`. The previous
+Each `wrangler.jsonc` declares the right cron, D1 binding and vars.
+Custom domains are NOT among them, with one exception: `apps/indexer`
+is the only config in the tree carrying a `routes` key. Every other
+hostname — including `agent.vaipakam.com`, which this section used to
+claim was declared here — is attached out-of-band as a Cloudflare
+Custom Domain, so the repository is not where you look to find out what
+serves a hostname. `docs/ops/DeploymentRunbook.md` carries that map
+(#1854). The previous
 `ops/hf-watcher/` monolith is decommissioned in source as part of
 Stage 3 PR5.
 
@@ -497,12 +520,12 @@ Stage 3 PR5.
 | 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
 | 4 | Operator | Provision **every declared binding on all three Workers** — §4.2 (indexer) + §4.3 (agent) + §4.4 (keeper), by the two mechanisms in §4.5. Do not skip the indexer: wrangler validates Secrets Store bindings at deploy, so a missing `ALCHEMY_WEBHOOK_SIGNING_KEY_*` fails step 5 rather than degrading. (NOT BLOCKAID; that proxy does not exist, #1651) |
 | 5 | Operator | `wrangler deploy` for `apps/indexer`, and the packaged scripts **`pnpm --filter @vaipakam/agent run deploy`** and **`pnpm --filter @vaipakam/keeper run deploy`** for the other two — NOT a bare `wrangler deploy` for either (#1896): those scripts carry `--keep-vars`, and without it wrangler deletes every var absent from `wrangler.jsonc`. For the keeper that is the `FRONTEND_ORIGIN` and optional `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning §4.4 just provisioned; for the agent it is `RECIPIENT_VALIDATING_TOKENS` and `OPENSEA_OFFERS_MAX_PAGES`, which `apps/agent/src/env.ts` reads and its config does not declare — a bare deploy silently switches recipient-token validation off and resets OpenSea pagination. This activates crons + binds `indexer.vaipakam.com`. **HOLD (#1896): the keeper no longer has a cron to activate** — `apps/keeper/wrangler.jsonc` commits `"crons": []` deliberately, because the Worker was being terminated for exceeding CPU on ~100% of invocations. Deploying it is still correct (it keeps the script and bindings current); it simply leaves the keeper unscheduled. Do not "fix" the empty list here. |
-| 6 | Operator | Update `apps/defi/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; `pnpm build && wrangler deploy` `vaipakam-defi`. |
-| 7 | Both | Smoke-test `defi.vaipakam.com` end-to-end against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (no autonomous liquidation). NOT fully alert-only: `runDailyOracleSnapshot` signs on `KEEPER_PRIVATE_KEY` alone and will broadcast on staging regardless — if the window must be write-free, remove the keeper's trigger in the Cloudflare dashboard (*Settings → Trigger Events*) — editing `wrangler.jsonc` after step 5 has already deployed the active schedule changes nothing live. Allow for propagation before treating it as stopped; see `apps/keeper/README.md` (#1466). **HOLD (#1896): skip this step's keeper-trigger actions entirely.** The keeper already has no trigger — step 5 deploys `"crons": []` — so there is nothing to remove, and the restore instruction below must NOT be followed: it would re-arm the every-minute invocation that #1896 exists to stop, defeating this hold and step 8. The window is write-free for the keeper by default. Original instruction, for after the hold lifts: **if you take that path, restore the trigger at the end of this step** — step 8 only flips `KEEPER_ENABLED`, so a Worker left with no schedule would make step 9's observation window look quiet while every pass is in fact disabled. |
+| 6 | Operator | Update `apps/app/.env.local` with `VITE_INDEXER_ORIGIN` + `VITE_AGENT_ORIGIN`; then `cd apps/app && pnpm run deploy` — **not** `pnpm build && wrangler deploy`. The packaged script sets `REQUIRE_INDEXER_ORIGIN=1`, which turns a missing or misspelled `VITE_INDEXER_ORIGIN` into a hard failure; a bare build only warns and will publish a configuration-empty Worker (no offer book, push rail or config snapshot). That is not hypothetical — it happened during #1854. |
+| 7 | Both | Smoke-test the app deployment end-to-end — its emitted `workers.dev` URL from step 6, since `app.vaipakam.com` is not bound (#1854) — against `agent.vaipakam.com` + `indexer.vaipakam.com`, with `KEEPER_ENABLED=false` (no autonomous liquidation). NOT fully alert-only: `runDailyOracleSnapshot` signs on `KEEPER_PRIVATE_KEY` alone and will broadcast on staging regardless — if the window must be write-free, remove the keeper's trigger in the Cloudflare dashboard (*Settings → Trigger Events*) — editing `wrangler.jsonc` after step 5 has already deployed the active schedule changes nothing live. Allow for propagation before treating it as stopped; see `apps/keeper/README.md` (#1466). **HOLD (#1896): skip this step's keeper-trigger actions entirely.** The keeper already has no trigger — step 5 deploys `"crons": []` — so there is nothing to remove, and the restore instruction below must NOT be followed: it would re-arm the every-minute invocation that #1896 exists to stop, defeating this hold and step 8. The window is write-free for the keeper by default. Original instruction, for after the hold lifts: **if you take that path, restore the trigger at the end of this step** — step 8 only flips `KEEPER_ENABLED`, so a Worker left with no schedule would make step 9's observation window look quiet while every pass is in fact disabled. |
 | 8 | Operator | **HOLD (#1896): this step cannot pass while the keeper is unscheduled, and that is expected — not a failure to work around.** The canonical schedule is currently `[]`, so skip the readback and the `KEEPER_ENABLED` arming, and record the hold in the run log; step 9's window will be quiet for the keeper by design. Resume this step only after #1896's CPU work lands and the schedule is restored, following the re-enable sequence kept beside the empty list in `apps/keeper/wrangler.jsonc` (which includes `--keep-vars`, a trigger-aware readback, and the propagation wait). The original instruction, for when that happens: read back the keeper's cron and confirm it is the canonical `* * * * *` from `apps/keeper/wrangler.jsonc` — **not merely that some trigger exists**, since a hand-recreated daily schedule would pass a presence check while exercising the keeper far less than intended, leaving step 9's window just as falsely quiet. Only removed if step 7 took the write-free path. Then arm the keeper with `( cd apps/keeper && wrangler secret put KEEPER_ENABLED )`, entering `true` — it is a per-Worker secret, not a var, so there is no `--var` form (§4.5(b)). The flag alone arms nothing without a schedule to run on. |
 | 9 | Both | Run for N days observing for divergence vs prod. |
 | 10 | Both | If green: bind `vaipakam.com` + `www.vaipakam.com` to `vaipakam-labs` (replacing the older `vaipakam` Worker); decommission `vaipakam-hf-watcher` + unbind `api.vaipakam.com`. |
-|   |   | If issues: revert (env-var rollback on `vaipakam-defi`); no prod impact. |
+|   |   | If issues: revert by rebuilding the frontend against the prod origins and redeploying — `cd apps/app && pnpm run deploy` with `apps/app/.env.local` restored. **Not** an env-var edit in the Cloudflare dashboard: these are Vite build-time variables baked into the bundle, so nothing on the Worker side changes them. This row named `vaipakam-defi` until #1854; that Worker's source is deleted and it cannot be rebuilt at all, which is precisely why the rollback target had to move. No prod impact either way. |
 
 ## 7. Open questions / known gaps
 

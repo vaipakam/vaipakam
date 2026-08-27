@@ -503,7 +503,7 @@ land する時点でオファーはすでに `Accepted` 状態です;
    ように料金を分割する代わりに全 ask をセラーにルーティング
    します。上級ユーザーはコレクションの OpenSea required-fee
    スケジュールを 取得 する必要があり(in-repo fee parser
-   `apps/defi/src/lib/openseaFeeSchedule.ts` がリファレンス)、コール前に
+   `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]** がリファレンス)、コール前に
    ask に対して導出された絶対金額を渡す必要があります。Facet は
    内部的にこれらの入力(プラス
    `CollateralListingExecutor.offerContext` に保持される値 —
@@ -564,8 +564,7 @@ land する時点でオファーはすでに `Accepted` 状態です;
    `parameters.totalOriginalConsiderationItems` を追加します
    — OpenSea の API はそれを要求しますが、canonical ハッシュを
    生成する Seaport 構造体の一部ではありません;in-repo
-   パブリッシャー(`apps/defi/src/lib/openseaPublish.ts` +
-   `apps/indexer/src/openseaPublish.ts`)はエンドポイント呼び出し
+   パブリッシャー(`apps/indexer/src/openseaPublish.ts`)はエンドポイント呼び出し
    前にこれを inject します。ERC-1271 検証されたオーダーの場合、
    OpenSea は `signature` フィールドを `0x`(空バイト)として
    受け入れます — ボルトのオンチェーン
@@ -1666,7 +1665,7 @@ keeper に delegate することもできます。ただし initiate step
 
 ### リカバリのフロー
 
-1. [リカバリページ](https://alpha02.vaipakam.com/recover) にアクセスします。
+1. [リカバリページ](https://defi.vaipakam.com/recover) にアクセスします。
 2. トークンのコントラクトアドレス、送金元のソースアドレス、および金額を入力します。
 3. 画面上の同意事項をよく読みます。
 4. "CONFIRM" と入力して、署名を有効にします。

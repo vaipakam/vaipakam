@@ -530,7 +530,7 @@ appears:
 
 ```bash
 bash contracts/script/exportFrontendDeployments.sh
-pnpm --filter @vaipakam/defi exec tsc -b --noEmit
+pnpm --filter @vaipakam/app exec tsc -b --noEmit
 pnpm --filter @vaipakam/keeper exec tsc -p . --noEmit
 pnpm --filter @vaipakam/indexer exec tsc -p . --noEmit
 pnpm --filter @vaipakam/agent exec tsc -p . --noEmit
@@ -850,8 +850,14 @@ Rules:
 ### Live testnet review is part of definition-of-done (user directive 2026-07-05)
 
 Every user-facing change merged to a deployed surface (`apps/*`) gets a
-LIVE review on the deployed testnet site (alpha02.vaipakam.com /
-defi.vaipakam.com) **after the production deploy** — drive the actual
+LIVE review on the deployed testnet site **after the production deploy**.
+Review the deployment you just made: until the #1854 cutover completes,
+`app.vaipakam.com` is NOT bound, so the target is the `workers.dev` URL
+`pnpm run deploy` prints. Do not review `alpha02.vaipakam.com` as a
+stand-in — it serves the frozen `vaipakam-alpha02` Worker, not the
+`vaipakam-app` one the deploy publishes, so a green review there says
+nothing about what shipped. Once the hostname is bound it becomes the
+target. Then — drive the actual
 feature end-to-end with the dev test wallets (the scratchpad Playwright
 driver), and confirm the observable behaviour, not just preview builds,
 typecheck, or CI. Contract-consuming changes additionally verify against
@@ -860,22 +866,22 @@ other source where applicable). Exception: behaviours with no production
 trigger (e.g. deliberate-crash fallbacks) may be verified on a preview
 build, with the exception stated in the PR.
 
-### alpha02 verification coverage — matrix + tiers (user directive 2026-07-06)
+### Connected-app verification coverage — matrix + tiers (user directive 2026-07-06)
 
-Every behaviour-changing PR to `apps/alpha02` updates
-[`apps/alpha02/e2e/COVERAGE.md`](apps/alpha02/e2e/COVERAGE.md) in the
+Every behaviour-changing PR to `apps/app` updates
+[`apps/app/e2e/COVERAGE.md`](apps/app/e2e/COVERAGE.md) in the
 same diff — the same per-PR discipline as release-note fragments and
 functional specs. Two tiers:
 
-- **CI-Anvil (default)**: a Playwright spec under `apps/alpha02/e2e/tests/`,
+- **CI-Anvil (default)**: a Playwright spec under `apps/app/e2e/tests/`,
   run automatically on every PR by the `fork-tier scenarios` job.
 - **Live-only** (stated reason required — deployed Worker, Telegram,
   third-party API, real build env): a committed driver under
-  `apps/alpha02/e2e/live/`, run post-deploy per the live-review DoD and
+  `apps/app/e2e/live/`, run post-deploy per the live-review DoD and
   as a batch via `e2e/live/run-live-batch.mjs` before testnet releases.
 
-The non-blocking `alpha02-coverage-drift` workflow warns on merges that
-change `apps/alpha02/src/` without touching the e2e surface. Never park
+The non-blocking `app-coverage-drift` workflow warns on merges that
+change `apps/app/src/` without touching the e2e surface. Never park
 live-review tooling in the session scratchpad — commit the drive with
 the PR (or its follow-up) so the next regression doesn't rebuild it.
 

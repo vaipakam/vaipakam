@@ -1,7 +1,7 @@
 # Bulk Wallet-Dashboard Read Views (#1025)
 
 **Status:** Design — pending implementation
-**Module:** contracts (with an apps/alpha02 consumer switch to follow)
+**Module:** contracts (with an apps/app consumer switch to follow)
 **Priority:** P3 — pre-mainnet nicety, batched with pre-audit-hardening
 **Origin:** RPC-efficiency review after #1016 chain-authoritative own-positions
 discovery (user-approved 2026-07-05).
@@ -10,7 +10,7 @@ discovery (user-approved 2026-07-05).
 
 ## 1. Problem
 
-`apps/alpha02`'s #1016 own-positions discovery is **chain-authoritative**:
+`apps/app`'s #1016 own-positions discovery is **chain-authoritative**:
 a wallet's open created offers, held offer-NFTs, and held loan positions are
 enumerated directly from the Diamond in a handful of cheap paginated reads,
 then each id is hydrated one-by-one:
@@ -297,7 +297,7 @@ effect) but must ship with the PR — call it out in the rollout so a reviewer
 isn't surprised by the extra JSON churn. One derivation, both facets, zero
 drift.
 
-### 5.4 Consumer switch (apps/alpha02 — follow-up PR, not this contracts PR)
+### 5.4 Consumer switch (apps/app — follow-up PR, not this contracts PR)
 
 - `readOwnOfferRowsLive`: after enumerating the id `Set`, **chunk it into
   `PAGE`-sized slices** and issue one `getOffersWithState(slice)` per chunk,
@@ -418,7 +418,7 @@ rule, not the full regression. All forge commands take the
    re-export touches **both** `MetricsDashboardFacet.json` (new selectors) and
    `MetricsFacet.json` (`internalType`-only churn from the enum hoist, §5.3) —
    expect that second, cosmetic diff.
-3. **Consumer PR (apps/alpha02):** switch `readOwnOfferRowsLive` /
+3. **Consumer PR (apps/app):** switch `readOwnOfferRowsLive` /
    `readOwnLoanRowsLive` to the batch views with the revert-probe fallback.
 4. **Deferred follow-up:** the `getUserDashboard` mega-aggregate (Alternative
    A), only if measurement justifies it over the two-batch approach.

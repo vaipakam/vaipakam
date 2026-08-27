@@ -39,10 +39,11 @@ deploy.
   navigation to `alpha02.vaipakam.com` returns `net::ERR_CONNECTION_RESET` on
   both direct egress and via the agent proxy (the sandbox gateway resets
   Chromium's TLS; `curl` succeeds because it is an allow-listed tool path).
-  This is exactly the class the `apps/alpha02/e2e/live/README.md`
+  This is exactly the class the `apps/app/e2e/live/README.md`
   `LIVE_PROXY_SETUP` undici-shim exists for. **Action for the operator:** run
   the committed read-only driver
-  `apps/alpha02/e2e/live/live-desk-i18n-capture.mjs` (added in this PR — it
+  `apps/app/e2e/live/live-desk-i18n-capture.mjs` (paths as of #1854; both
+  were under `apps/alpha02/` at review time — added in this PR, it
   seeds each locale, loads `/desk`, and screenshots + scrapes the rendered
   `copy.desk.*` text into `shots/desk-i18n/`) from an operator machine or a
   `LIVE_PROXY_SETUP`-shimmed run to eyeball each locale's desk rendering — the

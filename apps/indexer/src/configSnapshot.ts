@@ -327,7 +327,7 @@ export async function maybeRefreshProtocolConfig(opts: {
       ).catch((err: unknown) => {
         // The Diamond's fallback reverts `FunctionDoesNotExist()`
         // (selector 0xa9ad62f8) for an uncut selector — match the
-        // decoded name AND the raw selector, exactly like alpha02's
+        // decoded name AND the raw selector, exactly like the connected app's
         // shared `isMissingSelectorError` does, plus viem's generic
         // wordings (Codex #1298 r4: the spaced-string-only matcher
         // missed the repo's own error, so a pre-getter diamond fell

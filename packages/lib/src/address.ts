@@ -2,7 +2,7 @@
  * Pure ERC20 / EVM address helpers — no i18n, no React, no viem.
  *
  * Lives outside `format.ts` (which is i18n-coupled and stays
- * apps/defi-local until the i18n surface is itself extracted) so
+ * apps/app-local until the i18n surface is itself extracted) so
  * shared components in `@vaipakam/ui` can import a clean address-
  * shortener without pulling the i18n tree.
  */

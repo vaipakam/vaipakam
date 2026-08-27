@@ -469,7 +469,7 @@ then deploy.
    >   about to verify.
    >
    > Deploy the Workers here so bindings validate, and bind
-   > `agent.vaipakam.com`, `defi.vaipakam.com`, the apex and `www` in **§7
+   > `agent.vaipakam.com`, `app.vaipakam.com`, the apex and `www` in **§7
    > step 4**, which exists for exactly this ("update DNS / frontend env
    > vars to point at the new Worker subdomains") and sits after the smoke
    > test. Having to activate the zone early for the indexer's sake is not a
@@ -477,7 +477,7 @@ then deploy.
 
    Every OTHER Worker is the opposite shape: it declares no route, so its
    hostname must be bound by hand in the dashboard after deploy. That
-   includes both public surfaces — `apps/defi` and `apps/www` are
+   includes both public surfaces — `apps/app` and `apps/www` are
    **Workers Static Assets** deployments, NOT Pages projects, so nothing
    in their configs attaches a domain and deploying them leaves the sites
    reachable only on their `*.workers.dev` URLs.
@@ -494,7 +494,7 @@ then deploy.
 
    Reaching the Workers before then is still necessary — the §7 smoke test
    has to hit them — so use their `*.workers.dev` origins for every
-   pre-cutover build and check, and switch `apps/defi/.env.production` to
+   pre-cutover build and check, and switch `apps/app/.env.local` to
    the real hostnames as part of the §7 cutover. Leaving the zone inactive
    without staging those temporary origins is the failure in the other
    direction: the smoke test then has nothing to reach.
@@ -502,7 +502,7 @@ then deploy.
    The inventory, for §7 step 4:
 
    - `agent.vaipakam.com` → `vaipakam-agent`
-   - `defi.vaipakam.com` → `vaipakam-defi`
+   - `app.vaipakam.com` → `vaipakam-app`
    - `vaipakam.com` (apex — the canonical, indexable hostname) →
      `vaipakam-www`, plus `labs.vaipakam.com` → `vaipakam-www` if the
      legacy hostname is still wanted
@@ -627,15 +627,15 @@ then deploy.
 
    > **ORDER MATTERS for the frontend, and it is not obvious.** Vite
    > embeds `VITE_INDEXER_ORIGIN` and `VITE_AGENT_ORIGIN` at BUILD time,
-   > and `apps/defi/.env.production` still carries the OLD account's
-   > hosts. So a `defi` bundle built here calls hosts that no longer
+   > and `apps/app/.env.local` still carries the OLD account's
+   > hosts. So an `app` bundle built here calls hosts that no longer
    > answer, and editing the env afterwards changes nothing until it is
    > rebuilt. `apps/agent` additionally needs an operator-created
    > custom-domain binding — its Wrangler config declares no route.
    >
    > Deploy the WORKERS here, then choose the new origins and create the
-   > agent's custom domain, then update `apps/defi/.env.production` and
-   > **rebuild and redeploy `defi` and `www`** before the smoke test.
+   > agent's custom domain, then update `apps/app/.env.local` and
+   > **rebuild and redeploy `app` and `www`** before the smoke test.
    > The smoke-test step assumes the frontend already points at the
    > restored Workers; it does not do the rebuild for you.
 
@@ -675,14 +675,14 @@ then deploy.
      for the pre-cutover build and bind the real hostname in §7;
    - note the new `indexer` subdomain, and the agent's `workers.dev` origin;
    - set `VITE_INDEXER_ORIGIN` / `VITE_AGENT_ORIGIN` in
-     `apps/defi/.env.production`.
+     `apps/app/.env.local`.
 
    ONLY THEN build and deploy the frontends. Vite embeds those origins at
    BUILD time, so a bundle produced before this point calls the lost
    account's hosts and editing the env afterwards changes nothing:
 
    ```bash
-   pnpm --filter @vaipakam/defi run deploy
+   pnpm --filter @vaipakam/app run deploy
    pnpm --filter @vaipakam/www run deploy
    ```
 
@@ -1480,11 +1480,13 @@ caught at the cheapest stage.
       ```
 
       The `cd` is load-bearing and the subshell above does not carry over —
-      it exits, leaving you at the repository root, whose `wrangler.jsonc`
-      names **`vaipakam-alpha`**. Run bare from there and this reads another
-      Worker's deployment history entirely, so branch A would complete on
-      evidence about the wrong Worker. `--cwd apps/keeper` or
-      `--name vaipakam-keeper` do the same job if you prefer them.
+      it exits, leaving you at the repository root. There is NO wrangler
+      config there any more: the root `wrangler.jsonc` named
+      `vaipakam-alpha` and was deleted with that Worker's source in #1854.
+      So the old failure mode — silently reading another Worker's history —
+      is gone; run bare from the root now and wrangler simply has no config
+      to act on. Supply the context explicitly: `--cwd apps/keeper` or
+      `--name vaipakam-keeper` do the same job as the `cd`.
    2. A trigger-aware readback shows **no** schedule — the `/schedules`
       query later in this step, expected to return an EMPTY `result`. Empty
       is the pass condition here; it is the failure condition in branch B.
@@ -1810,13 +1812,15 @@ caught at the cheapest stage.
    A `KEEPER_PRIVATE_KEY unset` line is the `create` case instead.
 
    **`--config` is not optional here.** Without it, `wrangler secret put`
-   applies to the Worker named in whatever Wrangler config is active — and
-   from the repository root that is `wrangler.jsonc`, which names
-   **`vaipakam-alpha`**, not the keeper. The `( cd apps/keeper && … )` above
-   runs in a subshell, so it does not change your working directory. The
-   command would report success while the keeper's flags stayed exactly as
-   they were, which is the worst possible outcome for a step whose purpose
-   is to fix them.
+   applies to the Worker named in whatever Wrangler config is active, and
+   the `( cd apps/keeper && … )` above runs in a subshell, so it does not
+   change your working directory.
+
+   Since #1854 the root `wrangler.jsonc` is gone — it named the retired
+   `vaipakam-alpha` — so this no longer misfires at another Worker; it
+   fails for want of a config instead. Do not read a config-not-found
+   error as the keeper being misconfigured: it means the command lacked
+   `--config` / `--cwd`, and the keeper's flags are untouched.
 
    `wrangler secret put` creates a secret **for a Worker**;
    `wrangler secrets-store secret create` creates one **within a store**.

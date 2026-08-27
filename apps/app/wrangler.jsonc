@@ -1,0 +1,33 @@
+{
+  // Vaipakam app Worker — Cloudflare Workers Static Assets deploy of the
+  // apps/app Vite SPA build. Destined for `app.vaipakam.com`, which is
+  // **NOT BOUND YET**: the Worker exists, but the hostname awaits a
+  // deploy made with operator env present. Deploy with `pnpm run deploy`
+  // (never a bare build — see the guard note in vite.config.ts), bind the
+  // custom domain, then flip `APP_TARGET` in
+  // apps/www/src/lib/appUrl.ts. Until all three happen the marketing
+  // site's links deliberately still resolve to the legacy host.
+  //
+  // apps/app is THE connected app: the naive-user-first surface that
+  // replaced the retired apps/defi (defi.vaipakam.com) in #1854. It was
+  // developed as `apps/alpha02` on alpha02.vaipakam.com; the folder, the
+  // package name and the Worker were renamed together at cutover so no
+  // "alpha" naming survives on the surface users reach.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vaipakam-app",
+  "compatibility_date": "2026-04-23",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    // REQUIRED by wrangler v4 — without it `wrangler deploy` errors
+    // ("missing the required `directory` property") on any clean
+    // checkout. Vite's default outDir; run `pnpm run deploy` (build
+    // first) so the directory exists.
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
+}

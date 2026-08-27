@@ -756,7 +756,7 @@ rounds, and both options above fix it.
 
 ## 7. Rollout is per-chain, not per-selector
 
-alpha02 talks to several heterogeneous Diamonds, and `LoanSaleFlow` already
+The connected app (`apps/app`) talks to several heterogeneous Diamonds, and `LoanSaleFlow` already
 gates listing to Base Sepolia and Arbitrum Sepolia because BNB Testnet lacks
 an earlier cut. Registering a selector in the deploy scripts therefore says
 nothing about whether a given chain has it: call `saleExitPreview` on a chain

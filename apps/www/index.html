@@ -37,8 +37,11 @@
 
          Read order (mirrors ThemeContext + i18n bootstrap):
            (1) `vaipakam_theme` / `vaipakam_lang` cookie at the
-               `.vaipakam.com` parent scope — cross-subdomain truth
-               so a choice on defi.vaipakam.com is honoured here.
+               `.vaipakam.com` parent scope. LANGUAGE only in practice:
+               the connected app reads that cookie, but it does NOT read
+               or write the shared THEME cookie (it keeps theme in its own
+               origin's storage), so a theme picked there is not honoured
+               here. See packages/lib/README.md.
            (2) localStorage `vaipakam-theme` / `vaipakam:language` —
                same-origin fallback for cookie-disabled clients.
            (3) System / browser preference (`prefers-color-scheme`,
