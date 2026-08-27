@@ -328,6 +328,55 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    /// #1499 / #1970 r1 P1 — the horizon must read `backingPosition`, not a
+    /// hand-added bucket.
+    ///
+    /// `backingPosition` subtracts THREE terms — `recycleBucket`,
+    /// `strandedRecoveryReserved`, and the recovery position — while the first
+    /// draft added only the bucket. With a stranded reservation outstanding the
+    /// claim's room is smaller than a bucket-only view believes, so the horizon
+    /// called entries executable that the claim refuses and the notice clock
+    /// accrued against a claimant with no working path.
+    ///
+    /// STRADDLE (this is what makes the cell discriminate, and four cells on
+    /// this card were vacuous for lacking it): with `stranded` reserved,
+    ///     bucket-only need   = fresh + bucket             <= balance   (passes, wrongly)
+    ///     backingPosition need = fresh + bucket + stranded  > balance   (pauses, correctly)
+    /// so the balance is placed strictly between them.
+    function testHorizonHonoursStrandedRecoveryReservation() public {
+        (uint256 id, ) = _seedPayable(alice, 91);
+        // 180 is the setter's MINIMUM (bounds-checked to [180, 1095]).
+        _cfg().setRewardClaimHorizonDays(180);
+        _mut().setRecycleBucketRaw(1 ether);
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids);
+        (, uint64 before_) = _lens().getRewardEntryExpiry(id);
+        assertTrue(before_ != 0, "fixture: countdown live");
+
+        // Measured, not assumed: `_seedPayable`'s return over-states this
+        // entry's own share, which is what made an earlier straddle miss by
+        // 38 wei.
+        (uint256 freshNow, , ) = _lens().previewInteractionRewards(alice);
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        uint256 stranded = 5 ether;
+
+        // Leave room for exactly `fresh` above the bucket — so a bucket-only
+        // predicate is satisfied — then reserve `stranded` on top, which only
+        // `backingPosition` subtracts.
+        _mut().setRecycleBucketRaw(bal - freshNow);
+        _mut().setStrandedRecoveryRaw(address(0xD1), 1, stranded, 1, 4);
+
+        vm.warp(block.timestamp + 5 days);
+        (, uint64 after_) = _lens().getRewardEntryExpiry(id);
+        assertGt(
+            after_,
+            before_,
+            "deadline must RECEDE - a stranded reservation shrinks the claim's room, so the clock pauses"
+        );
+    }
+
     function testUnderfundedClaimIsRefusedAndLosesNothing() public {
         (, uint256 expected) = _seedPayable(alice, 42);
 
