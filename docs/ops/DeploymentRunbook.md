@@ -2097,12 +2097,21 @@ take a few minutes; nothing else to do.
 
 ### 8d. Server-side error capture
 
+> **DORMANT — nothing calls this today (#1969).** The endpoint is
+> deployed and works, but `apps/app` contains no reference to
+> `/diag/record`, `VITE_APP_VERSION` or `VITE_DIAG_DRAWER_ENABLED`; the
+> only clients lived in the retired connected app. **Everything below
+> describes how capture behaves WHEN a consumer exists.** An operator
+> checking whether capture is healthy will find an empty table, and that
+> is correct rather than an outage. Porting a consumer is part of
+> #1959's unported-surface work.
+
 `POST /diag/record` is served by the AGENT Worker
-(`apps/agent/src/index.ts`) — the frontend fires-and-forgets one
-POST per UI failure event so support has a server-side audit trail
-(UUID embedded in any GitHub-issue prefill cross-references back to
-a real session). It writes to the shared `vaipakam-archive` D1 that
-all three Stage 3 Workers bind.
+(`apps/agent/src/index.ts`). The design is fire-and-forget: one POST per
+UI failure event, giving support a server-side audit trail whose UUID
+cross-references any GitHub-issue prefill back to a real session. It
+writes to the shared `vaipakam-archive` D1 that all three Stage 3
+Workers bind.
 
 **One-time setup (per environment)**:
 
@@ -2129,11 +2138,24 @@ all three Stage 3 Workers bind.
    false green. `AGENT` below is `https://agent.vaipakam.com` only when
    the environment under test IS production.
 
-   The id must be **fresh on every run**: `diag_errors.id` is a
-   `TEXT PRIMARY KEY` (`apps/indexer/migrations/0003_diag_errors.sql:35`)
-   and `apps/agent/src/diagRecord.ts:384` does a plain `INSERT` with no
-   conflict handling, so a fixed UUID succeeds once per database and
-   then fails with a constraint error on every later run.
+   Two values must be **fresh on every run**, for different reasons.
+
+   The **id**, because `diag_errors.id` is a `TEXT PRIMARY KEY`
+   (`apps/indexer/migrations/0003_diag_errors.sql:35`) and
+   `apps/agent/src/diagRecord.ts:384` does a plain `INSERT` with no
+   conflict handling — a fixed UUID succeeds once per database and then
+   fails with a constraint error on every later run.
+
+   The **fingerprint**, because a fresh id is not enough. `diagRecord.ts`
+   dedups on a hash of `area|flow|step|errorType|errorName|errorSelector`
+   and suppresses the write when the **last five rows in the whole table**
+   share it (`exceedsConsecutiveCap`, lines 224-241). That check is
+   global, not per-user, and this endpoint has no shipping consumer to
+   interleave anything else — so on a quiet environment the sixth
+   consecutive smoke test with constant `area`/`flow` answers
+   `{"recorded":false,"reason":"streak_cap"}` and the verification query
+   comes back empty. That is the dedup working, not a broken deploy.
+   Varying `step` per run keeps each smoke test its own fingerprint.
 
    ```bash
    AGENT=https://agent-<env>.<account>.workers.dev   # production: https://agent.vaipakam.com
@@ -2147,7 +2169,8 @@ all three Stage 3 Workers bind.
        "id":"'"$ID"'",
        "client_at":'"$(date +%s)"',
        "area":"smoke-test",
-       "flow":"runbook-8d"
+       "flow":"runbook-8d",
+       "step":"'"$ID"'"
      }'
    # Expect: {"recorded":true,"id":"<the same $ID>"}
    ```
@@ -2189,7 +2212,8 @@ The optional `VITE_APP_VERSION` (CI-injected commit hash) gets stamped on
 each captured row for release-correlation.
 
 A second frontend var, `VITE_DIAG_DRAWER_ENABLED` (default
-`true`), gates the user-facing Diagnostics drawer + FAB. Set
+`true`), gates the user-facing Diagnostics drawer + FAB — again, in a
+consumer that does not currently exist. Set
 to `"false"` once server capture is observed healthy in
 production to hide the drawer entirely — server capture
 keeps running regardless. The user can still grab their

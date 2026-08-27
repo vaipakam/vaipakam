@@ -49,6 +49,17 @@ The third was a diagnostics smoke test. It would fail cleanly, which is
 the best of the three outcomes, but reads as an outage of a service that
 is healthy.
 
+The smoke test needed one more fix that only becomes visible once it can
+run at all. Beyond a unique identifier per attempt, each run also needs
+to look like a *different* event: the service deduplicates on the shape
+of a report and stops writing when the last several records in the whole
+table are identical. That check is global rather than per-user, and with
+no consumer sending anything else, a run of identical smoke tests trips
+it — the sixth returns a polite refusal and the verification query comes
+back empty, which reads as a broken deploy but is the deduplication
+working exactly as designed. The documented payload now varies per run,
+and the refusal is written down so nobody debugs it as a fault.
+
 One correction went further than repointing. The section describing how
 the frontend connects to that endpoint said a now-retired variable was
 read and already configured. Neither was true, and the endpoint has no
@@ -56,6 +67,15 @@ consumer in the shipping app at all — its only callers lived in the
 retired connected app. The section now leads with that, because an
 operator configuring something nothing calls will be confused by
 silence, not by an error.
+
+That correction then had to be made in three places rather than one. The
+same section elsewhere described the frontend firing a report on every
+failure, and two further settings shaping what gets captured — none of
+which exist in the shipping app. The section now says once, at the top,
+that the whole feature is dormant and that everything below describes how
+it will behave when something calls it. An empty table is the correct
+observation today, and an operator checking capture health deserves to
+know that before reading three pages about it.
 
 Left alone deliberately: the incident runbook already tells operators to
 use the correct host and explicitly not this one, the staging plan
