@@ -1977,6 +1977,26 @@ library LibInteractionRewards {
         address user
     ) private view returns (uint256 payout) {
         (payout, ) = _userEntriesUpperBound(s, user);
+
+        // Codex r4 P2 — the finalized legacy WINDOW, which
+        // `claimInteractionRewards` settles before the entries. Removing the
+        // now-unread `freshRaw` return, I bounded the edit by the next closing
+        // brace instead of by an exact string and took this block with it, so
+        // the helper silently became entry-only while still being used as a
+        // claim oracle. No cell exercises the window path, so the suite stayed
+        // green over it.
+        (uint256 today, bool active) = currentDayOrZero();
+        if (!active || today == 0) return payout;
+        uint256 last = s.interactionLastClaimedDay[user];
+        uint256 lastFinalized = today - 1;
+        if (last >= lastFinalized) return payout;
+        uint256 fromDay = last + 1;
+        uint256 windowLast =
+            fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
+        uint256 toDay = windowLast < lastFinalized ? windowLast : lastFinalized;
+        (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
+        if (!any) return payout;
+        payout += previewForUserWindow(user, fromDay, effectiveTo);
     }
 
     /// @dev The SUFFICIENT VPFI balance the user's atomic claim needs to NOT
@@ -3803,41 +3823,34 @@ library LibInteractionRewards {
         uint256 earmarked = bal > unearmarked ? bal - unearmarked : 0;
         need = freshTotal + earmarked;
 
-        // NO SECOND CONDITION, and the reasoning is worth keeping because two
-        // review rounds have now proposed one.
+        // SECOND CONDITION — the RECYCLED transfer must also settle.
         //
-        // r2 asked for a transferability test: with `bal <= bucket`,
-        // `unearmarked` floors to zero and `earmarked == bal`, so `need`
-        // becomes `freshTotal + bal` and the gate reduces to `freshTotal == 0`
-        // — vacuous for a recycled-only claim. r3 then found that the test I
-        // added for it compared against `_userEntriesUpperBound`, which prices
-        // every entry independently and over-states any group sharing a D1
-        // ceiling: two armed 0.4 entries jointly capped to 0.5 made `need` 0.8
-        // against a claim that pays 0.5, pausing an executable claim forever.
+        // Three rounds converged on this. r2 asked for a transferability test;
+        // r3 correctly rejected the one I wrote, because it sourced `payout`
+        // from `_userEntriesUpperBound` and so over-stated the FRESH side for
+        // any group sharing a D1 ceiling; r4 found that deleting it outright
+        // restored the fail-open state r2 had reported.
         //
-        // The claim-exact figure r3 asks for is NOT ASSEMBLABLE here.
-        // `_dryRunShareOfPoolDays` returns `(userTotal, armedTotal)` with no
-        // recycled split; `_userArmedFreshNeed` spans BOTH destinations (a
-        // forfeited entry's legacy slice spends the pool on its way to
-        // treasury); `previewForUserEntries` is a total. Reconstructing the
-        // user's grouped recycled share needs a new engine return and a new
-        // staticcall surface — a facet change, not an expression here.
+        // The state is real: with `freshTotal == 0` and
+        // `bal < userRecycled <= bucket`, `unearmarked` floors to zero, `need`
+        // becomes `bal`, and the outer check passes. `_recycledDrought` passes
+        // too, because it compares the obligation against the BUCKET, never
+        // against the live balance. The claim then reverts on the transfer
+        // while the horizon accrues — and eventually EXPIRES — an entry its
+        // owner could not have claimed. Fail-open on an expiry clock destroys
+        // the entry; fail-closed only delays the reap, so the direction of the
+        // error matters more than its size here.
         //
-        // The state actually left uncovered is narrow: `bal < userRecycled <=
-        // bucket`, which additionally requires an ARMED deploy, because
-        // {_entryPriceCore} clamps `recycled` to the armed amount and every
-        // current chain has `governorCommitArmedFromDay == 0` — so no entry
-        // carries a recycled share at all, and a claim with `freshTotal == 0`
-        // is already non-executable on `_poolCappedPayable(toUser) != 0`.
-        // {_recycledDrought}, in the same conjunction, covers the rest by
-        // testing the user's aggregate recycled against the live bucket.
-        //
-        // A `bucket > need` guard would close it, and is deliberately NOT here:
-        // it is stricter than the requirement (it pauses whenever the bucket is
-        // under-backed, even where `userRecycled <= bal`), and over-strictness
-        // stalling a live clock is the exact harm r3 objected to. Shipping it
-        // unexercised — the fixture cannot reach an armed recycled entry — would
-        // be trading a demonstrated regression for an undemonstrated one.
+        // Keyed on the recycled upper bound from the SAME walk
+        // {_recycledDrought} reads, deliberately. That gate already accepts
+        // this bound for exactly this quantity ("needs an UPPER bound"), and
+        // over-pausing is documented there as claimant-protective. This is not
+        // the r3 mistake: that was an upper bound standing in for the FRESH
+        // term, which the exact `freshTotal` above now covers; the recycled
+        // side has no exact grouped figure in this library, and bounding it the
+        // way its neighbour does keeps ONE convention rather than two.
+        (, uint256 recycledUpper) = _userEntriesUpperBound(s, user);
+        if (recycledUpper > need) need = recycledUpper;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
