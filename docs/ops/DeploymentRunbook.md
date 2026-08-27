@@ -2077,12 +2077,12 @@ Telegram + Push Protocol. This section is one-time setup and does
    - `PUT /thresholds` writes REAL users' alert settings to the shared
      `vaipakam-archive` D1 — not a copy.
    - The Telegram-link endpoints bind real chats.
-   - **Support tickets page real operators.** `apps/app/src/data/
-     support.ts` posts to the same origin, and `apps/agent/src/
-     supportTicket.ts` writes the shared `support_tickets` table and
-     notifies the ops Telegram chat through `TG_OPS_BOT_TOKEN` /
-     `TG_OPS_CHAT_ID`. A test ticket typed into a preview build is a
-     durable row and a real page.
+   - **Support tickets page real operators.** The support client
+     (`apps/app/src/data/support.ts`) posts to the same origin, and the
+     handler (`apps/agent/src/supportTicket.ts`) writes the shared
+     `support_tickets` table and notifies the ops Telegram chat through
+     `TG_OPS_BOT_TOKEN` / `TG_OPS_CHAT_ID`. A test ticket typed into a
+     preview build is a durable row and a real page.
 
    **Using a test wallet does not help with that last one** — tickets
    carry no wallet identity, so there is nothing for the test wallet to
