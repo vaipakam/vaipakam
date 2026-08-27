@@ -637,8 +637,10 @@ no upstream changes leaves the output byte-identical.
 
 This replaces the previous fan-out of
 `VITE_<CHAIN>_DIAMOND_ADDRESS` /
-`VITE_<CHAIN>_*_FACET_ADDRESS` env vars in `apps/app/.env.local`
-and the empty `DIAMOND_ADDR_*` placeholders in
+`VITE_<CHAIN>_*_FACET_ADDRESS` env vars — which lived in the
+connected app that #1854 retired, NOT in `apps/app`, whose
+`src/chain/chains.ts` has always read the consolidated bundle
+directly — and the empty `DIAMOND_ADDR_*` placeholders in
 `apps/keeper/wrangler.jsonc:vars` — both surfaces are now
 read from the consolidated JSON. After running the script:
 - `cd apps/app && npm run deploy` — vite inlines the new

@@ -62,6 +62,6 @@ No secrets — there's nothing here that requires server-side credentials. `apps
 
 ## Related
 
-- `apps/app` — the connected app at `app.vaipakam.com`. Shares a marketing-content base; the connected app overlays wallet + on-chain reads on top.
+- `apps/app` — the connected app. An INDEPENDENT tree, not an overlay: it was developed separately and shares no source with this one (which is why, as noted above, neither can regress the other). The only coupling is the cross-domain links in `src/lib/appUrl.ts`. The "overlay on a shared marketing base" description belonged to the app this one replaced.
 - `packages/ui` — React primitives, ORPHANED since #1854: nothing imports them (this app keeps only an unused dependency entry), and nothing typechecks the package either. See its README and #1963.
 - `packages/lib` — `crossDomainPref` (parent-domain cookie helper for preference sync across the two surfaces). LANGUAGE-only in practice today: the connected app reads the language cookie but not the theme one (see the note in `src/context/ThemeContext.tsx`).
