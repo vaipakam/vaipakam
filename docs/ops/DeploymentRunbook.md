@@ -1706,7 +1706,7 @@ pointed at.
 | --- | --- | --- | --- |
 | `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. **NOT BOUND YET** — the Worker exists, but the hostname awaits a deploy made with operator env. See the cutover note below. |
 | `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
-| `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | **403 to every path — under investigation (#1971).** This row used to say a bare `GET /` answering 403 was correct for an authenticated API. The Worker has no global auth gate and 404s unmatched paths, so that was never its own answer; do not use 403 here as a health signal either way. |
+| `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Origin-gated API. A bare `GET /` answering **403 `Forbidden` is correct, not an outage** — `apps/agent/src/index.ts:258` rejects any request whose `Origin` is not in `FRONTEND_ORIGIN`, and a curl sends none. **To actually health-check it, send an allowed Origin**: `curl -H 'origin: https://vaipakam.com' https://agent.vaipakam.com/nope` should return **404**, the Worker's own fallback. 403 with an allowed Origin means that origin is missing from `FRONTEND_ORIGIN`; 403 *without* one proves nothing. (#1971 — filed on the belief this was an outage, closed as designed behaviour.) |
 | `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
 | — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-triggered; deliberately unbound. |
 | — (no hostname) | `vaipakam-offchain-data-archive` / `-warm` | `ops/` | Scheduled ops Workers. |
