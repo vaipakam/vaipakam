@@ -417,7 +417,7 @@ GTT 报价，此到期是报价的原始 GTT 到期时间；出借人接受不�
    缺失），并且直接的 Seaport 填充将把完整 ask 路由到卖方，
    而不是按集合要求分割费用。高级用户必须获取集合的 OpenSea
    required-fee 时间表（in-repo fee parser
-   `apps/defi/src/lib/openseaFeeSchedule.ts` (#1959) 是参考）并在调用前传递
+   `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]** 是参考）并在调用前传递
    针对 ask 派生的绝对金额。Facet 在内部从这些输入（加上它在
    `CollateralListingExecutor.offerContext` 中保留的值 —
    借款人 vault 地址、本金资产、抵押品字段、startTime、

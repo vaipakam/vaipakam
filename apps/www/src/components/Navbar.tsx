@@ -69,8 +69,11 @@ const NAV_GROUPS: NavGroup[] = [
       // convention (Uniswap / Morpho / dYdX all keep
       // their `/markets` / `/explore` / governance dashboards on the
       // app subdomain alongside the wallet-bearing write flows).
-      // Linked out via `appUrl(...)` and opened in a new tab so the
-      // marketing tab stays open behind.
+      // Linked out and opened in a new tab so the marketing tab stays
+      // open behind. TWO helpers, and the split matters: the NFT Verifier
+      // uses `appUrl(...)`, which follows the cutover; Analytics and the
+      // Protocol Console use `legacyToolUrl(...)` because they were never
+      // ported to `apps/app` and only one deployment serves them (#1959).
       { labelKey: 'nav.analytics', href: legacyToolUrl('/analytics'), newTab: true },
       { labelKey: 'nav.nftVerifier', href: appUrl('nftVerifier'), newTab: true },
       { labelKey: 'nav.protocolConsole', href: legacyToolUrl('/protocol-console'), newTab: true },

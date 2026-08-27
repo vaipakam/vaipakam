@@ -139,8 +139,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   //
   // Dual-write to cookie + localStorage:
   //   - Cookie (`Domain=.vaipakam.com`) is the cross-domain source
-  //     of truth — picking dark on labs.vaipakam.com makes
-  //     app.vaipakam.com also dark on the next navigation.
+  //     of truth for surfaces that READ it. The connected app does
+  //     not: `apps/defi` did, `apps/app` does not (see the note at
+  //     the top of this file), so picking dark here does NOT make
+  //     the app dark today. The write is kept so restoring that is
+  //     a one-sided change.
   //   - localStorage is the belt-and-suspenders fallback for
   //     cookie-disabled clients (private mode, strict cookie
   //     blockers) and pre-existing same-origin users.

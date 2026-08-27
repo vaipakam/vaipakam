@@ -467,7 +467,7 @@ fill이 도착할 때까지 오퍼가 이미 `Accepted` 상태입니다;
    fill은 컬렉션이 요구하는 대로 수수료를 분할하는 대신 전체
    ask를 판매자에게 라우팅합니다. 고급 사용자는 컬렉션의
    OpenSea required-fee 일정을 조회해야 하며 (in-repo fee parser
-   `apps/defi/src/lib/openseaFeeSchedule.ts` (#1959)가 참조), 호출 전 ask에 대해
+   `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]**가 참조), 호출 전 ask에 대해
    파생된 절대 금액을 전달해야 합니다. Facet은 내부적으로
    이러한 입력 (플러스
    `CollateralListingExecutor.offerContext`에 보유하는 값 —

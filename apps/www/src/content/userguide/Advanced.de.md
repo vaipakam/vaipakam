@@ -548,7 +548,7 @@ ZWEI-TEILE-Schritt, den die dapp heute NICHT automatisiert:
    Verkäufer, statt die Fees aufzuteilen, wie es die Collection
    verlangt. Erfahrene Benutzer müssen den OpenSea-Required-Fee-
    Zeitplan für die Collection fetchen (der In-Repo-Fee-Parser
-   bei `apps/defi/src/lib/openseaFeeSchedule.ts` (#1959) ist die Referenz) und
+   bei `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]** ist die Referenz) und
    absolute, gegen den Ask abgeleitete Beträge vor dem Aufruf
    übergeben. Der Facet baut intern die kanonischen Seaport
    OrderComponents aus diesen Eingaben (plus Werte, die er in

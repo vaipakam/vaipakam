@@ -899,8 +899,9 @@ is `wrangler tail`, so verify there rather than assuming success.
    builtin portable-package command, not the package's script — #1478.)
 
    `deploy` builds as part of its own pipeline, so a separate `build` is
-   redundant. Confirm afterwards that `/alerts` renders the subscribe
-   link — the page treats an unset value as "no channel" and hides the link
+   redundant. Confirm afterwards that `/settings` renders the subscribe
+   link — the alerts card mounts there, NOT on an `/alerts` route, which
+   the successor app does not define — the page treats an unset value as "no channel" and hides the link
    entirely, which looks like a deliberate design rather than a broken
    deploy.
 5. Update the **Vaipakam Push channel reference** block at the top of this

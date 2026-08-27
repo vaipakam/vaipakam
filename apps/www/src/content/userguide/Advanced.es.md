@@ -549,7 +549,7 @@ que la aplicación NO automatiza hoy:
    dividir las tarifas como la colección requiere. Los usuarios
    avanzados deben consulta el calendario de tarifas obligatorias
    de OpenSea para la colección (el parser de tarifas in-repo en
-   `apps/defi/src/lib/openseaFeeSchedule.ts` (#1959) es la referencia) y pasar
+   `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]** es la referencia) y pasar
    montos absolutos derivados contra el ask antes de llamar. El
    facet internamente construye los `OrderComponents` canónicos
    de Seaport a partir de esos inputs (plus valores que retiene

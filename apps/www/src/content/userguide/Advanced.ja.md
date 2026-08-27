@@ -503,7 +503,7 @@ land する時点でオファーはすでに `Accepted` 状態です;
    ように料金を分割する代わりに全 ask をセラーにルーティング
    します。上級ユーザーはコレクションの OpenSea required-fee
    スケジュールを 取得 する必要があり(in-repo fee parser
-   `apps/defi/src/lib/openseaFeeSchedule.ts` (#1959) がリファレンス)、コール前に
+   `apps/defi/src/lib/openseaFeeSchedule.ts` **[RETIRED #1854 — no live replacement; recover from git history / #1959]** がリファレンス)、コール前に
    ask に対して導出された絶対金額を渡す必要があります。Facet は
    内部的にこれらの入力(プラス
    `CollateralListingExecutor.offerContext` に保持される値 —

@@ -1676,14 +1676,15 @@ so a contributor without that checkout still gets a clean run. For
 the production deploy path the sync stays manual on purpose so the
 operator can review each diff before committing.
 
-**Token-icon URL template** (`VITE_TOKEN_ICON_URL_TEMPLATE`) — not
-a deploy artefact; lives in `apps/app/.env.local` like the RPC URLs
-and feature flags. Default points at the Trust Wallet CDN
-(`assets-cdn.trustwallet.com`); override to the GitHub raw repo or
-a self-hosted registry per the commented examples in
-`apps/app/.env.example`. Any change requires a frontend rebuild +
-Cloudflare deploy to take effect — same as flipping any other
-`VITE_*` flag.
+**Token-icon URL template** (`VITE_TOKEN_ICON_URL_TEMPLATE`) — **currently
+inert; do not spend time setting it.** It is read only by
+`packages/ui/src/TokenIcon.tsx`, and `packages/ui` lost its last consumer
+when the retired connected app was deleted in #1854 (#1963). `apps/app` neither imports
+the package nor lists this variable in its `.env.example`, so setting it
+and rebuilding changes nothing. Historically it selected the icon source
+(Trust Wallet CDN by default, overridable to the GitHub raw repo or a
+self-hosted registry). Restore this step if and when a consumer adopts
+the package.
 
 ---
 
