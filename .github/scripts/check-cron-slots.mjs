@@ -849,6 +849,36 @@ const MUST_FIRE = [
   ['the wording the exemption protected', "// the keeper's cron trigger is reserved rather than spare"],
 ];
 
+/**
+ * ── WHAT A FIXTURE ASSERTING *NO FINDING* MAY MEAN ────────────────────────
+ *
+ * Every entry below, and every `0` in the inventory / summary / stamp cases,
+ * asserts an ABSENCE. Codex #1978 r4 found the trap in that:
+ * `'bolded name skipped'` asserted zero problems on a row the parser could not
+ * read, so it did not merely miss the gap — it encoded the gap as CORRECT, and
+ * closing it failed the selftest and read as a regression. A fixture pinning a
+ * limitation is worse than no fixture, because it recruits the test suite to
+ * defend the defect.
+ *
+ *     A fixture may assert "no finding" ONLY where silence is the RIGHT
+ *     answer — never where it is merely the CURRENT one.
+ *
+ * When you are tempted to pin what the checker happens to do today, you have
+ * found a finding, not a fixture. Write the issue instead.
+ *
+ * Every entry here, and the zero-problem cases elsewhere, were re-read against
+ * that rule after r4 and each asserts a right answer: the CAP is permitted by
+ * design, the reservation policy and the conditional verdict are the shapes
+ * this gate asks for, and "room to spare" / "2 spare bits" / bytecode and
+ * wall-time headroom are other people's budgets.
+ *
+ * (An earlier revision of this paragraph opened "All fourteen entries here".
+ * Two commits later there were seventeen. A restated count, gone stale inside
+ * the comment explaining why not to restate counts — which is either the
+ * funniest instance of this PR's defect or the most convincing one. The number
+ * is gone rather than corrected; `runSelftest` prints the real counts, and it
+ * cannot be wrong about them.)
+ */
 const MUST_NOT_FIRE = [
   // The CONDITIONAL is the correct way to write it, and is what
   // `apps/keeper/wrangler.jsonc` says today. If this ever starts firing, the
