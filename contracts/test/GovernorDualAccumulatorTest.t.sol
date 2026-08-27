@@ -722,6 +722,32 @@ contract GovernorDualAccumulatorTest is SetupTest {
     // vacuous before this one; a green test that cannot fail is what the card
     // exists to stop.
 
+    // #1499 / #1970 r2 P1#2 — GROUPED-ARMED-NEED CELL NOT BUILT, and the
+    // measurement says why rather than my guessing at it.
+    //
+    // A probe (since removed) measured `getUserArmedFreshNeed(alice)` with one
+    // entry and then two, both spanning the armed day 5, cursors advanced by a
+    // real sweep:
+    //
+    //     one entry  : 10082191780821917808210
+    //     two entries: 20164383561643835616420   == EXACTLY 2x
+    //
+    // So the D1 `(user, side, day)` ceiling does NOT bind at this sizing:
+    // grouped and per-entry-summed are the same number, and no fixture built on
+    // it can tell the two apart. An assertion here would have been the sixth
+    // vacuous cell on this card.
+    //
+    // To make it discriminate, the group must EXCEED the ceiling `finalizeDay`
+    // stamps (20% of the side half by default). Either raise the entry sizing
+    // well above that share, or lower `setDayCapThreshold18` for the armed day
+    // BEFORE `_armAndFinalize` stamps the ceiling — the stamp happens at
+    // finalize, so setting it afterwards has no effect.
+    //
+    // The probe also showed the dry-run reads through the side CURSORS, which
+    // only the sweep advances: measured before a sweep, every entry's need
+    // reads 0 — which would have made a grouped-vs-summed comparison trivially
+    // equal as well.
+
     function testP1bFirstCreditedChunkIsTheRemovalPoint() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
