@@ -2074,8 +2074,14 @@ Telegram + Push Protocol. This section is one-time setup and does
    non-production build reaches production state through three surfaces,
    not one:
 
-   - `PUT /thresholds` writes REAL users' alert settings to the shared
-     `vaipakam-archive` D1 — not a copy.
+   - `PUT /thresholds` writes REAL users' alert settings — not a copy —
+     to `vaipakam-archive`. **Do not let that database's name reassure
+     you.** Both Worker configs label it the STAGING database, and
+     `vaipakam-alerts-db` is the production-named one; but
+     `vaipakam-alerts-db` belongs to the retired `vaipakam-hf-watcher`,
+     and `vaipakam-archive` is what the LIVE agent on
+     `agent.vaipakam.com` actually binds. So it holds the records of
+     people using the live site, whatever it is called.
    - The Telegram-link endpoints bind real chats.
    - **Support tickets page real operators.** The support client
      (`apps/app/src/data/support.ts`) posts to the same origin, and the
@@ -2172,8 +2178,11 @@ Workers bind.
 
 3. Smoke test the endpoint:
    There is one agent and one shared database behind it, so this test
-   necessarily writes a row to the SAME `vaipakam-archive` D1 that
-   production uses, whichever environment prompted the check. That is
+   necessarily writes a row to `vaipakam-archive` — the database the
+   live agent binds — whichever environment prompted the check. (That
+   database is labelled STAGING in both Worker configs. The
+   production-named `vaipakam-alerts-db` is the retired watcher's and is
+   bound by nothing today; see the note in §8b.) That is
    accepted — the row is a marked `smoke-test` record, pruned on the
    same 90-day schedule as any other — but it does mean this smoke test
    verifies the shared agent, not an environment-specific deployment,
