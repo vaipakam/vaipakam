@@ -185,6 +185,27 @@ const OCCUPANCY = [
   // word looked specific and was not (`slot`, `schedule`, now `headroom`).
   // Requiring an absence quantifier keeps the claim and drops the measurements.
   /\b(?:no|zero|little|any)\s+(?:cron\s+|trigger\s+)?(?:headroom|capacity\s+(?:left|remaining|free))\b/i,
+  // Codex #1978 r4 removed two restated VERDICTS — "**This step currently
+  // fails**" and "**As things stand this step FAILS**" — but nothing pins the
+  // shape, so a third file can reintroduce it. Every pattern above keys on a
+  // COUNT, and a verdict restates the same live fact with no number in it.
+  //
+  // Keyed on the PRESENT-TENSE MARKER, not on the verb. What makes a verdict a
+  // restatement is that it asserts the state NOW; "If this step fails, that is
+  // the likeliest reason" is the same words about a hypothetical and is the
+  // correct way to write it — it is in `apps/keeper/wrangler.jsonc` today. A
+  // bare `(this|the) step ... fails` fires on that, which would be the fourth
+  // time in this file a pattern proved a word present without reading what the
+  // sentence does with it (`slot`, `schedule`, `headroom`, and the `spare`
+  // lookbehind that cost round 2). The marker is the claim.
+  new RegExp(
+    String.raw`\b(?:this|the)${WRAP}step${WRAP}(?:currently|today|now|at${WRAP}present)${WRAP}(?:fails?|succeeds?|passes)\b`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`\bas${WRAP}(?:things|it)${WRAP}stands?${WRAP}(?:this|the)${WRAP}step${WRAP}(?:fails?|succeeds?|passes)\b`,
+    'i',
+  ),
 ];
 
 /**
@@ -765,6 +786,15 @@ async function runLive() {
 // fixtures never execute is decoration.
 
 const MUST_FIRE = [
+  // Codex #1978 r4: the verdict shape — a live conclusion carrying no number.
+  [
+    'a restated verdict on the capacity step',
+    'Confirm a cron trigger is free. **This step currently fails**: an un-retired Worker holds the reserve.',
+  ],
+  [
+    'a restated verdict in a wrapped comment',
+    '// 3. Confirm a cron trigger is free —\n//    as things stand this step FAILS.',
+  ],
   // The first two are quoted with the neighbouring line they actually had in
   // the tree, because the context token that qualifies them lives there and
   // not on the counting line. A one-line fixture would have pinned a rule
@@ -820,6 +850,15 @@ const MUST_FIRE = [
 ];
 
 const MUST_NOT_FIRE = [
+  // The CONDITIONAL is the correct way to write it, and is what
+  // `apps/keeper/wrangler.jsonc` says today. If this ever starts firing, the
+  // pattern has regressed into mood-guessing.
+  [
+    'a conditional, which is the correct wording',
+    'Confirm a cron trigger is free. If this step fails, that is the likeliest reason.',
+  ],
+  ['a pipeline step failing near cron vocabulary', 'The cron handler retries when a step fails closed.'],
+  ['each-step wording', 'Each step fails closed before the trigger fires.'],
   ['bare cap', '// the free plan caps cron triggers at FIVE per ACCOUNT'],
   ['cap, numeral', 'The Cloudflare Workers free plan caps an account at 5 cron triggers.'],
   ['cap plus error code', '// caps triggers at FIVE per ACCOUNT (API error 10072 on the sixth)'],
