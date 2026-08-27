@@ -35,6 +35,18 @@ would never reach the give-up branch, and an unbounded one would retry
 forever. A configuration typo now fails with a message naming the
 accepted range.
 
+Retrying also exposed something that had been dormant in the original
+single-attempt code. Readiness is watched by a poller racing against the
+process exiting; whichever happens first wins, and the loser is simply
+abandoned. But the poller signals a timeout by failing, and an abandoned
+failure with nobody waiting on it is the kind that can bring down a run
+on its own — roughly two minutes later, long after the real error was
+reported. With one attempt that landed during shutdown and went unnoticed;
+with several it could surface in the middle of a passing suite. The
+poller now reports a timeout as an ordinary result rather than a failure,
+so nothing is ever left to fail unobserved, and the timeout case is
+handled where it is decided instead of escaping through the side.
+
 Retrying also meant being careful about what the teardown step is told
 to clean up. Each attempt's process id is recorded as soon as it starts,
 so a live one is always killable — but a dead one has to come back out

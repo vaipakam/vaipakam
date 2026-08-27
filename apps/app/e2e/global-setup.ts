@@ -123,10 +123,23 @@ export default async function globalSetup(): Promise<void> {
     const anvilDied = new Promise<number>((resolve) =>
       anvil.on('exit', (code) => resolve(code ?? -1)),
     );
-    const anvilOutcome = await Promise.race([
-      waitForAnvil(120_000).then(() => 'ready' as const),
-      anvilDied,
-    ]);
+    // waitForAnvil THROWS on timeout, and it loses this race whenever
+    // the child dies first — leaving an abandoned promise that rejects
+    // ~120s later with nobody awaiting it. With one attempt that landed
+    // during teardown; with retries it can surface mid-suite, failing a
+    // run that already reported a clear error. Convert the timeout into
+    // a value so the promise NEVER rejects, and handle it explicitly.
+    const readyOrTimeout = waitForAnvil(120_000)
+      .then(() => 'ready' as const)
+      .catch(() => 'timeout' as const);
+    const anvilOutcome = await Promise.race([readyOrTimeout, anvilDied]);
+    if (anvilOutcome === 'timeout') {
+      throw new Error(
+        `anvil did not become ready within 120s. Not retried: a timeout ` +
+          `means something structurally wrong rather than a bad moment ` +
+          `upstream, and retrying would only multiply the wait. See #1973.`,
+      );
+    }
     if (anvilOutcome === 'ready') {
       anvilStarted = true;
       break;
