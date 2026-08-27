@@ -19,19 +19,22 @@
   //     the nightly backup (two independent ctx.waitUntil() calls, no
   //     shared state, different scoped B2 keys, different B2 endpoints).
   //
-  // Why one cron instead of two: Cloudflare Workers free plan caps an
-  // account at 5 cron triggers total. apps/{agent,indexer} take one each
-  // (every-minute) and this Worker takes a third — 3 of 5 in use today,
-  // because apps/keeper commits an empty schedule since #1896. Its slot
-  // is RESERVED for its return (re-enable begins by confirming a free
-  // slot), so plan on the pre-#1896 arithmetic of 4 in use. The ops/lz-watcher slot was freed when that Worker was
-  // deleted (#1440) and is currently SPARE: ops/mesh-watcher is the
-  // intended occupant but is code-complete and UNDEPLOYED, so it holds no
-  // slot yet. Deploying it takes the account to 5 of 5. Splitting backup +
-  // healthcheck into two crons here would therefore push past the cap once
-  // mesh-watcher lands, and the deploy fails with CF API error 10072.
-  // Folding healthcheck under the same cron keeps the budget intact. If/when the account upgrades to Workers Paid
-  // ($5/mo, removes the cap), this can split back into two crons.
+  // Why one cron instead of two: the Cloudflare Workers free plan caps
+  // an account at 5 cron triggers total, and this Worker is entitled to
+  // one of them. Folding the Monday healthcheck under the nightly tick
+  // is what keeps it to one; splitting them would cost a second, and the
+  // deploy that pushes past the cap fails with CF API error 10072.
+  //
+  // How much of the budget is actually spoken for is NOT stated here.
+  // It was, for a long time, and it was wrong — the arithmetic in this
+  // comment omitted `vaipakam-offchain-data-archive`, this Worker's own
+  // un-retired predecessor, which has no source in this repository and
+  // has been armed on the same minute as the schedule below (#1977).
+  // `docs/ops/CloudflareCronSlots.md` carries the count, once, with the
+  // date it was last checked against the account.
+  //
+  // If/when the account upgrades to Workers Paid ($5/mo, removes the
+  // cap), this can split back into two crons.
   "triggers": {
     "crons": ["17 3 * * *"],
   },

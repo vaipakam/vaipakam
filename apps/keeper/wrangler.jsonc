@@ -57,9 +57,10 @@
   // EXCLUDE suspects, not name one. Attribution needs a profile.
   //
   // It also returns a cron trigger to the account pool. The free plan
-  // caps triggers at FIVE per ACCOUNT and all five were in use — see
+  // caps triggers at FIVE per ACCOUNT and the pool was full — see
   // `apps/indexer/src/cronRouting.ts`, which records a deploy that
-  // failed for exactly that reason.
+  // failed for exactly that reason, and
+  // `docs/ops/CloudflareCronSlots.md` for what the pool holds today.
   //
   // WHAT STOPS THAT WAS NOT ALREADY STOPPED. FOUR passes run ungated by
   // `KEEPER_ENABLED`, so unscheduling does cost function. Two earlier
@@ -109,15 +110,23 @@
   //      deploy from a clean checkout KEEPS it stopped. The commit is
   //      what makes the restoration durable, so it belongs with the CPU
   //      fix rather than being left to whoever ran the procedure.
-  //   3. Confirm a cron slot is free — the cap is five per account.
-  //      This slot is meant to be waiting: the capacity notes in
-  //      `ops/offchain-data-warm`, `apps/indexer` and
-  //      `docs/DesignsAndPlans/OffChainDataResilience.md` all count the
-  //      keeper's slot as RESERVED rather than spare, precisely so this
-  //      step cannot be blocked by something that moved in during the
-  //      hold (Codex #1924 r9). If it IS taken, that is a real problem
-  //      to resolve here — not something to work around by leaving the
-  //      keeper stopped.
+  //   3. Confirm a cron trigger is free — the cap is five per account,
+  //      and `docs/ops/CloudflareCronSlots.md` is the one place that
+  //      says what is using them. Confirm it against the ACCOUNT
+  //      (`node .github/scripts/check-cron-slots.mjs --live`), not
+  //      against a comment.
+  //
+  //      This slot is meant to be waiting, and an earlier revision of
+  //      this step cited three other capacity notes as evidence that it
+  //      was (Codex #1924 r9). All three were wrong together: none of
+  //      them could see `vaipakam-offchain-data-archive`, a Worker with
+  //      no source in this repository that has been holding a trigger
+  //      the whole time (#1977). **As things stand this step FAILS** —
+  //      the reserve does not exist until that Worker is retired.
+  //
+  //      That is a real problem to resolve here — not something to work
+  //      around by leaving the keeper stopped, and not something to
+  //      settle by reading another comment.
   //   4. `( cd apps/keeper && wrangler deploy --keep-vars )` — or the
   //      equivalent `pnpm --filter @vaipakam/keeper run deploy`, whose
   //      script now carries the flag. RUN IT FROM THIS DIRECTORY: a bare

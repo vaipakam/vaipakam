@@ -4,9 +4,12 @@
  * ── Why this is a shared primitive ───────────────────────────────────
  *
  * Cloudflare's free plan caps cron triggers at FIVE per ACCOUNT, and
- * this account's five Workers already use all five slots. A Worker that
+ * this account has no headroom to spend on a second one. A Worker that
  * wants two cadences therefore cannot register two schedules; it
  * registers ONE every-minute schedule and decides per tick who acts.
+ * (How many triggers are actually spoken for is stated once, with the
+ * date it was last checked against the account, in
+ * `docs/ops/CloudflareCronSlots.md` — not here. #1977.)
  * `apps/indexer/src/cronRouting.ts` learned that from a failed
  * production deploy, and `apps/keeper` needs the same discriminator to
  * stagger its ten passes (#1896).

@@ -278,30 +278,31 @@ read-only for healthcheck). The healthcheck:
 
 The originally-planned shape was a separate Worker cron for the
 healthcheck (running at 09:00 UTC every Monday), but the Cloudflare
-Workers free plan caps an account at 5 cron triggers. Historically four
-were occupied — apps/keeper, apps/agent, apps/indexer and this Worker
-itself — leaving one spare, which `ops/mesh-watcher` would take on its
-FIRST DEPLOY (code-complete but undeployed, §4.5). (`ops/lz-watcher`
-held a slot until #1440 removed it.)
+Workers free plan caps an account at 5 cron triggers, and this Worker is
+entitled to one of them rather than two.
 
-**Since #1896 only THREE schedules are LIVE** — apps/keeper commits
-`"crons": []`, so agent, indexer and this Worker are the ones actually
-running. The arithmetic to plan against is unchanged, because the
-keeper's slot is **reserved, not released**:
+**The budget itself is stated once, in
+[`docs/ops/CloudflareCronSlots.md`](../ops/CloudflareCronSlots.md), with
+the date it was last read from the account.** This section used to carry
+its own table of who holds which slot; that table was wrong, along with
+six other copies of the same arithmetic, because none of them could see
+`vaipakam-offchain-data-archive` — a Worker with no source in this
+repository that has been holding a trigger throughout (#1977). A design
+doc is a particularly bad place for such a count: it is read for
+planning, months after it was written, by someone deciding whether a new
+Worker fits.
 
-| | Slot |
-|---|---|
-| 1–3 | apps/agent, apps/indexer, this Worker — live |
-| 4 | **apps/keeper — reserved**, empty only until #1896's CPU fix lands |
-| 5 | `ops/mesh-watcher` — its slot on first deploy (§4.5) |
+Two design points do survive independently of the count, and they are
+what this section is actually for:
 
-So **deploying mesh-watcher remains correct and expected**: it takes
-the fifth slot, exactly as planned before #1896, and does not touch
-the keeper's. What must NOT happen is treating the keeper's empty
-schedule as spare capacity for some *additional* Worker — its
-re-enable procedure begins by confirming a free slot, so spending that
-one would block re-enable at the account cap with a stopped keeper as
-the cost.
+- **`apps/keeper`'s empty `"crons": []` is not spare capacity.** Its
+  re-enable procedure begins by confirming a free trigger, so spending
+  that one leaves the keeper stopped at the account cap.
+- **`ops/mesh-watcher` needs a trigger on its first deploy** (§4.5),
+  which is a cost to plan for rather than a slot already set aside.
+
+Whether both currently fit is a question for the account, and #1977 is
+where the answer is being worked out.
 
 This Worker is designed for a single cron on that basis rather than
 because the account is already full. Folding the healthcheck into the

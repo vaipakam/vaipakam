@@ -5,16 +5,22 @@
 // The first cut registered TWO schedules (every-minute for the legacy
 // fallback, every-5-minutes for the DO path) and routed by which one
 // fired. That deploy failed in production: the free plan caps cron
-// triggers at FIVE per ACCOUNT, and this account's five Workers already
-// used all five slots — a sixth schedule cannot exist. Same routing,
+// triggers at FIVE per ACCOUNT and the budget was full, so a sixth
+// schedule could not exist. Same routing,
 //
-// #1896 note: apps/keeper now commits `"crons": []`, so THREE slots are
-// live today, not five. That does NOT reopen the two-schedule design —
-// the freed slot is RESERVED for the keeper's return (its re-enable
-// procedure starts by confirming a free slot), and the time-routing
-// below is strictly better than a second trigger anyway: it costs one
-// Worker request on a skipped tick and nothing else. Do not "simplify"
-// this back into two schedules on the strength of temporary headroom.
+// Do NOT reopen the two-schedule design on the strength of apparent
+// headroom. Headroom here is temporary by construction — apps/keeper's
+// empty `"crons": []` since #1896 is a slot RESERVED for its return,
+// not a free one, and its re-enable procedure begins by confirming that
+// slot is still there. The time-routing below is also strictly better
+// than a second trigger regardless: it costs one Worker request on a
+// skipped tick and nothing else.
+//
+// What the budget actually looks like today is stated once, with the
+// date it was last checked against the account, in
+// `docs/ops/CloudflareCronSlots.md`. It is not restated here, because
+// the count belongs to the account rather than to this tree and every
+// copy of it in this repository was wrong at once (#1977).
 // different discriminator: ONE every-minute schedule, and the tick's
 // SCHEDULED TIME decides who acts.
 //

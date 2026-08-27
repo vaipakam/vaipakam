@@ -139,9 +139,11 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     // Cron tick routing — see cronRouting.ts: ONE every-minute schedule
-    // (the free plan caps cron triggers at 5 per ACCOUNT; all five were
-    // taken when this was written, and the slot apps/keeper freed in
-    // #1896 is reserved for its return), routed by the tick's scheduled
+    // (the free plan caps cron triggers at 5 per ACCOUNT and the budget
+    // was full when this was written; the trigger apps/keeper freed in
+    // #1896 is reserved for its return, and the live budget is in
+    // docs/ops/CloudflareCronSlots.md rather than in this comment —
+    // #1977), routed by the tick's scheduled
     // time. The legacy
     // fallback (round-robin = one chain per invocation, so a rollback
     // must keep N×1min freshness) acts every minute; the DO path — where

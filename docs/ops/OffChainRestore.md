@@ -771,19 +771,40 @@ then deploy.
 > reused shell it may still hold a stale value and list the wrong bucket.
 >
 > ```bash
-> # Newest first; use whichever lists your date.
-> B2_BUCKET=vaipakam-offchain-data-warm      # after the switchover
-> # B2_BUCKET=vaipakam-offchain-data-archive # before it, or for older nights
+> # Use the FIRST line. Uncomment the second only as the fallback described
+> # below — both buckets currently hold every recent night, so "whichever
+> # lists your date" no longer picks one.
+> B2_BUCKET=vaipakam-offchain-data-warm      # supported path — start here
+> # B2_BUCKET=vaipakam-offchain-data-archive # fallback, and for older nights
 > ```
 >
 > **The backup service was renamed and a bucket cannot be renamed**, so the
 > replacement was created new and the old `vaipakam-offchain-data-archive`
-> stays live until the replacement has completed a run. Until then the
-> usable archives are in the OLD bucket and the new one is empty or absent.
+> stays live until the replacement has completed a run.
 >
-> So **an empty listing is not "no backups exist"** — re-run against the
-> other bucket before concluding anything. The two never both hold a given
-> night, so whichever lists your date is the one to restore from.
+> **Both are still running, on the same minute** — verified against the
+> account 2026-08-27 (#1977). The old Worker was never retired: it is armed
+> on `17 3 * * *` exactly as the replacement is, with its own B2
+> credentials and its own copy of `BACKUP_ENCRYPTION_KEY`. So **both
+> buckets hold every recent night**, and an earlier version of this box was
+> wrong to say "the two never both hold a given night, so whichever lists
+> your date is the one to restore from". That rule no longer discriminates.
+>
+> While both are armed:
+>
+> - **Prefer `vaipakam-offchain-data-warm`** — the replacement is the
+>   supported path, and its Worker is the one whose source is in this
+>   repository (`ops/offchain-data-warm`). The old Worker's source is not
+>   in the tree at all, so nothing here describes what it writes today.
+> - **Fall back to `vaipakam-offchain-data-archive`** only if the warm
+>   bucket does not list your date, and say so in the incident record — a
+>   gap in the supported bucket is itself a finding.
+> - **An empty listing in ONE bucket is still not "no backups exist"** —
+>   that part stands. Re-run against the other before concluding anything.
+> - The compromise reasoning further down assumes ONE holder of a
+>   `writeFiles` B2 key and one copy of the encryption key. **There are
+>   two.** Treat the old Worker's credentials as in scope for any
+>   rotation.
 >
 > Delete this box once the old bucket is retired: at that point there is one
 > answer, and offering a choice becomes a hazard of its own.
@@ -1549,8 +1570,13 @@ caught at the cheapest stage.
       commit it** — an edit living only in your checkout leaves `[]` on the
       branch, and the next clean-checkout deploy re-unschedules the keeper
       after this procedure has declared success.
-   3. Confirm a cron slot is free (cap is five per account; the keeper's is
-      reserved, not spare).
+   3. Confirm a cron trigger is free — cap is five per account, and the
+      keeper's is meant to be held for it rather than released. Check the
+      ACCOUNT, not a comment: `node .github/scripts/check-cron-slots.mjs
+      --live`, against
+      [`CloudflareCronSlots.md`](CloudflareCronSlots.md). **This step
+      currently fails**: an un-retired Worker is holding the reserve
+      (#1977).
    4. Deploy from the keeper's directory, with the flag — the command shown
       in branch A above.
    5. Read the schedule back trigger-aware — the `/schedules` query below.
