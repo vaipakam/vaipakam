@@ -481,6 +481,35 @@
   },
   {
     "type": "function",
+    "name": "getUserArmedFreshNeedWithLegs",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "armed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "userLegs",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "treasuryLegs",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getUserRewardEntries",
     "inputs": [
       {

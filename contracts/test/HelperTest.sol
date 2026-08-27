@@ -2081,7 +2081,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](21);
+        selectors = new bytes4[](22);
         selectors[0] = InteractionRewardsLensFacet.getInteractionLaunchTimestamp.selector;
         selectors[1] = InteractionRewardsLensFacet.getInteractionCurrentDay.selector;
         selectors[2] = InteractionRewardsLensFacet.getInteractionAnnualRateBps.selector;
@@ -2106,6 +2106,7 @@ contract HelperTest {
         selectors[18] = InteractionRewardsLensFacet.getRecycleBackingSnapshot.selector;
         selectors[19] = InteractionRewardsLensFacet.getRecycledCreditedPreLaunch.selector;
         selectors[20] = InteractionRewardsLensFacet.getUserArmedFreshNeed.selector;
+        selectors[21] = InteractionRewardsLensFacet.getUserArmedFreshNeedWithLegs.selector;
         return selectors;
     }
 

@@ -2129,6 +2129,27 @@ library LibInteractionRewards {
     function userArmedFreshNeedView(
         address user
     ) internal view returns (uint256 armed) {
+        (armed, , ) = userArmedFreshNeedWithLegsView(user);
+    }
+
+    /// @notice Codex #1499 r6 P2 — the armed need TOGETHER WITH the legacy legs
+    ///         the walk's budget is derived from.
+    /// @dev    The legs are a full O(entries) pass and the funding formula needs
+    ///         the same two values, so returning them here is what stops the
+    ///         caller walking the list a second time across the staticcall
+    ///         boundary. The scan runs BEFORE {_dryRunShareOfPoolDays}'s
+    ///         unarmed early return, so the duplicate cost was paid on every
+    ///         chain, armed or not.
+    ///
+    ///         {userArmedFreshNeedView} delegates here rather than repeating the
+    ///         body: one implementation, two shapes.
+    function userArmedFreshNeedWithLegsView(
+        address user
+    )
+        internal
+        view
+        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Codex #1699 r14 P2 — the armed walk only ever spends what is left
         // after the window and legacy legs, so the need must be measured
@@ -2139,19 +2160,23 @@ library LibInteractionRewards {
         // against the allowance it is compared to would be circular).
         // r15 P2 — BOTH destinations reserve: a forfeited entry's legacy
         // slice spends the pool on its way to treasury.
-        (uint256 uL, uint256 tL) = previewForUserEntriesLegacyOnly(s, user);
+        (userLegs, treasuryLegs) = previewForUserEntriesLegacyOnly(s, user);
         (, armed) = _dryRunShareOfPoolDays(
             s,
             user,
             type(uint256).max,
-            _userWalkFreshBudget(s, user, uL + tL)
+            _userWalkFreshBudget(s, user, userLegs + treasuryLegs)
         );
     }
 
-    function _userArmedFreshNeed(
+    function _userArmedFreshNeedWithLegs(
         LibVaipakam.Storage storage s,
         address user
-    ) private view returns (uint256 armed) {
+    )
+        private
+        view
+        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs)
+    {
         // Codex #1699 r4 P2 — read the CLAIM'S OWN grouped, capped figure.
         //
         // The first version summed `_entryPriceCore` outputs per entry, which
@@ -2183,15 +2208,18 @@ library LibInteractionRewards {
         // `AddCollateralFacet` / `MetricsDashboardFacet`).
         (bool ok, bytes memory ret) = address(this).staticcall(
             abi.encodeWithSelector(
-                bytes4(keccak256("getUserArmedFreshNeed(address)")),
+                bytes4(keccak256("getUserArmedFreshNeedWithLegs(address)")),
                 user
             )
         );
         // Fail CLOSED on an unrouted selector (a partially-refreshed Diamond):
         // a zero need would read as "nothing required" and let an entry expire
         // while unpayable, which is the defect this gate exists to prevent.
-        require(ok && ret.length == 32, "armed-need view unavailable");
-        armed = abi.decode(ret, (uint256));
+        require(ok && ret.length == 96, "armed-need view unavailable");
+        (armed, userLegs, treasuryLegs) = abi.decode(
+            ret,
+            (uint256, uint256, uint256)
+        );
     }
 
     /// @dev #1351 slice 2e — the CHEAP per-entry sum: each entry's
@@ -3108,8 +3136,14 @@ library LibInteractionRewards {
         // swept yet (their cursors would otherwise read behind and understate
         // the need — Codex #1317 r2 xkk), and it folds in the recycle-bucket
         // backing the forfeit-credit path needs (Codex #1317 r2 xkq). The
-        // per-entry backing room is NOT checked here — it gates the all-or-
-        // nothing EXPIRY credit below, not the claimant's clock. Blocked when:
+        // The PER-ENTRY backing room is still not checked here — that gates
+        // the all-or-nothing EXPIRY credit below. But #1499 made the AGGREGATE
+        // funding need backing-aware: it nets the earmark off the balance via
+        // {LibVpfiRecycle.backingPosition}, so a backing shortfall now PAUSES
+        // the claimant's clock rather than only deferring the reap. That is the
+        // whole point of the alignment — the claim refuses such a payout, and a
+        // clock that kept running through it would expire an entry its owner
+        // could not have claimed. Blocked when:
         //   1. this entry's pool-capped payable is zero (a reap of it would
         //      recycle nothing — nothing a claim could pay for it),
         //   2. the owner is sanctioned (the claim path rejects them),
@@ -3145,13 +3179,19 @@ library LibInteractionRewards {
             // — processed ids stay in it — so the duplicate pass grew without
             // bound for a long-lived account.
             _advanceUserCursors(s, e.user);
-            uint256 armedFresh = _userArmedFreshNeed(s, e.user);
+            (
+                uint256 armedFresh,
+                uint256 userLegs,
+                uint256 treasuryLegs
+            ) = _userArmedFreshNeedWithLegs(s, e.user);
             (, uint256 recycledUpper) = _userEntriesUpperBound(s, e.user);
             uint256 fundingNeed = _userClaimFundingNeedViewWith(
                 s,
                 e.user,
                 armedFresh,
-                recycledUpper
+                recycledUpper,
+                userLegs,
+                treasuryLegs
             );
             // Codex #1699 r2 P1 — the MIRROR delivered bound belongs in this
             // predicate, not only at the terminal.
@@ -3674,11 +3714,14 @@ library LibInteractionRewards {
     ///      is payable, the owner is unsanctioned, the protocol is unpaused,
     ///      and the local balance covers the user's FULL aggregate claim (the
     ///      claim is atomic across all their entries + the legacy window).
-    ///      Backing room is deliberately NOT checked here: it gates the
-    ///      all-or-nothing EXPIRY credit, not the claimant's clock (a claim
-    ///      never touches the bucket), so a backing shortfall does not pause
-    ///      accrual — it only defers the final reap, which the view reflects
-    ///      as the estimate caveat documented on {rewardEntryExpiry}.
+    ///      #1499 — BACKING IS NOW PART OF THIS TEST, and the previous
+    ///      sentence here said the opposite. The aggregate funding need nets
+    ///      the earmark off the balance ({LibVpfiRecycle.backingPosition}), so
+    ///      a shortfall PAUSES the clock instead of only deferring the reap.
+    ///      The claim refuses such a payout, and a clock still running through
+    ///      it would expire an entry its owner could not have claimed. What
+    ///      remains unchecked here is the PER-ENTRY backing room, which gates
+    ///      the all-or-nothing expiry credit rather than the claimant's clock.
     function _entryExecutableNow(
         LibVaipakam.Storage storage s,
         uint256 id,
@@ -3705,7 +3748,11 @@ library LibInteractionRewards {
         // Deliberately the AGGREGATE need (`_userArmedFreshNeed`), matching
         // the sweep exactly — a per-entry figure here would re-open the very
         // gap the sweep's fix closed, one abstraction layer away.
-        uint256 armedFresh = _userArmedFreshNeed(s, e.user);
+        (
+            uint256 armedFresh,
+            uint256 userLegs,
+            uint256 treasuryLegs
+        ) = _userArmedFreshNeedWithLegs(s, e.user);
         if (LibVaipakam.isMirrorRewardChain(s)) {
             if (armedFresh != 0 && armedFresh > deliveredFreshBound(s)) {
                 return false;
@@ -3713,7 +3760,14 @@ library LibInteractionRewards {
         }
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            _userClaimFundingNeedViewWith(s, e.user, armedFresh, recycledUpper);
+            _userClaimFundingNeedViewWith(
+                s,
+                e.user,
+                armedFresh,
+                recycledUpper,
+                userLegs,
+                treasuryLegs
+            );
     }
 
     /// @dev #1351 slice 2d-0 — the ONE computation of an entry's claim-payable
@@ -3775,11 +3829,18 @@ library LibInteractionRewards {
         address user
     ) private view returns (uint256) {
         (, uint256 recycledUpper) = _userEntriesUpperBound(s, user);
+        (
+            uint256 armedFresh,
+            uint256 userLegs,
+            uint256 treasuryLegs
+        ) = _userArmedFreshNeedWithLegs(s, user);
         return _userClaimFundingNeedViewWith(
             s,
             user,
-            _userArmedFreshNeed(s, user),
-            recycledUpper
+            armedFresh,
+            recycledUpper,
+            userLegs,
+            treasuryLegs
         );
     }
 
@@ -3820,7 +3881,9 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user,
         uint256 armedFresh,
-        uint256 recycledUpper
+        uint256 recycledUpper,
+        uint256 userLegs,
+        uint256 treasuryLegs
     ) private view returns (uint256 need) {
         // #1499 — ASSEMBLED FROM EXISTING EXACT PIECES, deriving nothing.
         //
@@ -3864,8 +3927,6 @@ library LibInteractionRewards {
         // Not a double-count: `armed <= remaining - window - legacy` by
         // construction, so the cap is a NO-OP whenever the walk is budgeted and
         // binds only where the window/legacy portion alone exceeds headroom.
-        (uint256 userLegs, uint256 treasuryLegs) =
-            previewForUserEntriesLegacyOnly(s, user);
         uint256 freshTotal = _userWindowFreshReserved(s, user)
             + userLegs
             + treasuryLegs
