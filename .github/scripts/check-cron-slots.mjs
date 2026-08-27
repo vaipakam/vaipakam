@@ -68,7 +68,12 @@ const AUTHORITY = 'docs/ops/CloudflareCronSlots.md';
  */
 const SCOPE = ['apps', 'ops', 'packages', 'docs/ops', 'docs/DesignsAndPlans'];
 
-const TEXT_EXT = /\.(mjs|js|ts|tsx|jsonc|json|md|sh|toml|yml|yaml)$/;
+// Codex #1978 r10: `.mts` / `.cts` were missing, and the tree already has one
+// (`apps/indexer/scripts/lib/activity-refs-surface.d.mts`), so a helper written
+// as an ESM TypeScript module could carry an occupancy claim past a BLOCKING
+// gate. An extension allowlist is a closed world that the language keeps
+// reopening; adding a file type must not silently narrow this scan.
+const TEXT_EXT = /\.(mjs|cjs|js|mts|cts|ts|tsx|jsonc|json|md|sh|toml|yml|yaml)$/;
 
 /**
  * Context tokens. An occupancy shape only means cron occupancy if the
@@ -357,7 +362,14 @@ export function checkStamp(md) {
   // currency — the malformed one was invisible precisely because it was
   // malformed. The count and the validation are separate questions and the
   // count has to come first.
-  const markers = [...md.matchAll(/^\*\*Verified:\s*([^*]*?)\.?\*\*/gm)];
+  // Codex #1978 r10: count markers behind ordinary Markdown prefixes too —
+  // list bullets, blockquotes, indentation. A copied stamp pasted as
+  // `- **Verified: yesterday.**` was invisible to the DUPLICATE check while
+  // being perfectly visible to a reader, which is the stamp's whole audience.
+  // The r4 fix counted markers rather than well-formed stamps for exactly this
+  // reason and then anchored the count at column zero, so a second stamp could
+  // still hide by being indented.
+  const markers = [...md.matchAll(/^[ \t>*+-]*\*\*Verified:\s*([^*]*?)\.?\*\*/gm)];
   if (markers.length === 0) {
     return [
       'the "**Verified: <ISO-8601>.**" stamp is missing; it is the only ' +
@@ -1264,6 +1276,20 @@ const STAMP_CASES = [
     '**Verified: 2026-08-27T16:21:53Z.**\n\n**Verified: 2026-01-01T00:00:00Z.**',
     1,
   ],
+  // Codex #1978 r10: a second stamp behind an ordinary Markdown prefix. The r4
+  // fix counted MARKERS rather than well-formed stamps precisely so a bad one
+  // could not hide by being bad; anchoring that count at column zero let it
+  // hide by being indented instead.
+  [
+    'a second stamp as a list item',
+    '**Verified: 2026-08-27T16:21:53Z.**\n\n- **Verified: yesterday.**',
+    1,
+  ],
+  [
+    'a second stamp in a blockquote',
+    '**Verified: 2026-08-27T16:21:53Z.**\n\n> **Verified: 2026-01-01T00:00:00Z.**',
+    1,
+  ],
   // Codex #1978 r4: counting only the stamps that PARSED meant a valid stamp
   // beside a malformed one reported success over two conflicting claims — the
   // bad one invisible precisely because it was bad.
@@ -1426,8 +1452,31 @@ function runSelftest() {
 
 // ── Entry ───────────────────────────────────────────────────────────────────
 
+// Codex #1978 r10: an UNKNOWN argument is an error, never a fallback to the
+// offline scan. `--lve` used to print "Cron-slot gate OK" and exit 0 without
+// contacting Cloudflare at all — and the flow that command was added to is the
+// keeper re-enable procedure, whose step 3 is "confirm a cron trigger is free".
+// A typo there returns the reassuring line, the operator deploys, and the
+// account rejects the sixth trigger with 10072. Answering a question that was
+// not asked, in the affirmative, is the worst thing a check can do.
+const MODES = new Set(['--live', '--selftest']);
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
+  const unknown = args.filter((a) => !MODES.has(a));
+  if (unknown.length) {
+    console.error(`Unknown argument(s): ${unknown.join(' ')}`);
+    console.error('Usage: check-cron-slots.mjs [--live | --selftest]');
+    console.error('');
+    console.error('No argument runs the OFFLINE scan. It is not a fallback for a');
+    console.error('mistyped flag: an offline pass says nothing about the account,');
+    console.error('and reading it as "a trigger is free" is how a deploy meets 10072.');
+    process.exit(2);
+  }
+  if (args.includes('--live') && args.includes('--selftest')) {
+    console.error('--live and --selftest are separate modes; run one at a time.');
+    process.exit(2);
+  }
   let code;
   if (args.includes('--live')) code = await runLive();
   else if (args.includes('--selftest')) code = runSelftest();
