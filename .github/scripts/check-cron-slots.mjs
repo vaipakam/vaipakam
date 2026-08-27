@@ -597,6 +597,26 @@ export function parseInventory(md) {
   const problems = [];
   const seen = new Set();
 
+  // ── WHY THIS PARSER IS STRICT ────────────────────────────────────────────
+  //
+  // Four rounds of review found four ways to write a row this parser would
+  // half-read — a bolded name (r4), a missing column (r5), an extra column
+  // (r6), a case variant (r7). They look like four unrelated lessons and are
+  // one, stated here so the fifth is expected rather than discovered:
+  //
+  //     A LIVE row has a second witness; a RESERVED row does not.
+  //
+  // For a live row, `--live` compares against the account and a mis-parse
+  // eventually surfaces as ACCOUNT ONLY or SCHEDULE. A reserved row has no
+  // account schedule to compare — the reservation exists only in this table —
+  // so every relaxation in row parsing lands on the reservation, silently,
+  // and the summary can then be edited to the parser's answer. That is why
+  // each of the four was reachable end-to-end rather than cosmetic, and it
+  // predicts where the next one lives better than any of the four fixes does.
+  //
+  // Practical consequence: prefer REJECTING a row this parser cannot read
+  // exactly, over interpreting what it probably meant.
+  //
   // Only the inventory section. Bounding it is what lets an UNPARSABLE data row
   // be a finding rather than a skip — outside these bounds a `|` line could be
   // any other table, and demanding it parse as an inventory row would be a
