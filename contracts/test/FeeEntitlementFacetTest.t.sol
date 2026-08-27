@@ -1209,6 +1209,27 @@ contract FeeEntitlementFacetTest is SetupTest {
             address(diamond), borrower, borrowerPk, rentalOffer
         );
 
+        // Move the position so the STORED lender and the HOLDER differ, and put
+        // the hold tier on the HOLDER below. Without this the discount is keyed
+        // on an address the test never distinguishes, so swapping
+        // `ownerOf(loan.lenderTokenId)` for `loan.lender` at DefaultedFacet:727
+        // passes every assertion here (Codex #1957 r8 class, found by sweeping
+        // the resolve sites rather than by review).
+        //
+        // A rental needs no sanctions trick to keep `loan.lender` stale:
+        // `LibConsolidation._isExcludedLive` returns true for ANY non-ERC20
+        // `assetType`, so consolidation ALWAYS skips on a rental (#594 leaves
+        // rentals out of scope). The stored lender on a transferred rental is
+        // therefore PERMANENTLY stale, which makes the `ownerOf` keying
+        // load-bearing on every rental default, not just an edge case.
+        LibVaipakam.Loan memory rl = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address rHolder = makeAddr("rentalHolder1955");
+        vm.prank(rl.lender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(
+            rl.lender, rHolder, rl.lenderTokenId
+        );
+        vpfiToken.transfer(rHolder, PARTY_VPFI_STAKE);
+
         // Mocks are set BEFORE the snapshot on purpose: `vm.revertToState`
         // restores chain state but NOT mocks, so setting them here keeps both
         // replays on identical plumbing without a `clearMockedCalls` (which is
@@ -1233,10 +1254,10 @@ contract FeeEntitlementFacetTest is SetupTest {
         (, uint256 baseClaim, ) =
             ClaimFacet(address(diamond)).getClaimableAmount(loanId, true);
 
-        // ── Replay 2: the lender holds an AGED, consented stake. ──
+        // ── Replay 2: the HOLDER holds an AGED, consented stake. ──
         vm.revertToState(snap);
-        _stakeVpfi(lender, PARTY_VPFI_STAKE);
-        vm.prank(lender);
+        _stakeVpfi(rHolder, PARTY_VPFI_STAKE);
+        vm.prank(rHolder);
         VPFIDiscountFacet(address(diamond)).setVPFIDiscountConsent(true);
         // The stake must be placed BEFORE time passes: `effectiveTierAndBps`
         // returns a silent (0,0) until the stake has aged past
@@ -1247,9 +1268,20 @@ contract FeeEntitlementFacetTest is SetupTest {
         // strict-inequality assertion below fail as "fixture never discounted",
         // which is indistinguishable from a deleted resolve call.
         (uint8 effTier, uint16 effBps) =
-            VPFIDiscountFacet(address(diamond)).getEffectiveDiscount(lender);
-        assertGt(effTier, 0, "lender's EFFECTIVE tier resolves - accumulator is live");
-        assertGt(effBps, 0, "lender's EFFECTIVE discount bps is non-zero");
+            VPFIDiscountFacet(address(diamond)).getEffectiveDiscount(rHolder);
+        assertGt(effTier, 0, "holder's EFFECTIVE tier resolves - accumulator is live");
+        assertGt(effBps, 0, "holder's EFFECTIVE discount bps is non-zero");
+        assertTrue(rHolder != rl.lender, "holder diverged from the stored lender");
+
+        // Pin the resolver's key. The hold tier lives on the HOLDER, so keying
+        // on `loan.lender` resolves a party with no tier and no consent - the
+        // discount vanishes rather than being misattributed.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VPFIDiscountFacet.resolveLenderYieldFeeFor.selector, loanId, rHolder
+            )
+        );
 
         tBefore = IERC20(mockERC20).balanceOf(treasuryRecipient);
         DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());

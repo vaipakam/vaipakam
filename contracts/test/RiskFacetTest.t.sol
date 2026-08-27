@@ -12,6 +12,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {ISwapAdapter} from "../src/interfaces/ISwapAdapter.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -1004,6 +1005,64 @@ contract RiskFacetTest is Test {
     ///      mocks), and a live sub-1.0 HF mock makes loan CREATION revert
     ///      `HealthFactorTooLow`. Creating the loan before the snapshot keeps
     ///      that out of the replayed region.
+
+    /// @dev #1955 (Codex #1957 r8 P2) — force the STORED lender and the position
+    ///      HOLDER apart, which is the only state in which a resolver keyed on
+    ///      `ownerOf(loan.lenderTokenId)` is observably different from one keyed
+    ///      on `loan.lender`.
+    ///
+    ///      A bare transfer is not enough: every RiskFacet liquidation entry
+    ///      calls `_eagerConsolidateBothSides` first, which re-points
+    ///      `loan.lender` AT the holder and collapses the divergence. Mocking
+    ///      `ConsolidationFacet.eagerConsolidateBothSides` makes that Tier-2
+    ///      consolidation decline (skip-not-block), which is exactly the state
+    ///      the `ownerOf` keying exists for.
+    ///
+    ///      Single implementation on purpose. Three replays previously injected
+    ///      a loan-scoped `Full` stamp with no transfer at all; because that
+    ///      stamp's value is address-INDEPENDENT, every balance assertion stayed
+    ///      green under `ownerOf -> loan.lender`.
+    function _divergeLenderHolder(uint256 loanId, string memory tag)
+        private
+        returns (address holder)
+    {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        holder = makeAddr(tag);
+        vm.prank(l.lender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(
+            l.lender, holder, l.lenderTokenId
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector, loanId
+            ),
+            abi.encode()
+        );
+    }
+
+    /// @dev Assert the yield-fee resolver is keyed on the CURRENT holder.
+    ///
+    ///      Self-guarding: the expectation can only DISCRIMINATE if the holder
+    ///      and the stored lender differ, so this refuses to run on a fixture
+    ///      that never diverged. Without that guard the call matches under
+    ///      either keying and the assertion is worth nothing — which is how
+    ///      three of these replays passed while pinning nothing.
+    function _expectResolverKeyedOnHolder(uint256 loanId) private {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address holder = VaipakamNFTFacet(address(diamond)).ownerOf(l.lenderTokenId);
+        assertTrue(
+            holder != l.lender,
+            "fixture must diverge holder from stored lender or this pins nothing"
+        );
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VPFIDiscountFacet.resolveLenderYieldFeeFor.selector, loanId, holder
+            )
+        );
+    }
+
     function _liquidateAndMeasure(uint256 loanId, address treasuryEoa, bool stampFull)
         private
         returns (uint256 toTreasury, uint256 toLender)
@@ -1048,6 +1107,9 @@ contract RiskFacetTest is Test {
         uint256 treasuryBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
         uint256 lenderBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
 
+        if (stampFull) {
+            _expectResolverKeyedOnHolder(loanId);
+        }
         RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
@@ -1088,6 +1150,10 @@ contract RiskFacetTest is Test {
         // 39.6e18 = 1980e proceeds x 2% handling, and the `> 0` liveness check
         // passed on the handling fee alone.) Half-term keeps it in-term.
         vm.warp(block.timestamp + 15 days);
+
+        // Codex #1957 r8 P2 — without this the loan-scoped `Full` stamp below is
+        // address-INDEPENDENT, so `ownerOf -> loan.lender` passes every assertion.
+        _divergeLenderHolder(loanId, "hfHolder1955");
 
         uint256 snap = vm.snapshotState();
         (uint256 baseTreasury, uint256 baseLender) =
@@ -1212,22 +1278,37 @@ contract RiskFacetTest is Test {
         // and routes BOTH legs through slot 1 — the aggregate proceeds are
         // identical because both adapters wrap the same proxy. Requiring each
         // slot to execute is what pins per-leg routing in both directions.
-        vm.expectCall(venueA, "");
-        vm.expectCall(venueB, "");
+        // EXACT per-leg amounts, not merely "both were called" (Codex #1957 r8
+        // P2). Both adapters wrap the SAME linear-rate proxy, so a regression
+        // that ignores every `splits[i].splitAmount` and sends 50/50 still calls
+        // both venues and yields identical aggregate proceeds. Prefix-matching
+        // (inputToken, outputToken, inputAmount) pins the split each venue was
+        // asked to execute, which a 50/50 regression cannot satisfy at either.
+        vm.expectCall(
+            venueA,
+            abi.encodeWithSelector(
+                ISwapAdapter.execute.selector,
+                ln.collateralAsset,
+                ln.principalAsset,
+                legA
+            )
+        );
+        vm.expectCall(
+            venueB,
+            abi.encodeWithSelector(
+                ISwapAdapter.execute.selector,
+                ln.collateralAsset,
+                ln.principalAsset,
+                ln.collateralAmount - legA
+            )
+        );
 
         // Only in the STAMPED run: with no stamp and no consent the loan is
         // ineligible, so `LibLenderYieldFeeHost.resolve` short-circuits before
         // the host call and the reference replay never routes at all. Expecting
         // it in both runs asserts two calls where exactly one happens.
         if (stampFull) {
-            vm.expectCall(
-                address(diamond),
-                abi.encodeWithSelector(
-                    VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
-                    loanId,
-                    VaipakamNFTFacet(address(diamond)).ownerOf(ln.lenderTokenId)
-                )
-            );
+            _expectResolverKeyedOnHolder(loanId);
         }
 
         // BOTH position NFTs must be status-updated (Codex #1957 r7 P2). This
@@ -1270,7 +1351,21 @@ contract RiskFacetTest is Test {
                 ln.collateralAmount
             )
         );
+        uint256 diamondBefore = IERC20(mockERC20).balanceOf(address(diamond));
         RiskSplitLiquidationFacet(address(diamond)).triggerLiquidationSplit(loanId, splits);
+        // EXACT, and needs no fee arithmetic (Codex #1957 r8 P2). The principal
+        // FLOOR added in r7 catches a halving but not a small shortfall:
+        // subtracting a few wei from `lenderProceeds` in BOTH replays preserves
+        // the discount-conservation delta and still clears `claimAmt >=
+        // principal`, while stranding recovered funds. Any such shortfall stays
+        // behind at the Diamond, so requiring the waterfall to distribute every
+        // wei of proceeds catches it down to 1 wei -- without this test
+        // re-deriving the production fee split.
+        assertEq(
+            IERC20(mockERC20).balanceOf(address(diamond)),
+            diamondBefore,
+            "waterfall distributes every wei of proceeds - nothing stranded"
+        );
 
         lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
         toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
@@ -1303,18 +1398,7 @@ contract RiskFacetTest is Test {
         // `ownerOf` for `loan.lender` left this test green. The transfer is what
         // makes the resolver's key observable at all.
         LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
-        address splitHolder = makeAddr("splitHolder1955");
-        vm.prank(l0.lender);
-        VaipakamNFTFacet(address(diamond)).transferFrom(
-            l0.lender, splitHolder, l0.lenderTokenId
-        );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(
-                ConsolidationFacet.eagerConsolidateBothSides.selector, loanId
-            ),
-            abi.encode()
-        );
+        _divergeLenderHolder(loanId, "splitHolder1955");
 
         uint256 snap = vm.snapshotState();
         (uint256 baseTreasury, uint256 baseLender) =
@@ -1369,6 +1453,18 @@ contract RiskFacetTest is Test {
         // `ClaimFacet.claimAsLender` reverts `AlreadyClaimed`, leaving the
         // lender unable to recover proceeds whose collateral has been sold.
         assertFalse(claimTaken, "lender claim is unclaimed - actionable, not just recorded");
+        // FUNDED, not merely recorded (Codex #1957 r8 P2) -- the same check the
+        // BORROWER side already carries below, which is exactly why its absence
+        // here was invisible. If `depositLocked` moved only the Full-discount
+        // delta while `lenderClaims[loanId].amount` still recorded all of
+        // `lenderProceeds`, the conservation delta, the positive-claim check and
+        // the unclaimed check all pass, and `claimAsLender` reverts later
+        // against a vault that cannot cover the recorded amount.
+        assertGe(
+            fullLender,
+            claimAmt,
+            "lender claim is FUNDED - the vault delta covers the recorded amount"
+        );
 
         // The BORROWER side too (Codex #1957 r4 P2). This fixture's 1.1x swap
         // leaves a positive surplus, which the facet records in a separate
@@ -4640,6 +4736,9 @@ contract RiskFacetTest is Test {
         address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
         uint256 before = IERC20(mockERC20).balanceOf(treasuryEoa);
         uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
+        if (stampFull) {
+            _expectResolverKeyedOnHolder(loanId);
+        }
         RiskFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
         toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - before;
         lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
@@ -4664,6 +4763,10 @@ contract RiskFacetTest is Test {
         // measure nothing (the fixture this borrows from notes only "slight
         // headroom for accrued interest if any" — it does not warp).
         vm.warp(block.timestamp + 15 days);
+
+        // Codex #1957 r8 P2 — without this the loan-scoped `Full` stamp below is
+        // address-INDEPENDENT, so `ownerOf -> loan.lender` passes every assertion.
+        _divergeLenderHolder(loanId, "discHolder1955");
 
         uint256 snap = vm.snapshotState();
         (uint256 baseTreasury, uint256 baseLender) =
@@ -4893,6 +4996,9 @@ contract RiskFacetTest is Test {
         }
         uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
         uint256 lBefore = IERC20(mockERC20).balanceOf(lenderAddr);
+        if (stampFull) {
+            _expectResolverKeyedOnHolder(loanId);
+        }
         RiskFacet(address(diamond)).triggerPartialLiquidation(
             loanId, 2_000, defaultAdapterCalls()
         );
@@ -4926,12 +5032,26 @@ contract RiskFacetTest is Test {
         // fell into first. In-term, so the partial maturity gate still passes.
         vm.warp(block.timestamp + 10 days);
 
+        // Codex #1957 r8 P2 — without this the loan-scoped `Full` stamp below is
+        // address-INDEPENDENT, so `ownerOf -> loan.lender` passes every assertion.
+        //
+        // Partial liquidation is the ONE recovery entry that pays the holder
+        // DIRECTLY: it writes no `lenderClaims` row, so there is no
+        // `ownerOf`-gated claim behind the deposit to correct a stale address,
+        // and `freezeOrPayActiveLenderResident` resolves the resident itself
+        // (RiskFacet:1239-1257). The measured party therefore has to be the
+        // HOLDER — measuring `lenderAddr` here reported a zero lender delta
+        // against a real treasury reduction, which is the misrouted-principal
+        // bug that comment describes, seen from the test side.
+        address partialHolder = _divergeLenderHolder(loanId, "partialHolder1955");
+        assertTrue(partialHolder != lenderAddr, "holder diverged from stored lender");
+
         uint256 snap = vm.snapshotState();
         (uint256 baseTreasury, uint256 baseLender) =
-            _partialAndMeasure(loanId, treasuryEoa, lenderAddr, false);
+            _partialAndMeasure(loanId, treasuryEoa, partialHolder, false);
         vm.revertToState(snap);
         (uint256 fullTreasury, uint256 fullLender) =
-            _partialAndMeasure(loanId, treasuryEoa, lenderAddr, true);
+            _partialAndMeasure(loanId, treasuryEoa, partialHolder, true);
 
         assertGt(baseTreasury, 0, "reference run paid a treasury cut");
         assertLt(fullTreasury, baseTreasury, "Full stamp reduced the treasury cut");
