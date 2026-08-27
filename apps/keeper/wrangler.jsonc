@@ -121,8 +121,10 @@
   //      was (Codex #1924 r9). All three were wrong together: none of
   //      them could see `vaipakam-offchain-data-archive`, a Worker with
   //      no source in this repository that has been holding a trigger
-  //      the whole time (#1977). **As things stand this step FAILS** —
-  //      the reserve does not exist until that Worker is retired.
+  //      the whole time (#1977). If this step fails, that is the
+  //      likeliest reason, and #1977 carries the sequence to free the
+  //      trigger. Read the outcome from the live check rather than from
+  //      this comment, which cannot know when the cleanup has happened.
   //
   //      That is a real problem to resolve here — not something to work
   //      around by leaving the keeper stopped, and not something to

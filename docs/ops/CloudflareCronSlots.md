@@ -69,16 +69,20 @@ Workers with no schedule and no claim on the budget: `vaipakam-www`,
 
 These three lines are **derived from the inventory above, and checked against
 it** — `check-cron-slots.mjs` fails if "Live right now" disagrees with the
-number of inventory rows carrying a schedule, or if "Genuinely spare" is not
-`5 − committed`. That check is offline and runs in CI, so this summary cannot
-drift from the table it summarises even when nobody has account credentials
-to hand. Their exact wording is load-bearing: the script anchors on it, and
+number of **backticked schedule spans** in the table, or if "Genuinely spare"
+is not `5 − committed`. Spans, not rows: one row carrying two spans is two
+triggers and counts twice. (An earlier revision of this sentence said rows,
+which would have walked an editor into writing a summary CI then rejected.)
+
+That check is offline and runs in CI, so this summary cannot drift from the
+table it summarises even when nobody has account credentials to hand. Their exact wording is load-bearing: the script anchors on it, and
 rewording a line without updating the script fails the gate rather than
 silently disabling it.
 
 Keeping a summary at all is a deliberate exception to this file's own rule
-against second copies. A reader needs the total, counting rows is what nobody
-does, and the copy is safe precisely because it is pinned to its source. It
+against second copies. A reader needs the total, counting spans across the
+table is what nobody does, and the copy is safe precisely because it is pinned
+to its source. It
 was **not** pinned in the first revision of this file, which is the defect
 Codex found on #1978: retiring the archive Worker and deleting its row would
 have left this saying four were live while the table showed three, and
@@ -115,13 +119,16 @@ during exactly the cleanup the rest of this file anticipates.
   fits is `Genuinely spare` above: if that is zero, deploying it spends
   `apps/keeper`'s reservation, and the keeper's later re-arm is the deploy
   that fails with 10072.
-- **`apps/keeper`'s re-arm needs one trigger too**, and its procedure
-  begins by confirming one is free for precisely this reason. Whichever of
-  the two goes first takes the last trigger; the second fails.
-- **Both fit only when `Genuinely spare` is at least 2**, which today means
-  retiring `vaipakam-offchain-data-archive` first. That is the operator
-  action tracked in #1977, and it is not something to do casually: until
-  the replacement is confirmed to be landing and verifying in the new
+- **`apps/keeper`'s re-arm needs no spare trigger.** It already holds a
+  reservation, and re-arming CONVERTS that reservation into a live trigger —
+  `committed` does not move. Its procedure still begins by confirming a
+  trigger is free, because a reservation only helps if nobody has spent it.
+- **Both fit when `Genuinely spare` is at least 1**, not 2 — the keeper's
+  half is already committed. Today that line reads 0, so exactly one of the
+  two can proceed and whichever goes first takes it. Retiring
+  `vaipakam-offchain-data-archive` is what moves it to 1. That is the
+  operator action tracked in #1977, and it is not something to do casually:
+  until the replacement is confirmed to be landing and verifying in the new
   bucket, the un-retired predecessor is what would mask a defect in it.
 - **Splitting an existing Worker's one cron into two costs a trigger** and
   has the same effect as a new deploy. This is why

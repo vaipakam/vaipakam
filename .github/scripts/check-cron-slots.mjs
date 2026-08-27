@@ -243,17 +243,35 @@ function trackedFiles() {
  * than none, because it reads as reassurance.
  */
 export function checkStamp(md) {
-  const all = [
-    ...md.matchAll(/^\*\*Verified:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\.\*\*/gm),
-  ];
-  if (all.length === 0) {
+  // Codex #1978 r4: count every MARKER, not every well-formed stamp. Counting
+  // only the ones that parsed meant a document holding one valid stamp and one
+  // `**Verified: yesterday.**` reported success over two conflicting claims of
+  // currency — the malformed one was invisible precisely because it was
+  // malformed. The count and the validation are separate questions and the
+  // count has to come first.
+  const markers = [...md.matchAll(/^\*\*Verified:\s*([^*]*?)\.?\*\*/gm)];
+  if (markers.length === 0) {
     return [
-      'the "**Verified: <ISO-8601>.**" stamp is missing or malformed; it is the ' +
-        'only statement of how old this snapshot is',
+      'the "**Verified: <ISO-8601>.**" stamp is missing; it is the only ' +
+        'statement of how old this snapshot is',
     ];
   }
-  if (all.length > 1) {
-    return [`the "Verified:" stamp appears ${all.length} times; there must be exactly one`];
+  if (markers.length > 1) {
+    return [
+      `the "Verified:" stamp appears ${markers.length} times; there must be ` +
+        `exactly one, or the two can disagree`,
+    ];
+  }
+
+  const raw = markers[0][1].trim();
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(raw)) {
+    return [`the "Verified:" stamp reads "${raw}", which is not an ISO-8601 instant`];
+  }
+  // Shape is not existence. `2026-99-99T99:99:99Z` matches the shape and is not
+  // a moment in time; round-tripping through Date is what rejects it.
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().replace(/\.\d{3}Z$/, 'Z') !== raw) {
+    return [`the "Verified:" stamp reads "${raw}", which is not a real instant`];
   }
   return [];
 }
@@ -312,6 +330,7 @@ function runOffline() {
   const summaryProblems = [
     ...checkStamp(authorityMd),
     ...inv.problems,
+    ...checkSources(inv.sources),
     ...checkSummary(authorityMd, countTriggers(inv.live), inv.reserved.length),
   ];
   if (summaryProblems.length) {
@@ -470,13 +489,50 @@ export function parseInventory(md) {
   const live = new Map();
   /** names of rows the table marks reserved (no schedule, but budget spoken for). */
   const reserved = [];
+  /** name -> the `Source in this repo` path, or null for the explicit *none*. */
+  const sources = new Map();
   const problems = [];
   const seen = new Set();
 
-  for (const line of md.split('\n')) {
+  // Only the inventory section. Bounding it is what lets an UNPARSABLE data row
+  // be a finding rather than a skip — outside these bounds a `|` line could be
+  // any other table, and demanding it parse as an inventory row would be a
+  // finding about nothing.
+  // `\Z` is not a JavaScript escape — an earlier revision used it and the
+  // regex silently matched nothing, so the parser saw an empty inventory and
+  // the summary check reported "0 triggers". Sliced by index instead, which
+  // has no such trap.
+  const start = md.search(/^##\s+The inventory\b/m);
+  let region = md;
+  if (start !== -1) {
+    const rest = md.slice(start + 1);
+    const next = rest.search(/^##\s/m);
+    region = next === -1 ? md.slice(start) : md.slice(start, start + 1 + next);
+  }
+  const lines = region.split('\n');
+
+  for (const line of lines) {
+    if (!/^\s*\|/.test(line)) continue;
+    const cells = line.trim().replace(/^\||\|$/g, '').split('|');
+    if (cells.length < 4) continue;
+    // The header and the alignment separator are not data.
+    if (/^\s*Worker\s*$/i.test(cells[0]) || /^[\s:-]+$/.test(cells[0])) continue;
+
     const row = /^\|\s*`([a-z0-9-]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
-    if (!row) continue;
-    const [, name, scheduleCell, , statusCell] = row;
+    // Codex #1978 r4: a row that LOOKS like data and does not parse was silently
+    // skipped, and the "bolded name skipped" fixture documented the hole rather
+    // than closing it. Bolding the keeper's name would drop its reservation from
+    // the parse; the summary could then be edited to match, and `--live` could
+    // not object because a reserved Worker has no account schedule to compare.
+    // Every data row in this section must parse.
+    if (!row) {
+      problems.push(
+        `an inventory row does not parse — the Worker cell must be exactly one ` +
+          `backticked name: ${line.trim().slice(0, 80)}`,
+      );
+      continue;
+    }
+    const [, name, scheduleCell, sourceCell, statusCell] = row;
 
     // Codex #1978 r2: `Map.set` silently overwrote a repeated name, so leaving
     // a stale row behind while adding its replacement produced a table with two
@@ -505,6 +561,8 @@ export function parseInventory(md) {
     const residue = scheduleCell.replace(/`[^`]+`/g, '').replace(/[\s,]/g, '');
     const status = readStatus(statusCell);
 
+    sources.set(name, readSource(sourceCell));
+
     if (spans.length && residue === '') {
       live.set(name, spans);
       if (status !== 'live') {
@@ -531,7 +589,18 @@ export function parseInventory(md) {
     }
   }
 
-  return { live, reserved, problems };
+  return { live, reserved, sources, problems };
+}
+
+/**
+ * The `Source in this repo` cell: a backticked path, or null for the explicit
+ * `*none*` marker, or undefined when it is neither.
+ */
+export function readSource(cell) {
+  const backticked = /^\s*`([^`]+)`\s*$/.exec(cell);
+  if (backticked) return backticked[1].trim();
+  if (/^\s*\*+\s*none\s*\*+\s*$/i.test(cell)) return null;
+  return undefined;
 }
 
 /**
@@ -556,6 +625,42 @@ export function readStatus(cell) {
   const m = /^[\s*_]*([a-z]+)/i.exec(cell);
   const word = m?.[1]?.toLowerCase();
   return word && STATUSES.has(word) ? word : null;
+}
+
+/**
+ * Every inventory source path must resolve to tracked content.
+ *
+ * Codex #1978 r4: the Source column was parsed and thrown away, so renaming a
+ * source directory left a stale path with no finding from either half. That
+ * column is not decoration — the source-versus-`*none*` distinction is this
+ * document's whole explanation of how #1977 happened, and a Worker whose source
+ * silently stops existing is the beginning of the same story.
+ *
+ * Shells out, so it is separate from the pure parser the fixtures drive.
+ */
+export function checkSources(sources) {
+  const problems = [];
+  for (const [name, path] of sources) {
+    if (path === null) continue; // explicit *none* — the #1977 case, stated
+    if (path === undefined) {
+      problems.push(
+        `\`${name}\`'s source cell is neither a backticked path nor the ` +
+          `explicit *none* marker`,
+      );
+      continue;
+    }
+    const out = execFileSync('git', ['ls-files', '-z', '--', path], {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    if (out.split('\0').filter(Boolean).length === 0) {
+      problems.push(
+        `\`${name}\`'s source \`${path}\` matches no tracked files; if it moved, ` +
+          `update the row — if it is genuinely gone, say *none* and note why`,
+      );
+    }
+  }
+  return problems;
 }
 
 /** Triggers, not rows: a row carrying two schedules spends two of the five. */
@@ -592,6 +697,7 @@ async function runLive() {
   const problems = [
     ...checkStamp(authorityMd).map((p) => `STAMP         ${p}`),
     ...inv.problems.map((p) => `INVENTORY     ${p}`),
+    ...checkSources(inv.sources).map((p) => `SOURCE        ${p}`),
   ];
   // Same self-consistency check the offline half runs. Without it, `--live`
   // could compare the account to the inventory rows, find them equal, and
@@ -810,7 +916,19 @@ const INVENTORY_CASES = [
     [],
     1,
   ],
-  ['bolded name skipped', '| **`vaipakam-x`** | `0 1 * * *` | `ops/x` | live |', {}, [], 0],
+  // Codex #1978 r4: this fixture used to assert ZERO problems, which meant it
+  // DOCUMENTED the hole rather than closing it — bolding the keeper's name
+  // would have dropped its reservation from the parse, the summary could then
+  // be edited to match, and `--live` could not object because a reserved Worker
+  // has no account schedule to compare against. Every data row in the inventory
+  // section must parse.
+  [
+    'a row that looks like data and does not parse is a finding',
+    '| **`vaipakam-x`** | `0 1 * * *` | `ops/x` | live |',
+    {},
+    [],
+    1,
+  ],
   // Codex #1978 r2: TWO triggers in one cell. Counting Map entries made this
   // row worth one against a cap the account counts as two.
   [
@@ -854,6 +972,26 @@ const STAMP_CASES = [
     '**Verified: 2026-08-27T16:21:53Z.**\n\n**Verified: 2026-01-01T00:00:00Z.**',
     1,
   ],
+  // Codex #1978 r4: counting only the stamps that PARSED meant a valid stamp
+  // beside a malformed one reported success over two conflicting claims — the
+  // bad one invisible precisely because it was bad.
+  [
+    'one valid, one malformed',
+    '**Verified: 2026-08-27T16:21:53Z.**\n\n**Verified: yesterday.**',
+    1,
+  ],
+  // Shape is not existence.
+  ['shaped like an instant but impossible', '**Verified: 2026-99-99T99:99:99Z.**', 1],
+  ['a day February does not have', '**Verified: 2026-02-30T00:00:00Z.**', 1],
+];
+
+/** Source-cell fixtures: `[name, cell, expected readSource value]`. */
+const SOURCE_CASES = [
+  ['a backticked path', ' `apps/agent` ', 'apps/agent'],
+  ['the explicit none marker', ' *none* ', null],
+  ['bold none', ' **none** ', null],
+  ['prose is neither', ' probably somewhere ', undefined],
+  ['empty is neither', '  ', undefined],
 ];
 
 /**
@@ -915,6 +1053,15 @@ const SUMMARY_CASES = [
 
 function runSelftest() {
   let bad = 0;
+  for (const [name, cell, expected] of SOURCE_CASES) {
+    const got = readSource(cell);
+    if (got !== expected) {
+      console.error(
+        `selftest: source case "${name}" read ${JSON.stringify(got)}, expected ${JSON.stringify(expected)}`,
+      );
+      bad++;
+    }
+  }
   for (const [name, md, expected] of STAMP_CASES) {
     const got = checkStamp(md).length;
     if (got !== expected) {
@@ -971,7 +1118,7 @@ function runSelftest() {
   console.log(
     `Cron-slot gate selftest OK (${MUST_FIRE.length} fire, ${MUST_NOT_FIRE.length} quiet, ` +
       `${INVENTORY_CASES.length} inventory rows, ${SUMMARY_CASES.length} summaries, ` +
-      `${STAMP_CASES.length} stamps).`,
+      `${STAMP_CASES.length} stamps, ${SOURCE_CASES.length} sources).`,
   );
   return 0;
 }

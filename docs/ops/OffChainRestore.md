@@ -1574,9 +1574,11 @@ caught at the cheapest stage.
       keeper's is meant to be held for it rather than released. Check the
       ACCOUNT, not a comment: `node .github/scripts/check-cron-slots.mjs
       --live`, against
-      [`CloudflareCronSlots.md`](CloudflareCronSlots.md). **This step
-      currently fails**: an un-retired Worker is holding the reserve
-      (#1977).
+      [`CloudflareCronSlots.md`](CloudflareCronSlots.md). If it fails, the
+      likeliest reason is #1977 — an un-retired Worker holding the reserve —
+      and that issue carries the sequence to free it. Read the outcome from
+      the check rather than from this sentence, which cannot know when the
+      cleanup has happened.
    4. Deploy from the keeper's directory, with the flag — the command shown
       in branch A above.
    5. Read the schedule back trigger-aware — the `/schedules` query below.
