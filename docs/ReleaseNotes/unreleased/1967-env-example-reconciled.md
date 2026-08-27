@@ -74,6 +74,20 @@ keeps its original line — marked as no longer true rather than rewritten,
 because a record of what was provisioned in May should not be quietly
 edited to match August.
 
+Two more surfaced after that, and they are the ones that would have cost
+an operator something. The staging plan's cutover step still instructed
+binding both the apex and the `www` host to the Worker — under its old
+service name, and in a way that would have replaced the `www` → apex
+redirect with a second indexable origin, undoing the canonical setup it
+was meant to establish. It is retained as a record of what the step was,
+marked not to be executed. And the workspace's own architecture map, the
+first thing a new contributor reads, had the canonical host and its
+redirect the wrong way round, promised a redirect on the retired hostname
+that cannot exist without a DNS record, and gave the keeper a public
+hostname it deliberately does not have — the keeper is cron-only and
+holds the only signing key, so a hostname there would be a mistake rather
+than an omission.
+
 The variable count moved with the same care. It had been attributed to
 the operator's own `.env.local`, which is gitignored, absent on a clean
 checkout and different on every deployment — so no count could be quoted

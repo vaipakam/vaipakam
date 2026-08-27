@@ -30,12 +30,19 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 > now `vaipakam-app`, built from `apps/app`; its intended hostname is
 > `app.vaipakam.com` but that binding does NOT exist yet, so the Worker is
 > reachable only on its emitted `workers.dev` URL
-> (`@vaipakam/app`). The `vaipakam-defi` / `defi.vaipakam.com` rows below —
-> and the `defi.vaipakam.com` custom-domain binding in the next section —
-> record what was provisioned on 2026-05-07 and have NOT been re-verified
-> against the account since the rename. `apps/defi`, `apps/alpha` and
-> `apps/alpha01` no longer exist in the tree; whether their Workers and
-> hostname bindings are still present in Cloudflare is an operator check.
+> (`@vaipakam/app`).
+>
+> **RE-VERIFIED 2026-08-27** against the account's Workers custom-domain
+> inventory — the check this banner used to defer to an operator. The
+> `defi.vaipakam.com` binding is still live and still the same one:
+> binding id `a6475e83…`, matching the row recorded on 2026-05-07 below.
+> All four retired-source Workers are still bound and still serving —
+> `defi`, `alpha02`, `alpha` and `alpha01` all answer 200 — so deleting
+> `apps/defi`, `apps/alpha` and `apps/alpha01` from the tree did not
+> retire anything in Cloudflare. Their retirement remains an operator
+> action, and `defi.vaipakam.com` in particular CANNOT be retired while
+> it is the only host serving `/analytics` and `/protocol-console`
+> (#1959).
 
 | Worker | Domain | Lane | Cron | D1 binding |
 |---|---|---|---|---|

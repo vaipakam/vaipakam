@@ -17,16 +17,23 @@
 #                   helper selects host AND route table together and five
 #                   marketing call sites pass named destinations rather than
 #                   paths. Preserve that coupling (#1854).
-#   - apps/www     marketing + docs site → www.vaipakam.com
-#                   (canonical) + vaipakam.com (apex 301 → www).
-#                   Folder renamed from `apps/labs` in the labs →
-#                   www cutover; labs.vaipakam.com now serves a
-#                   Cloudflare Bulk Redirect to the new canonical
-#                   for ≥6 months so old indexed URLs hand their
-#                   PageRank forward. Wallet-free.
+#   - apps/www     marketing + docs site → vaipakam.com (APEX is the
+#                   canonical, indexable host) + www.vaipakam.com,
+#                   which is a Bulk Redirect 301 to the apex and is
+#                   NOT bound to the Worker. This note had the two
+#                   the wrong way round; verified against the account
+#                   2026-08-27. Folder renamed from `apps/labs` in the
+#                   labs → www cutover, and labs.vaipakam.com is now
+#                   RETIRED — no binding and no DNS record, so the
+#                   Bulk Redirect this note promised cannot exist
+#                   (a redirect needs a proxied record to fire on).
+#                   Wallet-free.
 #   - apps/agent   read/index Cloudflare Worker → agent.vaipakam.com
 #   - apps/indexer chain → D1 ingester        → indexer.vaipakam.com
-#   - apps/keeper  autonomous keeper Worker   → keeper.vaipakam.com
+#   - apps/keeper  autonomous keeper Worker   → NO public hostname, by
+#                   design. It is cron-triggered and holds the only
+#                   signing key; keeper.vaipakam.com does not resolve
+#                   and never should.
 #
 # `packages/` holds shared internal libraries — no deploy of their
 # own, consumed by the apps via workspace `:` protocol:
