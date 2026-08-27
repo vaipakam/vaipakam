@@ -29,7 +29,7 @@ export default function Hero() {
                 VPFI-benefits page (`/vpfi`); from there a "Launch App"
                 CTA opens the wallet-gated in-app surface in a new tab. */}
             <a
-              href={appUrl('/')}
+              href={appUrl('home')}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-primary btn-lg"

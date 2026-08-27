@@ -102,5 +102,10 @@ Agent reads-only: (none — every table the agent reads, it also writes.)
 
 - `apps/keeper` — sibling signing Worker; this one defers all on-chain submissions to it.
 - `apps/indexer` — sibling read-API Worker; this Worker reads from there for stats it doesn't compute locally.
-- `apps/app` — primary consumer of `/quote/*`, `/diag/record`, `/thresholds`, `/link/telegram`.
+- `apps/app` — consumes `/thresholds`, `/link/telegram` and the
+  support-ticket endpoint.
+- `/quote/*` and `/diag/record` have NO consumer in `apps/app`: their
+  only clients were in the retired `apps/defi`, so those endpoints are
+  currently unused by any shipping surface. Check that before
+  reconfiguring or retiring them (#1854).
 - `packages/contracts` — ABI / deployment source.

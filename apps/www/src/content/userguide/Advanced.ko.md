@@ -1553,7 +1553,7 @@ user-only로 남습니다.
 
 ### 복구 흐름
 
-1. [복구 페이지](https://app.vaipakam.com/recover)를 방문하십시오.
+1. [복구 페이지](https://defi.vaipakam.com/recover)를 방문하십시오.
 2. 토큰 컨트랙트 주소, 보낸 소스, 금액을 입력하십시오.
 3. 화면의 안내를 주의 깊게 검토하십시오.
 4. "CONFIRM"을 입력하여 서명을 활성화하십시오.

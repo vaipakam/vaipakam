@@ -1965,7 +1965,7 @@ from, etc.).
 
 ### Recovery flow
 
-1. Visit the [recovery page](https://app.vaipakam.com/recover).
+1. Visit the [recovery page](https://defi.vaipakam.com/recover).
 2. Enter the token contract address, the source you sent
    from, and the amount.
 3. Review the on-screen acknowledgment carefully.

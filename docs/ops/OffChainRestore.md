@@ -1480,11 +1480,13 @@ caught at the cheapest stage.
       ```
 
       The `cd` is load-bearing and the subshell above does not carry over —
-      it exits, leaving you at the repository root, whose `wrangler.jsonc`
-      names **`vaipakam-alpha`**. Run bare from there and this reads another
-      Worker's deployment history entirely, so branch A would complete on
-      evidence about the wrong Worker. `--cwd apps/keeper` or
-      `--name vaipakam-keeper` do the same job if you prefer them.
+      it exits, leaving you at the repository root. There is NO wrangler
+      config there any more: the root `wrangler.jsonc` named
+      `vaipakam-alpha` and was deleted with that Worker's source in #1854.
+      So the old failure mode — silently reading another Worker's history —
+      is gone; run bare from the root now and wrangler simply has no config
+      to act on. Supply the context explicitly: `--cwd apps/keeper` or
+      `--name vaipakam-keeper` do the same job as the `cd`.
    2. A trigger-aware readback shows **no** schedule — the `/schedules`
       query later in this step, expected to return an EMPTY `result`. Empty
       is the pass condition here; it is the failure condition in branch B.
@@ -1810,13 +1812,15 @@ caught at the cheapest stage.
    A `KEEPER_PRIVATE_KEY unset` line is the `create` case instead.
 
    **`--config` is not optional here.** Without it, `wrangler secret put`
-   applies to the Worker named in whatever Wrangler config is active — and
-   from the repository root that is `wrangler.jsonc`, which names
-   **`vaipakam-alpha`**, not the keeper. The `( cd apps/keeper && … )` above
-   runs in a subshell, so it does not change your working directory. The
-   command would report success while the keeper's flags stayed exactly as
-   they were, which is the worst possible outcome for a step whose purpose
-   is to fix them.
+   applies to the Worker named in whatever Wrangler config is active, and
+   the `( cd apps/keeper && … )` above runs in a subshell, so it does not
+   change your working directory.
+
+   Since #1854 the root `wrangler.jsonc` is gone — it named the retired
+   `vaipakam-alpha` — so this no longer misfires at another Worker; it
+   fails for want of a config instead. Do not read a config-not-found
+   error as the keeper being misconfigured: it means the command lacked
+   `--config` / `--cwd`, and the keeper's flags are untouched.
 
    `wrangler secret put` creates a secret **for a Worker**;
    `wrangler secrets-store secret create` creates one **within a store**.

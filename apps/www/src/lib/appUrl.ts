@@ -1,52 +1,83 @@
 /**
- * Cross-domain URL builder for the connected-app surface
- * (`app.vaipakam.com`). The marketing site hosted by this app links to a
- * handful of public-read tools that live on the connected-app
- * domain — analytics, NFT verifier, protocol console — plus the
- * "Launch App" CTA. None of those are co-located here because the
- * industry pattern (Uniswap, Morpho, dYdX, ...) keeps
+ * Cross-domain URL builder for the connected-app surface.
+ *
+ * The marketing site links to a handful of public-read tools that live
+ * on the connected-app domain — analytics, NFT verifier, protocol
+ * console — plus the "Launch App" CTA. None are co-located here
+ * because the industry pattern (Uniswap, Morpho, dYdX, ...) keeps
  * read-only public dashboards on the app subdomain alongside the
  * wallet-bearing write flows.
  *
- * The coupling is a URL and nothing more: this site never imports from
- * the connected app, so rehoming that app is a one-line change here.
- * #1854 exercised exactly that — the connected app moved from
- * `defi.vaipakam.com` (the retired apps/defi) to `app.vaipakam.com`
- * (apps/app) and no call site below changed.
+ * This site never imports from the connected app, so the coupling is a
+ * URL and nothing more. #1854 exercised that: the app moved from
+ * `defi.vaipakam.com` to `apps/app`, and no call site changed — only
+ * this file. What #1854 also showed is that the coupling is a URL AND
+ * a route table, which is what the switch below now models.
  *
- * Dev override: set `VITE_APP_URL=http://localhost:5173` (or
- * whatever the local connected-app dev server uses) in the active
- * `.env` so cross-domain links resolve to the dev server during local
- * development.
- *
- * The helper trims a trailing slash on the configured base so call
- * sites can pass either `/analytics` or `analytics` and the joined
- * URL stays well-formed.
+ * Dev override: `VITE_APP_URL=http://localhost:5173` in the active
+ * `.env` points these links at a local dev server. See the note on
+ * that constant — it moves the host only.
  */
-/**
- * NOTE ON THE DEFAULT — deliberately still the legacy host.
- *
- * The rename landed before `app.vaipakam.com` was serving a
- * production-configured build, so defaulting to it here would point
- * every "Launch App" CTA at an unserved hostname the moment this site
- * is deployed. The links keep resolving to the host that actually
- * answers until the new one is live.
- *
- * Flipping is the one-line change this helper exists to make cheap:
- * set the default below to `https://app.vaipakam.com` (or set
- * `VITE_APP_URL` in the deploy env, which already overrides it). Do it
- * once the Worker is deployed WITH operator env — a build with no
- * `VITE_INDEXER_ORIGIN` has no offer book, push rail or config
- * snapshot, and `apps/app`'s `deploy` script hard-fails on exactly
- * that, so use `pnpm run deploy` rather than a bare build.
- */
-const APP_URL = (
-  import.meta.env.VITE_APP_URL ?? 'https://defi.vaipakam.com'
-).replace(/\/$/, '');
 
-export function appUrl(path: string): string {
-  const normalised = path.startsWith('/') ? path : `/${path}`;
-  return `${APP_URL}${normalised}`;
+/**
+ * THE CUTOVER SWITCH — host and paths move together, on purpose.
+ *
+ * The rename landed before `app.vaipakam.com` served a
+ * production-configured build, so these links still resolve to the
+ * legacy host. That deferral is only half the problem, and the half
+ * that is easy to miss: the two surfaces do not agree on paths. The
+ * verifier is `/nft-verifier` on the legacy app and `/nft` on the new
+ * one; the VPFI vault is `/vpfi-vault` and `/vpfi`. Deferring the host
+ * while leaving new-app paths in the call sites produces exactly the
+ * same breakage as flipping the host too early — an earlier revision
+ * of this file did precisely that.
+ *
+ * So call sites name a DESTINATION, never a path, and one constant
+ * selects the host and the route table as a pair. They cannot drift.
+ *
+ * TO COMPLETE THE CUTOVER, in this order:
+ *   1. Deploy the Worker WITH operator env — `cd apps/app && pnpm run
+ *      deploy`, never a bare `build`. A build missing
+ *      `VITE_INDEXER_ORIGIN` has no offer book, push rail or config
+ *      snapshot; the `deploy` script hard-fails on that, a plain build
+ *      only warns.
+ *   2. Bind `app.vaipakam.com` to it and verify the routes below.
+ *   3. Set `APP_TARGET` to `'app'` here.
+ *   4. Repoint the hard-coded recovery links in the ten
+ *      `src/content/userguide/Advanced.*.md` files, which cannot call
+ *      this helper — markdown has no access to it.
+ *
+ * Step 4 is the one that gets forgotten; it is listed here because
+ * this file is where somebody will be standing when they do step 3.
+ */
+type AppTarget = 'legacy' | 'app';
+
+// `as AppTarget` widens the literal on purpose: without it TypeScript
+// narrows this to 'legacy' and reports the comparisons below as dead
+// code, which is exactly the check we want live when it is flipped.
+const APP_TARGET = 'legacy' as AppTarget;
+
+/** Per-surface routes. Same destinations, different paths. */
+const ROUTES: Record<AppTarget, Record<AppDestination, string>> = {
+  legacy: { home: '/', nftVerifier: '/nft-verifier', vpfiVault: '/vpfi-vault' },
+  app: { home: '/', nftVerifier: '/nft', vpfiVault: '/vpfi' },
+};
+
+/** Where a link can point. Add a member here, not a raw path at a call site. */
+export type AppDestination = 'home' | 'nftVerifier' | 'vpfiVault';
+
+const DEFAULT_HOST =
+  APP_TARGET === 'app' ? 'https://app.vaipakam.com' : 'https://defi.vaipakam.com';
+
+/**
+ * `VITE_APP_URL` overrides the HOST only — the route table still follows
+ * `APP_TARGET`. Pointing this at a local `apps/app` dev server therefore
+ * also wants `APP_TARGET = 'app'`, or the links carry legacy paths.
+ */
+const APP_URL = (import.meta.env.VITE_APP_URL ?? DEFAULT_HOST).replace(/\/$/, '');
+
+export function appUrl(destination: AppDestination): string {
+  return `${APP_URL}${ROUTES[APP_TARGET][destination]}`;
 }
 
 /**
@@ -70,8 +101,9 @@ export function appUrl(path: string): string {
  *    back to `appUrl`. It exists to be removed, not to become a second
  *    permanent surface.
  *
- * The NFT Verifier is deliberately NOT here: it WAS ported, as `/nft`,
- * so its links use `appUrl('/nft')`.
+ * The NFT Verifier is deliberately NOT here: it WAS ported, so its
+ * links use `appUrl('nftVerifier')`, which resolves to `/nft-verifier`
+ * or `/nft` depending on the cutover target above.
  */
 const LEGACY_TOOL_URL = (
   import.meta.env.VITE_LEGACY_TOOL_URL ?? 'https://defi.vaipakam.com'

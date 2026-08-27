@@ -1439,7 +1439,7 @@ user-only。
 
 ### 找回流程
 
-1. 访问 [找回页面](https://app.vaipakam.com/recover)。
+1. 访问 [找回页面](https://defi.vaipakam.com/recover)。
 2. 输入代币合约地址、您发送的来源地址和金额。
 3. 仔细阅读屏幕上的确认说明。
 4. 输入 “CONFIRM” 以启用签名。

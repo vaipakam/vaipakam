@@ -44,7 +44,11 @@ export interface OfferHeadlineInput {
   interestRateBpsMax: number;
 }
 
-/** Mirrors apps/app `offerHeadline` — NFT rentals use `amount` as the daily fee. */
+/** Mirrors the `offerHeadline` helper that lived in the retired
+ *  `apps/defi` — NFT rentals use `amount` as the daily fee. There is no
+ *  counterpart in `apps/app`; this copy is the only surviving one, so
+ *  the citation is historical (see git history before #1854) rather
+ *  than a parity claim against a live implementation. */
 export function offerHeadline(offer: OfferHeadlineInput): { principalWei: bigint; rateBps: number } {
   const amount = BigInt(offer.amount?.trim() || '0');
   const amountMax = BigInt(offer.amountMax?.trim() || '0');

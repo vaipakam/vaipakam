@@ -1792,7 +1792,7 @@ Tu as envoyé les jetons toi-même par erreur, tu contrôles le wallet source et
 
 ### Flux de récupération
 
-1. Visite la [page de récupération](https://app.vaipakam.com/recover).
+1. Visite la [page de récupération](https://defi.vaipakam.com/recover).
 2. Entre l'adresse du contrat du jeton, la source d'où tu as envoyé et le montant.
 3. Lis attentivement l'avis de réception à l'écran.
 4. Tape « CONFIRM » pour activer la signature.

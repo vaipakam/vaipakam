@@ -21,7 +21,7 @@ export default function CTA() {
                 a plain <a> via appUrl(), opening in a new tab to match
                 the Navbar + Hero "Launch App" CTAs. */}
             <a
-              href={appUrl('/')}
+              href={appUrl('home')}
               target="_blank"
               rel="noopener noreferrer"
               className="btn btn-primary btn-lg"

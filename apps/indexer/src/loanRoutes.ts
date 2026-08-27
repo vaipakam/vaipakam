@@ -716,7 +716,11 @@ export async function handleClaimables(
  * spec keeps the current holder's claim discoverable from chain).
  *
  * Deliberately separate from GET /claimables/:addr — that shape is a
- * typed apps/app contract ({asLender, asBorrower} of full rows);
+ * typed {asLender, asBorrower} response of full rows. Note it has no
+ * current consumer: the client was removed in #988 (claimables are
+ * on-chain-authoritative now) and `apps/app` uses this hint plus
+ * on-chain verification instead, so do not treat that endpoint as a
+ * compatibility constraint on the app;
  * this one returns a flat (loanId, role, status) list ordered by
  * most-recently-touched first (verification priority). No
  * already-claimed activity filter here: a claim burns the position

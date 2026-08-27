@@ -1665,7 +1665,7 @@ keeper に delegate することもできます。ただし initiate step
 
 ### リカバリのフロー
 
-1. [リカバリページ](https://app.vaipakam.com/recover) にアクセスします。
+1. [リカバリページ](https://defi.vaipakam.com/recover) にアクセスします。
 2. トークンのコントラクトアドレス、送金元のソースアドレス、および金額を入力します。
 3. 画面上の同意事項をよく読みます。
 4. "CONFIRM" と入力して、署名を有効にします。

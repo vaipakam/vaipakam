@@ -1,6 +1,12 @@
 {
   // Vaipakam app Worker — Cloudflare Workers Static Assets deploy of the
-  // apps/app Vite SPA build. Bound to `app.vaipakam.com`.
+  // apps/app Vite SPA build. Destined for `app.vaipakam.com`, which is
+  // **NOT BOUND YET**: the Worker exists, but the hostname awaits a
+  // deploy made with operator env present. Deploy with `pnpm run deploy`
+  // (never a bare build — see the guard note in vite.config.ts), bind the
+  // custom domain, then flip `APP_TARGET` in
+  // apps/www/src/lib/appUrl.ts. Until all three happen the marketing
+  // site's links deliberately still resolve to the legacy host.
   //
   // apps/app is THE connected app: the naive-user-first surface that
   // replaced the retired apps/defi (defi.vaipakam.com) in #1854. It was

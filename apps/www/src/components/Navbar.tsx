@@ -72,7 +72,7 @@ const NAV_GROUPS: NavGroup[] = [
       // Linked out via `appUrl(...)` and opened in a new tab so the
       // marketing tab stays open behind.
       { labelKey: 'nav.analytics', href: legacyToolUrl('/analytics'), newTab: true },
-      { labelKey: 'nav.nftVerifier', href: appUrl('/nft'), newTab: true },
+      { labelKey: 'nav.nftVerifier', href: appUrl('nftVerifier'), newTab: true },
       { labelKey: 'nav.protocolConsole', href: legacyToolUrl('/protocol-console'), newTab: true },
     ],
   },
@@ -326,7 +326,7 @@ export default function Navbar() {
               Present only here (on Navbar) because AppLayout has its own
               internal nav and shouldn't show this CTA. */}
           <a
-            href={appUrl('/')}
+            href={appUrl('home')}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-primary navbar-launch-mobile"
@@ -344,7 +344,7 @@ export default function Navbar() {
               marketing page stays open behind — same pattern as the
               VPFI dropdown's Buy / Stake-Unstake action items. */}
           <a
-            href={appUrl('/')}
+            href={appUrl('home')}
             target="_blank"
             rel="noopener noreferrer"
             className="btn btn-primary navbar-cta navbar-launch"

@@ -64,7 +64,7 @@ export default function Footer() {
               {t('footer.protocolConsole', 'Protocol Console')}
             </a>
             <a
-              href={appUrl('/nft')}
+              href={appUrl('nftVerifier')}
               target="_blank"
               rel="noopener noreferrer"
             >

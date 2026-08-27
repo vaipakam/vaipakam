@@ -64,11 +64,11 @@
 #   workspaces        pnpm workspace typechecks (apps/keeper, apps/indexer
 #                     — incl. the indexer's event-coverage script,
 #                     apps/agent, apps/app via `tsc -b --noEmit`,
-#                     apps/www). The vitest test suites in apps/app +
-#                     apps/agent are NOT run here — pre-existing test-
-#                     setup failures tracked as Issue #85; once that's
-#                     resolved, `pnpm -r test` joins this workflow in a
-#                     small follow-up PR.
+#                     apps/www). Vitest suites are NOT run in this job:
+#                     the connected-app + agent suites run in their own
+#                     `app-vitest.yml` workflow. Issue #85, which used to
+#                     block them here, died with the deleted app (#1854);
+#                     there is no pending `pnpm -r test` follow-up.
 #
 # The `Protect main` ruleset's required-status-checks rule wires
 # `contracts-fast`, `workspaces`, `detect-changes`, `Slither static

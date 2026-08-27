@@ -110,7 +110,7 @@ export default function BuyVPFIMarketing() {
           fixed-rate buy card was removed in #712. */}
       <div style={{ marginTop: 32, textAlign: 'center' }}>
         <a
-          href={appUrl('/vpfi')}
+          href={appUrl('vpfiVault')}
           target="_blank"
           rel="noopener noreferrer"
           className="btn btn-primary btn-lg"
