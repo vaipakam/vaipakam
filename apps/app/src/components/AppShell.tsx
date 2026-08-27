@@ -228,7 +228,6 @@ export function AppShell() {
             V
           </span>
           Vaipakam
-          <span className="brand-tag">alpha</span>
         </NavLink>
         <div className="shell-topbar-spacer" />
         {/* UX-013 — a persistent network indicator when connected: the

@@ -23,8 +23,25 @@
  * sites can pass either `/analytics` or `analytics` and the joined
  * URL stays well-formed.
  */
+/**
+ * NOTE ON THE DEFAULT — deliberately still the legacy host.
+ *
+ * The rename landed before `app.vaipakam.com` was serving a
+ * production-configured build, so defaulting to it here would point
+ * every "Launch App" CTA at an unserved hostname the moment this site
+ * is deployed. The links keep resolving to the host that actually
+ * answers until the new one is live.
+ *
+ * Flipping is the one-line change this helper exists to make cheap:
+ * set the default below to `https://app.vaipakam.com` (or set
+ * `VITE_APP_URL` in the deploy env, which already overrides it). Do it
+ * once the Worker is deployed WITH operator env — a build with no
+ * `VITE_INDEXER_ORIGIN` has no offer book, push rail or config
+ * snapshot, and `apps/app`'s `deploy` script hard-fails on exactly
+ * that, so use `pnpm run deploy` rather than a bare build.
+ */
 const APP_URL = (
-  import.meta.env.VITE_APP_URL ?? 'https://app.vaipakam.com'
+  import.meta.env.VITE_APP_URL ?? 'https://defi.vaipakam.com'
 ).replace(/\/$/, '');
 
 export function appUrl(path: string): string {

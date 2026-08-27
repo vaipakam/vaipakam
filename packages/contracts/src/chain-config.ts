@@ -7,11 +7,20 @@
  * a chain config without pulling apps/app's Vite-bundled runtime
  * registry.
  *
- * The runtime instantiation (CHAIN_REGISTRY, DEFAULT_CHAIN, etc.)
- * stays in apps/app/src/contracts/config.ts because it references
- * `import.meta.env.VITE_*_RPC_URL` which is Vite-specific. That
- * file re-exports {ChainConfig} and {compareChainsForDisplay} from
- * here so existing import paths keep working.
+ * The connected app's runtime chain registry lives separately, in
+ * apps/app/src/chain/chains.ts, because it reads
+ * `import.meta.env.VITE_*_RPC_URL`, which is Vite-specific.
+ *
+ * Do NOT assume that file is a thin re-export of this one — it is
+ * not, and an earlier version of this comment said otherwise. It
+ * declares its OWN `SupportedChain` shape and builds
+ * `SUPPORTED_CHAINS` / `DEFAULT_CHAIN` from it, taking only
+ * `getDeployment` from this package. Neither {ChainConfig} nor
+ * {compareChainsForDisplay} is re-exported there.
+ *
+ * So when you register a new chain, expect to touch BOTH: the
+ * descriptor type and pure helpers here, and the runtime registry
+ * there. Editing only this file leaves the app unaware of the chain.
  */
 
 /**

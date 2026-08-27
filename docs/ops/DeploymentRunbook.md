@@ -1737,23 +1737,29 @@ and go hunting for a broader token.
 ### Deploying a static-assets surface
 
 ```bash
-cd apps/<app> && pnpm run build && pnpm exec wrangler deploy
+cd apps/app && pnpm run deploy
 ```
 
-Use `pnpm run deploy`, **not** `pnpm run build && wrangler deploy`. The
-`deploy` script sets `REQUIRE_INDEXER_ORIGIN=1`, which turns the missing
-`VITE_INDEXER_ORIGIN` check in `apps/app/vite.config.ts` from a warning
-into a hard failure. A bare `build` only warns — by design, so CI and
-preview builds without operator env still pass — which means the
-build-then-deploy form will happily publish a production app with no
-offer-book feed, no push rail and no config snapshot. Populate
-`apps/app/.env.local` first; a build with no operator env is a preview
-build, not a deployable one.
+**Use `pnpm run deploy`. Do not hand-run `pnpm run build && wrangler
+deploy`.** The `deploy` script sets `REQUIRE_INDEXER_ORIGIN=1`, which
+turns the missing-`VITE_INDEXER_ORIGIN` check in
+`apps/app/vite.config.ts` from a warning into a hard failure. A bare
+`build` only warns — by design, so CI and preview builds without
+operator env still pass — so the build-then-deploy form will happily
+publish a production app with no offer-book feed, no push rail and no
+config snapshot. This is not hypothetical: it is how #1958 briefly put
+a config-empty build on the production hostname.
 
-The build must run first regardless: `assets.directory` points at
-`./dist`, and wrangler fails on a clean checkout without it. The Worker
-is created on first deploy from the `name` in `wrangler.jsonc` — there
-is no separate "create the Worker" step in the dashboard.
+Populate `apps/app/.env.local` first. A build with none of the sixteen
+`VITE_*` operator variables is a preview build, not a deployable one —
+it also lacks RPC URLs and the WalletConnect project ID, so wallet
+connection itself is degraded, not just the indexer-backed features.
+
+`deploy` runs the build itself, and the build must happen before
+wrangler regardless: `assets.directory` points at `./dist`, and
+wrangler fails on a clean checkout without it. The Worker is created on
+first deploy from the `name` in `wrangler.jsonc` — there is no separate
+"create the Worker" step in the dashboard.
 
 The scripted equivalents differ by script, and the two forms are not
 interchangeable:

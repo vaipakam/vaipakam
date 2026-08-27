@@ -206,9 +206,12 @@ const GLOSSARY = new Set(
 const BASELINE = {
   // --- Basic / common surfaces. The composed offer-row / step / vault /
   //     Vpfi-tier / fallback-label strings that used to live here were
-  //     extracted into the copy catalog in the #1393 burn-down; only the
-  //     release-stage badge (a proper noun, not localized) remains.
-  'src/components/AppShell.tsx': { alpha: 1 }, // release-stage badge, not localized
+  //     extracted into the copy catalog in the #1393 burn-down. The
+  //     release-stage "alpha" badge that outlived them is gone too: the
+  //     #1854 cutover promoted this app to the production surface, and
+  //     the badge was still rendering on every viewport above 430px, so
+  //     the shell was labelling the live product a prototype. Entry
+  //     removed rather than zeroed — a reintroduced badge should fail.
   // The advanced Rate-Desk surface was burned down into copy.desk.* in
   // the desk i18n pass — its baseline entries are gone (a new hardcoded
   // string there now fails CI outright).
