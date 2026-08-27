@@ -53,13 +53,31 @@ validator refuses the form, and the accepted consent is recorded on-chain
 with the offer, so it is auditable on the position rather than only in a
 browser session.
 
-Three follow-ups are left open rather than folded in. The operator must
-create the app.vaipakam.com DNS binding and retire the four Workers whose
-sources are now gone (`vaipakam-defi`, `vaipakam-alpha`, `vaipakam-alpha01`,
-`vaipakam-alpha02`) — Cloudflare-dashboard actions, not repository changes.
-A redirect from defi.vaipakam.com to the new origin is worth adding so
-existing links and bookmarks survive. And `packages/defi-client` is now
-orphaned: `apps/alpha01` was its only consumer. It is kept with its
-description saying so, to be deleted if nothing adopts it.
+The new surface is already live. `app.vaipakam.com` serves the app from
+the `vaipakam-app` Worker, deployed and bound ahead of this merge rather
+than after it, so there is no window where the repository advertises a
+hostname that nothing answers — which matters here because this change
+also repoints every live end-to-end driver at that host. The Worker was
+created equivalent to the one it replaces: same compatibility date and
+flags, and no bindings or secrets to carry over, since the app is a
+static-assets deploy.
+
+The deployment runbook gains the record that made this awkward to
+begin with. Which hostname served which Worker existed only in the
+Cloudflare dashboard, so nothing in the repository could answer what
+`alpha01.vaipakam.com` pointed at, or explain that the hostname is
+attached out-of-band as a Custom Domain rather than declared in the
+Worker's own config. That mapping, the binding procedure, and the
+deploy-before-merge ordering are now written down.
+
+Two follow-ups stay open. The four Workers whose sources are gone still
+run — `vaipakam-defi`, `vaipakam-alpha`, `vaipakam-alpha01` and
+`vaipakam-alpha02` — and the recommendation is to convert the first and
+last into redirects rather than delete them, since both had real users
+and `alpha02` in particular is cited as the testnet-review target
+throughout the findings notes; the two prototypes can go outright. And
+`packages/defi-client` is now orphaned, `apps/alpha01` having been its
+only consumer. It is kept with its description saying so, to be deleted
+if nothing adopts it.
 
 Closes #1854.

@@ -1687,6 +1687,86 @@ Cloudflare deploy to take effect — same as flipping any other
 
 ---
 
+## Cloudflare surface topology — hostname → Worker
+
+Every public surface is a Cloudflare **Worker** (Workers Static Assets
+for the two Vite sites; plain Workers for the three services). This
+table is the operational record of which hostname serves which Worker;
+before #1854 that mapping existed only in the Cloudflare dashboard, so
+nothing in the repository could tell you what `alpha01.vaipakam.com`
+pointed at.
+
+| Hostname | Worker | Source | Notes |
+| --- | --- | --- | --- |
+| `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. Bound at the #1854 cutover. |
+| `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
+| `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Authenticated API — a bare `GET /` answering 403 is correct, not an outage. |
+| `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
+| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-triggered; deliberately unbound. |
+| — (no hostname) | `vaipakam-offchain-data-archive` / `-warm` | `ops/` | Scheduled ops Workers. |
+| `defi.vaipakam.com` | `vaipakam-defi` | *(source deleted #1854)* | Retire per the cutover note below. |
+| `alpha02.vaipakam.com` | `vaipakam-alpha02` | *(source deleted #1854)* | Retire per the cutover note below. |
+| `alpha.vaipakam.com` | `vaipakam-alpha` | *(source deleted #1854)* | Prototype — safe to delete outright. |
+| `alpha01.vaipakam.com` | `vaipakam-alpha01` | *(source deleted #1854)* | Prototype — safe to delete outright. |
+
+### How a hostname gets bound
+
+**The binding is NOT in `wrangler.jsonc`.** No app declares a `routes`
+key, so `wrangler deploy` publishes the script and nothing else — the
+hostname is attached out-of-band as a Workers **Custom Domain**, which
+provisions the DNS record and certificate for you. Prefer a Custom
+Domain over a Route: a Route needs a pre-existing proxied DNS record
+and only pattern-matches an existing zone setup.
+
+Binding is idempotent, so re-running is safe:
+
+```bash
+curl -s -X PUT \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  -H "Content-Type: application/json" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains" \
+  --data '{"environment":"production","hostname":"<host>","service":"<worker>","zone_id":"<zone>"}'
+```
+
+List what is currently bound with `GET .../workers/domains`. Note that
+an account-scoped Workers token can create a Custom Domain — and so
+create its DNS record — while still being denied a direct read of
+`zones/<id>/dns_records`. Do not read that denial as "no DNS access"
+and go hunting for a broader token.
+
+### Deploying a static-assets surface
+
+```bash
+cd apps/<app> && pnpm run build && pnpm exec wrangler deploy
+```
+
+The build must run first: `assets.directory` points at `./dist`, and
+wrangler fails on a clean checkout without it. The Worker is created on
+first deploy from the `name` in `wrangler.jsonc` — there is no separate
+"create the Worker" step in the dashboard. The scripted equivalent is
+`deploy-{chain,testnet,mainnet}.sh --phase cf-app`.
+
+Deploying is safe to do **before** merging the branch that renames a
+surface: a newly created Worker has no hostname pointing at it, so it
+can be verified on its `*.workers.dev` URL first, and the domain bound
+once it looks right. That ordering avoids a window where `main`
+advertises a hostname that nothing answers.
+
+### Retiring a surface — redirect, don't delete
+
+When a hostname has had real users, converting its Worker into a
+redirect beats deleting it: bookmarks and external links keep working,
+and per-origin browser storage is lost on an origin change regardless,
+so a redirect at least lands people on a working app instead of a dead
+host. `defi.vaipakam.com` and `alpha02.vaipakam.com` both qualify —
+the latter was the live testnet-review target for months and is cited
+throughout `docs/FindingsAndFixes/`, so a redirect keeps those
+write-ups navigable. Give the redirects a bounded life rather than
+leaving them forever. Prototype hosts with no audience
+(`alpha.vaipakam.com`, `alpha01.vaipakam.com`) can just be deleted.
+
+---
+
 ## VPFIBuyAdapter — payment-token mode (per-chain MANDATORY config)
 
 > **Historical (#687-A).** The cross-chain VPFI fixed-rate buy flow —
