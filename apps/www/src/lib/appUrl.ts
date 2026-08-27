@@ -9,10 +9,13 @@
  * wallet-bearing write flows.
  *
  * This site never imports from the connected app, so the coupling is a
- * URL and nothing more. #1854 exercised that: the app moved from
- * `defi.vaipakam.com` to `apps/app`, and no call site changed — only
- * this file. What #1854 also showed is that the coupling is a URL AND
- * a route table, which is what the switch below now models.
+ * URL and nothing more — but it is a URL AND a route table, which is
+ * what #1854 established the hard way. The two surfaces answer on
+ * different paths, so rehoming the app is not a one-line change of a
+ * host: call sites moved from raw paths to named destinations (`CTA`,
+ * `Footer`, `Hero`, `Navbar`, `BuyVPFIMarketing`) precisely so the host
+ * and the routes cannot be changed independently. Preserve that coupling
+ * in any future cutover work.
  *
  * Dev override: `VITE_APP_URL=http://localhost:5173` in the active
  * `.env` points these links at a local dev server. See the note on
