@@ -1956,23 +1956,25 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user
     ) internal view returns (uint256 pending) {
-        pending = _userPendingSplit(s, user);
+        pending = _userPendingPayout(s, user);
     }
 
 
-    /// @dev #1499 — ONE walk yielding both the user's pending payout and its
-    ///      RAW fresh component. Replaces a second O(n) pricing scan: the
-    ///      caller previously ran `userClaimPendingUncapped` (which walks) and
-    ///      then walked again for the fresh split. `userRewardEntryIds` retains
-    ///      processed entries and has no size cap, and the horizon batch probes
-    ///      this per submitted entry — so the duplicate scan could push a batch
-    ///      over the block gas limit and leave exactly the entries whose clocks
-    ///      are running unsweepable (Codex #1970 r1 P2).
+    /// @dev #1499 — ONE walk yielding the user's pending payout: the entry
+    ///      upper bound plus the finalized legacy window the claim settles
+    ///      first. Replaces a second O(n) pricing scan — `userRewardEntryIds`
+    ///      retains processed entries and has no size cap, and the horizon
+    ///      batch probes this per submitted entry, so a duplicate scan could
+    ///      push a batch over the block gas limit and leave exactly the entries
+    ///      whose clocks are running unsweepable (Codex #1970 r1 P2).
     ///
-    ///      The WINDOW term counts toward both: `previewForUserWindow` returns a
-    ///      scalar and never splits funding composition, so no recycled share
-    ///      exists to subtract from it.
-    function _userPendingSplit(
+    ///      RENAMED from `_userPendingSplit` (Codex r7 P3). It returned a
+    ///      `(payout, freshRaw)` pair until r4 removed the unread second value,
+    ///      after which both the name and this comment described a split the
+    ///      function no longer performs. A helper whose name states a shape it
+    ///      does not have is how the divergence on #1981 survived a release;
+    ///      not worth repeating one file away from it.
+    function _userPendingPayout(
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (uint256 payout) {
