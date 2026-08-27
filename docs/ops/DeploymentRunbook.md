@@ -1765,7 +1765,7 @@ publish a production app with no offer-book feed, no push rail and no
 config snapshot. This is not hypothetical: it is how #1958 briefly put
 a config-empty build on the production hostname.
 
-Populate `apps/app/.env.local` first. A build with none of the sixteen
+Populate `apps/app/.env.local` first. A build with none of the eighteen
 `VITE_*` operator variables is a preview build, not a deployable one.
 Be precise about what that costs, because the failure is partial:
 chain reads still work — every chain in `apps/app/src/chain/chains.ts`

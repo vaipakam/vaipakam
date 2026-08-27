@@ -83,7 +83,7 @@ site emits still resolves to the host that actually answers.
 
 That ordering is the lesson rather than an oversight. The Worker was
 first deployed and bound during this change, then unbound again, because
-the build behind it had been made without any of the sixteen operator
+the build behind it had been made without any of the eighteen operator
 variables the app needs: no indexer origin, so no offer book, push rail
 or config snapshot, no keyed RPC endpoints, and no WalletConnect
 project ID. The last two degrade rather than break — the app falls back
