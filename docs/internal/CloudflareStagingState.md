@@ -39,7 +39,7 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 
 | Worker | Domain | Lane | Cron | D1 binding |
 |---|---|---|---|---|
-| `vaipakam-www` | `www.vaipakam.com` ✅ + `vaipakam.com` (apex) ✅ | Marketing static site (renamed from `vaipakam-labs` at the labs → www cutover; `labs.vaipakam.com` now serves a 301 Bulk Redirect to www) | none | none |
+| `vaipakam-www` | `vaipakam.com` (apex, canonical) ✅ + `www.vaipakam.com` → 301 to apex ✅ | Marketing static site (renamed from `vaipakam-labs` at the labs → www cutover). **`labs.vaipakam.com` is retired, not redirected** — verified 2026-08-27: no Workers binding and NO DNS record, so nothing resolves and no redirect rule can fire. This row previously said it served a 301 Bulk Redirect to www; a redirect needs a proxied DNS record, and there is none | none | none |
 | `vaipakam-defi` | `defi.vaipakam.com` (cert provisioning) | dApp frontend | none | none |
 | `vaipakam-agent` | `agent.vaipakam.com` (cert provisioning) | D1 → users (REST, Telegram, Push, frames) | every minute | yes |
 | `vaipakam-indexer` | (no public domain — cron only) | Chain → D1 | every minute | yes |
@@ -56,7 +56,7 @@ Workers default URLs (for direct reachability before custom-domain SSL is fully 
 
 | Hostname | Binding ID | Cert ID | Status |
 |---|---|---|---|
-| `labs.vaipakam.com` | `08853b930e2701479ca2cb9e3597d52a2ee5578c` | `aedaca43-5223-4acd-af0f-559ed28a181b` | live (HTTP/2 503 confirmed) |
+| ~~`labs.vaipakam.com`~~ | ~~`08853b930e2701479ca2cb9e3597d52a2ee5578c`~~ | ~~`aedaca43-5223-4acd-af0f-559ed28a181b`~~ | **REMOVED.** Verified 2026-08-27: absent from the account's Workers custom-domain bindings and absent from DNS. Ids kept struck through so an operator matching an old dashboard screenshot can see this row was retired rather than mislaid |
 | `defi.vaipakam.com` | `a6475e83ae6888e8f4d9e3e0f0b25609e283cb57` | `95999728-53b0-4229-9111-d624a7cdb320` | cert provisioning (~5–10 min) |
 | `agent.vaipakam.com` | `13dec781889c1b1ac6d68a34adc48b19356b5987` | `cc9e32be-5019-4d0a-bc13-d63349480ad2` | cert provisioning (~5–10 min) |
 

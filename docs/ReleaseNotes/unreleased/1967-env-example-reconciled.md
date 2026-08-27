@@ -55,6 +55,27 @@ before the move to the apex — as still bound, and reasoned at some length
 about the duplicate content that binding would produce for crawlers. It
 is not bound: the host appears in no binding on the account, and a request
 to it fails to connect in exactly the way the deliberately-unbound
-`app.vaipakam.com` does. The note now records what is actually true, with
-the date it was verified, and drops the crawler reasoning — an
-unresolvable hostname has no index entry to worry about.
+`app.vaipakam.com` does — and it has no DNS record at all, which settles
+it: with nothing resolving, there is no binding and no redirect rule
+either, since a redirect needs a proxied record to fire on. The note now
+records what is actually true, with the date it was verified, and drops
+the crawler reasoning — an unresolvable hostname has no index entry to
+worry about.
+
+Correcting that one file turned out not to be enough, which is the
+recurring shape of this whole effort: three further records said
+otherwise, and an operator consulting any of them would have been
+directed at a host that no longer exists. The staging plan described it
+as the marketing site's current home and listed it as bound; an internal
+state note went further and said it served a permanent redirect to the
+new site, which was never checkable against a hostname that does not
+resolve. All three now say what was verified, and the dated snapshot
+keeps its original line — marked as no longer true rather than rewritten,
+because a record of what was provisioned in May should not be quietly
+edited to match August.
+
+The variable count moved with the same care. It had been attributed to
+the operator's own `.env.local`, which is gitignored, absent on a clean
+checkout and different on every deployment — so no count could be quoted
+from it. Nineteen is the count in the tracked `.env.example` template,
+and that is the file the plan now names.

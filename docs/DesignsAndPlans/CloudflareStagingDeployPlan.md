@@ -22,7 +22,7 @@ unaffected.
 
 | Worker | Domain | What it does | Holds signing key? |
 |---|---|---|---|
-| **vaipakam-labs** | `labs.vaipakam.com` (today); `vaipakam.com` + `www.vaipakam.com` after cutover | Marketing site, docs, "Launch Vaipakam" button → `app.vaipakam.com/`. Static, wallet-free. | No |
+| **vaipakam-www** (was `vaipakam-labs`) | `vaipakam.com` (apex, canonical) + `www.vaipakam.com` (301 to apex). **`labs.vaipakam.com` is gone** — it was this row's "today" host before the labs → www cutover; as of 2026-08-27 it has no Workers binding and no DNS record at all, so nothing answers there and no redirect fires | Marketing site, docs, "Launch Vaipakam" button → `app.vaipakam.com/`. Static, wallet-free. | No |
 | **vaipakam-app** | `app.vaipakam.com` | The connected app — wallet connect, the intent-first Home at root (NOT a dashboard), Offer Book, loan flows, Claim Center, the VPFI fee-discount vault at `/vpfi` (deposits and withdrawals for fee tiers only — the app exposes no purchase surface of any kind), plus the wallet-free NFT verifier at `/nft`. NOTE (#1854): `/analytics` and `/protocol-console` were NOT ported — they remain on the retired `apps/defi` Worker, and the marketing site links them there deliberately, so do not test or redirect them against this Worker (#1959). `/nft-verifier` was the legacy path for the verifier; here it is `/nft`. | No |
 | **vaipakam-indexer** | `indexer.vaipakam.com` | Chain → D1 sync (chainIndexer.ts), cancelled-offer retention prune, public read-API: `/offers/*`, `/loans/*`, `/activity`, `/claimables/*` (open-CORS reads). **Also writes**: three POST endpoints that write D1, HMAC-authenticated inbound Alchemy webhooks, and authenticated outbound publication of **borrower-authorised, on-chain-bound** Seaport listings to OpenSea (posted with an empty `0x` signature; the vault's ERC-1271 check validates against a hash bound on-chain). | No on-chain key |
 | **vaipakam-agent** | `agent.vaipakam.com` | Proactive notifications (periodic interest pre-notify, push + Telegram), public Farcaster Frame at `/frames/active-loans`, operator services (`/quote/0x`, `/quote/1inch`), Telegram bot webhook (`/tg/webhook`), diagnostics record (`/diag/record`), frontend-facing settings (`/thresholds`, `/link/telegram`). Also **deletes** diagnostics + support records on a schedule and **publishes** listings via `/opensea/listing`. | **No on-chain transaction key** — but holds `PUSH_CHANNEL_PK`, a real Ethereum key used to sign notifications, whose EOA owns the channel's 50 PUSH stake and gas |
@@ -189,8 +189,12 @@ less scrutiny.
 Operator has provisioned (verified via Cloudflare API
 2026-05-08):
 
-- `vaipakam-defi`        — `defi.vaipakam.com` ✓ bound
-- `vaipakam-labs`        — `labs.vaipakam.com` ✓ bound
+- `vaipakam-defi`        — `defi.vaipakam.com` ✓ bound (still true 2026-08-27)
+- `vaipakam-labs`        — `labs.vaipakam.com` ✓ bound — **NO LONGER TRUE.**
+  The Worker was renamed `vaipakam-www` and moved to the apex; as of
+  2026-08-27 `labs.vaipakam.com` has no binding and no DNS record. The
+  line is kept because this section is a dated snapshot of what was
+  provisioned, not a description of today.
 - `vaipakam-indexer`     — Worker exists; **`indexer.vaipakam.com` not yet bound**
 - `vaipakam-agent`       — `agent.vaipakam.com` ✓ bound
 - `vaipakam-keeper`      — Worker exists; no public domain (by design)
@@ -215,9 +219,12 @@ Pre-existing primary infra (untouched until staging is proven):
 This was `vaipakam-defi` when the plan was written. #1854 retired that
 app and renamed its successor `apps/app` / `vaipakam-app`; the source
 behind `vaipakam-defi` is **deleted**, so it can no longer be built and
-nothing here applies to it. `apps/app/.env.local` is the authoritative
-list — it carries nineteen variables, not the six shown — and the deploy
-is `cd apps/app && pnpm run deploy` (§6 step 6), never a bare build.
+nothing here applies to it. `apps/app/.env.example` is the authoritative
+list — it carries nineteen variables, not the six shown. It is the
+TEMPLATE: copy it to `apps/app/.env.local`, which is gitignored, absent
+on a clean checkout and deployment-specific, so it can never be the file
+a count is quoted from. The deploy is `cd apps/app && pnpm run deploy`
+(§6 step 6), never a bare build.
 
 Static-asset deploy, build-time env vars (Vite injects at
 `pnpm build`, baked into the JS bundle):
