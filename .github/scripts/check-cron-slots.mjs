@@ -450,13 +450,28 @@ function hasVisibleStamp(md) {
   // close, so everything after it — including a fenced example stamp — counted
   // as visible. Markdown says the delimiters do not interchange; a boolean
   // cannot represent that, and the fix is to remember which one opened.
-  let openedWith = null;
+  // Codex #1978 r15: the LENGTH matters as well as the kind. A block opened
+  // with four backticks is not closed by three, so remembering only the kind
+  // let the shorter run close the longer block and everything after it — a
+  // fenced example stamp included — counted as visible again. A closing fence
+  // also carries no info string, which is what distinguishes it from a nested
+  // opener. Both are one CommonMark rule: the closer matches kind, is at least
+  // as long, and is otherwise blank.
+  let openedWith = null; // { kind, len }
   for (const line of md.split('\n')) {
-    const fence = /^\s*(```+|~~~+)/.exec(line);
+    const fence = /^\s*(```+|~~~+)(.*)$/.exec(line);
     if (fence) {
-      const kind = fence[1][0];
-      if (openedWith === null) openedWith = kind;
-      else if (openedWith === kind) openedWith = null;
+      const run = fence[1];
+      const kind = run[0];
+      if (openedWith === null) {
+        openedWith = { kind, len: run.length };
+      } else if (
+        openedWith.kind === kind &&
+        run.length >= openedWith.len &&
+        fence[2].trim() === ''
+      ) {
+        openedWith = null;
+      }
       continue;
     }
     if (openedWith === null && /^\*\*Verified:/.test(line)) return true;
@@ -1190,7 +1205,22 @@ export function checkSources(sources) {
       );
       continue;
     }
-    const out = execFileSync('git', ['ls-files', '-z', '--', path], {
+    // Codex #1978 r15: `git ls-files` reads its argument as a PATHSPEC, so a
+    // cell of `apps/*` — or `:(glob)apps/**` — resolves happily and KEEPS
+    // resolving after the Worker's real source directory is renamed or
+    // deleted. That is precisely the drift this column exists to catch, so a
+    // pattern here is worse than a wrong path: it cannot go stale. The cell
+    // must name one literal path, and the lookup disables magic explicitly so
+    // a future cell cannot turn it back on.
+    if (!/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(path) || path.includes('..')) {
+      problems.push(
+        `\`${name}\`'s source \`${path}\` is not a literal repository path; a glob ` +
+          `or pathspec keeps matching after the real source moves, which is the ` +
+          `drift this column exists to catch`,
+      );
+      continue;
+    }
+    const out = execFileSync('git', ['ls-files', '-z', '--', `:(literal)${path}`], {
       encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,
     });
@@ -1643,6 +1673,13 @@ const INVENTORY_CASES = [
 
 /** Stamp fixtures: `[name, markdown, expectedProblemCount]`. */
 const STAMP_CASES = [
+  // Codex #1978 r15: a four-backtick block is not closed by three, so this
+  // stamp is still inside the fenced example and must not count as visible.
+  [
+    'a shorter fence does not close a longer one',
+    '````\n```\n**Verified: 2026-08-27T16:21:53Z.**\n````',
+    1,
+  ],
   ['well-formed', '**Verified: 2026-08-27T16:21:53Z.** Re-verify with', 0],
   ['missing', 'Verified recently, honest.', 1],
   ['not a timestamp', '**Verified: yesterday.**', 1],
@@ -1692,6 +1729,25 @@ const STAMP_CASES = [
 ];
 
 /** Source-cell fixtures: `[name, cell, expected readSource value]`. */
+/**
+ * {checkSources} fixtures: `[name, Map(name -> parsed cell), expectedProblems]`.
+ *
+ * SOURCE_CASES below exercises the cell PARSER; these exercise the resolution
+ * that follows it, which is where a pathspec slips through — `apps/*` is a
+ * perfectly well-formed backticked path and only fails once git is asked to
+ * resolve it literally.
+ */
+const CHECK_SOURCES_CASES = [
+  ['a real tracked path resolves', new Map([['vaipakam-a', 'apps/keeper']]), 0],
+  ['the none marker is skipped', new Map([['vaipakam-a', null]]), 0],
+  // Codex #1978 r15: a glob keeps resolving after the real source moves, so it
+  // can never go stale — worse than a wrong path, for this column's purpose.
+  ['a glob is rejected', new Map([['vaipakam-a', 'apps/*']]), 1],
+  ['explicit pathspec magic is rejected', new Map([['vaipakam-a', ':(glob)apps/**']]), 1],
+  ['a parent-directory escape is rejected', new Map([['vaipakam-a', '../etc']]), 1],
+  ['a vanished literal path is still reported', new Map([['vaipakam-a', 'apps/gone-away']]), 1],
+];
+
 const SOURCE_CASES = [
   ['a backticked path', ' `apps/agent` ', 'apps/agent'],
   ['the explicit none marker', ' *none* ', null],
@@ -1832,6 +1888,13 @@ const SUMMARY_CASES = [
 
 function runSelftest() {
   let bad = 0;
+  for (const [name, map, expected] of CHECK_SOURCES_CASES) {
+    const got = checkSources(map).length;
+    if (got !== expected) {
+      console.error(`selftest: checkSources case "${name}" reported ${got} problem(s), expected ${expected}`);
+      bad++;
+    }
+  }
   for (const [name, cell, expected] of SOURCE_CASES) {
     const got = readSource(cell);
     if (got !== expected) {
@@ -1905,7 +1968,8 @@ function runSelftest() {
   console.log(
     `Cron-slot gate selftest OK (${MUST_FIRE.length} fire, ${MUST_NOT_FIRE.length} quiet, ` +
       `${INVENTORY_CASES.length} inventory rows, ${SUMMARY_CASES.length} summaries, ` +
-      `${STAMP_CASES.length} stamps, ${SOURCE_CASES.length} sources).`,
+      `${STAMP_CASES.length} stamps, ${SOURCE_CASES.length} sources, ` +
+      `${CHECK_SOURCES_CASES.length} source resolutions).`,
   );
   return 0;
 }
