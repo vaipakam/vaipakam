@@ -870,4 +870,30 @@ contract InteractionRewardsLensFacet {
     {
         return LibInteractionRewards.userArmedFreshNeedView(user);
     }
+
+    /**
+     * @notice Codex #1499 r6 P2 — the armed need together with the legacy legs
+     *         its budget is derived from.
+     * @dev    The horizon predicate reaches this by staticcall (an EIP-170
+     *         requirement, see {LibInteractionRewards}), and it needs the same
+     *         two legacy legs the walk's budget already computed. Returning
+     *         them here is what keeps that O(entries) pass to ONE per swept
+     *         entry instead of one on each side of the Diamond boundary. The
+     *         scan runs before the unarmed early return, so the duplicate was
+     *         paid on every chain rather than only on armed ones.
+     *
+     *         Additive on purpose: {getUserArmedFreshNeed} keeps its selector
+     *         and its callers, so no routed selector is retired here.
+     * @param  user The claimant.
+     * @return armed        Capped armed fresh the user's open claim would consume.
+     * @return userLegs     Legacy legs bound for the user.
+     * @return treasuryLegs Legacy legs bound for treasury (they reserve too).
+     */
+    function getUserArmedFreshNeedWithLegs(address user)
+        external
+        view
+        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs)
+    {
+        return LibInteractionRewards.userArmedFreshNeedWithLegsView(user);
+    }
 }

@@ -10,6 +10,7 @@ import {VPFITokenFacet} from "../src/facets/VPFITokenFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
+import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {AdminFacet} from "../src/facets/AdminFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 import {TestMutatorFacet} from "./mocks/TestMutatorFacet.sol";
@@ -120,6 +121,262 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
     /// the caps run, so a part-payment would consume the entry and delete
     /// the untruncated remainder. This test pins BOTH halves: the refusal,
     /// and that the claimant is made whole once funding lands.
+    /// #1499 — THE HORIZON AND THE CLAIM MUST AGREE.
+    ///
+    /// The RL-3 notice clock only accrues while an entry is claim-executable,
+    /// and `rewardEntryExpiry` mirrors that: it folds the pending interval into
+    /// `elapsed` ONLY when `_entryExecutableNow` holds. So a horizon that is
+    /// more lenient than the claim is directly observable — the countdown
+    /// advances for a claimant whose claim reverts, and when backing later
+    /// lands the next sweep can expire the entry immediately on that stale
+    /// elapsed time, consuming the notice window the horizon exists to give.
+    ///
+    /// This is the cell where they diverged: the claim refuses a payout whose
+    /// FRESH part does not fit ABOVE the earmark, while the horizon's predicate
+    /// tested a bare payout against the balance and never netted the bucket.
+    /// Balance covers the payout, so the OLD predicate called this executable;
+    /// balance does not cover payout + bucket, so the claim refuses it.
+    ///
+    /// Note the suite this lives in: four tests already covered the claim side
+    /// of #1460 and NONE touched the horizon, which is why the divergence
+    /// survived — and why three attempts to align it inside #1497 each passed
+    /// a green suite.
+    function testHorizonPausesWhenTheClaimWouldBeRefusedForBacking() public {
+        (uint256 id, uint256 expected) = _seedPayable(alice, 77);
+
+        // Arm the horizon. While `rewardClaimHorizonDays == 0` (the deploy
+        // default) the sweep returns at its first line and nothing accrues, so
+        // an unarmed run cannot exhibit this at all.
+        // 180 is the MINIMUM the setter accepts (bounds-checked to
+        // [180, 1095] days); 30 reverts ParameterOutOfRange.
+        _cfg().setRewardClaimHorizonDays(180);
+
+        _mut().setRecycleBucketRaw(1 ether); // ample: entry is executable
+        // START THE CLOCK. `rewardEntryFirstClaimableAt` is stamped by the
+        // SWEEP itself, on its first claim-EXECUTABLE observation
+        // (`LibInteractionRewards:3229`) — there is no mutator for it, and
+        // without the stamp `rewardEntryExpiry` returns `expiresAt == 0`, which
+        // would make every assertion below pass trivially against zero.
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids);
+
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        // NOW thin the backing: the balance still covers the payout outright,
+        // but NOT the payout sitting ABOVE the earmark. Exactly the divergence
+        // window — the old predicate calls this executable, the claim refuses.
+        assertGt(bal, expected, "fixture: balance covers the bare payout");
+        // One wei of room above the earmark: ANY positive fresh payout is
+        // refused, while the balance still covers the bare payout outright so
+        // the OLD predicate called it executable. Derived from the balance
+        // rather than from `expected`, which is the day half-pool total and
+        // over-states this entry's own share.
+        _mut().setRecycleBucketRaw(bal - 1);
+
+        // The claim refuses it.
+        vm.prank(alice);
+        vm.expectPartialRevert(InteractionRewardBackingShort.selector);
+        RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        // ...so the countdown must NOT advance across this interval. Sampled
+        // either side of a real time gap: a diverging predicate folds the gap
+        // into `elapsed` and brings `expiresAt` nearer, an aligned one leaves
+        // it where it was.
+        (, uint64 expiresBefore) = _lens().getRewardEntryExpiry(id);
+        vm.warp(block.timestamp + 5 days);
+        (, uint64 expiresAfter) = _lens().getRewardEntryExpiry(id);
+
+        assertTrue(expiresBefore != 0, "fixture: the countdown is live to begin with");
+        // THE DEADLINE RECEDES WHEN THE CLOCK PAUSES. `expiresAt` is
+        // `block.timestamp + (required - elapsed)`, so while an entry is
+        // continuously executable `elapsed` grows by exactly the time that
+        // passes and the deadline stays PUT. A paused clock leaves `elapsed`
+        // where it was while `block.timestamp` moves, pushing the deadline
+        // later. So "later" is the signature of a paused notice clock, which
+        // is what a claimant whose claim is refused must get.
+        assertGt(
+            expiresAfter,
+            expiresBefore,
+            "deadline must RECEDE - the notice clock cannot accrue against a claimant whose claim is refused"
+        );
+    }
+
+    /// #1499 — the CONTROL for the test above. Same entry, same horizon, the
+    /// only difference is that the earmark leaves room for the fresh payout.
+    /// Without this, a predicate hard-wired to "never executable" would satisfy
+    /// the assertion above and pin nothing.
+    function testHorizonStillAccruesWhenTheClaimWouldSucceed() public {
+        (uint256 id, ) = _seedPayable(alice, 78);
+        // 180 is the MINIMUM the setter accepts (bounds-checked to
+        // [180, 1095] days); 30 reverts ParameterOutOfRange.
+        _cfg().setRewardClaimHorizonDays(180);
+
+        // Ample room above the earmark throughout — the claim would pay.
+        _mut().setRecycleBucketRaw(1 ether);
+        // START THE CLOCK. `rewardEntryFirstClaimableAt` is stamped by the
+        // SWEEP itself, on its first claim-EXECUTABLE observation
+        // (`LibInteractionRewards:3229`) — there is no mutator for it, and
+        // without the stamp `rewardEntryExpiry` returns `expiresAt == 0`, which
+        // would make every assertion below pass trivially against zero.
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids);
+
+        (, uint64 expiresBefore) = _lens().getRewardEntryExpiry(id);
+        vm.warp(block.timestamp + 5 days);
+        (, uint64 expiresAfter) = _lens().getRewardEntryExpiry(id);
+
+        assertTrue(expiresBefore != 0, "fixture: countdown live");
+        // The paired direction: a backed claimant's clock ACCRUES, so the
+        // absolute deadline holds steady. Without this control a predicate
+        // stuck permanently closed would satisfy the receding-deadline
+        // assertion above and pin nothing.
+        assertEq(
+            expiresAfter,
+            expiresBefore,
+            "a backed claimant's deadline holds steady - the clock is accruing, not stuck"
+        );
+    }
+
+    // #1499 matrix — TWO CELLS WITHDRAWN, deliberately, rather than shipped green.
+    //
+    // A forfeit-present cell and a recycled-only cell were written here and
+    // both were VACUOUS: mutating the production formula to the exact defects
+    // they targeted left them passing.
+    //
+    //  - forfeit cell: it squeezed the balance with `bucket = bal - 1`, which
+    //    makes EVERY formula unmeetable, so the clock paused under the correct
+    //    and the broken predicate alike. To discriminate it needs a balance in
+    //    the gap `fresh + bucket <= bal < payout + bucket + forfeitFresh`.
+    //  - recycled-only cell: `_seedPayable` builds a FRESH entry, so it never
+    //    seeded recycled value at all; and with ample balance r2's
+    //    `payout + bucket` shape still fit, so the clock accrued either way. It
+    //    needs a genuinely armed/recycled entry and a balance in
+    //    `bucket <= bal < recycled + bucket`.
+    //
+    // Left out until they can fail. This card's own history is three attempts
+    // that each passed a 179-test suite, and a green test that cannot fail is
+    // what produced that.
+
+    /// #1499 / #1970 r1 P2 — THE FALSE NEGATIVE I INTRODUCED, and its fix.
+    ///
+    /// The first draft tested the UNCAPPED fresh entitlement against backing.
+    /// The claim truncates fresh to the remaining 69M pool headroom FIRST and
+    /// only then checks backing (`RewardClaimFacet:338-400`), so an uncapped
+    /// test over-states the requirement.
+    ///
+    /// That is not the safe direction it looks like. `remaining` is
+    /// `CAP - interactionPoolPaidOut - rewardBudgetRemittedGlobal`, both
+    /// append-only, so it is monotone NON-INCREASING — an over-strict gate does
+    /// not delay a reap, it stops the clock INDEFINITELY for a claim that is
+    /// executable. I argued in the PR that overstating fresh "only ever delays
+    /// a reap"; that was wrong, and this is the cell that would have caught it.
+    ///
+    /// Shape follows the reviewer's worked example: pool headroom well below
+    /// the fresh entitlement, with backing ample for what the claim would
+    /// ACTUALLY pay after truncation.
+    function testPoolCappedClaimantKeepsAccruingRatherThanStallingForever()
+        public
+    {
+        (uint256 id, uint256 expected) = _seedPayable(alice, 82);
+        // 180 is the setter's MINIMUM (bounds-checked to [180, 1095]).
+        _cfg().setRewardClaimHorizonDays(180);
+        _mut().setRecycleBucketRaw(1 ether);
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids);
+        (, uint64 before_) = _lens().getRewardEntryExpiry(id);
+        assertTrue(before_ != 0, "fixture: countdown live");
+
+        // Squeeze the POOL so the claim truncates fresh to 1 VPFI.
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - 1 ether
+        );
+
+        // STRADDLE THE BALANCE — this is what makes the cell discriminate, and
+        // omitting it is why the first version of this test was VACUOUS
+        // (mutating the cap away left it green). Reachability is not
+        // discrimination: with an ample balance BOTH formulas clear it, so the
+        // capped and uncapped predicates never disagree.
+        //
+        // With `room = 1e18` and `earmarked = bucket`:
+        //     capped need   = 1e18     + bucket   <= balance   (executable)
+        //     uncapped need = freshRaw + bucket    > balance    (would stall)
+        // Choosing `bucket = balance - expected + 1` puts the balance exactly
+        // inside that gap, since `expected > 1e18` here.
+        // Straddle on the MEASURED claimable, not on `expected`. `_seedPayable`
+        // returns the day half-pool SUM, which over-states this entry's own
+        // share — here by 38 wei. Leaving room of `expected - 1` therefore left
+        // room ABOVE the real fresh figure, so the uncapped need still fit and
+        // the mutation (cap removed) stayed green. Four drafts of this cell were
+        // vacuous before measuring showed the gap.
+        (uint256 freshNow, , ) = _lens().previewInteractionRewards(alice);
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        assertGt(freshNow, 1 ether, "fixture: entitlement exceeds the pool room");
+        // room = freshNow - 1, so:
+        //   capped need   = 1e18     + earmarked <= balance  (executable)
+        //   uncapped need = freshNow + earmarked  > balance  (would stall)
+        _mut().setRecycleBucketRaw(bal - freshNow + 1);
+
+        vm.warp(block.timestamp + 5 days);
+        (, uint64 after_) = _lens().getRewardEntryExpiry(id);
+        assertEq(
+            after_,
+            before_,
+            "pool-capped claimant keeps accruing - an uncapped test would stall this clock forever"
+        );
+    }
+
+    /// #1499 / #1970 r1 P1 — the horizon must read `backingPosition`, not a
+    /// hand-added bucket.
+    ///
+    /// `backingPosition` subtracts THREE terms — `recycleBucket`,
+    /// `strandedRecoveryReserved`, and the recovery position — while the first
+    /// draft added only the bucket. With a stranded reservation outstanding the
+    /// claim's room is smaller than a bucket-only view believes, so the horizon
+    /// called entries executable that the claim refuses and the notice clock
+    /// accrued against a claimant with no working path.
+    ///
+    /// STRADDLE (this is what makes the cell discriminate, and four cells on
+    /// this card were vacuous for lacking it): with `stranded` reserved,
+    ///     bucket-only need   = fresh + bucket             <= balance   (passes, wrongly)
+    ///     backingPosition need = fresh + bucket + stranded  > balance   (pauses, correctly)
+    /// so the balance is placed strictly between them.
+    function testHorizonHonoursStrandedRecoveryReservation() public {
+        (uint256 id, ) = _seedPayable(alice, 91);
+        // 180 is the setter's MINIMUM (bounds-checked to [180, 1095]).
+        _cfg().setRewardClaimHorizonDays(180);
+        _mut().setRecycleBucketRaw(1 ether);
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids);
+        (, uint64 before_) = _lens().getRewardEntryExpiry(id);
+        assertTrue(before_ != 0, "fixture: countdown live");
+
+        // Measured, not assumed: `_seedPayable`'s return over-states this
+        // entry's own share, which is what made an earlier straddle miss by
+        // 38 wei.
+        (uint256 freshNow, , ) = _lens().previewInteractionRewards(alice);
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        uint256 stranded = 5 ether;
+
+        // Leave room for exactly `fresh` above the bucket — so a bucket-only
+        // predicate is satisfied — then reserve `stranded` on top, which only
+        // `backingPosition` subtracts.
+        _mut().setRecycleBucketRaw(bal - freshNow);
+        _mut().setStrandedRecoveryRaw(address(0xD1), 1, stranded, 1, 4);
+
+        vm.warp(block.timestamp + 5 days);
+        (, uint64 after_) = _lens().getRewardEntryExpiry(id);
+        assertGt(
+            after_,
+            before_,
+            "deadline must RECEDE - a stranded reservation shrinks the claim's room, so the clock pauses"
+        );
+    }
+
     function testUnderfundedClaimIsRefusedAndLosesNothing() public {
         (, uint256 expected) = _seedPayable(alice, 42);
 

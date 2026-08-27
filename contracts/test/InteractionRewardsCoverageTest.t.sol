@@ -317,6 +317,34 @@ contract InteractionRewardsCoverageTest is SetupTest, IVaipakamErrors {
         assertEq(paid, _halfPool(182) + _halfPool(183), "per-day rates respected");
     }
 
+    /// #1499 Codex r4 P2 — `userClaimPendingUncapped` is used as a CLAIM
+    /// ORACLE, so it must include the finalized legacy window the claim settles
+    /// before the entries, not only the entry aggregate.
+    ///
+    /// There was no cell over this path at all, which is how a refactor that
+    /// dropped the window addition passed every suite: the helper silently
+    /// became entry-only while still being asserted against as an oracle.
+    /// Pinned against what the claim ACTUALLY pays rather than against a
+    /// recomputed figure, so the two cannot drift apart again.
+    function testPendingUncappedIncludesTheFinalizedLegacyWindow() public {
+        _mut().setInteractionLastClaimedDay(alice, 181);
+        _mut().setDailyLenderInterest(182, alice, 1e18, 1e18);
+        _mut().setDailyLenderInterest(183, alice, 1e18, 1e18);
+        vm.warp(block.timestamp + 184 days + 1);
+
+        uint256 pending = _mut().getUserClaimPendingUncappedRaw(alice);
+        assertEq(
+            pending,
+            _halfPool(182) + _halfPool(183),
+            "the oracle counts the finalized window"
+        );
+
+        vm.prank(alice);
+        (uint256 paid, , ) =
+            RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(pending, paid, "and equals what the claim actually pays");
+    }
+
     // ─── §4a finalization gate ───────────────────────────────────────────────
     //
     // docs/TokenomicsTechSpec.md §4a: claims must wait for the finalized

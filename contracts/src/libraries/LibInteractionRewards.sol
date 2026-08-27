@@ -3,6 +3,12 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPausable} from "./LibPausable.sol";
+// #1499 (Codex #1970 r1 P1) — the claim reads its room from
+// {LibVpfiRecycle.backingPosition}; the horizon must read the SAME
+// definition rather than re-deriving the earmark set. `LibVpfiRecycle`
+// imports this library in turn, but both directions are `internal`
+// library calls, which solc inlines — no runtime cycle.
+import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -1940,33 +1946,76 @@ library LibInteractionRewards {
     ///      transfer before it pool-truncates the fresh part. The live claim's
     ///      actual `paid` is this figure truncated DOWN to the remaining 69M
     ///      pool, so this is an UPPER BOUND: `balance >= this` guarantees the
-    ///      claimant's whole aggregate claim is funded. The claim-horizon
-    ///      accumulator gates on it so the clock advances only when the
-    ///      claimant had a working claim path for ALL their entries at once —
-    ///      never per-entry, which would let a partly-funded balance reap one
-    ///      entry while the real (aggregate) claim reverts (Codex #1317 P1).
-    ///      Bounded: the window walk is capped at MAX_INTERACTION_CLAIM_DAYS.
+    ///      claimant's whole aggregate claim is funded.
+    ///
+    ///      NOT THE HORIZON GATE any more (Codex #1499 r8). It was, and the
+    ///      aggregate-not-per-entry reasoning below is why; but #1499 moved the
+    ///      sweep and the countdown onto {_userClaimFundingNeedViewWith}, which
+    ///      additionally nets off the backing earmark. What survives here is
+    ///      the CLAIM-ORACLE role: `TestMutatorFacet` exposes it so tests can
+    ///      assert what a claim would pay, which is the contract
+    ///      {testPendingUncappedIncludesTheFinalizedLegacyWindow} pins.
+    ///
+    ///      The retained reasoning, because it still governs the real gate: the
+    ///      figure is aggregate rather than per-entry, since a partly-funded
+    ///      balance would otherwise reap one entry while the real claim reverts
+    ///      (Codex #1317 P1). Bounded: the window walk is capped at
+    ///      MAX_INTERACTION_CLAIM_DAYS.
     function userClaimPendingUncapped(
         LibVaipakam.Storage storage s,
         address user
     ) internal view returns (uint256 pending) {
-        (pending, ) = _userEntriesUpperBound(s, user);
+        pending = _userPendingPayout(s, user);
+    }
+
+
+    /// @dev #1499 — ONE walk yielding the user's pending payout: the entry
+    ///      upper bound plus the finalized legacy window the claim settles
+    ///      first. It replaced a second O(n) pricing scan when the horizon
+    ///      batch still probed this per submitted entry (Codex #1970 r1 P2);
+    ///      r5/r6 then moved that path onto {_userClaimFundingNeedViewWith},
+    ///      so this helper no longer sits on the sweep at all. Reached only
+    ///      through {userClaimPendingUncapped}, as a claim oracle for tests.
+    ///
+    ///      RENAMED from `_userPendingSplit` (Codex r7 P3). It returned a
+    ///      `(payout, freshRaw)` pair until r4 removed the unread second value,
+    ///      after which both the name and this comment described a split the
+    ///      function no longer performs. A helper whose name states a shape it
+    ///      does not have is how the divergence on #1981 survived a release;
+    ///      not worth repeating one file away from it.
+    function _userPendingPayout(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256 payout) {
+        (payout, ) = _userEntriesUpperBound(s, user);
+
+        // Codex r4 P2 — the finalized legacy WINDOW, which
+        // `claimInteractionRewards` settles before the entries. Removing the
+        // now-unread `freshRaw` return, I bounded the edit by the next closing
+        // brace instead of by an exact string and took this block with it, so
+        // the helper silently became entry-only while still being used as a
+        // claim oracle. No cell exercises the window path, so the suite stayed
+        // green over it.
         (uint256 today, bool active) = currentDayOrZero();
-        if (!active || today == 0) return pending;
+        if (!active || today == 0) return payout;
         uint256 last = s.interactionLastClaimedDay[user];
         uint256 lastFinalized = today - 1;
-        if (last >= lastFinalized) return pending;
+        if (last >= lastFinalized) return payout;
         uint256 fromDay = last + 1;
         uint256 windowLast =
             fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
         uint256 toDay = windowLast < lastFinalized ? windowLast : lastFinalized;
         (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
-        if (!any) return pending;
-        pending += previewForUserWindow(user, fromDay, effectiveTo);
+        if (!any) return payout;
+        payout += previewForUserWindow(user, fromDay, effectiveTo);
     }
 
     /// @dev The SUFFICIENT VPFI balance the user's atomic claim needs to NOT
-    ///      revert — used by the horizon sweep's claim-executable gate. Unlike
+    ///      revert. NO LONGER THE SWEEP'S ENTRY POINT (Codex #1499 r8): r5
+    ///      inlined its two steps — advance, then compute — into
+    ///      {sweepExpiredEntry} so the per-user aggregates are walked once and
+    ///      shared across every gate. It remains the MUTATING oracle tests
+    ///      drive through `TestMutatorFacet.userClaimFundingNeedRaw`. Unlike
     ///      the pure {userClaimPendingUncapped}, this MUTATES: it advances
     ///      every one of the user's side cursors first so the aggregate is
     ///      exact even for entries no keeper has swept yet (a behind cursor
@@ -1975,9 +2024,14 @@ library LibInteractionRewards {
     ///      the headroom the claim's forfeit-credit path requires: that path
     ///      calls {LibVpfiRecycle.credit}, which reverts unless the POST-payout
     ///      balance still backs `recycleBucket + freshTreasury` — so the whole
-    ///      claim needs `payout + recycleBucket + forfeitFresh` (Codex #1317 r2
-    ///      xkq). A conservative sufficient bound (payout >= the pool-truncated
-    ///      transfer), so the gate never reaps unfairly. The window walk is
+    ///      claim needs that headroom too (Codex #1317 r2 xkq). The
+    ///      `payout + recycleBucket + forfeitFresh` shape this once documented
+    ///      is OBSOLETE: #1499 made the formula unconditional — the post-cap
+    ///      fresh total, every {LibVpfiRecycle.backingPosition} reservation,
+    ///      and the recycled-transfer bound — rather than a forfeit-only
+    ///      addition. A conservative sufficient bound (payout >= the
+    ///      pool-truncated transfer), so the gate never reaps unfairly. The
+    ///      window walk is
     ///      capped at MAX_INTERACTION_CLAIM_DAYS and the entry scans are bounded
     ///      by the user's entry count — acceptable for the dark, keeper-run
     ///      reaper.
@@ -2095,6 +2149,27 @@ library LibInteractionRewards {
     function userArmedFreshNeedView(
         address user
     ) internal view returns (uint256 armed) {
+        (armed, , ) = userArmedFreshNeedWithLegsView(user);
+    }
+
+    /// @notice Codex #1499 r6 P2 — the armed need TOGETHER WITH the legacy legs
+    ///         the walk's budget is derived from.
+    /// @dev    The legs are a full O(entries) pass and the funding formula needs
+    ///         the same two values, so returning them here is what stops the
+    ///         caller walking the list a second time across the staticcall
+    ///         boundary. The scan runs BEFORE {_dryRunShareOfPoolDays}'s
+    ///         unarmed early return, so the duplicate cost was paid on every
+    ///         chain, armed or not.
+    ///
+    ///         {userArmedFreshNeedView} delegates here rather than repeating the
+    ///         body: one implementation, two shapes.
+    function userArmedFreshNeedWithLegsView(
+        address user
+    )
+        internal
+        view
+        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs)
+    {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
         // Codex #1699 r14 P2 — the armed walk only ever spends what is left
         // after the window and legacy legs, so the need must be measured
@@ -2105,19 +2180,23 @@ library LibInteractionRewards {
         // against the allowance it is compared to would be circular).
         // r15 P2 — BOTH destinations reserve: a forfeited entry's legacy
         // slice spends the pool on its way to treasury.
-        (uint256 uL, uint256 tL) = previewForUserEntriesLegacyOnly(s, user);
+        (userLegs, treasuryLegs) = previewForUserEntriesLegacyOnly(s, user);
         (, armed) = _dryRunShareOfPoolDays(
             s,
             user,
             type(uint256).max,
-            _userWalkFreshBudget(s, user, uL + tL)
+            _userWalkFreshBudget(s, user, userLegs + treasuryLegs)
         );
     }
 
-    function _userArmedFreshNeed(
+    function _userArmedFreshNeedWithLegs(
         LibVaipakam.Storage storage s,
         address user
-    ) private view returns (uint256 armed) {
+    )
+        private
+        view
+        returns (uint256 armed, uint256 userLegs, uint256 treasuryLegs)
+    {
         // Codex #1699 r4 P2 — read the CLAIM'S OWN grouped, capped figure.
         //
         // The first version summed `_entryPriceCore` outputs per entry, which
@@ -2149,15 +2228,18 @@ library LibInteractionRewards {
         // `AddCollateralFacet` / `MetricsDashboardFacet`).
         (bool ok, bytes memory ret) = address(this).staticcall(
             abi.encodeWithSelector(
-                bytes4(keccak256("getUserArmedFreshNeed(address)")),
+                bytes4(keccak256("getUserArmedFreshNeedWithLegs(address)")),
                 user
             )
         );
         // Fail CLOSED on an unrouted selector (a partially-refreshed Diamond):
         // a zero need would read as "nothing required" and let an entry expire
         // while unpayable, which is the defect this gate exists to prevent.
-        require(ok && ret.length == 32, "armed-need view unavailable");
-        armed = abi.decode(ret, (uint256));
+        require(ok && ret.length == 96, "armed-need view unavailable");
+        (armed, userLegs, treasuryLegs) = abi.decode(
+            ret,
+            (uint256, uint256, uint256)
+        );
     }
 
     /// @dev #1351 slice 2e — the CHEAP per-entry sum: each entry's
@@ -2189,7 +2271,11 @@ library LibInteractionRewards {
     function _userEntriesUpperBound(
         LibVaipakam.Storage storage s,
         address user
-    ) private view returns (uint256 userTotal, uint256 recycledTotal) {
+    )
+        private
+        view
+        returns (uint256 userTotal, uint256 recycledTotal)
+    {
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
         for (uint256 i = 0; i < len; ) {
@@ -3070,8 +3156,14 @@ library LibInteractionRewards {
         // swept yet (their cursors would otherwise read behind and understate
         // the need — Codex #1317 r2 xkk), and it folds in the recycle-bucket
         // backing the forfeit-credit path needs (Codex #1317 r2 xkq). The
-        // per-entry backing room is NOT checked here — it gates the all-or-
-        // nothing EXPIRY credit below, not the claimant's clock. Blocked when:
+        // The PER-ENTRY backing room is still not checked here — that gates
+        // the all-or-nothing EXPIRY credit below. But #1499 made the AGGREGATE
+        // funding need backing-aware: it nets the earmark off the balance via
+        // {LibVpfiRecycle.backingPosition}, so a backing shortfall now PAUSES
+        // the claimant's clock rather than only deferring the reap. That is the
+        // whole point of the alignment — the claim refuses such a payout, and a
+        // clock that kept running through it would expire an entry its owner
+        // could not have claimed. Blocked when:
         //   1. this entry's pool-capped payable is zero (a reap of it would
         //      recycle nothing — nothing a claim could pay for it),
         //   2. the owner is sanctioned (the claim path rejects them),
@@ -3099,7 +3191,28 @@ library LibInteractionRewards {
         // settlement run out of gas, stranding it exactly where the claim
         // path already skips it.
         if (!removed) {
-            uint256 fundingNeed = userClaimFundingNeed(s, e.user);
+            // Codex #1499 r5 P2 — advance ONCE, then walk each O(entries)
+            // aggregate ONCE and share it with every gate below.
+            // `userClaimFundingNeed` stays for its own callers; inlining its
+            // two steps here is what makes a swept entry pay for each walk a
+            // single time instead of twice. `userRewardEntryIds` never shrinks
+            // — processed ids stay in it — so the duplicate pass grew without
+            // bound for a long-lived account.
+            _advanceUserCursors(s, e.user);
+            (
+                uint256 armedFresh,
+                uint256 userLegs,
+                uint256 treasuryLegs
+            ) = _userArmedFreshNeedWithLegs(s, e.user);
+            (, uint256 recycledUpper) = _userEntriesUpperBound(s, e.user);
+            uint256 fundingNeed = _userClaimFundingNeedViewWith(
+                s,
+                e.user,
+                armedFresh,
+                recycledUpper,
+                userLegs,
+                treasuryLegs
+            );
             // Codex #1699 r2 P1 — the MIRROR delivered bound belongs in this
             // predicate, not only at the terminal.
             //
@@ -3121,17 +3234,19 @@ library LibInteractionRewards {
             // group, so a per-entry test would keep the clock running through
             // exactly the state in which the claimant cannot be paid.
             //
-            // r17 P2 — computed LAZILY and mirror-only, exactly as the view
-            // path ({_entryExecutableNow}) already scopes it: off-mirror the
-            // bound cannot bind, so pricing the aggregate there was pure
-            // gas exposure.
+            // r17 P2 scoped this call mirror-only, on the ground that
+            // off-mirror the bound cannot bind. That saved nothing: the funding
+            // need above reads the same aggregate UNCONDITIONALLY, so the walk
+            // happened on every chain regardless and the mirror branch merely
+            // paid for a SECOND one (Codex #1499 r5 P2). The value is now
+            // computed once above; the branch below is the bound's test, which
+            // is what was actually mirror-only.
             bool deliveredPayable = true;
             if (LibVaipakam.isMirrorRewardChain(s)) {
-                uint256 armedNeed = _userArmedFreshNeed(s, e.user);
-                deliveredPayable = armedNeed == 0
-                    || armedNeed <= deliveredFreshBound(s);
+                deliveredPayable = armedFresh == 0
+                    || armedFresh <= deliveredFreshBound(s);
             }
-            bool executable = !_recycledDrought(s, e.user) &&
+            bool executable = !_recycledDroughtWith(s, recycledUpper) &&
                 _poolCappedPayable(toUser) != 0 &&
                 deliveredPayable &&
                 !LibVaipakam.isSanctionedAddress(e.user) &&
@@ -3619,11 +3734,14 @@ library LibInteractionRewards {
     ///      is payable, the owner is unsanctioned, the protocol is unpaused,
     ///      and the local balance covers the user's FULL aggregate claim (the
     ///      claim is atomic across all their entries + the legacy window).
-    ///      Backing room is deliberately NOT checked here: it gates the
-    ///      all-or-nothing EXPIRY credit, not the claimant's clock (a claim
-    ///      never touches the bucket), so a backing shortfall does not pause
-    ///      accrual — it only defers the final reap, which the view reflects
-    ///      as the estimate caveat documented on {rewardEntryExpiry}.
+    ///      #1499 — BACKING IS NOW PART OF THIS TEST, and the previous
+    ///      sentence here said the opposite. The aggregate funding need nets
+    ///      the earmark off the balance ({LibVpfiRecycle.backingPosition}), so
+    ///      a shortfall PAUSES the clock instead of only deferring the reap.
+    ///      The claim refuses such a payout, and a clock still running through
+    ///      it would expire an entry its owner could not have claimed. What
+    ///      remains unchecked here is the PER-ENTRY backing room, which gates
+    ///      the all-or-nothing expiry credit rather than the claimant's clock.
     function _entryExecutableNow(
         LibVaipakam.Storage storage s,
         uint256 id,
@@ -3631,7 +3749,11 @@ library LibInteractionRewards {
     ) private view returns (bool) {
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
-        if (_recycledDrought(s, e.user)) return false; // clock pauses (r6)
+        // Codex #1499 r5 P2 — ONE walk for the bound, shared with the funding
+        // need below. Ordered so the cheap refusals still short-circuit ahead
+        // of the armed dry run, which is the expensive one.
+        (, uint256 recycledUpper) = _userEntriesUpperBound(s, e.user);
+        if (_recycledDroughtWith(s, recycledUpper)) return false; // pauses (r6)
         (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
         if (_poolCappedPayable(toUser) == 0) return false; // nothing to pay
         // Codex #1699 r3 P2 — the SAME delivered predicate the sweep applies.
@@ -3646,15 +3768,26 @@ library LibInteractionRewards {
         // Deliberately the AGGREGATE need (`_userArmedFreshNeed`), matching
         // the sweep exactly — a per-entry figure here would re-open the very
         // gap the sweep's fix closed, one abstraction layer away.
+        (
+            uint256 armedFresh,
+            uint256 userLegs,
+            uint256 treasuryLegs
+        ) = _userArmedFreshNeedWithLegs(s, e.user);
         if (LibVaipakam.isMirrorRewardChain(s)) {
-            uint256 armedNeed = _userArmedFreshNeed(s, e.user);
-            if (armedNeed != 0 && armedNeed > deliveredFreshBound(s)) {
+            if (armedFresh != 0 && armedFresh > deliveredFreshBound(s)) {
                 return false;
             }
         }
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            _userClaimFundingNeedView(s, e.user);
+            _userClaimFundingNeedViewWith(
+                s,
+                e.user,
+                armedFresh,
+                recycledUpper,
+                userLegs,
+                treasuryLegs
+            );
     }
 
     /// @dev #1351 slice 2d-0 — the ONE computation of an entry's claim-payable
@@ -3684,6 +3817,17 @@ library LibInteractionRewards {
         address user
     ) private view returns (bool) {
         (, uint256 recycledTotal) = _userEntriesUpperBound(s, user);
+        return _recycledDroughtWith(s, recycledTotal);
+    }
+
+    /// @dev Codex #1499 r5 P2 — the same test against an ALREADY-WALKED bound.
+    ///      Both consumers need this figure and the funding need in the same
+    ///      pass, and each walk is O(the user's whole entry list) — which does
+    ///      not shrink, since processed ids stay in `userRewardEntryIds`.
+    function _recycledDroughtWith(
+        LibVaipakam.Storage storage s,
+        uint256 recycledTotal
+    ) private view returns (bool) {
         return recycledTotal > s.recycleBucket;
     }
 
@@ -3695,42 +3839,158 @@ library LibInteractionRewards {
         return (freshShare < room ? freshShare : room) + toUser.recycled;
     }
 
+    /// @dev Codex #1499 r5 P2 — the aggregate-loading wrapper, for callers with
+    ///      nothing cached. Both O(entries) aggregates are computed ONCE here and
+    ///      threaded in; the gates that also need them take the `...With` form so
+    ///      a swept entry pays for each walk a single time. See the note on
+    ///      {_entryExecutableNow} for why the ORDER of those calls matters.
+    function _userClaimFundingNeedView(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256) {
+        (, uint256 recycledUpper) = _userEntriesUpperBound(s, user);
+        (
+            uint256 armedFresh,
+            uint256 userLegs,
+            uint256 treasuryLegs
+        ) = _userArmedFreshNeedWithLegs(s, user);
+        return _userClaimFundingNeedViewWith(
+            s,
+            user,
+            armedFresh,
+            recycledUpper,
+            userLegs,
+            treasuryLegs
+        );
+    }
+
     /// @dev View mirror of {userClaimFundingNeed}'s funding formula, WITHOUT
     ///      the cursor advance a view can't perform. Used by the countdown
-    ///      estimate so it applies the SAME forfeit-credit backing the sweep
-    ///      does (`payout + recycleBucket + forfeitFresh` when the user has
-    ///      forfeited entries) — otherwise the view would show an imminent
-    ///      expiry for an unbacked-forfeit user whose claim actually reverts
-    ///      and whom the sweep will not accrue (Codex #1317 r4). It stays
+    ///      estimate so it applies the SAME backing the sweep does — otherwise
+    ///      the view would show an imminent expiry for a user whose claim
+    ///      actually reverts and whom the sweep will not accrue (Codex #1317
+    ///      r4). That backing is no longer the forfeit-only
+    ///      `payout + recycleBucket + forfeitFresh` this paragraph used to
+    ///      name; see the #1499 note below for the formula now in force. It
+    ///      stays
     ///      optimistic ONLY on the axis a view genuinely cannot resolve: an
     ///      unadvanced entry reads behind (0), matching the documented
     ///      conservative-estimate caveat on {rewardEntryExpiry}.
     ///
-    ///      KNOWN DIVERGENCE from the #1460 claim-time backing gate, tracked
-    ///      as #1499 and NOT patched here. The claim now refuses a
-    ///      payout whose fresh part exceeds `balance - recycleBucket`, while
-    ///      this predicate tests the balance without netting off the
-    ///      earmark — so on a thin deployment the horizon can call an entry
-    ///      executable that the claim refuses. It is INERT today: the sweep
-    ///      returns early while `rewardClaimHorizonDays == 0` (the deploy
-    ///      default — RL-3 shipped dark), so no clock accrues and nothing
-    ///      expires. Aligning the two is a shared-derivation change plus a
-    ///      property-test matrix over the fresh / recycled / loan-side-cap /
-    ///      forfeit combinations, because THREE sites re-derive this split
-    ///      by hand and three successive attempts to hand-align them inside
-    ///      #1497 were each subtly wrong (raw-vs-post-cap recycled, and
-    ///      double-counting the bucket against the recycled payout). It is
-    ///      therefore a precondition on ARMING the RL-3 horizon, not a
-    ///      prerequisite of the claim-time gate.
-    function _userClaimFundingNeedView(
+    ///      #1499 ALIGNED this with the #1460 claim-time backing gate. The
+    ///      predicate no longer tests a bare balance: it nets off the earmark
+    ///      via {LibVpfiRecycle.backingPosition} and assembles the fresh term
+    ///      from the exact grouped pieces the claim itself uses, rather than
+    ///      re-deriving it — which is what three successive hand-alignments
+    ///      inside #1497 each got subtly wrong (raw-vs-post-cap recycled, and
+    ///      double-counting the bucket against the recycled payout).
+    ///
+    ///      TWO LIMITATIONS REMAIN, both deliberate and neither a divergence
+    ///      from the claim in the direction that reaps unfairly:
+    ///
+    ///      1. The RECYCLED side is bounded, not exact. This library exposes no
+    ///         grouped per-user recycled figure — {_dryRunShareOfPoolDays}
+    ///         returns `(userTotal, armedTotal)` with no recycled split — so the
+    ///         transfer test reuses the upper bound {_recycledDrought} already
+    ///         accepts for the same quantity. It can therefore pause a claimant
+    ///         whose exact obligation would have fitted; over-pausing only
+    ///         DELAYS the reap, whereas the fail-open alternative EXPIRES an
+    ///         entry its owner could not claim (Codex #1499 r3/r4).
+    ///      2. It stays optimistic on the one axis a view genuinely cannot
+    ///         resolve: an unadvanced entry reads behind (0), matching the
+    ///         documented conservative-estimate caveat on {rewardEntryExpiry}.
+    function _userClaimFundingNeedViewWith(
         LibVaipakam.Storage storage s,
-        address user
+        address user,
+        uint256 armedFresh,
+        uint256 recycledUpper,
+        uint256 userLegs,
+        uint256 treasuryLegs
     ) private view returns (uint256 need) {
-        uint256 payout = userClaimPendingUncapped(s, user);
-        uint256 forfeitFresh = _userForfeitFresh(s, user);
-        need = forfeitFresh == 0
-            ? payout
-            : payout + s.recycleBucket + forfeitFresh;
+        // #1499 — ASSEMBLED FROM EXISTING EXACT PIECES, deriving nothing.
+        //
+        // Five review findings on this predicate were five different wrong
+        // approximations of one quantity. Every component below already has a
+        // single implementation in this library, and the sum is the only
+        // arithmetic performed here.
+        //
+        // The claim's own gate is stated algebraically at
+        // `RewardClaimFacet:290-299`: the payout removes
+        // `freshPending + paidRecycled` from the balance while the bucket moves
+        // by `-paidRecycled + freshTreasury`, so `paidRecycled` CANCELS and
+        // `balance' >= recycleBucket'` reduces to
+        // `freshPending + freshTreasury <= room`.
+        //
+        // FRESH = the same three terms `_userWalkFreshBudget` reserves against,
+        // plus the armed need it budgets for:
+        //   window  — `_userWindowFreshReserved`
+        //   legacy  — `previewForUserEntriesLegacyOnly`, both destinations
+        //   armed   — `_userArmedFreshNeed`, GROUPED and D1-capped
+        //
+        // `_userArmedFreshNeed` is the piece I previously approximated with
+        // `_userEntriesUpperBound`. Its own comment names the failure that
+        // caused: "two 0.4 entries capped collectively to 0.5 reported 0.8, so
+        // the clock waited forever on 0.3 that no remittance owes" (Codex
+        // #1699 r4). It reaches the dry-run engine by cross-facet staticcall
+        // because inlining it costs 5,037 bytes over EIP-170.
+        //
+        // POOL TRUNCATION IS STILL REQUIRED, and reasoning it away cost a
+        // stalled clock in test before this shipped.
+        //
+        // `_userWalkFreshBudget` does start from `poolRemaining()`, but it
+        // bounds the ARMED WALK only: the window and legacy legs are reserves
+        // SUBTRACTED FROM that budget, not capped by it. On an unarmed deploy
+        // (`governorCommitArmedFromDay == 0` — every current chain) the armed
+        // term is zero and the legacy legs are the whole fresh figure, wholly
+        // untruncated. The claim truncates the TOTAL `freshSpend` to
+        // `remaining` (`RewardClaimFacet:338-346`), so the total is what must
+        // be truncated here.
+        //
+        // Not a double-count: `armed <= remaining - window - legacy` by
+        // construction, so the cap is a NO-OP whenever the walk is budgeted and
+        // binds only where the window/legacy portion alone exceeds headroom.
+        uint256 freshTotal = _userWindowFreshReserved(s, user)
+            + userLegs
+            + treasuryLegs
+            + armedFresh;
+        uint256 room = poolRemaining();
+        if (freshTotal > room) freshTotal = room;
+
+        // ONE predicate, no forfeit branch. Forfeit value enters as
+        // `treasuryLegs` — a TERM, not a second formula with its own
+        // arithmetic — so the branch that r2 found bypassing `backingPosition`
+        // stops existing rather than being patched.
+        (uint256 bal, , uint256 unearmarked) = LibVpfiRecycle.backingPosition(s);
+        uint256 earmarked = bal > unearmarked ? bal - unearmarked : 0;
+        need = freshTotal + earmarked;
+
+        // SECOND CONDITION — the RECYCLED transfer must also settle.
+        //
+        // Three rounds converged on this. r2 asked for a transferability test;
+        // r3 correctly rejected the one I wrote, because it sourced `payout`
+        // from `_userEntriesUpperBound` and so over-stated the FRESH side for
+        // any group sharing a D1 ceiling; r4 found that deleting it outright
+        // restored the fail-open state r2 had reported.
+        //
+        // The state is real: with `freshTotal == 0` and
+        // `bal < userRecycled <= bucket`, `unearmarked` floors to zero, `need`
+        // becomes `bal`, and the outer check passes. `_recycledDrought` passes
+        // too, because it compares the obligation against the BUCKET, never
+        // against the live balance. The claim then reverts on the transfer
+        // while the horizon accrues — and eventually EXPIRES — an entry its
+        // owner could not have claimed. Fail-open on an expiry clock destroys
+        // the entry; fail-closed only delays the reap, so the direction of the
+        // error matters more than its size here.
+        //
+        // Keyed on the recycled upper bound from the SAME walk
+        // {_recycledDrought} reads, deliberately. That gate already accepts
+        // this bound for exactly this quantity ("needs an UPPER bound"), and
+        // over-pausing is documented there as claimant-protective. This is not
+        // the r3 mistake: that was an upper bound standing in for the FRESH
+        // term, which the exact `freshTotal` above now covers; the recycled
+        // side has no exact grouped figure in this library, and bounding it the
+        // way its neighbour does keeps ONE convention rather than two.
+        if (recycledUpper > need) need = recycledUpper;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).

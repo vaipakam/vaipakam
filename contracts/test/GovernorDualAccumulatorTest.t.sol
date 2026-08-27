@@ -697,6 +697,63 @@ contract GovernorDualAccumulatorTest is SetupTest {
     ///      point: it announces itself and closes the claim. This asserts the
     ///      announcement happens and the claim is closed from that instant —
     ///      not that the claimant is quietly shortchanged.
+    // #1499 / #1970 r2 P1#3 — TRANSFER-CONDITION CELL WITHDRAWN (vacuous).
+    //
+    // Written here, then mutated: removing the transfer condition
+    // (`if (payout > need) need = payout`) left it PASSING, so it pinned
+    // nothing. The pause it observed came from the ADMISSION gate, not from
+    // the condition under test.
+    //
+    // Why: with `balance <= bucket`, `unearmarked` floors to 0 and
+    // `earmarked == balance`, so `need = freshTotal + balance`. Any positive
+    // `freshTotal` already exceeds the balance and pauses the clock on its own.
+    // The transfer condition only binds when BOTH:
+    //     freshTotal == 0      (admission degenerates to `balance >= balance`)
+    //     payout     >  balance
+    // i.e. a purely RECYCLED payout larger than the live balance. The fixture
+    // here spans a pre-cutover day, whose legacy leg is fresh by construction,
+    // so `freshTotal > 0` and the case is never reached.
+    //
+    // To build it: a wholly post-cutover entry on an armed day with a ZERO
+    // fresh floor (so the armed fresh need is 0), plus `setRecycleBucketRaw`
+    // above the live balance so the recycled payout can exceed it.
+    //
+    // Left out rather than committed green. Four cells on this card were
+    // vacuous before this one; a green test that cannot fail is what the card
+    // exists to stop.
+
+    // #1499 / #1970 r2 P1#2 — GROUPED-ARMED-NEED CELL NOT BUILT, and the
+    // measurement says why rather than my guessing at it.
+    //
+    // A probe (since removed) measured `getUserArmedFreshNeed(alice)` with one
+    // entry and then two, both spanning the armed day 5, cursors advanced by a
+    // real sweep:
+    //
+    //     one entry  : 10082191780821917808210
+    //     two entries: 20164383561643835616420   == EXACTLY 2x
+    //
+    // So the D1 `(user, side, day)` ceiling does NOT bind at this sizing:
+    // grouped and per-entry-summed are the same number, and no fixture built on
+    // it can tell the two apart. An assertion here would have been the sixth
+    // vacuous cell on this card.
+    //
+    // MEASURED FURTHER: the need was walked from 1 to 8 entries and tracked
+    // N x single EXACTLY at every count (10082e18, 20164e18, 30246e18, ...
+    // 80657e18). The ceiling does not bind at ANY entry count reachable here,
+    // so no fixture built on this suite's day-pool sizing can separate the
+    // grouped figure from a per-entry sum.
+    //
+    // To make it discriminate, the group must EXCEED the ceiling `finalizeDay`
+    // stamps (20% of the side half by default). Either raise the entry sizing
+    // well above that share, or lower `setDayCapThreshold18` for the armed day
+    // BEFORE `_armAndFinalize` stamps the ceiling — the stamp happens at
+    // finalize, so setting it afterwards has no effect.
+    //
+    // The probe also showed the dry-run reads through the side CURSORS, which
+    // only the sweep advances: measured before a sweep, every entry's need
+    // reads 0 — which would have made a grouped-vs-summed comparison trivially
+    // equal as well.
+
     function testP1bFirstCreditedChunkIsTheRemovalPoint() public {
         _cfg().setRewardClaimHorizonDays(180);
         (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
