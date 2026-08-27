@@ -1604,20 +1604,33 @@ caught at the cheapest stage.
       in branch A above.
    5. Read the schedule back trigger-aware — the `/schedules` query below.
       Here a NON-empty `result` is the pass condition.
-   6. Allow the propagation window (Cloudflare documents up to 15 minutes).
-   7. **Validate the still-disarmed passes first**, across every cadence they
+   6. **Update the authority, in the same sitting.** Arming the keeper
+      converts its reservation into a live trigger, and
+      [`CloudflareCronSlots.md`](CloudflareCronSlots.md) still describes the
+      state before that. Move the keeper row to `live` with its schedule,
+      change "Live right now" to match, drop the reserve from the "Committed"
+      label, refresh the `Verified:` stamp, and re-run the `--live` command
+      from step 3 to confirm the file and the account agree.
+
+      This step is easy to skip and hard to notice skipped: the conversion
+      leaves **committed and spare unchanged**, so the offline CI check keeps
+      passing on a file that is now wrong about which Workers are live. Only
+      `--live` sees it, and nothing runs `--live` on a schedule.
+
+   7. Allow the propagation window (Cloudflare documents up to 15 minutes).
+   8. **Validate the still-disarmed passes first**, across every cadence they
       run at — a full 15-minute cycle for `preGraceWatcher`, the 00:00–00:09
       UTC window for `dailyOracleSnapshot` — checking the `chains resolved:
       N — …` line on every tick you accept, and rejecting any tick that logs
       `console.error` at all. Roll back here if it still reports
       `exceededCpu`; nothing is armed, so it costs nothing.
-   8. **Only now arm** — `KEEPER_ENABLED` to `true`, per the command block
+   9. **Only now arm** — `KEEPER_ENABLED` to `true`, per the command block
       further down this step.
-   9. Validate the gated passes, again across every cadence, including one
+  10. Validate the gated passes, again across every cadence, including one
       full 5-minute cycle for `rewardBudgetRemit`.
-   10. Clear the checks branch A deferred — step 4's flag confirmations, and
-       the Push-rotation check if `PUSH_CHANNEL_PK` was rotated during the
-       hold.
+  11. Clear the checks branch A deferred — step 4's flag confirmations, and
+      the Push-rotation check if `PUSH_CHANNEL_PK` was rotated during the
+      hold.
 
    The rest of this step is the restore-specific detail those numbered items
    refer to.

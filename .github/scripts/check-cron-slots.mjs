@@ -386,6 +386,27 @@ function trackedFiles() {
  * whole claim to being current, and an unchecked claim of currency is worse
  * than none, because it reads as reassurance.
  */
+/**
+ * Is there a stamp that is the document's OWN, rather than one hidden or shown
+ * as an example? A line beginning `**Verified:` and outside every code fence.
+ *
+ * Fences are excluded deliberately, and it took catching myself to get right: a
+ * first pass pinned a fenced stamp as ACCEPTABLE, which would have let a
+ * document lose its real stamp and keep a format example — a fixture asserting
+ * a limitation as correct, the exact trap recorded above MUST_NOT_FIRE.
+ */
+function hasVisibleStamp(md) {
+  let fenced = false;
+  for (const line of md.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) {
+      fenced = !fenced;
+      continue;
+    }
+    if (!fenced && /^\*\*Verified:/.test(line)) return true;
+  }
+  return false;
+}
+
 export function checkStamp(md) {
   // Codex #1978 r4: count every MARKER, not every well-formed stamp. Counting
   // only the ones that parsed meant a document holding one valid stamp and one
@@ -419,6 +440,21 @@ export function checkStamp(md) {
     return [
       `the "Verified:" stamp appears ${markers.length} times; there must be ` +
         `exactly one, or the two can disagree`,
+    ];
+  }
+
+  // Codex #1978 r12: counting broadly is right for DUPLICATES and wrong for
+  // EXISTENCE. Dropping the anchor in r11 (so a prefixed copy could not hide)
+  // also accepted a stamp that no reader can see — `<!-- **Verified: …** -->`
+  // satisfied the count while the rendered authority carried no timestamp at
+  // all. Broad count, canonical validation: the same two-step `checkSummary`
+  // uses, and the third place in this file where one question was answered
+  // with the other's test.
+  if (!hasVisibleStamp(md)) {
+    return [
+      'the "Verified:" stamp exists only in a form that is not the document\'s ' +
+        'own stamp — an HTML comment, or a fenced example. It must appear as a ' +
+        'visible line of prose',
     ];
   }
 
@@ -685,6 +721,19 @@ export function checkSummary(md, liveTriggers, reservedNames) {
           `the reservation`,
       );
     }
+  }
+  // Codex #1978 r12: and the REVERSE. r11 required every reservation to be
+  // named; it did not reject a label naming a reservation that no longer
+  // exists. After the keeper is re-armed there are no reserved rows, and
+  // "live plus the keeper's reserve" would go on describing a reserve that
+  // has become a live trigger — with committed and spare both unchanged by
+  // that conversion, so nothing else in this function notices.
+  if (reservedNames.length === 0 && /\breserv/i.test(committedLabel)) {
+    problems.push(
+      'the "Committed" line still claims a reserve, but no inventory row is ' +
+        'marked reserved — if a reservation was converted to a live trigger, ' +
+        'this label has to stop describing it',
+    );
   }
   if (spare.value !== CAP - committed.value) {
     problems.push(
@@ -1368,6 +1417,11 @@ const STAMP_CASES = [
   ['well-formed', '**Verified: 2026-08-27T16:21:53Z.** Re-verify with', 0],
   ['missing', 'Verified recently, honest.', 1],
   ['not a timestamp', '**Verified: yesterday.**', 1],
+  // Codex #1978 r12: dropping the anchor in r11 (so a prefixed duplicate could
+  // not hide) also accepted a stamp no reader can see. Counting broadly is
+  // right for duplicates and wrong for existence.
+  ['commented out — invisible to a reader', '<!-- **Verified: 2026-08-27T16:21:53Z.** -->', 1],
+  ['only inside a code fence — an example, not the stamp', '```\n**Verified: 2026-08-27T16:21:53Z.**\n```', 1],
   [
     'duplicated',
     '**Verified: 2026-08-27T16:21:53Z.**\n\n**Verified: 2026-01-01T00:00:00Z.**',
@@ -1448,7 +1502,11 @@ const SUMMARY_CASES = [
     GOOD_SUMMARY,
     4,
     0,
-    1,
+    // TWO problems, and both are real: committed no longer follows from the
+    // inventory, AND the label still names a reserve that no row holds. The
+    // second is Codex #1978 r12's reverse direction, which this fixture
+    // reached first by accident.
+    2,
   ],
   ['a line is missing', '- **Live right now:** 4 of 5', 4, 1, 2],
   ['a line was reworded', GOOD_SUMMARY.replace('Genuinely spare', 'Spare'), 4, 1, 1],
