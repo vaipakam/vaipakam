@@ -28,6 +28,7 @@ import {
   InteractionRewardsLensFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import { MULTICALL3_ADDRESS } from './multicall3';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed, type KeeperContext } from './keeper';
 
@@ -35,23 +36,6 @@ const REMIT_ABI = RewardRemittanceFacetABI as Abi;
 /** `getDayClosedByRemitId` lives on the read-only lens facet. */
 const REMIT_LENS_ABI = RewardRemittanceLensFacetABI as Abi;
 
-/**
- * Multicall3's canonical deterministic-deployment address, the same on every
- * chain the keeper touches.
- *
- * It has to be passed EXPLICITLY: every keeper client is built as
- * `createPublicClient({ transport: http(chain.rpc) })` with no `chain`, so viem
- * cannot look the address up from `chain.contracts.multicall3` and
- * `multicall()` throws `client chain not configured. multicallAddress is
- * required.` before it issues a single request (Codex #1924 r37). That threw
- * the batched probe below straight into its catch path, where every ambiguous
- * day reads as UNKNOWN — so the discriminator never actually discriminated and
- * operators would have had to clear the whole window by hand, every run.
- *
- * Supplying the address rather than attaching a chain object keeps the change
- * to this call site; the tree-wide clients are chainless by design.
- */
-const MULTICALL3_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11' as Address;
 const REPORTER_ABI = RewardReporterFacetABI as Abi;
 const AGGREGATOR_ABI = RewardAggregatorFacetABI as Abi;
 // `getInteractionCurrentDay` moved to the read-only lens facet (#1333).
@@ -366,6 +350,18 @@ async function remitToMirror(
         })),
         multicallAddress: MULTICALL3_ADDRESS,
         allowFailure: true,
+        // Same size-split disable as the liquidator (#1965 r2): viem's default
+        // is 1024 BYTES, so a probe list long enough to exceed it silently
+        // becomes several `aggregate3` requests against the same
+        // per-invocation subrequest ceiling. This list is already bounded by
+        // the ambiguous-day set.
+        //
+        // The aggregate-rejection case needs no serial retry HERE, unlike the
+        // liquidator: `allowFailure` turns a rejected aggregate into per-call
+        // failures, and the loop below already treats any non-success as an
+        // OPEN/unknown day and reports it. The outcome is the same whether the
+        // rejection surfaces as results or as a throw.
+        batchSize: 0,
       })) as { status: 'success' | 'failure'; result?: unknown }[];
       ambiguous.forEach((dayId, i) => {
         const r = results[i];
