@@ -132,10 +132,16 @@ repoints every live end-to-end driver.
 The deployment runbook gains the record that made this awkward to
 begin with. Which hostname served which Worker existed only in the
 Cloudflare dashboard, so nothing in the repository could answer what
-`alpha01.vaipakam.com` pointed at, or explain that the hostname is
-attached out-of-band as a Custom Domain rather than declared in the
-Worker's own config. That mapping, the binding procedure, and the
-deploy-before-merge ordering are now written down.
+`alpha01.vaipakam.com` pointed at, or explain how a hostname gets
+attached at all — which is not uniform, and that is the part worth
+knowing. Almost every one is created out-of-band as a Custom Domain,
+invisible to the repository; the indexer is the single exception,
+declaring its own hostname in its Worker config so that publishing the
+Worker maintains the binding too. Reading one of those as the rule
+sends you either hand-binding a hostname that is already managed, or
+waiting for a deploy to create one that nothing will. That mapping, the
+binding procedure and its exception, and the deploy-before-merge
+ordering are now written down.
 
 Two follow-ups stay open. The four Workers whose sources are gone still
 run — `vaipakam-defi`, `vaipakam-alpha`, `vaipakam-alpha01` and
