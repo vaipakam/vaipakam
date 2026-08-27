@@ -1946,12 +1946,21 @@ library LibInteractionRewards {
     ///      transfer before it pool-truncates the fresh part. The live claim's
     ///      actual `paid` is this figure truncated DOWN to the remaining 69M
     ///      pool, so this is an UPPER BOUND: `balance >= this` guarantees the
-    ///      claimant's whole aggregate claim is funded. The claim-horizon
-    ///      accumulator gates on it so the clock advances only when the
-    ///      claimant had a working claim path for ALL their entries at once —
-    ///      never per-entry, which would let a partly-funded balance reap one
-    ///      entry while the real (aggregate) claim reverts (Codex #1317 P1).
-    ///      Bounded: the window walk is capped at MAX_INTERACTION_CLAIM_DAYS.
+    ///      claimant's whole aggregate claim is funded.
+    ///
+    ///      NOT THE HORIZON GATE any more (Codex #1499 r8). It was, and the
+    ///      aggregate-not-per-entry reasoning below is why; but #1499 moved the
+    ///      sweep and the countdown onto {_userClaimFundingNeedViewWith}, which
+    ///      additionally nets off the backing earmark. What survives here is
+    ///      the CLAIM-ORACLE role: `TestMutatorFacet` exposes it so tests can
+    ///      assert what a claim would pay, which is the contract
+    ///      {testPendingUncappedIncludesTheFinalizedLegacyWindow} pins.
+    ///
+    ///      The retained reasoning, because it still governs the real gate: the
+    ///      figure is aggregate rather than per-entry, since a partly-funded
+    ///      balance would otherwise reap one entry while the real claim reverts
+    ///      (Codex #1317 P1). Bounded: the window walk is capped at
+    ///      MAX_INTERACTION_CLAIM_DAYS.
     function userClaimPendingUncapped(
         LibVaipakam.Storage storage s,
         address user
@@ -1962,11 +1971,11 @@ library LibInteractionRewards {
 
     /// @dev #1499 — ONE walk yielding the user's pending payout: the entry
     ///      upper bound plus the finalized legacy window the claim settles
-    ///      first. Replaces a second O(n) pricing scan — `userRewardEntryIds`
-    ///      retains processed entries and has no size cap, and the horizon
-    ///      batch probes this per submitted entry, so a duplicate scan could
-    ///      push a batch over the block gas limit and leave exactly the entries
-    ///      whose clocks are running unsweepable (Codex #1970 r1 P2).
+    ///      first. It replaced a second O(n) pricing scan when the horizon
+    ///      batch still probed this per submitted entry (Codex #1970 r1 P2);
+    ///      r5/r6 then moved that path onto {_userClaimFundingNeedViewWith},
+    ///      so this helper no longer sits on the sweep at all. Reached only
+    ///      through {userClaimPendingUncapped}, as a claim oracle for tests.
     ///
     ///      RENAMED from `_userPendingSplit` (Codex r7 P3). It returned a
     ///      `(payout, freshRaw)` pair until r4 removed the unread second value,
@@ -2002,7 +2011,11 @@ library LibInteractionRewards {
     }
 
     /// @dev The SUFFICIENT VPFI balance the user's atomic claim needs to NOT
-    ///      revert — used by the horizon sweep's claim-executable gate. Unlike
+    ///      revert. NO LONGER THE SWEEP'S ENTRY POINT (Codex #1499 r8): r5
+    ///      inlined its two steps — advance, then compute — into
+    ///      {sweepExpiredEntry} so the per-user aggregates are walked once and
+    ///      shared across every gate. It remains the MUTATING oracle tests
+    ///      drive through `TestMutatorFacet.userClaimFundingNeedRaw`. Unlike
     ///      the pure {userClaimPendingUncapped}, this MUTATES: it advances
     ///      every one of the user's side cursors first so the aggregate is
     ///      exact even for entries no keeper has swept yet (a behind cursor
@@ -2011,9 +2024,14 @@ library LibInteractionRewards {
     ///      the headroom the claim's forfeit-credit path requires: that path
     ///      calls {LibVpfiRecycle.credit}, which reverts unless the POST-payout
     ///      balance still backs `recycleBucket + freshTreasury` — so the whole
-    ///      claim needs `payout + recycleBucket + forfeitFresh` (Codex #1317 r2
-    ///      xkq). A conservative sufficient bound (payout >= the pool-truncated
-    ///      transfer), so the gate never reaps unfairly. The window walk is
+    ///      claim needs that headroom too (Codex #1317 r2 xkq). The
+    ///      `payout + recycleBucket + forfeitFresh` shape this once documented
+    ///      is OBSOLETE: #1499 made the formula unconditional — the post-cap
+    ///      fresh total, every {LibVpfiRecycle.backingPosition} reservation,
+    ///      and the recycled-transfer bound — rather than a forfeit-only
+    ///      addition. A conservative sufficient bound (payout >= the
+    ///      pool-truncated transfer), so the gate never reaps unfairly. The
+    ///      window walk is
     ///      capped at MAX_INTERACTION_CLAIM_DAYS and the entry scans are bounded
     ///      by the user's entry count — acceptable for the dark, keeper-run
     ///      reaper.
@@ -3848,11 +3866,13 @@ library LibInteractionRewards {
 
     /// @dev View mirror of {userClaimFundingNeed}'s funding formula, WITHOUT
     ///      the cursor advance a view can't perform. Used by the countdown
-    ///      estimate so it applies the SAME forfeit-credit backing the sweep
-    ///      does (`payout + recycleBucket + forfeitFresh` when the user has
-    ///      forfeited entries) — otherwise the view would show an imminent
-    ///      expiry for an unbacked-forfeit user whose claim actually reverts
-    ///      and whom the sweep will not accrue (Codex #1317 r4). It stays
+    ///      estimate so it applies the SAME backing the sweep does — otherwise
+    ///      the view would show an imminent expiry for a user whose claim
+    ///      actually reverts and whom the sweep will not accrue (Codex #1317
+    ///      r4). That backing is no longer the forfeit-only
+    ///      `payout + recycleBucket + forfeitFresh` this paragraph used to
+    ///      name; see the #1499 note below for the formula now in force. It
+    ///      stays
     ///      optimistic ONLY on the axis a view genuinely cannot resolve: an
     ///      unadvanced entry reads behind (0), matching the documented
     ///      conservative-estimate caveat on {rewardEntryExpiry}.
