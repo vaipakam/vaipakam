@@ -1,8 +1,9 @@
 /**
  * Translate an app's canonical English locale bundle into other
- * supported locales via the Claude API. Generalised from
- * apps/app/scripts/translate-i18n.ts so every surface shares one
- * script (and one glossary + prompt).
+ * supported locales via the Claude API. Generalised from the connected
+ * app's own copy of this script — `apps/defi/scripts/translate-i18n.ts`,
+ * retired with that app in #1854 — so every surface shares one script
+ * (and one glossary + prompt).
  *
  * Usage (from the repo root or the package dir):
  *

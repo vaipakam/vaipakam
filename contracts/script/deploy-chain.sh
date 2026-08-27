@@ -1180,6 +1180,44 @@ elif [ "$SKIP_APP" = "0" ]; then
   # preview builds without operator env still pass), so the old form
   # would publish a production app with no offer-book feed, no push
   # rail and no config snapshot — silently. (#1958 Codex F4.)
+  #
+  # CUTOVER ADVISORY (#1854). This phase publishes the `vaipakam-app`
+  # Worker. Whether users can REACH what it publishes depends on two
+  # operator-side facts no script can read from the repository: whether
+  # `app.vaipakam.com` is bound to that Worker, and whether apps/www was
+  # built with VITE_APP_TARGET=app. While either is outstanding, every
+  # Launch App link still resolves to the legacy host, so a contract
+  # redeploy's new addresses reach this Worker and the repo but NOT the
+  # surface users are actually on. There is no second frontend to fall
+  # back on: the retired app's source was deleted with #1854, so
+  # `vaipakam-defi` CANNOT be rebuilt to carry the new addresses. Hence a
+  # banner rather than a silent publish — and an advisory rather than a
+  # hard stop, because blocking every contract deploy until the cutover
+  # blockers (#1959 unported tools, #1960 Data Rights, #1961 ToS gate)
+  # clear would be a worse failure mode than an operator who has been
+  # told.
+  cat >&2 <<'ADVISORY'
+
+  ─────────────────────────────────────────────────────────────────────
+  NOTE — check the app cutover before trusting this deploy (#1854)
+
+  This publishes the `vaipakam-app` Worker. If `app.vaipakam.com` is
+  not yet bound to it, or apps/www was not built with
+  VITE_APP_TARGET=app, users are still being sent to the LEGACY host
+  and will not see any contract addresses this run changed.
+
+  The legacy frontend cannot be rebuilt to carry them — its source was
+  deleted with #1854. Until the cutover completes, treat an
+  address-changing deploy as reaching the repository and this Worker
+  only.
+
+  Cutover blockers: #1961 (ToS gate), #1960 (Data Rights), #1959
+  (Analytics + Protocol Console not ported).
+  Full sequence: the cutover checklist in apps/www/src/lib/appUrl.ts and
+  the hostname map in docs/ops/DeploymentRunbook.md.
+  ─────────────────────────────────────────────────────────────────────
+
+ADVISORY
   ( cd "$APP_DIR" && pnpm run deploy )
   mark_done "app"
 else

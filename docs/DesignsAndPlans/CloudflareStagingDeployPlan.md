@@ -305,7 +305,11 @@ NO secrets — the frontend bundle is static.
   # (#1854). Keep this in lockstep with apps/agent/wrangler.jsonc, which
   # is authoritative — and keep every still-live origin listed, or their
   # sites' agent calls fail CORS.
-  FRONTEND_ORIGIN=https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com
+  # The trailing `workers.dev` entry is the #1854 review origin — the URL
+  # `cd apps/app && pnpm run deploy` prints, which is where the post-deploy
+  # live review runs until `app.vaipakam.com` is bound. Omitting it fails
+  # every agent call the review makes, on CORS.
+  FRONTEND_ORIGIN=https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com,https://vaipakam-app.dawn-fire-139e.workers.dev
   DIAG_SAMPLE_RATE=1.0
   DIAG_RETENTION_DAYS=90
   ```
