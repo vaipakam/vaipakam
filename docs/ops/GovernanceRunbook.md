@@ -1931,11 +1931,24 @@ Two mechanical facts that survive whatever branch is taken:
 Whether or not the pause is used:
 
 - **Pick a propagation day the target mirrors have NOT applied, and confirm it
-  per mirror immediately before broadcasting.** `broadcastV2Applied` is a private
-  storage mapping with **no external getter**, so this is read from the mirror's
-  LOGS — a `RewardBroadcastV2Applied(dayId, …)` event for that `dayId` means the
-  day is spent for arming purposes there. A getter would make this a readback
-  rather than a log scan; that is part of **#1944**.
+  per mirror immediately before broadcasting.** Call
+  `RewardReporterFacet.getBroadcastV2Applied(dayId)` on each mirror — `true`
+  means the day is spent for arming purposes there. Do this as a readback in
+  the same sitting as the broadcast, not from notes taken earlier: any third
+  party can apply a finalized day in between.
+
+  **Check the getter is routed on that Diamond first** (`cast call` it, or
+  `DiamondLoupeFacet.facetAddress` on its selector). It was added by **#1944**
+  and reaches a deployment only through a facet refresh, so a Diamond that
+  predates the refresh reverts `FunctionDoesNotExist`. On such a Diamond the
+  only source is the mirror's LOGS — a `RewardBroadcastV2Applied(dayId, …)`
+  event for that `dayId` means the day is spent.
+
+  **Prefer the readback wherever it is available, and treat a log scan as the
+  degraded path.** A scan that silently misses a page — provider retention,
+  block-range caps, a truncated response — reports "not applied", which is the
+  one wrong answer that burns the candidate day. The readback has no such
+  failure mode.
 - **Have alternates ready.** Identify several unapplied pre-`D*` days before
   arming, not one.
 - **Keep the finalize→broadcast interval short**, since finalization is what
