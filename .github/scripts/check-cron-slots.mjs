@@ -1182,6 +1182,19 @@ const MUST_NOT_FIRE = [
   // something that is not this account's trigger budget. Pinned because the
   // narrow pattern's whole job is to stay off them.
   ['headroom, wall-time', ' * 90 s per chain leaves headroom for ~3 multi-chain ticks within a 5-min cron envelope.'],
+  // The r11 open-world change put 83 more tracked files in front of this rule,
+  // and 17 of them use cron/trigger vocabulary in a DIFFERENT domain. None
+  // produces a finding today; these two are pinned because they are the real
+  // corpus text a future loosening would hit first, and a near-miss is worth
+  // more as a fixture than a case nobody has written.
+  [
+    'UI triggers, not cron triggers',
+    '.navbar-group-trigger { }\n/* Weight 700 is intentional — the dropdown triggers are two of the four */',
+  ],
+  [
+    'a latency trigger in a migration comment',
+    '-- The Alchemy webhook is a LATENCY trigger, not a correctness one; the\n-- cron backstop is what guarantees the five events arrive.',
+  ],
   // `exhausted` bare was tried and dropped for this line: a DO-write budget,
   // inside the context window of the word `cron`, about something else.
   ['exhausted, a different budget', '    // Both budgets exhausted — defer the rest to the cron backstop.'],
