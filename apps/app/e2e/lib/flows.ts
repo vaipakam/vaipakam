@@ -3,7 +3,7 @@
  * (03-accept posts as the lender before the borrower accepts; 04-repay
  * runs both before repaying). Selectors are the ones proven on live
  * Base Sepolia by the campaign harness (docs/TestScopes/
- * app-harness-seed) — change them there and here together.
+ * alpha02-harness-seed) — change them there and here together.
  */
 import { expect, type Locator, type Page } from '@playwright/test';
 import { MOCKS, WETH, pub, DIAMOND, DIAMOND_ABI_VIEM } from './chain';

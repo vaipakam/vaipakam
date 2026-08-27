@@ -324,6 +324,7 @@ export function watchPageRpc(page) {
 }
 
 export async function visit(page, pathname, opts = {}) {
+  requireSiteUrl();
   return precondition(`opening ${pathname}`, async () => {
     const resp = await page.goto(`${SITE}${pathname}`, {
       waitUntil: 'domcontentloaded',
@@ -465,12 +466,42 @@ export const CHAINS = {
   },
 };
 
-// Defaults to `alpha02.vaipakam.com`, NOT `app.vaipakam.com`: the latter
-// is not bound yet (#1854), and a default nothing answers silently costs
-// the whole live suite its coverage on the normal no-override run. That
-// host serves this same app today. Move it with the rest of the cutover —
-// see the checklist at APP_TARGET in apps/www/src/lib/appUrl.ts.
-export const SITE = process.env.SITE_URL ?? 'https://alpha02.vaipakam.com';
+// SITE_URL is REQUIRED — there is deliberately no default while the
+// #1854 cutover is blocked, because every candidate default is wrong in a
+// way that fails silently:
+//
+//   - `app.vaipakam.com` is not bound yet, so a run answers nothing.
+//   - `alpha02.vaipakam.com` IS served, but by the `vaipakam-alpha02`
+//     Worker, which no deploy script publishes to any more — they all
+//     publish `vaipakam-app`. A run there tests a frozen build and can
+//     report GREEN while the build you just shipped is broken. It also
+//     reads `alpha02.*` browser-storage keys while these drivers write
+//     `app.*`, so state-dependent steps quietly diverge.
+//
+// A live driver that silently tests the wrong deployment is worse than
+// one that refuses to start, so this refuses. Pass the `workers.dev` URL
+// printed by `pnpm run deploy`, or the custom domain once it is bound and
+// the checklist at APP_TARGET in apps/www/src/lib/appUrl.ts is done.
+export function requireSiteUrl() {
+  const url = process.env.SITE_URL;
+  if (!url) {
+    throw new Error(
+      'SITE_URL is required. There is no safe default while the #1854 ' +
+        'cutover is blocked: app.vaipakam.com is unbound, and ' +
+        'alpha02.vaipakam.com serves the frozen vaipakam-alpha02 Worker ' +
+        'rather than the vaipakam-app one the deploy scripts publish. ' +
+        'Pass the workers.dev URL from `pnpm run deploy`.',
+    );
+  }
+  return url;
+}
+
+// NOT `requireSiteUrl()` at module scope: pure helpers here are imported
+// by unit tests (watchPageRpc.test.mjs) that never touch the network, and
+// throwing on import would fail the vitest job for a variable they do not
+// use. The guard lives at the network entry points below instead, which is
+// where a missing target actually matters.
+export const SITE = process.env.SITE_URL ?? '';
 
 /** A real wallet rejects operations for an account it doesn't hold —
  *  mirror that so app regressions can't falsely pass a live review. */
@@ -611,6 +642,7 @@ export async function launch({
   // a correct-but-blunt verdict, never a silently discarded finding.
   onSetupFailure = 'blocked',
 } = {}) {
+  requireSiteUrl();
   const account = keyless
     ? null
     : privateKeyToAccount(walletFor(role).privateKey);

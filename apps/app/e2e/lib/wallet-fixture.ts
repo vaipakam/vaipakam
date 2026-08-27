@@ -1,6 +1,6 @@
 /**
  * Injected-wallet Playwright fixture — the checked-in port of the
- * campaign harness driver (docs/TestScopes/app-harness-seed/
+ * campaign harness driver (docs/TestScopes/alpha02-harness-seed/
  * driver.mjs). Injects an EIP-1193 + EIP-6963 provider whose signing
  * and RPC happen in THIS node process via viem against the anvil
  * fork; the app sees a normal injected browser wallet and the

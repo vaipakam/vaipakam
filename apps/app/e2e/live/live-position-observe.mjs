@@ -95,6 +95,7 @@ import {
   snapshotCardEligible,
   snapshotJumpable,
 } from './jumpability.mjs';
+import { requireSiteUrl } from './driver.mjs';
 import { redactUrl } from './redact.mjs';
 import { isDetailPath, visitVerdict } from './visitVerdict.mjs';
 import {
@@ -129,7 +130,7 @@ function loadDiamondAbi() {
   return out;
 }
 
-const SITE = process.env.SITE_URL ?? 'https://alpha02.vaipakam.com';
+const SITE = requireSiteUrl();
 const CHAIN_ID = Number(process.env.OBSERVE_CHAIN_ID ?? 84532);
 const RPC = process.env.OBSERVE_RPC ?? 'https://sepolia.base.org';
 // A limit of 0 (or a typo) would visit no detail route at all: the

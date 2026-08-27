@@ -1,6 +1,6 @@
 /**
  * Batch runner for the live tier — executes every live review script
- * sequentially against SITE_URL (default: production app) and
+ * sequentially against SITE_URL (REQUIRED — no default; see driver.mjs) and
  * prints a per-script verdict table. Use it as the "separate batch"
  * regression before a testnet release, or after a deploy that
  * touched several surfaces at once.

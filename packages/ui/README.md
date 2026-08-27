@@ -2,11 +2,20 @@
 
 **Shared React components — framework-decoupled primitives only.**
 
+> **ORPHANED as of #1854.** No source file imports this package any more:
+> `apps/defi`, which had eleven importers, was deleted; `apps/app` neither
+> declares nor imports it; `apps/www` retains an unused dependency entry.
+> Nothing compiles `src/` either — the `typecheck` script runs ESLint only
+> (no tsconfig, no `typescript` dep), so consumer builds and tests do NOT
+> protect edits here. Whether the package gets real typechecking or is
+> retired is #1963; treat the consumer list below as historical until that
+> is decided.
+
 [![Workspaces typecheck](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/vaipakam/vaipakam/actions/workflows/ci.yml)
 
 ## What is this
 
-React-coupled primitives shared between `apps/app` (the connected app) and `apps/www` (the marketing site). The scope is deliberately narrow — **only components that have NO defi-only dependencies** (no `WalletContext`, no `useEnsName`, no `useTokenMeta`, no `coingecko` hooks, no Vite-env-aware modules) live here.
+React-coupled primitives, written to be shared between the connected app and `apps/www` (the marketing site) — though as noted above nothing imports them today. The scope is deliberately narrow — **only components that have NO defi-only dependencies** (no `WalletContext`, no `useEnsName`, no `useTokenMeta`, no `coingecko` hooks, no Vite-env-aware modules) live here.
 
 Current scope (Stage 2b of the source-tree refactor):
 
