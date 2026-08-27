@@ -64,11 +64,13 @@
 #   workspaces        pnpm workspace typechecks (apps/keeper, apps/indexer
 #                     — incl. the indexer's event-coverage script,
 #                     apps/agent, apps/app via `tsc -b --noEmit`,
-#                     apps/www). Vitest suites are NOT run in this job:
-#                     the connected-app + agent suites run in their own
-#                     `app-vitest.yml` workflow. Issue #85, which used to
-#                     block them here, died with the deleted app (#1854);
-#                     there is no pending `pnpm -r test` follow-up.
+#                     apps/www). Vitest suites are NOT run in this job.
+#                     `app-vitest.yml` runs @vaipakam/{lib,app,indexer}.
+#                     The AGENT suite is run by NOTHING — it is outside
+#                     app-vitest.yml's change detector and no other
+#                     workflow invokes it, so agent test regressions are
+#                     currently ungated (#1962). Issue #85, which used to
+#                     be cited here, died with the deleted app (#1854).
 #
 # The `Protect main` ruleset's required-status-checks rule wires
 # `contracts-fast`, `workspaces`, `detect-changes`, `Slither static

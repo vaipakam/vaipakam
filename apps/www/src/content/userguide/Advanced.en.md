@@ -508,8 +508,12 @@ the dapp does NOT automate today:
    direct Seaport fill will route the full ask to the seller
    rather than splitting the fees as the collection requires.
    Advanced users must fetch the OpenSea required-fee schedule
-   for the collection (the in-repo fee parser at
-   `apps/agent/src/openseaCollectionProxy.ts` is the reference) and pass
+   for the collection (the in-repo fee parser that derived absolute
+   `FeeLeg` amounts, `apps/defi/src/lib/openseaFeeSchedule.ts`, was
+   retired in #1854 and has no live replacement — recover it from git
+   history for reference. The agent's `openseaCollectionProxy.ts` is not
+   a substitute: it relays OpenSea's Collection API body verbatim and
+   does not compute the split. Tracked in #1959.) and pass
    absolute amounts derived against the ask before calling. The facet internally builds the
    canonical Seaport OrderComponents from those inputs, the
    OfferContext values it records for the executor (borrower

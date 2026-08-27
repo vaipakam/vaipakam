@@ -166,7 +166,7 @@ export async function handleActiveLoansFramePost(
   const buttons = totalLoans === 0
     ? [
         { label: 'Check another wallet' },
-        { label: 'Open Vaipakam', action: `${frontendOrigin}/` },
+        { label: 'Open Vaipakam', action: `${frontendOrigin}/app` },
       ]
     : [
         { label: 'Check another wallet' },
@@ -178,7 +178,7 @@ export async function handleActiveLoansFramePost(
         // each loan's full state (HF, LTV, role, fallback split).
         {
           label: 'Open NFT Verifier',
-          action: `${frontendOrigin}/nft`,
+          action: `${frontendOrigin}/nft-verifier`,
         },
       ];
 
@@ -286,7 +286,7 @@ function _frameHtml(input: FrameHtmlInput): string {
   </head>
   <body>
     <p>${_esc(input.description)}</p>
-    <p><a href="${_esc(input.frontendOrigin)}/">Open Vaipakam</a></p>
+    <p><a href="${_esc(input.frontendOrigin)}/app">Open Vaipakam</a></p>
   </body>
 </html>`;
 }

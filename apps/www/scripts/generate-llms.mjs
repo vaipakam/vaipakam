@@ -283,7 +283,7 @@ ${INDEXER_ORIGIN} — fetch these instead of scraping the app:
 ## Apps
 
 - [Marketing site + docs](${ORIGIN}/): this site (English at /, localized under /es/, /ta/, …)
-- [Connected app](https://app.vaipakam.com/): the wallet-connected product surface
+- [Connected app](https://defi.vaipakam.com/): the wallet-connected product surface
 
 ## Optional
 

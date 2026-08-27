@@ -512,7 +512,7 @@ SEPARATE TWO-PART step ஆகும்:
    செய்கின்றபடி fees-ஐ split செய்வதற்கு பதிலாக full ask-ஐ
    seller-க்கு route செய்யும். Advanced users collection-க்கான
    OpenSea required-fee schedule-ஐ fetch செய்ய வேண்டும் (in-repo
-   fee parser `apps/agent/src/openseaCollectionProxy.ts` reference) மற்றும்
+   fee parser `apps/defi/src/lib/openseaFeeSchedule.ts` (#1959) reference) மற்றும்
    call செய்வதற்கு முன் ask-க்கு எதிராக derived absolute amounts-ஐ
    pass செய்ய வேண்டும். Facet internally அந்த inputs-இல் இருந்து
    canonical Seaport OrderComponents-ஐ build செய்கிறது (plus

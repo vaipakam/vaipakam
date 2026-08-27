@@ -46,16 +46,41 @@
  *   4. Repoint the hard-coded recovery links in the ten
  *      `src/content/userguide/Advanced.*.md` files, which cannot call
  *      this helper — markdown has no access to it.
+ *   5. Move the agent's `FRONTEND_ORIGIN` entry zero to the app host,
+ *      together with the Frame paths in `frames.ts` — that CSV's first
+ *      entry and those paths are the same coupling this file models.
+ *   6. Repoint the discovery links in `apps/indexer/src/apiIndex.ts` and
+ *      `apps/www/scripts/generate-llms.mjs`, which automated consumers
+ *      read.
  *
- * Step 4 is the one that gets forgotten; it is listed here because
+ * BLOCKERS — do not flip while either is open:
+ *   - #1961: `apps/app` has NO ToS gate. The retired app failed closed on
+ *     `currentTosVersion`, and the contracts delegate that enforcement to
+ *     the client, so flipping with a ToS in force would let every wallet
+ *     transact without accepting terms.
+ *   - #1959: Analytics and the Protocol Console are not ported, which is
+ *     why `legacyToolUrl` below exists.
+ *
+ * Steps 4-6 are the ones that get forgotten; they are listed here because
  * this file is where somebody will be standing when they do step 3.
  */
 type AppTarget = 'legacy' | 'app';
 
-// `as AppTarget` widens the literal on purpose: without it TypeScript
-// narrows this to 'legacy' and reports the comparisons below as dead
-// code, which is exactly the check we want live when it is flipped.
-const APP_TARGET = 'legacy' as AppTarget;
+/**
+ * Which surface the links point at. `VITE_APP_TARGET` overrides it so a
+ * preview or local build can aim at `apps/app` WITHOUT editing tracked
+ * source — important because the override has to move the route table
+ * too, not just the host. Pointing `VITE_APP_URL` at a local `apps/app`
+ * dev server while this stayed `legacy` would emit `/nft-verifier` and
+ * `/vpfi-vault` at an app that serves `/nft` and `/vpfi`: the exact
+ * host/path drift this helper exists to prevent, reintroduced through
+ * the dev path.
+ *
+ * Anything other than 'app' reads as 'legacy' — an unset or typo'd value
+ * lands on the served surface rather than the unbound one.
+ */
+const APP_TARGET: AppTarget =
+  import.meta.env.VITE_APP_TARGET === 'app' ? 'app' : 'legacy';
 
 /** Per-surface routes. Same destinations, different paths. */
 const ROUTES: Record<AppTarget, Record<AppDestination, string>> = {
@@ -70,9 +95,9 @@ const DEFAULT_HOST =
   APP_TARGET === 'app' ? 'https://app.vaipakam.com' : 'https://defi.vaipakam.com';
 
 /**
- * `VITE_APP_URL` overrides the HOST only — the route table still follows
- * `APP_TARGET`. Pointing this at a local `apps/app` dev server therefore
- * also wants `APP_TARGET = 'app'`, or the links carry legacy paths.
+ * `VITE_APP_URL` overrides the HOST. Set `VITE_APP_TARGET=app` alongside
+ * it when pointing at an `apps/app` dev server, so the route table moves
+ * with the host.
  */
 const APP_URL = (import.meta.env.VITE_APP_URL ?? DEFAULT_HOST).replace(/\/$/, '');
 

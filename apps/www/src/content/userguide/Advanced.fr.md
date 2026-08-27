@@ -546,7 +546,7 @@ SÉPARÉE que la application n'automatise PAS aujourd'hui :
    complet au vendeur au lieu de répartir les frais comme requis.
    Les utilisateurs avancés doivent récupérer le calendrier des
    frais requis OpenSea pour la collection (le parser de frais
-   in-repo à `apps/agent/src/openseaCollectionProxy.ts` est la référence) et
+   in-repo à `apps/defi/src/lib/openseaFeeSchedule.ts` (#1959) est la référence) et
    passer des montants absolus dérivés contre l'ask avant
    d'appeler. Le facet construit en interne les OrderComponents
    canoniques Seaport à partir de ces entrées (plus des valeurs

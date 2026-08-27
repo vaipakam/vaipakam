@@ -442,16 +442,23 @@
   "vars": {
     "TG_BOT_USERNAME": "",
     // ORDER IS LOAD-BEARING: frames.ts derives its link host from
-    // `FRONTEND_ORIGIN.split(',')[0]`, so the FIRST entry is where every
-    // Frame's "Open Vaipakam" / "Open NFT Verifier" action points. Keep
-    // the connected app first; reordering this CSV silently rehomes
-    // those buttons.
+    // `FRONTEND_ORIGIN.split(',')[0]`, and periodicPreNotify.ts builds
+    // notification deep links the same way, so the FIRST entry must be a
+    // host that actually SERVES those paths.
+    //
+    // It is `defi.` today, not `app.`, because `app.vaipakam.com` is not
+    // bound yet (see apps/app/wrangler.jsonc). Entry zero and the paths
+    // in frames.ts are ONE decision: the legacy app serves `/app` and
+    // `/nft-verifier`, the new one serves `/` and `/nft`. Move them
+    // together at cutover — same coupling `appUrl`'s APP_TARGET models
+    // on the marketing side — or the links break in whichever direction
+    // you half-changed.
     //
     // `defi.` and `alpha02.` are RETAINED past the #1854 rename on
     // purpose: their Workers still serve real users until the operator
     // converts them to redirects. Remove them in the same change that
     // retires those hosts, not before. (#1958 Codex F5.)
-    "FRONTEND_ORIGIN": "https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://defi.vaipakam.com,https://alpha02.vaipakam.com",
+    "FRONTEND_ORIGIN": "https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com",
     "DIAG_SAMPLE_RATE": "1.0",
     "DIAG_RETENTION_DAYS": "90",
   },

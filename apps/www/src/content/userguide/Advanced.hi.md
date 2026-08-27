@@ -515,7 +515,7 @@ listing OpenSea पर लाना एक SEPARATE TWO-PART step है जि�
    route करेगा बजाय fees को split करने के जैसा collection
    चाहता है। Advanced users को OpenSea required-fee schedule
    collection के लिए fetch करना होगा (in-repo fee parser
-   `apps/agent/src/openseaCollectionProxy.ts` reference है) और call करने
+   `apps/defi/src/lib/openseaFeeSchedule.ts` (#1959) reference है) और call करने
    से पहले ask के विरुद्ध derived absolute amounts pass करने
    होंगे। Facet internally उन inputs से canonical Seaport
    OrderComponents build करता है (साथ ही values जो वह
