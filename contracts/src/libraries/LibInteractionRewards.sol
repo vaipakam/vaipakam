@@ -1950,7 +1950,7 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user
     ) internal view returns (uint256 pending) {
-        (pending, ) = _userEntriesUpperBound(s, user);
+        (pending, , ) = _userEntriesUpperBound(s, user);
         (uint256 today, bool active) = currentDayOrZero();
         if (!active || today == 0) return pending;
         uint256 last = s.interactionLastClaimedDay[user];
@@ -1963,6 +1963,54 @@ library LibInteractionRewards {
         (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
         if (!any) return pending;
         pending += previewForUserWindow(user, fromDay, effectiveTo);
+    }
+
+
+    /// @dev #1499 — the FRESH component of a user's pending claim, post-cap.
+    ///
+    ///      The RL-3 horizon must agree with the #1460 claim-time gate, which
+    ///      refuses a claim whose fresh part does not fit ABOVE the recycle
+    ///      earmark (`LibVpfiRecycle.credit` reverts unless
+    ///      `bal >= recycleBucket + amount`). The horizon's predicate tested a
+    ///      bare payout against the balance and never netted the earmark, so on
+    ///      a thin deployment it could call an entry executable that the claim
+    ///      refuses — accruing notice time against a claimant who cannot claim.
+    ///
+    ///      Two deliberate choices, both in the conservative direction:
+    ///
+    ///      1. The ENTRY term subtracts the POST-CAP recycled share, taken off
+    ///         the same walk as the total. Subtracting the RAW share (as one
+    ///         earlier attempt did) understates fresh, which is the UNSAFE
+    ///         direction — it makes the gate too lenient.
+    ///      2. The WINDOW term is counted as fresh in full.
+    ///         {previewForUserWindow} returns a scalar and never splits the
+    ///         day's funding composition, so no recycled share is available for
+    ///         it. Treating it as fresh OVERSTATES the requirement, which only
+    ///         ever delays a reap.
+    function _userFreshRequirement(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256 fresh) {
+        (uint256 entriesTotal, , uint256 entriesRecycled) =
+            _userEntriesUpperBound(s, user);
+        // Floored: the post-cap recycled share can never exceed the post-cap
+        // total it was taken from, but ceil-dust in the split has produced
+        // wei-level overshoot elsewhere in this library, and a revert here
+        // would brick the sweep rather than pause it.
+        fresh = entriesTotal > entriesRecycled ? entriesTotal - entriesRecycled : 0;
+
+        (uint256 today, bool active) = currentDayOrZero();
+        if (!active || today == 0) return fresh;
+        uint256 last = s.interactionLastClaimedDay[user];
+        uint256 lastFinalized = today - 1;
+        if (last >= lastFinalized) return fresh;
+        uint256 fromDay = last + 1;
+        uint256 windowLast =
+            fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
+        uint256 toDay = windowLast < lastFinalized ? windowLast : lastFinalized;
+        (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
+        if (!any) return fresh;
+        fresh += previewForUserWindow(user, fromDay, effectiveTo);
     }
 
     /// @dev The SUFFICIENT VPFI balance the user's atomic claim needs to NOT
@@ -2189,7 +2237,15 @@ library LibInteractionRewards {
     function _userEntriesUpperBound(
         LibVaipakam.Storage storage s,
         address user
-    ) private view returns (uint256 userTotal, uint256 recycledTotal) {
+    )
+        private
+        view
+        returns (
+            uint256 userTotal,
+            uint256 recycledTotal,
+            uint256 recycledPostCapTotal
+        )
+    {
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
         for (uint256 i = 0; i < len; ) {
@@ -2219,6 +2275,18 @@ library LibInteractionRewards {
                 ) = _entryPriceCore(s, id, e);
                 userTotal += toUser.total;
                 recycledTotal += st.rawSplit.recycled;
+                // #1499 — the POST-CAP recycled share, from the SAME `toUser`
+                // that `userTotal` comes from. Accumulated here rather than
+                // re-derived elsewhere: three attempts to align the RL-3
+                // horizon inside #1497 each hand-derived this quantity and each
+                // was subtly wrong, one of them by reaching for
+                // `st.rawSplit.recycled` (raw) while comparing against a
+                // post-cap total. Taking both off the same walk makes that
+                // particular mistake unrepresentable.
+                //
+                // `recycledTotal` above stays RAW on purpose — see
+                // {_recycledDrought}, which needs an UPPER bound.
+                recycledPostCapTotal += toUser.recycled;
             }
             unchecked { ++i; }
         }
@@ -3683,7 +3751,7 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (bool) {
-        (, uint256 recycledTotal) = _userEntriesUpperBound(s, user);
+        (, uint256 recycledTotal, ) = _userEntriesUpperBound(s, user);
         return recycledTotal > s.recycleBucket;
     }
 
@@ -3728,9 +3796,32 @@ library LibInteractionRewards {
     ) private view returns (uint256 need) {
         uint256 payout = userClaimPendingUncapped(s, user);
         uint256 forfeitFresh = _userForfeitFresh(s, user);
-        need = forfeitFresh == 0
-            ? payout
-            : payout + s.recycleBucket + forfeitFresh;
+        if (forfeitFresh != 0) {
+            // Unchanged: this branch ALREADY nets the earmark, and charges the
+            // whole payout on top because that is what the forfeit-credit path
+            // ({LibVpfiRecycle.credit}) actually requires.
+            return payout + s.recycleBucket + forfeitFresh;
+        }
+        // #1499 — the zero-forfeit branch was the ONLY divergence. It returned
+        // a bare `payout`, giving `balance >= payout`, while a fresh claim needs
+        // `balance >= fresh + recycleBucket`. For a fresh-only claimant the
+        // horizon was too lenient by exactly `recycleBucket`.
+        //
+        // This can never come out BELOW the old value on any reachable path,
+        // which is what makes the change safe rather than a re-balancing:
+        // both consumers gate on {_recycledDrought} before this test —
+        // `_entryExecutableNow` returns early on it, and `sweepExpiredEntry`
+        // conjoins it into `executable` — and that gate is
+        // `rawRecycled > recycleBucket`. So wherever this predicate is
+        // consulted, `rawRecycled <= recycleBucket`, and post-cap <= raw, hence
+        //     fresh + recycleBucket  >=  fresh + recycledPostCap  ==  payout.
+        // Strictly greater exactly where the divergence bit; never smaller.
+        //
+        // (That is also a second, independent reason {_recycledDrought} must
+        // keep consuming the RAW figure: this argument needs it to be an upper
+        // bound on the post-cap value.)
+        payout; // retained above for the forfeit branch; unused here
+        need = _userFreshRequirement(s, user) + s.recycleBucket;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
