@@ -88,6 +88,18 @@ hostname it deliberately does not have — the keeper is cron-only and
 holds the only signing key, so a hostname there would be a mistake rather
 than an omission.
 
+One further setting turned out to sit outside the file entirely, and it
+is the sharpest of them. The build's SEO step runs before every build and
+picks the origin for every URL in the generated sitemap and the
+robots.txt target. It takes an override — but reads it from the shell
+environment, not from the operator's configuration file, because it is a
+plain script rather than part of the bundler's pipeline. So a deployment
+served from any other origin gets sitemap and robots artifacts pointing
+at the production host, silently and with nothing to discover in the
+file an operator was told is authoritative. It is now documented in that
+file under a heading saying plainly that setting it there does nothing,
+with the exported form spelled out.
+
 The variable count moved with the same care. It had been attributed to
 the operator's own `.env.local`, which is gitignored, absent on a clean
 checkout and different on every deployment — so no count could be quoted

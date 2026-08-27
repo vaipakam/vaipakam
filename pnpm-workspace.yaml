@@ -31,9 +31,14 @@
 #   - apps/agent   read/index Cloudflare Worker → agent.vaipakam.com
 #   - apps/indexer chain → D1 ingester        → indexer.vaipakam.com
 #   - apps/keeper  autonomous keeper Worker   → NO public hostname, by
-#                   design. It is cron-triggered and holds the only
-#                   signing key; keeper.vaipakam.com does not resolve
-#                   and never should.
+#                   design. Cron-triggered, and the only holder of an
+#                   ON-CHAIN TRANSACTION key. Keep that qualifier: the
+#                   agent is not keyless — it holds PUSH_CHANNEL_PK, a
+#                   real Ethereum key whose EOA owns the PUSH stake and
+#                   its gas — so "the only signing key" understates the
+#                   agent's compromise surface, which is a live error
+#                   the staging plan had already corrected once.
+#                   keeper.vaipakam.com does not resolve and never should.
 #
 # `packages/` holds shared internal libraries — no deploy of their
 # own, consumed by the apps via workspace `:` protocol:

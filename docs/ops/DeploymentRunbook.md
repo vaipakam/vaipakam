@@ -1767,6 +1767,11 @@ a config-empty build on the production hostname.
 
 Populate `apps/app/.env.local` first. A build with none of the nineteen
 `VITE_*` operator variables is a preview build, not a deployable one.
+There is a twentieth setting, `VITE_APP_PUBLIC_ORIGIN`, which is NOT
+among them and cannot be: the `prebuild` step reads it from the shell
+environment rather than from `.env.local`, and it selects the origin in
+the generated sitemap and robots.txt. Leave it unset for the production
+deploy; export it for any deployment served from another origin.
 Be precise about what that costs, because the failure is partial:
 chain reads still work — every chain in `apps/app/src/chain/chains.ts`
 carries a public `rpcUrlDefault` and `rpcUrlFor` falls back to it

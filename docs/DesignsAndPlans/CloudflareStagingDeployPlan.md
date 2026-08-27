@@ -195,7 +195,9 @@ Operator has provisioned (verified via Cloudflare API
   2026-08-27 `labs.vaipakam.com` has no binding and no DNS record. The
   line is kept because this section is a dated snapshot of what was
   provisioned, not a description of today.
-- `vaipakam-indexer`     — Worker exists; **`indexer.vaipakam.com` not yet bound**
+- `vaipakam-indexer`     — Worker exists; `indexer.vaipakam.com` was **not yet bound**
+  at this snapshot. **It is bound now** — verified 2026-08-27, serving 200; the
+  Worker's own config declares the route (§4.2).
 - `vaipakam-agent`       — `agent.vaipakam.com` ✓ bound
 - `vaipakam-keeper`      — Worker exists; no public domain (by design)
 
@@ -220,7 +222,10 @@ This was `vaipakam-defi` when the plan was written. #1854 retired that
 app and renamed its successor `apps/app` / `vaipakam-app`; the source
 behind `vaipakam-defi` is **deleted**, so it can no longer be built and
 nothing here applies to it. `apps/app/.env.example` is the authoritative
-list — it carries nineteen variables, not the six shown. It is the
+list — it carries nineteen assignable variables, not the six shown, plus
+`VITE_APP_PUBLIC_ORIGIN`, which it documents but which must be EXPORTED
+rather than set in the file (the prebuild SEO step reads the shell
+environment, not `.env.local`). It is the
 TEMPLATE: copy it to `apps/app/.env.local`, which is gitignored, absent
 on a clean checkout and deployment-specific, so it can never be the file
 a count is quoted from. The deploy is `cd apps/app && pnpm run deploy`
@@ -242,8 +247,13 @@ NO secrets — the frontend bundle is static.
 
 ### 4.2 `vaipakam-indexer`
 
-- **Custom domain:** `indexer.vaipakam.com` (binding pending —
-  add to wrangler.jsonc `routes`).
+- **Custom domain:** `indexer.vaipakam.com` — **DONE, and do not
+  hand-bind it.** `apps/indexer/wrangler.jsonc:157-162` declares it as a
+  `routes` entry with `custom_domain: true`, so `wrangler deploy`
+  creates and maintains the binding itself. Verified live 2026-08-27
+  (serving 200). This is the ONE config in the tree that owns its own
+  hostname; every other surface is bound out-of-band, which is why
+  `docs/ops/DeploymentRunbook.md` warns against hand-binding this one.
 - **D1:** `vaipakam-archive`, `migrations_dir: "migrations"`.
 - **Cron:** `* * * * *` — chain-event scan + cancelled-offer
   retention prune.
@@ -523,7 +533,7 @@ Stage 3 PR5.
 | Step | Owner | What happens |
 |---|---|---|
 | 1 | Operator | Provision Cloudflare resources per §3 (DONE 2026-05-07) |
-| 2 | Author | Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) |
+| 2 | Author | **DONE.** Patch wrangler.jsonc with `vaipakam-archive` D1 ID + `indexer.vaipakam.com` route (Stage 3 follow-up commit) — both are in `apps/indexer/wrangler.jsonc` and the hostname is live (verified 2026-08-27) |
 | 3 | Operator | `cd apps/indexer && wrangler d1 migrations apply vaipakam-archive --remote` (one-time schema apply) |
 | 4 | Operator | Provision **every declared binding on all three Workers** — §4.2 (indexer) + §4.3 (agent) + §4.4 (keeper), by the two mechanisms in §4.5. Do not skip the indexer: wrangler validates Secrets Store bindings at deploy, so a missing `ALCHEMY_WEBHOOK_SIGNING_KEY_*` fails step 5 rather than degrading. (NOT BLOCKAID; that proxy does not exist, #1651) |
 | 5 | Operator | `wrangler deploy` for `apps/indexer`, and the packaged scripts **`pnpm --filter @vaipakam/agent run deploy`** and **`pnpm --filter @vaipakam/keeper run deploy`** for the other two — NOT a bare `wrangler deploy` for either (#1896): those scripts carry `--keep-vars`, and without it wrangler deletes every var absent from `wrangler.jsonc`. For the keeper that is the `FRONTEND_ORIGIN` and optional `LIQ_*` / `SPLIT_*` / `PARTIAL_LIQ_*` tuning §4.4 just provisioned; for the agent it is `RECIPIENT_VALIDATING_TOKENS` and `OPENSEA_OFFERS_MAX_PAGES`, which `apps/agent/src/env.ts` reads and its config does not declare — a bare deploy silently switches recipient-token validation off and resets OpenSea pagination. This activates crons + binds `indexer.vaipakam.com`. **HOLD (#1896): the keeper no longer has a cron to activate** — `apps/keeper/wrangler.jsonc` commits `"crons": []` deliberately, because the Worker was being terminated for exceeding CPU on ~100% of invocations. Deploying it is still correct (it keeps the script and bindings current); it simply leaves the keeper unscheduled. Do not "fix" the empty list here. |
@@ -536,7 +546,9 @@ Stage 3 PR5.
 
 ## 7. Open questions / known gaps
 
-1. **`indexer.vaipakam.com`** — not yet bound in Cloudflare.
+1. ~~**`indexer.vaipakam.com`** — not yet bound in Cloudflare.~~
+   **RESOLVED** — bound and serving 200, verified 2026-08-27. The
+   Worker's config declares the route itself (§4.2).
    Goes in alongside the wrangler config patch (§6 step 2).
 
 2. **Bot/push-channel secrets on `vaipakam-agent`** — confirmed

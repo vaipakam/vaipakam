@@ -100,7 +100,9 @@ the record of what was outstanding in May; do not action this list.
       `apps/agent/` + `apps/indexer/` + `apps/keeper/`
       — the Worker split shipped; `apps/defi` itself was then retired by
       #1854 and the connected app is now `apps/app`
-- [ ] Per-app `wrangler.jsonc` with this state's IDs
-- [ ] Apply migrations to `vaipakam-archive`
-- [ ] Add `0011_offers_cancelled_at.sql` migration for cancelled-offer D1 capture
-- [ ] Update chainIndexer.ts: UPDATE-on-OfferCanceled instead of DELETE
+- [x] Per-app `wrangler.jsonc` with this state's IDs
+- [x] Apply migrations to `vaipakam-archive`
+- [x] Add `0011_offers_cancelled_at.sql` migration for cancelled-offer D1 capture
+      — this is the migration whose duplicated `0011` prefix is
+      grandfathered in `apps/indexer/scripts/check-migration-prefixes.mjs`
+- [x] Update chainIndexer.ts: UPDATE-on-OfferCanceled instead of DELETE
