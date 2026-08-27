@@ -737,6 +737,12 @@ contract GovernorDualAccumulatorTest is SetupTest {
     // it can tell the two apart. An assertion here would have been the sixth
     // vacuous cell on this card.
     //
+    // MEASURED FURTHER: the need was walked from 1 to 8 entries and tracked
+    // N x single EXACTLY at every count (10082e18, 20164e18, 30246e18, ...
+    // 80657e18). The ceiling does not bind at ANY entry count reachable here,
+    // so no fixture built on this suite's day-pool sizing can separate the
+    // grouped figure from a per-entry sum.
+    //
     // To make it discriminate, the group must EXCEED the ceiling `finalizeDay`
     // stamps (20% of the side half by default). Either raise the entry sizing
     // well above that share, or lower `setDayCapThreshold18` for the armed day
