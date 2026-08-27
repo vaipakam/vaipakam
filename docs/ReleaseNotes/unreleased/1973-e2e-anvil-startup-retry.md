@@ -23,6 +23,18 @@ reporting it. The final failure message now names the likely cause and
 points at the issue, so the next person reading it does not start by
 suspecting their own diff.
 
+Two limits keep the retry from becoming its own problem. It only applies
+when the fork tool dies within the first half-minute, which is what a
+genesis failure looks like; something that runs almost to the readiness
+deadline and then exits is a different fault, and retrying it would
+multiply the wait rather than recover from anything, so that fails
+immediately with a message saying which case it was. And the attempt
+count, which is overridable, is validated on the way in: an empty or
+mistyped value would otherwise skip startup silently, a fractional one
+would never reach the give-up branch, and an unbounded one would retry
+forever. A configuration typo now fails with a message naming the
+accepted range.
+
 The retry is loud on purpose. A silent one turns a degrading upstream
 into an unexplained slowdown, and hides exactly the signal that would
 tell an operator the endpoint needs attention.

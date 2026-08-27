@@ -79,9 +79,26 @@ export default async function globalSetup(): Promise<void> {
   // (#1973). A fast exit is retryable; a readiness TIMEOUT is not, since
   // that indicates something structurally wrong rather than a bad
   // moment, and retrying it would triple the wait before reporting.
-  const attempts = Number(process.env.APP_E2E_ANVIL_ATTEMPTS ?? 3);
+  // Validate rather than trusting Number(): '' and 'abc' both yield a
+  // loop that never runs, '2.5' never reaches the terminal branch, and
+  // 'Infinity' retries forever. A typo in CI config must fail loudly
+  // here, not manifest as a skipped or hanging startup.
+  const attemptsRaw = process.env.APP_E2E_ANVIL_ATTEMPTS;
+  const attempts = attemptsRaw === undefined ? 3 : Number(attemptsRaw);
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 10) {
+    throw new Error(
+      `APP_E2E_ANVIL_ATTEMPTS must be an integer in 1..10 (got ` +
+        `${JSON.stringify(attemptsRaw)}). Use 1 to disable retries.`,
+    );
+  }
+  // A genesis failure kills anvil in seconds. Anything that survives
+  // this long and THEN dies is not the transient class, so it is fatal
+  // on the spot — otherwise three near-timeout attempts would take
+  // ~360s while claiming to stay near 120s.
+  const FAST_EXIT_MS = 30_000;
   let anvilStarted = false;
   for (let attempt = 1; attempt <= attempts; attempt++) {
+    const spawnedAt = Date.now();
     const anvil = spawn(
       'anvil',
       [
@@ -114,6 +131,15 @@ export default async function globalSetup(): Promise<void> {
       anvilStarted = true;
       break;
     }
+    const elapsed = Date.now() - spawnedAt;
+    if (elapsed >= FAST_EXIT_MS) {
+      throw new Error(
+        `anvil ran for ${Math.round(elapsed / 1000)}s and then exited ` +
+          `(code ${anvilOutcome}). That is not the fast genesis failure ` +
+          `retrying is for, so it is fatal on the first occurrence; ` +
+          `retrying would only multiply the wait. See #1973.`,
+      );
+    }
     if (attempt === attempts) {
       throw new Error(
         `anvil exited before ready (code ${anvilOutcome}) after ${attempts} ` +
@@ -134,8 +160,10 @@ export default async function globalSetup(): Promise<void> {
     // cannot silently attach to something else that grabbed it.
     await assertNothingListening(ANVIL_URL, 'anvil');
   }
+  // Unreachable: `attempts` is validated >= 1, so the loop always runs
+  // and either breaks on ready or throws. Kept as a type-level guard.
   if (!anvilStarted) {
-    throw new Error('anvil did not start'); // unreachable; keeps types honest
+    throw new Error('anvil did not start');
   }
   console.log('[e2e] anvil fork ready (chainId 84532)');
 
