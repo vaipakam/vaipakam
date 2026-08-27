@@ -428,6 +428,15 @@ const CONTEXT_RADIUS = 200;
 // ── Scanning ────────────────────────────────────────────────────────────────
 
 function trackedFiles() {
+  // COST, measured 2026-08-27 so nobody narrows the scope back for speed:
+  // ~4 s wall for the whole offline gate over 5,272 tracked files / 127 MB.
+  // Of that, `git ls-files --eol` is ~1.1 s (it inspects every blob), reading
+  // the files ~0.6 s, and the rest is the claim scan itself. That is a
+  // rounding error inside a workflow that also runs a build, and the previous
+  // five-root version's saving bought a gate blind to `.github/` — which is
+  // where its own handbook lives. If this ever does need to be faster, cache
+  // the eol classification; do not shrink what is scanned.
+  //
   // r3's scope-root liveness check is GONE with the roots it guarded. It
   // existed because `git ls-files` on a vanished directory exits 0 and returns
   // nothing, silently shrinking coverage; with no positive roots there is
