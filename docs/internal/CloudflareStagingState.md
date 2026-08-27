@@ -24,9 +24,19 @@ source survey, distinguishing writes from reads):
 Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 --remote` from inside `apps/indexer/`.
 
-## Workers (all currently serving placeholder 503)
+## Workers
 
-> **STALE since #1854 — operator reconciliation needed.** The dApp Worker is
+> **This section mixes two vintages — read the labels.** Everything
+> unmarked is the 2026-05-07 provisioning snapshot; anything marked
+> "verified 2026-08-27" was re-checked against the account and is
+> current. The heading used to assert that every Worker served a
+> placeholder 503, which was true at provisioning and is not true now:
+> `vaipakam.com`, `defi.vaipakam.com` and `indexer.vaipakam.com` all
+> answer **200**, and `agent.vaipakam.com` answers **403** to a bare
+> `GET /`, which is correct for it rather than an outage. `app.vaipakam.com`
+> does not resolve at all — it is not bound.
+>
+> **Reconciled for #1854.** The dApp Worker is
 > now `vaipakam-app`, built from `apps/app`; its intended hostname is
 > `app.vaipakam.com` but that binding does NOT exist yet, so the Worker is
 > reachable only on its emitted `workers.dev` URL
@@ -64,8 +74,8 @@ Workers default URLs (for direct reachability before custom-domain SSL is fully 
 | Hostname | Binding ID | Cert ID | Status |
 |---|---|---|---|
 | ~~`labs.vaipakam.com`~~ | ~~`08853b930e2701479ca2cb9e3597d52a2ee5578c`~~ | ~~`aedaca43-5223-4acd-af0f-559ed28a181b`~~ | **REMOVED.** Verified 2026-08-27: absent from the account's Workers custom-domain bindings and absent from DNS. Ids kept struck through so an operator matching an old dashboard screenshot can see this row was retired rather than mislaid |
-| `defi.vaipakam.com` | `a6475e83ae6888e8f4d9e3e0f0b25609e283cb57` | `95999728-53b0-4229-9111-d624a7cdb320` | cert provisioning (~5–10 min) |
-| `agent.vaipakam.com` | `13dec781889c1b1ac6d68a34adc48b19356b5987` | `cc9e32be-5019-4d0a-bc13-d63349480ad2` | cert provisioning (~5–10 min) |
+| `defi.vaipakam.com` | `a6475e83ae6888e8f4d9e3e0f0b25609e283cb57` | `95999728-53b0-4229-9111-d624a7cdb320` | **live** — verified 2026-08-27 in the Workers custom-domain inventory (same binding id as provisioned) and serving 200. Was "cert provisioning (~5–10 min)" at the May snapshot |
+| `agent.vaipakam.com` | `13dec781889c1b1ac6d68a34adc48b19356b5987` | `cc9e32be-5019-4d0a-bc13-d63349480ad2` | **live** — verified 2026-08-27, serving 403 to a bare `GET /`, which is the correct answer for an authenticated API and NOT an outage. Was "cert provisioning" at the May snapshot |
 
 ## Pending — operator action
 
@@ -83,8 +93,13 @@ Workers default URLs (for direct reachability before custom-domain SSL is fully 
 
 ## Pending — author action
 
-- [ ] Source-tree refactor: `frontend/` → `apps/defi/`, `ops/hf-watcher/` → split into
+**All DONE, and the first item has since been superseded twice.** Kept as
+the record of what was outstanding in May; do not action this list.
+
+- [x] Source-tree refactor: `frontend/` → `apps/defi/`, `ops/hf-watcher/` → split into
       `apps/agent/` + `apps/indexer/` + `apps/keeper/`
+      — the Worker split shipped; `apps/defi` itself was then retired by
+      #1854 and the connected app is now `apps/app`
 - [ ] Per-app `wrangler.jsonc` with this state's IDs
 - [ ] Apply migrations to `vaipakam-archive`
 - [ ] Add `0011_offers_cancelled_at.sql` migration for cancelled-offer D1 capture
