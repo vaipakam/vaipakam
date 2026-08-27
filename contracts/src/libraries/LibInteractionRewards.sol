@@ -3,6 +3,12 @@ pragma solidity ^0.8.29;
 
 import {LibVaipakam} from "./LibVaipakam.sol";
 import {LibPausable} from "./LibPausable.sol";
+// #1499 (Codex #1970 r1 P1) — the claim reads its room from
+// {LibVpfiRecycle.backingPosition}; the horizon must read the SAME
+// definition rather than re-deriving the earmark set. `LibVpfiRecycle`
+// imports this library in turn, but both directions are `internal`
+// library calls, which solc inlines — no runtime cycle.
+import {LibVpfiRecycle} from "./LibVpfiRecycle.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {OracleFacet} from "../facets/OracleFacet.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
@@ -1950,67 +1956,50 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user
     ) internal view returns (uint256 pending) {
-        (pending, , ) = _userEntriesUpperBound(s, user);
-        (uint256 today, bool active) = currentDayOrZero();
-        if (!active || today == 0) return pending;
-        uint256 last = s.interactionLastClaimedDay[user];
-        uint256 lastFinalized = today - 1;
-        if (last >= lastFinalized) return pending;
-        uint256 fromDay = last + 1;
-        uint256 windowLast =
-            fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
-        uint256 toDay = windowLast < lastFinalized ? windowLast : lastFinalized;
-        (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
-        if (!any) return pending;
-        pending += previewForUserWindow(user, fromDay, effectiveTo);
+        (pending, ) = _userPendingSplit(s, user);
     }
 
 
-    /// @dev #1499 — the FRESH component of a user's pending claim, post-cap.
+    /// @dev #1499 — ONE walk yielding both the user's pending payout and its
+    ///      RAW fresh component. Replaces a second O(n) pricing scan: the
+    ///      caller previously ran `userClaimPendingUncapped` (which walks) and
+    ///      then walked again for the fresh split. `userRewardEntryIds` retains
+    ///      processed entries and has no size cap, and the horizon batch probes
+    ///      this per submitted entry — so the duplicate scan could push a batch
+    ///      over the block gas limit and leave exactly the entries whose clocks
+    ///      are running unsweepable (Codex #1970 r1 P2).
     ///
-    ///      The RL-3 horizon must agree with the #1460 claim-time gate, which
-    ///      refuses a claim whose fresh part does not fit ABOVE the recycle
-    ///      earmark (`LibVpfiRecycle.credit` reverts unless
-    ///      `bal >= recycleBucket + amount`). The horizon's predicate tested a
-    ///      bare payout against the balance and never netted the earmark, so on
-    ///      a thin deployment it could call an entry executable that the claim
-    ///      refuses — accruing notice time against a claimant who cannot claim.
-    ///
-    ///      Two deliberate choices, both in the conservative direction:
-    ///
-    ///      1. The ENTRY term subtracts the POST-CAP recycled share, taken off
-    ///         the same walk as the total. Subtracting the RAW share (as one
-    ///         earlier attempt did) understates fresh, which is the UNSAFE
-    ///         direction — it makes the gate too lenient.
-    ///      2. The WINDOW term is counted as fresh in full.
-    ///         {previewForUserWindow} returns a scalar and never splits the
-    ///         day's funding composition, so no recycled share is available for
-    ///         it. Treating it as fresh OVERSTATES the requirement, which only
-    ///         ever delays a reap.
-    function _userFreshRequirement(
+    ///      The WINDOW term counts toward both: `previewForUserWindow` returns a
+    ///      scalar and never splits funding composition, so no recycled share
+    ///      exists to subtract from it.
+    function _userPendingSplit(
         LibVaipakam.Storage storage s,
         address user
-    ) private view returns (uint256 fresh) {
+    ) private view returns (uint256 payout, uint256 freshRaw) {
         (uint256 entriesTotal, , uint256 entriesRecycled) =
             _userEntriesUpperBound(s, user);
-        // Floored: the post-cap recycled share can never exceed the post-cap
-        // total it was taken from, but ceil-dust in the split has produced
-        // wei-level overshoot elsewhere in this library, and a revert here
-        // would brick the sweep rather than pause it.
-        fresh = entriesTotal > entriesRecycled ? entriesTotal - entriesRecycled : 0;
+        payout = entriesTotal;
+        // Floored: post-cap recycled cannot exceed the post-cap total it came
+        // from, but ceil-dust has produced wei-level overshoot elsewhere here
+        // and a revert would brick the sweep rather than pause it.
+        freshRaw = entriesTotal > entriesRecycled
+            ? entriesTotal - entriesRecycled
+            : 0;
 
         (uint256 today, bool active) = currentDayOrZero();
-        if (!active || today == 0) return fresh;
+        if (!active || today == 0) return (payout, freshRaw);
         uint256 last = s.interactionLastClaimedDay[user];
         uint256 lastFinalized = today - 1;
-        if (last >= lastFinalized) return fresh;
+        if (last >= lastFinalized) return (payout, freshRaw);
         uint256 fromDay = last + 1;
         uint256 windowLast =
             fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
         uint256 toDay = windowLast < lastFinalized ? windowLast : lastFinalized;
         (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
-        if (!any) return fresh;
-        fresh += previewForUserWindow(user, fromDay, effectiveTo);
+        if (!any) return (payout, freshRaw);
+        uint256 w = previewForUserWindow(user, fromDay, effectiveTo);
+        payout += w;
+        freshRaw += w;
     }
 
     /// @dev The SUFFICIENT VPFI balance the user's atomic claim needs to NOT
@@ -3794,34 +3783,45 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (uint256 need) {
-        uint256 payout = userClaimPendingUncapped(s, user);
+        (uint256 payout, uint256 freshRaw) = _userPendingSplit(s, user);
         uint256 forfeitFresh = _userForfeitFresh(s, user);
         if (forfeitFresh != 0) {
-            // Unchanged: this branch ALREADY nets the earmark, and charges the
-            // whole payout on top because that is what the forfeit-credit path
-            // ({LibVpfiRecycle.credit}) actually requires.
+            // Unchanged: already nets the earmark and charges the whole payout
+            // on top, which is what {LibVpfiRecycle.credit} requires.
             return payout + s.recycleBucket + forfeitFresh;
         }
-        // #1499 — the zero-forfeit branch was the ONLY divergence. It returned
-        // a bare `payout`, giving `balance >= payout`, while a fresh claim needs
-        // `balance >= fresh + recycleBucket`. For a fresh-only claimant the
-        // horizon was too lenient by exactly `recycleBucket`.
+        // #1499 (Codex #1970 r1) — MIRROR THE CLAIM, do not re-derive it.
         //
-        // This can never come out BELOW the old value on any reachable path,
-        // which is what makes the change safe rather than a re-balancing:
-        // both consumers gate on {_recycledDrought} before this test —
-        // `_entryExecutableNow` returns early on it, and `sweepExpiredEntry`
-        // conjoins it into `executable` — and that gate is
-        // `rawRecycled > recycleBucket`. So wherever this predicate is
-        // consulted, `rawRecycled <= recycleBucket`, and post-cap <= raw, hence
-        //     fresh + recycleBucket  >=  fresh + recycledPostCap  ==  payout.
-        // Strictly greater exactly where the divergence bit; never smaller.
+        // Two corrections to the first draft, both found in review:
         //
-        // (That is also a second, independent reason {_recycledDrought} must
-        // keep consuming the RAW figure: this argument needs it to be an upper
-        // bound on the post-cap value.)
-        payout; // retained above for the forfeit branch; unused here
-        need = _userFreshRequirement(s, user) + s.recycleBucket;
+        // 1. CAP BEFORE TESTING BACKING. The claim truncates fresh to the
+        //    remaining 69M pool headroom and only then checks backing
+        //    (`RewardClaimFacet:338-400`). Testing the UNCAPPED fresh
+        //    over-states the requirement — and that is not the safe direction
+        //    it looks like: `remaining` is `CAP - paidOut - remittedGlobal`
+        //    with both subtrahends append-only, so it is monotone
+        //    NON-INCREASING. An over-strict gate does not delay a reap, it
+        //    stops the clock INDEFINITELY for a claim that is executable.
+        //
+        // 2. CALL `backingPosition`, do not hand-add the bucket. The claim
+        //    obtains its room from {LibVpfiRecycle.backingPosition}, which
+        //    subtracts the bucket AND `strandedRecoveryReserved` AND the
+        //    recovery position. Adding only the bucket left the same
+        //    understatement this card exists to remove, just narrower. The
+        //    claim path says exactly this at `RewardClaimFacet:310` —
+        //    "inlining the arithmetic instead of calling the definition is
+        //    what let the prose drift in the first place" — which I had read
+        //    as context rather than as instruction.
+        //
+        // Expressed as a BALANCE threshold so both consumers keep their
+        // `balance >= need` shape: since `unearmarked` is the balance less
+        // every reservation, `freshCapped <= unearmarked` is exactly
+        // `freshCapped + (balance - unearmarked) <= balance`.
+        uint256 room = poolRemaining();
+        uint256 freshCapped = freshRaw < room ? freshRaw : room;
+        (uint256 bal, , uint256 unearmarked) = LibVpfiRecycle.backingPosition(s);
+        uint256 earmarked = bal > unearmarked ? bal - unearmarked : 0;
+        need = freshCapped + earmarked;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).

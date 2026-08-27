@@ -258,6 +258,76 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
     // that each passed a 179-test suite, and a green test that cannot fail is
     // what produced that.
 
+    /// #1499 / #1970 r1 P2 — THE FALSE NEGATIVE I INTRODUCED, and its fix.
+    ///
+    /// The first draft tested the UNCAPPED fresh entitlement against backing.
+    /// The claim truncates fresh to the remaining 69M pool headroom FIRST and
+    /// only then checks backing (`RewardClaimFacet:338-400`), so an uncapped
+    /// test over-states the requirement.
+    ///
+    /// That is not the safe direction it looks like. `remaining` is
+    /// `CAP - interactionPoolPaidOut - rewardBudgetRemittedGlobal`, both
+    /// append-only, so it is monotone NON-INCREASING — an over-strict gate does
+    /// not delay a reap, it stops the clock INDEFINITELY for a claim that is
+    /// executable. I argued in the PR that overstating fresh "only ever delays
+    /// a reap"; that was wrong, and this is the cell that would have caught it.
+    ///
+    /// Shape follows the reviewer's worked example: pool headroom well below
+    /// the fresh entitlement, with backing ample for what the claim would
+    /// ACTUALLY pay after truncation.
+    function testPoolCappedClaimantKeepsAccruingRatherThanStallingForever()
+        public
+    {
+        (uint256 id, uint256 expected) = _seedPayable(alice, 82);
+        // 180 is the setter's MINIMUM (bounds-checked to [180, 1095]).
+        _cfg().setRewardClaimHorizonDays(180);
+        _mut().setRecycleBucketRaw(1 ether);
+
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        RewardHorizonSweepFacet(address(diamond)).sweepExpiredInteractionRewards(ids);
+        (, uint64 before_) = _lens().getRewardEntryExpiry(id);
+        assertTrue(before_ != 0, "fixture: countdown live");
+
+        // Squeeze the POOL so the claim truncates fresh to 1 VPFI.
+        _mut().setInteractionPoolPaidOut(
+            LibVaipakam.VPFI_INTERACTION_POOL_CAP - 1 ether
+        );
+
+        // STRADDLE THE BALANCE — this is what makes the cell discriminate, and
+        // omitting it is why the first version of this test was VACUOUS
+        // (mutating the cap away left it green). Reachability is not
+        // discrimination: with an ample balance BOTH formulas clear it, so the
+        // capped and uncapped predicates never disagree.
+        //
+        // With `room = 1e18` and `earmarked = bucket`:
+        //     capped need   = 1e18     + bucket   <= balance   (executable)
+        //     uncapped need = freshRaw + bucket    > balance    (would stall)
+        // Choosing `bucket = balance - expected + 1` puts the balance exactly
+        // inside that gap, since `expected > 1e18` here.
+        // Straddle on the MEASURED claimable, not on `expected`. `_seedPayable`
+        // returns the day half-pool SUM, which over-states this entry's own
+        // share — here by 38 wei. Leaving room of `expected - 1` therefore left
+        // room ABOVE the real fresh figure, so the uncapped need still fit and
+        // the mutation (cap removed) stayed green. Four drafts of this cell were
+        // vacuous before measuring showed the gap.
+        (uint256 freshNow, , ) = _lens().previewInteractionRewards(alice);
+        uint256 bal = vpfi.balanceOf(address(diamond));
+        assertGt(freshNow, 1 ether, "fixture: entitlement exceeds the pool room");
+        // room = freshNow - 1, so:
+        //   capped need   = 1e18     + earmarked <= balance  (executable)
+        //   uncapped need = freshNow + earmarked  > balance  (would stall)
+        _mut().setRecycleBucketRaw(bal - freshNow + 1);
+
+        vm.warp(block.timestamp + 5 days);
+        (, uint64 after_) = _lens().getRewardEntryExpiry(id);
+        assertEq(
+            after_,
+            before_,
+            "pool-capped claimant keeps accruing - an uncapped test would stall this clock forever"
+        );
+    }
+
     function testUnderfundedClaimIsRefusedAndLosesNothing() public {
         (, uint256 expected) = _seedPayable(alice, 42);
 
