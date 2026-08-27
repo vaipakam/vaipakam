@@ -772,7 +772,10 @@ The borrower claim returns, depending on how the loan settled:
   left — that is the rule on this route, not an unlucky outcome. Whether the rebate comes
   back depends on how the loan ended: on a loan still using the retired
   VPFI fee path, the VPFI held against its initiation fee is
-  forfeited to treasury on a default or liquidation. A proper
+  forfeited on a default or liquidation — it goes to the protocol,
+  and on a matcher-created loan the matcher's configured share of
+  it goes to the matcher, exactly as on the illiquid-default route
+  described earlier. A proper
   close instead settles the rebate — which can be
   zero, and the whole amount be forfeited, if your discount is zero
   at the moment it settles.
