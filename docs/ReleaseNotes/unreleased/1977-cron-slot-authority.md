@@ -58,6 +58,17 @@ duplicated section; the inventory parser keeping only the last of a duplicated
 row; a committed-vs-live comparison loose enough to accept every value; and a
 plain-prose restatement three paragraphs below the summary that pins it.
 
+Review then found two more of the same kind, and they are worth naming because
+they are different in shape. A row the parser could not read was skipped in
+silence, so bolding a Worker's name removed it from the inventory without a
+word — and the gate's own test suite contained a case asserting that skip as
+correct behaviour. And two files stated the OUTCOME of the capacity check in
+prose rather than a number, which every pattern missed because they all look
+for counts. Both are now covered: an unreadable row inside the table is a
+finding, and a verdict asserted in the present tense is treated as the
+restatement it is, while the conditional form that belongs in a runbook is
+explicitly allowed.
+
 Each was written carefully, by someone actively thinking about this exact
 failure. That is the argument for the gate rather than an embarrassment to it:
 if the defect reproduces this readily under maximum attention, it was never
