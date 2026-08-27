@@ -1956,7 +1956,7 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user
     ) internal view returns (uint256 pending) {
-        (pending, ) = _userPendingSplit(s, user);
+        pending = _userPendingSplit(s, user);
     }
 
 
@@ -1975,31 +1975,8 @@ library LibInteractionRewards {
     function _userPendingSplit(
         LibVaipakam.Storage storage s,
         address user
-    ) private view returns (uint256 payout, uint256 freshRaw) {
-        (uint256 entriesTotal, , uint256 entriesRecycled) =
-            _userEntriesUpperBound(s, user);
-        payout = entriesTotal;
-        // Floored: post-cap recycled cannot exceed the post-cap total it came
-        // from, but ceil-dust has produced wei-level overshoot elsewhere here
-        // and a revert would brick the sweep rather than pause it.
-        freshRaw = entriesTotal > entriesRecycled
-            ? entriesTotal - entriesRecycled
-            : 0;
-
-        (uint256 today, bool active) = currentDayOrZero();
-        if (!active || today == 0) return (payout, freshRaw);
-        uint256 last = s.interactionLastClaimedDay[user];
-        uint256 lastFinalized = today - 1;
-        if (last >= lastFinalized) return (payout, freshRaw);
-        uint256 fromDay = last + 1;
-        uint256 windowLast =
-            fromDay + LibVaipakam.MAX_INTERACTION_CLAIM_DAYS - 1;
-        uint256 toDay = windowLast < lastFinalized ? windowLast : lastFinalized;
-        (uint256 effectiveTo, bool any) = clampToFinalized(fromDay, toDay);
-        if (!any) return (payout, freshRaw);
-        uint256 w = previewForUserWindow(user, fromDay, effectiveTo);
-        payout += w;
-        freshRaw += w;
+    ) private view returns (uint256 payout) {
+        (payout, ) = _userEntriesUpperBound(s, user);
     }
 
     /// @dev The SUFFICIENT VPFI balance the user's atomic claim needs to NOT
@@ -2229,11 +2206,7 @@ library LibInteractionRewards {
     )
         private
         view
-        returns (
-            uint256 userTotal,
-            uint256 recycledTotal,
-            uint256 recycledPostCapTotal
-        )
+        returns (uint256 userTotal, uint256 recycledTotal)
     {
         uint256[] storage ids = s.userRewardEntryIds[user];
         uint256 len = ids.length;
@@ -2264,18 +2237,6 @@ library LibInteractionRewards {
                 ) = _entryPriceCore(s, id, e);
                 userTotal += toUser.total;
                 recycledTotal += st.rawSplit.recycled;
-                // #1499 — the POST-CAP recycled share, from the SAME `toUser`
-                // that `userTotal` comes from. Accumulated here rather than
-                // re-derived elsewhere: three attempts to align the RL-3
-                // horizon inside #1497 each hand-derived this quantity and each
-                // was subtly wrong, one of them by reaching for
-                // `st.rawSplit.recycled` (raw) while comparing against a
-                // post-cap total. Taking both off the same walk makes that
-                // particular mistake unrepresentable.
-                //
-                // `recycledTotal` above stays RAW on purpose — see
-                // {_recycledDrought}, which needs an UPPER bound.
-                recycledPostCapTotal += toUser.recycled;
             }
             unchecked { ++i; }
         }
@@ -3740,7 +3701,7 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (bool) {
-        (, uint256 recycledTotal, ) = _userEntriesUpperBound(s, user);
+        (, uint256 recycledTotal) = _userEntriesUpperBound(s, user);
         return recycledTotal > s.recycleBucket;
     }
 
@@ -3842,16 +3803,41 @@ library LibInteractionRewards {
         uint256 earmarked = bal > unearmarked ? bal - unearmarked : 0;
         need = freshTotal + earmarked;
 
-        // SECOND CONDITION — the transfer must also settle. `paidRecycled`
-        // cancels out of the gate above, so a recycled-only claim is never
-        // gated there (its backing is in the bucket by construction). It still
-        // has to be TRANSFERABLE, which is a different question: with
-        // `bal <= bucket`, `unearmarked` floors to zero, `earmarked == bal`,
-        // and the gate above degenerates to `balance >= balance` — vacuously
-        // true while the real claim reverts on the token transfer. That is the
-        // regression r2 caught in my own rework.
-        (uint256 payout, ) = _userPendingSplit(s, user);
-        if (payout > need) need = payout;
+        // NO SECOND CONDITION, and the reasoning is worth keeping because two
+        // review rounds have now proposed one.
+        //
+        // r2 asked for a transferability test: with `bal <= bucket`,
+        // `unearmarked` floors to zero and `earmarked == bal`, so `need`
+        // becomes `freshTotal + bal` and the gate reduces to `freshTotal == 0`
+        // — vacuous for a recycled-only claim. r3 then found that the test I
+        // added for it compared against `_userEntriesUpperBound`, which prices
+        // every entry independently and over-states any group sharing a D1
+        // ceiling: two armed 0.4 entries jointly capped to 0.5 made `need` 0.8
+        // against a claim that pays 0.5, pausing an executable claim forever.
+        //
+        // The claim-exact figure r3 asks for is NOT ASSEMBLABLE here.
+        // `_dryRunShareOfPoolDays` returns `(userTotal, armedTotal)` with no
+        // recycled split; `_userArmedFreshNeed` spans BOTH destinations (a
+        // forfeited entry's legacy slice spends the pool on its way to
+        // treasury); `previewForUserEntries` is a total. Reconstructing the
+        // user's grouped recycled share needs a new engine return and a new
+        // staticcall surface — a facet change, not an expression here.
+        //
+        // The state actually left uncovered is narrow: `bal < userRecycled <=
+        // bucket`, which additionally requires an ARMED deploy, because
+        // {_entryPriceCore} clamps `recycled` to the armed amount and every
+        // current chain has `governorCommitArmedFromDay == 0` — so no entry
+        // carries a recycled share at all, and a claim with `freshTotal == 0`
+        // is already non-executable on `_poolCappedPayable(toUser) != 0`.
+        // {_recycledDrought}, in the same conjunction, covers the rest by
+        // testing the user's aggregate recycled against the live bucket.
+        //
+        // A `bucket > need` guard would close it, and is deliberately NOT here:
+        // it is stricter than the requirement (it pauses whenever the bucket is
+        // under-backed, even where `userRecycled <= bal`), and over-strictness
+        // stalling a live clock is the exact harm r3 objected to. Shipping it
+        // unexercised — the fixture cannot reach an armed recycled entry — would
+        // be trading a demonstrated regression for an undemonstrated one.
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
