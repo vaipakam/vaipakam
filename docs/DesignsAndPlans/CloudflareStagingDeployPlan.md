@@ -216,7 +216,7 @@ This was `vaipakam-defi` when the plan was written. #1854 retired that
 app and renamed its successor `apps/app` / `vaipakam-app`; the source
 behind `vaipakam-defi` is **deleted**, so it can no longer be built and
 nothing here applies to it. `apps/app/.env.local` is the authoritative
-list — it carries eighteen variables, not the six shown — and the deploy
+list — it carries nineteen variables, not the six shown — and the deploy
 is `cd apps/app && pnpm run deploy` (§6 step 6), never a bare build.
 
 Static-asset deploy, build-time env vars (Vite injects at

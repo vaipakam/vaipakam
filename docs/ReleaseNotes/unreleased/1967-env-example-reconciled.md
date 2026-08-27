@@ -3,22 +3,32 @@
 `apps/app/.env.example` is what an operator copies to `.env.local` before
 deploying, and #1854 made it more load-bearing by pointing the deployment
 runbook and the staging plan at it as the authoritative list. It was
-missing two of the variables the app actually reads, so an operator could
-follow it completely and still not know those settings existed.
+missing three of the variables the app actually reads, so an operator
+could follow it completely and still not know those settings existed.
 
-Both are optional and both degrade quietly rather than breaking, which is
-exactly why they were easy to lose. One overrides the host of the
-indexer's realtime push channel, for deploys that front the WebSocket
-somewhere other than the read API — unset, the socket origin is derived
-from the read origin by swapping the scheme, so realtime updates work
-either way and nothing looks wrong. The other repoints the "report an
-issue" target in the diagnostics panel, which otherwise defaults to this
-repository's tracker; a deploy that wants support reports going somewhere
-else had no documented way to say so.
+All three are optional and all three degrade quietly rather than
+breaking, which is exactly why they were easy to lose. One overrides the
+host of the indexer's realtime push channel, for deploys that front the
+WebSocket somewhere other than the read API — unset, the socket origin is
+derived from the read origin by swapping the scheme, so realtime updates
+work either way and nothing looks wrong. Another is the WebSocket
+endpoint for BNB Testnet: the file documented that key for two of the
+three chains carrying a deployment and silently omitted the third, so
+live block updates there could not be switched on by anyone following the
+list. The last repoints the "report an issue" target in the diagnostics
+panel, which otherwise defaults to this repository's tracker.
 
-Both are now listed with a comment saying what happens when they are left
-empty, and the variable count quoted in the runbook, the staging plan and
-the #1854 release note moves from sixteen to eighteen.
+That last one needed a constraint rather than just an entry, because it
+is narrower than it looks. The report is delivered as GitHub issue-form
+prefill — the builder appends a template name and this repository's own
+bug-form field ids — so the target has to be a GitHub issue endpoint on a
+repository carrying the same form, and it must have no query string of
+its own, since one is appended unconditionally. Describing it as a way to
+send reports "to an internal form" would have been an invitation to
+configure something that silently drops every diagnostic.
+
+The variable count quoted in the runbook, the staging plan and the #1854
+release note moves from sixteen to nineteen.
 
 Worth recording what this was NOT, because the first pass got it wrong in
 both directions. Two per-chain WebSocket entries looked unused and were
