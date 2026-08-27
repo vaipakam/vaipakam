@@ -1608,9 +1608,12 @@ caught at the cheapest stage.
       converts its reservation into a live trigger, and
       [`CloudflareCronSlots.md`](CloudflareCronSlots.md) still describes the
       state before that. Move the keeper row to `live` with its schedule,
-      change "Live right now" to match, drop the reserve from the "Committed"
-      label, refresh the `Verified:` stamp, and re-run the `--live` command
-      from step 3 to confirm the file and the account agree.
+      change "Live right now" to match, switch the "Committed" label from
+      `**Committed, live plus the keeper's reserve:**` to
+      `**Committed, live only:**` — the checker recognises exactly those two
+      forms and requires the one matching the table — refresh the `Verified:`
+      stamp, and re-run the `--live` command from step 3 to confirm the file
+      and the account agree.
 
       This step is easy to skip and hard to notice skipped: the conversion
       leaves **committed and spare unchanged**, so the offline CI check keeps
@@ -1651,7 +1654,7 @@ caught at the cheapest stage.
    They are restored **the way they are held** — `wrangler secret put`, not
    `--var` and not the committed `vars` block. The commands are below, at
    **their two different points in the order**: the disarm is branch B step
-   1, the arm is branch B step 8, and the schedule restore sits between
+   1, the arm is branch B step 9, and the schedule restore sits between
    them. They are printed in that order here deliberately — an earlier
    revision printed the arm first, and reading straight down it armed the
    Worker before any tick had been observed.
@@ -1680,7 +1683,7 @@ caught at the cheapest stage.
      wrangler deployments list | head )
    ```
 
-   **Branch B step 8 — arming — is NOT here.** Its command block sits at the
+   **Branch B step 9 — arming — is NOT here.** Its command block sits at the
    very end of step 4, after the disarmed tail-validation, because that is
    the earliest point at which it is safe to run. An earlier revision printed
    it here with a warning attached and the arming happened anyway: an
@@ -1849,7 +1852,7 @@ caught at the cheapest stage.
    > `KEEPER_ENABLED off (explicitly disabled)`. Those skips are the expected
    > state, not a fault to repair — "fixing" them here arms the fund-moving
    > passes before the CPU and cadence validation has finished, which is
-   > exactly what the branch B step 8 block at the end of this step exists to
+   > exactly what the branch B step 9 block at the end of this step exists to
    > prevent. **Leave `KEEPER_ENABLED` alone until you reach that block.**
    > Every OTHER skipped binding named below is still worth repairing now.
 
@@ -1962,7 +1965,7 @@ caught at the cheapest stage.
    Only after that is a tail useful, and then only as positive
    confirmation: watch for a pass you expect to have work to do.
 
-   #### Branch B step 8 — arm. This is the earliest safe point.
+   #### Branch B step 9 — arm. This is the earliest safe point.
 
    Only reachable if you came through branch B (the #1896 hold has lifted).
    Everything above has run with `KEEPER_ENABLED` at `false`, which is what
@@ -1970,7 +1973,7 @@ caught at the cheapest stage.
    while the Worker was proved to survive a production tick.
 
    Before running this, confirm all of the following from the ticks you just
-   watched — this is branch B step 7, and it is the gate on the command
+   watched — this is branch B step 8, and it is the gate on the command
    below:
 
    - Every tick ended `ok`, never `exceededCpu`.
@@ -1993,9 +1996,9 @@ caught at the cheapest stage.
    Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way and at
    this same point, and only if they were on before.
 
-   Then do branch B step 9: validate the now-armed gated passes across every
+   Then do branch B step 10: validate the now-armed gated passes across every
    cadence they run at, including one full 5-minute cycle for
-   `rewardBudgetRemit`. Finally, branch B step 10 — clear the checks branch A
+   `rewardBudgetRemit`. Finally, branch B step 11 — clear the checks branch A
    deferred.
 
 ---

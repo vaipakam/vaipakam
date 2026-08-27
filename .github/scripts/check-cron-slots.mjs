@@ -667,10 +667,21 @@ export function checkSummary(md, liveTriggers, reservedNames) {
   // its anchors are load-bearing and that rewording one must fail; a wildcard
   // in the middle of the anchor is that promise not being kept.
   const committedLabel = (/\*\*Committed[^*]*:\*\*/.exec(md) ?? [''])[0];
+  // TWO canonical labels, because there are two states. Codex #1978 r13: with
+  // only the reserve form canonical, the runbook's post-arm refresh had NO
+  // satisfiable answer — remove the reserve wording and the canonical check
+  // fails; keep it and the r12 reverse check fails, because the reservation is
+  // gone. I added a procedure and, in the same round, made it impossible to
+  // complete. Two fixes correct in isolation and contradictory together.
+  //
+  // Still not a wildcard: r7's finding stands, and `Committed[^:]*` would again
+  // admit a label that contradicts the derivation. These are two NAMED forms,
+  // and which one is required is decided below by whether anything is actually
+  // reserved.
   const committed = read(
     'Committed',
     /\*\*Committed[^*]*:\*\*/,
-    /^-\s+\*\*Committed, live plus the keeper's reserve:\*\*\s+(\d+)\s+of\s+5\s*$/m,
+    /^-\s+\*\*Committed, (?:live only|live plus [^*:]+):\*\*\s+(\d+)\s+of\s+5\s*$/m,
   );
   const spare = read(
     'Genuinely spare',
@@ -732,7 +743,13 @@ export function checkSummary(md, liveTriggers, reservedNames) {
     problems.push(
       'the "Committed" line still claims a reserve, but no inventory row is ' +
         'marked reserved — if a reservation was converted to a live trigger, ' +
-        'this label has to stop describing it',
+        'use "**Committed, live only:**"',
+    );
+  }
+  if (reservedNames.length > 0 && !/\breserv/i.test(committedLabel)) {
+    problems.push(
+      `the "Committed" line says "live only", but ${reservedNames.length} row(s) ` +
+        'are marked reserved — use "**Committed, live plus <holder>\'s reserve:**"',
     );
   }
   if (spare.value !== CAP - committed.value) {
@@ -1513,11 +1530,30 @@ const SUMMARY_CASES = [
   // Codex #1978 r7: `Committed[^:]*` accepted a label that CONTRADICTED the
   // derivation — "live only", for a value computed as live plus reserved.
   [
-    'the committed label was reworded to contradict its derivation',
+    // r7 caught this via the canonical regex. Since r13 made "live only" a
+    // second CANONICAL label — the runbook's post-arm state needs one — the
+    // rejection now comes from the two identity checks instead, and reports
+    // BOTH true things: the label says live-only while a row is reserved, and
+    // the reserved Worker is not named. Same finding, better message, and r7's
+    // protection is intact by a different route.
+    'the committed label contradicts its derivation',
     GOOD_SUMMARY.replace("Committed, live plus the keeper's reserve", 'Committed, live only'),
     4,
     1,
-    1,
+    2,
+  ],
+  // The post-arm state the runbook's step 6 produces. Codex #1978 r13: with
+  // only the reserve label canonical, this document could not exist.
+  [
+    'no reservation, live-only label — the state after a re-arm',
+    [
+      '- **Live right now:** 5 of 5',
+      '- **Committed, live only:** 5 of 5',
+      '- **Genuinely spare:** 0',
+    ].join('\n'),
+    5,
+    0,
+    0,
   ],
   ['no summary at all', '# Some other document', 4, 1, 3],
   // The recursion: a duplicated summary section is itself a second unchecked
