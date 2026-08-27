@@ -285,7 +285,7 @@ entitled to one of them rather than two.
 [`docs/ops/CloudflareCronSlots.md`](../ops/CloudflareCronSlots.md), with
 the date it was last read from the account.** This section used to carry
 its own table of who holds which slot; that table was wrong, along with
-six other copies of the same arithmetic, because none of them could see
+every other copy of the same arithmetic, because none of them could see
 `vaipakam-offchain-data-archive` — a Worker with no source in this
 repository that has been holding a trigger throughout (#1977). A design
 doc is a particularly bad place for such a count: it is read for

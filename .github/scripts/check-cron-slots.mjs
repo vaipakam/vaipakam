@@ -221,7 +221,18 @@ const OCCUPANCY = [
     String.raw`\b${N}${WRAP}(?:live|active|armed|scheduled|in-use)${WRAP}(?:cron${WRAP})?triggers?\b`,
     'i',
   ),
-  new RegExp(String.raw`\b(?:has|have|holds?)${WRAP}${N}${WRAP}(?:cron${WRAP})?triggers?\b`, 'i'),
+  // The SUBJECT is required here for the same reason it is on the verdicts
+  // (r6). Codex #1978 r8: a bare `has|have|holds N triggers` fired on the CAP
+  // stated as an entitlement — "Free accounts may have five cron triggers",
+  // "Cloudflare allows an account to have 5 cron triggers" — which is the rule
+  // failing its own remediation, the one thing the criterion at the top
+  // forbids. Naming the subject excludes the modal forms without a lookbehind:
+  // "accounts MAY have" and "an account TO have" do not put the verb next to
+  // the subject, and a claim about this account's current state does.
+  new RegExp(
+    String.raw`\b(?:account|accounts|org|we)${WRAP}(?:currently${WRAP}|now${WRAP}|already${WRAP})?(?:has|have|holds?)${WRAP}${N}${WRAP}(?:live${WRAP}|active${WRAP}|cron${WRAP})*triggers?\b`,
+    'i',
+  ),
   // Capacity VERDICTS — the same claim as `spare` and `headroom` with the
   // number removed entirely: "the cron budget is full", "at capacity", "room
   // for one more". Self-found after round 5, whose accepted finding was that
@@ -635,7 +646,21 @@ export function parseInventory(md) {
   const lines = region.split('\n');
 
   for (const line of lines) {
-    if (!/^\s*\|/.test(line)) continue;
+    // Codex #1978 r8: a leading pipe is OPTIONAL in Markdown — the table still
+    // renders — so skipping lines without one dropped a row a reader can see.
+    // The fifth variant of the row-shape defect, and the first the principle
+    // above should have predicted rather than review finding it: a reservation
+    // written without its leading pipe vanishes, and no account witness exists
+    // to notice. Candidacy is now "enough pipes to be a row", and the
+    // non-canonical form is rejected by name rather than skipped.
+    if ((line.match(/\|/g) ?? []).length < 3) continue;
+    if (!/^\s*\|/.test(line)) {
+      problems.push(
+        `an inventory row is missing its leading pipe; Markdown renders it, this ` +
+          `parser must not have to guess: ${line.trim().slice(0, 80)}`,
+      );
+      continue;
+    }
     const cells = line.trim().replace(/^\||\|$/g, '').split('|');
     // The header and the alignment separator are not data.
     if (/^\s*Worker\s*$/i.test(cells[0]) || /^[\s:-]+$/.test(cells[0])) continue;
@@ -969,6 +994,7 @@ const MUST_FIRE = [
   // Codex #1978 r5: the shape nobody had written yet, and the most natural one.
   ['direct live count', 'The account currently has four live cron triggers.'],
   ['has N triggers', 'This account has 5 cron triggers today.'],
+  ['the org holds N', '// the org holds three triggers today'],
   // Capacity verdicts — the claim with the number removed entirely. Self-found
   // after r5 rather than reported, by asking what a restatement looks like
   // once every numeric shape is covered.
@@ -1036,6 +1062,12 @@ const MUST_NOT_FIRE = [
   ['bare cap', '// the free plan caps cron triggers at FIVE per ACCOUNT'],
   ['cap, numeral', 'The Cloudflare Workers free plan caps an account at 5 cron triggers.'],
   ['cap plus error code', '// caps triggers at FIVE per ACCOUNT (API error 10072 on the sixth)'],
+  // Codex #1978 r8: the CAP stated as an ENTITLEMENT. A bare `has|have|holds N
+  // triggers` failed the gate on both, which is the rule fighting its own
+  // remediation — the replacement sentence has to be able to say what the plan
+  // permits.
+  ['cap as entitlement, modal', 'Free accounts may have five cron triggers.'],
+  ['cap as entitlement, allows-to', 'Cloudflare allows an account to have 5 cron triggers.'],
   ['unrelated N-of-5', ' * twice before it did: the first cut caught 3 of 5 known violation forms,'],
   ['cadence modulo', '// acts only on minutes divisible by 5 (free-plan DO rows_written diet)'],
   ['a cron expression', '"crons": ["17 3 * * *"],'],
@@ -1204,6 +1236,16 @@ const INVENTORY_CASES = [
   [
     'a row with an extra column is a finding',
     '| `vaipakam-keeper` | *(none)* | `apps/keeper` | undeployed | reserved |',
+    {},
+    [],
+    1,
+  ],
+  // Codex #1978 r8: the fifth row-shape variant. Markdown makes the leading
+  // pipe optional and renders the row anyway, so skipping it dropped a
+  // reservation a reader can plainly see.
+  [
+    'a row missing its leading pipe is a finding',
+    '`vaipakam-keeper` | *(none)* | `apps/keeper` | reserved — held |',
     {},
     [],
     1,

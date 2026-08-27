@@ -213,8 +213,8 @@ rather than two.
 **How much of that budget is left is in
 [`docs/ops/CloudflareCronSlots.md`](../../docs/ops/CloudflareCronSlots.md),
 not here.** This paragraph used to do the arithmetic itself and got it
-wrong for months, in the company of six other copies: none of them could
-see `vaipakam-offchain-data-archive` — this Worker's own un-retired
+wrong for months, in the company of every other copy of the same
+arithmetic: none of them could see `vaipakam-offchain-data-archive` — this Worker's own un-retired
 predecessor, which has no source in this repository and is still armed on
 the same minute as the schedule below (#1977).
 

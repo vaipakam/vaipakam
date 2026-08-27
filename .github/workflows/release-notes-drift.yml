@@ -135,9 +135,12 @@ jobs:
       # Cron-slot gate (#1977). Same shape and the same reason as the two
       # gates around it: a fact about live infrastructure gets copied into
       # prose, and prose has no compiler. This one bans RESTATING how many of
-      # the account's 5 cron triggers are spoken for, because seven copies of
-      # that count agreed with each other and were wrong together — none of
-      # them could see a Worker that has no source in this tree.
+      # the account's 5 cron triggers are spoken for, because every copy of
+      # that count agreed with the others and they were wrong together — none
+      # of them could see a Worker that has no source in this tree. (How many
+      # copies is enumerated in the release-note fragment; restating the
+      # number here is the same defect this step bans, and an earlier revision
+      # of this comment said "seven" while the authority said ten.)
       #
       # Offline only. The `--live` half diffs the committed inventory against
       # the Cloudflare account, and CI has no account credentials; an operator

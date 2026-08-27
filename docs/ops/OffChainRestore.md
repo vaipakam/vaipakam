@@ -782,13 +782,23 @@ then deploy.
 > replacement was created new and the old `vaipakam-offchain-data-archive`
 > stays live until the replacement has completed a run.
 >
-> **Both are still running, on the same minute** — verified against the
-> account 2026-08-27 (#1977). The old Worker was never retired: it is armed
-> on `17 3 * * *` exactly as the replacement is, with its own B2
-> credentials and its own copy of `BACKUP_ENCRYPTION_KEY`. So **both
-> buckets hold every recent night**, and an earlier version of this box was
-> wrong to say "the two never both hold a given night, so whichever lists
-> your date is the one to restore from". That rule no longer discriminates.
+> **Both Workers are still SCHEDULED, on the same minute** — verified
+> against the account 2026-08-27 (#1977). The old Worker was never retired:
+> it is armed on `17 3 * * *` exactly as the replacement is, with its own B2
+> credentials and its own copy of `BACKUP_ENCRYPTION_KEY`.
+>
+> **Scheduled is not the same as uploaded.** The account check reads trigger
+> configuration; it says nothing about whether a given night's object exists.
+> A run can be armed and still produce nothing — the replacement's own
+> preflight aborts the invocation when a secret is missing. So do not assume
+> either bucket holds a particular night: **the listing is what establishes
+> which archives exist**, and it is the only thing that does.
+>
+> What the account state does establish is that the old rule is dead. An
+> earlier version of this box said "the two never both hold a given night, so
+> whichever lists your date is the one to restore from"; with both Workers
+> scheduled, that no longer discriminates, whatever each bucket turns out to
+> contain.
 >
 > While both are armed:
 >
@@ -1572,8 +1582,18 @@ caught at the cheapest stage.
       after this procedure has declared success.
    3. Confirm a cron trigger is free — cap is five per account, and the
       keeper's is meant to be held for it rather than released. Check the
-      ACCOUNT, not a comment: `node .github/scripts/check-cron-slots.mjs
-      --live`, against
+      ACCOUNT, not a comment. The checker reads `CLOUDFLARE_*` names, which
+      are NOT the `CF_*` ones §1 establishes, and §1 deliberately leaves the
+      token unexported — so pass them for this one command rather than
+      widening their scope:
+
+      ```bash
+      CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
+        node .github/scripts/check-cron-slots.mjs --live
+      ```
+
+      (If §1's token has already been unset, re-prompt for it the same way —
+      `read -rs CF_API_TOKEN`, not via argv.) Compare against
       [`CloudflareCronSlots.md`](CloudflareCronSlots.md). If it fails, the
       likeliest reason is #1977 — an un-retired Worker holding the reserve —
       and that issue carries the sequence to free it. Read the outcome from

@@ -57,9 +57,15 @@ one expression), and splitting on it produced two nonsense fragments.
 | `vaipakam-keeper` | *(none)* | `apps/keeper` | reserved — unscheduled since #1896, held for its return |
 | `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed — code-complete, holds no trigger |
 
-Workers with no schedule and no claim on the budget: `vaipakam-www`,
-`vaipakam-app`, and the four retired frontends (`vaipakam-defi`,
-`vaipakam-alpha`, `vaipakam-alpha01`, `vaipakam-alpha02`).
+**The table above is the whole inventory.** A Worker not listed holds no
+trigger, and `--live` is what enforces that: any Worker armed on the account
+and absent from the table is reported as `ACCOUNT ONLY`, which is how #1977
+was found in the first place.
+
+An earlier revision listed the unscheduled Workers here by name. That was a
+second inventory nothing checked — if one of them later gained a trigger, an
+operator could add its row, fix the summary, pass `--live`, and leave this
+paragraph still asserting it had none.
 
 ## What that adds up to
 
