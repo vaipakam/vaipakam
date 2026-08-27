@@ -32,7 +32,7 @@ acts — that is what `packages/lib/src/cronCadence.ts` is for.
 
 Read from the account, not from the tree.
 
-**Verified: 2026-08-27T16:21:53Z.** Re-verify with the command in
+**Verified: 2026-08-27T22:58:45Z.** Re-verify with the command in
 [Re-verifying](#re-verifying) below; update this table and this stamp in
 the same commit.
 
@@ -105,13 +105,26 @@ occupancy scan. A restated count is no safer for being inside the authority.
 Any comment or design note claiming room that this file does not is either
 older than #1977 or has copied a count from something that is.
 
-The fourth live trigger is the one that surprises people:
-`vaipakam-offchain-data-archive` is the **pre-rename** predecessor of
-`vaipakam-offchain-data-warm`, it was supposed to be retired once the
-replacement completed a run, and it is still armed on the same minute with
-a full set of its own credentials. It has **no source in this repository**,
-so it is invisible to anyone counting `crons` entries across the tree —
-which is exactly how ten separate statements of the count came to omit it.
+**Why `vaipakam-offchain-data-archive` is in this file at all** — background,
+not a statement of current state. It is the **pre-rename** predecessor of
+`vaipakam-offchain-data-warm` and was supposed to be retired once the
+replacement completed a run. It has **no source in this repository**, so it
+is invisible to anyone counting `crons` entries across the tree, which is
+exactly how ten separate statements of the count came to omit it.
+
+**Whether it is still armed is the table's answer, not this paragraph's.**
+An earlier revision said here that it *is* armed and *is* the fourth live
+trigger. Both were true when written and both would have survived the #1977
+retirement unchanged: the documented refresh deletes its row, updates the
+summary and the stamp, and passes offline **and** `--live` — because this
+file is excluded from the occupancy scan and its self-check reads only the
+inventory and the three summary labels. Nothing would have contradicted a
+paragraph asserting a Worker that no longer exists.
+
+That is this file's own thesis turned on itself, and the second time in it:
+a count restated in prose is unchecked even when the prose lives inside the
+authority. The durable form is the one used throughout — state the rule and
+the history, and let the checked table carry the state.
 
 ### Consequences for the next deploy
 

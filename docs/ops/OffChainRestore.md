@@ -287,11 +287,28 @@ then deploy.
    >   provisioning values (`daysFromHidingToDeleting: 1`). During a
    >   compromise that can silently collapse the hidden-version window
    >   §2 depends on to about a day — deleting the genuine versions you
-   >   are about to go looking for (#1450 r28). Create the two
-   >   replacement scoped keys with the same capability sets
+   >   are about to go looking for (#1450 r28).
+   >
+   >   **ENUMERATE THE KEYS FIRST — there is more than one write key, and
+   >   "the two replacement keys" is not the whole job while #1977 is
+   >   open.** `vaipakam-offchain-data-archive`, the un-retired predecessor
+   >   Worker, holds its OWN `writeFiles` key and its own copy of
+   >   `BACKUP_ENCRYPTION_KEY`. Rotating only the warm Worker's pair leaves
+   >   that key valid, so the attacker can keep uploading new archive
+   >   versions **after the procedure believes the window is closed** —
+   >   which is the one outcome this step exists to prevent. List every
+   >   application key on the account (`b2 key list`, or the console's App
+   >   Keys page) and account for each one before you delete anything;
+   >   `docs/ops/CloudflareCronSlots.md` names which Workers exist, and
+   >   #1977 tracks the retirement that will make this a single pair again.
+   >
+   >   Then, for EACH credential set that must remain in service, create
+   >   the replacement scoped key with the same capability sets
    >   (write-only: `listBuckets` + `writeFiles`; read-only:
-   >   `listBuckets` + `listFiles` + `readFiles`), delete the old
-   >   ones, and leave the bucket's lifecycle rules untouched. Then
+   >   `listBuckets` + `listFiles` + `readFiles`), and delete **every** old
+   >   key you enumerated — including the predecessor Worker's, whose
+   >   replacement is needed only if that Worker is still running. Leave
+   >   the bucket's lifecycle rules untouched. Then
    >   treat the archive history as
    >   **attacker-WRITABLE, not merely readable** — see the archive-
    >   selection warning in §2, which changes how you pick an archive. Do
@@ -2082,8 +2099,34 @@ caught at the cheapest stage.
 
    Then do branch B step 10: validate the now-armed gated passes across every
    cadence they run at, including one full 5-minute cycle for
-   `rewardBudgetRemit`. Finally, branch B step 11 — clear the checks branch A
-   deferred.
+   `rewardBudgetRemit`.
+
+   **IF STEP 10 FAILS, ROLL BACK BOTH HALVES — and note this rollback is
+   NOT the one above.** That one covers the still-disarmed validation
+   *before* the arming command, where nothing is live and the rollback costs
+   nothing. Past this point the fund-moving passes are genuinely armed, so
+   the order matters and the schedule alone is not enough:
+
+   1. `KEEPER_ENABLED` back to `false` **first** — it is what gates the six
+      fund-moving passes, and it takes effect without waiting for a
+      schedule change to propagate.
+   2. Then restore `"crons": []`, **commit that**, and redeploy
+      `( cd apps/keeper && wrangler deploy --keep-vars )` — same directory
+      scoping and same flag as before, and both matter more here, not less:
+      a bare root deploy would redeploy an unrelated Worker and leave this
+      one armed and failing.
+   3. Then roll the authority back exactly as the pre-arm rollback above
+      describes — row to `reserved`, label to `Committed, live plus the
+      keeper's reserve`, refresh the stamp, re-run `--live`, commit.
+
+   `apps/keeper/wrangler.jsonc` has carried this post-arm rollback all
+   along; this runbook did not, so an operator following the canonical
+   restore path could fail validation and leave the fund-moving passes
+   armed. Same defect as the missing authority refresh two steps up, in the
+   opposite direction — that time the runbook had it and the config did
+   not.
+
+   Finally, branch B step 11 — clear the checks branch A deferred.
 
 ---
 

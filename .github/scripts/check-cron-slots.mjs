@@ -66,7 +66,43 @@ const AUTHORITY = 'docs/ops/CloudflareCronSlots.md';
  * `docs/FindingsAndFixes/`) state past counts correctly and must not be
  * rewritten to match today.
  */
-const SCOPE = ['apps', 'ops', 'packages', 'docs/ops', 'docs/DesignsAndPlans'];
+/**
+ * What the occupancy scan SKIPS. Everything else tracked and textual is read.
+ *
+ * Codex #1978 r17: this was a positive list of roots — `apps`, `ops`,
+ * `packages`, `docs/ops`, `docs/DesignsAndPlans` — which is a closed world,
+ * and the leak was immediate and embarrassing: `.github/scripts/README.md`,
+ * the handbook that DOCUMENTS this gate and which this same PR edited, was
+ * never scanned. Nor were `.github/workflows/`, `CLAUDE.md`, or
+ * `CONTRIBUTING.md`, all of them live guidance where a stale count would be
+ * read and believed.
+ *
+ * That is the third closed world in this file to leak (the extension
+ * allowlist twice, now the root list), so it gets the same treatment the
+ * others did: replace the enumeration with a decidable test. Scanning is now
+ * the default and the exclusions are named individually, each with a reason
+ * that is about the FILE'S PURPOSE rather than its location — the only kind
+ * of exclusion that cannot silently widen as the tree grows.
+ *
+ * Measured before the switch: tree-wide, exactly three tracked files carry
+ * occupancy claims, and all three are below.
+ */
+const SKIP_EXACT = new Set([
+  // The authority itself states the count — that is its job.
+  'docs/ops/CloudflareCronSlots.md',
+  // This gate's own source quotes claim shapes in its comments and carries
+  // ~56 of them in the selftest fixtures. A checker cannot be its own
+  // subject; the fixtures ARE the specification of what a claim looks like.
+  '.github/scripts/check-cron-slots.mjs',
+]);
+
+/**
+ * Directories whose content is a record of what was true ON A DATE, not a
+ * claim about now. A release note saying "three of five triggers were live"
+ * is correct history and must stay readable as written; rewriting it to
+ * satisfy this gate would be falsifying the record.
+ */
+const SKIP_PREFIXES = ['docs/ReleaseNotes/'];
 
 /**
  * Whether a tracked file is text this gate should read.
@@ -392,37 +428,80 @@ const CONTEXT_RADIUS = 200;
 // ── Scanning ────────────────────────────────────────────────────────────────
 
 function trackedFiles() {
-  // Codex #1978 r3: every scope root must still CONTRIBUTE. `git ls-files` on
-  // a directory that no longer exists exits 0 and returns the other roots'
-  // paths, so a rename or a source-tree move silently shrinks coverage while
-  // the gate stays green — and a move is exactly when occupancy claims under
-  // the new root most need reading. An earlier revision argued silent
-  // degradation beat failing CI on a rename; that trade is wrong, because a
-  // rename is a deliberate act whose author can update one constant, while the
-  // silence has no author at all.
-  const missing = SCOPE.filter((root) => {
-    const out = execFileSync('git', ['ls-files', '-z', '--', root], {
-      encoding: 'utf8',
-      maxBuffer: 64 * 1024 * 1024,
-    });
-    return out.split('\0').filter(Boolean).length === 0;
-  });
-  if (missing.length) {
-    throw new Error(
-      `scope root(s) ${missing.map((m) => `\`${m}\``).join(', ')} match no tracked ` +
-        `files. If the tree moved, update SCOPE in this script — leaving it stale ` +
-        `would keep the gate green over unscanned code.`,
-    );
-  }
-
-  const out = execFileSync('git', ['ls-files', '-z', '--', ...SCOPE], {
+  // r3's scope-root liveness check is GONE with the roots it guarded. It
+  // existed because `git ls-files` on a vanished directory exits 0 and returns
+  // nothing, silently shrinking coverage; with no positive roots there is
+  // nothing to go stale, and a moved source tree is now scanned wherever it
+  // lands rather than needing a constant updated to follow it. The exclusions
+  // are checked instead — an exclusion that stops matching is the one that can
+  // now drift, and it drifts SAFELY (toward scanning more).
+  const out = execFileSync('git', ['ls-files', '-z'], {
     encoding: 'utf8',
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: 128 * 1024 * 1024,
   });
   const binary = binaryTrackedPaths();
   return out
     .split('\0')
-    .filter((p) => p && p !== AUTHORITY && isScannableText(p, binary));
+    .filter(
+      (p) =>
+        p &&
+        !SKIP_EXACT.has(p) &&
+        !SKIP_PREFIXES.some((pre) => p.startsWith(pre)) &&
+        isScannableText(p, binary),
+    );
+}
+
+/**
+ * The authority must actually CONTAIN an inventory.
+ *
+ * Codex #1978 r17: wrapping the table in `<!-- ... -->` left every check
+ * reporting success over a document whose whole subject had rendered away,
+ * with `--live` then comparing the account against nothing at all. The file's
+ * own text says "the table above is the whole inventory", so zero rows
+ * contradicts the document before it contradicts the account.
+ *
+ * This lives at DOCUMENT level rather than inside {parseInventory} on purpose:
+ * that function is also run against table FRAGMENTS by the row fixtures, where
+ * "no rows" is the normal and correct outcome. Putting it there made ten
+ * row-parsing fixtures fail for a property none of them was written to test —
+ * the check was right and its altitude was wrong.
+ */
+function checkInventoryPresent(inv) {
+  if (inv.live.size === 0 && inv.reserved.length === 0) {
+    return [
+      'the inventory table has no readable rows — every row is missing, ' +
+        'malformed, or hidden inside an HTML comment or code fence; the ' +
+        'authority cannot state a count it does not contain',
+    ];
+  }
+  return [];
+}
+
+/**
+ * Every SKIP_EXACT entry must still name a tracked file.
+ *
+ * Not symmetry for its own sake: an exclusion whose path has been renamed
+ * stops excluding, which is safe, but it ALSO stops telling the truth about
+ * why the file is unscanned — and the file it now fails to exclude will start
+ * failing the gate for reasons nobody can trace back to here. Failing loudly
+ * on a stale exclusion keeps the reason attached to the decision.
+ */
+function checkSkipList() {
+  const problems = [];
+  for (const path of SKIP_EXACT) {
+    const out = execFileSync('git', ['ls-files', '-z', '--', `:(literal)${path}`], {
+      encoding: 'utf8',
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    if (out.split('\0').filter(Boolean).length === 0) {
+      problems.push(
+        `the scan excludes \`${path}\`, which matches no tracked file; if it ` +
+          `moved, update SKIP_EXACT — a stale exclusion silently stops ` +
+          `explaining why something is unscanned`,
+      );
+    }
+  }
+  return problems;
 }
 
 /**
@@ -444,21 +523,42 @@ function trackedFiles() {
  * document lose its real stamp and keep a format example — a fixture asserting
  * a limitation as correct, the exact trap recorded above MUST_NOT_FIRE.
  */
-function hasVisibleStamp(md) {
-  // Codex #1978 r14: a fence closes only on its OWN delimiter. Toggling a
-  // boolean on either marker let a `~~~` line inside a ``` block read as the
-  // close, so everything after it — including a fenced example stamp — counted
-  // as visible. Markdown says the delimiters do not interchange; a boolean
-  // cannot represent that, and the fix is to remember which one opened.
-  // Codex #1978 r15: the LENGTH matters as well as the kind. A block opened
-  // with four backticks is not closed by three, so remembering only the kind
-  // let the shorter run close the longer block and everything after it — a
-  // fenced example stamp included — counted as visible again. A closing fence
-  // also carries no info string, which is what distinguishes it from a nested
-  // opener. Both are one CommonMark rule: the closer matches kind, is at least
-  // as long, and is otherwise blank.
-  let openedWith = null; // { kind, len }
-  for (const line of md.split('\n')) {
+/**
+ * The lines of a Markdown document a READER actually sees: outside fenced code
+ * blocks and outside HTML comments.
+ *
+ * Both hiding mechanisms were found the same way, one round apart. Codex
+ * #1978 r12/r14/r15 walked the fence rules (kind, then run length, then the
+ * info string); r17 pointed out that none of it touched HTML comments, so
+ * `<!--\n**Verified: …**\n-->` was accepted as the document's stamp while
+ * rendering as nothing at all. The single-line form `<!-- ... -->` had been
+ * handled since r11 — which is exactly the "fixed one member of a family"
+ * shape, since the multiline form is the one an editor reaches for when
+ * commenting out a BLOCK.
+ *
+ * Yielding lines rather than answering one question is deliberate: the stamp
+ * check and the inventory-table parser were each asking "is this visible?"
+ * separately, and only one of them had ever been told about fences.
+ */
+function* visibleLines(md) {
+  let openedWith = null; // { kind, len } while inside a fence
+  let inComment = false;
+  for (const raw of md.split('\n')) {
+    let line = raw;
+    if (inComment) {
+      const close = line.indexOf('-->');
+      if (close === -1) continue;
+      line = line.slice(close + 3);
+      inComment = false;
+    }
+    // Strip complete comments, then detect one left open on this line.
+    line = line.replace(/<!--[\s\S]*?-->/g, '');
+    const open = line.indexOf('<!--');
+    if (open !== -1) {
+      line = line.slice(0, open);
+      inComment = true;
+    }
+
     const fence = /^\s*(```+|~~~+)(.*)$/.exec(line);
     if (fence) {
       const run = fence[1];
@@ -474,7 +574,13 @@ function hasVisibleStamp(md) {
       }
       continue;
     }
-    if (openedWith === null && /^\*\*Verified:/.test(line)) return true;
+    if (openedWith === null) yield line;
+  }
+}
+
+function hasVisibleStamp(md) {
+  for (const line of visibleLines(md)) {
+    if (/^\*\*Verified:/.test(line)) return true;
   }
   return false;
 }
@@ -627,6 +733,8 @@ function runOffline() {
   const inv = parseInventory(authorityMd);
   const summaryProblems = [
     ...checkStamp(authorityMd),
+    ...checkSkipList(),
+    ...checkInventoryPresent(inv),
     ...inv.problems,
     ...checkSources(inv.sources),
     ...checkSummary(authorityMd, countTriggers(inv.live), inv.reserved, [
@@ -907,9 +1015,18 @@ export function checkSummary(md, liveTriggers, reservedNames, allNames = reserve
   const distinctiveOf = (n) => n.replace(/^vaipakam-/, '').toLowerCase();
   const label = committedLabel.toLowerCase();
   const reservedSet = new Set(reservedNames);
-  const namedInLabel = new Set(
-    [...allNames].filter((n) => label.includes(distinctiveOf(n))),
-  );
+  // Codex #1978 r17: `includes` again, one layer in. The r15 fix made the
+  // COMPARISON a set equality and left MEMBERSHIP a substring test, so
+  // `the housekeeper's reserve` still matched `vaipakam-keeper` and the
+  // "exact owner check" passed while naming a different holder. Third time
+  // this check has been fixed in the direction of the previous fix's blind
+  // spot; the token boundary is what makes it an identity test rather than a
+  // containment one.
+  const named = (n) => {
+    const d = distinctiveOf(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?:^|[^a-z0-9-])${d}(?:[^a-z0-9-]|$)`).test(label);
+  };
+  const namedInLabel = new Set([...allNames].filter(named));
   for (const name of reservedNames) {
     if (!namedInLabel.has(name)) {
       problems.push(
@@ -1014,7 +1131,14 @@ export function parseInventory(md) {
     const next = rest.search(/^##\s/m);
     region = next === -1 ? md.slice(start) : md.slice(start, start + 1 + next);
   }
-  const lines = region.split('\n');
+  // Codex #1978 r17: the ROWS must be reader-visible too, on the same rule the
+  // stamp uses. Wrapping the whole table in `<!-- ... -->` previously left
+  // parseInventory, checkSummary, checkSources and checkStamp all reporting no
+  // problems, and `--live` comparing the account against rows that render as
+  // nothing — an authority with no inventory in it, and both modes agreeing.
+  // The stamp check learned about fences three rounds before this parser did;
+  // sharing `visibleLines` is what stops them diverging again.
+  const lines = [...visibleLines(region)];
 
   for (const line of lines) {
     // Codex #1978 r8: a leading pipe is OPTIONAL in Markdown — the table still
@@ -1224,10 +1348,35 @@ export function checkSources(sources) {
       encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,
     });
-    if (out.split('\0').filter(Boolean).length === 0) {
+    const tracked = out.split('\0').filter(Boolean);
+    if (tracked.length === 0) {
       problems.push(
         `\`${name}\`'s source \`${path}\` matches no tracked files; if it moved, ` +
           `update the row — if it is genuinely gone, say *none* and note why`,
+      );
+      continue;
+    }
+
+    // Codex #1978 r17: "resolves to something tracked" is far weaker than it
+    // reads. `:(literal)apps` resolves to all 676 files under `apps/`, so a
+    // cell broadened to an ANCESTOR passes forever — the glob defect again,
+    // reached without a glob, and immune to the r15 fix because `apps` is a
+    // perfectly literal path.
+    //
+    // A Worker's source directory is identifiable rather than merely present:
+    // every one of them holds a `wrangler` config directly beneath it, and no
+    // ancestor does. That is the property to test — "this names A WORKER",
+    // not "this names something". Checked against the tree when written: all
+    // five sourced rows satisfy it and bare `apps` / `ops` do not.
+    const hasConfig = tracked.some((f) =>
+      /^wrangler\.(jsonc|json|toml)$/.test(f.slice(path.length + 1)),
+    );
+    if (!hasConfig) {
+      problems.push(
+        `\`${name}\`'s source \`${path}\` resolves, but holds no \`wrangler\` config ` +
+          `directly beneath it, so it does not identify a Worker's source — an ` +
+          `ancestor like \`apps\` resolves forever and can never go stale, which ` +
+          `is the drift this column exists to catch`,
       );
     }
   }
@@ -1746,6 +1895,11 @@ const CHECK_SOURCES_CASES = [
   ['explicit pathspec magic is rejected', new Map([['vaipakam-a', ':(glob)apps/**']]), 1],
   ['a parent-directory escape is rejected', new Map([['vaipakam-a', '../etc']]), 1],
   ['a vanished literal path is still reported', new Map([['vaipakam-a', 'apps/gone-away']]), 1],
+  // Codex #1978 r17: an ANCESTOR resolves to hundreds of tracked files and so
+  // can never go stale — the glob defect reached without a glob.
+  ['a bare ancestor directory is rejected', new Map([['vaipakam-a', 'apps']]), 1],
+  ['another ancestor is rejected', new Map([['vaipakam-a', 'ops']]), 1],
+  ['a real Worker source is accepted', new Map([['vaipakam-a', 'ops/offchain-data-warm']]), 0],
 ];
 
 const SOURCE_CASES = [
