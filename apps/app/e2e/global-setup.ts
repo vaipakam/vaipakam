@@ -118,8 +118,13 @@ export default async function globalSetup(): Promise<void> {
     // otherwise the orphan squats the port and every following run dies
     // on the stale-listener guard.
     fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
-    // Resolves (never rejects) so the loser of the race can't become an
-    // unhandled rejection.
+    // Resolves with the exit code rather than rejecting, because the code
+    // is a VALUE this loop branches on — fast exit vs slow exit vs final
+    // attempt — not an error condition. (This comment used to say the
+    // resolve-don't-reject shape was what stopped a losing entrant
+    // becoming an unhandled rejection. It isn't: see the note below,
+    // where that belief was tested and found false. Kept the shape,
+    // fixed the reason.)
     const anvilDied = new Promise<number>((resolve) =>
       anvil.on('exit', (code) => resolve(code ?? -1)),
     );
