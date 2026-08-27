@@ -379,7 +379,12 @@ NO secrets — the frontend bundle is static.
   (Previously written as "reads notify_state + thresholds";
   `thresholds` is not a table — it is `user_thresholds` — and
   `notify_state` is written here, not merely read.)
-- **Cron:** `* * * * *` — HF watcher loop. The daily oracle
+- **Cron:** **currently NONE.** `apps/keeper/wrangler.jsonc:269` commits
+  `"crons": []` under #1896 — the Worker was being terminated for
+  exceeding CPU on nearly every invocation — so nothing below runs
+  today, and a quiet keeper is expected rather than healthy. The
+  TARGET cadence, for when that hold lifts, is `* * * * *` — HF
+  watcher loop. The daily oracle
   snapshot pass internally pre-checks the 00:00–00:09 UTC
   window + a D1 last-day guard, so most ticks exit
   immediately.

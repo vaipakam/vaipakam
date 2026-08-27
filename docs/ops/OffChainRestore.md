@@ -553,10 +553,14 @@ then deploy.
    Then deploy the Workers — bindings resolve cleanly because the D1 + R2 +
    rate-limit namespaces + updated configs all exist first.
 
-   > **Deploy them with their SCHEDULES OFF.** All three of
-   > `apps/{indexer,keeper,agent}` declare `"crons": ["* * * * *"]`, so a
+   > **Deploy them with their SCHEDULES OFF.** `apps/indexer` and
+   > `apps/agent` declare `"crons": ["* * * * *"]`, so a
    > plain `wrangler deploy` here arms every-minute scheduled work against a
-   > database that §§4–6 have not restored or verified yet. Concretely: the
+   > database that §§4–6 have not restored or verified yet. **The keeper is
+   > the exception and needs no action:** it commits `"crons": []` under
+   > #1896, so deploying it arms nothing — do not "fix" that empty list
+   > here, and do not read the resulting quiet as a successful restore.
+   > Concretely: the
    > indexer starts writing before §6 resets its cursor; the keeper's alert
    > passes are NOT behind `KEEPER_ENABLED` (only the signing passes are), so
    > `runWatcher` / `runPreGraceWatcher` begin messaging users off

@@ -334,8 +334,10 @@ They are kept as the record of what the sizing anticipated, with current
 status marked per item — read the items, not this sentence:
 
 - Cron triggers loose enough for a matcher pass — **done**, and tighter
-  than planned: `apps/keeper/wrangler.jsonc` runs `* * * * *`, not the
-  `*/5 * * * *` this section assumed.
+  than planned: `apps/keeper/wrangler.jsonc` was set to `* * * * *`, not
+  the `*/5 * * * *` this section assumed. **It runs neither today** —
+  that file now commits `"crons": []` under #1896, so the matcher pass
+  described here does not execute until the hold lifts.
 - The keeper-side `db.ts` subset reading the indexer's `offers` table
   (cross-Worker D1 read, same database, different bindings) — **STILL
   OUTSTANDING.** `matcher.ts:41-43` states discovery is on-chain (count +
