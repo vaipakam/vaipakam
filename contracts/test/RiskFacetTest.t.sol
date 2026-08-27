@@ -12,6 +12,7 @@ import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {OfferCancelFacet} from "../src/facets/OfferCancelFacet.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
+import {ISwapAdapter} from "../src/interfaces/ISwapAdapter.sol";
 import {LibSwap} from "../src/libraries/LibSwap.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
@@ -20,6 +21,7 @@ import {OracleFacet} from "../src/facets/OracleFacet.sol";
 import {VaipakamNFTFacet} from "../src/facets/VaipakamNFTFacet.sol";
 import {VaultFactoryFacet} from "../src/facets/VaultFactoryFacet.sol";
 import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
+import {RiskSplitLiquidationFacet} from "../src/facets/RiskSplitLiquidationFacet.sol";
 import {LoanFacet} from "../src/facets/LoanFacet.sol";
 import {ProfileFacet} from "../src/facets/ProfileFacet.sol";
 import {LibAccessControl} from "../src/libraries/LibAccessControl.sol";
@@ -256,7 +258,7 @@ contract RiskFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](22);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -378,6 +380,40 @@ contract RiskFacetTest is Test {
             functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
 
         });
+
+
+        // #1955 — `triggerLiquidationSplit` is one of the five recovery entry
+
+
+        // points #1383 swept, and it had ZERO happy-path coverage anywhere in
+
+
+        // the tree: its only call sat inside an `expectRevert`. This suite
+
+
+        // already stages everything a split needs (swap mock, oracle mocks,
+
+
+        // treasury), so cutting the facet here is cheaper than porting that
+
+
+        // machinery into a suite that already cuts it.
+
+
+        cuts[21] = IDiamondCut.FacetCut({
+
+
+            facetAddress: address(new RiskSplitLiquidationFacet()),
+
+
+            action: IDiamondCut.FacetCutAction.Add,
+
+
+            functionSelectors: helperTest.getRiskSplitLiquidationFacetSelectors()
+
+
+        });
+
 
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
@@ -969,6 +1005,64 @@ contract RiskFacetTest is Test {
     ///      mocks), and a live sub-1.0 HF mock makes loan CREATION revert
     ///      `HealthFactorTooLow`. Creating the loan before the snapshot keeps
     ///      that out of the replayed region.
+
+    /// @dev #1955 (Codex #1957 r8 P2) — force the STORED lender and the position
+    ///      HOLDER apart, which is the only state in which a resolver keyed on
+    ///      `ownerOf(loan.lenderTokenId)` is observably different from one keyed
+    ///      on `loan.lender`.
+    ///
+    ///      A bare transfer is not enough: every RiskFacet liquidation entry
+    ///      calls `_eagerConsolidateBothSides` first, which re-points
+    ///      `loan.lender` AT the holder and collapses the divergence. Mocking
+    ///      `ConsolidationFacet.eagerConsolidateBothSides` makes that Tier-2
+    ///      consolidation decline (skip-not-block), which is exactly the state
+    ///      the `ownerOf` keying exists for.
+    ///
+    ///      Single implementation on purpose. Three replays previously injected
+    ///      a loan-scoped `Full` stamp with no transfer at all; because that
+    ///      stamp's value is address-INDEPENDENT, every balance assertion stayed
+    ///      green under `ownerOf -> loan.lender`.
+    function _divergeLenderHolder(uint256 loanId, string memory tag)
+        private
+        returns (address holder)
+    {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        holder = makeAddr(tag);
+        vm.prank(l.lender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(
+            l.lender, holder, l.lenderTokenId
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                ConsolidationFacet.eagerConsolidateBothSides.selector, loanId
+            ),
+            abi.encode()
+        );
+    }
+
+    /// @dev Assert the yield-fee resolver is keyed on the CURRENT holder.
+    ///
+    ///      Self-guarding: the expectation can only DISCRIMINATE if the holder
+    ///      and the stored lender differ, so this refuses to run on a fixture
+    ///      that never diverged. Without that guard the call matches under
+    ///      either keying and the assertion is worth nothing — which is how
+    ///      three of these replays passed while pinning nothing.
+    function _expectResolverKeyedOnHolder(uint256 loanId) private {
+        LibVaipakam.Loan memory l = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address holder = VaipakamNFTFacet(address(diamond)).ownerOf(l.lenderTokenId);
+        assertTrue(
+            holder != l.lender,
+            "fixture must diverge holder from stored lender or this pins nothing"
+        );
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VPFIDiscountFacet.resolveLenderYieldFeeFor.selector, loanId, holder
+            )
+        );
+    }
+
     function _liquidateAndMeasure(uint256 loanId, address treasuryEoa, bool stampFull)
         private
         returns (uint256 toTreasury, uint256 toLender)
@@ -1013,6 +1107,9 @@ contract RiskFacetTest is Test {
         uint256 treasuryBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
         uint256 lenderBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
 
+        if (stampFull) {
+            _expectResolverKeyedOnHolder(loanId);
+        }
         RiskFacet(address(diamond)).triggerLiquidation(loanId, defaultAdapterCalls());
 
         lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
@@ -1054,6 +1151,10 @@ contract RiskFacetTest is Test {
         // passed on the handling fee alone.) Half-term keeps it in-term.
         vm.warp(block.timestamp + 15 days);
 
+        // Codex #1957 r8 P2 — without this the loan-scoped `Full` stamp below is
+        // address-INDEPENDENT, so `ownerOf -> loan.lender` passes every assertion.
+        _divergeLenderHolder(loanId, "hfHolder1955");
+
         uint256 snap = vm.snapshotState();
         (uint256 baseTreasury, uint256 baseLender) =
             _liquidateAndMeasure(loanId, treasuryEoa, false);
@@ -1079,6 +1180,427 @@ contract RiskFacetTest is Test {
             fullLender - baseLender,
             "every wei the treasury gave up reached the lender"
         );
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1955 — run ONE split liquidation on an existing loan, optionally
+    ///      stamping the lender `Full` first. Mocks live in here because the
+    ///      caller replays from a snapshot and `vm.revertToState` restores chain
+    ///      state but NOT mocks, and an HF mock set before the loan exists
+    ///      blocks its creation.
+    function _splitLiquidateAndMeasure(
+        uint256 loanId,
+        address treasuryEoa,
+        bool stampFull
+    ) private returns (uint256 toTreasury, uint256 toLender) {
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        if (stampFull) {
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
+            abi.encode(HF_SCALE - 1)
+        );
+        // The `vaultWithdrawERC20` mock is DELIBERATELY absent here (Codex #1957
+        // r10 P2). Mocking it selector-wide returned success without consulting
+        // the encumbrance guard, so the release-before-withdraw ORDER was
+        // unobservable: two independent `expectCall`s prove both calls happen,
+        // never that the release precedes the withdrawal. Running the REAL
+        // withdrawal makes the production guard itself the assertion.
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
+            abi.encode(true)
+        );
+        deal(mockERC20, address(diamond), 1800 ether);
+        deal(mockCollateralERC20, address(diamond), 1800 ether);
+
+        // TWO routes, not one (Codex #1957 r4 P2). Multi-venue execution is the
+        // DEFINING behaviour of this entry point, and a single-element array
+        // stays green if the implementation processes only `splits[0]`, fails to
+        // aggregate later outputs, or mishandles per-leg approvals. `LibSwap`
+        // requires `sum(splits[i].splitAmount)` to equal the input, so the two
+        // legs are a 60/40 partition of the collateral with the remainder given
+        // to the second leg so the sum is exact for any amount.
+        // DISTINCT adapters, not two legs on slot 0 (Codex #1957 r5 P2). With
+        // both legs on the same adapter the fixture kills a loop-clamp mutation
+        // but stays green if the execution loop ignores `splits[i].adapterIdx`,
+        // reuses the first adapter, or mishandles approvals between venues —
+        // which is the multi-VENUE behaviour this entry point exists for.
+        // Registered lazily so the suite's other tests keep exactly one adapter.
+        if (AdminFacet(address(diamond)).getSwapAdapters().length < 2) {
+            AdminFacet(address(diamond)).addSwapAdapter(
+                address(new MockZeroExLegacyAdapter(address(mockZeroExProxy)))
+            );
+        }
+        address venueA = AdminFacet(address(diamond)).getSwapAdapters()[0];
+        address venueB = AdminFacet(address(diamond)).getSwapAdapters()[1];
+        uint256 legA = (ln.collateralAmount * 60) / 100;
+        LibSwap.SplitCall[] memory splits = new LibSwap.SplitCall[](2);
+        splits[0] = LibSwap.SplitCall({
+            adapterIdx: 0, splitAmount: legA, data: bytes("")
+        });
+        splits[1] = LibSwap.SplitCall({
+            adapterIdx: 1, splitAmount: ln.collateralAmount - legA, data: bytes("")
+        });
+
+        address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
+        uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
+
+        // The resolver must be keyed on the CURRENT position-NFT holder
+        // (Codex #1957 r5 P2). The `Full` stamp this test injects is LOAN-scoped
+        // and identical for every address, so it cannot distinguish the holder
+        // from `loan.lender` — swapping the facet's `ownerOf` argument for the
+        // stored field would leave the balance assertions green. Asserting the
+        // host call's `settlingLender` argument proves the key directly, without
+        // staging an aged hold tier in a suite that has no staking machinery.
+        // Distinct SLOTS are not enough on their own: both adapters wrap the
+        // same `mockZeroExProxy`, so routing everything through slot 0 produces
+        // identical proceeds and the balance assertions cannot tell. Verified —
+        // clamping the execution loop's `adapterIdx` to 0 left them green.
+        // Asserting the SECOND adapter is actually called is what proves per-leg
+        // venue dispatch.
+        // BOTH adapters, not just the second (Codex #1957 r7 P2). Expecting only
+        // `venueB` is satisfied by a regression that ignores every `adapterIdx`
+        // and routes BOTH legs through slot 1 — the aggregate proceeds are
+        // identical because both adapters wrap the same proxy. Requiring each
+        // slot to execute is what pins per-leg routing in both directions.
+        // EXACT per-leg amounts, not merely "both were called" (Codex #1957 r8
+        // P2). Both adapters wrap the SAME linear-rate proxy, so a regression
+        // that ignores every `splits[i].splitAmount` and sends 50/50 still calls
+        // both venues and yields identical aggregate proceeds. Prefix-matching
+        // (inputToken, outputToken, inputAmount) pins the split each venue was
+        // asked to execute, which a 50/50 regression cannot satisfy at either.
+        vm.expectCall(
+            venueA,
+            abi.encodeWithSelector(
+                ISwapAdapter.execute.selector,
+                ln.collateralAsset,
+                ln.principalAsset,
+                legA
+            )
+        );
+        vm.expectCall(
+            venueB,
+            abi.encodeWithSelector(
+                ISwapAdapter.execute.selector,
+                ln.collateralAsset,
+                ln.principalAsset,
+                ln.collateralAmount - legA
+            )
+        );
+
+        // Only in the STAMPED run: with no stamp and no consent the loan is
+        // ineligible, so `LibLenderYieldFeeHost.resolve` short-circuits before
+        // the host call and the reference replay never routes at all. Expecting
+        // it in both runs asserts two calls where exactly one happens.
+        if (stampFull) {
+            _expectResolverKeyedOnHolder(loanId);
+        }
+
+        // BOTH position NFTs must be status-updated (Codex #1957 r7 P2). This
+        // helper mocks every `updateNFTStatus` call, so removing either
+        // production update leaves the loan `Defaulted` while an NFT still reads
+        // active. Expect each exact call.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                ln.lenderTokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanLiquidated
+            )
+        );
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VaipakamNFTFacet.updateNFTStatus.selector,
+                ln.borrowerTokenId,
+                loanId,
+                LibVaipakam.LoanPositionStatus.LoanLiquidated
+            )
+        );
+
+        // The borrower's collateral MUST actually be withdrawn. This suite mocks
+        // `vaultWithdrawERC20` (six sites) and `deal`s the Diamond's balance, so
+        // a regression that stopped withdrawing entirely would leave this test
+        // green with the loan terminalized, the claims funded, and the borrower
+        // still holding the pledged collateral (Codex #1957 r3 P2). Assert the
+        // withdrawal is attempted with the exact borrower / asset / amount
+        // rather than diverging from the suite's mocking convention.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                VaultFactoryFacet.vaultWithdrawERC20.selector,
+                ln.borrower,
+                ln.collateralAsset,
+                address(diamond),
+                ln.collateralAmount
+            )
+        );
+        // The collateral lien MUST be released before the vault withdrawal, or
+        // the real withdrawal reverts at the encumbrance chokepoint (Codex #1957
+        // r9 P2). This fixture's selector-wide `vaultWithdrawERC20` mock returns
+        // success without consulting the lien, so removing the production
+        // release left the repository's only successful `triggerLiquidationSplit`
+        // test green over an unusable path.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector, loanId
+            )
+        );
+
+        uint256 diamondBefore = IERC20(mockERC20).balanceOf(address(diamond));
+        RiskSplitLiquidationFacet(address(diamond)).triggerLiquidationSplit(loanId, splits);
+        // EXACT, and needs no fee arithmetic (Codex #1957 r8 P2). The principal
+        // FLOOR added in r7 catches a halving but not a small shortfall:
+        // subtracting a few wei from `lenderProceeds` in BOTH replays preserves
+        // the discount-conservation delta and still clears `claimAmt >=
+        // principal`, while stranding recovered funds. Any such shortfall stays
+        // behind at the Diamond, so requiring the waterfall to distribute every
+        // wei of proceeds catches it down to 1 wei -- without this test
+        // re-deriving the production fee split.
+        assertEq(
+            IERC20(mockERC20).balanceOf(address(diamond)),
+            diamondBefore,
+            "waterfall distributes every wei of proceeds - nothing stranded"
+        );
+
+        lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
+        toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
+    }
+
+    /// @notice #1955 — a Full-stamped lender keeps the `+10%` on the interest a
+    ///         SPLIT liquidation recovers.
+    ///
+    /// @dev    This entry point had **no happy-path coverage anywhere in the
+    ///         tree** before this test — its only call sat inside an
+    ///         `expectRevert` in `InternalMatchPriorityWindow`. So this is the
+    ///         first end-to-end exercise of `triggerLiquidationSplit`'s
+    ///         settlement, not merely of its discount.
+    function test_1955_splitLiquidation_lenderFull_shiftsInterestFeeToLender()
+        public
+    {
+        address treasuryEoa = makeAddr("treasuryEoaFor1955Split");
+        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+
+        uint256 loanId = createAndAcceptOffer();
+        // Interest must accrue or the treasury takes only the handling fee and
+        // both replays measure the same thing.
+        vm.warp(block.timestamp + 15 days);
+
+        // TRANSFER the lender position and force the consolidation to decline.
+        // Without this `loan.lender == ownerOf(lenderTokenId)`, so an assertion
+        // on the resolver's settling-lender argument cannot discriminate between
+        // them — verified: with the addresses identical, swapping the facet's
+        // `ownerOf` for `loan.lender` left this test green. The transfer is what
+        // makes the resolver's key observable at all.
+        LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        _divergeLenderHolder(loanId, "splitHolder1955");
+
+        // Captured BEFORE the replays, at the timestamp both of them liquidate
+        // at. `calculateRepaymentAmount` returns the GROSS debt (principal +
+        // accrued interest), which is what the waterfall's `allocated` equals in
+        // a full recovery — verified exactly against the live numbers, not
+        // assumed from the name.
+        uint256 totalDue =
+            RepayFacet(address(diamond)).calculateRepaymentAmount(loanId);
+        uint256 snap = vm.snapshotState();
+        (uint256 baseTreasury, uint256 baseLender) =
+            _splitLiquidateAndMeasure(loanId, treasuryEoa, false);
+        vm.revertToState(snap);
+        // Capture the liquidator payout and the REAL swap output for the
+        // bonus/surplus anchors below. The bonus goes to `msg.sender`, which is
+        // this test contract.
+        uint256 selfBefore = IERC20(mockERC20).balanceOf(address(this));
+        vm.recordLogs();
+        (uint256 fullTreasury, uint256 fullLender) =
+            _splitLiquidateAndMeasure(loanId, treasuryEoa, true);
+        uint256 bonusPaid = IERC20(mockERC20).balanceOf(address(this)) - selfBefore;
+        uint256 proceeds;
+        {
+            Vm.Log[] memory lg = vm.getRecordedLogs();
+            bytes32 sig = keccak256(
+                "SwapAdapterSucceeded(uint256,uint256,address,uint256)"
+            );
+            uint256 legs;
+            for (uint256 i = 0; i < lg.length; i++) {
+                if (lg[i].topics.length == 3 && lg[i].topics[0] == sig
+                    && uint256(lg[i].topics[1]) == loanId) {
+                    (, uint256 out_) = abi.decode(lg[i].data, (address, uint256));
+                    proceeds += out_;
+                    legs++;
+                }
+            }
+            assertEq(legs, 2, "both split legs reported a swap output");
+        }
+
+        assertGt(baseTreasury, 0, "reference run paid a treasury cut");
+        assertLt(fullTreasury, baseTreasury, "Full stamp reduced the treasury cut");
+        assertEq(
+            baseTreasury - fullTreasury,
+            fullLender - baseLender,
+            "every wei the treasury gave up reached the lender"
+        );
+
+        // Codex #1957 r1 P2 — this is the ONLY successful `triggerLiquidationSplit`
+        // in the tree, so balance deltas alone are not enough: removing the claim
+        // write, the `terminalize` call or the NFT-status updates would leave the
+        // test green with the collateral SOLD and the loan still Active or
+        // unclaimable. Assert the close-out actually completed.
+        LibVaipakam.Loan memory after_ =
+            LoanFacet(address(diamond)).getLoanDetails(loanId);
+        assertEq(
+            uint8(after_.status),
+            uint8(LibVaipakam.LoanStatus.Defaulted),
+            "split liquidation drives the loan terminal"
+        );
+        (address claimAsset, uint256 claimAmt, bool claimTaken, , , , , ) =
+            ClaimFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ true);
+        assertEq(claimAsset, mockERC20, "lender claim recorded in the principal asset");
+        assertGt(claimAmt, 0, "lender claim amount recorded");
+        // ABSOLUTE, not just positive (Codex #1957 r7 P2). Every other assertion
+        // in this test is RELATIVE — a base-vs-stamped delta — and a relative
+        // check is structurally blind to a UNIFORM error: computing
+        // `lenderProceeds` as (say) half of `allocated` underpays both replays
+        // equally, preserves `fullLender - baseLender == baseTreasury -
+        // fullTreasury`, and still leaves a positive funded claim.
+        //
+        // The invariant that catches it: this fixture recovers FULLY (1980e
+        // proceeds against ~1020e debt), so `allocated == totalDebt` and
+        // `lenderProceeds = allocated - treasuryInterestFee`. The treasury's cut
+        // is taken from INTEREST only, so the lender must come away with at
+        // least the whole principal.
+        assertGe(
+            claimAmt,
+            l0.principal,
+            "fully-recovered split returns at least the principal to the lender"
+        );
+        // POPULATED is not ACTIONABLE (Codex #1957 r2 P2). A claim written with
+        // `claimed == true` satisfies the two assertions above while
+        // `ClaimFacet.claimAsLender` reverts `AlreadyClaimed`, leaving the
+        // lender unable to recover proceeds whose collateral has been sold.
+        assertFalse(claimTaken, "lender claim is unclaimed - actionable, not just recorded");
+        // ABSOLUTE ALLOCATION, not just conservation (Codex #1957 r9 P2). The
+        // no-stranded-funds invariant added in r8 catches funds LOST, not funds
+        // MISALLOCATED: overstating `treasuryInterestFee` by 1 wei grows
+        // `toTreasury` and shrinks the residual `lenderProceeds` by that same
+        // wei, so the Diamond still returns exactly to `diamondBefore`, the
+        // base/Full delta is unchanged, and `claimAmt >= principal` still holds
+        // while the lender quietly loses recovered interest. My r8 reply argued
+        // the stranding check was sufficient; it is not, and this is the anchor
+        // that was missing.
+        //
+        // No handling-fee or proceeds arithmetic is needed to get one. The Full
+        // tariff is exactly 10% off the interest fee (frozen §F2 rev 8:
+        // `d = min(d_hold + d_tariff, 5000)` with `d_tariff = 1000`, and this
+        // lender holds no VPFI so `d_hold = 0`), so the MEASURED base/Full
+        // treasury delta recovers the base interest fee absolutely. The handling
+        // fee is identical across replays and cancels out of that delta.
+        // Anchored on a production VIEW, not on arithmetic reconstructed from
+        // the measured deltas. A first attempt derived the base interest fee as
+        // `(baseTreasury - fullTreasury) * 10` on the strength of the frozen
+        // §F2 10% tariff; that is wrong by construction, because the facet
+        // floors the fee and THEN floors the discount, so the delta is not
+        // exactly one tenth of the base. It missed by 4 wei against correct
+        // code — an assertion that would have failed on a healthy contract.
+        //
+        // `lenderProceeds = allocated - treasuryInterestFee`, and in a full
+        // recovery `allocated == totalDue`, so the lender's vault delta must be
+        // the gross debt less exactly the stamped fee bps of the accrued
+        // interest. Verified exact against the live fixture.
+        uint256 feeBps = l0.treasuryFeeBpsAtInit == 0
+            ? uint256(100) // LEGACY_TREASURY_FEE_BPS, per `effectiveTreasuryFeeBps`
+            : uint256(l0.treasuryFeeBpsAtInit);
+        assertEq(
+            baseLender,
+            totalDue - ((totalDue - l0.principal) * feeBps) / 10_000,
+            "lender receives the gross debt less exactly the stamped treasury fee"
+        );
+        // FUNDED, not merely recorded (Codex #1957 r8 P2) -- the same check the
+        // BORROWER side already carries below, which is exactly why its absence
+        // here was invisible. If `depositLocked` moved only the Full-discount
+        // delta while `lenderClaims[loanId].amount` still recorded all of
+        // `lenderProceeds`, the conservation delta, the positive-claim check and
+        // the unclaimed check all pass, and `claimAsLender` reverts later
+        // against a vault that cannot cover the recorded amount.
+        assertGe(
+            fullLender,
+            claimAmt,
+            "lender claim is FUNDED - the vault delta covers the recorded amount"
+        );
+
+        // The BORROWER side too (Codex #1957 r4 P2). This fixture's 1.1x swap
+        // leaves a positive surplus, which the facet records in a separate
+        // `borrowerClaims` row (`RiskSplitLiquidationFacet:336`). Asserting only
+        // the lender leaves that write unguarded: deleting it, or marking it
+        // claimed, would leave this test green with the borrower unable to
+        // recover their surplus after their collateral was sold.
+        (address bAsset, uint256 bAmt, bool bTaken, , , , , ) =
+            ClaimFacet(address(diamond)).getClaimable(loanId, /*isLender=*/ false);
+        assertEq(bAsset, mockERC20, "borrower surplus claim in the principal asset");
+        assertGt(bAmt, 0, "borrower surplus recorded");
+        assertFalse(bTaken, "borrower surplus claim is unclaimed - actionable");
+        // FUNDED, not merely recorded (Codex #1957 r7 P2). Dropping the
+        // borrower-side `depositLocked` leaves the row populated and unclaimed
+        // while the tokens stay in the Diamond, and `claimAsBorrower` reverts
+        // later trying to withdraw from an empty vault.
+        address bVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(l0.borrower);
+        assertTrue(bVault != address(0), "borrower vault exists");
+        assertGe(
+            IERC20(mockERC20).balanceOf(bVault),
+            bAmt,
+            "borrower surplus is FUNDED in their vault, not just recorded"
+        );
+
+        // PIN THE BONUS AND THE SURPLUS (Codex #1957 r10 P2). `bAmt > 0` left
+        // the whole bonus/surplus tail of the waterfall unpinned: overstating
+        // `bonus` by 1 wei shrinks `borrowerSurplus` by the same wei, and the
+        // exact lender recovery, the treasury discount delta, the funded-claim
+        // checks and the Diamond-baseline invariant ALL still pass while the
+        // liquidator quietly takes value owed to the borrower.
+        //
+        // Both halves are needed. Anchoring the surplus on the MEASURED bonus
+        // would let a bonus overstatement cancel out of the identity, so the
+        // bonus itself is checked against config-derived expectation first.
+        // `ConfigFacet` is not cut into this suite's Diamond, so the expected
+        // incentive is resolved from the named defaults rather than a getter.
+        // `liquidatorIncentiveBps` takes the MINIMUM of: the slippage cap (600),
+        // the incentive cap (300), and the per-asset `liqBonusBps` (500, set in
+        // this suite's setUp) — so 300 binds. Realised slippage is 0 because the
+        // mock proxy delivers at or above the expected rate. If any of those
+        // move, this fails LOUDLY rather than drifting.
+        assertEq(
+            bonusPaid,
+            (proceeds * LibVaipakam.MAX_LIQUIDATOR_INCENTIVE_BPS) / 10_000,
+            "liquidator bonus is exactly the incentive bps of realised proceeds"
+        );
+        // With the bonus pinned, the borrower's surplus is the exact remainder:
+        // proceeds less bonus, the recovered debt, and the handling fee.
+        assertEq(
+            bAmt,
+            proceeds - bonusPaid - totalDue
+                - ((proceeds * LibVaipakam.LIQUIDATION_HANDLING_FEE_BPS) / 10_000),
+            "borrower surplus is the exact proceeds remainder after bonus, debt and handling fee"
+        );
+
         vm.clearMockedCalls();
     }
 
@@ -4292,6 +4814,96 @@ contract RiskFacetTest is Test {
     ///         `LoanLiquidated`.
     ///       - `LiquidationDiscounted` emitted with the precise
     ///         (totalDebt, collateralSeized, borrowerSurplus) triple.
+    /// @dev #1955 — run ONE discounted liquidation on an existing loan,
+    ///      optionally stamping the lender `Full` first, and return what the
+    ///      treasury took. Mocks live in here (not the caller) because the
+    ///      caller replays from a snapshot and `vm.revertToState` restores chain
+    ///      state but NOT mocks — and the HF mock would block loan creation.
+    function _discountedLiqTreasury(
+        uint256 loanId,
+        address treasuryEoa,
+        bool stampFull
+    ) private returns (uint256 toTreasury, uint256 toLender) {
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        if (stampFull) {
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+        _mockDiscountPathHappy(loanId);
+        deal(mockERC20, address(this), 4000 ether);
+        IERC20(mockERC20).approve(address(diamond), 4000 ether);
+
+        address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        uint256 before = IERC20(mockERC20).balanceOf(treasuryEoa);
+        uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
+        if (stampFull) {
+            _expectResolverKeyedOnHolder(loanId);
+        }
+        RiskFacet(address(diamond)).triggerLiquidationDiscounted(loanId, address(this), "");
+        toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - before;
+        lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
+    }
+
+    /// @notice #1955 — the Full stamp reaches the interest a DISCOUNTED
+    ///         liquidation recovers. This is the recovery entry that sits beside
+    ///         the ordinary one and is easy to miss; #1383 swept it.
+    ///
+    /// @dev    Asserted EXACTLY, not by conservation. Unlike every other
+    ///         recovery entry, this path charges NO handling fee — the collateral
+    ///         discount IS the liquidator's compensation — so the treasury
+    ///         receives precisely `treasuryInterestFee` and the `+10%` is
+    ///         directly observable as `base - base*1000/BPS`.
+    function test_1955_discountedLiquidation_lenderFull_TenPercentOff() public {
+        address treasuryEoa = makeAddr("treasuryEoaFor1955Disc");
+        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+
+        uint256 loanId = createAndAcceptOffer();
+        // Interest must accrue or the treasury cut is zero and both replays
+        // measure nothing (the fixture this borrows from notes only "slight
+        // headroom for accrued interest if any" — it does not warp).
+        vm.warp(block.timestamp + 15 days);
+
+        // Codex #1957 r8 P2 — without this the loan-scoped `Full` stamp below is
+        // address-INDEPENDENT, so `ownerOf -> loan.lender` passes every assertion.
+        _divergeLenderHolder(loanId, "discHolder1955");
+
+        uint256 snap = vm.snapshotState();
+        (uint256 baseTreasury, uint256 baseLender) =
+            _discountedLiqTreasury(loanId, treasuryEoa, false);
+        vm.revertToState(snap);
+        (uint256 fullTreasury, uint256 fullLender) =
+            _discountedLiqTreasury(loanId, treasuryEoa, true);
+
+        assertGt(baseTreasury, 0, "reference run took a cut on recovered interest");
+        assertEq(
+            fullTreasury,
+            baseTreasury - (baseTreasury * 1_000) / LibVaipakam.BASIS_POINTS,
+            "Full lender keeps exactly the +10% on this path"
+        );
+        // The saving must REACH the lender (Codex #1957 r5 P2). Reducing the
+        // treasury transfer without crediting `lenderProceeds` would satisfy the
+        // assertion above while the message claims the lender keeps the 10% —
+        // and no other test in this suite observes the lender on this path.
+        assertEq(
+            baseTreasury - fullTreasury,
+            fullLender - baseLender,
+            "every wei the treasury gave up reached the lender"
+        );
+        vm.clearMockedCalls();
+    }
+
     function testTriggerLiquidationDiscounted_HappyPath_Tier3() public {
         uint256 loanId = createAndAcceptOffer();
         _mockDiscountPathHappy(loanId);
@@ -4461,6 +5073,104 @@ contract RiskFacetTest is Test {
             "stored lender received NOTHING"
         );
 
+        vm.clearMockedCalls();
+    }
+
+    /// @dev #1955 — run ONE partial liquidation on an existing loan, optionally
+    ///      stamping the lender `Full` first, and return what the treasury took
+    ///      and what the lender received. The lender's share lands in their
+    ///      WALLET: `freezeOrPayActiveLenderResident`'s clean branch is a direct
+    ///      transfer (only the frozen branch vaults, and it vaults to the STORED
+    ///      lender deliberately).
+    function _partialAndMeasure(
+        uint256 loanId,
+        address treasuryEoa,
+        address lenderAddr,
+        bool stampFull
+    ) private returns (uint256 toTreasury, uint256 toLender) {
+        if (stampFull) {
+            LibVaipakam.Loan memory ln =
+                LoanFacet(address(diamond)).getLoanDetails(loanId);
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+        uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
+        uint256 lBefore = IERC20(mockERC20).balanceOf(lenderAddr);
+        if (stampFull) {
+            _expectResolverKeyedOnHolder(loanId);
+        }
+        RiskFacet(address(diamond)).triggerPartialLiquidation(
+            loanId, 2_000, defaultAdapterCalls()
+        );
+        toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
+        toLender = IERC20(mockERC20).balanceOf(lenderAddr) - lBefore;
+    }
+
+    /// @notice #1955 — the Full stamp reaches the interest a PARTIAL liquidation
+    ///         recovers. This entry point does not end the loan, and its payout
+    ///         re-key is covered by the #1383 test above; the DISCOUNT on it was
+    ///         not, and it is the one recovery entry whose treasury cut is taken
+    ///         while the loan stays Active.
+    ///
+    /// @dev    Same value-conservation shape as the HF-liquidation test: the
+    ///         treasury transfer bundles the handling fee, which the discount
+    ///         never touches, so two replays of ONE loan isolate the discount
+    ///         without needing to know that fee (it cannot be zeroed — a 0 falls
+    ///         back to the default).
+    function test_1955_partialLiquidation_lenderFull_shiftsInterestFeeToLender()
+        public
+    {
+        address treasuryEoa = makeAddr("treasuryEoaFor1955");
+        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+
+        uint256 loanId = _setupPartialSizing(0.65e8);
+        AdminFacet(address(diamond)).setPartialLiquidationSizing(0, 0, 0);
+        address lenderAddr = LoanFacet(address(diamond)).getLoanDetails(loanId).lender;
+
+        // Interest must have ACCRUED or there is no yield fee to discount and
+        // both replays measure the handling fee alone — the trap the #1383 test
+        // fell into first. In-term, so the partial maturity gate still passes.
+        vm.warp(block.timestamp + 10 days);
+
+        // Codex #1957 r8 P2 — without this the loan-scoped `Full` stamp below is
+        // address-INDEPENDENT, so `ownerOf -> loan.lender` passes every assertion.
+        //
+        // Partial liquidation is the ONE recovery entry that pays the holder
+        // DIRECTLY: it writes no `lenderClaims` row, so there is no
+        // `ownerOf`-gated claim behind the deposit to correct a stale address,
+        // and `freezeOrPayActiveLenderResident` resolves the resident itself
+        // (RiskFacet:1239-1257). The measured party therefore has to be the
+        // HOLDER — measuring `lenderAddr` here reported a zero lender delta
+        // against a real treasury reduction, which is the misrouted-principal
+        // bug that comment describes, seen from the test side.
+        address partialHolder = _divergeLenderHolder(loanId, "partialHolder1955");
+        assertTrue(partialHolder != lenderAddr, "holder diverged from stored lender");
+
+        uint256 snap = vm.snapshotState();
+        (uint256 baseTreasury, uint256 baseLender) =
+            _partialAndMeasure(loanId, treasuryEoa, partialHolder, false);
+        vm.revertToState(snap);
+        (uint256 fullTreasury, uint256 fullLender) =
+            _partialAndMeasure(loanId, treasuryEoa, partialHolder, true);
+
+        assertGt(baseTreasury, 0, "reference run paid a treasury cut");
+        assertLt(fullTreasury, baseTreasury, "Full stamp reduced the treasury cut");
+        assertEq(
+            baseTreasury - fullTreasury,
+            fullLender - baseLender,
+            "every wei the treasury gave up reached the lender"
+        );
         vm.clearMockedCalls();
     }
 

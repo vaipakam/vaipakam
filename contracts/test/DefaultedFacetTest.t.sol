@@ -7,6 +7,7 @@ import {console} from "forge-std/console.sol";
 import {VaipakamDiamond} from "../src/VaipakamDiamond.sol";
 import {IDiamondCut} from "@diamond-3/interfaces/IDiamondCut.sol";
 import {OfferCreateFacet} from "../src/facets/OfferCreateFacet.sol";
+import {VPFIDiscountFacet} from "../src/facets/VPFIDiscountFacet.sol";
 import {OfferAcceptFacet} from "../src/facets/OfferAcceptFacet.sol";
 import {OfferAcceptFeeFacet} from "../src/facets/OfferAcceptFeeFacet.sol";
 import {LibAcceptTestSigner} from "./helpers/LibAcceptTestSigner.sol";
@@ -216,7 +217,7 @@ contract DefaultedFacetTest is Test {
         vaultImpl = new VaipakamVaultImplementation();
 
         // Cut facets into diamond
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](20);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](21);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -319,6 +320,25 @@ contract DefaultedFacetTest is Test {
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getConsolidationFacetSelectors()
         });
+
+        // #1955 — the recovery/refinance paths resolve the lender yield-fee
+
+        // discount through `VPFIDiscountFacet` (host-routed). Production cuts
+
+        // it; without it a Full-STAMPED loan reverts `FunctionDoesNotExist`
+
+        // here, so this suite could not exercise a stamped settlement at all.
+
+        cuts[20] = IDiamondCut.FacetCut({
+
+            facetAddress: address(new VPFIDiscountFacet()),
+
+            action: IDiamondCut.FacetCutAction.Add,
+
+            functionSelectors: helperTest.getVPFIDiscountFacetSelectors()
+
+        });
+
 
         IDiamondCut(address(diamond)).diamondCut(cuts, address(0), "");
         AccessControlFacet(address(diamond)).initializeAccessControl();
@@ -754,6 +774,147 @@ contract DefaultedFacetTest is Test {
             loanId
         );
         assertEq(uint8(loan.status), uint8(LibVaipakam.LoanStatus.Defaulted));
+    }
+
+    /// @dev #1955 — drive ONE liquid ERC-20 default to completion on an existing
+    ///      loan, optionally stamping the lender `Full` first, and return what
+    ///      the treasury took and what the lender's vault received.
+    ///
+    ///      The warp and the mocks live IN HERE, not in the caller: the caller
+    ///      replays this from a state snapshot, and `vm.revertToState` undoes
+    ///      chain state (the warp) but NOT mocked calls. Setting the HF mock
+    ///      before the loan exists would also block its creation.
+    function _defaultAndMeasure(
+        uint256 loanId,
+        address treasuryEoa,
+        bool stampFull
+    ) private returns (uint256 toTreasury, uint256 toLender) {
+        LibVaipakam.Loan memory ln = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        if (stampFull) {
+            TestMutatorFacet(address(diamond)).setFeeEntitlementRaw(
+                loanId,
+                LibVaipakam.FeeEntitlement({
+                    borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                    lenderMode: LibVaipakam.FeeEntitlementMode.Full,
+                    openDays: uint32(ln.durationDays),
+                    rewardHaircutBpsAtOpen: 0,
+                    borrowerTariffPaid: 0,
+                    lenderTariffPaid: 0,
+                    cStarOpen: 0,
+                    loanSideRewardCapOpen: 0
+                })
+            );
+        }
+
+        // The resolver must key on the CURRENT position-NFT holder. The `Full`
+        // stamp above is LOAN-scoped and identical for every address, so it
+        // cannot distinguish the holder from `loan.lender` — swapping
+        // `DefaultedFacet`'s `ownerOf(loan.lenderTokenId)` for the stored field
+        // would leave every balance assertion green (Codex #1957 r7 P2).
+        // Asserting the host call's settling-lender argument pins the key, and
+        // only works because the caller TRANSFERRED the position: with the two
+        // addresses equal an argument matcher cannot tell them apart.
+        if (stampFull) {
+            vm.expectCall(
+                address(diamond),
+                abi.encodeWithSelector(
+                    VPFIDiscountFacet.resolveLenderYieldFeeFor.selector,
+                    loanId,
+                    VaipakamNFTFacet(address(diamond)).ownerOf(ln.lenderTokenId)
+                )
+            );
+        }
+
+        vm.warp(uint256(ln.startTime) + uint256(ln.durationDays) * 1 days
+            + LibVaipakam.gracePeriod(ln.durationDays) + 1);
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                OracleFacet.getAssetPrice.selector, mockCollateralERC20
+            ),
+            abi.encode(5e7, 8)
+        );
+        vm.mockCall(
+            address(diamond),
+            abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector),
+            abi.encode(uint256(0.5e18))
+        );
+        deal(mockERC20, address(diamond), 3000 ether);
+        deal(mockCollateralERC20, address(diamond), 3000 ether);
+
+        address lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        uint256 tBefore = IERC20(mockERC20).balanceOf(treasuryEoa);
+        uint256 lBefore = lv == address(0) ? 0 : IERC20(mockERC20).balanceOf(lv);
+
+        vm.prank(lender);
+        DefaultedFacet(address(diamond)).triggerDefault(loanId, defaultAdapterCalls());
+
+        lv = VaultFactoryFacet(address(diamond)).getUserVaultAddress(ln.lender);
+        toTreasury = IERC20(mockERC20).balanceOf(treasuryEoa) - tBefore;
+        toLender = IERC20(mockERC20).balanceOf(lv) - lBefore;
+    }
+
+    /// @notice #1955 — a Full-stamped lender keeps the `+10%` on the interest a
+    ///         TIME-BASED DEFAULT recovers. `DefaultedFacet.triggerDefault` is
+    ///         one of the five recovery entry points #1383 swept; this covers
+    ///         its ERC-20 leg.
+    ///
+    /// @dev    Treasury is pointed at an EOA first — this suite points it at the
+    ///         DIAMOND (`setUp`), where the fee is invisible in a balance diff
+    ///         because the diamond holds the collateral and the swap proceeds at
+    ///         the same time.
+    ///
+    ///         Value conservation rather than an absolute: the treasury transfer
+    ///         bundles the handling fee, which the discount never touches and
+    ///         which cannot be zeroed (a 0 falls back to the default).
+    function test_1955_timeDefault_lenderFull_shiftsInterestFeeToLender() public {
+        address treasuryEoa = makeAddr("treasuryEoaFor1955Default");
+        AdminFacet(address(diamond)).setTreasury(treasuryEoa);
+
+        uint256 loanId = createAndAcceptOffer(
+            mockERC20, mockCollateralERC20, LibVaipakam.AssetType.ERC20,
+            1000 ether, 2000 ether, 30, 0, 0
+        );
+
+        // Make the stored lender and the position HOLDER diverge, which is the
+        // only state in which keying the resolver on `ownerOf` differs
+        // observably from keying it on `loan.lender`.
+        //
+        // A plain transfer does NOT achieve this: `markDefaulted` runs
+        // `LibConsolidation.consolidateToHolder(..., Ctx.Tier2CloseOut)` first,
+        // which re-points `loan.lender` AT the new holder — after which the two
+        // are equal and the mutation is undetectable. (Verified: with a bare
+        // transfer this test passed against `ownerOf -> loan.lender`.)
+        //
+        // The divergence needs consolidation to SKIP. At Tier-2 a SANCTIONED
+        // current holder returns `Result.Skipped` — skip-not-block, so the
+        // close-out still completes while `loan.lender` stays stale. That is
+        // exactly the case the `ownerOf` keying at DefaultedFacet:497 exists for.
+        LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
+        address dHolder = makeAddr("defaultHolder1955");
+        vm.prank(l0.lender);
+        VaipakamNFTFacet(address(diamond)).transferFrom(
+            l0.lender, dHolder, l0.lenderTokenId
+        );
+        MockSanctionsList dSanc = new MockSanctionsList();
+        dSanc.setFlagged(dHolder, true);
+        ProfileFacet(address(diamond)).setSanctionsOracle(address(dSanc));
+
+        uint256 snap = vm.snapshotState();
+        (uint256 baseTreasury, uint256 baseLender) =
+            _defaultAndMeasure(loanId, treasuryEoa, false);
+        vm.revertToState(snap);
+        (uint256 fullTreasury, uint256 fullLender) =
+            _defaultAndMeasure(loanId, treasuryEoa, true);
+
+        assertGt(baseTreasury, 0, "reference run paid a treasury cut");
+        assertLt(fullTreasury, baseTreasury, "Full stamp reduced the treasury cut");
+        assertEq(
+            baseTreasury - fullTreasury,
+            fullLender - baseLender,
+            "every wei the treasury gave up reached the lender"
+        );
+        vm.clearMockedCalls();
     }
 
     // ─── #998 S10 (#1006) — fail-closed frozen-claimant end-to-end ─────────────
