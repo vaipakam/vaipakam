@@ -350,6 +350,18 @@ async function remitToMirror(
         })),
         multicallAddress: MULTICALL3_ADDRESS,
         allowFailure: true,
+        // Same size-split disable as the liquidator (#1965 r2): viem's default
+        // is 1024 BYTES, so a probe list long enough to exceed it silently
+        // becomes several `aggregate3` requests against the same
+        // per-invocation subrequest ceiling. This list is already bounded by
+        // the ambiguous-day set.
+        //
+        // The aggregate-rejection case needs no serial retry HERE, unlike the
+        // liquidator: `allowFailure` turns a rejected aggregate into per-call
+        // failures, and the loop below already treats any non-success as an
+        // OPEN/unknown day and reports it. The outcome is the same whether the
+        // rejection surfaces as results or as a throw.
+        batchSize: 0,
       })) as { status: 'success' | 'failure'; result?: unknown }[];
       ambiguous.forEach((dayId, i) => {
         const r = results[i];

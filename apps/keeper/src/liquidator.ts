@@ -222,12 +222,64 @@ async function liquidatePassForChain(
         // serial fallback — one subrequest per loan, on every chain, forever.
         // See src/multicall3.ts (#1946).
         multicallAddress: MULTICALL3_ADDRESS,
+        // Disable viem's SECOND, size-based split (#1965 r2). Without this the
+        // default is 1024 BYTES (`multicall.js:57`), and each encoded HF call is
+        // 36 bytes — so this already-bounded 100-loan chunk is re-split into
+        // four `aggregate3` requests. Four subrequests per 100 loans, on top of
+        // pagination and the other passes sharing the same per-invocation
+        // ceiling, is most of the saving this change exists to make. The chunk
+        // is bounded by HF_MULTICALL_CHUNK above; viem does not need to bound it
+        // again. `0` disables the split outright (`batchSize > 0` guards it).
+        batchSize: 0,
       })) as typeof results;
     } catch (err) {
       console.error(
         `[keeper] liquidator chain=${chain.name} multicall chunk ${i}/${ids.length} failed: ${String(err).slice(0, 200)}`,
       );
       // Fallback: serial reads for this chunk only.
+      results = [];
+      for (const id of chunk) {
+        try {
+          const hf = (await client.readContract({
+            address: diamond,
+            abi: RISK_ABI,
+            functionName: 'calculateHealthFactor',
+            args: [id],
+            blockNumber: pinnedBlock,
+          })) as bigint;
+          results.push({ status: 'success', result: hf });
+        } catch (subErr) {
+          results.push({ status: 'failure', error: subErr as Error });
+        }
+      }
+    }
+    // THE CATCH ABOVE CANNOT SEE AN AGGREGATE FAILURE (#1965 r2). With
+    // `allowFailure: true`, viem converts a REJECTED `aggregate3` into one
+    // failure result per contract instead of throwing — its own source says so:
+    // "If an error occurred in a `readContract` invocation (ie. network error),
+    // then append the failure reason to each contract result"
+    // (`multicall.js:160-172`). So a chain without this Multicall3 deployment,
+    // or an RPC that rejects the aggregate call, does NOT reach the serial
+    // fallback: every loan in the chunk is silently marked unevaluated and no
+    // liquidation is attempted. That is the exact failure the fallback was
+    // written for, and it was unreachable.
+    //
+    // Detected by IDENTITY, not by guesswork: on an aggregate rejection viem
+    // pushes the SAME `result.reason` object for every call in the batch. With
+    // `batchSize: 0` there is exactly one batch per chunk, so "every result
+    // failed and they all carry the identical error object" is precisely the
+    // aggregate-level case — and cannot be produced by per-loan reverts, which
+    // carry their own decoded errors.
+    const aggregateFailed =
+      results.length === chunk.length &&
+      results.length > 0 &&
+      results.every(
+        (r) => r.status === 'failure' && r.error === results[0].error && r.error !== undefined,
+      );
+    if (aggregateFailed) {
+      console.error(
+        `[keeper] liquidator chain=${chain.name} aggregate3 rejected for chunk ${i}/${ids.length}: ${String(results[0].error).slice(0, 200)} — retrying serially`,
+      );
       results = [];
       for (const id of chunk) {
         try {

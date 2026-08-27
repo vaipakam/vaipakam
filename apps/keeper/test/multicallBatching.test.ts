@@ -88,7 +88,7 @@ type Seen = { to: string; selector: string; innerSelectors: string[] };
  * Install a fetch stub that records the shape of every `eth_call`, answering
  * `aggregate3` with a well-formed batch result so the pass proceeds normally.
  */
-function recordCalls(): { seen: Seen[]; restore: () => void } {
+function recordCalls(opts: { rejectAggregate?: boolean } = {}): { seen: Seen[]; restore: () => void } {
   const seen: Seen[] = [];
   const real = globalThis.fetch;
 
@@ -159,6 +159,15 @@ function recordCalls(): { seen: Seen[]; restore: () => void } {
       }
       seen.push({ to: (call.to ?? '').toLowerCase(), selector, innerSelectors });
 
+      if (selector === AGGREGATE3_SELECTOR && opts.rejectAggregate) {
+        // A chain WITHOUT this Multicall3 deployment, or an RPC that refuses
+        // the aggregate call. This is the case the serial fallback exists for.
+        return {
+          jsonrpc: '2.0',
+          id: req.id ?? 1,
+          error: { code: -32000, message: 'execution reverted: no multicall3 here' },
+        };
+      }
       if (selector === AGGREGATE3_SELECTOR) {
         const hf = encodeFunctionResult({
           abi: [
@@ -255,5 +264,58 @@ describe('Multicall3 batching (#1946)', () => {
 
     // 5. The specific local rejection that caused #1946 never occurred.
     expect(errors.join('\n')).not.toMatch(/chain not configured|multicallAddress is required/i);
+  });
+
+  /**
+   * #1965 r2 — the serial fallback was UNREACHABLE for the case it was written
+   * for.
+   *
+   * With `allowFailure: true`, viem converts a REJECTED `aggregate3` into one
+   * failure result per contract rather than throwing. Its own source says so:
+   * "If an error occurred in a `readContract` invocation (ie. network error),
+   * then append the failure reason to each contract result"
+   * (`multicall.js:160-172`). So the `try/catch` around the batch never fires
+   * on an aggregate-level failure, and every loan in the chunk is marked
+   * unevaluated — no liquidation attempted, on a chain that simply lacks
+   * Multicall3.
+   */
+  it('falls back to serial reads when the aggregate call is REJECTED', async () => {
+    const { seen, restore } = recordCalls({ rejectAggregate: true });
+    const errors: string[] = [];
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => {
+      errors.push(a.map(String).join(' '));
+    });
+    try {
+      const { runLiquidator } = await import('../src/liquidator');
+      await runLiquidator({
+        DB: undefined as never,
+        KEEPER_ENABLED: 'true',
+        KEEPER_PRIVATE_KEY:
+          '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80',
+        RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
+      } as never);
+    } finally {
+      restore();
+      spy.mockRestore();
+    }
+
+    const batched = seen.filter((s) => s.selector === AGGREGATE3_SELECTOR);
+    const serialHf = seen.filter((s) => s.selector === CALC_HF_SELECTOR);
+
+    // The batch was attempted — this is a fallback, not a bypass.
+    expect(batched.length).toBeGreaterThan(0);
+
+    // THE ASSERTION THAT EARNS THIS TEST. Before the fix this was 0: the
+    // rejection arrived as per-contract failures, the catch never ran, and
+    // every loan silently counted as unevaluated.
+    expect(serialHf.length).toBe(LOAN_COUNT);
+
+    // Each retry went DIRECT to the Diamond, not back through Multicall3.
+    for (const c of serialHf) {
+      expect(c.to).not.toBe(MULTICALL3_ADDRESS.toLowerCase());
+    }
+
+    // And the operator can see why it degraded.
+    expect(errors.join('\n')).toMatch(/aggregate3 rejected/i);
   });
 });
