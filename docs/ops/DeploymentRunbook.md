@@ -1804,6 +1804,15 @@ navigable. Give redirects a bounded life rather than leaving them
 forever. Prototype hosts with no audience (`alpha.vaipakam.com`,
 `alpha01.vaipakam.com`) can just be deleted.
 
+Two user-facing capabilities have no counterpart on the successor and
+must be built before users are moved across, not after: the Terms-of-
+Service gate (#1961 — the contracts delegate that enforcement to the
+client, so its absence means a configured ToS applies to nobody) and the
+Data Rights export/erase controls (#1960 — the marketing site's copy
+cannot substitute, because browser storage is same-origin). Both are
+listed as blockers beside the cutover switch in
+`apps/www/src/lib/appUrl.ts`.
+
 Before retiring ANY origin, check what still depends on it. At minimum:
 `FRONTEND_ORIGIN` in `apps/agent/wrangler.jsonc` (an origin dropped
 from that CSV does not get a clean CORS rejection — `resolveAllowedOrigin`

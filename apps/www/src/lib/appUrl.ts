@@ -56,11 +56,17 @@
  *      legacy `#step-2`, then add it to the `app` route above — the
  *      marketing CTA promises that landing position.
  *
- * BLOCKERS — do not flip while either is open:
+ * BLOCKERS — do not flip while any of these is open:
  *   - #1961: `apps/app` has NO ToS gate. The retired app failed closed on
  *     `currentTosVersion`, and the contracts delegate that enforcement to
  *     the client, so flipping with a ToS in force would let every wallet
  *     transact without accepting terms.
+ *   - #1960: `apps/app` has NO Data Rights route. The marketing site's
+ *     export/erase controls cannot stand in — they run on this origin and
+ *     browser storage is same-origin, so they can neither read nor clear
+ *     what the app keeps (preferences, alert settings, notification
+ *     cursors, pending transactions, diagnostics). Moving users across
+ *     before this is ported takes away a privacy control they have today.
  *   - #1959: Analytics and the Protocol Console are not ported, which is
  *     why `legacyToolUrl` below exists.
  *

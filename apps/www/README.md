@@ -14,7 +14,10 @@ The **public marketing + docs surface** served at `vaipakam.com` (apex; `www.vai
 - NO wallet connect / wagmi / `wallet_*` JSON-RPC.
 - NO on-chain reads (every value the page shows is statically content-baked or sourced from a sibling Worker, not from a chain RPC).
 - NO connectkit / react-query / per-action permissioning.
-- Public-read tools that live on the connected-app domain by industry convention (analytics, NFT verifier, protocol console) are linked out via `defiUrl()` to `app.vaipakam.com` rather than duplicated here.
+- Public-read tools that live on the connected-app domain by industry convention (analytics, NFT verifier, protocol console) are linked OUT rather than duplicated here. Since #1854 that routing is SPLIT across two helpers in `src/lib/appUrl.ts`, and the split is deliberate:
+  - `appUrl(destination)` — the cutover-aware builder. Takes a named destination, never a raw path, and one `APP_TARGET` constant selects the host AND the route table together (the two surfaces disagree on paths: `/nft-verifier` vs `/nft`, `/vpfi-vault#step-2` vs `/vpfi`). The NFT Verifier goes through this.
+  - `legacyToolUrl(path)` — Analytics and the Protocol Console, which were NOT ported to `apps/app` (#1959) and so still resolve to the surface that serves them. It exists to be deleted once they are ported.
+  Note the connected app's own hostname is not bound yet, so `appUrl` currently resolves to the legacy host too; the cutover checklist lives beside `APP_TARGET`.
 
 This deliberate dependency-surface narrowing means a marketing-only change has a tighter blast radius — `apps/www` can't accidentally regress the connected app, and vice versa.
 
