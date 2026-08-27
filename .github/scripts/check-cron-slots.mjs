@@ -171,6 +171,20 @@ const OCCUPANCY = [
   // "spare" in scope is ordinary English ("room to spare", "spare bits") and
   // nowhere near cron vocabulary, so CONTEXT keeps the gate off them.
   /\bspare\b/i,
+  // Codex #1978 r3: `packages/lib/src/cronCadence.ts` said "this account has no
+  // headroom to spend on a second one" — a zero-capacity claim in a synonym the
+  // patterns did not know, three lines above a sentence saying the count is
+  // stated only in the authority.
+  //
+  // QUANTIFIED, not bare. A bare `headroom` was tried first and fired on four
+  // sites, three about something else entirely: bytecode headroom under EIP-170
+  // (`OfferModificationDesign.md`), wall-time headroom inside a cron envelope
+  // (`apps/keeper/src/matcher.ts`), and retention headroom beside a cron
+  // interval (`ops/mesh-watcher/src/env.ts`). Findings about nothing — the one
+  // thing the admission criterion forbids, and the third time in this file a
+  // word looked specific and was not (`slot`, `schedule`, now `headroom`).
+  // Requiring an absence quantifier keeps the claim and drops the measurements.
+  /\b(?:no|zero|little|any)\s+(?:cron\s+|trigger\s+)?(?:headroom|capacity\s+(?:left|remaining|free))\b/i,
 ];
 
 /**
@@ -188,11 +202,60 @@ const CONTEXT_RADIUS = 200;
 // ── Scanning ────────────────────────────────────────────────────────────────
 
 function trackedFiles() {
-  const out = execFileSync('git', ['ls-files', '-z', ...SCOPE], {
+  // Codex #1978 r3: every scope root must still CONTRIBUTE. `git ls-files` on
+  // a directory that no longer exists exits 0 and returns the other roots'
+  // paths, so a rename or a source-tree move silently shrinks coverage while
+  // the gate stays green — and a move is exactly when occupancy claims under
+  // the new root most need reading. An earlier revision argued silent
+  // degradation beat failing CI on a rename; that trade is wrong, because a
+  // rename is a deliberate act whose author can update one constant, while the
+  // silence has no author at all.
+  const missing = SCOPE.filter((root) => {
+    const out = execFileSync('git', ['ls-files', '-z', '--', root], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return out.split('\0').filter(Boolean).length === 0;
+  });
+  if (missing.length) {
+    throw new Error(
+      `scope root(s) ${missing.map((m) => `\`${m}\``).join(', ')} match no tracked ` +
+        `files. If the tree moved, update SCOPE in this script — leaving it stale ` +
+        `would keep the gate green over unscanned code.`,
+    );
+  }
+
+  const out = execFileSync('git', ['ls-files', '-z', '--', ...SCOPE], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
   return out.split('\0').filter((p) => p && TEXT_EXT.test(p) && p !== AUTHORITY);
+}
+
+/**
+ * The authority's `Verified:` stamp — exactly one, well-formed.
+ *
+ * Codex #1978 r3: nothing read it. Deleting or duplicating the line left both
+ * halves reporting success, removing the only signal of how stale a manually
+ * maintained account snapshot is — and `--live` would then print "refresh the
+ * stamp" pointing at a line that no longer existed. The stamp is the file's
+ * whole claim to being current, and an unchecked claim of currency is worse
+ * than none, because it reads as reassurance.
+ */
+export function checkStamp(md) {
+  const all = [
+    ...md.matchAll(/^\*\*Verified:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z)\.\*\*/gm),
+  ];
+  if (all.length === 0) {
+    return [
+      'the "**Verified: <ISO-8601>.**" stamp is missing or malformed; it is the ' +
+        'only statement of how old this snapshot is',
+    ];
+  }
+  if (all.length > 1) {
+    return [`the "Verified:" stamp appears ${all.length} times; there must be exactly one`];
+  }
+  return [];
 }
 
 /**
@@ -247,6 +310,7 @@ function runOffline() {
   const authorityMd = readFileSync(AUTHORITY, 'utf8');
   const inv = parseInventory(authorityMd);
   const summaryProblems = [
+    ...checkStamp(authorityMd),
     ...inv.problems,
     ...checkSummary(authorityMd, countTriggers(inv.live), inv.reserved.length),
   ];
@@ -426,25 +490,72 @@ export function parseInventory(md) {
     }
     seen.add(name);
 
-    const schedule = /^\s*`([^`]+)`\s*$/.exec(scheduleCell);
-    if (schedule) {
-      // Codex #1978 r2: split on commas. One cell can legitimately carry two
-      // schedules, and counting Map ENTRIES rather than triggers made such a
-      // row worth one against a cap the account counts as two — with `--live`
-      // printing the higher account total and still concluding "matches".
-      live.set(
-        name,
-        schedule[1]
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
+    // Each cron expression is its OWN backticked span; the delimiter between
+    // spans lives outside them.
+    //
+    // Codex #1978 r3: the previous revision split ONE span on commas, to make
+    // two schedules in a cell count as two triggers (r2's finding). That was
+    // worse than what it replaced — a comma is CRON SYNTAX. An ordinary
+    // `0 1,13 * * *` became the two nonsense fragments `0 1` and `13 * * *`,
+    // overcounting the budget offline and reporting a schedule disagreement in
+    // `--live` against a table that exactly reproduced the account.
+    const spans = [...scheduleCell.matchAll(/`([^`]+)`/g)].map((m) => m[1].trim());
+    // Only a cell that is NOTHING BUT spans and separators is a schedule.
+    // `*(would be `*/15 * * * *`)*` contains a span and is not one.
+    const residue = scheduleCell.replace(/`[^`]+`/g, '').replace(/[\s,]/g, '');
+    const status = readStatus(statusCell);
+
+    if (spans.length && residue === '') {
+      live.set(name, spans);
+      if (status !== 'live') {
+        problems.push(
+          `\`${name}\` carries a schedule but its status is ` +
+            `${status === null ? 'unrecognised' : `"${status}"`}; a scheduled row must be "live"`,
+        );
+      }
+      continue;
+    }
+
+    // No schedule, so the status cell alone decides whether the budget is
+    // spoken for. It must therefore be unambiguous — see readStatus.
+    if (status === null) {
+      problems.push(
+        `\`${name}\` has no schedule and its status is not one of ` +
+          `${[...STATUSES].map((s) => `"${s}"`).join(', ')}; the parser cannot tell ` +
+          `whether it holds a trigger`,
       );
-    } else if (/\breserved\b/i.test(statusCell)) {
+    } else if (status === 'reserved') {
       reserved.push(name);
+    } else if (status === 'live') {
+      problems.push(`\`${name}\` is marked "live" but carries no schedule`);
     }
   }
 
   return { live, reserved, problems };
+}
+
+/**
+ * The controlled vocabulary a Status cell must LEAD with.
+ *
+ * Codex #1978 r3: the previous revision tested the whole cell for the word
+ * `reserved`, and got the answer wrong in both directions at once — "no longer
+ * reserved" counted as reserved, "reservation held for its return" did not.
+ * Substring-matching a word cannot read a sentence, which is the same lesson
+ * the `spare` lookbehind had already cost a round earlier: a pattern proves a
+ * word is present, never what the sentence does with it.
+ *
+ * So the machine-readable part is a keyword the cell BEGINS with, and prose
+ * follows. Anything unrecognised is a FINDING rather than a silent zero — an
+ * operator inventing a status must be told the parser did not understand it,
+ * not have it quietly not count.
+ */
+const STATUSES = new Set(['live', 'reserved', 'undeployed']);
+
+/** The leading status keyword, or null if the cell does not start with one. */
+export function readStatus(cell) {
+  const m = /^[\s*_]*([a-z]+)/i.exec(cell);
+  const word = m?.[1]?.toLowerCase();
+  return word && STATUSES.has(word) ? word : null;
 }
 
 /** Triggers, not rows: a row carrying two schedules spends two of the five. */
@@ -478,7 +589,10 @@ async function runLive() {
   const inv = parseInventory(authorityMd);
   const committed = inv.live;
 
-  const problems = inv.problems.map((p) => `INVENTORY     ${p}`);
+  const problems = [
+    ...checkStamp(authorityMd).map((p) => `STAMP         ${p}`),
+    ...inv.problems.map((p) => `INVENTORY     ${p}`),
+  ];
   // Same self-consistency check the offline half runs. Without it, `--live`
   // could compare the account to the inventory rows, find them equal, and
   // print "matches the account" over a summary saying something else.
@@ -487,8 +601,16 @@ async function runLive() {
   }
   // Compared as multisets, not as joined strings: two schedules in one cell are
   // two triggers, and the account may report them in either order.
-  const sameSchedules = (a, b) =>
-    a.length === b.length && [...a].sort().join(' ') === [...b].sort().join(' ');
+  // Compared ELEMENT-WISE rather than by joining on a separator — an earlier
+  // revision joined on one, and the separator it ended up with was a literal
+  // NUL byte, which made this whole file read as BINARY to grep and every
+  // text-scanning tool. Comparing the arrays directly needs no separator.
+  const sameSchedules = (a, b) => {
+    if (a.length !== b.length) return false;
+    const x = [...a].sort();
+    const y = [...b].sort();
+    return x.every((v, i) => v === y[i]);
+  };
   for (const [name, crons] of [...live].sort()) {
     if (!committed.has(name)) {
       problems.push(
@@ -576,6 +698,13 @@ const MUST_FIRE = [
   ['spare slot', 'One cron slot is genuinely SPARE today:'],
   ['no spare — a count of zero', 'There is no spare cron trigger.'],
   ['slash form', 'the account sits at 4/5 cron triggers'],
+  // Codex #1978 r3: the synonym the patterns did not know, verbatim from
+  // `packages/lib/src/cronCadence.ts` before the reword.
+  [
+    'no headroom — a count of zero in a synonym',
+    ' * Cloudflare free plan caps cron triggers at FIVE per ACCOUNT, and\n' +
+      ' * this account has no headroom to spend on a second one.',
+  ],
   // Codex #1978 r2's counterexamples, promoted from MUST_NOT_FIRE. Negated in
   // the shape the old lookbehind exempted, and identical in meaning to the
   // fixture two lines above — which is what proved the exemption unsound.
@@ -602,6 +731,18 @@ const MUST_NOT_FIRE = [
   // the gate off these — which is why dropping the lookbehind cost nothing.
   ['ordinary English, room to spare', 'one external swap clears with room to spare'],
   ['ordinary English, spare bits', '`KEEPER_ACTION_SIGNED_FILL = 1 << 6` (2 spare bits today; bump'],
+  // The three real sites a BARE `headroom` pattern fired on, each measuring
+  // something that is not this account's trigger budget. Pinned because the
+  // narrow pattern's whole job is to stay off them.
+  ['headroom, wall-time', ' * 90 s per chain leaves headroom for ~3 multi-chain ticks within a 5-min cron envelope.'],
+  [
+    'headroom, retention beside a cron interval',
+    ' * ticks that is ~112, so 130 (~32.5h) leaves headroom. RETUNE THIS if\n * you change the cron interval.',
+  ],
+  [
+    'headroom, unquantified warning',
+    '// Do not reopen the two-schedule design on the strength of apparent\n// headroom. Headroom here is temporary — the trigger is reserved.',
+  ],
 ];
 
 /**
@@ -620,32 +761,72 @@ const INVENTORY_CASES = [
   // [name, markdown, expected {live}, expected reserved[], expected problem count]
   [
     'plain row',
-    '| `vaipakam-agent` | `* * * * *` | `apps/agent` | **live** |',
+    '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |',
     { 'vaipakam-agent': ['* * * * *'] },
     [],
     0,
   ],
   [
     'reserved row counts toward committed',
-    '| `vaipakam-keeper` | *(none)* | `apps/keeper` | unscheduled; slot **reserved** for its return |',
+    '| `vaipakam-keeper` | *(none)* | `apps/keeper` | reserved — held for its return |',
     {},
     ['vaipakam-keeper'],
     0,
   ],
   [
-    'hypothetical schedule is neither live nor reserved',
-    '| `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | code-complete, **undeployed** |',
+    'undeployed is neither live nor reserved',
+    '| `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed — code-complete |',
     {},
     [],
     0,
+  ],
+  // Codex #1978 r3: substring-matching `reserved` got BOTH directions wrong.
+  // A leading keyword cannot be negated by what follows it.
+  [
+    'a released row is not reserved',
+    '| `vaipakam-r` | *(none)* | `ops/r` | undeployed — no longer reserved |',
+    {},
+    [],
+    0,
+  ],
+  [
+    'an unrecognised status is a finding, not a silent zero',
+    '| `vaipakam-q` | *(none)* | `ops/q` | reservation held for its return |',
+    {},
+    [],
+    1,
+  ],
+  [
+    'a scheduled row must say live',
+    '| `vaipakam-p` | `0 1 * * *` | `ops/p` | reserved — held |',
+    { 'vaipakam-p': ['0 1 * * *'] },
+    [],
+    1,
+  ],
+  [
+    'a live row must carry a schedule',
+    '| `vaipakam-o` | *(none)* | `ops/o` | live |',
+    {},
+    [],
+    1,
   ],
   ['bolded name skipped', '| **`vaipakam-x`** | `0 1 * * *` | `ops/x` | live |', {}, [], 0],
   // Codex #1978 r2: TWO triggers in one cell. Counting Map entries made this
   // row worth one against a cap the account counts as two.
   [
-    'two schedules in one cell are two triggers',
-    '| `vaipakam-y` | `* * * * *, 0 1 * * *` | `ops/y` | live |',
+    'two spans are two triggers',
+    '| `vaipakam-y` | `* * * * *` `0 1 * * *` | `ops/y` | live |',
     { 'vaipakam-y': ['* * * * *', '0 1 * * *'] },
+    [],
+    0,
+  ],
+  // Codex #1978 r3: a comma is CRON SYNTAX. Splitting one span on commas made
+  // this ordinary expression two nonsense fragments, overcounting the budget
+  // and reporting a false SCHEDULE disagreement against a correct table.
+  [
+    'a comma INSIDE one expression is one trigger',
+    '| `vaipakam-w` | `0 1,13 * * *` | `ops/w` | live |',
+    { 'vaipakam-w': ['0 1,13 * * *'] },
     [],
     0,
   ],
@@ -661,6 +842,18 @@ const INVENTORY_CASES = [
   ],
   ['header row ignored', '| Worker | Schedule | Source in this repo | Status |', {}, [], 0],
   ['separator ignored', '|---|---|---|---|', {}, [], 0],
+];
+
+/** Stamp fixtures: `[name, markdown, expectedProblemCount]`. */
+const STAMP_CASES = [
+  ['well-formed', '**Verified: 2026-08-27T16:21:53Z.** Re-verify with', 0],
+  ['missing', 'Verified recently, honest.', 1],
+  ['not a timestamp', '**Verified: yesterday.**', 1],
+  [
+    'duplicated',
+    '**Verified: 2026-08-27T16:21:53Z.**\n\n**Verified: 2026-01-01T00:00:00Z.**',
+    1,
+  ],
 ];
 
 /**
@@ -722,6 +915,13 @@ const SUMMARY_CASES = [
 
 function runSelftest() {
   let bad = 0;
+  for (const [name, md, expected] of STAMP_CASES) {
+    const got = checkStamp(md).length;
+    if (got !== expected) {
+      console.error(`selftest: stamp case "${name}" reported ${got} problem(s), expected ${expected}`);
+      bad++;
+    }
+  }
   for (const [name, md, liveTriggers, reservedRows, expected] of SUMMARY_CASES) {
     const got = checkSummary(md, liveTriggers, reservedRows).length;
     if (got !== expected) {
@@ -770,7 +970,8 @@ function runSelftest() {
   }
   console.log(
     `Cron-slot gate selftest OK (${MUST_FIRE.length} fire, ${MUST_NOT_FIRE.length} quiet, ` +
-      `${INVENTORY_CASES.length} inventory rows, ${SUMMARY_CASES.length} summaries).`,
+      `${INVENTORY_CASES.length} inventory rows, ${SUMMARY_CASES.length} summaries, ` +
+      `${STAMP_CASES.length} stamps).`,
   );
   return 0;
 }

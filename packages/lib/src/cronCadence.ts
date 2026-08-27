@@ -3,10 +3,11 @@
  *
  * ── Why this is a shared primitive ───────────────────────────────────
  *
- * Cloudflare's free plan caps cron triggers at FIVE per ACCOUNT, and
- * this account has no headroom to spend on a second one. A Worker that
- * wants two cadences therefore cannot register two schedules; it
- * registers ONE every-minute schedule and decides per tick who acts.
+ * Cloudflare's free plan caps cron triggers at FIVE per ACCOUNT, and a
+ * Worker is entitled to one of them. A second is a claim on the shared
+ * budget rather than something the Worker may simply take, so a Worker
+ * that wants two cadences does not register two schedules; it registers
+ * ONE every-minute schedule and decides per tick who acts.
  * (How many triggers are actually spoken for is stated once, with the
  * date it was last checked against the account, in
  * `docs/ops/CloudflareCronSlots.md` — not here. #1977.)

@@ -36,14 +36,26 @@ Read from the account, not from the tree.
 [Re-verifying](#re-verifying) below; update this table and this stamp in
 the same commit.
 
+**The Status cell must BEGIN with one of `live`, `reserved` or `undeployed`**
+— the script reads that first word and refuses a row it does not recognise.
+Prose goes after it. An earlier revision searched the whole cell for the word
+"reserved", which read "no longer reserved" as reserved and "reservation held"
+as not; a leading keyword cannot be negated by the sentence that follows it.
+A row with a schedule must say `live`; a row without must say `reserved` or
+`undeployed`.
+
+Each cron expression is **its own backticked span**. Two schedules are two
+spans, not one span with a comma — a comma is cron syntax (`0 1,13 * * *` is
+one expression), and splitting on it produced two nonsense fragments.
+
 | Worker | Schedule | Source in this repo | Status |
 |---|---|---|---|
-| `vaipakam-agent` | `* * * * *` | `apps/agent` | **live** |
-| `vaipakam-indexer` | `* * * * *` | `apps/indexer` | **live** |
-| `vaipakam-offchain-data-warm` | `17 3 * * *` | `ops/offchain-data-warm` | **live** |
-| `vaipakam-offchain-data-archive` | `17 3 * * *` | *none* | **live — should not be** (#1977) |
-| `vaipakam-keeper` | *(none)* | `apps/keeper` | unscheduled since #1896; slot **reserved** for its return |
-| `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | code-complete, **undeployed** — holds no slot |
+| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |
+| `vaipakam-indexer` | `* * * * *` | `apps/indexer` | live |
+| `vaipakam-offchain-data-warm` | `17 3 * * *` | `ops/offchain-data-warm` | live |
+| `vaipakam-offchain-data-archive` | `17 3 * * *` | *none* | live — and should not be (#1977) |
+| `vaipakam-keeper` | *(none)* | `apps/keeper` | reserved — unscheduled since #1896, held for its return |
+| `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed — code-complete, holds no trigger |
 
 Workers with no schedule and no claim on the budget: `vaipakam-www`,
 `vaipakam-app`, and the four retired frontends (`vaipakam-defi`,
@@ -93,17 +105,25 @@ which is exactly how ten separate statements of the count came to omit it.
 
 ### Consequences for the next deploy
 
-- **Deploying `ops/mesh-watcher` today succeeds** (it would be the 5th
-  live trigger) **and consumes the slot reserved for `apps/keeper`.**
-  After that, re-arming the keeper fails with 10072.
-- **Re-arming `apps/keeper` first also succeeds** (5th live trigger) **and
-  then the mesh-watcher deploy fails with 10072.**
-- Both fit only after `vaipakam-offchain-data-archive` is retired. That is
-  the operator action tracked in #1977, and it is not something to do
-  casually: until the replacement is confirmed to be landing and verifying
-  in the new bucket, the un-retired predecessor is what would mask a
-  defect in it.
-- **Splitting an existing Worker's one cron into two costs a slot** and
+These are rules, not arithmetic. **Read the current numbers off the summary
+above and apply them** — an earlier revision of this section stated the
+outcomes as fixed facts ("it would be the 5th live trigger"), which is a
+restated count wearing operational clothes, and it would have gone stale
+during exactly the cleanup the rest of this file anticipates.
+
+- **`ops/mesh-watcher` needs one trigger on its first deploy.** Whether it
+  fits is `Genuinely spare` above: if that is zero, deploying it spends
+  `apps/keeper`'s reservation, and the keeper's later re-arm is the deploy
+  that fails with 10072.
+- **`apps/keeper`'s re-arm needs one trigger too**, and its procedure
+  begins by confirming one is free for precisely this reason. Whichever of
+  the two goes first takes the last trigger; the second fails.
+- **Both fit only when `Genuinely spare` is at least 2**, which today means
+  retiring `vaipakam-offchain-data-archive` first. That is the operator
+  action tracked in #1977, and it is not something to do casually: until
+  the replacement is confirmed to be landing and verifying in the new
+  bucket, the un-retired predecessor is what would mask a defect in it.
+- **Splitting an existing Worker's one cron into two costs a trigger** and
   has the same effect as a new deploy. This is why
   `ops/offchain-data-warm` folds its Monday healthcheck into the nightly
   backup tick rather than scheduling it separately.
