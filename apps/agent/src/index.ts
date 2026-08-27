@@ -63,7 +63,8 @@
  * The `/thresholds`, `/link/telegram`, `/diag/record`,
  * `/diag/erasure`, `/diag/erasure/status` and `/diag/legal-hold`
  * endpoints are CORS-locked to `FRONTEND_ORIGIN` — `/diag/legal-hold`
- * is driven from the `apps/app` protocol console, so it is a
+ * is driven from the protocol console — still on the legacy
+ * `apps/defi` deployment, not ported in #1854 (see #1959) — so it is a
  * browser-facing endpoint; its authorization is the signer's
  * on-chain `ADMIN_ROLE`, checked inside the handler. The Telegram
  * webhook + Frames + quote proxies have their own CORS posture (no
@@ -295,7 +296,8 @@ export default {
     }
 
     // Legal hold (T-075) — protocol admin places / lifts a hold from
-    // the apps/app protocol console. Browser-facing, so Origin-gated
+    // the protocol console, which is still on the legacy `apps/defi`
+    // deployment (not ported in #1854; see #1959). Browser-facing, so Origin-gated
     // like the endpoints above; the request itself is signed and the
     // handler verifies the signer holds the on-chain ADMIN_ROLE.
     if (url.pathname === '/diag/legal-hold' && req.method === 'POST') {

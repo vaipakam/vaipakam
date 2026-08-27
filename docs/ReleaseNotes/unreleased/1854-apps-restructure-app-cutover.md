@@ -53,14 +53,29 @@ validator refuses the form, and the accepted consent is recorded on-chain
 with the offer, so it is auditable on the position rather than only in a
 browser session.
 
-The new surface is already live. `app.vaipakam.com` serves the app from
-the `vaipakam-app` Worker, deployed and bound ahead of this merge rather
-than after it, so there is no window where the repository advertises a
-hostname that nothing answers — which matters here because this change
-also repoints every live end-to-end driver at that host. The Worker was
-created equivalent to the one it replaces: same compatibility date and
-flags, and no bindings or secrets to carry over, since the app is a
-static-assets deploy.
+The new hostname is not live yet, and this change deliberately does not
+pretend otherwise. The `vaipakam-app` Worker exists — created equivalent
+to the one it replaces, same compatibility date and flags, with no
+bindings or secrets to carry over since the app is a static-assets
+deploy — but `app.vaipakam.com` is unbound, and every link the marketing
+site emits still resolves to the host that actually answers.
+
+That ordering is the lesson rather than an oversight. The Worker was
+first deployed and bound during this change, then unbound again, because
+the build behind it had been made without any of the sixteen operator
+variables the app needs: no indexer origin, so no offer book, push rail
+or config snapshot, and no RPC URLs or WalletConnect project ID either.
+A bare build only warns about that; the package's own deploy script
+turns it into a hard failure, and using the shortcut is what let a
+configuration-empty build reach a production hostname at all. The
+scripted deploy paths were routing around the same guard, and no longer
+do.
+
+So finishing the cutover is one deploy and one line: publish the Worker
+with operator env present, bind the hostname, verify, and flip the link
+helper's default. Until then the repository never advertises a hostname
+that nothing answers — which matters here because this change also
+repoints every live end-to-end driver at that host.
 
 The deployment runbook gains the record that made this awkward to
 begin with. Which hostname served which Worker existed only in the

@@ -506,7 +506,8 @@ async function appendLegalHoldAudit(
  * requires it to hold the on-chain `ADMIN_ROLE` (`verifyAdmin`,
  * default {@link isProtocolAdmin}). No shared secret — the contract's
  * access-control state is the source of truth, exactly as the
- * `apps/app` protocol console determines admin status. The endpoint
+ * legacy protocol console determines admin status (that console is
+ * still on the `apps/defi` deployment — not ported, see #1959). The endpoint
  * is naturally inert before deploy: with no RPC / deployment
  * configured, `verifyAdmin` finds no admin and every call is 403.
  *

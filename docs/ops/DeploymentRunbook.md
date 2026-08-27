@@ -1698,7 +1698,7 @@ pointed at.
 
 | Hostname | Worker | Source | Notes |
 | --- | --- | --- | --- |
-| `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. Bound at the #1854 cutover. |
+| `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. **NOT BOUND YET** — the Worker exists, but the hostname awaits a deploy made with operator env. See the cutover note below. |
 | `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
 | `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Authenticated API — a bare `GET /` answering 403 is correct, not an outage. |
 | `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |

@@ -5,7 +5,9 @@
   // (basic + advanced), Terms, Privacy, Data Rights, Discord, Help
   // Search. Wallet-free; cross-domain link-outs to the connected-
   // app surface via the `appUrl(...)` helper (env-driven by
-  // `VITE_APP_URL`, defaults `https://app.vaipakam.com`). Both the
+  // `VITE_APP_URL`). The default is still the LEGACY host, on purpose:
+  // `app.vaipakam.com` is not bound yet, so defaulting to it would point
+  // every Launch App CTA at an unserved hostname. Both the
   // helper and the variable were renamed from `defiUrl` /
   // `VITE_DEFI_URL` in #1854; the old variable name is no longer
   // read, so a preview or local build that still sets it silently

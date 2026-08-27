@@ -9,11 +9,14 @@
  * the request is signed by a wallet, and that wallet must hold the
  * on-chain `ADMIN_ROLE` on the Diamond.
  *
- * This is the exact check `apps/app`'s protocol console already runs
- * client-side (`useIsProtocolAdmin.ts` →
- * `AccessControlFacet.hasRole(ADMIN_ROLE, addr)`). Doing it here, on
- * the Worker, makes it a real authorization gate (the client-side
- * version is only a UI affordance): the contract's access-control
+ * This mirrors the check the protocol console ran client-side
+ * (`useIsProtocolAdmin.ts` →
+ * `AccessControlFacet.hasRole(ADMIN_ROLE, addr)`). That console lives
+ * on the LEGACY `apps/defi` deployment and was not ported in #1854 —
+ * `apps/app` has neither the route nor the hook — so treat that as a
+ * historical reference, not a path you can open today (see #1959).
+ * Doing the check here, on the Worker, makes it a real authorization
+ * gate rather than the UI affordance the client-side version was: the contract's access-control
  * state is the single source of truth for "who is an admin", so
  * there is no separate admin list to keep in sync and no shared
  * secret in the Worker's env.
@@ -29,7 +32,8 @@ import {
 import { getChainConfigs, type Env } from './env';
 
 /** `keccak256("ADMIN_ROLE")` — mirrors `LibAccessControl.ADMIN_ROLE`
- *  and the frontend's `useIsProtocolAdmin` constant. */
+ *  and the `useIsProtocolAdmin` constant in the legacy protocol
+ *  console (not present in `apps/app`; see #1959). */
 const ADMIN_ROLE = keccak256(toBytes('ADMIN_ROLE'));
 
 /** Minimal `hasRole` view ABI — all the on-chain check needs. */
