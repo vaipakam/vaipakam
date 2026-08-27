@@ -335,10 +335,15 @@ manual follow-up required when the prerequisites are in place:
    Regenerates the consolidated `deployments.json` that every consumer
    — the React surfaces and all three Workers — reads, with the new
    diamond + facet addresses.
-2. **Frontend build + Cloudflare deploy** (step `[7]` /
-   `phase_cf_frontend`) — runs `npm run build` then
-   `npx wrangler deploy` from `apps/app/`. Skip with
-   `--skip-frontend` if the build is intentionally lagging.
+2. **App build + Cloudflare deploy** (step `[7a]`) — runs
+   `pnpm run deploy` from `apps/app/`. Use that packaged script, NOT
+   `build` followed by a bare `wrangler deploy`: it sets
+   `REQUIRE_INDEXER_ORIGIN=1`, which turns a missing or misspelled
+   `VITE_INDEXER_ORIGIN` into a hard failure instead of a warning that
+   still ships an app with no offer-book feed, push rail or config
+   snapshot. Skip with `--skip-app` if the build is intentionally
+   lagging. (The flag was `--skip-frontend` and the phase
+   `phase_cf_frontend` before #1854; neither name exists now.)
 3. **Keeper Cloudflare deploy** (phase `cf-keeper`) —
    `pnpm run deploy` from `apps/keeper/`, plus the
    RPC-secret presence check (**hard-fails if a per-chain

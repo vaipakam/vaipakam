@@ -8,8 +8,12 @@ switching users onto, for reasons set out below. The three surfaces it
 superseded are
 deleted — `apps/defi` (frozen since the redesign began, previously at
 defi.vaipakam.com) and the two earlier prototypes `apps/alpha` and
-`apps/alpha01`. Nothing named "alpha" survives on any surface a user
-reaches.
+`apps/alpha01`. Nothing named "alpha" survives in the source tree, the package names
+or the app's own shell. One does survive where users can still reach
+it: the `vaipakam-alpha02` Worker is still deployed on
+alpha02.vaipakam.com, because deleting a source directory does not
+retire a running deployment. That retirement is an operator step, and
+it is listed with the others at the end of this note.
 
 The marketing site needed no structural change, which is worth recording
 because it was the part everyone expected to be hard. `apps/www` never
