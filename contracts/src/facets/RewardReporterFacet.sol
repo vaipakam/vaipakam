@@ -975,6 +975,28 @@ contract RewardReporterFacet is
         return LibVaipakam.storageSlot().dayClockEra[dayId];
     }
 
+    /// @notice #1944 — whether THIS chain has already applied the V2 broadcast
+    ///         for `dayId`.
+    /// @dev    The M7 arming ceremony has to know, per mirror and immediately
+    ///         before broadcasting, whether a candidate propagation day is
+    ///         still unapplied: `_applyBroadcastV2Core` returns early on an
+    ///         already-applied day, BEFORE the `armedFromDay` install, so
+    ///         arming through a burnt day silently no-ops and `D*` is one-shot.
+    ///
+    ///         Until now that question was answerable only by scanning for
+    ///         `RewardBroadcastV2Applied` logs. A log scan under ceremony
+    ///         pressure is materially worse than a readback — it depends on
+    ///         provider retention and range limits, and a missed page reads as
+    ///         "not applied", which is the exact wrong answer here.
+    ///
+    ///         Read-only: this does NOT close the underlying defect (a day
+    ///         applied pre-arm still cannot carry `D*`), it makes the
+    ///         ceremony's mitigation executable. The protocol fix wants its own
+    ///         design pass — see #1944.
+    function getBroadcastV2Applied(uint256 dayId) external view returns (bool) {
+        return LibVaipakam.storageSlot().broadcastV2Applied[dayId];
+    }
+
     /// @notice #1434 P2-w1 — whether the V3 broadcast marked this day
     ///         deliberately zeroed for THIS chain (R1: the chain's interest
     ///         was zeroed out of the day's finalized denominator).
