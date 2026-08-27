@@ -49,13 +49,21 @@ issue rather than something to take unilaterally.
 
 One thing is worth recording rather than smoothing over, because it is the
 most transferable part. **The mechanism did not work first time, or for many
-times after.** Fourteen review rounds found the same defect it was built to
-prevent — a claim about the account that nothing checks — again and again
-*inside the mechanism itself*, and the interesting thing is not the count but
-that the misses fell into six repeating shapes. The last of them was found
-while writing the reply that accepted the fix which introduced it, roughly an
-hour after that fix was pushed — which is the clearest evidence in this whole
-change that the problem is not attention:
+times after.** Review round after review round found the same defect it was
+built to prevent — a claim about something live that nothing checks — again
+and again *inside the mechanism itself*.
+
+(There is no count in that sentence, deliberately. Earlier drafts said
+"twelve rounds", then "fourteen", and each went stale within the day; a
+reviewer caught one of them. A restated number describing this change's own
+history is the same defect the change is about, and it does not become
+acceptable for being about the past.)
+
+The interesting part was never the count anyway. It is that the misses fell
+into a small number of repeating shapes — and that two of them were found not
+by review but while *writing the reply accepting a different fix*, within an
+hour of pushing it. That is the clearest evidence here that the problem is not
+attention:
 
 - **Closed worlds keep reopening.** A list of file extensions, a class of
   Markdown prefixes, a set of phrasings gathered from the tree: each was an
@@ -88,14 +96,47 @@ change that the problem is not attention:
   "this one failed, try the other" is the newest-that-verifies move the
   adversarial section of the same document exists to forbid. The sentence
   never changed meaning; the reader's situation did.
+- **The general remedy applied without checking that this case has the
+  general problem.** A reviewer pointed out that reading only the first page
+  of a paginated list would hide exactly the thing the check exists to find.
+  True in general, and the endpoint in question turned out not to paginate at
+  all — it ignores the parameters and returns everything — so the page loop
+  written to fix it was *worse* than the single call it replaced. The same
+  round: a file-classifier was rewritten to ask git whether a file is binary
+  instead of sniffing for a null byte, keyed on the field that reports git's
+  own guess rather than the one carrying the explicit setting — so it still
+  excluded the exact file the finding named, while compiling, reading
+  correctly and passing its tests. Both were caught by going and asking the
+  thing itself. A remedy that is right about the world is not yet right about
+  the case in front of it.
 
-Two findings landed outside the mechanism and mattered more than any of the
-above. The restore runbook concluded from two armed cron schedules that both
-backup buckets held every recent night; armed is not uploaded, and an operator
-restoring under pressure would have taken it as licence to skip the listing.
-And a mistyped `--live` flag printed "OK" and exited zero without contacting
-the account at all — in the procedure whose next step is a deploy that fails
-if the check was wrong.
+Several findings landed outside the mechanism entirely, in the operator
+runbooks the un-retired Worker touches, and those mattered more than anything
+above. Two were serious enough to change what an operator does in an
+emergency.
+
+The disaster-recovery procedure for a **compromised** account said to rotate
+the storage credentials and then pointed at a step whose actual instruction
+replaces one Worker's pair of keys. With two Workers holding write access,
+following it as written leaves the second key valid — so the attacker keeps
+the ability to upload after the procedure believes the breach is closed. It
+now enumerates the keys from the account before deleting anything, rather
+than trusting a number written down in advance.
+
+And the procedure for bringing the paused keeper back had no failure path for
+the validation that runs *after* the fund-moving passes are switched on. The
+rollback it did document covers the earlier, still-inert validation, where
+backing out costs nothing — so an operator whose post-arming check failed had
+no instruction for the one situation where it matters. The Worker's own
+configuration file had carried that rollback all along; the runbook had not,
+and nothing compares the two.
+
+Smaller, and the same shape: the restore runbook concluded from two armed
+schedules that both backup buckets held every recent night — armed is not
+uploaded, and an operator restoring under pressure would have taken it as
+licence to skip the listing. And a mistyped verification flag printed "OK"
+and exited zero without contacting the account at all, in the procedure whose
+next step is a deploy that fails if the check was wrong.
 
 Every one of these was written carefully, by someone actively thinking about
 this exact failure. That is the argument for the gate rather than an
