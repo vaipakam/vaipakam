@@ -1351,6 +1351,19 @@ contract RiskFacetTest is Test {
                 ln.collateralAmount
             )
         );
+        // The collateral lien MUST be released before the vault withdrawal, or
+        // the real withdrawal reverts at the encumbrance chokepoint (Codex #1957
+        // r9 P2). This fixture's selector-wide `vaultWithdrawERC20` mock returns
+        // success without consulting the lien, so removing the production
+        // release left the repository's only successful `triggerLiquidationSplit`
+        // test green over an unusable path.
+        vm.expectCall(
+            address(diamond),
+            abi.encodeWithSelector(
+                EncumbranceMutateFacet.releaseCollateralLien.selector, loanId
+            )
+        );
+
         uint256 diamondBefore = IERC20(mockERC20).balanceOf(address(diamond));
         RiskSplitLiquidationFacet(address(diamond)).triggerLiquidationSplit(loanId, splits);
         // EXACT, and needs no fee arithmetic (Codex #1957 r8 P2). The principal
@@ -1400,6 +1413,13 @@ contract RiskFacetTest is Test {
         LibVaipakam.Loan memory l0 = LoanFacet(address(diamond)).getLoanDetails(loanId);
         _divergeLenderHolder(loanId, "splitHolder1955");
 
+        // Captured BEFORE the replays, at the timestamp both of them liquidate
+        // at. `calculateRepaymentAmount` returns the GROSS debt (principal +
+        // accrued interest), which is what the waterfall's `allocated` equals in
+        // a full recovery — verified exactly against the live numbers, not
+        // assumed from the name.
+        uint256 totalDue =
+            RepayFacet(address(diamond)).calculateRepaymentAmount(loanId);
         uint256 snap = vm.snapshotState();
         (uint256 baseTreasury, uint256 baseLender) =
             _splitLiquidateAndMeasure(loanId, treasuryEoa, false);
@@ -1453,6 +1473,42 @@ contract RiskFacetTest is Test {
         // `ClaimFacet.claimAsLender` reverts `AlreadyClaimed`, leaving the
         // lender unable to recover proceeds whose collateral has been sold.
         assertFalse(claimTaken, "lender claim is unclaimed - actionable, not just recorded");
+        // ABSOLUTE ALLOCATION, not just conservation (Codex #1957 r9 P2). The
+        // no-stranded-funds invariant added in r8 catches funds LOST, not funds
+        // MISALLOCATED: overstating `treasuryInterestFee` by 1 wei grows
+        // `toTreasury` and shrinks the residual `lenderProceeds` by that same
+        // wei, so the Diamond still returns exactly to `diamondBefore`, the
+        // base/Full delta is unchanged, and `claimAmt >= principal` still holds
+        // while the lender quietly loses recovered interest. My r8 reply argued
+        // the stranding check was sufficient; it is not, and this is the anchor
+        // that was missing.
+        //
+        // No handling-fee or proceeds arithmetic is needed to get one. The Full
+        // tariff is exactly 10% off the interest fee (frozen §F2 rev 8:
+        // `d = min(d_hold + d_tariff, 5000)` with `d_tariff = 1000`, and this
+        // lender holds no VPFI so `d_hold = 0`), so the MEASURED base/Full
+        // treasury delta recovers the base interest fee absolutely. The handling
+        // fee is identical across replays and cancels out of that delta.
+        // Anchored on a production VIEW, not on arithmetic reconstructed from
+        // the measured deltas. A first attempt derived the base interest fee as
+        // `(baseTreasury - fullTreasury) * 10` on the strength of the frozen
+        // §F2 10% tariff; that is wrong by construction, because the facet
+        // floors the fee and THEN floors the discount, so the delta is not
+        // exactly one tenth of the base. It missed by 4 wei against correct
+        // code — an assertion that would have failed on a healthy contract.
+        //
+        // `lenderProceeds = allocated - treasuryInterestFee`, and in a full
+        // recovery `allocated == totalDue`, so the lender's vault delta must be
+        // the gross debt less exactly the stamped fee bps of the accrued
+        // interest. Verified exact against the live fixture.
+        uint256 feeBps = l0.treasuryFeeBpsAtInit == 0
+            ? uint256(100) // LEGACY_TREASURY_FEE_BPS, per `effectiveTreasuryFeeBps`
+            : uint256(l0.treasuryFeeBpsAtInit);
+        assertEq(
+            baseLender,
+            totalDue - ((totalDue - l0.principal) * feeBps) / 10_000,
+            "lender receives the gross debt less exactly the stamped treasury fee"
+        );
         // FUNDED, not merely recorded (Codex #1957 r8 P2) -- the same check the
         // BORROWER side already carries below, which is exactly why its absence
         // here was invisible. If `depositLocked` moved only the Full-discount

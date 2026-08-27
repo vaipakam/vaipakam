@@ -1298,6 +1298,26 @@ contract FeeEntitlementFacetTest is SetupTest {
         // what dies if the branch folds only the treasury term.
         assertEq(baseTreasury - heldTreasury, heldClaim - baseClaim,
             "every wei the treasury gave up reached the lender's prepay claim");
+
+        // FUNDED, not merely recorded (Codex #1957 r9 P2). Everything above
+        // compares CLAIM ROWS and treasury balances, so omitting or underfunding
+        // `LibSanctionedLock.depositLocked` leaves them all green while the
+        // prepay stays at the Diamond and `claimAsLender` cannot withdraw
+        // `heldClaim` later. The fixture's selector-wide `vaultWithdrawERC20`
+        // mock does NOT hide this: `depositLocked` moves the tokens with a
+        // direct `safeTransfer`, so the vault delta is real and observable.
+        //
+        // Keyed on the STORED lender: the rental leg pays `loan.lender` (the
+        // deposit has a `lenderClaims` row behind it, unlike the partial path),
+        // even though the DISCOUNT is keyed on the holder.
+        address rLenderVault =
+            VaultFactoryFacet(address(diamond)).getUserVaultAddress(rl.lender);
+        assertTrue(rLenderVault != address(0), "stored lender's vault exists");
+        assertGe(
+            IERC20(mockERC20).balanceOf(rLenderVault),
+            heldClaim,
+            "rental prepay claim is FUNDED in the vault, not just recorded"
+        );
     }
 
 
