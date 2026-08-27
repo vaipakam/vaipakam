@@ -102,7 +102,17 @@ const SKIP_EXACT = new Set([
  * is correct history and must stay readable as written; rewriting it to
  * satisfy this gate would be falsifying the record.
  */
-const SKIP_PREFIXES = ['docs/ReleaseNotes/'];
+const SKIP_PREFIXES = [
+  'docs/ReleaseNotes/',
+  // Codex #1978 r18: this was missing while the comment above NAMED it, and
+  // while `check-docs-paths.mjs` and `check-excision-residue.mjs` — the two
+  // sibling gates in this directory — both already exclude it. Three places
+  // agreed it was historical and one of them was the code. A dated incident
+  // report recording "the account had four live cron triggers" is correct
+  // history; a blocking gate demanding it be rewritten is the gate falsifying
+  // the record.
+  'docs/FindingsAndFixes/',
+];
 
 /**
  * Whether a tracked file is text this gate should read.
@@ -553,14 +563,33 @@ function* visibleLines(md) {
   let openedWith = null; // { kind, len } while inside a fence
   let inComment = false;
   for (const raw of md.split('\n')) {
-    // ONE left-to-right pass, deliberately, rather than stripping complete
-    // `<!-- ... -->` pairs with a global replace and then looking for a
-    // leftover opener. CodeQL flags that shape as incomplete multi-character
-    // sanitization, and while nothing here is rendered — this decides which
-    // lines a READER sees, not what gets written to a page — the objection to
-    // replace-then-rescan is sound on its own terms: the second look runs over
-    // text the first one rewrote, so `<!<!-- -->--` produces an opener that
-    // was never in the source. A single scan never re-reads its own output.
+    // INSIDE A FENCE, `<!--` is literal text, not markup. Codex #1978 r18:
+    // treating it as a comment opener let a fenced EXAMPLE containing `<!--`
+    // swallow its own closing fence and everything after it — including the
+    // real stamp — so the gate REJECTED a valid authority. That direction
+    // matters more than the one I was defending against: a false negative
+    // lets one bad edit through, a false positive blocks every correct edit,
+    // and this gate blocks CI. Fences are resolved first, and comment state is
+    // only touched outside them.
+    if (openedWith !== null && !inComment) {
+      const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(raw);
+      if (
+        fence &&
+        fence[1][0] === openedWith.kind &&
+        fence[1].length >= openedWith.len &&
+        fence[2].trim() === ''
+      ) {
+        openedWith = null;
+      }
+      continue; // fenced content is never visible
+    }
+
+    // ONE left-to-right pass, rather than stripping complete `<!-- ... -->`
+    // pairs with a global replace and then looking for a leftover opener.
+    // CodeQL flags that shape as incomplete multi-character sanitization, and
+    // while nothing here is rendered, the objection is sound on its own terms:
+    // the second look runs over text the first rewrote, so `<!<!-- -->--`
+    // produces an opener that was never in the source.
     let line = '';
     let i = 0;
     while (i < raw.length) {
@@ -585,7 +614,12 @@ function* visibleLines(md) {
       }
     }
 
-    const fence = /^\s*(```+|~~~+)(.*)$/.exec(line);
+    // Codex #1978 r18: at most THREE leading spaces. Four or more makes the
+    // line an indented code block, not a fence — so `^\s*` accepted an
+    // indented line as a CLOSER and released the fence early, marking
+    // still-fenced content visible. CommonMark's rule, and the opener and the
+    // closer are both bound by it.
+    const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(line);
     if (fence) {
       const run = fence[1];
       const kind = run[0];
@@ -913,7 +947,14 @@ const CAP = 5;
  * silently matches nothing is the inventory parser's failure mode with the
  * loudness removed — it would report agreement it never tested.
  */
-export function checkSummary(md, liveTriggers, reservedNames, allNames = reservedNames) {
+export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = reservedNames) {
+  // Codex #1978 r18: the THIRD member of the visibility family. The table
+  // learned about `visibleLines` in r17 and the stamp in r17; the summary,
+  // sitting between them and read by both modes, kept matching against the
+  // raw document — so all three canonical lines wrapped in `<!-- -->` left
+  // this returning no problems over an authority that renders no totals at
+  // all. Fixed one sibling, then the second, and walked past the third.
+  const md = [...visibleLines(rawMd)].join('\n');
   // Exactly one of each line. Not the first match — this whole change exists
   // because a second, unchecked copy of a count went unnoticed, and `exec`
   // reading only the first would reproduce that defect inside the check meant
@@ -1052,7 +1093,36 @@ export function checkSummary(md, liveTriggers, reservedNames, allNames = reserve
     const d = distinctiveOf(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return new RegExp(`(?:^|[^a-z0-9-])${d}(?:[^a-z0-9-]|$)`).test(label);
   };
+
+  // Codex #1978 r18: filtering the KNOWN names can only ever find known
+  // names. `live plus the keeper and intruder's reserve` passed, because
+  // `intruder` is in no table row and so was never a candidate to reject —
+  // the closed world I defended as sound in r17 was sound for the question
+  // "which known Workers are claimed" and useless for "is anything ELSE
+  // claimed". Fourth consecutive round on this check, and the fourth time the
+  // fix answered the previous question rather than the next one.
+  //
+  // So parse the label's holder list instead of testing membership against
+  // it. Read the words between "live plus" and "reserve", split on the
+  // connectives, and treat every token as a claimed holder — then the
+  // comparison with the table is a real set equality in both directions,
+  // including for holders the table has never heard of.
+  const holderText = /live plus\s+(.*?)\s*(?:'s)?\s*reserve/.exec(label)?.[1] ?? '';
+  const claimed = holderText
+    .split(/\s*(?:,|\band\b|\&)\s*/)
+    .map((t) => t.replace(/^the\s+/, '').replace(/'s$/, '').trim())
+    .filter(Boolean);
+
   const namedInLabel = new Set([...allNames].filter(named));
+  for (const token of claimed) {
+    if (![...allNames].some((n) => distinctiveOf(n) === token)) {
+      problems.push(
+        `the "Committed" line names \`${token}\` as holding a reservation, but no ` +
+          `inventory row names that Worker at all — the summary is claiming a ` +
+          `reservation for something the table has never heard of`,
+      );
+    }
+  }
   for (const name of reservedNames) {
     if (!namedInLabel.has(name)) {
       problems.push(
@@ -1174,7 +1244,20 @@ export function parseInventory(md) {
     // written without its leading pipe vanishes, and no account witness exists
     // to notice. Candidacy is now "enough pipes to be a row", and the
     // non-canonical form is rejected by name rather than skipped.
-    if ((line.match(/\|/g) ?? []).length < 3) continue;
+    // Codex #1978 r18: a TRUNCATED row — `| \`vaipakam-keeper\` | *(none)*` —
+    // has two pipes and was skipped here, one branch before the column-count
+    // guard that exists to report exactly that. Markdown still renders it,
+    // with the missing cells empty, so a reader sees the reservation and the
+    // parser does not; and `--live` cannot object, because a reserved Worker
+    // has no account schedule to compare against. Same silent-skip-before-the-
+    // finding shape as r5, in the candidacy test rather than the early-out.
+    //
+    // Candidacy is now "starts like a row, OR has enough pipes to be one".
+    // A leading pipe is the strong signal — prose does not begin with one —
+    // and the pipe count still catches the leading-pipe-omitted form the next
+    // check reports by name.
+    const pipes = (line.match(/\|/g) ?? []).length;
+    if (!/^ {0,3}\|/.test(line) && pipes < 3) continue;
     if (!/^\s*\|/.test(line)) {
       problems.push(
         `an inventory row is missing its leading pipe; Markdown renders it, this ` +
@@ -1394,10 +1477,34 @@ export function checkSources(sources) {
     // ancestor does. That is the property to test — "this names A WORKER",
     // not "this names something". Checked against the tree when written: all
     // five sourced rows satisfy it and bare `apps` / `ops` do not.
-    const hasConfig = tracked.some((f) =>
+    const configPath = tracked.find((f) =>
       /^wrangler\.(jsonc|json|toml)$/.test(f.slice(path.length + 1)),
     );
-    if (!hasConfig) {
+    if (configPath) {
+      // Codex #1978 r18, and a straight reversal of my r17 refusal. I declined
+      // to match the config's name against the row on the grounds that "no
+      // current defect reaches it"; the counterexample is one line —
+      // checkSources(Map([['vaipakam-agent', 'apps/indexer']])) passed. Two
+      // swapped or copy-pasted source cells are permanently green, and the
+      // column's whole job is to say WHICH source belongs to WHICH Worker.
+      //
+      // "No defect reaches it" was a claim about the space of edits, made
+      // without looking. It is the same move as the counts this gate exists to
+      // catch: an assertion about the world that nothing checks.
+      //
+      // Read with a regex rather than a JSONC parser — the file is
+      // comment-laden and this needs one top-level string field. A config that
+      // declares no name is not a finding here; `--live` already ties Worker
+      // NAMES to the account, so this check exists for the DIRECTORY binding.
+      const declared = /^\s*"name"\s*:\s*"([^"]+)"/m.exec(readFileSync(configPath, 'utf8'));
+      if (declared && declared[1] !== name) {
+        problems.push(
+          `\`${name}\`'s source \`${path}\` holds a wrangler config for ` +
+            `\`${declared[1]}\` — the row points at another Worker's directory`,
+        );
+      }
+    }
+    if (!configPath) {
       problems.push(
         `\`${name}\`'s source \`${path}\` resolves, but holds no \`wrangler\` config ` +
           `directly beneath it, so it does not identify a Worker's source — an ` +
@@ -1923,7 +2030,7 @@ const STAMP_CASES = [
  * resolve it literally.
  */
 const CHECK_SOURCES_CASES = [
-  ['a real tracked path resolves', new Map([['vaipakam-a', 'apps/keeper']]), 0],
+  ['a real tracked path resolves', new Map([['vaipakam-keeper', 'apps/keeper']]), 0],
   ['the none marker is skipped', new Map([['vaipakam-a', null]]), 0],
   // Codex #1978 r15: a glob keeps resolving after the real source moves, so it
   // can never go stale — worse than a wrong path, for this column's purpose.
@@ -1935,7 +2042,11 @@ const CHECK_SOURCES_CASES = [
   // can never go stale — the glob defect reached without a glob.
   ['a bare ancestor directory is rejected', new Map([['vaipakam-a', 'apps']]), 1],
   ['another ancestor is rejected', new Map([['vaipakam-a', 'ops']]), 1],
-  ['a real Worker source is accepted', new Map([['vaipakam-a', 'ops/offchain-data-warm']]), 0],
+  ['a real Worker source is accepted', new Map([['vaipakam-agent', 'apps/agent']]), 0],
+  // Codex #1978 r18: the row must point at ITS OWN Worker's directory. Both
+  // of these resolve and both hold a wrangler config; only one is correct.
+  ['a source cell pointing at another Worker is rejected', new Map([['vaipakam-agent', 'apps/indexer']]), 1],
+  ['the matching source is accepted', new Map([['vaipakam-indexer', 'apps/indexer']]), 0],
 ];
 
 const SOURCE_CASES = [
