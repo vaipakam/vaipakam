@@ -772,8 +772,9 @@ then deploy.
 >
 > ```bash
 > # Use the FIRST line. Uncomment the second only as the fallback described
-> # below — both buckets currently hold every recent night, so "whichever
-> # lists your date" no longer picks one.
+> # below. Do NOT pick by "whichever lists your date" — both Workers are
+> # scheduled, so that rule no longer discriminates. What each bucket
+> # actually holds is established by the listing, never by this comment.
 > B2_BUCKET=vaipakam-offchain-data-warm      # supported path — start here
 > # B2_BUCKET=vaipakam-offchain-data-archive # fallback, and for older nights
 > ```
