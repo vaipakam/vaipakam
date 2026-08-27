@@ -41,6 +41,14 @@ Cloudflare frontend deploy — the only one in the repository, and formerly
 `deploy-testnet.sh` and `deploy-mainnet.sh` still ship a frontend; the
 per-app skip flag is now `--skip-app` and the phase is `cf-app`.
 
+Those scripts now also state plainly what they are not doing. Until the
+cutover completes, publishing the app Worker does not reach the surface
+users are actually on, and there is no second frontend to publish to
+instead — the retired app's source is gone with it, so it cannot be
+rebuilt to carry new contract addresses. Refusing to deploy contracts
+at all until three unrelated frontend blockers clear would be a worse
+answer than saying so, so each run prints the caveat and names them.
+
 Two workflow display names deliberately keep stale text. A required status
 check is keyed on the workflow's name, so renaming one strands it as
 permanently pending and blocks every merge; `defi vitest` and

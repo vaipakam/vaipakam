@@ -1717,12 +1717,21 @@ pointed at.
 
 ### How a hostname gets bound
 
-**The binding is NOT in `wrangler.jsonc`.** No app declares a `routes`
-key, so `wrangler deploy` publishes the script and nothing else — the
-hostname is attached out-of-band as a Workers **Custom Domain**, which
+**For every surface in the table above except the indexer, the binding
+is NOT in `wrangler.jsonc`.** Those apps declare no `routes` key, so
+`wrangler deploy` publishes the script and nothing else — the hostname
+is attached out-of-band as a Workers **Custom Domain**, which
 provisions the DNS record and certificate for you. Prefer a Custom
 Domain over a Route: a Route needs a pre-existing proxied DNS record
 and only pattern-matches an existing zone setup.
+
+`apps/indexer` is the exception, and the only one in the tree: it
+declares `routes` with `custom_domain: true`, so `wrangler deploy`
+creates and maintains `indexer.vaipakam.com` itself. Do not hand-bind
+that one — you would be creating by API what its config already owns.
+Check for a `routes` key before reaching for the `curl` below; this
+paragraph said "no app declares one" until that was checked against
+the configs rather than assumed.
 
 Binding is idempotent, so re-running is safe:
 
