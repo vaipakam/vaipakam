@@ -222,7 +222,55 @@ const OCCUPANCY = [
     'i',
   ),
   new RegExp(String.raw`\b(?:has|have|holds?)${WRAP}${N}${WRAP}(?:cron${WRAP})?triggers?\b`, 'i'),
+  // Capacity VERDICTS — the same claim as `spare` and `headroom` with the
+  // number removed entirely: "the cron budget is full", "at capacity", "room
+  // for one more". Self-found after round 5, whose accepted finding was that
+  // building only from phrasings already in the tree leaves the gate blind to
+  // the one the next author reaches for. These are that finding applied
+  // forward rather than waiting to be told again.
+  //
+  // Each is tight enough to have ZERO hits in the tree today, checked before
+  // adding. `exhausted` bare was tried and dropped: it appears 92 times in
+  // scope — VPFI reward budgets, retry budgets, feed cursors — and one of
+  // them, `chainIngestDO.ts`'s "Both budgets exhausted — defer the rest to the
+  // cron backstop", sits within the context window of the word `cron` while
+  // being about DO writes. The noun is what makes it admissible.
+  new RegExp(String.raw`\b(?:cron|trigger)s?${WRAP}budget${WRAP}is${WRAP}(?:full|exhausted|spent)\b`, 'i'),
+  /\bat\s+capacity\b/i,
+  /\bno\s+room\s+for\s+(?:a|an|another|one\s+more)?\s*(?:new\s+)?(?:cron|trigger|schedule|worker)\b/i,
+  /\broom\s+for\s+(?:one\s+more|another)\b/i,
+  /\bcan\s+(?:still\s+)?(?:take|fit|hold)\s+(?:one\s+more|another)\b/i,
 ];
+
+/**
+ * ── WHAT THIS RULE SHAPE CANNOT REACH ─────────────────────────────────────
+ *
+ * Named after r5, whose accepted finding was that patterns reverse-engineered
+ * from phrasings already in the tree are blind to the one the next author
+ * reaches for. Working forward from that, the numeric shapes and the capacity
+ * verdicts above are covered. Two families are NOT, and are recorded here
+ * rather than half-covered:
+ *
+ *   - ENUMERATION. "agent, indexer and this Worker are the ones actually
+ *     running" states the live set with no count and no verdict. This is not
+ *     hypothetical: `OffChainDataResilience.md` carried exactly that sentence
+ *     and it was removed BY HAND in this PR, not by any rule. Catching it
+ *     needs "a list of Worker names, asserted as the live set", which a regex
+ *     cannot distinguish from a list of Worker names appearing in a reason —
+ *     and reasons are what this gate asks authors to write instead. A rule
+ *     here would fire on its own remediation.
+ *
+ *   - OPEN PARAPHRASE. The verdicts above are the phrasings worth pre-empting;
+ *     English affords unboundedly many more. Chasing them one at a time is how
+ *     a closed-world rule turns into an open-world one, which by the criterion
+ *     at the top of this file may not ship.
+ *
+ * Both are DIAGNOSIS gaps rather than holes in the invariant: the summary is
+ * still pinned to the inventory and the inventory to the account, so a
+ * restatement of either kind is wrong prose beside a checked source, not an
+ * unchecked source. Recorded so the next reader knows the boundary was chosen
+ * rather than missed.
+ */
 
 /**
  * How far either side of a hit is searched for a context token, in CHARACTERS
@@ -864,6 +912,14 @@ const MUST_FIRE = [
   // Codex #1978 r5: the shape nobody had written yet, and the most natural one.
   ['direct live count', 'The account currently has four live cron triggers.'],
   ['has N triggers', 'This account has 5 cron triggers today.'],
+  // Capacity verdicts — the claim with the number removed entirely. Self-found
+  // after r5 rather than reported, by asking what a restatement looks like
+  // once every numeric shape is covered.
+  ['budget is full', '// The cron budget is full.'],
+  ['at capacity', '// The account is at capacity for cron triggers.'],
+  ['no room for another', '// There is no room for another cron trigger.'],
+  ['room for one more', '// The account has room for one more scheduled Worker; the cron cap allows it.'],
+  ['can still take another', '// The account can still take one more scheduled Worker before the cron cap binds.'],
   // Codex #1978 r3: the synonym the patterns did not know, verbatim from
   // `packages/lib/src/cronCadence.ts` before the reword.
   [
@@ -940,6 +996,10 @@ const MUST_NOT_FIRE = [
   // something that is not this account's trigger budget. Pinned because the
   // narrow pattern's whole job is to stay off them.
   ['headroom, wall-time', ' * 90 s per chain leaves headroom for ~3 multi-chain ticks within a 5-min cron envelope.'],
+  // `exhausted` bare was tried and dropped for this line: a DO-write budget,
+  // inside the context window of the word `cron`, about something else.
+  ['exhausted, a different budget', '    // Both budgets exhausted — defer the rest to the cron backstop.'],
+  ['exhausted, a reward cap', 'Once the 69,000,000 VPFI category cap is exhausted, emissions stop.'],
   [
     'headroom, retention beside a cron interval',
     ' * ticks that is ~112, so 130 (~32.5h) leaves headroom. RETUNE THIS if\n * you change the cron interval.',
