@@ -545,9 +545,15 @@ export function checkSummary(md, liveTriggers, reservedRows) {
   };
 
   const live = read('Live right now', /^-\s+\*\*Live right now:\*\*\s+(\d+)\s+of\s+5\s*$/m);
+  // Codex #1978 r7: the label is matched EXACTLY. `Committed[^:]*` accepted
+  // `**Committed, live only:**` while the value it validates is derived as
+  // live PLUS reserved — the authority would have defined the number one way
+  // and computed it another, with the gate reporting agreement. The file says
+  // its anchors are load-bearing and that rewording one must fail; a wildcard
+  // in the middle of the anchor is that promise not being kept.
   const committed = read(
     'Committed',
-    /^-\s+\*\*Committed[^:]*:\*\*\s+(\d+)\s+of\s+5\s*$/m,
+    /^-\s+\*\*Committed, live plus the keeper's reserve:\*\*\s+(\d+)\s+of\s+5\s*$/m,
   );
   const spare = read('Genuinely spare', /^-\s+\*\*Genuinely spare:\*\*\s+(\d+)\s*$/m);
 
@@ -651,6 +657,20 @@ export function parseInventory(md) {
     // a stale row behind while adding its replacement produced a table with two
     // contradictory schedules that both halves would accept — they only ever
     // saw the last one. A repeat is now a finding, not a shrug.
+    // Codex #1978 r7: the row regex is case-INSENSITIVE while this set was
+    // case-sensitive, so `Vaipakam-Keeper` beside `vaipakam-keeper` read as two
+    // Workers and counted two reservations. `--live` cannot expose it either —
+    // reserved rows have no account schedule to compare. Worker names are
+    // lower-case on Cloudflare, so a variant is rejected outright rather than
+    // normalised: silently accepting a name the account cannot have is how a
+    // typo becomes a second row.
+    if (name !== name.toLowerCase()) {
+      problems.push(
+        `\`${name}\` is not lower-case; Cloudflare Worker names are, so this row ` +
+          `cannot match any account entry`,
+      );
+      continue;
+    }
     if (seen.has(name)) {
       problems.push(
         `the inventory lists \`${name}\` more than once; two rows for one Worker can disagree`,
@@ -1134,6 +1154,15 @@ const INVENTORY_CASES = [
   // Codex #1978 r2: a stale row left beside its replacement. `Map.set` kept
   // only the last, so both halves accepted a table stating two contradictory
   // schedules for one Worker.
+  // Codex #1978 r7: the row regex is case-insensitive; the duplicate set was
+  // not, so a case variant read as a second Worker and a second reservation.
+  [
+    'a non-lower-case Worker name is a finding',
+    '| `vaipakam-keeper` | *(none)* | `apps/keeper` | reserved — held |\n| `Vaipakam-Keeper` | *(none)* | `apps/keeper` | reserved — held |',
+    {},
+    ['vaipakam-keeper'],
+    1,
+  ],
   [
     'a repeated Worker is a finding, not an overwrite',
     '| `vaipakam-z` | `0 1 * * *` | `ops/z` | live |\n| `vaipakam-z` | `0 2 * * *` | `ops/z` | live |',
@@ -1238,6 +1267,15 @@ const SUMMARY_CASES = [
   ],
   ['a line is missing', '- **Live right now:** 4 of 5', 4, 1, 2],
   ['a line was reworded', GOOD_SUMMARY.replace('Genuinely spare', 'Spare'), 4, 1, 1],
+  // Codex #1978 r7: `Committed[^:]*` accepted a label that CONTRADICTED the
+  // derivation — "live only", for a value computed as live plus reserved.
+  [
+    'the committed label was reworded to contradict its derivation',
+    GOOD_SUMMARY.replace("Committed, live plus the keeper's reserve", 'Committed, live only'),
+    4,
+    1,
+    1,
+  ],
   ['no summary at all', '# Some other document', 4, 1, 3],
   // The recursion: a duplicated summary section is itself a second unchecked
   // copy of the count. Reading only the first match would let two contradicting
