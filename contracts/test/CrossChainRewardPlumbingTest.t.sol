@@ -1461,6 +1461,53 @@ contract CrossChainRewardPlumbingTest is SetupTest, IVaipakamErrors {
         messenger.deliverBroadcastV2(_v2Packet(CHAIN_OP));
     }
 
+    /// #1944 — `getBroadcastV2Applied` is the readback the M7 arming ceremony
+    /// needs: `_applyBroadcastV2Core` returns early on an already-applied day
+    /// BEFORE installing `armedFromDay`, so arming through a day a mirror has
+    /// already applied silently no-ops, and `D*` is one-shot. Until this getter
+    /// the question was answerable only by scanning `RewardBroadcastV2Applied`
+    /// logs, where a missed page reads as "not applied" — the exact wrong
+    /// answer under ceremony pressure.
+    ///
+    /// Driven through the REAL ingress rather than `setBroadcastV2AppliedRaw`,
+    /// so this asserts the getter tracks what the PRODUCTION apply path writes.
+    /// A mutator-only test would pass even if the getter read a mapping the
+    /// apply path never touches.
+    function testGetBroadcastV2AppliedTracksTheApplyPath() public {
+        _configureMirror(CHAIN_ARB);
+
+        assertFalse(_rep().getBroadcastV2Applied(3), "day 3 unapplied before delivery");
+        assertFalse(_rep().getBroadcastV2Applied(4), "day 4 unapplied before delivery");
+
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB)); // packet is dayId 3
+
+        assertTrue(_rep().getBroadcastV2Applied(3), "day 3 reads applied after ingress");
+        // PER-DAY DISCRIMINATION. Without this a getter that ignores `dayId`,
+        // or returns a constant true once any day has landed, satisfies every
+        // assertion above — which is the whole point of the readback, since the
+        // ceremony asks the question per CANDIDATE day.
+        assertFalse(
+            _rep().getBroadcastV2Applied(4),
+            "an unrelated day is unaffected - the getter is keyed on dayId"
+        );
+
+        // MAPPING DISCRIMINATION, and this is the assertion that earns the
+        // test. The V2 ingress sets `knownGlobalSet` ALONGSIDE
+        // `broadcastV2Applied`, so both flip together on day 3 and a getter
+        // pointed at the wrong mapping satisfies every assertion above. That
+        // is not hypothetical: mutating the getter to read `knownGlobalSet`
+        // PASSED the first draft of this test.
+        //
+        // The legacy kind-2 ingress (`onRewardBroadcastReceived`) sets
+        // `knownGlobalSet` ONLY and never touches `broadcastV2Applied`, so a
+        // day delivered that way separates them.
+        messenger.deliverBroadcast(7, 30e18, 15e18, type(uint256).max);
+        assertFalse(
+            _rep().getBroadcastV2Applied(7),
+            "a legacy-only day is NOT V2-applied - getter reads broadcastV2Applied, not knownGlobalSet"
+        );
+    }
+
     function testBroadcastV2RevertsWhenNotMessenger() public {
         _configureMirror(CHAIN_ARB);
         vm.prank(alice);
