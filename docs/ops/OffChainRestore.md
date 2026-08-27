@@ -504,8 +504,15 @@ then deploy.
    - `agent.vaipakam.com` → `vaipakam-agent`
    - `app.vaipakam.com` → `vaipakam-app`
    - `vaipakam.com` (apex — the canonical, indexable hostname) →
-     `vaipakam-www`, plus `labs.vaipakam.com` → `vaipakam-www` if the
-     legacy hostname is still wanted
+     `vaipakam-www`. `labs.vaipakam.com` → `vaipakam-www` only if the
+     legacy hostname is wanted BACK: as of 2026-08-27 it is retired —
+     no binding and no DNS record — so restoring it is a decision to
+     revive a dead hostname, not part of returning to the status quo.
+   - `indexer.vaipakam.com` → `vaipakam-indexer`, but **do NOT create
+     this binding by hand.** `apps/indexer/wrangler.jsonc` declares it
+     with `custom_domain: true`, so deploying that Worker creates it.
+     It is listed here so its absence from the inventory is not read as
+     an omission.
    - `www.vaipakam.com`: **not** a Worker binding, and it needs TWO
      things, both zone-level and neither travelling with any Worker
      config:
@@ -546,10 +553,14 @@ then deploy.
    Then deploy the Workers — bindings resolve cleanly because the D1 + R2 +
    rate-limit namespaces + updated configs all exist first.
 
-   > **Deploy them with their SCHEDULES OFF.** All three of
-   > `apps/{indexer,keeper,agent}` declare `"crons": ["* * * * *"]`, so a
+   > **Deploy them with their SCHEDULES OFF.** `apps/indexer` and
+   > `apps/agent` declare `"crons": ["* * * * *"]`, so a
    > plain `wrangler deploy` here arms every-minute scheduled work against a
-   > database that §§4–6 have not restored or verified yet. Concretely: the
+   > database that §§4–6 have not restored or verified yet. **The keeper is
+   > the exception and needs no action:** it commits `"crons": []` under
+   > #1896, so deploying it arms nothing — do not "fix" that empty list
+   > here, and do not read the resulting quiet as a successful restore.
+   > Concretely: the
    > indexer starts writing before §6 resets its cursor; the keeper's alert
    > passes are NOT behind `KEEPER_ENABLED` (only the signing passes are), so
    > `runWatcher` / `runPreGraceWatcher` begin messaging users off
@@ -561,7 +572,9 @@ then deploy.
    >
    > Same hazard the archive Worker gets its own warning for below, and the
    > same remedy: do not let a cron run before the data it reads is real.
-   > For each of the three, set the trigger list empty for this deploy —
+   > For the **indexer and the agent** — not the keeper, which already
+   > commits an empty list under #1896 and must stay that way — set the
+   > trigger list empty for this deploy —
    >
    > ```jsonc
    > "triggers": { "crons": [] }
@@ -611,9 +624,18 @@ then deploy.
    > restores the indexer's schedule, after the cursor reset.
    >
    > These are restored later, deliberately split in two: the indexer's at
-   > the end of §6 (once its cursor is reset), and the keeper's and agent's
-   > in §7a after the smoke test. Do not simply revert the config now — the
-   > point is that the schedules stay off until each one's data is verified.
+   > the end of §6 (once its cursor is reset), and the **agent's** in §7a
+   > after the smoke test. Do not simply revert the config now — the point
+   > is that the schedules stay off until each one's data is verified.
+   >
+   > **The keeper is NOT in that restore, and this is the sentence most
+   > likely to be skimmed.** Its schedule is not "off for the restore" and
+   > waiting to come back — it is off permanently until #1896's CPU work
+   > lands, because the Worker was being terminated for exceeding CPU on
+   > nearly every invocation. Restoring it here would re-arm an
+   > every-minute pass on the one Worker holding a transaction-signing
+   > key. Route it through §7a branch A, which covers this deliberately;
+   > do not treat it like the agent.
 
    > **DO NOT deploy `ops/offchain-data-warm` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually

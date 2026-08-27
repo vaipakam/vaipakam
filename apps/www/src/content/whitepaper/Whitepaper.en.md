@@ -1445,7 +1445,7 @@ credentials than its job needs:
 - **Indexer** (`indexer.vaipakam.com`) — chain-to-archive ingestion. Scans the allow-listed Diamond
   event set from safe blocks, maintains a D1-backed projection of offers, loans, activity, and
   claimability, and serves read APIs. It holds RPC credentials only — no signing keys.
-- **Keeper** (`keeper.vaipakam.com`) — autonomous write actions. Health-factor sweeps, alert
+- **Keeper** (no public endpoint — internal, cron-only) — autonomous write actions. Health-factor sweeps, alert
   dispatch, and (operator-enabled, off by default) permissionless liquidation submission and
   delegated auto-lend fills; the only Worker holding a transaction-signing key, and that key maps to
   no protocol role.

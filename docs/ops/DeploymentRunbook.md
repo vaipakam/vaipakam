@@ -1706,9 +1706,9 @@ pointed at.
 | --- | --- | --- | --- |
 | `app.vaipakam.com` | `vaipakam-app` | `apps/app` | The connected app. **NOT BOUND YET** — the Worker exists, but the hostname awaits a deploy made with operator env. See the cutover note below. |
 | `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
-| `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Authenticated API — a bare `GET /` answering 403 is correct, not an outage. |
+| `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Origin-gated API. A bare `GET /` answering **403 `Forbidden` is correct, not an outage** — `apps/agent/src/index.ts:258` rejects any request whose `Origin` is not in `FRONTEND_ORIGIN`, and a curl sends none. **To actually health-check it, send an allowed Origin**: `curl -H 'origin: https://vaipakam.com' https://agent.vaipakam.com/nope` should return **404**, the Worker's own fallback. 403 with an allowed Origin means that origin is missing from `FRONTEND_ORIGIN`; 403 *without* one proves nothing. (#1971 — filed on the belief this was an outage, closed as designed behaviour.) |
 | `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
-| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-triggered; deliberately unbound. |
+| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-only and deliberately unbound — **and currently UNSCHEDULED**: `apps/keeper/wrangler.jsonc:269` commits `"crons": []` under #1896, so no pass runs at all. Quiet keeper metrics are not evidence of health until that hold lifts. |
 | — (no hostname) | `vaipakam-offchain-data-archive` / `-warm` | `ops/` | Scheduled ops Workers. |
 | `defi.vaipakam.com` | `vaipakam-defi` | *(source deleted #1854)* | Retire per the cutover note below. |
 | `alpha02.vaipakam.com` | `vaipakam-alpha02` | *(source deleted #1854)* | Retire per the cutover note below. |
@@ -1765,8 +1765,13 @@ publish a production app with no offer-book feed, no push rail and no
 config snapshot. This is not hypothetical: it is how #1958 briefly put
 a config-empty build on the production hostname.
 
-Populate `apps/app/.env.local` first. A build with none of the sixteen
+Populate `apps/app/.env.local` first. A build with none of the nineteen
 `VITE_*` operator variables is a preview build, not a deployable one.
+There is a twentieth setting, `VITE_APP_PUBLIC_ORIGIN`, which is NOT
+among them and cannot be: the `prebuild` step reads it from the shell
+environment rather than from `.env.local`, and it selects the origin in
+the generated sitemap and robots.txt. Leave it unset for the production
+deploy; export it for any deployment served from another origin.
 Be precise about what that costs, because the failure is partial:
 chain reads still work — every chain in `apps/app/src/chain/chains.ts`
 carries a public `rpcUrlDefault` and `rpcUrlFor` falls back to it

@@ -24,13 +24,21 @@
   //                          https://vaipakam.com/$1` (301). NOT
   //                          bound to the Worker — the redirect
   //                          rule fires before any Worker route.
-  //   - labs.vaipakam.com  LEGACY — still bound to this Worker
-  //                          (no redirect rule today since Google
-  //                          had not indexed it before cutover).
-  //                          Harmless duplicate; the apex-pinned
-  //                          `<link rel="canonical">` on every
-  //                          page collapses any accidental crawler
-  //                          visit into the apex's index entry.
+  //   - labs.vaipakam.com  RETIRED — NOT bound, and nothing answers
+  //                          there. Verified against the live
+  //                          account (2026-08-27): it appears in no
+  //                          Workers custom-domain binding, and a
+  //                          request to it fails to connect exactly
+  //                          as the deliberately-unbound
+  //                          app.vaipakam.com does. This comment
+  //                          previously said it was "still bound to
+  //                          this Worker" as a harmless duplicate;
+  //                          that was true when the labs → www
+  //                          cutover was written and has not been
+  //                          true since the binding was removed.
+  //                          Nothing needs doing about crawlers: an
+  //                          unresolvable host has no index entry to
+  //                          collapse.
   //
   // Worker name `vaipakam-www` — renamed from the legacy
   // `vaipakam-labs` at the same time as the labs → www cutover so
