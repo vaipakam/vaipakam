@@ -255,8 +255,12 @@ After PR2 / PR3 / PR4 have all been validated in production:
 
 > **Status correction (#1720 round 15).** This section was written as
 > future scope and stayed that way after the matcher shipped.
-> `apps/keeper/src/index.ts:141-146` schedules `runMatcher` on every tick of
-> the keeper's cron. The matcher pass is IMPLEMENTED — do not re-implement
+> `apps/keeper/src/passSchedule.ts:80-85` registers `runMatcher` as a keeper
+> pass with `cadenceMinutes: 1`, and `apps/keeper/src/index.ts:185-196`
+> dispatches every due pass on each tick of the keeper's cron. (This banner
+> cited `index.ts:141-146`, which was the wiring before the passes were
+> extracted into their own schedule; those lines now close `timedPass` and
+> open `scheduled()`, so the citation sent readers to unrelated code.) The matcher pass is IMPLEMENTED — do not re-implement
 > or re-schedule it — but it does not EXECUTE today: that cron is committed
 > as `[]` under #1896, so the Worker takes no ticks for `runMatcher` to
 > ride. Read "live" here as shipped code, not as running work, and do not
