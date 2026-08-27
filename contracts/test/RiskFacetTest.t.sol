@@ -1214,11 +1214,12 @@ contract RiskFacetTest is Test {
             abi.encodeWithSelector(RiskFacet.calculateHealthFactor.selector, loanId),
             abi.encode(HF_SCALE - 1)
         );
-        vm.mockCall(
-            address(diamond),
-            abi.encodeWithSelector(VaultFactoryFacet.vaultWithdrawERC20.selector),
-            abi.encode(true)
-        );
+        // The `vaultWithdrawERC20` mock is DELIBERATELY absent here (Codex #1957
+        // r10 P2). Mocking it selector-wide returned success without consulting
+        // the encumbrance guard, so the release-before-withdraw ORDER was
+        // unobservable: two independent `expectCall`s prove both calls happen,
+        // never that the release precedes the withdrawal. Running the REAL
+        // withdrawal makes the production guard itself the assertion.
         vm.mockCall(
             address(diamond),
             abi.encodeWithSelector(VaipakamNFTFacet.updateNFTStatus.selector),
@@ -1424,8 +1425,31 @@ contract RiskFacetTest is Test {
         (uint256 baseTreasury, uint256 baseLender) =
             _splitLiquidateAndMeasure(loanId, treasuryEoa, false);
         vm.revertToState(snap);
+        // Capture the liquidator payout and the REAL swap output for the
+        // bonus/surplus anchors below. The bonus goes to `msg.sender`, which is
+        // this test contract.
+        uint256 selfBefore = IERC20(mockERC20).balanceOf(address(this));
+        vm.recordLogs();
         (uint256 fullTreasury, uint256 fullLender) =
             _splitLiquidateAndMeasure(loanId, treasuryEoa, true);
+        uint256 bonusPaid = IERC20(mockERC20).balanceOf(address(this)) - selfBefore;
+        uint256 proceeds;
+        {
+            Vm.Log[] memory lg = vm.getRecordedLogs();
+            bytes32 sig = keccak256(
+                "SwapAdapterSucceeded(uint256,uint256,address,uint256)"
+            );
+            uint256 legs;
+            for (uint256 i = 0; i < lg.length; i++) {
+                if (lg[i].topics.length == 3 && lg[i].topics[0] == sig
+                    && uint256(lg[i].topics[1]) == loanId) {
+                    (, uint256 out_) = abi.decode(lg[i].data, (address, uint256));
+                    proceeds += out_;
+                    legs++;
+                }
+            }
+            assertEq(legs, 2, "both split legs reported a swap output");
+        }
 
         assertGt(baseTreasury, 0, "reference run paid a treasury cut");
         assertLt(fullTreasury, baseTreasury, "Full stamp reduced the treasury cut");
@@ -1544,6 +1568,37 @@ contract RiskFacetTest is Test {
             IERC20(mockERC20).balanceOf(bVault),
             bAmt,
             "borrower surplus is FUNDED in their vault, not just recorded"
+        );
+
+        // PIN THE BONUS AND THE SURPLUS (Codex #1957 r10 P2). `bAmt > 0` left
+        // the whole bonus/surplus tail of the waterfall unpinned: overstating
+        // `bonus` by 1 wei shrinks `borrowerSurplus` by the same wei, and the
+        // exact lender recovery, the treasury discount delta, the funded-claim
+        // checks and the Diamond-baseline invariant ALL still pass while the
+        // liquidator quietly takes value owed to the borrower.
+        //
+        // Both halves are needed. Anchoring the surplus on the MEASURED bonus
+        // would let a bonus overstatement cancel out of the identity, so the
+        // bonus itself is checked against config-derived expectation first.
+        // `ConfigFacet` is not cut into this suite's Diamond, so the expected
+        // incentive is resolved from the named defaults rather than a getter.
+        // `liquidatorIncentiveBps` takes the MINIMUM of: the slippage cap (600),
+        // the incentive cap (300), and the per-asset `liqBonusBps` (500, set in
+        // this suite's setUp) — so 300 binds. Realised slippage is 0 because the
+        // mock proxy delivers at or above the expected rate. If any of those
+        // move, this fails LOUDLY rather than drifting.
+        assertEq(
+            bonusPaid,
+            (proceeds * LibVaipakam.MAX_LIQUIDATOR_INCENTIVE_BPS) / 10_000,
+            "liquidator bonus is exactly the incentive bps of realised proceeds"
+        );
+        // With the bonus pinned, the borrower's surplus is the exact remainder:
+        // proceeds less bonus, the recovered debt, and the handling fee.
+        assertEq(
+            bAmt,
+            proceeds - bonusPaid - totalDue
+                - ((proceeds * LibVaipakam.LIQUIDATION_HANDLING_FEE_BPS) / 10_000),
+            "borrower surplus is the exact proceeds remainder after bonus, debt and handling fee"
         );
 
         vm.clearMockedCalls();
