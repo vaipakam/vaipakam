@@ -41,7 +41,22 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPublicClient, http, parseAbi } from 'viem';
-import { blockedSync, ensureConnected, launch, precondition, SITE, visit } from './driver.mjs';
+import {
+  blockedSync,
+  ensureConnected,
+  launch,
+  precondition,
+  requireSiteUrl,
+  SITE,
+  visit,
+} from './driver.mjs';
+
+// Entry-point guard. This module reads SITE directly at initialisation
+// (`new URL(SITE)`), which runs BEFORE any guarded driver function, so
+// without this an omitted SITE_URL surfaces as a generic URL parse error
+// and the batch runner can misread a configuration mistake as a product
+// FAIL. Fail with the real diagnostic instead.
+requireSiteUrl();
 import { splitBlocked } from './readOnlyFindings.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

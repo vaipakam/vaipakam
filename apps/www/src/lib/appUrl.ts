@@ -52,6 +52,9 @@
  *   6. Repoint the discovery links in `apps/indexer/src/apiIndex.ts` and
  *      `apps/www/scripts/generate-llms.mjs`, which automated consumers
  *      read.
+ *   7. Give the app's Vpfi page a deposit anchor equivalent to the
+ *      legacy `#step-2`, then add it to the `app` route above — the
+ *      marketing CTA promises that landing position.
  *
  * BLOCKERS — do not flip while either is open:
  *   - #1961: `apps/app` has NO ToS gate. The retired app failed closed on
@@ -61,7 +64,7 @@
  *   - #1959: Analytics and the Protocol Console are not ported, which is
  *     why `legacyToolUrl` below exists.
  *
- * Steps 4-6 are the ones that get forgotten; they are listed here because
+ * Steps 4-7 are the ones that get forgotten; they are listed here because
  * this file is where somebody will be standing when they do step 3.
  */
 type AppTarget = 'legacy' | 'app';
@@ -83,8 +86,16 @@ const APP_TARGET: AppTarget =
   import.meta.env.VITE_APP_TARGET === 'app' ? 'app' : 'legacy';
 
 /** Per-surface routes. Same destinations, different paths. */
+// Entries carry any FRAGMENT too, because the anchor is part of the
+// destination and differs per surface. The legacy VPFI page keeps
+// `id="step-2"` on its first actionable deposit card specifically as a
+// deep-link target, and the marketing CTA promises that landing position;
+// dropping the fragment silently lands users at the top of an
+// educational page instead. The new app's Vpfi page has NO equivalent
+// anchor yet — give it one before switching `vpfiVault` to the app
+// target, or that CTA regresses at the cutover.
 const ROUTES: Record<AppTarget, Record<AppDestination, string>> = {
-  legacy: { home: '/', nftVerifier: '/nft-verifier', vpfiVault: '/vpfi-vault' },
+  legacy: { home: '/', nftVerifier: '/nft-verifier', vpfiVault: '/vpfi-vault#step-2' },
   app: { home: '/', nftVerifier: '/nft', vpfiVault: '/vpfi' },
 };
 

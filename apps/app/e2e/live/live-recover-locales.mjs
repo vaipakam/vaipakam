@@ -54,7 +54,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { launch, SITE } from './driver.mjs';
+import { launch, requireSiteUrl, SITE} from './driver.mjs';
+
+// Entry-point guard: this executable reads SITE directly, which can run
+// before any guarded driver function. Without it an omitted SITE_URL
+// surfaces as an opaque URL/fetch error and the batch runner can
+// misclassify a configuration mistake as a product FAIL.
+requireSiteUrl();
 import { splitBlocked } from './readOnlyFindings.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));

@@ -105,11 +105,18 @@ import {
   ensureConnected,
   launch,
   LivePreconditionError,
+  requireSiteUrl,
   SITE,
   precondition,
   requireSigningRole,
   visit,
 } from './driver.mjs';
+
+// Entry-point guard: this executable reads SITE directly, which can run
+// before any guarded driver function. Without it an omitted SITE_URL
+// surfaces as an opaque URL/fetch error and the batch runner can
+// misclassify a configuration mistake as a product FAIL.
+requireSiteUrl();
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 

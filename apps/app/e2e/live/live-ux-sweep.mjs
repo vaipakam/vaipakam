@@ -90,9 +90,16 @@ import {
   addressOf,
   blockedSync,
   LiveSetupError,
+  requireSiteUrl,
   SITE,
   visit,
 } from './driver.mjs';
+
+// Entry-point guard: this executable reads SITE directly, which can run
+// before any guarded driver function. Without it an omitted SITE_URL
+// surfaces as an opaque URL/fetch error and the batch runner can
+// misclassify a configuration mistake as a product FAIL.
+requireSiteUrl();
 // The beacon verdict lives in its own module so it can be unit-tested
 // (`beaconScan.test.mjs`). Its first revision traversed one level too
 // shallow and would have returned "nothing found" forever — a privacy

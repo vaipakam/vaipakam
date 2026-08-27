@@ -333,7 +333,7 @@ If the merge changed behaviour (contracts/src/* or apps/*), also:
 | **Status** | single-select | Backlog → Ready → In progress → In review → Done |
 | **Iteration** | iteration (1-week cycles) | Tactical timing — "what week was this worked on" |
 | **Sprint** | iteration (2-week cycles from Sprint 3+) | Thematic grouping — "which sprint goal does this card serve" |
-| **Module** | single-select | `contracts` / `apps/{defi,keeper,indexer,agent,www}` / `docs` / `ops` / `vaipakam-keeper-bot` |
+| **Module** | single-select | `contracts` / `apps/{app,keeper,indexer,agent,www}` / `docs` / `ops` / `vaipakam-keeper-bot` |
 | **Priority** | single-select | P0 (drop everything) / P1 (current sprint) / P2 (backlog) |
 | **Size** | single-select | XS (<1h) / S (~half-day) / M (~1d) / L (~2-3d) / XL (>3d) |
 | **Estimate** | number | Skip unless explicitly meaningful. Size carries enough info for solo work. |

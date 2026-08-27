@@ -7,11 +7,18 @@ import {
   blocked,
   ensureConnected,
   launch,
+  requireSiteUrl,
   SITE,
   visit,
   pasteAssetLive,
   watchPageRpc,
 } from './driver.mjs';
+
+// Entry-point guard: this executable reads SITE directly, which can run
+// before any guarded driver function. Without it an omitted SITE_URL
+// surfaces as an opaque URL/fetch error and the batch runner can
+// misclassify a configuration mistake as a product FAIL.
+requireSiteUrl();
 
 const KILL_COPY = 'switched off right now';
 // EVERY public route in App.tsx — the claim is "the banner appears

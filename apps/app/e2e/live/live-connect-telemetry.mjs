@@ -65,7 +65,13 @@
 //   SITE_URL=http://localhost:4319 node e2e/live/live-connect-telemetry.mjs
 //
 // Exit: 0 pass, 1 fail, 2 blocked (setup/precondition, nothing observed).
-import { addressOf, blockedSync, launch, SITE, visit } from './driver.mjs';
+import { addressOf, blockedSync, launch, requireSiteUrl, SITE, visit} from './driver.mjs';
+
+// Entry-point guard: this executable reads SITE directly, which can run
+// before any guarded driver function. Without it an omitted SITE_URL
+// surfaces as an opaque URL/fetch error and the batch runner can
+// misclassify a configuration mistake as a product FAIL.
+requireSiteUrl();
 import { splitBlocked } from './readOnlyFindings.mjs';
 
 /** The two endpoints #1836 turned off. Watched for the whole session. */

@@ -19,8 +19,15 @@ import {
   ensureConnected,
   launch,
   precondition,
+  requireSiteUrl,
   SITE,
 } from './driver.mjs';
+
+// Entry-point guard: this driver reaches `fetch(SITE)` in a precondition
+// before it ever calls `launch()`, so the guarded functions would not fire
+// first. Without this an omitted SITE_URL fails as an opaque fetch error
+// and the batch runner can misclassify it as a product FAIL.
+requireSiteUrl();
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIAMOND = readDiamond();

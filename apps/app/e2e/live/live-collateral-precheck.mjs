@@ -29,11 +29,18 @@ import {
   blockedSync,
   launch,
   ensureConnected,
+  requireSiteUrl,
   SITE,
   visit,
   pasteAssetLive,
   watchPageRpc,
 } from './driver.mjs';
+
+// Entry-point guard: this executable reads SITE directly, which can run
+// before any guarded driver function. Without it an omitted SITE_URL
+// surfaces as an opaque URL/fetch error and the batch runner can
+// misclassify a configuration mistake as a product FAIL.
+requireSiteUrl();
 import deployments from '@vaipakam/contracts/deployments.json' with { type: 'json' };
 
 const mocks = deployments['84532']?.testnetMocks;

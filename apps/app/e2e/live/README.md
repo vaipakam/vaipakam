@@ -17,18 +17,24 @@ before/after evidence for the classifier fix.
 
 ```bash
 # from apps/app/e2e/live/
-TESTNET_WALLETS_FILE=~/secrets/vaipakam-dev-wallets.json \
+# SITE_URL is REQUIRED — the drivers refuse to start without it while the
+# #1854 cutover is blocked (see the note below).
+SITE_URL=https://<the-deployed-worker>.workers.dev \
+  TESTNET_WALLETS_FILE=~/secrets/vaipakam-dev-wallets.json \
   node live-dryrun-review.mjs
-
-# target a branch preview instead of production:
-SITE_URL=https://<branch-preview>.workers.dev node live-dryrun-review.mjs
 ```
 
 - `TESTNET_WALLETS_FILE` — JSON of dev TEST wallets (throwaway keys
   holding testnet dust). **Never commit this file.** Shape:
   `{ "lender": { "address": "0x…", "privateKey": "0x…" }, … }` or an
   array of `{ role, address, privateKey }`.
-- `SITE_URL` — defaults to `https://app.vaipakam.com`.
+- `SITE_URL` — **REQUIRED.** There is deliberately no default while the
+  #1854 cutover is blocked: `app.vaipakam.com` is unbound, and
+  `alpha02.vaipakam.com` is served by the frozen `vaipakam-alpha02`
+  Worker rather than the `vaipakam-app` one the deploy scripts publish —
+  so a default would silently test the wrong deployment and could report
+  green on a broken build. Pass the `workers.dev` URL printed by
+  `pnpm run deploy`, or the custom domain once it is bound.
 - `LIVE_PROXY_SETUP` — optional path to an egress-proxy shim module,
   for sandboxes whose gateway resets Chromium TLS (the driver then
   routes page traffic through undici in-process). Honoured by
