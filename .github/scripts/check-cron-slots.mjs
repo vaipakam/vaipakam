@@ -544,19 +544,36 @@ function* visibleLines(md) {
   let openedWith = null; // { kind, len } while inside a fence
   let inComment = false;
   for (const raw of md.split('\n')) {
-    let line = raw;
-    if (inComment) {
-      const close = line.indexOf('-->');
-      if (close === -1) continue;
-      line = line.slice(close + 3);
-      inComment = false;
-    }
-    // Strip complete comments, then detect one left open on this line.
-    line = line.replace(/<!--[\s\S]*?-->/g, '');
-    const open = line.indexOf('<!--');
-    if (open !== -1) {
-      line = line.slice(0, open);
-      inComment = true;
+    // ONE left-to-right pass, deliberately, rather than stripping complete
+    // `<!-- ... -->` pairs with a global replace and then looking for a
+    // leftover opener. CodeQL flags that shape as incomplete multi-character
+    // sanitization, and while nothing here is rendered — this decides which
+    // lines a READER sees, not what gets written to a page — the objection to
+    // replace-then-rescan is sound on its own terms: the second look runs over
+    // text the first one rewrote, so `<!<!-- -->--` produces an opener that
+    // was never in the source. A single scan never re-reads its own output.
+    let line = '';
+    let i = 0;
+    while (i < raw.length) {
+      if (inComment) {
+        const close = raw.indexOf('-->', i);
+        if (close === -1) {
+          i = raw.length;
+        } else {
+          i = close + 3;
+          inComment = false;
+        }
+      } else {
+        const open = raw.indexOf('<!--', i);
+        if (open === -1) {
+          line += raw.slice(i);
+          i = raw.length;
+        } else {
+          line += raw.slice(i, open);
+          i = open + 4;
+          inComment = true;
+        }
+      }
     }
 
     const fence = /^\s*(```+|~~~+)(.*)$/.exec(line);
@@ -1875,6 +1892,16 @@ const STAMP_CASES = [
   ['a day February does not have', '**Verified: 2026-02-30T00:00:00Z.**', 1],
   // Codex #1978 r15: real, well-formed, and impossible as a record of a READ.
   ['a real instant in the future', '**Verified: 2099-08-27T16:21:53Z.**', 1],
+  // Codex #1978 r17: the multiline comment form. The single-line form has been
+  // handled since r11 — this is its sibling, and the one an editor reaches for
+  // when hiding a block.
+  ['hidden in a multiline HTML comment', '<!--\n**Verified: 2026-08-27T16:21:53Z.**\n-->', 1],
+  // A comment that CLOSES leaves the rest of the document visible.
+  [
+    'a closed comment does not hide the stamp after it',
+    '<!-- unrelated -->\n**Verified: 2026-08-27T16:21:53Z.**',
+    0,
+  ],
 ];
 
 /** Source-cell fixtures: `[name, cell, expected readSource value]`. */
