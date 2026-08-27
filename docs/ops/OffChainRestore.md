@@ -801,9 +801,14 @@ then deploy.
 > scheduled, that no longer discriminates, whatever each bucket turns out to
 > contain.
 >
-> While both are armed — **on an ordinary restore.** On a *compromise*
-> restore the rules below do not apply; use the box that follows this one,
-> and read the carve-out under the fallback bullet before doing anything:
+> While both are armed. **The two SELECTION rules — prefer, and fall back —
+> are for an ordinary restore only**; after a compromise use the box that
+> follows this one, and read the carve-out under the fallback bullet first.
+> The last two bullets apply on BOTH paths, and the credentials one applies
+> most sharply on the compromise path — it is the bullet that tells you the
+> next box is reasoning about one attacker-writable bucket when there are
+> two. An earlier revision of this sentence disclaimed "the rules below" as
+> a block, which voided that warning on the only path it was written for.
 >
 > - **Prefer `vaipakam-offchain-data-warm`** — the replacement is the
 >   supported path, and its Worker is the one whose source is in this
@@ -869,12 +874,24 @@ then deploy.
 > So for a compromise, select by **time, not by recency**:
 >
 > 0. **There are TWO write-capable buckets, not one**, while #1977 is open —
->    see the box above. Every step below applies to both: two `writeFiles`
->    keys to rotate, two sets of versions to list, and two places a forgery
->    can sit. The ordinary-restore rule of falling back to the other bucket
->    when verification fails is **suspended here** — that is the box above's
->    carve-out, and it is the one rule from that box that inverts on this
->    path rather than merely doubling.
+>    see the box above. Steps 1, 2 and 4 apply to both: two `writeFiles` keys
+>    to rotate, one compromise window governing both, and two sets of
+>    versions to list — a forgery can sit in either.
+>
+>    Two things here do **not** simply double, and assuming they do is the
+>    trap:
+>
+>    - **Step 5's retention numbers describe the WARM bucket only.** They
+>      were read off `vaipakam-offchain-data-warm`; the old Worker's source
+>      is not in this repository, and nothing here has ever established the
+>      archive bucket's lifecycle rules. Its version-retention reach is
+>      **unknown** — read it off that bucket with `b2_list_buckets` before
+>      relying on a pre-window version having survived there, and do not
+>      carry the ~29-day daily figure across. A bucket nobody configured
+>      from this tree may retain for a day.
+>    - **The ordinary-restore fallback is SUSPENDED, not doubled** — that is
+>      the box above's carve-out, and the one rule here that inverts rather
+>      than widening.
 > 1. **Rotate the B2 keys first** (§1 step 6) so nothing new can land
 >    mid-restore.
 > 2. **Establish the earliest possible compromise time** — first unexplained
