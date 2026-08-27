@@ -91,6 +91,23 @@ hides the feature and sends nothing. That per-environment isolation does
 not exist is a genuine gap, and saying so is more useful than inventing a
 URL.
 
+Review then found the warning itself was too narrow, in the direction
+that matters. Sharing one service across environments does not only put
+alert settings at risk: the same origin carries the support form, and a
+ticket submitted from a preview build writes a durable record and pages
+real operators through the internal alerting channel. The advice to use a
+test wallet is no protection there, because tickets carry no wallet
+identity at all — there is nothing for a test wallet to isolate. The
+warning now names all three surfaces and says plainly that for support
+the only real protection is not exercising the form outside production.
+
+A related instruction was removed rather than corrected. Operators were
+told they could hide the in-app diagnostics drawer with a setting once
+capture looked healthy. That setting is read nowhere in the shipping app
+and the drawer is mounted unconditionally, so the instruction would not
+have worked today and would not work after a consumer is ported either.
+Saying so is more useful than leaving a knob that quietly does nothing.
+
 The published privacy policy turned out to describe this same dormant
 capture as though it were running — telling every visitor their errors,
 redacted wallet and chain are transmitted and kept for ninety days. That

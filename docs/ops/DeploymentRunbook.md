@@ -2053,13 +2053,26 @@ Telegram + Push Protocol. This section is one-time setup and does
    origin — do not go looking for a per-environment agent URL, because
    none exists.
 
-   **Know what that costs, because it is not obvious.** `PUT /thresholds`
-   and the Telegram-link endpoints write the shared `vaipakam-archive`
-   D1, and the agent's allow-list already accepts staging and legacy
-   frontend origins. A staging or preview build therefore writes REAL
-   users' alert settings and Telegram links — not a copy. Treat alert
-   flows as production-affecting from any environment, and prefer test
-   wallets.
+   **Know what that costs, because it is not obvious.** The agent's
+   allow-list already accepts staging and legacy frontend origins, so a
+   non-production build reaches production state through three surfaces,
+   not one:
+
+   - `PUT /thresholds` writes REAL users' alert settings to the shared
+     `vaipakam-archive` D1 — not a copy.
+   - The Telegram-link endpoints bind real chats.
+   - **Support tickets page real operators.** `apps/app/src/data/
+     support.ts` posts to the same origin, and `apps/agent/src/
+     supportTicket.ts` writes the shared `support_tickets` table and
+     notifies the ops Telegram chat through `TG_OPS_BOT_TOKEN` /
+     `TG_OPS_CHAT_ID`. A test ticket typed into a preview build is a
+     durable row and a real page.
+
+   **Using a test wallet does not help with that last one** — tickets
+   carry no wallet identity, so there is nothing for the test wallet to
+   isolate. Treat every one of these as production-affecting from any
+   environment; for support specifically, the only real protection is
+   not exercising the form outside production.
 
    Leaving `VITE_AGENT_ORIGIN` unset is a safe choice rather than a
    broken one: `apps/app/src/data/alerts.ts:28-32` fails closed, hiding
@@ -2238,14 +2251,13 @@ environment.
 The optional `VITE_APP_VERSION` (CI-injected commit hash) gets stamped on
 each captured row for release-correlation.
 
-A second frontend var, `VITE_DIAG_DRAWER_ENABLED` (default
-`true`), gates the user-facing Diagnostics drawer + FAB — again, in a
-consumer that does not currently exist. Set
-to `"false"` once server capture is observed healthy in
-production to hide the drawer entirely — server capture
-keeps running regardless. The user can still grab their
-session journey log from the Data Rights page when the
-drawer is hidden.
+`VITE_DIAG_DRAWER_ENABLED` used to be documented here as a way to hide
+the Diagnostics drawer and FAB once server capture looked healthy.
+**Do not try it — the variable does nothing.** `apps/app` contains no
+reference to it, and `AppShell.tsx` mounts `DiagnosticsDrawer`
+unconditionally, so setting it changes nothing today and would not hide
+the drawer even after a `/diag/record` consumer is ported. Hiding the
+drawer would need the gate to be implemented first.
 
 **GitHub-issue cross-reference workflow** (support team):
 
