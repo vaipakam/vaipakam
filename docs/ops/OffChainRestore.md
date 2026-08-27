@@ -572,7 +572,9 @@ then deploy.
    >
    > Same hazard the archive Worker gets its own warning for below, and the
    > same remedy: do not let a cron run before the data it reads is real.
-   > For each of the three, set the trigger list empty for this deploy —
+   > For the **indexer and the agent** — not the keeper, which already
+   > commits an empty list under #1896 and must stay that way — set the
+   > trigger list empty for this deploy —
    >
    > ```jsonc
    > "triggers": { "crons": [] }
@@ -622,9 +624,18 @@ then deploy.
    > restores the indexer's schedule, after the cursor reset.
    >
    > These are restored later, deliberately split in two: the indexer's at
-   > the end of §6 (once its cursor is reset), and the keeper's and agent's
-   > in §7a after the smoke test. Do not simply revert the config now — the
-   > point is that the schedules stay off until each one's data is verified.
+   > the end of §6 (once its cursor is reset), and the **agent's** in §7a
+   > after the smoke test. Do not simply revert the config now — the point
+   > is that the schedules stay off until each one's data is verified.
+   >
+   > **The keeper is NOT in that restore, and this is the sentence most
+   > likely to be skimmed.** Its schedule is not "off for the restore" and
+   > waiting to come back — it is off permanently until #1896's CPU work
+   > lands, because the Worker was being terminated for exceeding CPU on
+   > nearly every invocation. Restoring it here would re-arm an
+   > every-minute pass on the one Worker holding a transaction-signing
+   > key. Route it through §7a branch A, which covers this deliberately;
+   > do not treat it like the agent.
 
    > **DO NOT deploy `ops/offchain-data-warm` yet.** Deploy it LAST,
    > after §2 has selected the archive and the D1/R2 data is actually
