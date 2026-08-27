@@ -55,7 +55,11 @@
  *
  * Usage (operator machine):
  *   node apps/www/e2e/live/live-wallet-telemetry.mjs \
- *     https://app.vaipakam.com/
+ *     <deployed-app-origin>/
+ *
+ * Pass the app deployment you want checked. `app.vaipakam.com` is the
+ * intended host but is NOT bound yet (#1854), so today that means the
+ * workers.dev URL `pnpm run deploy` prints for `vaipakam-app`.
  *
  * From the agent container, add the two launch overrides and the
  * host-side setup described in this directory's README:

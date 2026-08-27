@@ -63,5 +63,5 @@ No secrets — there's nothing here that requires server-side credentials. `apps
 ## Related
 
 - `apps/app` — the connected app at `app.vaipakam.com`. Shares a marketing-content base; the connected app overlays wallet + on-chain reads on top.
-- `packages/ui` — primitives shared between `apps/app` + `apps/www`.
+- `packages/ui` — React primitives, ORPHANED since #1854: nothing imports them (this app keeps only an unused dependency entry), and nothing typechecks the package either. See its README and #1963.
 - `packages/lib` — `crossDomainPref` (parent-domain cookie helper for preference sync across the two surfaces). LANGUAGE-only in practice today: the connected app reads the language cookie but not the theme one (see the note in `src/context/ThemeContext.tsx`).

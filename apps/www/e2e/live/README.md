@@ -53,7 +53,10 @@ positional arguments instead, because it checks several apps in one run and
 a single environment variable cannot express that:
 
 ```bash
-node apps/www/e2e/live/live-wallet-telemetry.mjs https://app.vaipakam.com/
+# Pass the app deployment to check. `app.vaipakam.com` is the intended
+# host but is not bound yet (#1854) — use the workers.dev URL the app's
+# `pnpm run deploy` prints until it is.
+node apps/www/e2e/live/live-wallet-telemetry.mjs <deployed-app-origin>/
 ```
 
 It exits with a usage message if given no origins, rather than silently

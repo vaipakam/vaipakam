@@ -11,7 +11,12 @@
 #                   superseded `apps/alpha` and `apps/alpha01` prototypes.
 #                   apps/www links out to this domain — a URL and nothing
 #                   more; there is no build or import coupling between the
-#                   two, which is what made the rehome a one-line change.
+#                   two. That is NOT the same as a one-line rehome, which an
+#                   earlier version of this note claimed: the two deployments
+#                   answer on different NFT and VPFI routes, so the link
+#                   helper selects host AND route table together and five
+#                   marketing call sites pass named destinations rather than
+#                   paths. Preserve that coupling (#1854).
 #   - apps/www     marketing + docs site → www.vaipakam.com
 #                   (canonical) + vaipakam.com (apex 301 → www).
 #                   Folder renamed from `apps/labs` in the labs →
