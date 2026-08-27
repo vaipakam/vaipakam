@@ -71,11 +71,32 @@ configuration-empty build reach a production hostname at all. The
 scripted deploy paths were routing around the same guard, and no longer
 do.
 
-So finishing the cutover is one deploy and one line: publish the Worker
-with operator env present, bind the hostname, verify, and flip the link
-helper's default. Until then the repository never advertises a hostname
+Finishing the cutover is not a one-line flip, and it would be a
+disservice to describe it as one. Two things must be built first. The
+successor has no Terms-of-Service gate: the retired app refused every
+connected route until the wallet had accepted the current version, the
+contracts delegate that enforcement to the client rather than checking
+it per action, and nothing in the new app does it — so switching users
+across while a Terms version is in force would leave that requirement
+quietly unenforced for everybody. And two public tools, Analytics and
+the Protocol Console, were never ported, which is why the marketing
+site still points those particular links at the old surface and why
+that surface cannot yet be retired or redirected wholesale.
+
+Only then does the mechanical part apply, and it is more than the
+hostname: the app's own deploy, the binding, the link helper's target,
+the recovery links hard-coded in ten translated guides, the agent's
+first allowed origin — which is where its Frame and notification links
+are built from — and the discovery links that automated consumers read
+from the indexer's catalogue and the generated `llms.txt`. Those move
+together or they contradict each other, which happened twice while this
+change was in review. The full sequence lives beside the switch that
+performs it, so whoever flips it is reading the list at the moment they
+need it.
+
+Until all of that lands, the repository never advertises a hostname
 that nothing answers — which matters here because this change also
-repoints every live end-to-end driver at that host.
+repoints every live end-to-end driver.
 
 The deployment runbook gains the record that made this awkward to
 begin with. Which hostname served which Worker existed only in the

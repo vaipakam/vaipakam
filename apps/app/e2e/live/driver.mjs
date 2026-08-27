@@ -465,7 +465,12 @@ export const CHAINS = {
   },
 };
 
-export const SITE = process.env.SITE_URL ?? 'https://app.vaipakam.com';
+// Defaults to `alpha02.vaipakam.com`, NOT `app.vaipakam.com`: the latter
+// is not bound yet (#1854), and a default nothing answers silently costs
+// the whole live suite its coverage on the normal no-override run. That
+// host serves this same app today. Move it with the rest of the cutover —
+// see the checklist at APP_TARGET in apps/www/src/lib/appUrl.ts.
+export const SITE = process.env.SITE_URL ?? 'https://alpha02.vaipakam.com';
 
 /** A real wallet rejects operations for an account it doesn't hold —
  *  mirror that so app regressions can't falsely pass a live review. */

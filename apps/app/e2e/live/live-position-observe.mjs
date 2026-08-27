@@ -129,7 +129,7 @@ function loadDiamondAbi() {
   return out;
 }
 
-const SITE = process.env.SITE_URL ?? 'https://app.vaipakam.com';
+const SITE = process.env.SITE_URL ?? 'https://alpha02.vaipakam.com';
 const CHAIN_ID = Number(process.env.OBSERVE_CHAIN_ID ?? 84532);
 const RPC = process.env.OBSERVE_RPC ?? 'https://sepolia.base.org';
 // A limit of 0 (or a typo) would visit no detail route at all: the

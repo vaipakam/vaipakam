@@ -102,6 +102,13 @@ const GATED = ['docs/ops/'];
 const REMOVED_DIRS = [
   ['frontend/', 'the dApp moved to `apps/app/`, and its contract bundle to `packages/contracts/`, in the Stage 3 refactor'],
   ['ops/hf-watcher/', 'split into `apps/{keeper,indexer,agent}` (Stage 3)'],
+  // #1854 — the connected-app cutover. `apps/alpha02` was RENAMED to
+  // `apps/app`; the other three were deleted outright and have no
+  // successor path, so a citation to them is only ever historical.
+  ['apps/alpha02/', 'renamed to `apps/app/` at the #1854 cutover'],
+  ['apps/defi/', 'retired in #1854 — the connected app is `apps/app/`; note Analytics and the Protocol Console were NOT ported (#1959), so cite git history for those'],
+  ['apps/alpha01/', 'prototype deleted in #1854 — cite git history'],
+  ['apps/alpha/', 'prototype deleted in #1854 — cite git history'],
 ];
 
 const TRACKED = new Set(trackedFiles());

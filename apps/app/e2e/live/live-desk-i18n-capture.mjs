@@ -13,7 +13,7 @@
  *   LIVE_PROXY_SETUP=./my-egress-shim.mjs node live-desk-i18n-capture.mjs
  *
  * Env:
- *   SITE_URL            — default https://app.vaipakam.com
+ *   SITE_URL            — default https://alpha02.vaipakam.com
  *   DESK_I18N_LOCALES   — comma list; default en,zh,ta,de,fr,es,ar,ja,ko,hi
  *   LIVE_PROXY_SETUP    — optional egress-shim module (same knob driver.mjs
  *                         uses): imported before any page traffic so its
@@ -76,7 +76,7 @@ if (proxyShimError) {
   );
 }
 
-const SITE = process.env.SITE_URL || 'https://app.vaipakam.com';
+const SITE = process.env.SITE_URL || 'https://alpha02.vaipakam.com';
 const OUT = new URL('./shots/desk-i18n/', import.meta.url).pathname;
 try {
   // The screenshots and report ARE this drive's output — nowhere to write

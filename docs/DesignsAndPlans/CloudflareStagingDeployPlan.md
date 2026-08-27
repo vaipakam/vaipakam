@@ -299,7 +299,13 @@ NO secrets — the frontend bundle is static.
 - **Vars (non-secret):**
   ```
   TG_BOT_USERNAME=<staging bot @-handle>
-  FRONTEND_ORIGIN=https://app.vaipakam.com,https://labs.vaipakam.com
+  # Entry ZERO is the Frame / notification link host (frames.ts and
+  # periodicPreNotify.ts read split(',')[0]), so it must be a host that
+  # SERVES those paths. It is `defi.` until `app.vaipakam.com` is bound
+  # (#1854). Keep this in lockstep with apps/agent/wrangler.jsonc, which
+  # is authoritative — and keep every still-live origin listed, or their
+  # sites' agent calls fail CORS.
+  FRONTEND_ORIGIN=https://defi.vaipakam.com,https://app.vaipakam.com,https://labs.vaipakam.com,https://www.vaipakam.com,https://vaipakam.com,https://alpha02.vaipakam.com
   DIAG_SAMPLE_RATE=1.0
   DIAG_RETENTION_DAYS=90
   ```

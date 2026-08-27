@@ -885,7 +885,7 @@ is `wrangler tail`, so verify there rather than assuming success.
    built — a shell comment does nothing. `apps/app` reads its build env
    from `apps/app/.env.local` (gitignored, operator-held); the deploy runs
    locally, so Vite loads that file itself. There is no `.env.production`:
-   the retired `apps/defi` needed one because Cloudflare Workers Builds
+   the retired connected app needed one because Cloudflare Workers Builds
    pulled from git and could not see a gitignored file, and `apps/app` is
    built and pushed by the operator instead. Set the key, then deploy:
 

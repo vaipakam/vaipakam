@@ -552,7 +552,7 @@ re-opens.
    bodies are byte-identical (modulo HTML wrapping in the React file).
 2. Compute the canonical content hash. **No derivation utility exists
    in the repo, and no frontend derives it** — so whatever bytes32
-   governance commits IS the hash of record. (The retired `apps/defi`
+   governance commits IS the hash of record. (The retired connected app
    carried a `useTosAcceptance` hook that read the on-chain
    `currentTosHash` and echoed it back in `acceptTerms`; it was deleted
    with that app in #1854, and `apps/app` reads no ToS hash at all

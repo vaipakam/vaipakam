@@ -824,8 +824,8 @@ four code edits**:
    for it, so `diamondAddress` / `deployBlock` / facet addresses flow
    in from the bundle on the next build and this file never holds one.
 
-   > This step changed shape in #1854. The retired `apps/defi` kept a
-   > per-chain `ChainConfig` record in `src/contracts/config.ts` that
+   > This step changed shape in #1854. The retired connected app kept a
+   > per-chain `ChainConfig` record (see git history before that PR) that
    > spelled out every `VITE_<PREFIX>_*` key it consumed; miss it and
    > the env vars were dead text. `apps/app` derives all of that from
    > the deployments bundle, so only the display metadata and the RPC

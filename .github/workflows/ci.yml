@@ -922,13 +922,18 @@ jobs:
       - name: Typecheck — apps/app (tsc -b --noEmit + lint + i18n guards)
         run: pnpm --filter @vaipakam/app typecheck
 
-      # `packages/ui` is not deployed on its own, but its components are
-      # compiled INTO the apps that import it, and each app's
-      # `eslint .` runs from that app's directory without following
-      # imports across the workspace boundary. Without this step a
-      # conditional hook in a shared component keeps every app green
-      # and still breaks the page (#1521).
-      - name: Lint — packages/ui (rules-of-hooks)
+      # `packages/ui` is not deployed on its own. It USED to be compiled
+      # into the apps that imported it — that indirect coverage is why
+      # this step only ever ran ESLint — but #1854 deleted `apps/defi`,
+      # its last real consumer, and no shipping app imports it now.
+      #
+      # So read this step for exactly what it is: the rules-of-hooks lint
+      # that catches a conditional hook in a shared component (#1521).
+      # It runs NO TypeScript — the package has no tsconfig and no
+      # `typescript` dep — and with no consumer left, nothing else
+      # compiles `packages/ui/src` either, so ordinary type errors there
+      # are currently ungated. Tracked in #1963.
+      - name: Lint — packages/ui (rules-of-hooks, NOT a typecheck)
         run: pnpm --filter @vaipakam/ui typecheck
 
       # The i18n baselines may only SHRINK, and that rule lived only in
