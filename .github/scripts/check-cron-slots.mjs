@@ -51,7 +51,7 @@
  * "the inventory is current" — it means "nobody re-copied the inventory".
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, openSync, fstatSync, readSync, closeSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -68,12 +68,41 @@ const AUTHORITY = 'docs/ops/CloudflareCronSlots.md';
  */
 const SCOPE = ['apps', 'ops', 'packages', 'docs/ops', 'docs/DesignsAndPlans'];
 
-// Codex #1978 r10: `.mts` / `.cts` were missing, and the tree already has one
-// (`apps/indexer/scripts/lib/activity-refs-surface.d.mts`), so a helper written
-// as an ESM TypeScript module could carry an occupancy claim past a BLOCKING
-// gate. An extension allowlist is a closed world that the language keeps
-// reopening; adding a file type must not silently narrow this scan.
-const TEXT_EXT = /\.(mjs|cjs|js|mts|cts|ts|tsx|jsonc|json|md|sh|toml|yml|yaml)$/;
+/**
+ * Whether a tracked file is text this gate should read.
+ *
+ * This was an extension ALLOWLIST until Codex #1978 r11, and it leaked twice in
+ * two rounds: `.mts`/`.cts` (r10, with one such file already tracked), then
+ * `.html` (r11, with `apps/app/index.html` and `apps/www/index.html` tracked
+ * and both carrying comments). Patching it a third time would have been the
+ * third patch on one class — an allowlist is a closed world that the tree keeps
+ * reopening, and each reopening is silent, because a file type nobody added to
+ * the list is simply not scanned.
+ *
+ * Replaced with the open-world test, which is decidable and needs no
+ * maintenance: git tracks it, it holds no NUL byte in its first 8 KiB, and it
+ * is not enormous. Measured on this tree, the allowlist read 961 of 1,053
+ * tracked files in scope while only NINE are actually binary — so the closed
+ * world was excluding 83 text files, any of which could have carried a
+ * restatement past a blocking gate.
+ */
+const MAX_SCAN_BYTES = 2 * 1024 * 1024;
+
+function isScannableText(path) {
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const { size } = fstatSync(fd);
+    if (size > MAX_SCAN_BYTES) return false;
+    const head = Buffer.alloc(Math.min(size, 8192));
+    if (head.length) readSync(fd, head, 0, head.length, 0);
+    return !head.includes(0);
+  } catch {
+    return false; // unreadable is not this gate's business
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
 
 /**
  * Context tokens. An occupancy shape only means cron occupancy if the
@@ -342,7 +371,9 @@ function trackedFiles() {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
   });
-  return out.split('\0').filter((p) => p && TEXT_EXT.test(p) && p !== AUTHORITY);
+  return out
+    .split('\0')
+    .filter((p) => p && p !== AUTHORITY && isScannableText(p));
 }
 
 /**
@@ -369,7 +400,15 @@ export function checkStamp(md) {
   // The r4 fix counted markers rather than well-formed stamps for exactly this
   // reason and then anchored the count at column zero, so a second stamp could
   // still hide by being indented.
-  const markers = [...md.matchAll(/^[ \t>*+-]*\*\*Verified:\s*([^*]*?)\.?\*\*/gm)];
+  // Counted ANYWHERE, not behind an enumerated prefix class. Third revision of
+  // one count and the first that is not a closed world: r4 counted well-formed
+  // stamps (a malformed one hid by being malformed), r10 counted markers
+  // anchored at column zero (one hid by being indented), r11 found an
+  // ordered-list prefix the class `[ \t>*+-]` does not include. Each fix
+  // enumerated the prefixes somebody might use, and Markdown affords more than
+  // an enumeration can hold. The LABEL is the marker; where it sits on the line
+  // is not this gate's business, and a reader sees it rendered either way.
+  const markers = [...md.matchAll(/\*\*Verified:\s*([^*]*?)\.?\*\*/g)];
   if (markers.length === 0) {
     return [
       'the "**Verified: <ISO-8601>.**" stamp is missing; it is the only ' +
@@ -451,7 +490,7 @@ function runOffline() {
     ...checkStamp(authorityMd),
     ...inv.problems,
     ...checkSources(inv.sources),
-    ...checkSummary(authorityMd, countTriggers(inv.live), inv.reserved.length),
+    ...checkSummary(authorityMd, countTriggers(inv.live), inv.reserved),
   ];
   if (summaryProblems.length) {
     console.error(`Cron-slot gate: ${AUTHORITY} disagrees with itself.\n`);
@@ -546,39 +585,62 @@ const CAP = 5;
  * silently matches nothing is the inventory parser's failure mode with the
  * loudness removed — it would report agreement it never tested.
  */
-export function checkSummary(md, liveTriggers, reservedRows) {
+export function checkSummary(md, liveTriggers, reservedNames) {
   // Exactly one of each line. Not the first match — this whole change exists
   // because a second, unchecked copy of a count went unnoticed, and `exec`
   // reading only the first would reproduce that defect inside the check meant
   // to prevent it: a duplicated summary section could contradict itself and
   // still pass.
-  const read = (label, re) => {
-    const all = [...md.matchAll(new RegExp(re.source, re.flags + 'g'))];
-    if (all.length === 0) {
+  // Codex #1978 r11: COUNT the label, then VALIDATE the canonical line — the
+  // two-step `checkStamp` already used, for the same reason. Collecting only
+  // CANONICAL matches meant a malformed second copy ("- **Live right now:**
+  // three of five") was invisible to the duplicate check precisely because it
+  // was malformed, leaving two contradictory summaries in a document that
+  // claims to hold exactly one. The marker is the label; canonical form is a
+  // separate question, asked of the single survivor.
+  const read = (label, markerRe, canonicalRe) => {
+    const markers = [...md.matchAll(new RegExp(markerRe.source, markerRe.flags + 'g'))];
+    if (markers.length === 0) {
       return {
-        error: `the "${label}" line is missing or reworded; the script anchors on its exact wording`,
+        error: `the "${label}" line is missing; the script anchors on its exact wording`,
       };
     }
-    if (all.length > 1) {
+    if (markers.length > 1) {
       return {
-        error: `the "${label}" line appears ${all.length} times; there must be exactly one, or the two copies can disagree`,
+        error: `the "${label}" line appears ${markers.length} times; there must be exactly one, or the two copies can disagree`,
       };
     }
-    return { value: Number(all[0][1]) };
+    const m = canonicalRe.exec(md);
+    if (!m) {
+      return {
+        error: `the "${label}" line is present but not in its canonical form; the script anchors on its exact wording`,
+      };
+    }
+    return { value: Number(m[1]) };
   };
 
-  const live = read('Live right now', /^-\s+\*\*Live right now:\*\*\s+(\d+)\s+of\s+5\s*$/m);
+  const live = read(
+    'Live right now',
+    /\*\*Live right now:\*\*/,
+    /^-\s+\*\*Live right now:\*\*\s+(\d+)\s+of\s+5\s*$/m,
+  );
   // Codex #1978 r7: the label is matched EXACTLY. `Committed[^:]*` accepted
   // `**Committed, live only:**` while the value it validates is derived as
   // live PLUS reserved — the authority would have defined the number one way
   // and computed it another, with the gate reporting agreement. The file says
   // its anchors are load-bearing and that rewording one must fail; a wildcard
   // in the middle of the anchor is that promise not being kept.
+  const committedLabel = (/\*\*Committed[^*]*:\*\*/.exec(md) ?? [''])[0];
   const committed = read(
     'Committed',
+    /\*\*Committed[^*]*:\*\*/,
     /^-\s+\*\*Committed, live plus the keeper's reserve:\*\*\s+(\d+)\s+of\s+5\s*$/m,
   );
-  const spare = read('Genuinely spare', /^-\s+\*\*Genuinely spare:\*\*\s+(\d+)\s*$/m);
+  const spare = read(
+    'Genuinely spare',
+    /\*\*Genuinely spare:\*\*/,
+    /^-\s+\*\*Genuinely spare:\*\*\s+(\d+)\s*$/m,
+  );
 
   const problems = [];
   for (const r of [live, committed, spare]) if (r.error) problems.push(r.error);
@@ -595,12 +657,34 @@ export function checkSummary(md, liveTriggers, reservedRows) {
   // row still said reserved. Committed is now DERIVED — live triggers plus the
   // rows the table itself marks reserved — so the summary is constrained by the
   // inventory it claims to summarise rather than merely being no smaller.
-  const derived = liveTriggers + reservedRows;
+  const derived = liveTriggers + reservedNames.length;
   if (committed.value !== derived) {
     problems.push(
       `summary says ${committed.value} committed, but the inventory has ${liveTriggers} live ` +
-        `+ ${reservedRows} reserved = ${derived}`,
+        `+ ${reservedNames.length} reserved = ${derived}`,
     );
+  }
+
+  // Codex #1978 r11: WHICH Worker holds the reservation, not just how many.
+  // Counting alone let the keeper row become `undeployed` and the mesh-watcher
+  // row become `reserved` while the summary still said "the keeper's reserve" —
+  // one reserved row either way, so every check passed. Neither unscheduled row
+  // has an account witness (the r7 asymmetry again), so this table is the only
+  // place that identity exists, and the keeper's re-enable procedure would go
+  // on treating its trigger as protected while mesh-watcher held it.
+  //
+  // Each reserved Worker must be NAMED in the committed label: cheap to
+  // satisfy, impossible to satisfy by accident, and moving a reservation now
+  // forces the prose to move with it.
+  for (const name of reservedNames) {
+    const distinctive = name.replace(/^vaipakam-/, '');
+    if (!committedLabel.toLowerCase().includes(distinctive.toLowerCase())) {
+      problems.push(
+        `the inventory reserves a trigger for \`${name}\` but the "Committed" line ` +
+          `does not name it — the summary and the table disagree about WHO holds ` +
+          `the reservation`,
+      );
+    }
   }
   if (spare.value !== CAP - committed.value) {
     problems.push(
@@ -892,7 +976,7 @@ async function runLive() {
   // Same self-consistency check the offline half runs. Without it, `--live`
   // could compare the account to the inventory rows, find them equal, and
   // print "matches the account" over a summary saying something else.
-  for (const p of checkSummary(authorityMd, countTriggers(committed), inv.reserved.length)) {
+  for (const p of checkSummary(authorityMd, countTriggers(committed), inv.reserved)) {
     problems.push(`SUMMARY       ${p}`);
   }
   // Compared as multisets, not as joined strings: two schedules in one cell are
@@ -1397,7 +1481,11 @@ function runSelftest() {
     }
   }
   for (const [name, md, liveTriggers, reservedRows, expected] of SUMMARY_CASES) {
-    const got = checkSummary(md, liveTriggers, reservedRows).length;
+    // Fixtures carry a COUNT; the checker takes names. Synthesise keeper-shaped
+    // names so the identity check is satisfied by the canonical label and the
+    // fixtures keep testing what they were written to test.
+    const names = Array.from({ length: reservedRows }, () => 'vaipakam-keeper');
+    const got = checkSummary(md, liveTriggers, names).length;
     if (got !== expected) {
       console.error(`selftest: summary case "${name}" reported ${got} problem(s), expected ${expected}`);
       bad++;
