@@ -206,6 +206,22 @@ const OCCUPANCY = [
     String.raw`\bas${WRAP}(?:things|it)${WRAP}stands?${WRAP}(?:this|the)${WRAP}step${WRAP}(?:fails?|succeeds?|passes)\b`,
     'i',
   ),
+  // Codex #1978 r5: the most natural way to say it was the one shape missing.
+  // "The account currently has four live cron triggers" carries the count and
+  // the context and matched nothing — every pattern above grew from a phrasing
+  // found in the wild, and none of the ten copies happened to be written this
+  // way. A gate built only from the phrasings that already existed cannot see
+  // the one the next author reaches for.
+  //
+  // The QUALIFIER is what keeps this off the cap. "caps an account at 5 cron
+  // triggers" is the sentence the remediation needs; "5 LIVE cron triggers" is
+  // account state. A bare `N (cron )?triggers` would have banned the cap and
+  // fought its own fix — the trap the admission criterion names at the top.
+  new RegExp(
+    String.raw`\b${N}${WRAP}(?:live|active|armed|scheduled|in-use)${WRAP}(?:cron${WRAP})?triggers?\b`,
+    'i',
+  ),
+  new RegExp(String.raw`\b(?:has|have|holds?)${WRAP}${N}${WRAP}(?:cron${WRAP})?triggers?\b`, 'i'),
 ];
 
 /**
@@ -535,9 +551,20 @@ export function parseInventory(md) {
   for (const line of lines) {
     if (!/^\s*\|/.test(line)) continue;
     const cells = line.trim().replace(/^\||\|$/g, '').split('|');
-    if (cells.length < 4) continue;
     // The header and the alignment separator are not data.
     if (/^\s*Worker\s*$/i.test(cells[0]) || /^[\s:-]+$/.test(cells[0])) continue;
+    // Codex #1978 r5: a SHORT row used to `continue` before the malformed-row
+    // finding below, so dropping the Status column dropped the reservation with
+    // it, in silence — and `--live` cannot recover a reservation, because a
+    // reserved Worker has no account schedule to compare against. The early-out
+    // was performing the exact silent skip the finding below exists to stop,
+    // one branch earlier and out of its reach.
+    if (cells.length < 4) {
+      problems.push(
+        `an inventory row has ${cells.length} column(s), not 4: ${line.trim().slice(0, 80)}`,
+      );
+      continue;
+    }
 
     const row = /^\|\s*`([a-z0-9-]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
     // Codex #1978 r4: a row that LOOKS like data and does not parse was silently
@@ -834,6 +861,9 @@ const MUST_FIRE = [
   ['spare slot', 'One cron slot is genuinely SPARE today:'],
   ['no spare — a count of zero', 'There is no spare cron trigger.'],
   ['slash form', 'the account sits at 4/5 cron triggers'],
+  // Codex #1978 r5: the shape nobody had written yet, and the most natural one.
+  ['direct live count', 'The account currently has four live cron triggers.'],
+  ['has N triggers', 'This account has 5 cron triggers today.'],
   // Codex #1978 r3: the synonym the patterns did not know, verbatim from
   // `packages/lib/src/cronCadence.ts` before the reword.
   [
@@ -1024,6 +1054,15 @@ const INVENTORY_CASES = [
     'a repeated Worker is a finding, not an overwrite',
     '| `vaipakam-z` | `0 1 * * *` | `ops/z` | live |\n| `vaipakam-z` | `0 2 * * *` | `ops/z` | live |',
     { 'vaipakam-z': ['0 1 * * *'] },
+    [],
+    1,
+  ],
+  // Codex #1978 r5: a row that loses a column dropped its reservation in
+  // silence, one branch before the malformed-row finding could see it.
+  [
+    'a row missing a column is a finding',
+    '| `vaipakam-keeper` | *(none)* | `apps/keeper` |',
+    {},
     [],
     1,
   ],

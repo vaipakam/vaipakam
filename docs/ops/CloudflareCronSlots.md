@@ -124,12 +124,16 @@ during exactly the cleanup the rest of this file anticipates.
   `committed` does not move. Its procedure still begins by confirming a
   trigger is free, because a reservation only helps if nobody has spent it.
 - **Both fit when `Genuinely spare` is at least 1**, not 2 — the keeper's
-  half is already committed. Today that line reads 0, so exactly one of the
-  two can proceed and whichever goes first takes it. Retiring
-  `vaipakam-offchain-data-archive` is what moves it to 1. That is the
-  operator action tracked in #1977, and it is not something to do casually:
-  until the replacement is confirmed to be landing and verifying in the new
-  bucket, the un-retired predecessor is what would mask a defect in it.
+  half is already committed. Below that, exactly one of the two can proceed
+  and whichever goes first takes it. **Read the current value off the
+  summary**; an earlier revision of this bullet stated it here, along with
+  what retirement would change it to, and both would have been wrong the
+  moment the retirement landed.
+- Retiring `vaipakam-offchain-data-archive` is what frees a trigger. That is
+  the operator action tracked in #1977, and it is not something to do
+  casually: until the replacement is confirmed to be landing and verifying
+  in the new bucket, the un-retired predecessor is what would mask a defect
+  in it.
 - **Splitting an existing Worker's one cron into two costs a trigger** and
   has the same effect as a new deploy. This is why
   `ops/offchain-data-warm` folds its Monday healthcheck into the nightly
