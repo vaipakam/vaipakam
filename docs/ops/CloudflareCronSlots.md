@@ -72,8 +72,16 @@ Codex found on #1978: retiring the archive Worker and deleting its row would
 have left this saying four were live while the table showed three, and
 `--live` would still have reported a match.
 
-**There is no spare slot.** Any comment or design note claiming one is
-either older than #1977 or has copied a count from something that is.
+**The "Genuinely spare" line above is the only statement of how much room
+is left.** An earlier revision restated it here in prose, and Codex found
+the consequence on #1978: retiring the archive Worker and correctly updating
+both the table and the summary would have left this paragraph asserting the
+opposite, with nothing to catch it — the summary anchors are the only lines
+either half of the script reads, and this file is excluded from the
+occupancy scan. A restated count is no safer for being inside the authority.
+
+Any comment or design note claiming room that this file does not is either
+older than #1977 or has copied a count from something that is.
 
 The fourth live trigger is the one that surprises people:
 `vaipakam-offchain-data-archive` is the **pre-rename** predecessor of

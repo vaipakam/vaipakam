@@ -295,9 +295,9 @@ Worker fits.
 Two design points do survive independently of the count, and they are
 what this section is actually for:
 
-- **`apps/keeper`'s empty `"crons": []` is not spare capacity.** Its
-  re-enable procedure begins by confirming a free trigger, so spending
-  that one leaves the keeper stopped at the account cap.
+- **`apps/keeper`'s empty `"crons": []` is a reservation.** Its re-enable
+  procedure begins by confirming a free trigger, so spending that one
+  leaves the keeper stopped at the account cap.
 - **`ops/mesh-watcher` needs a trigger on its first deploy** (§4.5),
   which is a cost to plan for rather than a slot already set aside.
 

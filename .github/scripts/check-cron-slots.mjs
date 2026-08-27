@@ -152,18 +152,25 @@ const OCCUPANCY = [
   // is arranged, and the arrangements varied across all ten copies.
   // Anchoring it to a preceding number word missed the commonest one.
   //
-  // The lookbehind exempts DENIALS — "not spare", "never spare", "reserved
-  // rather than spare". Those are the reservation POLICY, not a count: they
-  // say a particular trigger is held, which is a tree-side decision that goes
-  // stale only when the policy changes. The defect class is the opposite
-  // claim, that capacity EXISTS, which goes stale when the account changes
-  // and nobody is looking. Note "no spare slot" is NOT exempted and should
-  // not be — a quantifier over the budget is a count of zero.
+  // There was a lookbehind here exempting DENIALS — "not spare", "never
+  // spare", "reserved rather than spare" — on the theory that those state the
+  // reservation POLICY rather than a count. Codex #1978 r2 falsified it, and
+  // the counterexample is decisive: "Cron capacity is not spare right now" and
+  // "Cron triggers are never spare" are negated in exactly the same shape and
+  // are account-wide zero-capacity claims, identical in meaning to the
+  // must-fire fixture "There is no spare cron trigger." A lookbehind can prove
+  // the preceding word is `not`; it cannot tell what the sentence's SUBJECT is,
+  // and that is the whole distinction. So the gate silently permitted a
+  // restated count in two phrasings while firing on a third.
   //
-  // The lookbehind is wrap-tolerant for the same reason the rest are: a denial
-  // split as `rather than\n// spare` must stay exempt, or the gate fires on
-  // the reservation policy purely because of where the line broke.
-  new RegExp(String.raw`(?<!\b(?:not|never|than)(?:\s|\*|\/|#|>){1,8})\bspare\b`, 'i'),
+  // Dropped rather than narrowed. "Spare" is a claim about available capacity
+  // whichever way the sentence runs, and the policy it was protecting says
+  // itself better without the word: "the keeper's trigger is reserved" needs no
+  // "rather than spare". Sweeping the tree confirmed the exemption was
+  // protecting exactly one sentence, which is now reworded — every other
+  // "spare" in scope is ordinary English ("room to spare", "spare bits") and
+  // nowhere near cron vocabulary, so CONTEXT keeps the gate off them.
+  /\bspare\b/i,
 ];
 
 /**
@@ -238,7 +245,11 @@ function runOffline() {
   // its inventory disagree, the file is not an authority yet, and reporting
   // "occupancy stated only here" would be reporting on a contradiction.
   const authorityMd = readFileSync(AUTHORITY, 'utf8');
-  const summaryProblems = checkSummary(authorityMd, parseInventory(authorityMd).size);
+  const inv = parseInventory(authorityMd);
+  const summaryProblems = [
+    ...inv.problems,
+    ...checkSummary(authorityMd, countTriggers(inv.live), inv.reserved.length),
+  ];
   if (summaryProblems.length) {
     console.error(`Cron-slot gate: ${AUTHORITY} disagrees with itself.\n`);
     for (const p of summaryProblems) console.error(`  ${p}`);
@@ -332,7 +343,7 @@ const CAP = 5;
  * silently matches nothing is the inventory parser's failure mode with the
  * loudness removed — it would report agreement it never tested.
  */
-export function checkSummary(md, liveRows) {
+export function checkSummary(md, liveTriggers, reservedRows) {
   // Exactly one of each line. Not the first match — this whole change exists
   // because a second, unchecked copy of a count went unnoticed, and `exec`
   // reading only the first would reproduce that defect inside the check meant
@@ -364,14 +375,22 @@ export function checkSummary(md, liveRows) {
   for (const r of [live, committed, spare]) if (r.error) problems.push(r.error);
   if (problems.length) return problems;
 
-  if (live.value !== liveRows) {
+  if (live.value !== liveTriggers) {
     problems.push(
-      `summary says ${live.value} live, but the inventory table lists ${liveRows} row(s) with a schedule`,
+      `summary says ${live.value} live, but the inventory table accounts for ${liveTriggers} trigger(s)`,
     );
   }
-  if (committed.value < live.value) {
+  // Codex #1978 r2: `committed >= live` was not a check, it was a range. It
+  // passed whether the keeper's reservation row was present or absent, and
+  // passed either "5 committed / 0 spare" or "4 committed / 1 spare" while the
+  // row still said reserved. Committed is now DERIVED — live triggers plus the
+  // rows the table itself marks reserved — so the summary is constrained by the
+  // inventory it claims to summarise rather than merely being no smaller.
+  const derived = liveTriggers + reservedRows;
+  if (committed.value !== derived) {
     problems.push(
-      `summary says ${committed.value} committed, which is fewer than the ${live.value} it says are live`,
+      `summary says ${committed.value} committed, but the inventory has ${liveTriggers} live ` +
+        `+ ${reservedRows} reserved = ${derived}`,
     );
   }
   if (spare.value !== CAP - committed.value) {
@@ -383,12 +402,56 @@ export function checkSummary(md, liveRows) {
 }
 
 export function parseInventory(md) {
-  const inventory = new Map();
+  /** name -> the cron expressions that row carries, one entry per TRIGGER. */
+  const live = new Map();
+  /** names of rows the table marks reserved (no schedule, but budget spoken for). */
+  const reserved = [];
+  const problems = [];
+  const seen = new Set();
+
   for (const line of md.split('\n')) {
-    const m = /^\|\s*`([a-z0-9-]+)`\s*\|\s*`([^`]+)`\s*\|/i.exec(line);
-    if (m) inventory.set(m[1], m[2].trim());
+    const row = /^\|\s*`([a-z0-9-]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
+    if (!row) continue;
+    const [, name, scheduleCell, , statusCell] = row;
+
+    // Codex #1978 r2: `Map.set` silently overwrote a repeated name, so leaving
+    // a stale row behind while adding its replacement produced a table with two
+    // contradictory schedules that both halves would accept — they only ever
+    // saw the last one. A repeat is now a finding, not a shrug.
+    if (seen.has(name)) {
+      problems.push(
+        `the inventory lists \`${name}\` more than once; two rows for one Worker can disagree`,
+      );
+      continue;
+    }
+    seen.add(name);
+
+    const schedule = /^\s*`([^`]+)`\s*$/.exec(scheduleCell);
+    if (schedule) {
+      // Codex #1978 r2: split on commas. One cell can legitimately carry two
+      // schedules, and counting Map ENTRIES rather than triggers made such a
+      // row worth one against a cap the account counts as two — with `--live`
+      // printing the higher account total and still concluding "matches".
+      live.set(
+        name,
+        schedule[1]
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
+    } else if (/\breserved\b/i.test(statusCell)) {
+      reserved.push(name);
+    }
   }
-  return inventory;
+
+  return { live, reserved, problems };
+}
+
+/** Triggers, not rows: a row carrying two schedules spends two of the five. */
+export function countTriggers(live) {
+  let n = 0;
+  for (const crons of live.values()) n += crons.length;
+  return n;
 }
 
 async function runLive() {
@@ -412,31 +475,35 @@ async function runLive() {
   }
 
   const authorityMd = readFileSync(AUTHORITY, 'utf8');
-  const committed = parseInventory(authorityMd);
+  const inv = parseInventory(authorityMd);
+  const committed = inv.live;
 
-  const problems = [];
+  const problems = inv.problems.map((p) => `INVENTORY     ${p}`);
   // Same self-consistency check the offline half runs. Without it, `--live`
   // could compare the account to the inventory rows, find them equal, and
   // print "matches the account" over a summary saying something else.
-  for (const p of checkSummary(authorityMd, committed.size)) {
+  for (const p of checkSummary(authorityMd, countTriggers(committed), inv.reserved.length)) {
     problems.push(`SUMMARY       ${p}`);
   }
+  // Compared as multisets, not as joined strings: two schedules in one cell are
+  // two triggers, and the account may report them in either order.
+  const sameSchedules = (a, b) =>
+    a.length === b.length && [...a].sort().join(' ') === [...b].sort().join(' ');
   for (const [name, crons] of [...live].sort()) {
-    const joined = crons.join(', ');
     if (!committed.has(name)) {
       problems.push(
-        `ACCOUNT ONLY  ${name} is armed on \`${joined}\` and is absent from the inventory.`,
+        `ACCOUNT ONLY  ${name} is armed on \`${crons.join(', ')}\` and is absent from the inventory.`,
       );
-    } else if (committed.get(name) !== joined) {
+    } else if (!sameSchedules(crons, committed.get(name))) {
       problems.push(
-        `SCHEDULE      ${name}: account has \`${joined}\`, inventory says \`${committed.get(name)}\`.`,
+        `SCHEDULE      ${name}: account has \`${crons.join(', ')}\`, inventory says \`${committed.get(name).join(', ')}\`.`,
       );
     }
   }
-  for (const [name, cron] of [...committed].sort()) {
+  for (const [name, crons] of [...committed].sort()) {
     if (!live.has(name)) {
       problems.push(
-        `INVENTORY ONLY ${name} is listed as armed on \`${cron}\` but the account has no schedule for it.`,
+        `INVENTORY ONLY ${name} is listed as armed on \`${crons.join(', ')}\` but the account has no schedule for it.`,
       );
     }
   }
@@ -509,6 +576,12 @@ const MUST_FIRE = [
   ['spare slot', 'One cron slot is genuinely SPARE today:'],
   ['no spare — a count of zero', 'There is no spare cron trigger.'],
   ['slash form', 'the account sits at 4/5 cron triggers'],
+  // Codex #1978 r2's counterexamples, promoted from MUST_NOT_FIRE. Negated in
+  // the shape the old lookbehind exempted, and identical in meaning to the
+  // fixture two lines above — which is what proved the exemption unsound.
+  ['negated, but still a capacity claim', 'Cron capacity is not spare right now.'],
+  ['never spare', 'Cron triggers are never spare in this account.'],
+  ['the wording the exemption protected', "// the keeper's cron trigger is reserved rather than spare"],
 ];
 
 const MUST_NOT_FIRE = [
@@ -519,16 +592,16 @@ const MUST_NOT_FIRE = [
   ['cadence modulo', '// acts only on minutes divisible by 5 (free-plan DO rows_written diet)'],
   ['a cron expression', '"crons": ["17 3 * * *"],'],
   ['pointer, the intended fix', '// One schedule, not two — see docs/ops/CloudflareCronSlots.md for the budget.'],
-  // The reservation policy, which belongs in a design doc and does not go
-  // stale when the account changes. Denials of availability are not counts.
-  ['reserve policy, "not spare"', "- **`apps/keeper`'s empty `\"crons\": []` is not spare capacity.**"],
-  ['reserve policy, "rather than spare"', '// the keeper\'s cron trigger is reserved rather than spare'],
-  // Same policy statement, wrapped. Exempt for the same reason — where the
-  // line broke must not decide whether the gate fires.
-  [
-    'reserve policy, wrapped denial',
-    "// the keeper's cron trigger is reserved rather than\n// spare",
-  ],
+  // The reservation policy stated WITHOUT a capacity word — the rewording the
+  // dropped exemption forced, and the shape to reach for. It says the same
+  // thing and cannot go stale when the account changes, which was the property
+  // the exemption was reaching for and could not express.
+  ['reserve policy, no capacity word', "- **`apps/keeper`'s empty `\"crons\": []` is a reservation.**"],
+  ['reserve policy, plain', "// the keeper's cron trigger is reserved for its return"],
+  // "Spare" outside cron vocabulary. CONTEXT, not the pattern, is what keeps
+  // the gate off these — which is why dropping the lookbehind cost nothing.
+  ['ordinary English, room to spare', 'one external swap clears with room to spare'],
+  ['ordinary English, spare bits', '`KEEPER_ACTION_SIGNED_FILL = 1 << 6` (2 spare bits today; bump'],
 ];
 
 /**
@@ -544,25 +617,59 @@ const MUST_NOT_FIRE = [
  * than a wrong schedule.
  */
 const INVENTORY_CASES = [
-  ['plain row', '| `vaipakam-agent` | `* * * * *` | `apps/agent` | **live** |', { 'vaipakam-agent': '* * * * *' }],
-  ['unscheduled row skipped', '| `vaipakam-keeper` | *(none)* | `apps/keeper` | reserved |', {}],
+  // [name, markdown, expected {live}, expected reserved[], expected problem count]
   [
-    'hypothetical schedule skipped',
-    '| `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed |',
-    {},
+    'plain row',
+    '| `vaipakam-agent` | `* * * * *` | `apps/agent` | **live** |',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    0,
   ],
-  ['bolded name skipped', '| **`vaipakam-x`** | `0 1 * * *` | `ops/x` | live |', {}],
-  ['two schedules in one cell skipped', '| `vaipakam-y` | `* * * * *`, `0 1 * * *` | `ops/y` | live |', {}],
-  ['header row ignored', '| Worker | Schedule | Source in this repo | Status |', {}],
-  ['separator ignored', '|---|---|---|---|', {}],
+  [
+    'reserved row counts toward committed',
+    '| `vaipakam-keeper` | *(none)* | `apps/keeper` | unscheduled; slot **reserved** for its return |',
+    {},
+    ['vaipakam-keeper'],
+    0,
+  ],
+  [
+    'hypothetical schedule is neither live nor reserved',
+    '| `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | code-complete, **undeployed** |',
+    {},
+    [],
+    0,
+  ],
+  ['bolded name skipped', '| **`vaipakam-x`** | `0 1 * * *` | `ops/x` | live |', {}, [], 0],
+  // Codex #1978 r2: TWO triggers in one cell. Counting Map entries made this
+  // row worth one against a cap the account counts as two.
+  [
+    'two schedules in one cell are two triggers',
+    '| `vaipakam-y` | `* * * * *, 0 1 * * *` | `ops/y` | live |',
+    { 'vaipakam-y': ['* * * * *', '0 1 * * *'] },
+    [],
+    0,
+  ],
+  // Codex #1978 r2: a stale row left beside its replacement. `Map.set` kept
+  // only the last, so both halves accepted a table stating two contradictory
+  // schedules for one Worker.
+  [
+    'a repeated Worker is a finding, not an overwrite',
+    '| `vaipakam-z` | `0 1 * * *` | `ops/z` | live |\n| `vaipakam-z` | `0 2 * * *` | `ops/z` | live |',
+    { 'vaipakam-z': ['0 1 * * *'] },
+    [],
+    1,
+  ],
+  ['header row ignored', '| Worker | Schedule | Source in this repo | Status |', {}, [], 0],
+  ['separator ignored', '|---|---|---|---|', {}, [], 0],
 ];
 
 /**
- * Summary fixtures. `[name, markdown, liveRows, expectedProblemCount]`.
+ * Summary fixtures.
+ * `[name, markdown, liveTriggers, reservedRows, expectedProblemCount]`.
  *
  * The zero-problem case is the one that would have shipped broken: a summary
- * agreeing with its rows must pass, and every way of disagreeing — including a
- * line that is simply absent — must not.
+ * agreeing with its inventory must pass, and every way of disagreeing —
+ * including a line that is simply absent — must not.
  */
 const GOOD_SUMMARY = [
   '- **Live right now:** 4 of 5',
@@ -571,49 +678,75 @@ const GOOD_SUMMARY = [
 ].join('\n');
 
 const SUMMARY_CASES = [
-  ['agrees with its rows', GOOD_SUMMARY, 4, 0],
-  ['live disagrees with row count', GOOD_SUMMARY, 3, 1],
+  ['agrees with its inventory', GOOD_SUMMARY, 4, 1, 0],
+  ['live disagrees with the trigger count', GOOD_SUMMARY, 3, 1, 2], // live wrong, committed then wrong too
   [
     'spare does not follow from committed',
     GOOD_SUMMARY.replace('**Genuinely spare:** 0', '**Genuinely spare:** 1'),
     4,
     1,
+    1,
+  ],
+  // Codex #1978 r2: the old `committed >= live` accepted both of these while
+  // the keeper row still said reserved. Committed is derived now, so each is a
+  // finding rather than a permitted range.
+  [
+    'committed ignores the reservation row',
+    GOOD_SUMMARY.replace("reserve:** 5 of 5", 'reserve:** 4 of 5'),
+    4,
+    1,
+    2, // committed wrong, and spare no longer follows from it
   ],
   [
-    'committed is below live',
-    GOOD_SUMMARY.replace("reserve:** 5 of 5", 'reserve:** 2 of 5'),
+    'the reservation row was removed but committed still counts it',
+    GOOD_SUMMARY,
     4,
-    2, // committed < live, and spare no longer follows
+    0,
+    1,
   ],
-  ['a line is missing', '- **Live right now:** 4 of 5', 4, 2],
-  ['a line was reworded', GOOD_SUMMARY.replace('Genuinely spare', 'Spare'), 4, 1],
-  ['no summary at all', '# Some other document', 4, 3],
+  ['a line is missing', '- **Live right now:** 4 of 5', 4, 1, 2],
+  ['a line was reworded', GOOD_SUMMARY.replace('Genuinely spare', 'Spare'), 4, 1, 1],
+  ['no summary at all', '# Some other document', 4, 1, 3],
   // The recursion: a duplicated summary section is itself a second unchecked
   // copy of the count. Reading only the first match would let two contradicting
   // copies pass — the defect this check exists to prevent, inside the check.
-  ['the summary appears twice', `${GOOD_SUMMARY}\n\n${GOOD_SUMMARY}`, 4, 3],
+  ['the summary appears twice', `${GOOD_SUMMARY}\n\n${GOOD_SUMMARY}`, 4, 1, 3],
   [
     'a contradicting second copy',
     `${GOOD_SUMMARY}\n\n${GOOD_SUMMARY.replace('**Live right now:** 4', '**Live right now:** 2')}`,
     4,
+    1,
     3,
   ],
 ];
 
 function runSelftest() {
   let bad = 0;
-  for (const [name, md, rows, expected] of SUMMARY_CASES) {
-    const got = checkSummary(md, rows).length;
+  for (const [name, md, liveTriggers, reservedRows, expected] of SUMMARY_CASES) {
+    const got = checkSummary(md, liveTriggers, reservedRows).length;
     if (got !== expected) {
       console.error(`selftest: summary case "${name}" reported ${got} problem(s), expected ${expected}`);
       bad++;
     }
   }
-  for (const [name, md, expected] of INVENTORY_CASES) {
-    const got = Object.fromEntries(parseInventory(md));
-    if (JSON.stringify(got) !== JSON.stringify(expected)) {
+  for (const [name, md, expectedLive, expectedReserved, expectedProblems] of INVENTORY_CASES) {
+    const inv = parseInventory(md);
+    const got = Object.fromEntries(inv.live);
+    if (JSON.stringify(got) !== JSON.stringify(expectedLive)) {
       console.error(
-        `selftest: inventory case "${name}" parsed as ${JSON.stringify(got)}, expected ${JSON.stringify(expected)}`,
+        `selftest: inventory case "${name}" parsed live as ${JSON.stringify(got)}, expected ${JSON.stringify(expectedLive)}`,
+      );
+      bad++;
+    }
+    if (JSON.stringify(inv.reserved) !== JSON.stringify(expectedReserved)) {
+      console.error(
+        `selftest: inventory case "${name}" parsed reserved as ${JSON.stringify(inv.reserved)}, expected ${JSON.stringify(expectedReserved)}`,
+      );
+      bad++;
+    }
+    if (inv.problems.length !== expectedProblems) {
+      console.error(
+        `selftest: inventory case "${name}" reported ${inv.problems.length} problem(s), expected ${expectedProblems}`,
       );
       bad++;
     }
