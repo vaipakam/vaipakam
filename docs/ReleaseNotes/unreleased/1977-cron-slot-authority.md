@@ -47,6 +47,23 @@ a defect in it — so the sequence (confirm, unschedule, delete, rotate its
 credentials, expire the old bucket) is an operator decision recorded in the
 issue rather than something to take unilaterally.
 
+One thing is worth recording rather than smoothing over, because it is the
+most transferable part. The mechanism did not work first time. Review found
+the same defect it was built to prevent — a second copy of the count that
+nothing reads — six times **inside the mechanism itself**: the wrap-tolerant
+matcher applied to one pattern and not the rest, so a wrapped restatement went
+undetected and the gate reported clean over it; the authority file's own
+summary left unpinned; the summary parser reading only the first of a
+duplicated section; the inventory parser keeping only the last of a duplicated
+row; a committed-vs-live comparison loose enough to accept every value; and a
+plain-prose restatement three paragraphs below the summary that pins it.
+
+Each was written carefully, by someone actively thinking about this exact
+failure. That is the argument for the gate rather than an embarrassment to it:
+if the defect reproduces this readily under maximum attention, it was never
+going to be prevented by care, and the ten copies that started this were not a
+lapse.
+
 **#1977 stays open**, deliberately. This change is the repository half of it;
 the account half — confirm, unschedule, delete, rotate the credentials that
 Worker holds, expire the old bucket — has not happened, and the issue is the
