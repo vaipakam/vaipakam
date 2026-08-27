@@ -37,3 +37,14 @@ understand computed keys and distinguish operator configuration from test
 scaffolding, or it will confidently make the file worse.
 
 Closes #1967.
+
+A second configuration claim was checked against the live account in the
+same pass and turned out to be stale. The marketing site's Worker config
+described `labs.vaipakam.com` — the hostname the site was served from
+before the move to the apex — as still bound, and reasoned at some length
+about the duplicate content that binding would produce for crawlers. It
+is not bound: the host appears in no binding on the account, and a request
+to it fails to connect in exactly the way the deliberately-unbound
+`app.vaipakam.com` does. The note now records what is actually true, with
+the date it was verified, and drops the crawler reasoning — an
+unresolvable hostname has no index entry to worry about.
