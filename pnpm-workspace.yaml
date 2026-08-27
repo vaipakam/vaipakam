@@ -31,7 +31,12 @@
 #   - apps/agent   read/index Cloudflare Worker → agent.vaipakam.com
 #   - apps/indexer chain → D1 ingester        → indexer.vaipakam.com
 #   - apps/keeper  autonomous keeper Worker   → NO public hostname, by
-#                   design. Cron-triggered, and the only holder of an
+#                   design. Cron-ONLY but CURRENTLY UNSCHEDULED —
+#                   wrangler.jsonc commits `"crons": []` deliberately
+#                   under #1896 (the Worker was being terminated for
+#                   exceeding CPU on nearly every invocation), so no
+#                   pass runs at all today. Do not read quiet keeper
+#                   metrics as healthy. It is the only holder of an
 #                   ON-CHAIN TRANSACTION key. Keep that qualifier: the
 #                   agent is not keyless — it holds PUSH_CHANNEL_PK, a
 #                   real Ethereum key whose EOA owns the PUSH stake and

@@ -504,8 +504,15 @@ then deploy.
    - `agent.vaipakam.com` → `vaipakam-agent`
    - `app.vaipakam.com` → `vaipakam-app`
    - `vaipakam.com` (apex — the canonical, indexable hostname) →
-     `vaipakam-www`, plus `labs.vaipakam.com` → `vaipakam-www` if the
-     legacy hostname is still wanted
+     `vaipakam-www`. `labs.vaipakam.com` → `vaipakam-www` only if the
+     legacy hostname is wanted BACK: as of 2026-08-27 it is retired —
+     no binding and no DNS record — so restoring it is a decision to
+     revive a dead hostname, not part of returning to the status quo.
+   - `indexer.vaipakam.com` → `vaipakam-indexer`, but **do NOT create
+     this binding by hand.** `apps/indexer/wrangler.jsonc` declares it
+     with `custom_domain: true`, so deploying that Worker creates it.
+     It is listed here so its absence from the inventory is not read as
+     an omission.
    - `www.vaipakam.com`: **not** a Worker binding, and it needs TWO
      things, both zone-level and neither travelling with any Worker
      config:
