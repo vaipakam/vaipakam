@@ -3137,7 +3137,22 @@ library LibInteractionRewards {
         // settlement run out of gas, stranding it exactly where the claim
         // path already skips it.
         if (!removed) {
-            uint256 fundingNeed = userClaimFundingNeed(s, e.user);
+            // Codex #1499 r5 P2 — advance ONCE, then walk each O(entries)
+            // aggregate ONCE and share it with every gate below.
+            // `userClaimFundingNeed` stays for its own callers; inlining its
+            // two steps here is what makes a swept entry pay for each walk a
+            // single time instead of twice. `userRewardEntryIds` never shrinks
+            // — processed ids stay in it — so the duplicate pass grew without
+            // bound for a long-lived account.
+            _advanceUserCursors(s, e.user);
+            uint256 armedFresh = _userArmedFreshNeed(s, e.user);
+            (, uint256 recycledUpper) = _userEntriesUpperBound(s, e.user);
+            uint256 fundingNeed = _userClaimFundingNeedViewWith(
+                s,
+                e.user,
+                armedFresh,
+                recycledUpper
+            );
             // Codex #1699 r2 P1 — the MIRROR delivered bound belongs in this
             // predicate, not only at the terminal.
             //
@@ -3159,17 +3174,19 @@ library LibInteractionRewards {
             // group, so a per-entry test would keep the clock running through
             // exactly the state in which the claimant cannot be paid.
             //
-            // r17 P2 — computed LAZILY and mirror-only, exactly as the view
-            // path ({_entryExecutableNow}) already scopes it: off-mirror the
-            // bound cannot bind, so pricing the aggregate there was pure
-            // gas exposure.
+            // r17 P2 scoped this call mirror-only, on the ground that
+            // off-mirror the bound cannot bind. That saved nothing: the funding
+            // need above reads the same aggregate UNCONDITIONALLY, so the walk
+            // happened on every chain regardless and the mirror branch merely
+            // paid for a SECOND one (Codex #1499 r5 P2). The value is now
+            // computed once above; the branch below is the bound's test, which
+            // is what was actually mirror-only.
             bool deliveredPayable = true;
             if (LibVaipakam.isMirrorRewardChain(s)) {
-                uint256 armedNeed = _userArmedFreshNeed(s, e.user);
-                deliveredPayable = armedNeed == 0
-                    || armedNeed <= deliveredFreshBound(s);
+                deliveredPayable = armedFresh == 0
+                    || armedFresh <= deliveredFreshBound(s);
             }
-            bool executable = !_recycledDrought(s, e.user) &&
+            bool executable = !_recycledDroughtWith(s, recycledUpper) &&
                 _poolCappedPayable(toUser) != 0 &&
                 deliveredPayable &&
                 !LibVaipakam.isSanctionedAddress(e.user) &&
@@ -3669,7 +3686,11 @@ library LibInteractionRewards {
     ) private view returns (bool) {
         if (LibVaipakam.isSanctionedAddress(e.user)) return false;
         if (LibPausable.paused()) return false; // every claim reverts paused
-        if (_recycledDrought(s, e.user)) return false; // clock pauses (r6)
+        // Codex #1499 r5 P2 — ONE walk for the bound, shared with the funding
+        // need below. Ordered so the cheap refusals still short-circuit ahead
+        // of the armed dry run, which is the expensive one.
+        (, uint256 recycledUpper) = _userEntriesUpperBound(s, e.user);
+        if (_recycledDroughtWith(s, recycledUpper)) return false; // pauses (r6)
         (EntrySplit memory toUser, , , ) = _entryPriceCore(s, id, e);
         if (_poolCappedPayable(toUser) == 0) return false; // nothing to pay
         // Codex #1699 r3 P2 — the SAME delivered predicate the sweep applies.
@@ -3684,15 +3705,15 @@ library LibInteractionRewards {
         // Deliberately the AGGREGATE need (`_userArmedFreshNeed`), matching
         // the sweep exactly — a per-entry figure here would re-open the very
         // gap the sweep's fix closed, one abstraction layer away.
+        uint256 armedFresh = _userArmedFreshNeed(s, e.user);
         if (LibVaipakam.isMirrorRewardChain(s)) {
-            uint256 armedNeed = _userArmedFreshNeed(s, e.user);
-            if (armedNeed != 0 && armedNeed > deliveredFreshBound(s)) {
+            if (armedFresh != 0 && armedFresh > deliveredFreshBound(s)) {
                 return false;
             }
         }
         return
             IERC20Metadata(s.vpfiToken).balanceOf(address(this)) >=
-            _userClaimFundingNeedView(s, e.user);
+            _userClaimFundingNeedViewWith(s, e.user, armedFresh, recycledUpper);
     }
 
     /// @dev #1351 slice 2d-0 — the ONE computation of an entry's claim-payable
@@ -3722,6 +3743,17 @@ library LibInteractionRewards {
         address user
     ) private view returns (bool) {
         (, uint256 recycledTotal) = _userEntriesUpperBound(s, user);
+        return _recycledDroughtWith(s, recycledTotal);
+    }
+
+    /// @dev Codex #1499 r5 P2 — the same test against an ALREADY-WALKED bound.
+    ///      Both consumers need this figure and the funding need in the same
+    ///      pass, and each walk is O(the user's whole entry list) — which does
+    ///      not shrink, since processed ids stay in `userRewardEntryIds`.
+    function _recycledDroughtWith(
+        LibVaipakam.Storage storage s,
+        uint256 recycledTotal
+    ) private view returns (bool) {
         return recycledTotal > s.recycleBucket;
     }
 
@@ -3731,6 +3763,24 @@ library LibInteractionRewards {
         uint256 freshShare = toUser.total - toUser.recycled;
         uint256 room = poolRemaining();
         return (freshShare < room ? freshShare : room) + toUser.recycled;
+    }
+
+    /// @dev Codex #1499 r5 P2 — the aggregate-loading wrapper, for callers with
+    ///      nothing cached. Both O(entries) aggregates are computed ONCE here and
+    ///      threaded in; the gates that also need them take the `...With` form so
+    ///      a swept entry pays for each walk a single time. See the note on
+    ///      {_entryExecutableNow} for why the ORDER of those calls matters.
+    function _userClaimFundingNeedView(
+        LibVaipakam.Storage storage s,
+        address user
+    ) private view returns (uint256) {
+        (, uint256 recycledUpper) = _userEntriesUpperBound(s, user);
+        return _userClaimFundingNeedViewWith(
+            s,
+            user,
+            _userArmedFreshNeed(s, user),
+            recycledUpper
+        );
     }
 
     /// @dev View mirror of {userClaimFundingNeed}'s funding formula, WITHOUT
@@ -3744,25 +3794,33 @@ library LibInteractionRewards {
     ///      unadvanced entry reads behind (0), matching the documented
     ///      conservative-estimate caveat on {rewardEntryExpiry}.
     ///
-    ///      KNOWN DIVERGENCE from the #1460 claim-time backing gate, tracked
-    ///      as #1499 and NOT patched here. The claim now refuses a
-    ///      payout whose fresh part exceeds `balance - recycleBucket`, while
-    ///      this predicate tests the balance without netting off the
-    ///      earmark — so on a thin deployment the horizon can call an entry
-    ///      executable that the claim refuses. It is INERT today: the sweep
-    ///      returns early while `rewardClaimHorizonDays == 0` (the deploy
-    ///      default — RL-3 shipped dark), so no clock accrues and nothing
-    ///      expires. Aligning the two is a shared-derivation change plus a
-    ///      property-test matrix over the fresh / recycled / loan-side-cap /
-    ///      forfeit combinations, because THREE sites re-derive this split
-    ///      by hand and three successive attempts to hand-align them inside
-    ///      #1497 were each subtly wrong (raw-vs-post-cap recycled, and
-    ///      double-counting the bucket against the recycled payout). It is
-    ///      therefore a precondition on ARMING the RL-3 horizon, not a
-    ///      prerequisite of the claim-time gate.
-    function _userClaimFundingNeedView(
+    ///      #1499 ALIGNED this with the #1460 claim-time backing gate. The
+    ///      predicate no longer tests a bare balance: it nets off the earmark
+    ///      via {LibVpfiRecycle.backingPosition} and assembles the fresh term
+    ///      from the exact grouped pieces the claim itself uses, rather than
+    ///      re-deriving it — which is what three successive hand-alignments
+    ///      inside #1497 each got subtly wrong (raw-vs-post-cap recycled, and
+    ///      double-counting the bucket against the recycled payout).
+    ///
+    ///      TWO LIMITATIONS REMAIN, both deliberate and neither a divergence
+    ///      from the claim in the direction that reaps unfairly:
+    ///
+    ///      1. The RECYCLED side is bounded, not exact. This library exposes no
+    ///         grouped per-user recycled figure — {_dryRunShareOfPoolDays}
+    ///         returns `(userTotal, armedTotal)` with no recycled split — so the
+    ///         transfer test reuses the upper bound {_recycledDrought} already
+    ///         accepts for the same quantity. It can therefore pause a claimant
+    ///         whose exact obligation would have fitted; over-pausing only
+    ///         DELAYS the reap, whereas the fail-open alternative EXPIRES an
+    ///         entry its owner could not claim (Codex #1499 r3/r4).
+    ///      2. It stays optimistic on the one axis a view genuinely cannot
+    ///         resolve: an unadvanced entry reads behind (0), matching the
+    ///         documented conservative-estimate caveat on {rewardEntryExpiry}.
+    function _userClaimFundingNeedViewWith(
         LibVaipakam.Storage storage s,
-        address user
+        address user,
+        uint256 armedFresh,
+        uint256 recycledUpper
     ) private view returns (uint256 need) {
         // #1499 — ASSEMBLED FROM EXISTING EXACT PIECES, deriving nothing.
         //
@@ -3811,7 +3869,7 @@ library LibInteractionRewards {
         uint256 freshTotal = _userWindowFreshReserved(s, user)
             + userLegs
             + treasuryLegs
-            + _userArmedFreshNeed(s, user);
+            + armedFresh;
         uint256 room = poolRemaining();
         if (freshTotal > room) freshTotal = room;
 
@@ -3849,7 +3907,6 @@ library LibInteractionRewards {
         // term, which the exact `freshTotal` above now covers; the recycled
         // side has no exact grouped figure in this library, and bounding it the
         // way its neighbour does keeps ONE convention rather than two.
-        (, uint256 recycledUpper) = _userEntriesUpperBound(s, user);
         if (recycledUpper > need) need = recycledUpper;
     }
 
