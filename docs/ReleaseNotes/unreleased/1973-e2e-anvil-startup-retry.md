@@ -35,17 +35,18 @@ would never reach the give-up branch, and an unbounded one would retry
 forever. A configuration typo now fails with a message naming the
 accepted range.
 
-Retrying also exposed something that had been dormant in the original
-single-attempt code. Readiness is watched by a poller racing against the
-process exiting; whichever happens first wins, and the loser is simply
-abandoned. But the poller signals a timeout by failing, and an abandoned
-failure with nobody waiting on it is the kind that can bring down a run
-on its own — roughly two minutes later, long after the real error was
-reported. With one attempt that landed during shutdown and went unnoticed;
-with several it could surface in the middle of a passing suite. The
-poller now reports a timeout as an ordinary result rather than a failure,
-so nothing is ever left to fail unobserved, and the timeout case is
-handled where it is decided instead of escaping through the side.
+One thing that looks like a problem here is not one, and the check is
+now recorded in the code so nobody spends the effort twice. Readiness is
+watched by a poller racing against the process exiting; the loser of that
+race is abandoned mid-flight, and since the poller reports a timeout by
+failing, an abandoned one looks like a failure nobody is waiting for —
+the kind that can bring down an otherwise healthy run minutes later. It
+is not: a race keeps watching every entrant even after one has won, so
+the late failure is seen and discarded. That was verified by experiment
+rather than reasoned about, after reasoning about it produced the wrong
+answer, and a change made on the strength of the wrong answer was
+withdrawn — it would have thrown away the underlying error the timeout
+message carries, which is the most useful thing in it.
 
 Retrying also meant being careful about what the teardown step is told
 to clean up. Each attempt's process id is recorded as soon as it starts,
