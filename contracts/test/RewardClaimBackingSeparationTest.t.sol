@@ -238,6 +238,26 @@ contract RewardClaimBackingSeparationTest is SetupTest, IVaipakamErrors {
         );
     }
 
+    // #1499 matrix — TWO CELLS WITHDRAWN, deliberately, rather than shipped green.
+    //
+    // A forfeit-present cell and a recycled-only cell were written here and
+    // both were VACUOUS: mutating the production formula to the exact defects
+    // they targeted left them passing.
+    //
+    //  - forfeit cell: it squeezed the balance with `bucket = bal - 1`, which
+    //    makes EVERY formula unmeetable, so the clock paused under the correct
+    //    and the broken predicate alike. To discriminate it needs a balance in
+    //    the gap `fresh + bucket <= bal < payout + bucket + forfeitFresh`.
+    //  - recycled-only cell: `_seedPayable` builds a FRESH entry, so it never
+    //    seeded recycled value at all; and with ample balance r2's
+    //    `payout + bucket` shape still fit, so the clock accrued either way. It
+    //    needs a genuinely armed/recycled entry and a balance in
+    //    `bucket <= bal < recycled + bucket`.
+    //
+    // Left out until they can fail. This card's own history is three attempts
+    // that each passed a 179-test suite, and a green test that cannot fail is
+    // what produced that.
+
     function testUnderfundedClaimIsRefusedAndLosesNothing() public {
         (, uint256 expected) = _seedPayable(alice, 42);
 
