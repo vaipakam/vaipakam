@@ -38,7 +38,14 @@ import { copy } from '../content/copy';
 /** Production origin every canonical is rooted at. Hardcoded on
  *  purpose (same rationale as www): the canonical is what crawlers
  *  index, and that must be the production hostname even on preview
- *  builds. Update at the app → defi cutover. */
+ *  builds.
+ *
+ *  This is ALREADY the intended final value — do not "update it at the
+ *  cutover". The cutover runs defi → app, and this app is the
+ *  successor, so the only edit this constant could take today would
+ *  repoint indexed public routes at the hostname the rollout retires.
+ *  It changes only if the canonical hostname itself changes. (#1854;
+ *  the note here previously named the cutover in the wrong direction.) */
 const CANONICAL_ORIGIN = 'https://app.vaipakam.com';
 
 interface RouteMeta {

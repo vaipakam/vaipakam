@@ -1766,9 +1766,17 @@ config snapshot. This is not hypothetical: it is how #1958 briefly put
 a config-empty build on the production hostname.
 
 Populate `apps/app/.env.local` first. A build with none of the sixteen
-`VITE_*` operator variables is a preview build, not a deployable one —
-it also lacks RPC URLs and the WalletConnect project ID, so wallet
-connection itself is degraded, not just the indexer-backed features.
+`VITE_*` operator variables is a preview build, not a deployable one.
+Be precise about what that costs, because the failure is partial:
+chain reads still work — every chain in `apps/app/src/chain/chains.ts`
+carries a public `rpcUrlDefault` and `rpcUrlFor` falls back to it
+whenever the operator variable is empty — so what is missing is the
+KEYED RPC endpoints, not RPC connectivity. Public endpoints are rate
+limited and unsuitable for production traffic. The absent
+WalletConnect project ID is the harder loss: it removes WalletConnect
+pairing outright, while injected and Coinbase connectors keep working.
+So wallet connection is narrowed and reads are throttled, on top of
+the indexer-backed features being gone.
 
 `deploy` runs the build itself, and the build must happen before
 wrangler regardless: `assets.directory` points at `./dist`, and
