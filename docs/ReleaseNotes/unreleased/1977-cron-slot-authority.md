@@ -52,7 +52,10 @@ most transferable part. **The mechanism did not work first time, or for many
 times after.** Fourteen review rounds found the same defect it was built to
 prevent — a claim about the account that nothing checks — again and again
 *inside the mechanism itself*, and the interesting thing is not the count but
-that the misses fell into five repeating shapes:
+that the misses fell into six repeating shapes. The last of them was found
+while writing the reply that accepted the fix which introduced it, roughly an
+hour after that fix was pushed — which is the clearest evidence in this whole
+change that the problem is not attention:
 
 - **Closed worlds keep reopening.** A list of file extensions, a class of
   Markdown prefixes, a set of phrasings gathered from the tree: each was an
@@ -77,6 +80,14 @@ that the misses fell into five repeating shapes:
   document satisfied both and the step could not be completed. This is the
   one shape the others do not cover: nothing was individually wrong, and no
   per-change review asks whether the state a fix *produces* is reachable.
+- **One rule, two threat models, opposite meanings.** The restore runbook
+  gained a rule saying that if a backup fails its checksum, fall back to the
+  other bucket. That is right on an ordinary restore, where the second bucket
+  is a spare copy — and it is precisely wrong after a compromise, where that
+  bucket's Worker holds a write key and a copy of the encryption key, so
+  "this one failed, try the other" is the newest-that-verifies move the
+  adversarial section of the same document exists to forbid. The sentence
+  never changed meaning; the reader's situation did.
 
 Two findings landed outside the mechanism and mattered more than any of the
 above. The restore runbook concluded from two armed cron schedules that both

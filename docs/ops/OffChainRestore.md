@@ -801,7 +801,9 @@ then deploy.
 > scheduled, that no longer discriminates, whatever each bucket turns out to
 > contain.
 >
-> While both are armed:
+> While both are armed — **on an ordinary restore.** On a *compromise*
+> restore the rules below do not apply; use the box that follows this one,
+> and read the carve-out under the fallback bullet before doing anything:
 >
 > - **Prefer `vaipakam-offchain-data-warm`** — the replacement is the
 >   supported path, and its Worker is the one whose source is in this
@@ -816,6 +818,23 @@ then deploy.
 >   independently written copy of the night you actually want sat in the
 >   other bucket. That copy exists precisely because both Workers are
 >   scheduled; it is the one upside of the state #1977 is about.
+>
+>   **NOT after a compromise.** There, a verification failure is a signal,
+>   not an inconvenience, and the second bucket is a second place the
+>   attacker can write: its Worker holds a `writeFiles` key and its own copy
+>   of `BACKUP_ENCRYPTION_KEY`, so an object it serves can verify perfectly
+>   and still be theirs. "Verification failed, try the other bucket" is the
+>   newest-that-verifies move the next box exists to forbid, wearing a
+>   different hat. Select by TIME on both sides, per that box's step 2, and
+>   treat a failure in the warm bucket as evidence about the window rather
+>   than as a reason to source the same night from elsewhere.
+>
+>   This carve-out was missing when the verification-failure condition was
+>   first added, and the omission has a shape worth naming: the fallback was
+>   written against the ordinary path, where the other bucket is a spare
+>   copy, and never re-read against the adversarial path three paragraphs
+>   below, where the same bucket is an attacker's write target. One
+>   sentence, two paths, opposite meanings.
 > - **An empty listing in ONE bucket is still not "no backups exist"** —
 >   that part stands. Re-run against the other before concluding anything.
 > - The compromise reasoning further down assumes ONE holder of a
@@ -849,6 +868,13 @@ then deploy.
 >
 > So for a compromise, select by **time, not by recency**:
 >
+> 0. **There are TWO write-capable buckets, not one**, while #1977 is open —
+>    see the box above. Every step below applies to both: two `writeFiles`
+>    keys to rotate, two sets of versions to list, and two places a forgery
+>    can sit. The ordinary-restore rule of falling back to the other bucket
+>    when verification fails is **suspended here** — that is the box above's
+>    carve-out, and it is the one rule from that box that inverts on this
+>    path rather than merely doubling.
 > 1. **Rotate the B2 keys first** (§1 step 6) so nothing new can land
 >    mid-restore.
 > 2. **Establish the earliest possible compromise time** — first unexplained
