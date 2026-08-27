@@ -21,9 +21,10 @@
  * precisely the kind of failure a build should catch instead of a user,
  * and it is invisible in review because every bundle looks complete.
  *
- * WHY A SCRIPT, NOT A VITEST. Both would gate — app's vitest suite
- * is blocking via `defi-vitest.yml` (#1111), and `typecheck` is a
- * required check too. It is a script because it belongs next to
+ * WHY A SCRIPT, NOT A VITEST. `typecheck` IS a required status check,
+ * so a script wired into it gates. The vitest suite does not: it runs
+ * in `app-vitest.yml` (renamed from `defi-vitest.yml` in #1854), which
+ * branch protection does not require (#1962). It is a script because it belongs next to
  * `check-hardcoded-strings.mjs`, the guardrail for the sibling failure
  * (a string never reaching the catalog at all): same command surface,
  * same place to look, and one consolidated report across every locale

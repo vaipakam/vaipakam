@@ -585,8 +585,9 @@ export async function handleClaimables(
     // the union's true top-CAP is re-derived in JS (any row in the
     // union's top-CAP is necessarily in its own side's top-CAP, so
     // the merge loses nothing). `truncated` is additive — the typed
-    // apps/app consumer ignores it, and its Claim Center layers an
-    // on-chain verify over this discovery anyway.
+    // no current consumer reads it (the client was removed in #988 —
+    // see the note on this endpoint further down), and the Claim Center
+    // layers an on-chain verify over this discovery anyway.
     // Each side also excludes rows whose claim ALREADY fired (r4): a
     // claim burns the position NFT so the owner projection normally
     // evicts the row, but if that projection lags, claimed rows would

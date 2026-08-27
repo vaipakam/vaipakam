@@ -1,7 +1,8 @@
 # Connected App Functional Specification
 
 This document states the intended behaviour of the Vaipakam connected app —
-`apps/app`, served at `app.vaipakam.com`. It is the app-specific functional
+`apps/app`, whose destination hostname is `app.vaipakam.com` (not yet
+bound — see #1854). It is the app-specific functional
 spec distilled from the release notes through 2026-08-12. It is intentionally
 written without implementation snippets. (The app was called `alpha02` and
 served `alpha02.vaipakam.com` until #1854 renamed it; this file keeps the old

@@ -27,7 +27,9 @@ Apply schema changes with `wrangler d1 migrations apply vaipakam-archive
 ## Workers (all currently serving placeholder 503)
 
 > **STALE since #1854 — operator reconciliation needed.** The dApp Worker is
-> now `vaipakam-app` on `app.vaipakam.com`, built from `apps/app`
+> now `vaipakam-app`, built from `apps/app`; its intended hostname is
+> `app.vaipakam.com` but that binding does NOT exist yet, so the Worker is
+> reachable only on its emitted `workers.dev` URL
 > (`@vaipakam/app`). The `vaipakam-defi` / `defi.vaipakam.com` rows below —
 > and the `defi.vaipakam.com` custom-domain binding in the next section —
 > record what was provisioned on 2026-05-07 and have NOT been re-verified

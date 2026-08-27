@@ -2,7 +2,10 @@
 
 `apps/app` is the Vaipakam connected app: a ground-up redesign for
 people who have used a wallet and maybe a DEX, but are not DeFi
-experts. It serves at **app.vaipakam.com**.
+experts. Its destination hostname is **app.vaipakam.com**, which is not
+bound yet (#1854) — until the cutover completes the deploy is reachable
+only on the `workers.dev` URL `pnpm run deploy` prints, and that is what
+the live-review drivers require.
 
 It was developed as `apps/alpha02` at alpha02.vaipakam.com alongside the
 frozen `apps/defi`. #1854 completed that cutover: `apps/defi` and the two

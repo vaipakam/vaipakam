@@ -27,8 +27,10 @@ export default function Footer() {
               }}
             />
             <p className="footer-tagline">{t('footer.tagline')}</p>
-            {/* Per-chain Diamond verify links live on the connected-app
-                surface (app.vaipakam.com/analytics#transparency) — see
+            {/* Per-chain Diamond verify links live on `/analytics#transparency`,
+                which `apps/app` does NOT define — the link below therefore
+                uses `legacyToolUrl`, resolving to the deployment that still
+                serves it (#1959) — see
                 the "Smart Contracts" link in the Resources column. The
                 marketing footer is intentionally chain-agnostic so the
                 deployed-network set can change without a labs build. */}
