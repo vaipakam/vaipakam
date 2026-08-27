@@ -93,6 +93,15 @@ and whose account carries a stake and its gas. An inventory that says
 "the only signing key" understates what a compromise of that Worker would
 reach, which is exactly the error being corrected here.
 
+The published whitepaper was carrying the sharpest version of the same
+problem. It listed the keeper alongside the other Workers with a public
+hostname of its own — a service that does not exist and, by the design
+this very correction documents, must never exist, since that Worker is
+cron-only and holds the only key that can sign a transaction. A reader
+following the public architecture description was being pointed at
+nothing. The entry now says it has no public endpoint. Its account of the
+keys was already precise and is untouched.
+
 One further setting turned out to sit outside the file entirely, and it
 is the sharpest of them. The build's SEO step runs before every build and
 picks the origin for every URL in the generated sitemap and the

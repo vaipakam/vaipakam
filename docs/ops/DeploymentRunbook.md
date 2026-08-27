@@ -1708,7 +1708,7 @@ pointed at.
 | `vaipakam.com` | `vaipakam-www` | `apps/www` | Marketing + docs, wallet-free. Apex, not `www`. |
 | `agent.vaipakam.com` | `vaipakam-agent` | `apps/agent` | Origin-gated API. A bare `GET /` answering **403 `Forbidden` is correct, not an outage** — `apps/agent/src/index.ts:258` rejects any request whose `Origin` is not in `FRONTEND_ORIGIN`, and a curl sends none. **To actually health-check it, send an allowed Origin**: `curl -H 'origin: https://vaipakam.com' https://agent.vaipakam.com/nope` should return **404**, the Worker's own fallback. 403 with an allowed Origin means that origin is missing from `FRONTEND_ORIGIN`; 403 *without* one proves nothing. (#1971 — filed on the belief this was an outage, closed as designed behaviour.) |
 | `indexer.vaipakam.com` | `vaipakam-indexer` | `apps/indexer` | |
-| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-triggered; deliberately unbound. |
+| — (no hostname) | `vaipakam-keeper` | `apps/keeper` | Cron-only and deliberately unbound — **and currently UNSCHEDULED**: `apps/keeper/wrangler.jsonc:269` commits `"crons": []` under #1896, so no pass runs at all. Quiet keeper metrics are not evidence of health until that hold lifts. |
 | — (no hostname) | `vaipakam-offchain-data-archive` / `-warm` | `ops/` | Scheduled ops Workers. |
 | `defi.vaipakam.com` | `vaipakam-defi` | *(source deleted #1854)* | Retire per the cutover note below. |
 | `alpha02.vaipakam.com` | `vaipakam-alpha02` | *(source deleted #1854)* | Retire per the cutover note below. |
