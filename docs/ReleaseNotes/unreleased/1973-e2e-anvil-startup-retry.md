@@ -35,6 +35,16 @@ would never reach the give-up branch, and an unbounded one would retry
 forever. A configuration typo now fails with a message naming the
 accepted range.
 
+Retrying also meant being careful about what the teardown step is told
+to clean up. Each attempt's process id is recorded as soon as it starts,
+so a live one is always killable — but a dead one has to come back out
+again the moment it is seen to have exited. Leaving it would be worse
+than untidy: the cleanup step kills every recorded id, tolerating one
+that is simply gone, but an operating system reuses those numbers, and on
+a long run the number could by then belong to something else entirely.
+The removal happens before anything else, including before giving up, so
+no exit path can leave one behind.
+
 The retry is loud on purpose. A silent one turns a degrading upstream
 into an unexplained slowdown, and hides exactly the signal that would
 tell an operator the endpoint needs attention.

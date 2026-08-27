@@ -131,6 +131,17 @@ export default async function globalSetup(): Promise<void> {
       anvilStarted = true;
       break;
     }
+    // The child is confirmed dead. Drop its PID before doing anything
+    // else, including throwing: teardown kills every recorded PID, and
+    // catching ESRCH only covers a number that stays unused — the OS can
+    // REASSIGN it during a long run, at which point teardown would kill
+    // an unrelated process. Recording it at spawn is still right (a live
+    // child must always be killable); it just has to come back out the
+    // moment the exit is observed, on every path.
+    const deadIdx = anvil.pid ? pids.indexOf(anvil.pid) : -1;
+    if (deadIdx !== -1) pids.splice(deadIdx, 1);
+    fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
+
     const elapsed = Date.now() - spawnedAt;
     if (elapsed >= FAST_EXIT_MS) {
       throw new Error(
