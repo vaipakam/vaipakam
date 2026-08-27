@@ -27,18 +27,15 @@ old form in their notes.
 Repointing them turned out to need more care than swapping a hostname,
 and review caught two ways a naive substitution goes wrong.
 
-The frontend step says "set on every frontend deploy", so writing the
-production address into it tells an operator to point a staging or
-preview build at the live service — and the alerts code carries an
-explicit invariant against exactly that, because the live service's
-allow-list accepts those origins and one of its endpoints writes real
-users' settings. It now says to use the deployment under test, with
-production named only as the production case.
+The frontend step says "set on every frontend deploy", and writing the
+production address into it looked like pointing staging at production.
+The truth turned out to be less comfortable: there is only one such
+service and every environment already shares it, so there was no
+per-environment address to prefer. The step now says that, and states
+the consequence instead of implying a separation that does not exist.
 
-The smoke test had the same shape and a second flaw underneath it. Aimed
-at the live service, it returns a healthy answer even when the
-deployment being tested is broken — a green result that proves nothing.
-And its payload carried a fixed identifier while the table treats that
+The smoke test carried a second flaw underneath the same wrong host. Its
+payload carried a fixed identifier while the table treats that
 column as a primary key with no conflict handling, so the test worked
 once per database and then failed with a constraint error that looks
 like a fault in the service. It now generates a fresh identifier per run

@@ -2011,7 +2011,23 @@ Telegram + Push Protocol. This section is one-time setup and does
    # wrangler prompts for the value — paste the BotFather token.
    ```
    `TG_BOT_USERNAME` is committed in `wrangler.jsonc` as a public var.
-3. Register the webhook so Telegram pushes inbound DMs into the worker:
+3. Register the webhook so Telegram pushes inbound DMs into the worker.
+
+   > **SECURITY — read before running this step.** `handleTelegramWebhook`
+   > (`apps/agent/src/index.ts:654`) verifies only that `TG_BOT_TOKEN` is
+   > configured; it does **not** verify that a request actually came from
+   > Telegram. The route sits before the Origin gate and carries no rate
+   > limiter, so it accepts update JSON from any caller. Telegram supports
+   > a `secret_token` parameter on `setWebhook` and echoes it back in the
+   > `X-Telegram-Bot-Api-Secret-Token` header on every delivery — **the
+   > agent does not check that header today.** Setting the parameter alone
+   > therefore buys nothing; the handler has to reject mismatches first.
+   >
+   > This is not created by registering the webhook — the endpoint is
+   > already public and `POST /link/telegram` already issues handshake
+   > codes regardless — but do not treat this step as making the linking
+   > flow safe. Tracked privately per SECURITY.md; do not open a public
+   > issue for it.
    ```bash
    curl "https://api.telegram.org/bot<TG_BOT_TOKEN>/setWebhook" \
         --data-urlencode "url=https://agent.vaipakam.com/tg/webhook"
@@ -2635,13 +2651,20 @@ lives. Set it per environment in the dapp's `.env.production` /
 `.env.staging`:
 
 ```
-VITE_AGENT_ORIGIN=https://agent-production.<account>.workers.dev
+VITE_AGENT_ORIGIN=https://agent.vaipakam.com
 ```
 
-Set this to the URL `wrangler deploy` prints for the agent
-Worker. Missing var → the offers panel and the click-time
-fulfillment-data fetch both noop; the dapp behaves as if no
-OpenSea offers exist on any prepay-listing.
+**One agent serves every environment** — `apps/agent/wrangler.jsonc`
+declares a single Worker with no environment blocks, and the staging
+plan points staging at this same origin. This section previously showed
+a per-environment `agent-production.<account>.workers.dev` form; no such
+deployment exists, so an operator following it configured a hostname
+that answers nothing. See the shared-origin warning in §8b for what
+using one agent everywhere costs.
+
+Missing var → the offers panel and the click-time fulfillment-data fetch
+both noop; the dapp behaves as if no OpenSea offers exist on any
+prepay-listing.
 
 ### Indexer D1 migrations (auto-applied)
 
