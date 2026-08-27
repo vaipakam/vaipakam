@@ -3783,45 +3783,75 @@ library LibInteractionRewards {
         LibVaipakam.Storage storage s,
         address user
     ) private view returns (uint256 need) {
-        (uint256 payout, uint256 freshRaw) = _userPendingSplit(s, user);
-        uint256 forfeitFresh = _userForfeitFresh(s, user);
-        if (forfeitFresh != 0) {
-            // Unchanged: already nets the earmark and charges the whole payout
-            // on top, which is what {LibVpfiRecycle.credit} requires.
-            return payout + s.recycleBucket + forfeitFresh;
-        }
-        // #1499 (Codex #1970 r1) — MIRROR THE CLAIM, do not re-derive it.
+        // #1499 — ASSEMBLED FROM EXISTING EXACT PIECES, deriving nothing.
         //
-        // Two corrections to the first draft, both found in review:
+        // Five review findings on this predicate were five different wrong
+        // approximations of one quantity. Every component below already has a
+        // single implementation in this library, and the sum is the only
+        // arithmetic performed here.
         //
-        // 1. CAP BEFORE TESTING BACKING. The claim truncates fresh to the
-        //    remaining 69M pool headroom and only then checks backing
-        //    (`RewardClaimFacet:338-400`). Testing the UNCAPPED fresh
-        //    over-states the requirement — and that is not the safe direction
-        //    it looks like: `remaining` is `CAP - paidOut - remittedGlobal`
-        //    with both subtrahends append-only, so it is monotone
-        //    NON-INCREASING. An over-strict gate does not delay a reap, it
-        //    stops the clock INDEFINITELY for a claim that is executable.
+        // The claim's own gate is stated algebraically at
+        // `RewardClaimFacet:290-299`: the payout removes
+        // `freshPending + paidRecycled` from the balance while the bucket moves
+        // by `-paidRecycled + freshTreasury`, so `paidRecycled` CANCELS and
+        // `balance' >= recycleBucket'` reduces to
+        // `freshPending + freshTreasury <= room`.
         //
-        // 2. CALL `backingPosition`, do not hand-add the bucket. The claim
-        //    obtains its room from {LibVpfiRecycle.backingPosition}, which
-        //    subtracts the bucket AND `strandedRecoveryReserved` AND the
-        //    recovery position. Adding only the bucket left the same
-        //    understatement this card exists to remove, just narrower. The
-        //    claim path says exactly this at `RewardClaimFacet:310` —
-        //    "inlining the arithmetic instead of calling the definition is
-        //    what let the prose drift in the first place" — which I had read
-        //    as context rather than as instruction.
+        // FRESH = the same three terms `_userWalkFreshBudget` reserves against,
+        // plus the armed need it budgets for:
+        //   window  — `_userWindowFreshReserved`
+        //   legacy  — `previewForUserEntriesLegacyOnly`, both destinations
+        //   armed   — `_userArmedFreshNeed`, GROUPED and D1-capped
         //
-        // Expressed as a BALANCE threshold so both consumers keep their
-        // `balance >= need` shape: since `unearmarked` is the balance less
-        // every reservation, `freshCapped <= unearmarked` is exactly
-        // `freshCapped + (balance - unearmarked) <= balance`.
+        // `_userArmedFreshNeed` is the piece I previously approximated with
+        // `_userEntriesUpperBound`. Its own comment names the failure that
+        // caused: "two 0.4 entries capped collectively to 0.5 reported 0.8, so
+        // the clock waited forever on 0.3 that no remittance owes" (Codex
+        // #1699 r4). It reaches the dry-run engine by cross-facet staticcall
+        // because inlining it costs 5,037 bytes over EIP-170.
+        //
+        // POOL TRUNCATION IS STILL REQUIRED, and reasoning it away cost a
+        // stalled clock in test before this shipped.
+        //
+        // `_userWalkFreshBudget` does start from `poolRemaining()`, but it
+        // bounds the ARMED WALK only: the window and legacy legs are reserves
+        // SUBTRACTED FROM that budget, not capped by it. On an unarmed deploy
+        // (`governorCommitArmedFromDay == 0` — every current chain) the armed
+        // term is zero and the legacy legs are the whole fresh figure, wholly
+        // untruncated. The claim truncates the TOTAL `freshSpend` to
+        // `remaining` (`RewardClaimFacet:338-346`), so the total is what must
+        // be truncated here.
+        //
+        // Not a double-count: `armed <= remaining - window - legacy` by
+        // construction, so the cap is a NO-OP whenever the walk is budgeted and
+        // binds only where the window/legacy portion alone exceeds headroom.
+        (uint256 userLegs, uint256 treasuryLegs) =
+            previewForUserEntriesLegacyOnly(s, user);
+        uint256 freshTotal = _userWindowFreshReserved(s, user)
+            + userLegs
+            + treasuryLegs
+            + _userArmedFreshNeed(s, user);
         uint256 room = poolRemaining();
-        uint256 freshCapped = freshRaw < room ? freshRaw : room;
+        if (freshTotal > room) freshTotal = room;
+
+        // ONE predicate, no forfeit branch. Forfeit value enters as
+        // `treasuryLegs` — a TERM, not a second formula with its own
+        // arithmetic — so the branch that r2 found bypassing `backingPosition`
+        // stops existing rather than being patched.
         (uint256 bal, , uint256 unearmarked) = LibVpfiRecycle.backingPosition(s);
         uint256 earmarked = bal > unearmarked ? bal - unearmarked : 0;
-        need = freshCapped + earmarked;
+        need = freshTotal + earmarked;
+
+        // SECOND CONDITION — the transfer must also settle. `paidRecycled`
+        // cancels out of the gate above, so a recycled-only claim is never
+        // gated there (its backing is in the bucket by construction). It still
+        // has to be TRANSFERABLE, which is a different question: with
+        // `bal <= bucket`, `unearmarked` floors to zero, `earmarked == bal`,
+        // and the gate above degenerates to `balance >= balance` — vacuously
+        // true while the real claim reverts on the token transfer. That is the
+        // regression r2 caught in my own rework.
+        (uint256 payout, ) = _userPendingSplit(s, user);
+        if (payout > need) need = payout;
     }
 
     /// @dev PR-3c — accumulate `part` into `acc` (memory fold helper).
