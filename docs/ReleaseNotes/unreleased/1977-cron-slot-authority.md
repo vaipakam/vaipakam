@@ -101,6 +101,16 @@ attention:
   document satisfied both and the step could not be completed. This is the
   one shape the others do not cover: nothing was individually wrong, and no
   per-change review asks whether the state a fix *produces* is reachable.
+- **The correction that landed and was never called.** One check had its
+  substring test replaced by a proper parse, for exactly the right reason. The
+  parse was written, was correct, and was wired into one of the three places
+  that needed it; the other two went on running the test it replaced. So the
+  fix and the defect shipped side by side in the same short function, and
+  every gate stayed green, because the text being searched happened to contain
+  the right word for an unrelated reason. This is not the sibling shape above —
+  nothing was left untouched and nothing was overlooked in another file. The
+  remedy was present, adjacent, and inert. Nothing that examines a change can
+  see this; only reading the finished function can.
 - **One rule, two threat models, opposite meanings.** The restore runbook
   gained a rule saying that if a backup fails its checksum, fall back to the
   other bucket. That is right on an ordinary restore, where the second bucket
