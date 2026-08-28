@@ -1270,13 +1270,11 @@ const SCOPED = [
  * the keeper really does depend on the agent.
  */
 const workspaceDepsCache = new Map();
-function scopedWorkspaceDeps(sc) {
-  if (!workspaceDepsCache.has(sc.dir)) {
+function manifestDeps(dir) {
+  if (!workspaceDepsCache.has(dir)) {
     let names = [];
     try {
-      const m = JSON.parse(
-        readFileSync(`${REPO_ROOT}/${sc.dir}/package.json`, 'utf8'),
-      );
+      const m = JSON.parse(readFileSync(`${REPO_ROOT}/${dir}/package.json`, 'utf8'));
       names = [
         ...Object.keys(m.dependencies ?? {}),
         ...Object.keys(m.devDependencies ?? {}),
@@ -1285,12 +1283,96 @@ function scopedWorkspaceDeps(sc) {
     } catch {
       names = [];
     }
-    workspaceDepsCache.set(sc.dir, names);
+    workspaceDepsCache.set(dir, names);
   }
-  return workspaceDepsCache.get(sc.dir);
+  return workspaceDepsCache.get(dir);
 }
 
-function filterScopes(line) {
+/**
+ * Every workspace package's name and declared dependencies.
+ *
+ * Needed because `...<pattern>` is DIRECT AND INDIRECT — pnpm's own wording.
+ * A one-level read answered the direct question correctly and silently missed
+ * the transitive one: with `apps/agent -> @vaipakam/contracts -> @vaipakam/lib`,
+ * `--filter '...@vaipakam/lib'` selects the agent, and the guard saw only the
+ * agent's own manifest and resolved the selector to nothing (#1995 r16).
+ *
+ * Built from the conventional workspace roots rather than from
+ * `pnpm-workspace.yaml`, which would need a YAML parse for two directory
+ * names. A package outside them is simply absent from the graph, which costs a
+ * transitive edge and never invents one.
+ */
+let workspaceIndexCache = null;
+function workspaceIndex() {
+  if (workspaceIndexCache) return workspaceIndexCache;
+  const byName = new Map();
+  for (const root of ['apps', 'packages']) {
+    let entries = [];
+    try {
+      entries = readdirSync(`${REPO_ROOT}/${root}`);
+    } catch {
+      entries = [];
+    }
+    for (const e of entries) {
+      try {
+        const m = JSON.parse(
+          readFileSync(`${REPO_ROOT}/${root}/${e}/package.json`, 'utf8'),
+        );
+        if (m.name) byName.set(m.name, manifestDeps(`${root}/${e}`));
+      } catch {
+        /* not a package */
+      }
+    }
+  }
+  workspaceIndexCache = byName;
+  return byName;
+}
+
+/**
+ * Workspace dependency names a scoped package reaches, DIRECTLY OR NOT.
+ *
+ * Resolved from the manifests rather than guessed. The conservative
+ * alternative — attributing every `...` selector to every scoped package —
+ * would report the keeper for `...@vaipakam/agent`, which is a false red unless
+ * the keeper really does depend on the agent.
+ */
+function scopedWorkspaceDeps(sc) {
+  const index = workspaceIndex();
+  const seen = new Set();
+  const queue = [...manifestDeps(sc.dir)];
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    // Only WORKSPACE packages have edges to follow; a registry dependency is a
+    // leaf. A cycle terminates on `seen`, which pnpm's own graph may contain.
+    for (const next of index.get(name) ?? []) if (!seen.has(next)) queue.push(next);
+  }
+  return [...seen];
+}
+
+/**
+ * A fan-out flag counts only when it is ENABLED.
+ *
+ * `pnpm --recursive=false run --if-present deploy` runs no workspace script at
+ * all, and `npm --workspaces=false` likewise — but a bare presence test read
+ * both as "every package" and failed CI on a command that deploys nothing
+ * (#1995 r16). Same shape, and the same last-occurrence rule, as the safety
+ * flag's own scoring; the difference is that being wrong here produces a false
+ * RED rather than a false green, which is the failure mode that gets a guard
+ * switched off.
+ */
+function fanOutEnabled(line, spellings) {
+  let on = false;
+  for (const m of line.matchAll(
+    new RegExp(`(?<![\\w-])(?:${spellings})(?:=(\\S*))?(?=[\\s;&|]|$)`, 'g'),
+  )) {
+    on = m[1] === undefined || /^(true|1)$/i.test(m[1]);
+  }
+  return on;
+}
+
+function filterScopes(rawLine) {
   // EVERY selector, not the first: pnpm runs on packages satisfying "at least
   // one of the selectors", so a protected glob sitting second was ignored
   // (#1995 r6). `--filter-prod` is the same selector with a different name.
@@ -1307,10 +1389,38 @@ function filterScopes(line) {
   // it does, so callers can tell "nothing said" from "said, and it selects
   // nothing". Those had the same spelling before, and only the first may fall
   // through to matching package names in the surrounding text.
+  // Neutralise OTHER options' values before scanning, exactly as
+  // `selectorScope` does — keeping our own. A forwarded wrangler string
+  // carrying filter-like text (`--message="--filter !@vaipakam/agent"`) parsed
+  // as a real selector and SUBTRACTED the package the command actually deploys
+  // (#1995 r16). The same defect `selectorScope` was fixed for at r3, in the
+  // one selector reader that had not been asked the question.
+  // EVERY option this function goes on to read must be kept, fan-out flags
+  // included. `selectorScope`'s own comment warns that the keep list and the
+  // readers "are two halves of one decision and drift silently, because a
+  // missing entry looks exactly like an option that was not present" — and
+  // omitting the fan-out spellings here proved it immediately: `npm
+  // --workspaces run deploy` had `--workspaces run` swallowed as an
+  // option-and-value, so a command that deploys EVERY package read as naming
+  // none. Caught by a control probe, not by the finding being fixed.
+  const line = stripOtherOptionValues(rawLine, [
+    'filter',
+    'filter-prod',
+    'F',
+    'recursive',
+    'workspaces',
+  ]);
   const included = new Set();
   const excluded = new Set();
   let sawSelector = false;
   let sawPositive = false;
+  // A selector that is REAL but cannot be resolved from the text is not an
+  // empty selection. Those had the same spelling, so `--filter .` — which pnpm
+  // documents as the packages under the CWD — came out as "selects nothing",
+  // authoritatively, and suppressed the cwd scope that would have named the
+  // package (#1995 r16). Deferring hands the question to the modelled or
+  // stated directory, which is the thing that actually answers it.
+  let unresolved = false;
   // `-r` / `--recursive` runs the script in EVERY workspace package, naming
   // none of them, so no textual, filter or cwd signal exists at all (#1995 r8).
   //
@@ -1320,11 +1430,11 @@ function filterScopes(line) {
   // there, so `pnpm recursive --if-present run deploy --no-keep-vars` — every
   // protected Worker, destructively — passed the guard.
   if (
-    /(?:^|\s)(?:-r|--recursive)(?:\s|=|$)/.test(line) ||
+    fanOutEnabled(line, '-r|--recursive') ||
     /(?:^|\s)pnpm\s+(?:recursive|multi|m)(?:\s|$)/.test(line) ||
     // npm's spelling of the same fan-out: `npm run --help` documents
     // `[--workspaces]`, with `-ws` as its shorthand (#1995 r10).
-    /(?:^|\s)(?:--workspaces|-ws)(?:\s|=|$)/.test(line)
+    fanOutEnabled(line, '--workspaces|-ws')
   ) {
     sawSelector = true;
     sawPositive = true;
@@ -1350,7 +1460,10 @@ function filterScopes(line) {
     // `--filter ./<dir>` and `--filter {<dir>}`, and matching only against
     // package names missed `--filter './apps/*gent'` entirely (#1995 r7).
     const isDir = /^[.{]/.test(pat);
-    pat = pat.replace(/^\{|\}$/g, '').replace(/^\.\//, '').replace(/\/+$/, '');
+    // `\}` and not `\}$`: the brace may be followed by a changed-since suffix
+    // (`{apps/agent}[HEAD~100]`), and an end-anchored strip left the closing
+    // brace embedded in the pattern (#1995 r16).
+    pat = pat.replace(/^\{|\}(?=\[|$)/g, '').replace(/^\.\//, '').replace(/\/+$/, '');
     // `[<since>]` selects whatever changed since a ref (#1995 r10). Which
     // packages that is cannot be known from the text, and it demonstrably
     // reaches a protected one, so it is attributed to every scoped package the
@@ -1359,6 +1472,29 @@ function filterScopes(line) {
     if (/^\[.*\]$/.test(pat)) {
       sawPositive = true;
       for (const sc of SCOPED) included.add(sc);
+      continue;
+    }
+    // The changed-since suffix COMPOSES with a directory selector — pnpm
+    // documents the shape as `{}[]` — and only the standalone `[]`
+    // form was handled, so `{apps/agent}[HEAD~100]` fell through to the glob
+    // test, matched nothing, and became an authoritative empty scope (#1995
+    // r16). The suffix only ever NARROWS what the prefix selects, so
+    // attributing the prefix's packages is the conservative reading.
+    const since = pat.match(/^(.*)\[[^\]]*\]$/);
+    if (since) {
+      pat = since[1];
+      // `{}[]` with nothing but a ref left is the standalone form again.
+      if (pat === '') {
+        sawPositive = true;
+        for (const sc of SCOPED) included.add(sc);
+        continue;
+      }
+    }
+    // `.` and `./` select the packages UNDER THE CURRENT DIRECTORY, which the
+    // selector text cannot name. Real, and unresolvable — not empty.
+    if (pat === '' || pat === '.') {
+      sawSelector = true;
+      unresolved = true;
       continue;
     }
     const re = new RegExp(
@@ -1384,7 +1520,7 @@ function filterScopes(line) {
       for (const sc of matched) included.add(sc);
     }
   }
-  if (!sawSelector) return null;
+  if (!sawSelector || unresolved) return null;
   // With only negations, the base is every package — that is what
   // `--filter '!@vaipakam/indexer'` means, and it still reaches both.
   const base = sawPositive ? included : new Set(SCOPED);

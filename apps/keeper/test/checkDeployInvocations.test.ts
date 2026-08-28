@@ -2857,6 +2857,89 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ── An UNRECOGNISED selector was an authoritative EMPTY selection, which
+  // suppressed every other source of scope. Real-but-unresolvable and
+  // selects-nothing had the same spelling (#1995 r16).
+  it('--filter . is the packages under the CWD, not none (#1995 r16)', () => {
+    seedWorkspace();
+    seed('docs/r.md', 'From `apps/agent`, run `pnpm --filter . run deploy --no-keep-vars`\n');
+    const r = runWith('x.sh', '# placeholder\n');
+    expect(r.ok).toBe(false);
+    // The NEGATIVE is what pins the deferral. The report echoes the offending
+    // line, and that line says `apps/agent` itself — so asserting only that
+    // was satisfied by the input rather than by the verdict, and a mutant
+    // removing the deferral survived. Without it the selector falls through to
+    // "negations only, so every package" and the FIRST scoped package (the
+    // keeper) is reported instead of the one the cwd names.
+    expect(r.out).toContain('apps/agent');
+    expect(r.out).not.toContain('@vaipakam/keeper');
+  });
+
+  it('a changed-since suffix COMPOSES with a directory selector (#1995 r16)', () => {
+    // pnpm documents the shape as `{<dir>}[<since>]`; only the standalone
+    // `[<since>]` form was handled, so this matched nothing and read as an
+    // authoritative empty scope. The suffix only NARROWS the prefix, so
+    // attributing the prefix's packages is the conservative reading.
+    seedWorkspace();
+    const r = runWith('a.sh', "pnpm --filter '{apps/agent}[HEAD~100]' run deploy --no-keep-vars\n");
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('filter-like text inside ANOTHER option cannot subtract a package (#1995 r16)', () => {
+    // The quoted wrangler message parsed as a real negation and excluded the
+    // very package the command deploys. `selectorScope` was fixed for exactly
+    // this at r3; `filterScopes` was the selector reader nobody had asked.
+    seedWorkspace();
+    const r = runWith(
+      'b.sh',
+      'pnpm --filter @vaipakam/agent run deploy --message="--filter !@vaipakam/agent" --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('...<pkg> reaches INDIRECT dependents too (#1995 r16)', () => {
+    // pnpm's wording is "direct and indirect". A one-level manifest read
+    // answered the direct question correctly and silently missed this one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent","dependencies":{"@vaipakam/contracts":"workspace:*"}}\n');
+    seed('apps/keeper/package.json', '{"name":"@vaipakam/keeper","dependencies":{"@vaipakam/contracts":"workspace:*"}}\n');
+    seed('packages/contracts/package.json', '{"name":"@vaipakam/contracts","dependencies":{"@vaipakam/lib":"workspace:*"}}\n');
+    const r = runWith('c.sh', "pnpm --filter '...@vaipakam/lib' run --if-present deploy --no-keep-vars\n");
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a DISABLED fan-out flag selects nothing (#1995 r16)', () => {
+    // `pnpm --recursive=false run --if-present deploy` runs no workspace
+    // script; a presence test failed CI on a command that deploys nothing.
+    seedWorkspace();
+    const r = runWith('d.sh', 'pnpm --recursive=false run --if-present deploy --no-keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and npm --workspaces=false likewise (#1995 r16)', () => {
+    seedWorkspace();
+    const r = runWith('e.sh', 'npm --workspaces=false run deploy -- --no-keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('while a BARE --workspaces is still every package (#1995 r16 control)', () => {
+    // Load-bearing: neutralising other options' values before the fan-out test
+    // swallowed `--workspaces run` as an option-and-value, so a command that
+    // deploys EVERY package read as naming none. A control probe caught it,
+    // not the finding being fixed.
+    seedWorkspace();
+    const r = runWith('f.sh', 'npm --workspaces run deploy -- --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('and a bare -r too (#1995 r16 control)', () => {
+    seedWorkspace();
+    const r = runWith('g.sh', 'pnpm -r run deploy --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',
