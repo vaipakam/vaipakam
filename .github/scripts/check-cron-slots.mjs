@@ -1945,7 +1945,14 @@ export function parseInventory(md) {
     // A leading pipe is the strong signal — prose does not begin with one —
     // and the pipe count still catches the leading-pipe-omitted form the next
     // check reports by name.
-    const pipes = (line.match(/\|/g) ?? []).length;
+    // Codex #1978 r54: the RAW count treated escaped pipes as separators, so
+    // ordinary prose in this section carrying three `\|` was classified as a
+    // malformed row and BLOCKED both gate modes on a valid authority. The
+    // parity semantics already exist in `splitTableRow`, written for exactly
+    // this distinction one layer down — the candidacy test and the split
+    // disagreed about what a separator is, which is the two-halves-of-one-
+    // function shape for the fourth time on this PR.
+    const pipes = splitTableRow(line).length - 1;
     if (!/^ {0,3}\|/.test(line) && pipes < 3) continue;
     if (!/^\s*\|/.test(line)) {
       problems.push(
@@ -2577,8 +2584,14 @@ export function checkSources(sources) {
     // ancestor does. That is the property to test — "this names A WORKER",
     // not "this names something". Checked against the tree when written: all
     // five sourced rows satisfy it and bare `apps` / `ops` do not.
+    // Codex #1978 r54: `apps/indexer/` is a conventional way to write a
+    // directory, `git ls-files` accepts it, and the slice then skipped one
+    // character too many — so a formatting-only edit made `checkSources`
+    // claim the directory holds no config and blocked both modes. Strip the
+    // separator rather than assuming exactly one follows.
+    const dir = path.replace(/\/+$/, '');
     const configPath = tracked.find((f) =>
-      /^wrangler\.(jsonc|json|toml)$/.test(f.slice(path.length + 1)),
+      /^wrangler\.(jsonc|json|toml)$/.test(f.slice(dir.length + 1)),
     );
     if (configPath) {
       // Codex #1978 r18, and a straight reversal of my r17 refusal. I declined
@@ -2776,7 +2789,7 @@ export function wranglerNameFrom(raw, isToml) {
     // name that does not exist. Eleventh route, same silent consequence.
     const basic =
       m[4] !== undefined
-        ? m[4].replace(/^\r?\n/, '').replace(/\\\r?\n[ \t]*/g, '')
+        ? m[4].replace(/^\r?\n/, '').replace(/\\[ \t]*\r?\n\s*/g, '')
         : m[6];
     return decodeTomlBasic(basic);
   }
@@ -4055,6 +4068,14 @@ const WRANGLER_NAME_CASES = [
   // r53: a UTF-8 BOM, and TOML's EIGHT-digit escape which `JSON.parse` does
   // not know. Both made the whole config unreadable.
   ['a toml config with a BOM', '\uFEFFname = "vaipakam-agent"\n', true, 'vaipakam-agent'],
+  // r54: TOML trims a continuation's WHOLE whitespace run, blank lines
+  // included — not one newline plus indentation.
+  [
+    'a toml continuation across a blank line',
+    'name = @@@vaipakam-\\\n\n   agent@@@\n'.replace(/@@@/g, '"'.repeat(3)),
+    true,
+    'vaipakam-agent',
+  ],
   [
     'a toml uppercase unicode escape in the key',
     '"n\\U00000061me" = "vaipakam-agent"\n',
