@@ -150,6 +150,67 @@ contract GovernorDualAccumulatorTest is SetupTest {
     /// @dev Arm from `armDay`, seed bucket + trailing credits so day
     ///      `armDay`'s stamp carries a non-zero recycled budget, and
     ///      finalize it. Returns (floor, recycled) of the armed day.
+    /// #1499 — the RECYCLED-TRANSFER guard, asserted on the quantity it sets.
+    ///
+    /// The guard raises the claim's funding requirement to the claimant's
+    /// recycled obligation when that exceeds what the balance can transfer
+    /// above the earmark. It shipped in #1970 unexercised, because
+    /// `RewardClaimBackingSeparationTest` never arms the governor and
+    /// {_entryPriceCore} clamps `recycled` to the armed amount — so every entry
+    /// there has a zero recycled share. This suite arms and `_armAndFinalize`
+    /// already seeds a recycled credit.
+    ///
+    /// Asserted on `userClaimFundingNeed` rather than on the expiry deadline.
+    /// A first attempt asserted the deadline and PASSED with the guard removed:
+    /// the countdown has further gates of its own, so it cannot isolate this
+    /// one. The funding requirement is the exact value the guard writes, so
+    /// deleting the guard moves it and the assertion fails.
+    ///
+    /// The pool is exhausted first so the fresh term is zero and
+    /// `freshTotal + earmarked` degenerates to the bare balance; without that,
+    /// the first backing condition decides the outcome and the guard is never
+    /// the reason for it.
+    function testFundingNeedRisesToTheRecycledObligation() public {
+        _cfg().setRewardClaimHorizonDays(180);
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "fixture: the armed day has a NON-ZERO recycled share");
+
+        uint256 id = _seedEntry(alice, 100, 4, 6);
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _mut().setInteractionPoolPaidOut(0);
+        _mut().setArmedFreshLedgerRaw(100_000 ether, 0);
+        _sweeper().sweepExpiredInteractionRewards(ids);
+
+        // Fresh truncates to zero; bucket above the balance so the earmark is
+        // the whole balance — the shape in which the first condition is vacuous.
+        _mut().setInteractionPoolPaidOut(LibVaipakam.VPFI_INTERACTION_POOL_CAP);
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+
+        uint256 bal = vpfi.balanceOf(address(diamond));
+
+        // ABOVE the obligation: the requirement is just the balance, and the
+        // claim is fundable.
+        vm.prank(address(diamond));
+        vpfi.transfer(address(0xdead), bal - 500 ether);
+        uint256 balHigh = vpfi.balanceOf(address(diamond));
+        uint256 needHigh = _mut().userClaimFundingNeedRaw(alice);
+        assertEq(needHigh, balHigh, "above the obligation the requirement is the balance");
+
+        // BELOW it: the requirement rises to the recycled obligation, so the
+        // claim is NOT fundable — which is what stops the horizon clock.
+        vm.prank(address(diamond));
+        vpfi.transfer(address(0xdead), 490 ether);
+        uint256 balLow = vpfi.balanceOf(address(diamond));
+        uint256 needLow = _mut().userClaimFundingNeedRaw(alice);
+        assertGt(needLow, balLow, "below it the requirement exceeds the balance");
+        assertGt(
+            needLow,
+            needHigh - (balHigh - balLow),
+            "the requirement is pinned to the obligation, not to the balance"
+        );
+    }
+
     function _armAndFinalize(uint256 armDay, uint256 creditedPerWindow)
         internal
         returns (uint256 floor_, uint256 recycled)
