@@ -2485,6 +2485,62 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a negation flag composed from chunks (#1995 r15)', () => {
+    // bash passes `--no-keep-"vars"` as `--no-keep-vars`, so the earlier
+    // --keep-vars is overridden and the deploy is destructive.
+    const r = runWith('a.sh', 'cd apps/agent\nwrangler deploy --keep-vars --no-keep-"vars"\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a quoted paren inside a command substitution (#1995 r15)', () => {
+    // The substitution produces no stdout, so the deploy is bare; the quoted
+    // `)` ended the depth walk early and left the inert --keep-vars visible.
+    const r = runWith('a.sh', "cd apps/agent\nwrangler deploy $(echo ')' --keep-vars >&2)\n");
+    expect(r.ok).toBe(false);
+  });
+
+  it('a package-root target with a doubled separator (#1995 r15)', () => {
+    const r = runWith('a.sh', 'cd apps//agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it("ANSI-C quoting in a path component (#1995 r15)", () => {
+    // `$'agent'` is a quoted WORD; leaving the `$` made it read as an
+    // unresolved parameter expansion and cleared scope.
+    const r = runWith('a.sh', "cd apps/$'agent'\nwrangler deploy\n");
+    expect(r.ok).toBe(false);
+  });
+
+  it('a colon-terminated prose LABEL scopes the next command line (#1995 r15)', () => {
+    const r = runWith('docs/ops/DeploymentRunbook.md', 'From apps/agent, run:\n\n`wrangler deploy`\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('but a label naming TWO scoped packages hands over nothing (#1995 r15)', () => {
+    // Ambiguous, and this guard blocks the unfiltered CI job.
+    const r = runWith('docs/x.md', 'Compare apps/agent and apps/keeper:\n\n`wrangler deploy`\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and intervening prose resets the label (#1995 r15)', () => {
+    const r = runWith('docs/x.md', 'From apps/agent, run:\n\nSome prose here.\n\n`wrangler deploy`\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('an explicit cd supersedes an earlier assignment on the line (#1995 r15)', () => {
+    // A valid bare INDEXER deploy; preferring the unused TARGET text over the
+    // modelled cwd was a false red.
+    const r = runWith('a.sh', 'TARGET=apps/agent; cd apps/indexer; wrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('while the assignment still resolves a later cd through it (#1995 r15)', () => {
+    // Assignments keep feeding shellVars; what they stop doing is standing in
+    // for a cwd the shell has since been told.
+    const r = runWith('b.sh', 'TARGET=apps/agent\ncd "$TARGET"\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('still does not flag a subdirectory of an OUT-OF-SCOPE package (#1995 r1)', () => {
     // The descendant match must widen scope for scoped packages only; if it
     // widened generally the 13 leak fixtures would pass for the wrong reason.

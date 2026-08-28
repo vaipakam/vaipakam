@@ -180,7 +180,16 @@ const DECL_PREFIX = String.raw`(?:(?:export|declare|typeset|local|readonly)\s+(?
 
 /** Collapse a captured word to what the shell would hand the command. */
 function dequote(w) {
-  return w.replace(/\\([\s\S])/g, '$1').replace(/["'`]/g, '');
+  return (
+    w
+      // `$'…'` is ANSI-C quoting — a quoted WORD. Stripping the quotes first
+      // and the `$` never left a stray `$`, which then read as an unresolved
+      // parameter expansion and cleared scope on a static target: bash enters
+      // `apps/agent` for `cd apps/$'agent'` (#1995 r15).
+      .replace(/\$'((?:\\[\s\S]|[^'])*)'/g, '$1')
+      .replace(/\\([\s\S])/g, '$1')
+      .replace(/["'`]/g, '')
+  );
 }
 
 /** Vendored trees excluded by exact repo-relative path, not by basename. */
@@ -428,11 +437,26 @@ function stripCommandSubstitutions(text) {
       continue;
     }
     if (text[i] === '$' && text[i + 1] === '(') {
+      // The depth walk has to respect QUOTING and escapes, or a quoted paren
+      // inside the substitution ends it early and leaves its contents visible:
+      // `wrangler deploy $(echo ')' --keep-vars >&2)` produces no stdout, so
+      // the deploy is bare, but the inert `--keep-vars` blessed it (#1995 r15).
       let depth = 1;
       let j = i + 2;
+      let q = null;
       for (; j < text.length && depth > 0; j += 1) {
-        if (text[j] === '(') depth += 1;
-        else if (text[j] === ')') depth -= 1;
+        const c = text[j];
+        if (c === '\\') {
+          j += 1;
+          continue;
+        }
+        if (q) {
+          if (c === q) q = null;
+          continue;
+        }
+        if (c === '"' || c === "'" || c === '`') q = c;
+        else if (c === '(') depth += 1;
+        else if (c === ')') depth -= 1;
       }
       out += '\u0000';
       i = j - 1;
@@ -441,6 +465,24 @@ function stripCommandSubstitutions(text) {
     out += text[i];
   }
   return out;
+}
+
+/**
+ * A flag name with optional quote characters between its letters.
+ *
+ * Bash concatenates `--no-keep-"vars"` into `--no-keep-vars`, and scoring the
+ * raw text read it as an unknown token and left an earlier `--keep-vars`
+ * standing (#1995 r15). Tolerating quotes only INSIDE THE NAME is deliberate:
+ * my first attempt dequoted whole flag tokens and ran into their VALUES,
+ * breaking seven #1924 cases where quoting round the `=` or the value is
+ * load-bearing (`--keep-vars"="false`, `--keep-vars"=true garbage"`).
+ */
+function quoteTolerant(name) {
+  const Q = `["'\`]*`;
+  return name
+    .split('')
+    .map((c) => (/[a-z0-9]/i.test(c) ? c : `\\${c}`))
+    .join(Q);
 }
 
 function flagEnabled(rawLine, flag) {
@@ -485,8 +527,11 @@ function flagEnabled(rawLine, flag) {
   // `--message=--keep-vars` — another option whose entire value looks like the
   // flag — pass as well. It was never needed: in `--keep-vars=true` the flag
   // is preceded by whitespace and it is the VALUE that follows the `=`.
+  // The NAME is quote-tolerant; the value patterns are untouched, because
+  // quoting there is load-bearing (#1995 r15).
+  const flagRe = quoteTolerant(flag);
   const re = new RegExp(
-    `(?<![^\\s(\`'"])${flag}(?:=((?:"[^"]*"|'[^']*'|[^\\s"'\`)\\u0000]+)+)` +
+    `(?<![^\\s(\`'"])${flagRe}(?:=((?:"[^"]*"|'[^']*'|[^\\s"'\`)\\u0000]+)+)` +
       `|\\s+(?:"([^"]*)"|'([^']*)'|((?![-#])[^\\s"'\`)\\u0000]+)))?`,
     'g',
   );
@@ -528,10 +573,10 @@ function flagEnabled(rawLine, flag) {
   // above: an optional `=` capture there swallows the equals before the value
   // alternation can, breaking every `--keep-vars=true` (caught by the
   // fixtures). Scanned separately, positioned like any other event.
-  const emptyRe = new RegExp(`(?<![^\\s(\`'"])${flag}=(?=\\s|$)`, 'g');
+  const emptyRe = new RegExp(`(?<![^\\s(\`'"])${flagRe}=(?=\\s|$)`, 'g');
   for (const m of line.matchAll(emptyRe)) events.push({ at: m.index, on: false });
   const negRe = new RegExp(
-    `(?<![^\\s(\`'"])--no-${flag.replace(/^--/, '')}\\b`,
+    `(?<![^\\s(\`'"])${quoteTolerant(`--no-${flag.replace(/^--/, '')}`)}(?![\\w-])`,
     'g',
   );
   for (const m of line.matchAll(negRe)) events.push({ at: m.index, on: false });
@@ -1262,7 +1307,19 @@ function resolveDir(cwd, target, vars = null) {
   // from inside another package. Modelling it as nested is what produced
   // `apps/keeper/apps/indexer` and forced a tail exclusion that then dropped
   // real subdirectories like `apps/agent/packages/generated` (#1995 r5).
-  if (/^(?:apps|ops|packages)\//.test(target)) return target.replace(/\/+$/, '');
+  // Normalised component-wise, not just trimmed: the early return skipped the
+  // walk below, so `cd apps//agent` was stored literally and `scopeOfCwd` did
+  // not recognise it, while bash resolves it to apps/agent (#1995 r15).
+  if (/^(?:apps|ops|packages)\//.test(target)) {
+    const norm = [];
+    for (const part of target.split('/')) {
+      if (part === '' || part === '.') continue;
+      if (part !== '..') norm.push(part);
+      else if (norm.length > 0 && norm[norm.length - 1] !== '..') norm.pop();
+      else norm.push('..');
+    }
+    return norm.join('/');
+  }
   const parts = target.startsWith('/') ? [] : cwd.split('/').filter(Boolean);
   for (const part of target.split('/')) {
     if (part === '' || part === '.') continue;
@@ -2059,6 +2116,34 @@ for (const file of walk(REPO_ROOT)) {
   // runs from the keeper (Codex #1924 r39). Each state carries its own pushd
   // stack. A deploy is judged against every state that can reach it: for a
   // default-deny guard, one reachable keeper state is enough to flag.
+  // A runbook often puts the package on a LABEL line and the copyable command
+  // on the next: "From apps/agent, run:" then `wrangler deploy`. The command
+  // line names nothing, so line-local scope loses it (#1995 r15).
+  //
+  // DELIBERATELY NARROW, because this is prose and this guard blocks the
+  // unfiltered CI job. The label must END WITH A COLON — i.e. it introduces
+  // what follows — and must name EXACTLY ONE scoped package; a line mentioning
+  // two, or mentioning one in passing without introducing a command, hands over
+  // nothing. Blank lines between label and command are allowed; anything else
+  // resets it.
+  const rawLines = text.split('\n');
+  const labelScope = new Map();
+  {
+    let pending = null;
+    for (let i = 0; i < rawLines.length; i += 1) {
+      const t = rawLines[i].trim();
+      if (t === '') continue;
+      if (pending) labelScope.set(i + 1, pending);
+      if (/:\s*$/.test(t)) {
+        const named = SCOPED.filter((sc) => scopeOf(t, '') === sc || new RegExp(
+          `${sc.dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w.-])`,
+        ).test(t));
+        pending = named.length === 1 ? named[0] : null;
+      } else {
+        pending = null;
+      }
+    }
+  }
   const INITIAL = [{ cwd: '', stack: [] }];
   /** Literal `VAR=value` assignments seen so far in the current shell block. */
   const shellVars = new Map();
@@ -2100,7 +2185,7 @@ for (const file of walk(REPO_ROOT)) {
       // KEEPER, purely because it is first in SCOPED, with the keeper's filter
       // and HF_SCALE remedy beside an agent problem. The scope has to come from
       // the segment carrying the unsafe command.
-      const lineScope = scopeOf(line, rel);
+      const lineScope = scopeOf(line, rel) ?? labelScope.get(lineNo) ?? null;
       for (const part of splitCommands(line)) {
         const seg = part.text;
         // The dequoted fallback belongs here too (#1995 r9). Only the shell
@@ -2235,6 +2320,20 @@ for (const file of walk(REPO_ROOT)) {
           part.sep === '|' || nextPart?.sep === '|' || nextPart?.sep === '&';
         const after =
           dir && !inSubshell ? input.map((st) => applyDir(st, dir, shellVars)) : input;
+        // An explicit `cd` that MOVES THE PARENT SHELL establishes where the
+        // command actually runs, so an assignment naming a different package
+        // earlier on the line stops being evidence of scope:
+        // `TARGET=apps/agent; cd apps/indexer; wrangler deploy` is a valid bare
+        // indexer deploy, and preferring the unused TARGET text over the
+        // modelled cwd was a false red (#1995 r15). Assignments still feed
+        // `shellVars`, which is how `cd "$TARGET"` resolves; what they stop
+        // doing is standing in for a cwd the shell has since been told. Not
+        // applied for a subshell/pipeline `cd`, which never reached the parent.
+        if (dir && !inSubshell && dir.kind !== 'popd') {
+          for (let k = namedPrefix.length - 1; k >= 0; k -= 1) {
+            if (namedPrefix[k].assignment) namedPrefix.splice(k, 1);
+          }
+        }
         // After `A || B` both outcomes remain reachable: A succeeded and B was
         // skipped, or A failed and B ran.
         //
@@ -2299,7 +2398,9 @@ for (const file of walk(REPO_ROOT)) {
           } else if (named) {
             shellVars.delete(named[1]);
           }
-          namedPrefix.push({ text: seg, depth: segDepth });
+          // Recorded with the depth AND marked as an assignment, so a later
+          // explicit `cd` on the same line can supersede it (#1995 r15).
+          namedPrefix.push({ text: seg, depth: segDepth, assignment: true });
         } else {
           const at = seg.search(/(?:^|[\s({])(?:cd|pushd)\s/);
           if (at >= 0) {
