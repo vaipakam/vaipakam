@@ -2693,6 +2693,24 @@ function readWranglerName(configPath) {
  * not be written down at all. That is the actual reason an escaped quote
  * survived to round 40 — not the regex, which was only how it survived.
  */
+/**
+ * A TOML basic string's escapes, undone with TOML's rules.
+ *
+ * Codex #1978 r53: this existed inline for the VALUE and the KEY was sent
+ * through `JSON.parse` instead — which does not know `\\U00000061`, TOML's
+ * eight-digit escape. One decoder, called from both, so the two halves of one
+ * line cannot disagree about the language they are written in.
+ */
+function decodeTomlBasic(text) {
+  return text.replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (whole, esc) => {
+    if (esc[0] === 'u' || esc[0] === 'U') {
+      return String.fromCodePoint(parseInt(esc.slice(1), 16));
+    }
+    const simple = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', '"': '"', '\\': '\\' };
+    return simple[esc] ?? whole;
+  });
+}
+
 export function wranglerNameFrom(raw, isToml) {
   // Codex #1978 r39: TOML was routed past the extension check and then run
   // through the JSON brace-depth tracker anyway, with only JSON comments
@@ -2718,7 +2736,11 @@ export function wranglerNameFrom(raw, isToml) {
     // the assumption underneath both this and the r41 JSON finding. `#`
     // comments are stripped only at line starts, since a `#` inside a name is
     // content.
-    const lines = raw.split('\n');
+    // Codex #1978 r53: a UTF-8 BOM before the first key made the
+    // start-of-line matcher blind to it. Wrangler accepts a BOM-prefixed
+    // config, so `name` written first in that entirely ordinary encoding
+    // switched both source checks off.
+    const lines = raw.replace(/^\uFEFF/, '').split('\n');
     const stop = lines.findIndex((l) => /^\s*\[/.test(l));
     const head = (stop === -1 ? lines : lines.slice(0, stop))
       .join('\n')
@@ -2733,15 +2755,13 @@ export function wranglerNameFrom(raw, isToml) {
     // unread. This is r51's JSON-key finding in the TOML branch: I fixed the
     // key half on one side of the function and not the other, which is the
     // sibling shape this function's whole history is made of.
-    const rawKey = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[1];
-    let key = rawKey;
-    if (m[2] !== undefined) {
-      try {
-        key = JSON.parse(`"${m[2]}"`);
-      } catch {
-        key = m[2];
-      }
-    }
+    // Codex #1978 r53: the key was decoded with `JSON.parse` while the value
+    // three lines below has a TOML decoder — so `"n\U00000061me"`, valid TOML
+    // that Wrangler deploys, threw and fell back to the undecoded key. One
+    // decoder, both sides: the SAME asymmetry as r51/r52 (key vs value) at the
+    // next level down (JSON semantics vs TOML semantics), and the fourteenth
+    // route by which this function has returned nothing for a valid config.
+    const key = m[2] !== undefined ? decodeTomlBasic(m[2]) : m[3] !== undefined ? m[3] : m[1];
     if (key !== 'name') return null;
     // Groups: 4 multiline-basic, 5 multiline-literal, 6 basic, 7 literal.
     // Literal forms are RAW by definition and returned untouched — decoding
@@ -2758,13 +2778,7 @@ export function wranglerNameFrom(raw, isToml) {
       m[4] !== undefined
         ? m[4].replace(/^\r?\n/, '').replace(/\\\r?\n[ \t]*/g, '')
         : m[6];
-    return basic.replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (whole, esc) => {
-      if (esc[0] === 'u' || esc[0] === 'U') {
-        return String.fromCodePoint(parseInt(esc.slice(1), 16));
-      }
-      const simple = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', '"': '"', '\\': '\\' };
-      return simple[esc] ?? whole;
-    });
+    return decodeTomlBasic(basic);
   }
   // Codex #1978 r41: the JSON side was still LINE-based — depth was updated
   // after each line's check, and `name` had to begin its line — so
@@ -4038,6 +4052,16 @@ const WRANGLER_NAME_CASES = [
   // and decoding only the value left the whole config unread.
   // r52: TOML keys may be quoted or escaped, exactly as JSON keys may.
   ["a toml literal-quoted key", "'name' = 'vaipakam-agent'\n", true, 'vaipakam-agent'],
+  // r53: a UTF-8 BOM, and TOML's EIGHT-digit escape which `JSON.parse` does
+  // not know. Both made the whole config unreadable.
+  ['a toml config with a BOM', '\uFEFFname = "vaipakam-agent"\n', true, 'vaipakam-agent'],
+  [
+    'a toml uppercase unicode escape in the key',
+    '"n\\U00000061me" = "vaipakam-agent"\n',
+    true,
+    'vaipakam-agent',
+  ],
+  ['a toml uppercase unicode escape in the value', 'name = "esc-\\U00000061"\n', true, 'esc-a'],
   ['a toml escaped key', '"n\\u0061me" = "vaipakam-agent"\n', true, 'vaipakam-agent'],
   [
     'a unicode escape in the key',
