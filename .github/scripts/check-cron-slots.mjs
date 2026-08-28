@@ -272,7 +272,7 @@ const OCCUPANCY = [
   // pattern, "takes the account to 5 of 5" by the account pattern, and the
   // slash form carries "cron triggers" immediately after it.
   new RegExp(
-    String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)${WRAP}(?:(?:cron|account)${WRAP})?(?:slots?|triggers?|schedules?)\b`,
+    String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)${WRAP}(?:(?:cron|account)[-\s]*${WRAP}?)*(?:cron-)?(?:slots?|triggers?|schedules?)\b`,
     'i',
   ),
   // "all five slots", "used all 5 cron triggers". The noun is REQUIRED: "all
@@ -504,7 +504,17 @@ function trackedFiles() {
  * the check was right and its altitude was wrong.
  */
 function checkInventoryPresent(inv) {
-  if (inv.live.size === 0 && inv.reserved.length === 0) {
+  // Codex #1978 r21: "no rows" must mean NO ROWS, not "no rows that hold or
+  // reserve a trigger". An account legitimately at zero live and zero reserved,
+  // with the table still listing undeployed Workers, is a valid state — and the
+  // gate blocked it. `sources` carries every parsed row whatever its status, so
+  // it is the collection that answers the question actually being asked.
+  //
+  // I wrote this check to catch a table hidden inside an HTML comment and
+  // tested it by hiding the table; both occupancy collections empty was the
+  // symptom I had in front of me, and I encoded the symptom rather than the
+  // condition. That reads fine until the symptom has another cause.
+  if (inv.sources.size === 0) {
     return [
       'the inventory table has no readable rows — every row is missing, ' +
         'malformed, or hidden inside an HTML comment or code fence; the ' +
@@ -1191,6 +1201,7 @@ export function parseInventory(md) {
   const live = new Map();
   /** names of rows the table marks reserved (no schedule, but budget spoken for). */
   const reserved = [];
+  const statuses = new Map(); // every parsed row's status, for checks the account settles
   /** name -> the `Source in this repo` path, or null for the explicit *none*. */
   const sources = new Map();
   const problems = [];
@@ -1403,6 +1414,7 @@ export function parseInventory(md) {
     const status = readStatus(statusCell);
 
     sources.set(name, readSource(sourceCell));
+    if (status !== null) statuses.set(name, status);
 
     if (spans.length && residue === '') {
       live.set(name, spans);
@@ -1430,7 +1442,7 @@ export function parseInventory(md) {
     }
   }
 
-  return { live, reserved, sources, problems };
+  return { live, reserved, sources, statuses, problems };
 }
 
 /**
@@ -1606,8 +1618,14 @@ function trackedWranglerNames() {
   const names = new Map();
   for (const f of out.split('\0').filter(Boolean)) {
     try {
-      const m = /^ {0,2}"?name"?\s*[:=]\s*"([^"]+)"/m.exec(readFileSync(f, 'utf8'));
-      if (m && !names.has(m[1])) names.set(m[1], f);
+      // Codex #1978 r21: TOML accepts LITERAL strings — `name = 'x'` — and a
+      // double-quote-only regex silently ignores them, so a restored source in
+      // TOML would leave a `*none*` claim green. Both quote forms now.
+      const m = /^ {0,2}"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/m.exec(
+        readFileSync(f, 'utf8'),
+      );
+      const declaredName = m && (m[1] ?? m[2]);
+      if (declaredName && !names.has(declaredName)) names.set(declaredName, f);
     } catch {
       // unreadable config is not this check's business
     }
@@ -1633,6 +1651,13 @@ async function runLive() {
 
   const scripts = await cfList(`/accounts/${account}/workers/scripts`, token);
   const live = new Map();
+  // Codex #1978 r21: keep the DEPLOYED set, not just the scheduled one. A
+  // Worker with a script and no cron was dropped here, so an `undeployed` row
+  // for it passed and `--live` reported a match over a false status. The
+  // account distinguishes three states — absent, deployed-unscheduled,
+  // scheduled — and this loop was collapsing the first two, which is exactly
+  // the distinction `reserved` vs `undeployed` exists to record.
+  const deployed = new Set(scripts.map((s) => s.id));
   for (const s of scripts) {
     const r = await cfOne(
       `/accounts/${account}/workers/scripts/${s.id}/schedules`,
@@ -1646,7 +1671,21 @@ async function runLive() {
   const inv = parseInventory(authorityMd);
   const committed = inv.live;
 
+  // `undeployed` claims the account has no script at all. Checked here because
+  // only the account can falsify it — the offline half has no way to know.
+  const undeployedProblems = [];
+  for (const [name, status] of inv.statuses ?? []) {
+    if (status === 'undeployed' && deployed.has(name)) {
+      undeployedProblems.push(
+        `\`${name}\` is marked "undeployed" but the account has a deployed script ` +
+          `for it (it simply holds no schedule); "reserved" is the status that ` +
+          `means deployed-without-a-trigger`,
+      );
+    }
+  }
+
   const problems = [
+    ...undeployedProblems.map((p) => `STATUS        ${p}`),
     ...checkStamp(authorityMd).map((p) => `STAMP         ${p}`),
     ...inv.problems.map((p) => `INVENTORY     ${p}`),
     ...checkSources(inv.sources).map((p) => `SOURCE        ${p}`),
@@ -1779,6 +1818,9 @@ const MUST_FIRE = [
   ['spare slot', 'One cron slot is genuinely SPARE today:'],
   ['no spare — a count of zero', 'There is no spare cron trigger.'],
   ['slash form', 'the account sits at 4/5 cron triggers'],
+  // Codex #1978 r21: the compound, hyphenated. The adjacency fix in r20 was
+  // right and its noun phrase was too narrow — WRAP cannot cross a hyphen.
+  ['hyphenated compound noun', 'The account is using 4 of 5 cron-trigger slots.'],
   // Codex #1978 r5: the shape nobody had written yet, and the most natural one.
   ['direct live count', 'The account currently has four live cron triggers.'],
   ['zero is a live-account state too', 'The account currently has zero live cron triggers.'],

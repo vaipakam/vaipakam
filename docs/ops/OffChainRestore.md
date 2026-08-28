@@ -2173,13 +2173,38 @@ not just the Worker, came back.
 Not part of an emergency restore, but documented here because the
 two procedures share the offline-key handling discipline.
 
+> ⚠️ **WHILE #1977 IS OPEN, THIS PROCEDURE IS WRITTEN FOR THE WRONG
+> NUMBER OF WORKERS.** It says "the archive Worker" and flips one secret;
+> there are **two** Workers scheduled, each holding its **own copy of
+> `BACKUP_ENCRYPTION_KEY`** and writing to its **own bucket** — see §2's
+> selection box and `docs/ops/CloudflareCronSlots.md`.
+>
+> Run as written, it pauses one Worker, migrates one bucket, flips one
+> secret, and then **destroys the old key at step 6**. The Worker that was
+> not migrated keeps producing OLD-key ciphertext throughout, and the
+> predecessor bucket's entire retained history becomes **permanently
+> undecryptable** — including the copies §2 now names as a restore
+> fallback. That is the same failure step 1 already guards against for a
+> single Worker's late write, at the scale of a whole bucket.
+>
+> **Either retire `vaipakam-offchain-data-archive` first (#1977 carries
+> the sequence, and this is the strongest argument for doing it), or run
+> every step below against BOTH Workers and BOTH buckets**: pause both in
+> step 1, enumerate and re-encrypt both in steps 2–3, `wrangler secret
+> put` on both in step 4, and sweep both in step 6.
+>
+> This is separate from §1's compromise-time B2 **credential** rotation,
+> which has its own two-Worker warning. Different keys, different step,
+> same root cause — delete this box when the predecessor is retired.
+
 1. Generate a NEW key locally:
 
    ```bash
    openssl rand -hex 32 > /tmp/new-backup-key
    ```
 
-   Then **pause the archive Worker's schedule before enumerating** —
+   Then **pause the archive Worker's schedule before enumerating**
+   (**both Workers' schedules** while #1977 is open — see the box above) —
    disable the cron from the CF dashboard (Worker → Settings →
    Triggers) and note the time. If the rotation spans 03:17 UTC with
    the cron live, the Worker uploads a fresh OLD-key archive *after*
@@ -2214,7 +2239,12 @@ two procedures share the offline-key handling discipline.
    sweep needs the set to tell your own re-uploads apart from a
    genuine late Worker write.
 4. `wrangler secret put BACKUP_ENCRYPTION_KEY` on
-   `vaipakam-offchain-data-warm` to flip the Worker to the new key.
+   `vaipakam-offchain-data-warm` to flip the Worker to the new key —
+   **and on `vaipakam-offchain-data-archive` too, while it is still
+   scheduled.** A Worker left on the old key keeps writing ciphertext that
+   step 6 is about to make undecryptable; naming only the warm Worker here
+   is what makes that easy to miss, since every other step reads as
+   generic.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
 6. **Sweep for stragglers before retiring anything**: list every
