@@ -263,7 +263,14 @@ export function Vpfi() {
           // after. `useDiamondWrite` would reject the deposit anyway,
           // but only once this allowance had been mined and paid for,
           // leaving the user with a standing approval and no deposit.
-          if (termsBlocked()) throw new Error(copy.errors.termsNotAccepted);
+          const termsVerdict = termsBlocked();
+          if (termsVerdict !== 'ok') {
+            throw new Error(
+              termsVerdict === 'pending'
+                ? copy.errors.termsCheckPending
+                : copy.errors.termsNotAccepted,
+            );
+          }
           await ensureAllowance({
             onPrompt: () => setPhase('approving'),
             publicClient,

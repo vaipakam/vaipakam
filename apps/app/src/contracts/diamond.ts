@@ -51,7 +51,37 @@ export interface DiamondWriteResult {
  * the same cache under the same key: a second, looser copy would tell
  * users they may proceed and then refuse them.
  */
-export function useTermsBlockNonExitWrites(): () => boolean {
+/** What the cached Terms verdict says about proceeding right now. */
+export type TermsWriteVerdict = 'ok' | 'pending' | 'blocked';
+
+/**
+ * The one place the cached Terms verdict is interpreted.
+ *
+ * Three states, not two: an in-flight read is not a refusal. Both
+ * `pending` and `blocked` stop a write — the gate fails closed either
+ * way — but they are told to the user differently, because saying "you
+ * need to accept the terms" to somebody whose read simply has not
+ * landed accuses them of declining something they were never shown.
+ */
+export function readTermsWriteVerdict(
+  queryClient: ReturnType<typeof useQueryClient>,
+  chainId: number,
+  address: string,
+): TermsWriteVerdict {
+  const key = tosQueryKey(chainId, address);
+  const verdict = queryClient.getQueryData<TosVerdictData>(key);
+  const state = queryClient.getQueryState(key);
+  if (state?.status === 'pending') return 'pending';
+  const fresh =
+    verdict !== undefined &&
+    state !== undefined &&
+    state.status === 'success' &&
+    !isVerdictStale(state.dataUpdatedAt, Date.now());
+  if (!fresh) return verdict === undefined ? 'pending' : 'blocked';
+  return verdict.accepted ? 'ok' : 'blocked';
+}
+
+export function useTermsBlockNonExitWrites(): () => TermsWriteVerdict {
   const { walletChain, address } = useActiveChain();
   const queryClient = useQueryClient();
   // A CALLBACK, not a rendered boolean. Two reasons, and the second is
@@ -60,16 +90,8 @@ export function useTermsBlockNonExitWrites(): () => boolean {
   // moment the user acts — a verdict that was fresh when the page
   // painted can be three minutes old by the time they press the button.
   return useCallback(() => {
-    if (!walletChain || !address) return false;
-    const key = tosQueryKey(walletChain.chainId, address);
-    const verdict = queryClient.getQueryData<TosVerdictData>(key);
-    const state = queryClient.getQueryState(key);
-    const fresh =
-      verdict !== undefined &&
-      state !== undefined &&
-      state.status === 'success' &&
-      !isVerdictStale(state.dataUpdatedAt, Date.now());
-    return !fresh || !verdict.accepted;
+    if (!walletChain || !address) return 'ok';
+    return readTermsWriteVerdict(queryClient, walletChain.chainId, address);
   }, [walletChain, address, queryClient]);
 }
 
@@ -109,11 +131,10 @@ export function useDiamondWrite() {
       // fail-closed rule the gate uses: this must not become a bypass
       // for whoever loads the page and acts before the read lands.
       if (!isExitWrite(functionName, args)) {
-        const verdict = queryClient.getQueryData<TosVerdictData>(
-          tosQueryKey(walletChain.chainId, address),
-        );
-        const state = queryClient.getQueryState(
-          tosQueryKey(walletChain.chainId, address),
+        const termsVerdict = readTermsWriteVerdict(
+          queryClient,
+          walletChain.chainId,
+          address,
         );
         // Review round 4 P1: STATUS as well as age. A failed background
         // refetch leaves TanStack holding the old `data` and
@@ -124,13 +145,12 @@ export function useDiamondWrite() {
         // refresh, the wallet could open a position without accepting
         // them. The two halves of one gate have to agree about what
         // counts as knowing.
-        const fresh =
-          verdict !== undefined &&
-          state !== undefined &&
-          state.status === 'success' &&
-          !isVerdictStale(state.dataUpdatedAt, Date.now());
-        if (!fresh || !verdict.accepted) {
-          throw new Error(copy.errors.termsNotAccepted);
+        if (termsVerdict !== 'ok') {
+          throw new Error(
+            termsVerdict === 'pending'
+              ? copy.errors.termsCheckPending
+              : copy.errors.termsNotAccepted,
+          );
         }
       }
       const hash = await walletClient.writeContract({
