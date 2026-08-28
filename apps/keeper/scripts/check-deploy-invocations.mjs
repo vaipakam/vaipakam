@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * Guard: every keeper deploy must preserve dashboard-managed vars.
+ * Guard: every deploy of a SCOPED Worker must preserve dashboard-managed vars.
+ *
+ * Scope is `apps/keeper` and `apps/agent` — see `SCOPED` below for the evidence
+ * that puts each one there, and for the Workers audited and deliberately left
+ * out. It covered only the keeper until #1933; the agent had the identical
+ * hazard and nine bare invocations that this guard could not see.
  *
  * WHY THIS EXISTS. `wrangler deploy` without `--keep-vars` "will delete all
  * vars before setting those found in the Wrangler configuration". The keeper's
@@ -67,7 +72,7 @@
  * exposure needs a wrapper that is ALREADY broken — cd-ing somewhere absent —
  * and the deploy it then misses is one the wrapper's own failure surfaces.
  *
- * WHAT COUNTS AS A VIOLATION: any keeper-scoped line mentioning
+ * WHAT COUNTS AS A VIOLATION: any line in a scoped package mentioning
  * `wrangler deploy` without `--keep-vars` (or `--dry-run`, or the safe
  * `run deploy` form). That deliberately includes prose — see `ALLOWED` below
  * for why the burden is inverted rather than inferred.
@@ -180,18 +185,53 @@ const ALLOWED = [
     match: 'cf-keeper        — wrangler deploy apps/keeper (autonomous keeper).',
     why: 'deploy-testnet.sh --help text: a phase summary, not an invocation.',
   },
+  {
+    match: 'cf-agent        — wrangler deploy apps/agent (notifications, frames).',
+    why: 'deploy-mainnet.sh --help text: a phase summary, not an invocation.',
+  },
+  {
+    match: 'cf-agent         — wrangler deploy apps/agent (notifications, frames).',
+    why: 'deploy-testnet.sh --help text: a phase summary, not an invocation.',
+  },
+  {
+    match: '`run deploy`, NOT `exec wrangler deploy` — the line above used to spell',
+    why: 'apps/agent/src/index.ts: a comment contrasting the safe form with the unsafe one.',
+  },
+  {
+    match: '`wrangler deploy`-ed since wrangler.jsonc gained the binding), we',
+    why: 'apps/agent/src/quoteProxy.ts: names the event that changed the binding, not a command to run.',
+  },
+  {
+    match: 'Re-add the rate-limit binding to `apps/agent/wrangler.jsonc` and `npx wrangler deploy`.',
+    why: 'ReleaseNotes-2026-06-10: a HISTORICAL record of what the operator did. Editing shipped release notes to add a flag would falsify the account.',
+  },
+  {
+    match: 'added the matching binding to `apps/agent/wrangler.jsonc` + `npx wrangler deploy` (live version',
+    why: 'docs/ToDo.md OP-001: the OUTCOME half of the same closed 2026-06-08 record.',
+  },
+  {
+    match: 'the commented block shows the exact declaration; replace `<chosen-id>` with the id from step 2) + `cd apps/agent && npx wrangler deploy`',
+    why: 'docs/ToDo.md OP-001: a CLOSED item recording a completed 2026-06-08 operator action; the live instruction it points at (DeploymentRunbook) carries the flag.',
+  },
 ];
 
 function allowReason(line) {
-  const hit = ALLOWED.find((a) => line.includes(a.match));
-  if (!hit) return null;
-  // The exemption covers the KNOWN prose occurrence, not the whole line. An
+  // EVERY matching exemption is removed, not just the first (#1933). One line
+  // can carry two allowlisted quotes: `docs/ToDo.md`'s OP-001 entry records the
+  // same completed operator action twice — once in its outcome and once in the
+  // steps it superseded — so removing one fragment left the other standing and
+  // the whole line was reported. Composing them keeps the r27 property intact,
+  // because what is tested afterwards is whatever is LEFT.
+  const hits = ALLOWED.filter((a) => line.includes(a.match));
+  if (hits.length === 0) return null;
+  // The exemption covers the KNOWN prose occurrences, not the whole line. An
   // allowlisted sentence that later grows a real command beside it —
   // `…a bare \`wrangler deploy\` is dangerous; wrangler deploy` — would
   // otherwise be exempted wholesale (Codex #1924 r27). Remove the matched
-  // fragment and see whether a deploy is still standing.
-  const rest = line.split(hit.match).join(' ');
-  return new RegExp(DEPLOY_RE).test(rest) ? null : hit.why;
+  // fragments and see whether a deploy is still standing.
+  let rest = line;
+  for (const h of hits) rest = rest.split(h.match).join(' ');
+  return new RegExp(DEPLOY_RE).test(rest) ? null : hits.map((h) => h.why).join(' ');
 }
 
 /**
@@ -630,22 +670,91 @@ function isSafe(line) {
 }
 
 /**
- * Keeper-scoped by explicit reference, or by living in the keeper's own tree.
+ * The Workers whose deploys must preserve dashboard vars, and why each is here.
+ *
+ * SCOPE IS EVIDENCE, NOT CAUTION (#1933). A Worker belongs here when its source
+ * reads an env name that is neither a secret nor a binding nor declared in its
+ * own `wrangler.jsonc` — because those are exactly the values a bare deploy
+ * deletes. Secrets and bindings survive a deploy, so a Worker that reads only
+ * those is genuinely safe bare and is deliberately LEFT OUT: every package in
+ * scope makes prose and runbooks that quote the unsafe command fail until
+ * someone allowlists them, which is a real cost to pay for a property that does
+ * not hold.
+ *
+ * VERIFIED CLEAN, recorded so the next reader does not re-derive it:
+ *   - `apps/indexer` (#1924 r43) — its env reads are secrets (`RPC_*`,
+ *     `OPENSEA_API_KEY`), bindings (`DB`, `CHAIN_INGEST_DO`, the rate-limit
+ *     namespaces, `CF_VERSION_METADATA`) or declared vars.
+ *   - `ops/mesh-watcher` (#1933) — every non-secret, non-binding name it reads
+ *     is declared: `ALERT_REPEAT_SECONDS`, `BUCKET_COVERAGE_TOLERANCE_WEI`,
+ *     `CANONICAL_CHAIN_ID`, `COMPOSITION_SLACK_TOLERANCE_WEI`,
+ *     `REPORT_LAG_WINDOW_TICKS`, `STALE_LOCAL_SECONDS`, `STUCK_WINDOW_TICKS`,
+ *     `TG_OPS_CHAT_ID`. Its bare `deploy` script is safe as written.
+ *   - `ops/offchain-data-warm` (#1933) — it LOOKS unsafe: `wrangler.jsonc`
+ *     carries `"vars": {}` and the source reads three names that are not in it.
+ *     All three are accounted for. `TG_OPS_CHAT_ID` is a SECRET there (the
+ *     README's setup step is `wrangler secret put TG_OPS_CHAT_ID`), and secrets
+ *     survive a deploy. `ARCHIVE_FIRST_MONTHLY` / `ARCHIVE_FIRST_YEARLY` are
+ *     vars, currently unset on purpose, and the documented way to set them
+ *     (`npm run archive:baselines`) prints them for pasting into the COMMITTED
+ *     wrangler config — its own output says they "are plain configuration, NOT
+ *     secrets … so they belong in the committed wrangler config where a
+ *     reviewer can see them". A value that lives in the config is re-applied by
+ *     every deploy, bare or not. Its README's claim that "every operator-specific
+ *     value lives in the secret store, so `wrangler deploy` takes no flags" is
+ *     therefore accurate, and adding it to scope would have contradicted a
+ *     correct document on the strength of a wrong classification.
+ * Re-verify rather than inherit any of these if the config changes.
+ *
+ * The static front-end packages (`apps/{www,app,alpha02,…}`) upload assets and
+ * are out of scope.
+ */
+const SCOPED = [
+  {
+    dir: 'apps/keeper',
+    dirVar: 'KEEPER_DIR',
+    filter: '@vaipakam/keeper',
+    // Declares only TG_BOT_USERNAME (which nothing reads); env.ts reads eight
+    // dashboard-only values that govern liquidation.
+    vars: 'HF_SCALE / LIQ_* / SPLIT_* / PARTIAL_LIQ_*',
+  },
+  {
+    dir: 'apps/agent',
+    dirVar: 'AGENT_DIR',
+    filter: '@vaipakam/agent',
+    // env.ts reads both; wrangler.jsonc declares neither (OPENSEA_OFFERS_MAX_PAGES
+    // appears there only inside a comment). A bare deploy silently switches
+    // recipient-token validation off and resets OpenSea pagination.
+    vars: 'RECIPIENT_VALIDATING_TOKENS / OPENSEA_OFFERS_MAX_PAGES',
+  },
+];
+
+/**
+ * In scope by explicit reference, or by living in a scoped package's tree.
  *
  * The brace form matters and is not decoration: the staging plan writes
  * `apps/{keeper,indexer,agent}`, which contains neither the literal
  * `apps/keeper` nor a pnpm filter. An earlier cut of this guard missed exactly
  * that line — the one violation the review round was about — because it only
- * looked for the expanded spelling.
+ * looked for the expanded spelling. The brace test now checks the package's
+ * BASENAME, so `apps/{keeper,agent}` matches on either.
  */
-function isKeeperScoped(line, filePath) {
-  return (
-    /@vaipakam\/keeper/.test(line) ||
-    /KEEPER_DIR/.test(line) ||
-    /apps\/keeper/.test(line) ||
-    /apps\/\{[^}]*keeper[^}]*\}/.test(line) ||
-    filePath.startsWith('apps/keeper/')
-  );
+function scopeOf(line, filePath) {
+  for (const s of SCOPED) {
+    const base = s.dir.slice(s.dir.lastIndexOf('/') + 1);
+    const parent = s.dir.slice(0, s.dir.lastIndexOf('/'));
+    const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (
+      new RegExp(esc(s.filter)).test(line) ||
+      new RegExp(`\\b${esc(s.dirVar)}\\b`).test(line) ||
+      new RegExp(esc(s.dir)).test(line) ||
+      new RegExp(`${esc(parent)}/\\{[^}]*\\b${esc(base)}\\b[^}]*\\}`).test(line) ||
+      filePath.startsWith(`${s.dir}/`)
+    ) {
+      return s;
+    }
+  }
+  return null;
 }
 
 /**
@@ -674,13 +783,16 @@ function looksExecutable(entry) {
  * normalised instead.
  *
  * The base is unknown — a wrapper is invoked from wherever the operator stands
- * — so this is a path RELATIVE to that base, and `isKeeperCwd` matches on the
+ * — so this is a path RELATIVE to that base, and `scopeOfCwd` matches on the
  * suffix. `..` past the base is kept as `..` rather than silently collapsing,
  * which would make unrelated directories look like the keeper's.
  */
 function resolveDir(cwd, target) {
-  // A `$KEEPER_DIR` reference is the keeper wherever it happens to be defined.
-  if (/KEEPER_DIR/.test(target)) return 'apps/keeper';
+  // A `$KEEPER_DIR` / `$AGENT_DIR` reference is that package wherever it
+  // happens to be defined.
+  for (const s of SCOPED) {
+    if (new RegExp(`\\b${s.dirVar}\\b`).test(target)) return s.dir;
+  }
   const parts = target.startsWith('/') ? [] : cwd.split('/').filter(Boolean);
   for (const part of target.split('/')) {
     if (part === '' || part === '.') continue;
@@ -694,9 +806,13 @@ function resolveDir(cwd, target) {
   return parts.join('/');
 }
 
-/** Is the shell standing in the keeper's directory? */
-function isKeeperCwd(cwd) {
-  return /(^|\/)apps\/keeper$/.test(cwd);
+/** The scoped package the shell is standing in, if any. */
+function scopeOfCwd(cwd) {
+  return (
+    SCOPED.find((s) =>
+      new RegExp(`(^|/)${s.dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`).test(cwd),
+    ) ?? null
+  );
 }
 
 /** Apply one directory directive to one reachable state. */
@@ -1090,11 +1206,15 @@ for (const file of walk(REPO_ROOT)) {
       return;
     }
     let flagged = false;
+    let hitScope = null;
     if (physical) {
       // Prose cannot cd a shell, so a non-shell line is judged on its own
       // content only — it neither reads nor writes the directory state.
-      flagged =
-        new RegExp(DEPLOY_RE).test(line) && isKeeperScoped(line, rel) && !isSafe(line);
+      const scope = scopeOf(line, rel);
+      if (new RegExp(DEPLOY_RE).test(line) && scope && !isSafe(line)) {
+        flagged = true;
+        hitScope = scope;
+      }
     } else {
       // `pushd` moves the shell exactly as `cd` does and is ordinary in deploy
       // wrappers; recognising only `cd` let `pushd apps/keeper` plus a bare
@@ -1151,35 +1271,51 @@ for (const file of walk(REPO_ROOT)) {
         namedPrefix.push(seg);
         // `\b` so `wrangler deployments list` is not read as a deploy.
         if (!new RegExp(DEPLOY_RE).test(seg)) continue;
-        if (
-          !isKeeperScoped(namedPrefix.join(' '), rel) &&
-          !input.some((st) => isKeeperCwd(st.cwd))
-        ) {
-          continue;
-        }
+        const scope =
+          scopeOf(namedPrefix.join(' '), rel) ??
+          input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
+          null;
+        if (!scope) continue;
         if (commandIsSafe(seg)) continue;
         flagged = true;
+        hitScope = scope;
       }
     }
 
     if (!flagged) return;
     if (allowReason(line)) return;
-    violations.push(`${rel}:${lineNo}\n    ${line.trim()}`);
+    violations.push({ where: `${rel}:${lineNo}`, line: line.trim(), scope: hitScope });
   });
 }
 
 if (violations.length > 0) {
   console.error(
-    `\n[check-deploy-invocations] ${violations.length} keeper deploy(s) missing --keep-vars:\n`,
+    `\n[check-deploy-invocations] ${violations.length} deploy(s) missing --keep-vars:\n`,
   );
-  for (const v of violations) console.error(`  ${v}\n`);
-  console.error(
-    'Use `pnpm --filter @vaipakam/keeper run deploy` (the package script carries\n' +
-      'the flag), or add --keep-vars explicitly. A bare deploy deletes every var\n' +
-      'not in apps/keeper/wrangler.jsonc — including the HF_SCALE / LIQ_* / SPLIT_*\n' +
-      '/ PARTIAL_LIQ_* tuning that env.ts reads and that governs liquidation.\n',
-  );
+  // Grouped by package, because the remedy names a package: the reader needs
+  // the right pnpm filter and the right list of vars at risk, and a single
+  // keeper-worded message next to an agent violation sends them to the wrong
+  // wrangler.jsonc (#1933).
+  for (const s of SCOPED) {
+    const hits = violations.filter((v) => v.scope === s);
+    if (hits.length === 0) continue;
+    console.error(`  ${s.dir}:\n`);
+    for (const v of hits) console.error(`    ${v.where}\n      ${v.line}\n`);
+    console.error(
+      `    Use \`pnpm --filter ${s.filter} run deploy\` (the package script carries\n` +
+        `    the flag), or add --keep-vars explicitly. A bare deploy deletes every var\n` +
+        `    not in ${s.dir}/wrangler.jsonc — including the ${s.vars}\n` +
+        `    tuning its source reads.\n`,
+    );
+  }
+  const unattributed = violations.filter((v) => !v.scope);
+  for (const v of unattributed) {
+    console.error(`  ${v.where}\n    ${v.line}\n`);
+  }
   process.exit(1);
 }
 
-console.log('[check-deploy-invocations] OK — every keeper deploy preserves vars.');
+console.log(
+  `[check-deploy-invocations] OK — every deploy in ${SCOPED.length} scoped ` +
+    'package(s) preserves vars.',
+);

@@ -341,7 +341,7 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
   it('nested pushd/popd returning to the keeper directory (#1924 r28)', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'pushd apps/keeper\npushd ../agent\npopd\nwrangler deploy\n',
+      'pushd apps/keeper\npushd ../indexer\npopd\nwrangler deploy\n',
     );
     expect(r.ok).toBe(false);
   });
@@ -482,10 +482,10 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
   });
 
   it('the LAST cd on a line decides scope (#1924 r36)', () => {
-    // `cd apps/agent; cd apps/keeper` ends in the keeper directory.
+    // `cd apps/indexer; cd apps/keeper` ends in the keeper directory.
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'set -e; cd apps/agent; cd apps/keeper\nwrangler deploy\n',
+      'set -e; cd apps/indexer; cd apps/keeper\nwrangler deploy\n',
     );
     expect(r.ok).toBe(false);
   });
@@ -501,6 +501,20 @@ describe('check-deploy-invocations — forms it must CATCH', () => {
   });
 });
 
+/**
+ * These fixtures use `apps/indexer` as the out-of-scope stand-in. It was
+ * `apps/agent` until #1933 put the agent IN scope — at which point all thirteen
+ * of them failed, correctly.
+ *
+ * They were re-pointed rather than flipped to expect a violation. The property
+ * each one protects is that scope does not LEAK — past a blank line, across a
+ * fenced block, out of a `run:` step, through a `pushd`/`popd` pair, or from a
+ * superseded `cd` — and a test that expects a violation proves none of that: a
+ * guard that flagged every line would satisfy it. The assertion has to stay
+ * "this correct line is accepted", so the fixture needs a Worker that is
+ * genuinely out of scope. `apps/indexer` is (audited #1924 r43; see SCOPED in
+ * the script).
+ */
 describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('a keeper deploy carrying --keep-vars', () => {
     const r = runWith('docs/ops/DeploymentRunbook.md', '```bash\ncd apps/keeper\nwrangler deploy --keep-vars\n```\n');
@@ -521,19 +535,19 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   });
 
   it('another Worker entirely', () => {
-    const r = runWith('docs/ops/DeploymentRunbook.md', '```bash\ncd apps/agent\nwrangler deploy\n```\n');
+    const r = runWith('docs/ops/DeploymentRunbook.md', '```bash\ncd apps/indexer\nwrangler deploy\n```\n');
     expect(r.ok).toBe(true);
   });
 
   it('does not leak keeper context past a blank line', () => {
-    const r = runWith('contracts/script/deploy-testnet.sh', 'cd "$KEEPER_DIR"\n\ncd "$AGENT_DIR"\npnpm exec wrangler deploy\n');
+    const r = runWith('contracts/script/deploy-testnet.sh', 'cd "$KEEPER_DIR"\n\ncd "$INDEXER_DIR"\npnpm exec wrangler deploy\n');
     expect(r.ok).toBe(true);
   });
 
   it('does not leak keeper context across fenced blocks', () => {
     const r = runWith(
       'docs/ops/DeploymentRunbook.md',
-      '```bash\ncd apps/keeper\n```\n\n```bash\ncd apps/agent\nwrangler deploy\n```\n',
+      '```bash\ncd apps/keeper\n```\n\n```bash\ncd apps/indexer\nwrangler deploy\n```\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -709,17 +723,17 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('accepts pushd into a sibling app, deploying that one', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'pushd apps/agent\nwrangler deploy\npopd\n',
+      'pushd apps/indexer\nwrangler deploy\npopd\n',
     );
     expect(r.ok).toBe(true);
   });
 
   it('does not leak keeper scope from one run block into the next (#1924 r29)', () => {
     // Each Actions step is a fresh shell. Carrying scope across blocks made
-    // the first block's cd reject the second block's AGENT deploy.
+    // the first block's cd reject the second block's INDEXER deploy.
     const r = runWith(
       '.github/workflows/deploy.yml',
-      'jobs:\n  x:\n    steps:\n      - run: |\n          cd apps/keeper\n          wrangler deploy --keep-vars\n      - run: |\n          cd apps/agent\n          wrangler \\\n            deploy\n',
+      'jobs:\n  x:\n    steps:\n      - run: |\n          cd apps/keeper\n          wrangler deploy --keep-vars\n      - run: |\n          cd apps/indexer\n          wrangler \\\n            deploy\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -727,7 +741,7 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('does not leak keeper scope between fenced examples', () => {
     const r = runWith(
       'docs/ops/DeploymentRunbook.md',
-      '```bash\ncd apps/keeper\nwrangler deploy --keep-vars\n```\n\n```bash\ncd apps/agent\nwrangler deploy\n```\n',
+      '```bash\ncd apps/keeper\nwrangler deploy --keep-vars\n```\n\n```bash\ncd apps/indexer\nwrangler deploy\n```\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -740,10 +754,10 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('does not let prose in one file scope a later unrelated deploy (#1924 r30)', () => {
     // Physical (non-shell) lines all had `block === undefined`, so the r29
     // block reset never fired for them and a `cd apps/keeper` in prose
-    // rejected an agent deploy further down the same file.
+    // rejected an out-of-scope deploy further down the same file.
     const r = runWith(
       'docs/ops/DeploymentRunbook.md',
-      'First cd apps/keeper and read on.\n\nLater, for the agent:\n\nwrangler deploy\n',
+      'First cd apps/keeper and read on.\n\nLater, for the indexer:\n\nwrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -815,17 +829,17 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('does not treat a cd to another app after a preamble as keeper scope', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'set -e; cd apps/agent\nwrangler deploy\n',
+      'set -e; cd apps/indexer\nwrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });
 
   it('the last cd also decides scope in the other direction (#1924 r36)', () => {
-    // `cd apps/keeper; cd apps/agent` ends in the AGENT directory — taking the
+    // `cd apps/keeper; cd apps/indexer` ends in the INDEXER directory — taking the
     // first match rejected this correct wrapper.
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'set -e; cd apps/keeper; cd apps/agent\nwrangler deploy\n',
+      'set -e; cd apps/keeper; cd apps/indexer\nwrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -848,10 +862,10 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
 
   it('a same-line cd away from the keeper applies BEFORE the deploy (#1924 r37)', () => {
     // The shell reaches this line in apps/keeper, then leaves. The deploy that
-    // FOLLOWS the cd runs from apps/agent, so it is not the keeper's.
+    // FOLLOWS the cd runs from apps/indexer, so it is not the keeper's.
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'cd apps/keeper\ncd ../agent; wrangler deploy\n',
+      'cd apps/keeper\ncd ../indexer; wrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -859,7 +873,7 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('a same-line cd INTO the keeper still catches the deploy after it (#1924 r37)', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'cd ../agent\ncd apps/keeper; wrangler deploy\n',
+      'cd ../indexer\ncd apps/keeper; wrangler deploy\n',
     );
     expect(r.ok).toBe(false);
   });
@@ -964,11 +978,11 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   });
 
   it('a superseded cd does not scope a later deploy on the same line (#1924 r38)', () => {
-    // The walk ends in apps/agent; the line still CONTAINS `apps/keeper`, and
+    // The walk ends in apps/indexer; the line still CONTAINS `apps/keeper`, and
     // a whole-line fallback let that stale string override the walk.
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'cd apps/keeper; cd ../agent; wrangler deploy\n',
+      'cd apps/keeper; cd ../indexer; wrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -1020,11 +1034,11 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   });
 
   it('resolves a relative cd BETWEEN siblings (#1924 r39)', () => {
-    // `cd apps/agent; cd ../keeper` ends in apps/keeper; scoring each target
+    // `cd apps/indexer; cd ../keeper` ends in apps/keeper; scoring each target
     // as its own boolean saw `../keeper` and recorded non-keeper.
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'cd apps/agent; cd ../keeper; wrangler deploy\n',
+      'cd apps/indexer; cd ../keeper; wrangler deploy\n',
     );
     expect(r.ok).toBe(false);
   });
@@ -1032,17 +1046,17 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('resolves a relative cd back OUT of the keeper (#1924 r39)', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'cd apps/keeper; cd ../../apps/agent; wrangler deploy\n',
+      'cd apps/keeper; cd ../../apps/indexer; wrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });
 
   it('keeps a keeper state reachable across a || fallback (#1924 r39)', () => {
     // The left cd succeeds in this tree, so the deploy runs from the keeper;
-    // applying both cds unconditionally ended in agent scope.
+    // applying both cds unconditionally ended in indexer scope.
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'cd apps/keeper || cd apps/agent; wrangler deploy\n',
+      'cd apps/keeper || cd apps/indexer; wrangler deploy\n',
     );
     expect(r.ok).toBe(false);
   });
@@ -1050,18 +1064,18 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('flags the other || order too — keeper is still reachable (#1924 r39)', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'cd apps/agent || cd apps/keeper; wrangler deploy\n',
+      'cd apps/indexer || cd apps/keeper; wrangler deploy\n',
     );
     expect(r.ok).toBe(false);
   });
 
   it('&& does NOT keep the pre-cd state reachable (#1924 r39)', () => {
     // Unlike ||, the right-hand side of && runs only when the cd SUCCEEDED, so
-    // apps/agent is the only reachable state. Modelling both would be a false
+    // apps/indexer is the only reachable state. Modelling both would be a false
     // positive.
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'cd apps/agent && wrangler deploy\n',
+      'cd apps/indexer && wrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -1069,7 +1083,7 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('pushd/popd still restore the directory through the state set (#1924 r39)', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'pushd apps/keeper; pushd ../agent; popd; wrangler deploy\n',
+      'pushd apps/keeper; pushd ../indexer; popd; wrangler deploy\n',
     );
     expect(r.ok).toBe(false);
   });
@@ -1109,7 +1123,7 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
   it('an unresolvable cd target is assumed to succeed (#1924 r40)', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
-      'cd apps/keeper; cd "$AGENT_DIR"; wrangler deploy\n',
+      'cd apps/keeper; cd "$INDEXER_DIR"; wrangler deploy\n',
     );
     expect(r.ok).toBe(true);
   });
@@ -1158,20 +1172,139 @@ describe('check-deploy-invocations — forms it must NOT flag', () => {
     expect(r.ok).toBe(true);
   });
 
-  it('does not flag a sibling Worker manifest with a bare deploy', () => {
-    // Only the KEEPER is in scope — but not because the others are safe. That
-    // was the old reason here and it was factually wrong for apps/agent, which
-    // reads dashboard-managed RECIPIENT_VALIDATING_TOKENS and
-    // OPENSEA_OFFERS_MAX_PAGES that its config does not declare — which is why
-    // this PR put --keep-vars in its package script too, and why Codex #1924
-    // r42 found six runbook sites still telling operators to deploy it bare.
-    // The scope is narrow because widening it is a separate change with its
-    // own false-positive surface, tracked as #1933. Do not read this
-    // expectation as "a bare agent deploy is fine".
+  it('does not flag ops/mesh-watcher, verified clean rather than assumed (#1933)', () => {
+    // Out of scope on EVIDENCE, not caution: every non-secret, non-binding name
+    // its source reads is declared in its own wrangler config, so a bare deploy
+    // deletes nothing. Re-verify if that config changes — this expectation is a
+    // record of an audit, not a permanent property.
+    const r = runWith(
+      'ops/mesh-watcher/package.json',
+      '{\n  "scripts": {\n    "deploy": "wrangler deploy"\n  }\n}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('does not flag ops/offchain-data-warm, which only LOOKS unsafe (#1933)', () => {
+    // Its wrangler config carries `"vars": {}` and its source reads three names
+    // absent from it, which is the shape that put it on #1933's audit list. All
+    // three are accounted for: TG_OPS_CHAT_ID is a SECRET there (secrets survive
+    // a deploy), and the two ARCHIVE_FIRST_* vars are set by pasting them into
+    // the COMMITTED config — its own tooling prints them for that purpose and
+    // says they are "NOT secrets". A value that lives in the config is
+    // re-applied by every deploy. Scoping it would have contradicted a correct
+    // README on a wrong classification.
+    const r = runWith(
+      'ops/offchain-data-warm/package.json',
+      '{\n  "scripts": {\n    "deploy": "wrangler deploy"\n  }\n}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+});
+
+/**
+ * #1933 — the guard covers apps/agent too.
+ *
+ * The premise: `apps/agent/src/env.ts` reads `RECIPIENT_VALIDATING_TOKENS` and
+ * `OPENSEA_OFFERS_MAX_PAGES`, and `apps/agent/wrangler.jsonc` declares neither
+ * (the latter appears there only inside a comment). A bare deploy therefore
+ * switches recipient-token validation off and resets OpenSea pagination — the
+ * same failure the keeper half exists to prevent, and Codex found nine bare
+ * agent invocations across #1924 r42 and r43 while the guard could not see
+ * them.
+ *
+ * Every scoping form the keeper half supports is re-tested here rather than
+ * assumed, because the generalisation replaced a hard-coded predicate with a
+ * table and a table can be wrong per row.
+ */
+describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
+  it('a bare deploy inside the agent tree, scoped by location', () => {
+    const r = runWith('apps/agent/release.sh', 'wrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('the agent package manifest, the canonical entry point', () => {
     const r = runWith(
       'apps/agent/package.json',
       '{\n  "scripts": {\n    "deploy": "wrangler deploy"\n  }\n}\n',
     );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the pnpm-filter exec form', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'pnpm --filter @vaipakam/agent exec wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the multiline cd form, where the deploy line names nothing', () => {
+    const r = runWith('contracts/script/deploy-chain.sh', 'cd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('the $AGENT_DIR subshell form — the exact r43 finding', () => {
+    const r = runWith(
+      'contracts/script/deploy-testnet.sh',
+      '( cd "$AGENT_DIR" && pnpm exec wrangler deploy )\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('brace notation naming the agent among siblings', () => {
+    const r = runWith(
+      'docs/DesignsAndPlans/CloudflareStagingDeployPlan.md',
+      'Deploy apps/{keeper,indexer,agent} with `wrangler deploy`.\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('names the AGENT package and its vars in the remedy, not the keeper (#1933)', () => {
+    // The message is the whole product for a reader: a keeper-worded remedy
+    // beside an agent violation sends them to the wrong wrangler.jsonc and the
+    // wrong pnpm filter.
+    const r = runWith('apps/agent/release.sh', 'wrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent run deploy');
+    expect(r.out).toContain('RECIPIENT_VALIDATING_TOKENS');
+    expect(r.out).not.toContain('HF_SCALE');
+  });
+
+  it('still accepts a safe agent deploy', () => {
+    const r = runWith('apps/agent/release.sh', 'wrangler deploy --keep-vars\n');
     expect(r.ok).toBe(true);
+  });
+
+  it('does not let a keeper cd bless an agent deploy, or the reverse', () => {
+    // The table must not collapse the two scopes into one boolean: each package
+    // has its own directory, and a deploy is judged against the scope it is
+    // actually in.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper\ncd ../agent\nwrangler deploy --keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('composes TWO allowlisted quotes on one line (#1933)', () => {
+    // docs/ToDo.md's OP-001 entry records the same completed operator action
+    // twice on a single line. Removing only the first exemption left the second
+    // standing and reported the line; exemptions have to compose. What is tested
+    // afterwards is whatever is LEFT, so the r27 property is unaffected.
+    const r = runWith(
+      'docs/ToDo.md',
+      'added the matching binding to `apps/agent/wrangler.jsonc` + `npx wrangler deploy` (live version x) ' +
+        'and later: the commented block shows the exact declaration; replace `<chosen-id>` with the id from step 2) + `cd apps/agent && npx wrangler deploy`\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
+    const r = runWith(
+      'docs/ToDo.md',
+      'added the matching binding to `apps/agent/wrangler.jsonc` + `npx wrangler deploy` (live version x) ' +
+        '&& cd apps/agent && wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
   });
 });

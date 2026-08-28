@@ -831,10 +831,20 @@ jobs:
     # DELIBERATELY UNFILTERED — no `needs: detect-changes`, no `if:`.
     #
     # `apps/keeper/scripts/check-deploy-invocations.mjs` asserts a TREE-WIDE
-    # property: no keeper `wrangler deploy` anywhere in the repo may omit
-    # `--keep-vars`, because a bare deploy erases the dashboard-managed
-    # liquidation tuning (`HF_SCALE`, `LIQ_*`, `SPLIT_*`, `PARTIAL_LIQ_*`).
+    # property: no `wrangler deploy` of a SCOPED Worker anywhere in the repo may
+    # omit `--keep-vars`, because a bare deploy erases that Worker's
+    # dashboard-managed vars — the keeper's liquidation tuning (`HF_SCALE`,
+    # `LIQ_*`, `SPLIT_*`, `PARTIAL_LIQ_*`) and, since #1933, the agent's
+    # `RECIPIENT_VALIDATING_TOKENS` / `OPENSEA_OFFERS_MAX_PAGES`.
     # It scans docs/, contracts/script/, ops/, .github/ and the workspaces.
+    #
+    # The JOB NAME still says "keeper" and is left alone on purpose. A required
+    # status check is keyed on "<workflow name> / <job name>", and the comment
+    # at the top of this file records an owed operator action to add THIS
+    # context to the `Protect main` ruleset. Renaming it before that lands would
+    # make the operator wire up a name that no longer exists — the same
+    # coupling `app-vitest.yml` documents for its own stale display name.
+    # Rename it in the same change that updates the ruleset, not before.
     #
     # Running it inside the `workspaces` job would path-skip it on exactly the
     # PRs it exists to catch: a docs-only or `contracts/script/`-only change
@@ -862,7 +872,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Assert every keeper deploy preserves dashboard vars
+      - name: Assert every scoped Worker deploy preserves dashboard vars
         run: node apps/keeper/scripts/check-deploy-invocations.mjs
 
   workspaces:

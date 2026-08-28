@@ -562,8 +562,7 @@ declaration the file shipped without — paste it back in, replacing
 Then redeploy:
 
 ```bash
-cd apps/agent
-npx wrangler deploy
+pnpm --filter @vaipakam/agent run deploy
 ```
 
 Verify the binding landed on the live Worker:
