@@ -6,10 +6,14 @@
  * cron triggers. How many are in use was, until this gate, restated in TEN
  * places — three wrangler configs, three source comments, a README, a design
  * doc and two operator runbooks. All ten agreed with each other, and all ten
- * were wrong, because the fourth live trigger belongs to
- * `vaipakam-offchain-data-archive` — a Worker that has no source in this
- * repository and is therefore invisible to anyone counting `crons` entries
- * across the tree.
+ * were wrong, because one live trigger belonged — as read from the account on
+ * 2026-08-27 — to `vaipakam-offchain-data-archive`, a Worker that has no
+ * source in this repository and is therefore invisible to anyone counting
+ * `crons` entries across the tree. Whether it is still armed is the
+ * authority's table's answer, not this comment's: this file is in
+ * `SKIP_EXACT`, so nothing here is ever scanned, and a present-tense ordinal
+ * written here would survive the retirement untouched and uncontradicted —
+ * the stale copy this gate exists to prevent, inside the gate.
  *
  * That is the whole shape of the defect: an occupancy count is a claim about
  * an ACCOUNT, and the account changes without touching the tree. Care while
@@ -1910,13 +1914,43 @@ export function parseInventory(md) {
     // range-checking parser — `99 * * * *` is somebody's problem at deploy
     // time, while `not a cron` is this file's, and the gate has been punished
     // three times for implementing more of a format than it needed.
-    const CRON_FIELD = /^(?:\*|\d+|\d+-\d+)(?:\/\d+)?(?:,(?:\*|\d+|\d+-\d+)(?:\/\d+)?)*$/;
+    //
+    // Codex #1978 r37: RANGES too, not only shape. `99 99 99 99 99` is
+    // lexically perfect and cannot execute, so it parsed clean and was counted
+    // as a live trigger. My own comment here argued an out-of-range value was
+    // "somebody's problem at deploy time" — that reasoning was wrong in the
+    // direction that matters: Cloudflare rejects it, so no trigger is ever
+    // armed, so the row describes a schedule that does not exist and the
+    // budget derived from it is overstated. That is precisely this file's
+    // problem. And unlike Markdown or English, cron IS a closed specified
+    // format with five fields and known bounds — the argument against
+    // implementing more of a format does not reach a grammar this small.
+    const BOUNDS = [
+      [0, 59],
+      [0, 23],
+      [1, 31],
+      [1, 12],
+      [0, 7],
+    ];
+    const fieldOk = (f, [lo, hi]) =>
+      f.split(',').every((part) => {
+        const [range, step] = part.split('/');
+        if (step !== undefined && !/^\d+$/.test(step)) return false;
+        if (range === '*') return true;
+        const ends = range.split('-');
+        if (ends.length > 2 || !ends.every((e) => /^\d+$/.test(e))) return false;
+        const nums = ends.map(Number);
+        if (!nums.every((n) => n >= lo && n <= hi)) return false;
+        return nums.length === 1 || nums[0] <= nums[1];
+      });
     for (const span of spans) {
       const fields = span.split(/\s+/);
-      if (fields.length !== 5 || !fields.every((f) => CRON_FIELD.test(f))) {
+      if (fields.length !== 5 || !fields.every((f, i) => fieldOk(f, BOUNDS[i]))) {
         problems.push(
           `\`${name}\` carries \`${span}\` as a schedule, which is not a cron ` +
-            `expression — five space-separated fields are required. An ` +
+            `expression — five space-separated fields, each within its own ` +
+            `range (minute 0-59, hour 0-23, day 1-31, month 1-12, weekday ` +
+            `0-7), are required. An ` +
             `unrunnable schedule counted as a live trigger is a budget this ` +
             `file states wrongly while every offline check passes`,
         );
@@ -2813,6 +2847,38 @@ const INVENTORY_CASES = [
     'step and list syntax is accepted',
     '| `vaipakam-mw` | `*/15 0,12 1-7 * *` | `ops/mesh-watcher` | live |',
     { 'vaipakam-mw': ['*/15 0,12 1-7 * *'] },
+    [],
+    0,
+  ],
+  // Codex #1978 r37: lexically perfect, unable to execute. Counted as a live
+  // trigger until the ranges were checked.
+  [
+    'an out-of-range schedule is a finding',
+    '| `vaipakam-agent` | `99 99 99 99 99` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['99 99 99 99 99'] },
+    [],
+    1,
+  ],
+  [
+    'an inverted range is a finding',
+    '| `vaipakam-agent` | `5-2 * * * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['5-2 * * * *'] },
+    [],
+    1,
+  ],
+  // The mirror, so tightening cannot quietly reject legal schedules: every
+  // field at its upper bound, plus weekday 7 (Sunday, both spellings).
+  [
+    'boundary values are accepted',
+    '| `vaipakam-agent` | `59 23 31 12 0` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['59 23 31 12 0'] },
+    [],
+    0,
+  ],
+  [
+    'weekday seven is accepted',
+    '| `vaipakam-agent` | `0 0 * * 7` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 * * 7'] },
     [],
     0,
   ],

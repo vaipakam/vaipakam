@@ -17,12 +17,20 @@ second backup every night for at least three weeks. Reading the account rather
 than the prose is what surfaced it.
 
 Those are dated observations, deliberately. This note lives in the pending
-folder until the day's notes are assembled, the account can change in the
-meantime, and the checker that forbids stale counts everywhere else skips the
-release-notes tree by design — so a present-tense claim here could ship
-describing a state that had already been cleaned up. The one place that
-carries the live figure is the authority, which is checked against the
-account; everything here is history with a date on it.
+folder until the day's notes are assembled, and the account can change in the
+meantime — so a present-tense claim here could ship describing a state that
+had already been cleaned up. The one place that carries the live figure is the
+authority, which is checked against the account; everything here is history
+with a date on it.
+
+The checker enforces that, rather than leaving it to care. Its exclusion for
+the release-notes tree covers the **assembled, dated** notes, which are
+finished history; **pending fragments are scanned like any other file**,
+because a fragment is not history yet. It is a forward-looking description of
+behaviour shipping in the same change, and a count written into one would sit
+there indefinitely with nothing to contradict it. That distinction was itself a
+review finding on this change, and the scan caught a restated count in this
+very fragment within the hour of being switched on.
 
 Three things follow from that, and this change addresses all three. Every one of
 those comments was a trigger short of the account's real state — so the slot
