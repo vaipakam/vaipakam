@@ -23,6 +23,19 @@ describe('isExitRoute', () => {
     }
   });
 
+  it('exempts the desk, which hosts the only signed-order cancel', () => {
+    // Review round 5 P1. `/desk` renders `OpenOrdersPanel`, the ONLY
+    // place a live signed order can be cancelled. Gating it left a user
+    // who declined new Terms unable to revoke a standing order that
+    // anyone holding the signed row could still fill — the gate
+    // creating the exposure it was meant to withhold.
+    //
+    // Safe to exempt only BECAUSE enforcement moved to the writes: the
+    // desk's order-creating controls are refused by `tosWriteGate.ts`
+    // whatever route they are pressed from.
+    expect(isExitRoute('/desk')).toBe(true);
+  });
+
   it('exempts the aliases that redirect into them', () => {
     // An alias renders its <Navigate> INSIDE the gate, so holding the
     // alias means the redirect never runs and the exit is unreachable
@@ -49,7 +62,6 @@ describe('isExitRoute', () => {
       '/lend',
       '/rent',
       '/offers',
-      '/desk',
       '/activity',
       '/faucet',
       '/settings',

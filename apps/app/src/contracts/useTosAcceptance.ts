@@ -86,12 +86,24 @@ export function useTosAcceptance(): TosAcceptanceState {
   // stale — and the effect fills it immediately.
   const [nowMs, setNowMs] = useState(0);
   useEffect(() => {
-    // Ticked from the interval only — setting state directly in the
-    // effect body is what `react-hooks/set-state-in-effect` forbids, and
-    // it is unnecessary here: 0 reads as "no age known yet", and a
-    // verdict cannot be too old before the first tick anyway.
-    const id = setInterval(() => setNowMs(Date.now()), 15_000);
-    return () => clearInterval(id);
+    // Review round 5 P2: seeded on the next macrotask as well as ticked,
+    // because "a verdict cannot be too old before the first tick" was
+    // only true on a FIRST mount. Remounting — a connected wallet coming
+    // back from three minutes on an exempt route — resets this clock but
+    // not TanStack's cached `dataUpdatedAt`, so the age check was
+    // disabled while the cache was at its stalest, and the stated
+    // three-minute bound did not apply for the first 15 seconds.
+    //
+    // Still not set in the effect BODY, which
+    // `react-hooks/set-state-in-effect` forbids; a timeout callback is
+    // the same immediacy without the violation.
+    const tick = () => setNowMs(Date.now());
+    const seed = setTimeout(tick, 0);
+    const id = setInterval(tick, 15_000);
+    return () => {
+      clearTimeout(seed);
+      clearInterval(id);
+    };
   }, []);
 
   // Memoised so the callbacks below can depend on it honestly rather

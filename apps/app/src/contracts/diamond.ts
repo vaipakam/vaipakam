@@ -35,6 +35,44 @@ export interface DiamondWriteResult {
  * success status — callers can refresh reads immediately after.
  * Throws with the wallet/RPC error otherwise.
  */
+/**
+ * Would a non-exit Diamond write be refused right now (#1961, review
+ * round 5 P2)?
+ *
+ * `useDiamondWrite` refuses at submission, which is the right place for
+ * ENFORCEMENT and the wrong place to find out. A flow with a
+ * prerequisite — `/vpfi`'s classic deposit mines an ERC-20 approval
+ * first — would charge the user for that approval and only then reject
+ * the deposit, leaving them out of pocket with a standing allowance and
+ * nothing to show for it.
+ *
+ * So flows that spend gas before their Diamond call ask this first. It
+ * is deliberately the same predicate the write path applies, read from
+ * the same cache under the same key: a second, looser copy would tell
+ * users they may proceed and then refuse them.
+ */
+export function useTermsBlockNonExitWrites(): () => boolean {
+  const { walletChain, address } = useActiveChain();
+  const queryClient = useQueryClient();
+  // A CALLBACK, not a rendered boolean. Two reasons, and the second is
+  // the one that matters: `react-hooks/purity` rightly rejects reading
+  // the clock during render, and the answer is only meaningful at the
+  // moment the user acts — a verdict that was fresh when the page
+  // painted can be three minutes old by the time they press the button.
+  return useCallback(() => {
+    if (!walletChain || !address) return false;
+    const key = tosQueryKey(walletChain.chainId, address);
+    const verdict = queryClient.getQueryData<TosVerdictData>(key);
+    const state = queryClient.getQueryState(key);
+    const fresh =
+      verdict !== undefined &&
+      state !== undefined &&
+      state.status === 'success' &&
+      !isVerdictStale(state.dataUpdatedAt, Date.now());
+    return !fresh || !verdict.accepted;
+  }, [walletChain, address, queryClient]);
+}
+
 export function useDiamondWrite() {
   const { walletChain, onSupportedChain, address } = useActiveChain();
   const { data: walletClient } = useWalletClient();

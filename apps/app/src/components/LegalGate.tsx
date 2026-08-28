@@ -51,14 +51,24 @@ export function LegalGate({ children }: { children: ReactNode }) {
   const { address } = useActiveChain();
 
   if (!address) return <>{children}</>;
-  if (isExitRoute(pathname)) return <>{children}</>;
 
-  // The fallback holds the gate CLOSED. Rendering `children` here would
-  // open the app for the length of a chunk fetch — the same fail-open
-  // this component exists to prevent, arriving through the loader.
+  // Review round 5 P1: an exit route renders its children, but the read
+  // still MOUNTS. Returning early here left `useTosAcceptance`
+  // unmounted on `/vpfi` and `/positions/:loanId`, so the write gate —
+  // which reads that query's cache — saw "not checked" and refused
+  // deposits and refinancing even with no Terms in force. The exemption
+  // is about what a held user may SEE; it was never meant to stop the
+  // app finding out whether they are held.
+  const exempt = isExitRoute(pathname);
+
+  // The fallback holds the gate closed on a GATED route — rendering
+  // `children` there would open the app for the length of a chunk
+  // fetch, the same fail-open this component exists to prevent,
+  // arriving through the loader. On an exempt route the opposite rule
+  // applies: the exit is never withheld, chunk fetch included.
   return (
-    <Suspense fallback={<TermsStatusCard />}>
-      <LegalGateActive>{children}</LegalGateActive>
+    <Suspense fallback={exempt ? <>{children}</> : <TermsStatusCard />}>
+      <LegalGateActive exempt={exempt}>{children}</LegalGateActive>
     </Suspense>
   );
 }

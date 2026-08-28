@@ -31,6 +31,19 @@ const EXIT_PREFIXES = [
   '/vpfi', // withdrawVPFIFromVault
   '/vault', // the user's own asset vault
   '/recover', // stuck-token recovery: retrieving assets, by definition
+  // Review round 5 P1: `/desk` hosts `OpenOrdersPanel`, the ONLY place a
+  // live signed order can be cancelled. Gating it left a user who
+  // declined new Terms unable to revoke a standing order that anyone
+  // holding the signed row could still fill — the gate creating the
+  // exposure it was meant to withhold. `cancelSignedOffer` being on the
+  // write allowlist is no help if the button is behind the gate.
+  //
+  // Exempting it is safe BECAUSE the enforcement moved to the writes:
+  // the desk's order-CREATING controls are refused by
+  // `tosWriteGate.ts` whatever route they are pressed from. That is the
+  // division of labour this pair now has — the route list decides what
+  // a held user can SEE, the write list decides what they can DO.
+  '/desk',
   // Aliases that redirect INTO the above.
   '/loans',
   '/dashboard',

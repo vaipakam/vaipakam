@@ -23,7 +23,15 @@ import { LEGAL_URLS } from '../lib/legalUrls';
 import { TermsStatusCard } from './TermsStatusCard';
 import { LanguagePicker } from './LanguagePicker';
 
-export function LegalGateActive({ children }: { children: ReactNode }) {
+export function LegalGateActive({
+  children,
+  exempt = false,
+}: {
+  children: ReactNode;
+  /** Render children whatever the verdict — but still run the read, so
+   *  the write gate can tell "accepted" from "never checked". */
+  exempt?: boolean;
+}) {
   const { address, onSupportedChain } = useActiveChain();
   const {
     hasAccepted,
@@ -46,6 +54,10 @@ export function LegalGateActive({ children }: { children: ReactNode }) {
     loading,
     accepted: hasAccepted,
   });
+
+  // The read above has mounted by now, which is the point of coming
+  // here at all on an exempt route.
+  if (exempt) return <>{children}</>;
 
   if (verdict === 'pass-unconnected' || verdict === 'pass') return <>{children}</>;
 
