@@ -255,8 +255,26 @@ const GAP = String.raw`(?:\s|\*|\/\/|#|>)*`;
 const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
 
 const OCCUPANCY = [
-  // "3 of 5", "5/5", "4 of five", "three of 5"
-  new RegExp(String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)\b`, 'i'),
+  // "4/5 cron triggers", "3 of 5 slots". The NOUN is required and must be
+  // adjacent. Codex #1978 r20: the bare ratio was validated only by cron
+  // vocabulary somewhere in a 200-character window, so ordinary prose fired —
+  // "The cron handler processes four of five queue partitions on this tick."
+  // is a claim about partitions in a sentence that happens to say "cron".
+  //
+  // That is a FALSE POSITIVE on a gate that scans the whole tree and blocks
+  // every PR, which is the most expensive failure this script can have: one
+  // implementation note about a cron handler would have stopped all work in
+  // the repository. Detached context cannot tell what a number counts; the
+  // word next to it can.
+  //
+  // The must-fire ratio cases survive because they are caught by their own
+  // shapes rather than by this one: "3 of 5 in use today" by the in-use
+  // pattern, "takes the account to 5 of 5" by the account pattern, and the
+  // slash form carries "cron triggers" immediately after it.
+  new RegExp(
+    String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)${WRAP}(?:(?:cron|account)${WRAP})?(?:slots?|triggers?|schedules?)\b`,
+    'i',
+  ),
   // "all five slots", "used all 5 cron triggers". The noun is REQUIRED: "all
   // five concerns" (Stage3WorkerSplitPlan) and "until all five hold"
   // (IncidentRunbook) are five of something else, in windows that happen to
@@ -1266,7 +1284,23 @@ export function parseInventory(md) {
     }
     const cells = line.trim().replace(/^\||\|$/g, '').split('|');
     // The header and the alignment separator are not data.
-    if (/^[\s:-]+$/.test(cells[0])) continue; // alignment separator
+    if (/^[\s:-]+$/.test(cells[0])) {
+      // Codex #1978 r20: the DELIMITER row, checked like the header row above
+      // it. It was skipped on its first cell alone, so `|---|` under a
+      // four-column header left every data row parsed and no problem
+      // reported — while GFM does not recognise that as a table at all, so
+      // the rendered authority shows no inventory. Sibling of the header
+      // finding, one line below it, missed in the same round I fixed that.
+      const cellsOk = cells.map((c) => c.trim()).every((c) => /^:?-{1,}:?$/.test(c));
+      if (cells.length !== 4 || !cellsOk) {
+        problems.push(
+          `the inventory's alignment row has ${cells.length} cell(s), not 4 valid ` +
+            `delimiters; Markdown then renders no table at all and the rows below ` +
+            `are invisible to a reader while this parser still reads them`,
+        );
+      }
+      continue;
+    }
     if (/^\s*Worker\s*$/i.test(cells[0])) {
       // Codex #1978 r19: the header was skipped on its FIRST cell alone, while
       // the data rows below are parsed by fixed position. Reorder the headings
@@ -1448,7 +1482,24 @@ export function readStatus(cell) {
 export function checkSources(sources) {
   const problems = [];
   for (const [name, path] of sources) {
-    if (path === null) continue; // explicit *none* — the #1977 case, stated
+    if (path === null) {
+      // Codex #1978 r20: an explicit *none* is a CLAIM about the tree — and
+      // it is the claim this whole authority exists to make legible, because
+      // "no source in this repository" is exactly the condition that hid
+      // `vaipakam-offchain-data-archive` for three weeks. Accepting it
+      // unchecked meant a maintained Worker could be marked account-only and
+      // both modes would stay green, with the row asserting the very thing
+      // #1977 is about.
+      const declared = trackedWranglerNames();
+      if (declared.has(name)) {
+        problems.push(
+          `\`${name}\`'s source says *none*, but \`${declared.get(name)}\` declares ` +
+            `that Worker — it HAS a source in this repository, and *none* is the ` +
+            `account-only condition this file exists to make visible`,
+        );
+      }
+      continue;
+    } // explicit *none* — the #1977 case, stated
     if (path === undefined) {
       problems.push(
         `\`${name}\`'s source cell is neither a backticked path nor the ` +
@@ -1542,6 +1593,28 @@ export function checkSources(sources) {
   return problems;
 }
 
+/**
+ * Every Worker name declared by a tracked `wrangler` config, mapped to its
+ * config path. Used to falsify an explicit *none* claim in the source column.
+ */
+function trackedWranglerNames() {
+  const out = execFileSync(
+    'git',
+    ['ls-files', '-z', '--', '*wrangler.jsonc', '*wrangler.json', '*wrangler.toml'],
+    { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 },
+  );
+  const names = new Map();
+  for (const f of out.split('\0').filter(Boolean)) {
+    try {
+      const m = /^ {0,2}"?name"?\s*[:=]\s*"([^"]+)"/m.exec(readFileSync(f, 'utf8'));
+      if (m && !names.has(m[1])) names.set(m[1], f);
+    } catch {
+      // unreadable config is not this check's business
+    }
+  }
+  return names;
+}
+
 /** Triggers, not rows: a row carrying two schedules spends two of the five. */
 export function countTriggers(live) {
   let n = 0;
@@ -1581,6 +1654,18 @@ async function runLive() {
   // Same self-consistency check the offline half runs. Without it, `--live`
   // could compare the account to the inventory rows, find them equal, and
   // print "matches the account" over a summary saying something else.
+  // Codex #1978 r20: `--live` must run the document-level comment ban too.
+  // The ban replaced comment tracking inside visibleLines, so with it wired
+  // only into the offline path an operator running `--live` against a
+  // working-tree authority whose table, summary and stamp are all inside an
+  // HTML comment would be told the inventory MATCHES THE ACCOUNT — over a
+  // document that renders none of it. Deleting the parser moved this
+  // responsibility to a caller, and I updated one of the two callers: the
+  // same one-sibling-of-two miss this PR keeps producing, this time created
+  // by the fix for it.
+  for (const p of checkNoHtmlComments(authorityMd)) {
+    problems.push(p);
+  }
   for (const p of checkSummary(authorityMd, countTriggers(committed), inv.reserved, [
     ...inv.sources.keys(),
   ])) {
@@ -1773,6 +1858,17 @@ const MUST_NOT_FIRE = [
   ['cap as entitlement, modal', 'Free accounts may have five cron triggers.'],
   ['cap as entitlement, allows-to', 'Cloudflare allows an account to have 5 cron triggers.'],
   ['unrelated N-of-5', ' * twice before it did: the first cut caught 3 of 5 known violation forms,'],
+  // Codex #1978 r20: a cron IMPLEMENTATION note. The window contains "cron",
+  // the ratio counts something else entirely, and firing here would have
+  // blocked every PR in the repository.
+  [
+    'a ratio about something else, in a sentence about cron',
+    'The cron handler processes four of five queue partitions on this tick.',
+  ],
+  [
+    'a trigger-shaped ratio counting retries',
+    'Each cron trigger retries three of five times before giving up.',
+  ],
   ['cadence modulo', '// acts only on minutes divisible by 5 (free-plan DO rows_written diet)'],
   ['a cron expression', '"crons": ["17 3 * * *"],'],
   ['pointer, the intended fix', '// One schedule, not two — see docs/ops/CloudflareCronSlots.md for the budget.'],
@@ -2082,7 +2178,11 @@ const COMMENT_CASES = [
  */
 const CHECK_SOURCES_CASES = [
   ['a real tracked path resolves', new Map([['vaipakam-keeper', 'apps/keeper']]), 0],
-  ['the none marker is skipped', new Map([['vaipakam-a', null]]), 0],
+  ['the none marker is accepted for a Worker with no source', new Map([['vaipakam-offchain-data-archive', null]]), 0],
+  // Codex #1978 r20: *none* is a CLAIM about the tree, and it is the exact
+  // claim that hid the archive Worker for three weeks. A maintained Worker
+  // marked account-only must fail.
+  ['*none* is rejected when the tree declares that Worker', new Map([['vaipakam-agent', null]]), 1],
   // Codex #1978 r15: a glob keeps resolving after the real source moves, so it
   // can never go stale — worse than a wrong path, for this column's purpose.
   ['a glob is rejected', new Map([['vaipakam-a', 'apps/*']]), 1],
