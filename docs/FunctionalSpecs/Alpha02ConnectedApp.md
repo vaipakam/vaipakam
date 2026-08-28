@@ -708,9 +708,20 @@ Thin-market honesty rules apply.
   in both cases where a third party or an automatic process holds authority —
   withdrawing that authority: a keeper's permission over their positions, and
   the consent that allows fees to be deducted automatically from their vault.
+- The requirement applies to notification settings on the same terms, even
+  though nothing there touches the protocol. Signing up — linking a messaging
+  channel, or switching a reminder on — waits for acceptance. Switching a
+  reminder off, or unlinking a channel, always works. **Each reminder can be
+  switched off on its own**: turning one off is never read as signing up for
+  whichever others happen to be on, which would leave a user unable to
+  silence any of them.
 - A refusal never costs the user anything. Where an action needs a separate
   approval transaction first, the requirement is checked before that approval,
   not after it.
+- The check is made against the network the action is scoped to. A wallet
+  connected to a network the app does not support is not thereby exempt: an
+  action still aimed at a supported network is judged by that network's terms,
+  not permitted for want of an answer.
 - Acceptance is a single action recorded against that exact version and
   fingerprint, so what a user agreed to remains checkable afterwards.
 - A user is asked again only when the terms change to a new version. An

@@ -90,7 +90,30 @@ export function readTermsWriteVerdict(
 }
 
 export function useTermsBlockNonExitWrites(): () => TermsWriteVerdict {
-  const { walletChain, address } = useActiveChain();
+  // `readChain`, not `walletChain` (review round 9 P1). Two reasons,
+  // and they are the same reason from either end:
+  //
+  //   - It is the key the verdict is actually STORED under.
+  //     `useTosAcceptance` reads and caches on `readChain.chainId`, so
+  //     looking it up by anything else asks for a row nothing writes.
+  //     On a supported chain the two are equal, which is why the
+  //     mismatch was invisible.
+  //   - On an UNSUPPORTED chain `walletChain` is null while `address`
+  //     is still set, and the old guard answered `ok` — unconditional
+  //     permission, from the one state where nothing had been checked.
+  //     That is not hypothetical: `AlertsCard` calls this on the exempt
+  //     `/settings` route and scopes its enrolment to `readChain`, so a
+  //     wallet on the wrong network could link Telegram and enable
+  //     alerts against the default chain without accepting the Terms in
+  //     force there. Nothing downstream would have caught it — neither
+  //     the agent nor the indexer carries a Terms check.
+  //
+  // Reading `readChain` answers the question that was actually asked:
+  // has this wallet accepted the Terms of the chain this action is
+  // scoped to. `useDiamondWrite` below keys on `walletChain` and stays
+  // correct because it refuses everything unless `onSupportedChain`,
+  // where the two chains are the same one.
+  const { readChain, address } = useActiveChain();
   const queryClient = useQueryClient();
   // A CALLBACK, not a rendered boolean. Two reasons, and the second is
   // the one that matters: `react-hooks/purity` rightly rejects reading
@@ -98,9 +121,11 @@ export function useTermsBlockNonExitWrites(): () => TermsWriteVerdict {
   // moment the user acts — a verdict that was fresh when the page
   // painted can be three minutes old by the time they press the button.
   return useCallback(() => {
-    if (!walletChain || !address) return 'ok';
-    return readTermsWriteVerdict(queryClient, walletChain.chainId, address);
-  }, [walletChain, address, queryClient]);
+    // No wallet is not a permitted state, it is an absent one: every
+    // caller separately requires an address before it does anything.
+    if (!address) return 'ok';
+    return readTermsWriteVerdict(queryClient, readChain.chainId, address);
+  }, [readChain, address, queryClient]);
 }
 
 export function useDiamondWrite() {

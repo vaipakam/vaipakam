@@ -25,6 +25,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
 import { useTermsBlockNonExitWrites } from '../contracts/diamond';
 import {
+  addsAlertOptIn,
   alertsConfigured,
   bandsValid,
   issueTelegramLink,
@@ -94,11 +95,12 @@ export function AlertsCard() {
 
   async function persist(next: AlertPrefs, opts?: { dueDateChanged?: boolean }) {
     if (!address) return;
-    // Only an ENROLMENT is held. A save that turns everything off is an
-    // opt-out and goes through whatever the Terms say.
-    const enrolling =
-      next.repayDue || next.risky || next.telegramLinked || next.pushEnabled;
-    if (enrolling) {
+    // Only an ENROLMENT is held — a save that ADDS an opt-in. Turning
+    // one off, or tuning bands, goes through whatever the Terms say.
+    // The direction is compared per field against what is stored now;
+    // see `addsAlertOptIn` for why the round-8 "is anything still on
+    // afterwards" test was the wrong question.
+    if (addsAlertOptIn(prefs, next)) {
       const blocked = termsBlockEnrolment();
       if (blocked) {
         setError(blocked);

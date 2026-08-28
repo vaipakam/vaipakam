@@ -53,6 +53,16 @@ automatically from your vault. A rule about accepting terms should never
 become a reason somebody cannot close a position, and it should never
 leave a permission running that they are no longer allowed to cancel.
 
+The same rule reaches the alert settings, which never touch the
+protocol at all. Signing up for reminders — linking a messaging channel,
+or switching a reminder on — waits until the terms are accepted.
+Switching one off, or unlinking, always works, and each reminder can be
+switched off on its own. That last part sounds obvious and was not: an
+earlier version of this decided by asking whether anything was still
+switched on afterwards, which meant anyone with two reminders enabled
+could not turn either one off — a rule about accepting terms leaving
+somebody unable to stop being messaged.
+
 Nor does a refusal cost anything. Where an action needs a separate
 approval step first, the terms are checked before that step, so nobody
 pays a network fee for an approval that was going to be turned down.

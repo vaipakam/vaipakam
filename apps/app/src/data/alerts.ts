@@ -107,6 +107,48 @@ export const DEFAULT_PREFS: AlertPrefs = {
   ...DEFAULT_BANDS,
 };
 
+/**
+ * The four fields that are OPT-INS — each one a channel or a lane the
+ * user has asked to receive. The HF bands are not among them: they
+ * tune an opt-in already made (the advanced form only appears once
+ * `risky` is on), so changing one neither enrols nor withdraws.
+ */
+const OPT_IN_FLAGS = ['repayDue', 'risky', 'telegramLinked', 'pushEnabled'] as const;
+
+/**
+ * Does this save ADD an opt-in — i.e. is it enrolment (#1961 review
+ * round 9 P1)?
+ *
+ * The Terms gate holds enrolment and never holds an opt-out, so the
+ * question it has to ask about an alerts save is which of the two this
+ * one is. Round 8 answered it by asking whether anything was left
+ * enabled AFTERWARDS, which is not the same question and got it wrong
+ * in the common case: fresh preferences default `repayDue` and `risky`
+ * both on, so a held user switching either one off produced a record
+ * that still had the other on, was read as enrolment, and was refused.
+ * Every user with two lanes enabled was locked out of disabling either
+ * — the gate trapping somebody in a subscription, which is precisely
+ * the shape it exists to avoid.
+ *
+ * So the DIRECTION decides, per field, against what is stored now: a
+ * flag going false → true is enrolment; a flag going true → false, or
+ * a save that flips nothing, is not.
+ *
+ * One residual is worth naming rather than hiding. On a device with no
+ * saved record the baseline is the DEFAULTS, both lanes on, and the
+ * save posts the whole record — so a held user's first opt-out can
+ * register the other default lane server-side. That is an alert about
+ * the user's own loans, not new exposure, and the alternative is the
+ * lock-out above.
+ *
+ * `null` baseline (no prefs loaded) has nothing to compare against, so
+ * any enabled flag counts as enrolment — fail closed.
+ */
+export function addsAlertOptIn(prev: AlertPrefs | null, next: AlertPrefs): boolean {
+  if (!prev) return OPT_IN_FLAGS.some((flag) => next[flag]);
+  return OPT_IN_FLAGS.some((flag) => next[flag] && !prev[flag]);
+}
+
 /** The agent re-validates warn > alert > critical > 1.00 and rejects
  *  otherwise — mirror it client-side so the advanced form can explain
  *  instead of surfacing a bare 400. */
