@@ -1,4 +1,4 @@
-## Thread — The keeper's per-tick RPC budget, told apart into scan and action (PR #TBD)
+## Thread — The keeper's per-tick RPC budget, told apart into scan and action (PR #1992)
 
 The keeper's CPU profiling harness could say how many RPC calls each pass made
 per tick, but not what they were for. That gap produced a wrong conclusion the
