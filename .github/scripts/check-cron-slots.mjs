@@ -340,7 +340,24 @@ const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
  * endpoint), and the `occupy` complement — "occupies both" reads as a claim
  * about which two, not how many.
  */
-const QUANT = String.raw`(?:${N}|both|the${WRAP}(?:only|sole|single))`;
+/**
+ * The optional `a total of` prefix in front of a quantity.
+ *
+ * Codex #1978 r58: `There are a total of four cron triggers.` produced no
+ * finding, because every matcher wanted the quantity immediately after the
+ * verb. It is an ordinary way to write the count and goes stale exactly like
+ * the bare form.
+ *
+ * It is folded INTO `QUANT` rather than added at each call site. Round 57's
+ * finding was that the determiner reached two of eight positions, and adding
+ * this one the same way would have produced the identical finding a round
+ * later. A prefix that belongs to every quantity belongs in the definition of
+ * a quantity; the two bare-numeral sites that legitimately reject determiners
+ * take it explicitly, and are the only places this appears twice.
+ */
+const TOTAL_OF = String.raw`(?:a${WRAP}total${WRAP}of${WRAP})?`;
+
+const QUANT = String.raw`(?:${TOTAL_OF}(?:${N}|both|the${WRAP}(?:only|sole|single)))`;
 
 /**
  * The capacity noun, with its optional compound qualifiers.
@@ -551,7 +568,7 @@ const OCCUPANCY = [
   // asked the question this does: is the number counting something the
   // sentence names, and is that something a trigger?
   new RegExp(
-    String.raw`(?:cron|account|triggers?|slots?|schedules?)${GAP}[\s\S]{0,120}?\boccup(?:y|ies|ied)\b[^.\n]{0,40}${GAP}\b${N}\b(?![-\s]+(?!${FUNCTION_WORD}|total\b|currently\b|already\b|(?:cron|account)[-\s]|slots?\b|triggers?\b|schedules?\b)[A-Za-z])`,
+    String.raw`(?:cron|account|triggers?|slots?|schedules?)${GAP}[\s\S]{0,120}?\boccup(?:y|ies|ied)\b[^.\n]{0,40}${GAP}\b${TOTAL_OF}${N}\b(?![-\s]+(?!${FUNCTION_WORD}|total\b|currently\b|already\b|(?:cron|account)[-\s]|slots?\b|triggers?\b|schedules?\b)[A-Za-z])`,
     'i',
   ),
   // "4 are taken", "four were occupied", "3 in use", "4 in use today"
@@ -590,7 +607,7 @@ const OCCUPANCY = [
   ),
   // "takes the account to 5", "brings the account to five"
   new RegExp(
-    String.raw`\b(?:takes?|brings?|puts?)${WRAP}the${WRAP}account${WRAP}to${WRAP}${N}\b`,
+    String.raw`\b(?:takes?|brings?|puts?)${WRAP}the${WRAP}account${WRAP}to${WRAP}${TOTAL_OF}${N}\b`,
     'i',
   ),
   // "one slot is genuinely SPARE", "leaving one spare", "no spare slot".
@@ -1889,6 +1906,47 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
   return problems;
 }
 
+/**
+ * The HTML-block openers that end a GFM table.
+ *
+ * Codex #1978 r58: `<details>` directly under the inventory. GFM ends the
+ * table there and renders a separate HTML node; this parser kept `inTable`
+ * set and reported every line of the block as a malformed row — CI blocked on
+ * an ordinary authority edit, and `<details>` is already how this repository's
+ * operator docs fold long output. The r56/r57 boundary work enumerated the
+ * block starts it could picture and stopped at the ones written with
+ * punctuation.
+ *
+ * These are CommonMark's HTML-block start conditions 1 to 6 — the six that
+ * can interrupt a paragraph, and therefore a table. Condition 7 (any complete
+ * tag on its own line) is deliberately absent: it cannot interrupt a
+ * paragraph, so a table does not end on it either, and admitting it would end
+ * the table on an autolink like `<https://example.com>`.
+ *
+ * Condition 6's tag list is closed and specified, which is the same reason
+ * the cron grammar is implemented here and English is not: a fixed list is a
+ * lookup, not a language. Its failure direction is a FALSE REJECTION with no
+ * remedy — an operator cannot edit the file into a passing state — and this
+ * file has now been punished for that four times.
+ */
+const HTML_BLOCK_TAGS =
+  'address|article|aside|base|basefont|blockquote|body|caption|center|col|' +
+  'colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|' +
+  'form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|' +
+  'menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|' +
+  'summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul';
+const HTML_BLOCK_START = new RegExp(
+  '^ {0,3}(?:' +
+    String.raw`<(?:script|pre|style|textarea)(?:[\s>]|$)` +
+    String.raw`|<!--` +
+    String.raw`|<\?` +
+    String.raw`|<![A-Za-z]` +
+    String.raw`|<!\[CDATA\[` +
+    String.raw`|</?(?:${HTML_BLOCK_TAGS})(?:\s|/?>|$)` +
+    ')',
+  'i',
+);
+
 export function parseInventory(md) {
   /** name -> the cron expressions that row carries, one entry per TRIGGER. */
   const live = new Map();
@@ -2026,9 +2084,9 @@ export function parseInventory(md) {
     // that `--live` cannot recover, because a reservation has no account
     // witness. That is r18's finding returning through the candidacy test my
     // own r55 change introduced.
-    const isBlockStart = /^ {0,3}(?:#{1,6}\s|>|[-*+]\s|\d+[.)]\s|```|~~~|(?:[-*_]\s*){3,}$)/.test(
-      line,
-    );
+    const isBlockStart =
+      /^ {0,3}(?:#{1,6}\s|>|[-*+]\s|\d+[.)]\s|```|~~~|(?:[-*_]\s*){3,}$)/.test(line) ||
+      HTML_BLOCK_START.test(line);
     if (line.trim() === '' || isBlockStart) {
       inTable = false;
       continue;
@@ -3231,6 +3289,17 @@ const MUST_FIRE = [
   ['the both determiner in the taken form', 'Of the account triggers, both are taken.'],
   ['the only determiner before live', 'The only live cron trigger is the indexer.'],
   ['the both determiner in there-are-running', 'There are both cron triggers running.'],
+  // r58: `a total of` in front of the quantity. Folded into QUANT, so every
+  // form takes it at once rather than two of eight.
+  ['a total of, existential', 'There are a total of four cron triggers.'],
+  ['a total of, after a verb', 'The account currently runs a total of four cron triggers.'],
+  ['a total of, after has', 'This account has a total of four cron triggers.'],
+  ['a total of, exist form', 'A total of four cron triggers exist in the account.'],
+  ['a total of, direct predicate', 'A total of four cron triggers are live.'],
+  [
+    'a total of, account endpoint',
+    'Deploying mesh-watcher takes the account to a total of five cron triggers.',
+  ],
   ['the finite run verb with all', 'All four cron triggers run nightly.'],
   // r45: no predicate at all — the plainest way to state the count.
   ['the bare existential', 'There are four cron triggers.'],
@@ -4109,6 +4178,35 @@ const INVENTORY_CASES = [
     { 'vaipakam-agent': ['* * * * *'] },
     [],
     0,
+  ],
+  // r58: an HTML block ends a GFM table with no blank line, and `<details>` is
+  // how this repository's operator docs fold long output. Every line of the
+  // block was reported as a malformed row.
+  [
+    'an HTML block between the table and pipe prose ends the table',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |\n' +
+      '<details>\n' +
+      '<summary>account readback</summary>\n' +
+      'a | b | c\n' +
+      '</details>\n' +
+      'The accepted labels are live | reserved | undeployed | uncertain.',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    0,
+  ],
+  // ...and an AUTOLINK is not an HTML block (CommonMark condition 7 cannot
+  // interrupt a paragraph), so it stays a row and is still reported.
+  [
+    'an autolink under the table is still a row',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |\n' +
+      '<https://dash.cloudflare.com>',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    1,
   ],
   [
     'pipes in prose outside a table are not a row',

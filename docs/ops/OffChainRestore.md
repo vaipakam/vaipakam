@@ -2408,6 +2408,31 @@ two procedures share the offline-key handling discipline.
    #1978 r42). If the predecessor was retired before you started — the #1977
    sequence — there is one cron and this reads as written.
 
+   **Update the authority in the same sitting as the pause, before you begin
+   step 2.** Disabling a cron removes a trigger from the account, so
+   `docs/ops/CloudflareCronSlots.md` — the only place the count lives — now
+   describes an account that no longer exists, and
+   `node .github/scripts/check-cron-slots.mjs --live` fails for as long as the
+   window lasts. That window is not short: step 2 enumerates every retained
+   object across three tiers and both buckets, and step 3 decrypts,
+   re-encrypts and re-verifies each one. Another operator reading the
+   inventory during it would be told two Workers are armed that are not.
+
+   For each Worker you paused: set its Schedule cell to `*(none)*`, set its
+   Status to `reserved — paused for the encryption-key rotation, re-armed at
+   step 4`, re-derive the three summary lines from the table, and re-stamp
+   `Verified:` with the time you paused. Do not carry the numbers over from
+   the old summary — derive them, which is what the gate checks.
+
+   **If the rotation aborts, the document follows the account, not the plan.**
+   Stopping with the crons still paused is the safe stopping point — a paused
+   Worker cannot write old-key ciphertext — so if you stop there, leave the
+   rows reserved and record in the restore log that the pause is outstanding
+   and why. Restore the rows only when the crons are actually back. Reverting
+   the document because the procedure was abandoned, while the schedules stay
+   off, manufactures exactly the stale inventory #1977 is about, and does it
+   deliberately.
+
 2. Enumerate and download **every retained ciphertext across all
    three tiers** — `archives/` (daily), `archives-monthly/`, and
    `archives-yearly/` — to a local workstation, **in EACH bucket while
@@ -2456,6 +2481,16 @@ two procedures share the offline-key handling discipline.
    `ops/offchain-data-warm` it silently rotates the WARM Worker a second time
    and reports success, leaving the predecessor on the old key; run from the
    repository root it finds no config at all.
+
+   **Re-enable both schedules now, and restore the authority in the same
+   sitting** — put each paused Worker's schedule back in its Schedule cell,
+   set its Status back to `live`, re-derive the three summary lines, and
+   re-stamp `Verified:`. Step 1 took the rows down; this is where they come
+   back. Doing it here rather than "at the end" matters because step 5 waits
+   a full nightly cycle plus a weekly healthcheck: leaving the document
+   describing paused Workers across that wait is a stale inventory lasting
+   days, and it is the state in which someone else deploys a Worker into what
+   the summary reports as spare capacity.
 
    Deliberately NOT "while it is still scheduled" (Codex #1978 r24): step 1
    disabled BOTH schedules and step 1's own note says to re-enable only after
