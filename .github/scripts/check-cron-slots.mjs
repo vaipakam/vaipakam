@@ -2476,7 +2476,18 @@ export function readStatus(cell) {
   // (r43), with the punctuation that most plainly marks doubt. FIFTH narrowing
   // of this lookahead, and I have added the characters I was shown each time
   // rather than the class: anything a reader sees as attached to the word.
-  const m = /^[\s*_]*([a-z]+)(?![\p{L}\p{N}\p{M}_\-./?!])/iu.exec(cell);
+  // Codex #1978 r52 — and this is the inversion I described in the r51 reply
+  // and did not make. FIVE rounds (r30 digits, r31 Unicode letters, r32
+  // combining marks, r43 hyphen/dot/slash, r51 `?`/`!`) added the characters
+  // each finding showed, and r52 found `+`, `=` and `@` because an
+  // enumeration of what may NOT follow can never be finished.
+  //
+  // So require what MUST follow instead: whitespace, end of cell, or a
+  // Markdown emphasis marker (a bolded `**reserved**` is how several rows are
+  // written). Everything else — every character anyone can attach to the word,
+  // named or not — ends the match and the status is unrecognised. That closes
+  // the class rather than its sixth member.
+  const m = /^[\s*_]*([a-z]+)(?=[\s*_]|$)/iu.exec(cell);
   const word = m?.[1]?.toLowerCase();
   return word && STATUSES.has(word) ? word : null;
 }
@@ -2713,24 +2724,40 @@ export function wranglerNameFrom(raw, isToml) {
       .join('\n')
       .replace(/(^|\n)\s*#[^\n]*/g, '$1');
     const m = new RegExp(
-      String.raw`(?:^|\n)\s*"?name"?\s*=\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)'''|"((?:[^"\\]|\\.)*)"|'([^']*)')`,
+      String.raw`(?:^|\n)[ \t]*(name|"((?:[^"\\]|\\.)*)"|'([^']*)')[ \t]*=[ \t]*(?:"""([\s\S]*?)"""|'''([\s\S]*?)'''|"((?:[^"\\]|\\.)*)"|'([^']*)')`,
     ).exec(head);
     if (!m) return null;
-    // Groups: 1 multiline-basic, 2 multiline-literal, 3 basic, 4 literal.
+    // Codex #1978 r52: the KEY may be quoted or escaped too — `'name' = …`
+    // and `"n\u0061me" = …` are both valid TOML that Wrangler deploys, and
+    // matching only the bare or plainly-quoted spelling left the config
+    // unread. This is r51's JSON-key finding in the TOML branch: I fixed the
+    // key half on one side of the function and not the other, which is the
+    // sibling shape this function's whole history is made of.
+    const rawKey = m[2] !== undefined ? m[2] : m[3] !== undefined ? m[3] : m[1];
+    let key = rawKey;
+    if (m[2] !== undefined) {
+      try {
+        key = JSON.parse(`"${m[2]}"`);
+      } catch {
+        key = m[2];
+      }
+    }
+    if (key !== 'name') return null;
+    // Groups: 4 multiline-basic, 5 multiline-literal, 6 basic, 7 literal.
     // Literal forms are RAW by definition and returned untouched — decoding
     // them would be a new bug in the other direction. A multiline value's
     // opening newline is not part of it, per the TOML spec.
-    if (m[2] !== undefined) return m[2].replace(/^\r?\n/, '');
-    if (m[4] !== undefined) return m[4];
+    if (m[5] !== undefined) return m[5].replace(/^\r?\n/, '');
+    if (m[7] !== undefined) return m[7];
     // Codex #1978 r48: a multiline basic string may end a line with `\` to
     // strip the newline and the following indentation — TOML's line
     // continuation. Wrangler deploys the joined value; this returned the
     // backslash and newline literally, so the Worker was indexed under a
     // name that does not exist. Eleventh route, same silent consequence.
     const basic =
-      m[1] !== undefined
-        ? m[1].replace(/^\r?\n/, '').replace(/\\\r?\n[ \t]*/g, '')
-        : m[3];
+      m[4] !== undefined
+        ? m[4].replace(/^\r?\n/, '').replace(/\\\r?\n[ \t]*/g, '')
+        : m[6];
     return basic.replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (whole, esc) => {
       if (esc[0] === 'u' || esc[0] === 'U') {
         return String.fromCodePoint(parseInt(esc.slice(1), 16));
@@ -3728,6 +3755,23 @@ const INVENTORY_CASES = [
   // equivocal and parsed as a definite reservation — the row with no
   // account-side witness.
   // r51: a question mark marks doubt as plainly as `-ish` does.
+  // r52: the boundary is a POSITIVE test now, so every attached character
+  // fails without being listed. These three were the finding; the class is
+  // closed rather than extended.
+  [
+    'a plus-joined status is a finding',
+    '| `vaipakam-q` | *(none)* | `ops/q` | reserved+live |',
+    {},
+    [],
+    1,
+  ],
+  [
+    'an equals-qualified status is a finding',
+    '| `vaipakam-q` | *(none)* | `ops/q` | reserved=unknown |',
+    {},
+    [],
+    1,
+  ],
   [
     'a question-marked status is a finding',
     '| `vaipakam-q` | *(none)* | `ops/q` | reserved? — maybe |',
@@ -3992,6 +4036,9 @@ const WRANGLER_NAME_CASES = [
   ['an escaped quote in the name', '{"name":"vaipakam-\\"odd\\""}\n', false, 'vaipakam-"odd"'],
   // r51: the KEY may be escaped too — Wrangler reads `n\\u0061me` as `name`,
   // and decoding only the value left the whole config unread.
+  // r52: TOML keys may be quoted or escaped, exactly as JSON keys may.
+  ["a toml literal-quoted key", "'name' = 'vaipakam-agent'\n", true, 'vaipakam-agent'],
+  ['a toml escaped key', '"n\\u0061me" = "vaipakam-agent"\n', true, 'vaipakam-agent'],
   [
     'a unicode escape in the key',
     '{"n\\u0061me":"vaipakam-agent"}\n',
