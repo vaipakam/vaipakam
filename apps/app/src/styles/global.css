@@ -2338,3 +2338,12 @@ a.item-row:hover {
   font-size: 0.875rem;
   margin: 12px 0 0;
 }
+
+/* #1961 review round 3 — the language control inside the Terms gate.
+   Separated from the footnote above it because it is an action, not
+   more prose. */
+.legal-gate-language {
+  margin: 16px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}

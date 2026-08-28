@@ -53,7 +53,13 @@ const EXIT_PREFIXES = [
  * naming a route carefully is not a gate.
  */
 export function isExitRoute(pathname: string): boolean {
-  const path = pathname.replace(/\/+$/, '') || '/';
+  // Lower-cased first: React Router matches route declarations
+  // case-insensitively, so `/POSITIONS/7` renders the same page. A
+  // case-sensitive exemption would block repayment for anyone whose
+  // bookmark or inbound link differs in case — the exit trap this
+  // module exists to prevent, reintroduced by a string comparison
+  // (review round 3 P2).
+  const path = pathname.toLowerCase().replace(/\/+$/, '') || '/';
   return EXIT_PREFIXES.some(
     (prefix) => path === prefix || path.startsWith(`${prefix}/`),
   );

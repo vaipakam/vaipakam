@@ -77,9 +77,19 @@ export function useDiamondWrite() {
         const state = queryClient.getQueryState(
           tosQueryKey(walletChain.chainId, address),
         );
+        // Review round 4 P1: STATUS as well as age. A failed background
+        // refetch leaves TanStack holding the old `data` and
+        // `dataUpdatedAt` while flipping status to 'error' — so the
+        // route gate closed (it reads `isSuccess`) while this check,
+        // looking only at age, kept permitting writes for the rest of
+        // the 180s window. If the Terms changed just before that failed
+        // refresh, the wallet could open a position without accepting
+        // them. The two halves of one gate have to agree about what
+        // counts as knowing.
         const fresh =
           verdict !== undefined &&
           state !== undefined &&
+          state.status === 'success' &&
           !isVerdictStale(state.dataUpdatedAt, Date.now());
         if (!fresh || !verdict.accepted) {
           throw new Error(copy.errors.termsNotAccepted);

@@ -73,4 +73,18 @@ describe('isExitRoute', () => {
     expect(isExitRoute('/claims/')).toBe(true);
     expect(isExitRoute('/borrow/')).toBe(false);
   });
+
+  it('exempts regardless of case', () => {
+    // React Router matches route declarations case-insensitively, so
+    // `/POSITIONS/7` renders the same page. A case-sensitive exemption
+    // would block repayment for anyone whose bookmark or inbound link
+    // differed in case.
+    expect(isExitRoute('/POSITIONS/7')).toBe(true);
+    expect(isExitRoute('/Claims')).toBe(true);
+    expect(isExitRoute('/VPFI')).toBe(true);
+    expect(isExitRoute('/Loans/7')).toBe(true);
+    // ...and case does not smuggle a gated route past the exemption.
+    expect(isExitRoute('/BORROW')).toBe(false);
+    expect(isExitRoute('/Offers')).toBe(false);
+  });
 });

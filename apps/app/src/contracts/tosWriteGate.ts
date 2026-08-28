@@ -62,7 +62,31 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   // rule to cost somebody their collateral — the sharpest version of
   // the trap this whole list exists to avoid.
   'addCollateral',
+  // Withdrawing a THIRD PARTY's authority over your positions (review
+  // round 4 P1). A user who declines new Terms and cannot revoke a
+  // keeper is left with somebody else still able to act for them, and
+  // no way to stop it — the gate would be protecting the delegate
+  // rather than the user. `revokeKeeper` is unconditional; the two
+  // below are permitted only in their DISABLING direction, handled in
+  // `isExitWrite`, so grants and enables stay gated.
+  'revokeKeeper',
+  'setKeeperAccess',
+  'setLoanKeeperEnabled',
 ]);
+
+/**
+ * Writes permitted only when their argument turns something OFF.
+ *
+ * The boolean's position differs per function, so it is named rather
+ * than assumed: `setKeeperAccess(bool enabled)` carries it first,
+ * `setLoanKeeperEnabled(uint256 loanId, address keeper, bool enabled)`
+ * third. Guessing an index here would either gate a revocation or
+ * permit a grant, and the second is the one that matters.
+ */
+const DISABLE_ONLY: Readonly<Record<string, number>> = {
+  setKeeperAccess: 0,
+  setLoanKeeperEnabled: 2,
+};
 
 /** Selectors of the exit writes, for inspecting batched calls. */
 const EXIT_SELECTORS: ReadonlySet<string> = new Set(
@@ -95,6 +119,13 @@ interface BatchedCall {
  */
 export function isExitWrite(functionName: string, args: readonly unknown[]): boolean {
   if (!EXIT_WRITES.has(functionName)) return false;
+
+  // Disable-only writes: permitted when switching OFF, gated when
+  // switching on. A missing or non-boolean argument is refused rather
+  // than assumed to be the harmless direction.
+  const flagAt = DISABLE_ONLY[functionName];
+  if (flagAt !== undefined) return args[flagAt] === false;
+
   if (functionName !== 'multicall') return true;
 
   const calls = args[0];

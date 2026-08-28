@@ -21,6 +21,7 @@ import { useTosAcceptance } from '../contracts/useTosAcceptance';
 import { tosGateVerdict } from '../contracts/tosGate';
 import { LEGAL_URLS } from '../lib/legalUrls';
 import { TermsStatusCard } from './TermsStatusCard';
+import { LanguagePicker } from './LanguagePicker';
 
 export function LegalGateActive({ children }: { children: ReactNode }) {
   const { address, onSupportedChain } = useActiveChain();
@@ -150,6 +151,18 @@ export function LegalGateActive({ children }: { children: ReactNode }) {
         </div>
 
         <p className="legal-gate-footnote">{copy.legalGate.footnote}</p>
+
+        {/* Review round 3 P2 — the picker is rendered HERE, not merely
+            assumed reachable. It lives only on `/settings`, which this
+            gate holds, so a user shown a consent prompt in a language
+            they cannot read had no way to change it before deciding.
+            Asking someone to accept terms they cannot read, with the
+            remedy behind the same gate, is the one place in the app
+            where a missing language control is a consent problem
+            rather than an inconvenience. */}
+        <div className="legal-gate-language">
+          <LanguagePicker />
+        </div>
       </div>
     </div>
   );

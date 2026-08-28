@@ -320,11 +320,17 @@ export function AppShell() {
               shell, never a blank panel. */}
           {/* #1961 — the Terms-of-Service gate wraps the routed
               content, INSIDE the error boundary and the shell chrome so
-              a gated user keeps the nav, the language picker and the
+              a gated user keeps the nav, the network banner and the
               support drawer. It passes an unconnected visitor straight
               through, so browsing while disconnected is unaffected; it
               only ever holds a CONNECTED wallet, which is the only
-              party the terms can apply to. */}
+              party the terms can apply to.
+
+              An earlier revision of this comment also claimed the
+              language picker, which was false: that control lives only
+              on `/settings`, which is inside the gate (review round 3).
+              The gate card now renders its own picker rather than the
+              comment asserting one that was not reachable. */}
           <ErrorBoundary resetKey={pathname + search}>
             <LegalGate>
               <Suspense fallback={<EmptyState icon={LoaderCircle} title={copy.chrome.loading} />}>

@@ -91,6 +91,29 @@ describe('isExitWrite', () => {
     expect(isExitWrite('multicall', [])).toBe(false);
   });
 
+  it('permits withdrawing a keeper\u2019s authority, and only that direction', () => {
+    // Review round 4 P1: a user who declines new Terms must still be
+    // able to take back a third party's power over their positions.
+    // Otherwise the gate protects the delegate, not the user.
+    expect(isExitWrite('revokeKeeper', ['0xabc'])).toBe(true);
+    expect(isExitWrite('setKeeperAccess', [false])).toBe(true);
+    expect(isExitWrite('setLoanKeeperEnabled', [1n, '0xabc', false])).toBe(true);
+    // ...but a GRANT is new authority and stays gated.
+    expect(isExitWrite('setKeeperAccess', [true])).toBe(false);
+    expect(isExitWrite('setLoanKeeperEnabled', [1n, '0xabc', true])).toBe(false);
+    expect(isExitWrite('approveKeeper', ['0xabc', 7])).toBe(false);
+    expect(isExitWrite('setKeeperActions', ['0xabc', 7])).toBe(false);
+  });
+
+  it('refuses a disable-only write whose flag it cannot read', () => {
+    // A missing or non-boolean argument is refused rather than assumed
+    // to be the harmless direction — the flag's POSITION differs per
+    // function, so a wrong index would silently permit a grant.
+    expect(isExitWrite('setKeeperAccess', [])).toBe(false);
+    expect(isExitWrite('setKeeperAccess', ['false'])).toBe(false);
+    expect(isExitWrite('setLoanKeeperEnabled', [1n, '0xabc'])).toBe(false);
+  });
+
   it('keeps acceptTerms on the list', () => {
     // Omitting it would make the gate unpassable — the one defect with
     // no workaround, since the remedy is itself the blocked write.
