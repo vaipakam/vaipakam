@@ -133,6 +133,23 @@ const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run(?:-scrip
 /** What counts as "this line performs a deploy" for DETECTION purposes. */
 const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
 
+/**
+ * ONE SHELL WORD: adjacent quoted, unquoted and escaped chunks, which bash
+ * concatenates into a single argument. `--name vaipakam"-"agent`,
+ * `cd "$ROOT"/apps/agent`, `--filter '@vaipakam/'"*gent"` and `de"ploy"` are all
+ * one word each.
+ *
+ * This is the single most repeated defect in this file — #1924 r23/r24, r30,
+ * #1995 r4a, r6c, and three more in r8 — always with the same tell: a pattern
+ * that stops at the first chunk. It is named here so the next site copies THIS
+ * rather than a neighbouring single-chunk pattern.
+ */
+const WORD = String.raw`(?:"[^"]*"|'[^']*'|(?:\\[\s\S])|[^\s"'\`;&|)]+)+`;
+/** Collapse a captured word to what the shell would hand the command. */
+function dequote(w) {
+  return w.replace(/\\([\s\S])/g, '$1').replace(/["'`]/g, '');
+}
+
 /** Vendored trees excluded by exact repo-relative path, not by basename. */
 const SKIP_PATHS = new Set(['contracts/lib']);
 
@@ -700,7 +717,11 @@ function commandIsSafe(cmd) {
   // ("Use `pnpm --filter … run deploy`"), where an anchored match fails and
   // would report the recommended command as a violation.
   const hasWrangler = new RegExp(DEPLOY_RE).test(bare);
-  const source = hasWrangler ? executedCommand(bare) : bare;
+  // Quote-collapse for the package-script test: `pnpm run de"ploy"` invokes the
+  // `deploy` script, and matching raw characters missed it (#1995 r8). Only the
+  // script-name comparison uses this view; flag parsing keeps the raw text,
+  // where quoting is meaningful.
+  const source = dequote(hasWrangler ? executedCommand(bare) : bare);
   const runDeploy = source.match(
     new RegExp(
       `${hasWrangler ? '^' : ''}(pnpm|npm|yarn)(?:\\s+[^\\s]+)*?` +
@@ -730,7 +751,16 @@ function commandIsSafe(cmd) {
   // re-using `flagEnabled` gets every negation spelling for free —
   // `--no-keep-vars`, `--keep-vars=false`, `--keep-vars=` — rather than
   // enumerating them here and missing one.
-  return flagEnabled(`--keep-vars ${appended}`, '--keep-vars');
+  // SAFE UNLESS EXPLICITLY NEGATED. The earlier form asked
+  // `flagEnabled("--keep-vars " + appended)`, which reads whatever follows as
+  // the flag's VALUE — fine for real argv, wrong for prose, where
+  // "`pnpm … run deploy`, whose …" made `,` the value and scored it false. That
+  // was latent behind the backtick being excluded from the value class until
+  // the r8 dequoting removed the accident, and it produced four false reds on
+  // the real tree. Ask the narrower question instead: does the appended text
+  // actually turn keep-vars off? Text that never mentions it cannot.
+  if (!/--(?:no-)?keep-vars/.test(appended)) return true;
+  return flagEnabled(appended, '--keep-vars');
 }
 
 /**
@@ -741,7 +771,10 @@ function commandIsSafe(cmd) {
 function isSafe(line) {
   const deploys = splitCommands(line)
     .map((c) => c.text)
-    .filter((c) => new RegExp(ANY_DEPLOY_RE).test(c));
+    .filter(
+      (c) =>
+        new RegExp(ANY_DEPLOY_RE).test(c) || new RegExp(RUN_DEPLOY_RE).test(dequote(c)),
+    );
   if (deploys.length === 0) return true;
   return deploys.every(commandIsSafe);
 }
@@ -848,22 +881,30 @@ function filterScopes(line) {
   // '@vaipakam/*'` covers both scoped Workers, and returning the first left the
   // other's remedy out of the same report (#1995 r7).
   const out = new Set();
-  const all = line.matchAll(
-    /--filter(?:-prod)?(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"';&|)]+))/g,
-  );
+  // `-r` / `--recursive` runs the script in EVERY workspace package, naming
+  // none of them, so no textual, filter or cwd signal exists at all (#1995 r8).
+  if (/(?:^|\s)(?:-r|--recursive)(?:\s|=|$)/.test(line)) {
+    for (const sc of SCOPED) out.add(sc);
+  }
+  const all = line.matchAll(new RegExp(`--filter(?:-prod)?(?:=|\\s+)(${WORD})`, 'g'));
   for (const m of all) {
-    let pat = (m[1] ?? m[2] ?? m[3]).replace(/^\.\.\.|\.\.\.$/g, '');
+    let pat = dequote(m[1]).replace(/^\.\.\.|\.\.\.$/g, '');
+    // A LEADING `!` excludes: pnpm selects the packages NOT matching, so
+    // `--filter '!@vaipakam/indexer'` reaches both protected Workers (#1995 r8).
+    const negated = pat.startsWith('!');
+    if (negated) pat = pat.slice(1);
     // A filter may name a DIRECTORY rather than a package: pnpm documents
     // `--filter ./<dir>` and `--filter {<dir>}`, and matching only against
     // package names missed `--filter './apps/*gent'` entirely (#1995 r7).
     const isDir = /^[.{]/.test(pat);
     pat = pat.replace(/^\{|\}$/g, '').replace(/^\.\//, '').replace(/\/+$/, '');
-    if (!/[*]/.test(pat)) continue; // literal names/paths are handled by scopeOf
+    if (!negated && !/[*]/.test(pat)) continue; // literals handled by scopeOf
     const re = new RegExp(
       `^${pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,
     );
     for (const sc of SCOPED) {
-      if (re.test(isDir ? sc.dir : sc.filter)) out.add(sc);
+      const subject = isDir ? sc.dir : sc.filter;
+      if (negated ? !re.test(subject) : re.test(subject)) out.add(sc);
     }
   }
   return [...out];
@@ -931,7 +972,19 @@ function looksExecutable(entry) {
  * suffix. `..` past the base is kept as `..` rather than silently collapsing,
  * which would make unrelated directories look like the keeper's.
  */
-function resolveDir(cwd, target) {
+function resolveDir(cwd, target, vars = null) {
+  // Substitute variables whose value was assigned STATICALLY earlier in the
+  // same shell block. `TARGET=apps/agent` then `cd "$TARGET"` is deterministic,
+  // and treating every `$` as unknown cleared scope on an ordinary wrapper —
+  // while the same commands on ONE line were rejected, which is an incoherent
+  // pair (#1995 r8). Only literal assignments are carried; anything computed
+  // stays unresolved.
+  if (vars && /\$/.test(target)) {
+    target = target.replace(
+      /\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g,
+      (m, name) => vars.get(name) ?? m,
+    );
+  }
   // A `$KEEPER_DIR` / `$AGENT_DIR` reference is that package wherever it
   // happens to be defined.
   for (const s of SCOPED) {
@@ -1063,7 +1116,7 @@ function selectorScope(seg, states, hasCwdState = true) {
   // `commandIsSafe` already strips these for the package-script test.
   const clean = stripOtherOptionValues(
     executedCommand(stripRedirections(seg)),
-    ['name', 'config', 'cwd'],
+    ['name', 'config', 'cwd', 'dir'],
   );
   // `--config` before `-c` so the long spelling wins the alternation, and a
   // lookbehind so `-c` cannot match inside `--config` or at the tail of another
@@ -1092,7 +1145,10 @@ function selectorScope(seg, states, hasCwdState = true) {
   }
 
   const cfgRaw = valueOf('--config|-c');
-  const cwdRaw = valueOf('--cwd');
+  // `--cwd` is wrangler's; `--dir` / `-C` is pnpm's own, documented as "change
+  // to that directory", and it decides which package's script runs (#1995 r8).
+  // Same resolution, so it is read here rather than duplicated elsewhere.
+  const cwdRaw = valueOf('--cwd') ?? valueOf('--dir|-C');
   const cfg = known(cfgRaw);
   const cwdFlag = known(cwdRaw);
   // A path selector is present but unresolvable: we know a target was named and
@@ -1146,14 +1202,14 @@ function selectorScope(seg, states, hasCwdState = true) {
 }
 
 /** Apply one directory directive to one reachable state. */
-function applyDir(state, dir) {
+function applyDir(state, dir, vars = null) {
   if (dir.kind === 'popd') {
     return state.stack.length > 0
       ? { cwd: state.stack[state.stack.length - 1], stack: state.stack.slice(0, -1) }
       : { cwd: '', stack: [] };
   }
   return {
-    cwd: resolveDir(state.cwd, dir.target),
+    cwd: resolveDir(state.cwd, dir.target, vars),
     stack: dir.kind === 'pushd' ? [...state.stack, state.cwd] : state.stack,
   };
 }
@@ -1167,11 +1223,14 @@ function dirDirective(seg) {
   // standard `--` terminator is consumed too, or it becomes the destination
   // (#1995 r7).
   const OPTS = String.raw`(?:-[LPe@]+\s+)*(?:--\s+)?`;
-  const pushed = seg.match(new RegExp(`^pushd\\s+${OPTS}["']?([^\\s"';&|)]+)`));
-  if (pushed) return { kind: 'pushd', target: pushed[1] };
+  // The destination is ONE SHELL WORD. Stopping at the first closing quote lost
+  // the static suffix of `cd "$ROOT"/apps/agent` — bash concatenates the chunks
+  // and enters apps/agent (#1995 r8).
+  const pushed = seg.match(new RegExp(`^pushd\\s+${OPTS}(${WORD})`));
+  if (pushed) return { kind: 'pushd', target: dequote(pushed[1]) };
   if (/^popd\b/.test(seg)) return { kind: 'popd' };
-  const cd = seg.match(new RegExp(`^cd\\s+${OPTS}["']?([^\\s"';&|)]+)`));
-  return cd ? { kind: 'cd', target: cd[1] } : null;
+  const cd = seg.match(new RegExp(`^cd\\s+${OPTS}(${WORD})`));
+  return cd ? { kind: 'cd', target: dequote(cd[1]) } : null;
 }
 
 /**
@@ -1279,6 +1338,18 @@ function embeddedShellLines(text, isYaml = false) {
       // Only a scalar that actually SPANS lines is folded into a block. A
       // single-line `run:` is already judged correctly as a physical line, and
       // routing it through here as well would report one violation twice.
+      // A single-line `run:` needs the same seeding: Actions runs it from
+      // `working-directory` too, and only the multiline branch was reaching
+      // `workingDirFor` (#1995 r8). Emitted as its own block so the cwd applies;
+      // the duplicate with the physical line is removed by the dedupe at the
+      // reporting site.
+      if (end === i && isYaml) {
+        const wd = workingDirFor(lines, i);
+        if (wd) {
+          out.push(...offset(logicalLines(flow[2]), i, blockId, wd));
+          blockId += 1;
+        }
+      }
       if (end > i) {
         const q = flow[2][0] === '"' || flow[2][0] === "'" ? flow[2][0] : null;
         const parts = [flow[2], ...lines.slice(i + 1, end + 1)];
@@ -1446,18 +1517,50 @@ function workingDirFor(lines, runIdx) {
     }
   }
 
-  // DEFAULTS: the nearest preceding `defaults:` block that declares one.
-  for (let i = runIdx; i >= 0; i -= 1) {
-    if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
-    const di = indentOf(lines[i]);
-    for (let j = i + 1; j < lines.length; j += 1) {
-      if (lines[j].trim() !== '' && indentOf(lines[j]) <= di) break;
-      const m = lines[j].match(WD);
-      if (m) return valueOf(m);
+  // DEFAULTS, confined to the CONTAINING JOB. Taking the nearest preceding
+  // `defaults:` let one job's default leak into a later job that has none —
+  // reporting a repo-root deploy as the agent's, which is a false red (#1995
+  // r8). Job scope is bounded by the job-key line and the next key at the same
+  // indent; a workflow-level `defaults:` outside `jobs:` still applies.
+  const declaredIn = (from, to) => {
+    for (let i = from; i < to && i < lines.length; i += 1) {
+      if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
+      const di = indentOf(lines[i]);
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (lines[j].trim() !== '' && indentOf(lines[j]) <= di) break;
+        const m = lines[j].match(WD);
+        if (m) return valueOf(m);
+      }
     }
-    break;
+    return '';
+  };
+
+  const jobsIdx = lines.findIndex((l) => /^\s*jobs:\s*$/.test(l));
+  let jobStart = -1;
+  let jobIndent = -1;
+  if (jobsIdx >= 0 && runIdx > jobsIdx) {
+    const ji = indentOf(lines[jobsIdx]);
+    for (let i = jobsIdx + 1; i <= runIdx; i += 1) {
+      if (lines[i].trim() === '') continue;
+      const ind = indentOf(lines[i]);
+      if (ind <= ji) break;
+      if (jobIndent === -1) jobIndent = ind;
+      if (ind === jobIndent && /^\s*[\w.-]+:\s*$/.test(lines[i])) jobStart = i;
+    }
   }
-  return '';
+  if (jobStart >= 0) {
+    let jobEnd = lines.length;
+    for (let i = jobStart + 1; i < lines.length; i += 1) {
+      if (lines[i].trim() !== '' && indentOf(lines[i]) <= jobIndent) {
+        jobEnd = i;
+        break;
+      }
+    }
+    const inJob = declaredIn(jobStart, jobEnd);
+    if (inJob) return inJob;
+  }
+  // Workflow level: a `defaults:` declared before `jobs:` applies to every job.
+  return declaredIn(0, jobsIdx >= 0 ? jobsIdx : lines.length);
 }
 
 /**
@@ -1561,7 +1664,15 @@ for (const file of walk(REPO_ROOT)) {
   const folded = isShellFile(rel, text)
     ? logicalLines(text)
     : [...plainLines(text), ...embeddedShellLines(text, /\.ya?ml$/.test(rel))];
-  if (!folded.some((l) => new RegExp(ANY_DEPLOY_RE).test(l.text))) continue;
+  if (
+    !folded.some(
+      (l) =>
+        new RegExp(ANY_DEPLOY_RE).test(l.text) ||
+        new RegExp(RUN_DEPLOY_RE).test(dequote(l.text)),
+    )
+  ) {
+    continue;
+  }
   // Directory context carries across lines, but only within a CONTIGUOUS
   // block. The form to catch is
   //     cd apps/keeper
@@ -1586,6 +1697,8 @@ for (const file of walk(REPO_ROOT)) {
   // stack. A deploy is judged against every state that can reach it: for a
   // default-deny guard, one reachable keeper state is enough to flag.
   const INITIAL = [{ cwd: '', stack: [] }];
+  /** Literal `VAR=value` assignments seen so far in the current shell block. */
+  const shellVars = new Map();
   let states = INITIAL;
   let prior = INITIAL;
   let currentBlock;
@@ -1597,6 +1710,7 @@ for (const file of walk(REPO_ROOT)) {
     // typecheck, so it would have blocked CI on a correct workflow.
     if (block !== currentBlock) {
       currentBlock = block;
+      shellVars.clear();
       // A workflow step's `working-directory` is where its commands actually
       // run, so the block starts THERE rather than at an empty cwd (#1995 r7).
       states = blockCwd ? [{ cwd: blockCwd.replace(/\/+$/, ''), stack: [] }] : INITIAL;
@@ -1713,7 +1827,7 @@ for (const file of walk(REPO_ROOT)) {
         // state that preceded it — a failed `cd` moves nothing.
         const input = part.sep === '||' ? prior : states;
         const dir = dirDirective(seg);
-        const after = dir ? input.map((st) => applyDir(st, dir)) : input;
+        const after = dir ? input.map((st) => applyDir(st, dir, shellVars)) : input;
         // After `A || B` both outcomes remain reachable: A succeeded and B was
         // skipped, or A failed and B ran.
         const next = part.sep === '||' ? dedupeStates([...states, ...after]) : after;
@@ -1729,6 +1843,17 @@ for (const file of walk(REPO_ROOT)) {
         // `cd` moves to the explicitly out-of-scope indexer (#1995 r5). That is
         // a false red in a check that blocks the unfiltered CI job.
         if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(seg)) {
+          // Deliberately NOT the WORD pattern: anchoring its nested quantifiers
+          // with `$` backtracks catastrophically on a non-matching line and hung
+          // the guard. A literal value needs only simple alternatives, and a
+          // mixed-chunk assignment simply stays unremembered — which is the safe
+          // direction, since an unknown variable clears scope.
+          const asg = seg.match(
+            /^([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|[^\s"';&|)]*)\s*$/,
+          );
+          // Only a LITERAL value is remembered; one containing a `$` is still
+          // computed as far as this scanner can tell.
+          if (asg && !/\$/.test(asg[2])) shellVars.set(asg[1], dequote(asg[2]));
           namedPrefix.push({ text: seg, depth: segDepth });
         } else {
           const at = seg.search(/(?:^|[\s({])(?:cd|pushd)\s/);
@@ -1747,7 +1872,12 @@ for (const file of walk(REPO_ROOT)) {
           }
         }
         // `\b` so `wrangler deployments list` is not read as a deploy.
-        if (!new RegExp(ANY_DEPLOY_RE).test(seg)) continue;
+        if (
+          !new RegExp(ANY_DEPLOY_RE).test(seg) &&
+          !new RegExp(RUN_DEPLOY_RE).test(dequote(seg))
+        ) {
+          continue;
+        }
         // An explicit selector WINS. wrangler's help makes `--name` the "Name
         // of the Worker", so `For apps/keeper: wrangler deploy --name
         // vaipakam-agent` deploys the AGENT however the line reads — and
@@ -1776,7 +1906,12 @@ for (const file of walk(REPO_ROOT)) {
       return;
     }
     for (const sc of hitScopes) {
-      violations.push({ where: `${rel}:${lineNo}`, line: line.trim(), scope: sc });
+      const where = `${rel}:${lineNo}`;
+      // A line can now reach the reporter twice — once as a physical line and
+      // once as a seeded workflow block — so the same (line, package) pair is
+      // reported once (#1995 r8).
+      if (violations.some((v) => v.where === where && v.scope === sc)) continue;
+      violations.push({ where, line: line.trim(), scope: sc });
     }
   });
 }

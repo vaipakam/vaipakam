@@ -1839,6 +1839,106 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it("working-directory applies to a SINGLE-LINE run too (#1995 r8)", () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'jobs:\n  x:\n    steps:\n      - name: deploy\n        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    // Reported ONCE despite reaching the reporter as both a physical line and a
+    // seeded workflow block.
+    expect(r.out.match(/w\.yml:/g) ?? []).toHaveLength(1);
+  });
+
+  it('job defaults do not leak into a later job (#1995 r8)', () => {
+    // First job defaults to the agent and deploys safely; the second has no
+    // defaults and deploys from the repo root. Attributing it to the agent is a
+    // false red.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'jobs:\n  first:\n    defaults:\n      run:\n        working-directory: apps/agent\n' +
+        '    steps:\n      - run: |\n          wrangler deploy --keep-vars\n' +
+        '  second:\n    steps:\n      - run: |\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('but a WORKFLOW-level defaults still applies (#1995 r8)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'defaults:\n  run:\n    working-directory: apps/agent\njobs:\n  only:\n    steps:\n      - run: |\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a NEGATED filter selector reaches both packages (#1995 r8)', () => {
+    const r = runWith(
+      'a.sh',
+      "pnpm --filter '!@vaipakam/indexer' run --if-present deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('@vaipakam/keeper');
+    expect(r.out).toContain('@vaipakam/agent');
+  });
+
+  it('a RECURSIVE workspace run reaches every scoped package (#1995 r8)', () => {
+    const r = runWith('a.sh', 'pnpm -r --if-present run deploy --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('@vaipakam/keeper');
+    expect(r.out).toContain('@vaipakam/agent');
+  });
+
+  it('a filter value assembled from adjacent chunks (#1995 r8)', () => {
+    const r = runWith('a.sh', "pnpm --filter '@vaipakam/'\"*gent\" run deploy --no-keep-vars\n");
+    expect(r.ok).toBe(false);
+  });
+
+  it('a cd destination assembled from adjacent chunks (#1995 r8)', () => {
+    const r = runWith('a.sh', 'cd "$ROOT"/apps/agent; wrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a script NAME assembled from adjacent chunks (#1995 r8)', () => {
+    const r = runWith('apps/agent/a.sh', 'pnpm run de"ploy" --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it("pnpm's own --dir / -C option decides the package (#1995 r8)", () => {
+    expect(
+      runWith('a.sh', 'cd apps/indexer\npnpm --dir ../agent run deploy --no-keep-vars\n').ok,
+    ).toBe(false);
+  });
+
+  it('the -C spelling of the same (#1995 r8)', () => {
+    expect(
+      runWith('b.sh', 'cd apps/indexer\npnpm -C ../agent run deploy --no-keep-vars\n').ok,
+    ).toBe(false);
+  });
+
+  it('a statically assigned directory variable carries across lines (#1995 r8)', () => {
+    // The same commands on ONE line were already rejected; treating every `$` as
+    // unknown made the two spellings disagree.
+    const r = runWith('a.sh', 'TARGET=apps/agent\ncd "$TARGET"\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a COMPUTED variable still clears scope (#1995 r8)', () => {
+    // Only literal assignments are carried; anything with a `$` in its value
+    // stays unresolved, per #1924 r40.
+    const r = runWith('a.sh', 'TARGET="$BASE/apps/agent"\ncd "$TARGET"\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('prose after a package script is not read as a flag VALUE (#1995 r8)', () => {
+    // "`pnpm … run deploy`, whose …" made `,` the value and scored it unsafe —
+    // four false reds on the real tree, latent since r4d.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Use `pnpm --filter @vaipakam/agent run deploy`, whose script carries the flag.\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('still does not flag a subdirectory of an OUT-OF-SCOPE package (#1995 r1)', () => {
     // The descendant match must widen scope for scoped packages only; if it
     // widened generally the 13 leak fixtures would pass for the wrong reason.
