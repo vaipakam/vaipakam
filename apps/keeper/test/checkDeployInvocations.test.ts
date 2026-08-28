@@ -3588,6 +3588,68 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ── The state walk applied every `cd` it saw, with no model of whether the
+  // shell would execute it or return from it (#1995 r16).
+  it('a MULTILINE subshell restores the parent (#1995 r16)', () => {
+    // The same-line form was fixed at r13; this is that fix's other half. Depth
+    // and the snapshot stack were re-created per line, so the closing `)` had
+    // nothing to restore.
+    const r = runWith('a.sh', 'cd apps/agent\n(\ncd ../indexer\n)\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a SKIPPED conditional branch leaves the shell where it was (#1995 r16)', () => {
+    const r = runWith('b.sh', 'cd apps/agent\nif false; then cd ../indexer; fi\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and BOTH branches of an if/else stay reachable (#1995 r16)', () => {
+    // Applying them in sequence let the else-branch overwrite the then-branch,
+    // so the protected leg vanished.
+    const r = runWith(
+      'c.sh',
+      'if [ -n "$X" ]; then cd apps/agent; else cd apps/indexer; fi\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a for-loop GLOB is a list, not an unknown (#1995 r16)', () => {
+    // `for TARGET in apps/*` iterates the real directories, one of which is
+    // protected. Dropping the value left `cd "$TARGET"` unresolved.
+    //
+    // The seed is load-bearing and not boilerplate: the expansion reads the
+    // TREE, so without `apps/` on disk the glob matches nothing and this passes
+    // for the wrong reason — which is exactly what it did on the first run.
+    seedWorkspace();
+    const r = runWith('d.sh', 'for TARGET in apps/*; do\ncd "$TARGET"\nwrangler deploy\ndone\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a glob matching no protected package binds nothing (#1995 r16 control)', () => {
+    seedWorkspace();
+    const r = runWith('e.sh', 'for TARGET in packages/*; do\ncd "$TARGET"\nwrangler deploy\ndone\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and a DYNAMIC loop list still clears the binding (#1995 r16 control)', () => {
+    // The r14 rule: an unknown value clears the name rather than leaving a
+    // stale binding. Expanding globs must not weaken it.
+    const r = runWith('f.sh', 'for TARGET in $DIRS; do\ncd "$TARGET"\nwrangler deploy\ndone\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a one-line subshell still restores too (#1995 r13 control)', () => {
+    // Pins that hoisting the stack to block scope did not break the case the
+    // stack was introduced for.
+    const r = runWith('g.sh', 'cd apps/agent\n(cd ../indexer)\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

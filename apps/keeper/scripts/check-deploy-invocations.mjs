@@ -3261,6 +3261,14 @@ for (const file of walk(REPO_ROOT)) {
   let states = INITIAL;
   let prior = INITIAL;
   let currentBlock;
+  // Subshell nesting belongs to the BLOCK, not to a line. A `( … )` that spans
+  // lines re-created its depth and its snapshot stack on every callback, so the
+  // closing `)` had nothing to restore and the subshell's `cd` leaked into the
+  // parent — `cd apps/agent`, then `(` / `cd ../indexer` / `)`, then a bare
+  // deploy, ran in the AGENT while the model stood in the indexer (#1995 r16).
+  // The same-line form was fixed at r13 and this is that fix's other half.
+  let depth = 0;
+  const stateStack = [];
   folded.forEach(({ text: line, line: lineNo, block, physical, cwd: blockCwd }) => {
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
@@ -3270,6 +3278,9 @@ for (const file of walk(REPO_ROOT)) {
     if (block !== currentBlock) {
       currentBlock = block;
       shellVars.clear();
+      // A new shell starts outside every subshell the previous one opened.
+      depth = 0;
+      stateStack.length = 0;
       // A workflow step's `working-directory` is where its commands actually
       // run, so the block starts THERE rather than at an empty cwd (#1995 r7).
       states = blockCwd ? [{ cwd: blockCwd.replace(/\/+$/, ''), stack: [] }] : INITIAL;
@@ -3430,14 +3441,17 @@ for (const file of walk(REPO_ROOT)) {
       // prefix was carried through the rest of the line and reported it as an
       // agent violation (#1995 r6). A false red, in the unfiltered CI job.
       const namedPrefix = [];
-      let depth = 0;
       // The previous line ran to completion, so this line starts from `states`.
       prior = states;
-      let pendingDepth = 0;
+      // Continues at the depth the PREVIOUS line left, not at zero. Resetting
+      // here made every line start outside any open subshell, so the close
+      // logic fired immediately and popped a snapshot that belonged to a
+      // subshell still open (#1995 r16).
+      let pendingDepth = depth;
       // Indexed, because whether a segment runs in a subshell depends on the
       // separator that FOLLOWS it, and `sep` records the one that PRECEDES.
-      // States entering each open subshell, so `)` can restore them (#1995 r13).
-      const stateStack = [];
+      // The snapshot stack is BLOCK-scoped — declared above — so a subshell
+      // that spans lines still has its parent state to restore.
       const segments = splitCommands(line);
       for (let pi = 0; pi < segments.length; pi += 1) {
         const part = segments[pi];
@@ -3527,13 +3541,29 @@ for (const file of walk(REPO_ROOT)) {
         // short-circuits, so a later `&&` command does not run either. It is
         // dropped when the next separator is `&&`, rather than carried into a
         // command it can never reach.
+        // A CONDITIONAL BODY may not run, and the state before it stays
+        // reachable either way (#1995 r16). `cd apps/agent`, then `if false;
+        // then cd ../indexer; fi`, leaves bash in the AGENT — but the branch's
+        // move was applied unconditionally and the bare deploy after it passed.
+        // The if/else form is the same question twice: both outcomes are
+        // reachable, and taking only the last one lost the agent leg.
+        //
+        // `do` is included for the zero-iteration loop, which is the same
+        // shape: a `for`/`while` body need never execute.
+        //
+        // Modelled as a UNION rather than by tracking `fi`, because the union
+        // is what the rest of this walk already speaks — `||` has worked this
+        // way since r9 — and a `fi` tracker would be a second, parallel model
+        // of reachability for one construct.
+        const branchBody = /^(?:then|else|elif|do)\b/.test(seg);
+        const after2 = branchBody ? dedupeStates([...input, ...after]) : after;
         const skipped = nextPart?.sep === '&&' ? [] : prior;
         const next =
           part.sep === '||'
-            ? dedupeStates([...states, ...after])
+            ? dedupeStates([...states, ...after2])
             : part.sep === '&&'
-              ? dedupeStates([...skipped, ...after])
-              : after;
+              ? dedupeStates([...skipped, ...after2])
+              : after2;
         prior = input;
         states = next;
         if (dir) continue;
@@ -3560,10 +3590,44 @@ for (const file of walk(REPO_ROOT)) {
           /^for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+(.+?)\s*$/,
         );
         if (loop) {
+          // A GLOB is a list, not an unknown. `for TARGET in apps/*` iterates
+          // the real directories, one of which is a protected package — and
+          // dropping the value left `cd "$TARGET"` unresolved, so the loop's
+          // bare deploy passed (#1995 r16). Expanded against the tree the
+          // scanner is already walking, one path component at a time; a glob in
+          // the DIRECTORY part is left unexpanded rather than guessed.
+          const expandGlob = (pat) => {
+            // The `$` guard is an EQUIVALENT MUTANT and is recorded as one
+            // rather than fixtured: a pattern carrying an unresolved variable
+            // fails the directory lookup anyway, because no path on disk is
+            // spelled with it. Measured over eleven patterns mixing leading,
+            // interior and quoted variables against the real tree; guarded and
+            // unguarded agreed on all eleven. Kept because it states the rule
+            // — an unknown expands to nothing — where a reader looks for it.
+            if (/\$/.test(pat)) return [];
+            const slash = pat.lastIndexOf('/');
+            const dir = slash === -1 ? '' : pat.slice(0, slash);
+            const base = slash === -1 ? pat : pat.slice(slash + 1);
+            if (/[*?]/.test(dir)) return [];
+            let entries = [];
+            try {
+              entries = readdirSync(dir ? `${REPO_ROOT}/${dir}` : REPO_ROOT);
+            } catch {
+              return [];
+            }
+            const re = new RegExp(
+              `^${base
+                .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+                .replace(/\*/g, '.*')
+                .replace(/\?/g, '.')}$`,
+            );
+            return entries.filter((e) => re.test(e)).map((e) => (dir ? `${dir}/${e}` : e));
+          };
           const vals = loop[2]
             .split(/\s+/)
             .map((v) => dequote(v))
-            .filter((v) => v && !/[$*?]/.test(v));
+            .filter(Boolean)
+            .flatMap((v) => (/[*?]/.test(v) ? expandGlob(v) : /\$/.test(v) ? [] : [v]));
           const hit = vals.find((v) =>
             SCOPED.some((sc) => v === sc.dir || v.startsWith(`${sc.dir}/`)),
           );
@@ -3681,6 +3745,12 @@ for (const file of walk(REPO_ROOT)) {
         const saved = stateStack.pop();
         if (saved) states = saved;
       }
+      // Carry the depth the line ENDS at into the next one. `depth` is assigned
+      // at each segment's START, so after the loop it still held the last
+      // segment's entry depth — a line that is nothing but `(` left it at 0,
+      // and the next line therefore began outside the subshell it had just
+      // opened. That is why hoisting the stack alone changed nothing.
+      depth = pendingDepth;
     }
 
     if (!flagged) return;
