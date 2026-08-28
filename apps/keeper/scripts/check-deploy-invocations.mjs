@@ -2158,10 +2158,16 @@ function embeddedShellLines(text, isYaml = false) {
       // unfolded source missed it entirely (Codex #1924 r29).
       const raw = lines.slice(start, j);
       const body = run[2] === '>' ? foldYamlScalar(raw) : raw.join('\n');
-      out.push(
-        ...offset(logicalLines(body), start, blockId, isYaml ? workingDirFor(lines, i) : ''),
-      );
-      blockId += 1;
+      // A step that names a NON-SHELL interpreter does not execute shell, and
+      // feeding its body to the scanner reported `print("wrangler deploy")` as
+      // a live deploy (#1995 r16). Checked at each of the three ingest points
+      // rather than inside the scanner, because it is a property of the STEP.
+      if (!isYaml || stepIsShell(lines, i)) {
+        out.push(
+          ...offset(logicalLines(body), start, blockId, isYaml ? workingDirFor(lines, i) : ''),
+        );
+        blockId += 1;
+      }
       i = j;
       continue;
     }
@@ -2175,7 +2181,7 @@ function embeddedShellLines(text, isYaml = false) {
       // `workingDirFor` (#1995 r8). Emitted as its own block so the cwd applies;
       // the duplicate with the physical line is removed by the dedupe at the
       // reporting site.
-      if (end === i && isYaml) {
+      if (end === i && isYaml && stepIsShell(lines, i)) {
         const wd = workingDirFor(lines, i);
         if (wd) {
           out.push(...offset(logicalLines(flow[2]), i, blockId, wd));
@@ -2193,15 +2199,17 @@ function embeddedShellLines(text, isYaml = false) {
             parts[last] = parts[last].slice(0, close) + parts[last].slice(close + 1);
           }
         }
-        out.push(
-          ...offset(
-            logicalLines(foldFlowScalar(parts, q)),
-            i,
-            blockId,
-            isYaml ? workingDirFor(lines, i) : '',
-          ),
-        );
-        blockId += 1;
+        if (!isYaml || stepIsShell(lines, i)) {
+          out.push(
+            ...offset(
+              logicalLines(foldFlowScalar(parts, q)),
+              i,
+              blockId,
+              isYaml ? workingDirFor(lines, i) : '',
+            ),
+          );
+          blockId += 1;
+        }
         i = end + 1;
         continue;
       }
@@ -2344,12 +2352,79 @@ function offset(block, start, blockId, cwd = '') {
  *
  * Step level wins over the job default, which is Actions' own precedence.
  */
+/**
+ * The first match of `re` among a step's OWN metadata keys.
+ *
+ * Extracted so "read a step's metadata" has ONE implementation. It grew a
+ * depth rule at r16 — a heredoc line that happens to read like Actions
+ * metadata is not Actions metadata — and a second copy of the walk would have
+ * been a place for that rule to go missing.
+ */
+function scanStepKeys(lines, runIdx, re) {
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  const runIndent = indentOf(lines[runIdx]);
+  let start = runIdx;
+  while (start > 0 && !/^\s*-\s/.test(lines[start])) {
+    if (lines[start].trim() !== '' && indentOf(lines[start]) < runIndent) break;
+    start -= 1;
+  }
+  if (!/^\s*-\s/.test(lines[start])) return null;
+  const stepIndent = indentOf(lines[start]);
+  // A step's own keys sit at the column the dash's first key opens. Scanning
+  // every nested line let SHELL PAYLOAD stand in for Actions metadata: a
+  // heredoc whose data happens to read `working-directory: apps/indexer`
+  // overrode the real cwd and the agent deploy under it passed (#1995 r16).
+  // Depth is what distinguishes a sibling key from text inside a value, and
+  // the scan had no notion of it.
+  const keyIndent =
+    stepIndent + (lines[start].slice(stepIndent).match(/^-\s*/)?.[0].length ?? 2);
+  for (let i = start; i < lines.length; i += 1) {
+    if (i > start && lines[i].trim() !== '') {
+      const ind = indentOf(lines[i]);
+      if (ind < stepIndent || (ind === stepIndent && /^\s*-\s/.test(lines[i]))) break;
+      if (ind !== keyIndent) continue;
+    }
+    const m = lines[i].match(re);
+    if (m) return m;
+  }
+  return null;
+}
+
+/**
+ * Whether a workflow step's body is executed by a SHELL at all.
+ *
+ * `shell: python` with `run: print("wrangler deploy")` prints a string and
+ * deploys nothing, but the body went through the shell scanner and was
+ * reported as a live deploy — a false red on a correct workflow, which is the
+ * failure mode that gets a guard switched off (#1995 r16).
+ *
+ * Allow-list rather than deny-list: an unset `shell` is the runner's default
+ * shell and must be scanned, and an unrecognised value is not known to be a
+ * shell. Actions' documented shell keywords are the ones here; a custom
+ * `command {0}` template names its own interpreter and is not among them.
+ */
+const SHELL_KEYWORDS = new Set(['bash', 'sh', 'pwsh', 'powershell', 'cmd']);
+function stepIsShell(lines, runIdx) {
+  const m = scanStepKeys(
+    lines,
+    runIdx,
+    /^\s*(?:-\s+)?shell:\s*(?:"([^"]*)"|'([^']*)'|(\S+))/,
+  );
+  if (!m) return true;
+  return SHELL_KEYWORDS.has((m[1] ?? m[2] ?? m[3] ?? '').trim());
+}
+
 function workingDirFor(lines, runIdx) {
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
   // The unquoted alternative must admit an EXPRESSION: `${{ matrix.dir }}`
   // contains spaces, so `\S+` captured only `${{` (#1995 r11).
+  // `(?:-\s+)?`: `- working-directory: apps/agent` as the FIRST key on a step's
+  // dash line is ordinary Actions YAML, and an anchor that admitted only
+  // leading whitespace could not see it — so the step had no scope and its
+  // bare deploy passed. Found while probing the six reported cases; nobody
+  // reported this one (#1995 r16).
   const WD =
-    /^\s*working-directory:\s*(?:"([^"]*)"|'([^']*)'|(\$\{\{[^}]*\}\}|\S+))/;
+    /^\s*(?:-\s+)?working-directory:\s*(?:"([^"]*)"|'([^']*)'|(\$\{\{[^}]*\}\}|\S+))/;
   // FLOW-style mapping (#1995 r13): `defaults: { run: { working-directory: X } }`
   // is the same Actions configuration as the block form, and only the block
   // form was recognised — so a workflow written this way ran its inline deploy
@@ -2368,43 +2443,110 @@ function workingDirFor(lines, runIdx) {
    * expression resolves to nothing rather than being taken literally — which
    * is what recorded `${{` as a directory name before.
    */
-  const resolveMatrix = (raw) => {
+  /**
+   * Collapse `.`, `..` and repeated separators.
+   *
+   * `working-directory: apps/indexer/../agent` starts the runner in
+   * `apps/agent`; storing the raw path meant `scopeOfCwd` could not recognise
+   * it and a bare agent deploy passed (#1995 r16).
+   *
+   * A `..` that would climb above the repo root is kept rather than popping an
+   * empty stack. That branch is an EQUIVALENT MUTANT and is recorded as one
+   * instead of being fixtured: `scopeOfCwd` matches a package on a `/`
+   * boundary ANYWHERE in the path, so `../apps/agent` and `apps/agent` reach
+   * the same verdict. Checked against eleven paths mixing leading, interior and
+   * root-crossing `..`, and the two forms agreed on all of them. It is kept
+   * because it is the faithful normalisation — a caller that ever reads the
+   * PATH rather than the verdict would need it — not because a test proves it.
+   */
+  const normalizePath = (raw) => {
+    if (!raw || /\$/.test(raw)) return raw;
+    const out = [];
+    for (const part of raw.split('/')) {
+      if (part === '' || part === '.') continue;
+      if (part === '..' && out.length > 0 && out[out.length - 1] !== '..') out.pop();
+      else out.push(part);
+    }
+    return out.join('/');
+  };
+
+  /**
+   * The declared values of a matrix key, in any of the three shapes Actions
+   * accepts: an inline array, a block sequence, and `include:` entries.
+   *
+   * Only the inline array was read, so `include: [{ dir: apps/agent }]` — the
+   * standard object form — resolved to nothing and its bare agent deploy
+   * passed (#1995 r16).
+   */
+  const matrixValues = (key) => {
+    const vals = [];
+    for (let i = 0; i < lines.length; i += 1) {
+      const inline = lines[i].match(new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`));
+      if (inline) {
+        vals.push(...inline[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
+        continue;
+      }
+      // Block sequence: `dir:` on its own line, values as `- x` beneath it.
+      if (new RegExp(`^\\s*${key}:\\s*$`).test(lines[i])) {
+        const di = (lines[i].match(/^\s*/) ?? [''])[0].length;
+        for (let j = i + 1; j < lines.length; j += 1) {
+          if (lines[j].trim() === '') continue;
+          const ind = (lines[j].match(/^\s*/) ?? [''])[0].length;
+          if (ind <= di) break;
+          const item = lines[j].match(/^\s*-\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/);
+          if (item) vals.push(item[1] ?? item[2] ?? item[3]);
+        }
+        continue;
+      }
+      // `include:` entries carry the key as an ordinary mapping member, with or
+      // without the leading dash on the same line.
+      const inc = lines[i].match(
+        new RegExp(`^\\s*(?:-\\s+)?${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
+      );
+      if (inc) vals.push(inc[1] ?? inc[2] ?? inc[3]);
+    }
+    return vals.filter(Boolean);
+  };
+
+  /**
+   * An expression is not a literal directory (#1995 r11, widened at r16).
+   *
+   * `matrix.*` resolves against the declared legs: if any lands in a scoped
+   * package that value is used; if the values are found and none do, the step
+   * is genuinely out of scope; if they cannot be found at all, the expression
+   * resolves to nothing rather than being taken literally — which is what
+   * recorded `${{` as a directory name before.
+   *
+   * `env.*` is the same question with a different source, and it was left
+   * whole: a workflow declaring `env: { DEPLOY_DIR: apps/agent }` ran its bare
+   * deploy from the agent while `scopeOfCwd` matched nothing (#1995 r16).
+   * Static declarations only — anything computed stays unresolved, the same
+   * rule `shellVars` follows.
+   */
+  const resolveExpression = (raw) => {
+    const em = raw.match(/\$\{\{\s*env\.([A-Za-z_][\w-]*)\s*\}\}/);
+    if (em) {
+      for (const l of lines) {
+        const kv = l.match(
+          new RegExp(`^\\s*${em[1]}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
+        );
+        if (kv) return kv[1] ?? kv[2] ?? kv[3];
+      }
+      return '';
+    }
     const mm = raw.match(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/);
     if (!mm) return raw;
-    for (const l of lines) {
-      const km = l.match(new RegExp(`^\\s*${mm[1]}:\\s*\\[([^\\]]*)\\]`));
-      if (!km) continue;
-      const vals = km[1]
-        .split(',')
-        .map((v) => v.trim().replace(/^["']|["']$/g, ''))
-        .filter(Boolean);
-      const hit = vals.find((v) =>
-        SCOPED.some((sc) => v === sc.dir || v.startsWith(`${sc.dir}/`)),
-      );
-      return hit ?? '';
-    }
-    return '';
+    const vals = matrixValues(mm[1]);
+    if (vals.length === 0) return '';
+    return (
+      vals.find((v) => SCOPED.some((sc) => v === sc.dir || v.startsWith(`${sc.dir}/`))) ?? ''
+    );
   };
-  const valueOf = (m) => resolveMatrix(m[1] ?? m[2] ?? m[3]);
+  const valueOf = (m) => normalizePath(resolveExpression(m[1] ?? m[2] ?? m[3]));
 
-  // STEP: walk up to this step's `- ` marker, then scan the step's own body.
-  const runIndent = indentOf(lines[runIdx]);
-  let start = runIdx;
-  while (start > 0 && !/^\s*-\s/.test(lines[start])) {
-    if (lines[start].trim() !== '' && indentOf(lines[start]) < runIndent) break;
-    start -= 1;
-  }
-  if (/^\s*-\s/.test(lines[start])) {
-    const stepIndent = indentOf(lines[start]);
-    for (let i = start; i < lines.length; i += 1) {
-      if (i > start && lines[i].trim() !== '') {
-        const ind = indentOf(lines[i]);
-        if (ind < stepIndent || (ind === stepIndent && /^\s*-\s/.test(lines[i]))) break;
-      }
-      const m = lines[i].match(WD);
-      if (m) return valueOf(m);
-    }
-  }
+  // STEP level wins over the job default, which is Actions' own precedence.
+  const stepWd = scanStepKeys(lines, runIdx, WD);
+  if (stepWd) return valueOf(stepWd);
 
   // DEFAULTS, confined to the CONTAINING JOB. Taking the nearest preceding
   // `defaults:` let one job's default leak into a later job that has none —
@@ -2436,7 +2578,12 @@ function workingDirFor(lines, runIdx) {
       const ind = indentOf(lines[i]);
       if (ind <= ji) break;
       if (jobIndent === -1) jobIndent = ind;
-      if (ind === jobIndent && /^\s*[\w.-]+:\s*$/.test(lines[i])) jobStart = i;
+      // A job key may be QUOTED — `"deploy-agent":` is ordinary YAML — and an
+      // identifier-only matcher skipped that job entirely, so its
+      // `defaults.run.working-directory` was never consulted (#1995 r16).
+      if (ind === jobIndent && /^\s*(?:"[^"]*"|'[^']*'|[\w.-]+):\s*$/.test(lines[i])) {
+        jobStart = i;
+      }
     }
   }
   if (jobStart >= 0) {

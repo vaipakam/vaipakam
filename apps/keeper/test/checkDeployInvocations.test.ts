@@ -3017,6 +3017,140 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ── `workingDirFor` read the workflow as free TEXT rather than as
+  // structure: no depth rule, no normalisation, one matrix shape, unquoted job
+  // keys only, no env, and no notion of which interpreter runs the body
+  // (#1995 r16). Six reported, one found while probing them.
+  it('a step key on the DASH LINE is still metadata (#1995 r16)', () => {
+    // `- working-directory: apps/agent` is ordinary Actions YAML and the
+    // pattern could only see a line that STARTS with the key. Nobody reported
+    // this one; it turned up because two of my probes for the others passed
+    // when their controls said they should not have.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('shell PAYLOAD cannot stand in for step metadata (#1995 r16)', () => {
+    // A heredoc whose data reads `working-directory: apps/indexer` overrode
+    // the real Actions cwd. Depth distinguishes a sibling key from text inside
+    // a value, and the scan had no notion of it.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\ndefaults:\n  run:\n    working-directory: apps/agent\njobs:\n  d:\n    steps:\n' +
+        "      - run: |\n          cat <<'EOT' > /tmp/x\n          working-directory: apps/indexer\n" +
+        '          EOT\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a QUOTED job key still has its defaults read (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  "deploy-agent":\n    defaults:\n      run:\n' +
+        '        working-directory: apps/agent\n    steps:\n      - run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a NON-NORMALIZED working directory resolves (#1995 r16)', () => {
+    // The runner starts in apps/agent; storing the raw path meant scopeOfCwd
+    // could not recognise it.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    defaults:\n      run:\n' +
+        '        working-directory: apps/indexer/../agent\n    steps:\n      - run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a root-crossing .. still resolves to the package (#1995 r16)', () => {
+    // My first version of this expected a PASS, on the reasoning that
+    // `../apps/agent` leaves the checkout. It does not pass, and should not:
+    // `scopeOfCwd` matches a package on a `/` boundary anywhere in the path,
+    // which is what lets an absolute runner path resolve at all. Written down
+    // because the wrong expectation is the tempting one.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    defaults:\n      run:\n' +
+        '        working-directory: ../apps/agent\n    steps:\n      - run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a static env value backs a working directory (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\nenv:\n  DEPLOY_DIR: apps/agent\njobs:\n  d:\n    steps:\n' +
+        '      - name: go\n        working-directory: ${{ env.DEPLOY_DIR }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('matrix.include carries the leg values too (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        include:\n' +
+        '          - dir: apps/agent\n    steps:\n' +
+        '      - name: go\n        working-directory: ${{ matrix.dir }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and so does a block-sequence matrix (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        dir:\n          - apps/agent\n' +
+        '    steps:\n      - name: go\n        working-directory: ${{ matrix.dir }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a NON-SHELL interpreter runs no shell (#1995 r16)', () => {
+    // `print("wrangler deploy")` prints a string. Reporting it failed CI on a
+    // correct workflow — the failure mode that gets a guard switched off.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: python\n' +
+        '        working-directory: apps/agent\n        run: print("wrangler deploy")\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('while shell: bash is still scanned (#1995 r16 control)', () => {
+    // Allow-list, not deny-list: an unrecognised interpreter is not known to
+    // be a shell, but the named ones must keep working.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: bash\n' +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('and a non-shell step does not silence its SIBLING (#1995 r16 control)', () => {
+    // The gate is per-step. If it leaked to the block or the file, one python
+    // step would hide every real deploy beside it.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: a\n        shell: python\n' +
+        '        run: print("hi")\n      - name: b\n        working-directory: apps/agent\n' +
+        '        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',
