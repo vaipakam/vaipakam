@@ -271,6 +271,55 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// #1499 — a FORFEITED entry enters the funding requirement as a TERM,
+    /// through the same single formula, without re-adding the earmark.
+    ///
+    /// This is the forfeit x backing intersection. Seven cells combine a
+    /// forfeit with a backing manipulation, but only two assert on a funding
+    /// gate — one of those is the DROUGHT gate, and the other lives in
+    /// `RewardClaimBackingSeparationTest`, which never arms and so has no
+    /// recycled component at all. The requirement itself was unasserted here.
+    ///
+    /// The invariant is the one the predicate's own comment states: "ONE
+    /// predicate, no forfeit branch. Forfeit value enters as `treasuryLegs` —
+    /// a TERM, not a second formula with its own arithmetic". A second formula
+    /// is what Codex #1970 r2 found bypassing {LibVpfiRecycle.backingPosition}
+    /// entirely, so this pins the shape rather than the value: adding a
+    /// forfeited sibling must add its own contribution and NOTHING else.
+    ///
+    /// Written as an exact equation over the two measurements, so it fails in
+    /// both directions — drop the forfeit term and the requirement does not
+    /// grow; count the earmark per entry instead of once and it grows twice as
+    /// much.
+    function testForfeitedEntryEntersTheRequirementAsATermNotASecondFormula()
+        public
+    {
+        _cfg().setRewardClaimHorizonDays(180);
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "fixture: the armed day has a recycled component");
+
+        uint256 bucket = 1_000_000 ether;
+        _mut().setRecycleBucketRaw(bucket); // the earmark under test
+
+        // One live entry: requirement = its own contribution + the earmark.
+        _seedEntry(alice, 100, 4, 6);
+        uint256 needLiveOnly = _mut().userClaimFundingNeedRaw(alice);
+        assertGt(needLiveOnly, bucket, "fixture: the live entry contributes");
+        uint256 perEntry = needLiveOnly - bucket;
+
+        // An identical sibling, FORFEITED. Its value still has to be funded —
+        // the forfeit-credit path spends it — so it enters the same formula.
+        uint256 gone = _seedEntry(alice, 101, 4, 6);
+        _mut().setRewardEntryForfeitedRaw(gone);
+        uint256 needWithForfeit = _mut().userClaimFundingNeedRaw(alice);
+
+        assertEq(
+            needWithForfeit,
+            perEntry * 2 + bucket,
+            "the forfeited sibling adds its own contribution and the earmark stays counted ONCE"
+        );
+    }
+
     function _armAndFinalize(uint256 armDay, uint256 creditedPerWindow)
         internal
         returns (uint256 floor_, uint256 recycled)
