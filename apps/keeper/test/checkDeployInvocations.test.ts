@@ -3884,6 +3884,109 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ── The workflow readers resolved against the WHOLE FILE and took the first
+  // match, with no notion of which mapping level or which job an entry belongs
+  // to (#1995 r16). Three of these six are false REDS.
+  it('an absolute-path interpreter is still bash (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: "/bin/bash -e {0}"\n' +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('defaults.run.shell decides for a step with no shell key (#1995 r16)', () => {
+    // Returning "shell" unconditionally reported a python step's
+    // `print("wrangler deploy")` as a destructive deploy.
+    const r = runWith(
+      '.github/workflows/w2.yml',
+      'name: w\ndefaults:\n  run:\n    shell: python\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        working-directory: apps/agent\n        run: print("wrangler deploy")\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('and a bash default still scans (#1995 r16 control)', () => {
+    const r = runWith(
+      '.github/workflows/w3.yml',
+      'name: w\ndefaults:\n  run:\n    shell: bash\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an EXCLUDED matrix leg does not exist (#1995 r16)', () => {
+    // Keeping the declared value reported a violation for a leg that never runs.
+    const r = runWith(
+      '.github/workflows/w4.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        dir: [apps/agent, apps/indexer]\n' +
+        '        exclude:\n          - dir: apps/agent\n    steps:\n      - name: go\n' +
+        '        working-directory: ${{ matrix.dir }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('while the same matrix without the exclusion still flags (#1995 r16 control)', () => {
+    const r = runWith(
+      '.github/workflows/w5.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        dir: [apps/agent, apps/indexer]\n' +
+        '    steps:\n      - name: go\n        working-directory: ${{ matrix.dir }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a matrix axis in an UNRELATED job scopes nothing here (#1995 r16)', () => {
+    // A deploy job whose `dir` is only the indexer was reported as the agent
+    // because another job declared an agent leg.
+    const r = runWith(
+      '.github/workflows/w6.yml',
+      'name: w\njobs:\n  other:\n    strategy:\n      matrix:\n        dir: [apps/agent]\n    steps:\n' +
+        '      - name: x\n        run: echo hi\n  deploy:\n    strategy:\n      matrix:\n' +
+        '        dir: [apps/indexer]\n    steps:\n      - name: go\n' +
+        '        working-directory: ${{ matrix.dir }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a static string-literal expression evaluates to itself (#1995 r16)', () => {
+    // Blanking it made a real deploy unattributed — a defect in last round's
+    // empty-substitution rule, found by the round after it.
+    const r = runWith(
+      '.github/workflows/w7.yml',
+      "name: w\njobs:\n  d:\n    steps:\n      - name: go\n" +
+        "        working-directory: ${{ 'apps/agent' }}\n        run: wrangler deploy\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a SIBLING step env does not shadow the workflow env (#1995 r16)', () => {
+    // A job's range contains every step's `env`, and the workflow's contains
+    // every job's and step's — so the first `env:` in range was often a deeper
+    // one. Each level now reads its OWN mapping.
+    const r = runWith(
+      '.github/workflows/w8.yml',
+      'name: w\nenv:\n  DEPLOY_DIR: apps/agent\njobs:\n  d:\n    steps:\n      - name: a\n' +
+        '        env:\n          DEPLOY_DIR: apps/indexer\n        run: echo hi\n      - name: go\n' +
+        '        working-directory: ${{ env.DEPLOY_DIR }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it("but a step's OWN env still wins (#1995 r16 control)", () => {
+    const r = runWith(
+      '.github/workflows/w9.yml',
+      'name: w\nenv:\n  DEPLOY_DIR: apps/indexer\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        env:\n          DEPLOY_DIR: apps/agent\n' +
+        '        working-directory: ${{ env.DEPLOY_DIR }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

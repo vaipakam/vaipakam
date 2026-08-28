@@ -2802,6 +2802,59 @@ const SHELL_KEYWORDS = new Set(['bash', 'sh', 'pwsh', 'powershell', 'cmd']);
  * that one answers "which value lands in a scoped package", which is the wrong
  * question for an interpreter name.
  */
+/**
+ * The interpreter a `shell:` value names.
+ *
+ * The first token, BASENAMED: `shell: "/bin/bash -e {0}"` is a valid template
+ * and an exact-token test classified `/bin/bash` as non-shell, skipping the run
+ * body of a real deploy (#1995 r16).
+ */
+function interpreterOf(value) {
+  const first = value.trim().split(/\s+/)[0] ?? '';
+  return first.slice(first.lastIndexOf('/') + 1);
+}
+
+/**
+ * `defaults.run.shell`, resolved job-then-workflow.
+ *
+ * Same shape as `workingDirFor`'s defaults lookup and deliberately separate
+ * from it: that one answers "where", this one answers "run by what", and
+ * folding them would make one reader serve two questions.
+ */
+function defaultShellFor(lines, runIdx) {
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  const SH = /^\s*shell:\s*(?:"([^"]*)"|'([^']*)'|(\S+))/;
+  const inRange = (from, to) => {
+    for (let i = from; i < to && i < lines.length; i += 1) {
+      const flow = lines[i].match(
+        /defaults:\s*\{[^}]*shell:\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/,
+      );
+      if (flow) return flow[1] ?? flow[2] ?? flow[3];
+      if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
+      const di = indentOf(lines[i]);
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (lines[j].trim() !== '' && indentOf(lines[j]) <= di) break;
+        const m = lines[j].match(SH);
+        if (m) return m[1] ?? m[2] ?? m[3];
+      }
+    }
+    return null;
+  };
+  const job = jobBounds(lines, runIdx);
+  if (job) {
+    const v = inRange(job.start, job.end);
+    if (v !== null) return v;
+  }
+  const jobsIdx = lines.findIndex((l) => /^\s*jobs:\s*$/.test(l));
+  const topIndent = jobsIdx >= 0 ? indentOf(lines[jobsIdx]) : 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/^\s*defaults:\s*$/.test(lines[i]) || indentOf(lines[i]) !== topIndent) continue;
+    const v = inRange(i, lines.length);
+    if (v !== null) return v;
+  }
+  return null;
+}
+
 function matrixShellValues(lines, runIdx, raw) {
   const mm = raw.match(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/);
   if (!mm) return [];
@@ -2826,7 +2879,14 @@ function stepIsShell(lines, runIdx) {
     runIdx,
     /^\s*(?:-\s+)?shell:\s*(?:"([^"]*)"|'([^']*)'|(\$\{\{[^}]*\}\}|\S+))/,
   );
-  if (!m) return true;
+  if (!m) {
+    // No step-level `shell:` means the DEFAULT applies, and `defaults.run.shell`
+    // may name a non-shell interpreter. Returning true unconditionally reported
+    // a python step's `print("wrangler deploy")` as a destructive deploy
+    // (#1995 r16) — a false red on a correct workflow.
+    const dflt = defaultShellFor(lines, runIdx);
+    return dflt === null ? true : SHELL_KEYWORDS.has(interpreterOf(dflt));
+  }
   // `shell: ${{ matrix.shell }}` is not the literal token `${{`. Testing it
   // against the keyword set classified a real bash leg as non-shell and skipped
   // its body entirely (#1995 r16). An UNRESOLVED expression is scanned rather
@@ -2837,7 +2897,7 @@ function stepIsShell(lines, runIdx) {
   if (/\$\{\{/.test(rawShell)) {
     const resolved = matrixShellValues(lines, runIdx, rawShell);
     if (resolved.length === 0) return true;
-    return resolved.some((v) => SHELL_KEYWORDS.has(v.trim().split(/\s+/)[0]));
+    return resolved.some((v) => SHELL_KEYWORDS.has(interpreterOf(v)));
   }
   // Actions accepts a custom TEMPLATE — `bash -e {0}` — and the interpreter is
   // its first token. Comparing the whole scalar classified a quoted
@@ -2846,7 +2906,7 @@ function stepIsShell(lines, runIdx) {
   // alternative stopped at the space, so it captured `bash` by accident. Both
   // spellings take the first token now, deliberately.
   const value = (m[1] ?? m[2] ?? m[3] ?? '').trim();
-  return SHELL_KEYWORDS.has(value.split(/\s+/)[0]);
+  return SHELL_KEYWORDS.has(interpreterOf(value));
 }
 
 function workingDirFor(lines, runIdx) {
@@ -2922,7 +2982,14 @@ function workingDirFor(lines, runIdx) {
    */
   const matrixValues = (key) => {
     const vals = [];
-    for (let i = 0; i < lines.length; i += 1) {
+    // BOUNDED TO THE CONTAINING JOB. Scanning the whole workflow let an axis of
+    // the same name in an UNRELATED job scope this one — a deploy job whose
+    // `dir` is only the indexer was reported as the agent because another job
+    // declared an agent leg (#1995 r16). A false red, and the wrong package.
+    const jb = jobBounds(lines, runIdx);
+    const from = jb ? jb.start : 0;
+    const to = jb ? jb.end : lines.length;
+    for (let i = from; i < to; i += 1) {
       const inline = lines[i].match(new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`));
       if (inline) {
         vals.push(...inline[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
@@ -2967,7 +3034,39 @@ function workingDirFor(lines, runIdx) {
         vals.push(fm[1] ?? fm[2] ?? fm[3]);
       }
     }
-    return vals.filter(Boolean);
+    // `exclude:` removes LEGS. A matrix declaring the agent and the indexer and
+    // then excluding the agent runs no agent leg at all, but the collector kept
+    // the declared value and reported a violation for a leg that does not exist
+    // (#1995 r16). Another false red.
+    //
+    // Single-axis reading, which is what this resolver models: a value named
+    // under `exclude` is dropped. A multi-axis exclusion removes a COMBINATION
+    // rather than a value, and dropping the value there would be too eager, so
+    // an exclude entry carrying more than one key is left alone — which keeps
+    // the leg and errs toward reporting.
+    const excluded = new Set();
+    for (let i = from; i < to; i += 1) {
+      if (/^\s*exclude:\s*$/.test(lines[i])) {
+        const ei = indentOf(lines[i]);
+        for (let j = i + 1; j < lines.length && j < to; j += 1) {
+          if (lines[j].trim() === '') continue;
+          if (indentOf(lines[j]) <= ei) break;
+          const only = lines[j].match(
+            new RegExp(`^\\s*-\\s+${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
+          );
+          if (only) excluded.add(only[1] ?? only[2] ?? only[3]);
+        }
+      }
+      for (const fm of lines[i].matchAll(
+        new RegExp(
+          `exclude:\\s*\\[\\s*\\{\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^\\s,}]+))\\s*\\}`,
+          'g',
+        ),
+      )) {
+        excluded.add(fm[1] ?? fm[2] ?? fm[3]);
+      }
+    }
+    return vals.filter(Boolean).filter((v) => !excluded.has(v));
   };
 
   /**
@@ -2978,9 +3077,15 @@ function workingDirFor(lines, runIdx) {
    * `with: { DEPLOY_DIR: … }` was read as an environment declaration and
    * shadowed the real one (#1995 r16).
    */
-  const envValueIn = (key, from, to) => {
+  const envValueIn = (key, from, to, atIndent) => {
     for (let i = from; i < to && i < lines.length; i += 1) {
       if (!/^\s*env:\s*$/.test(lines[i])) continue;
+      // The mapping's OWN level. A job's range contains every STEP's `env`, and
+      // the workflow's range contains every job's and step's — so the first
+      // `env:` found in range was often a deeper one, and a sibling step's
+      // override shadowed the top-level value the step actually inherits
+      // (#1995 r16, on the r16 scoping fix itself).
+      if (atIndent !== null && indentOf(lines[i]) !== atIndent) continue;
       const ei = indentOf(lines[i]);
       for (let j = i + 1; j < lines.length; j += 1) {
         if (lines[j].trim() === '') continue;
@@ -3005,13 +3110,18 @@ function workingDirFor(lines, runIdx) {
   const envValues = (key) => {
     const step = stepBounds(lines, runIdx);
     const job = jobBounds(lines, runIdx);
+    // Each level names the indent its OWN `env:` sits at. A step's is bounded
+    // by `stepBounds` already, so it needs none; a job's is the job key's first
+    // child column; the workflow's is the top level.
+    const jobsIdx = lines.findIndex((l) => /^\s*jobs:\s*$/.test(l));
+    const topIndent = jobsIdx >= 0 ? indentOf(lines[jobsIdx]) : 0;
     const ranges = [
-      step && [step.start, step.end],
-      job && [job.start, job.end],
-      [0, lines.length],
+      step && [step.start, step.end, step.keyIndent],
+      job && [job.start, job.end, job.indent + 2],
+      [0, lines.length, topIndent],
     ].filter(Boolean);
-    for (const [from, to] of ranges) {
-      const v = envValueIn(key, from, to);
+    for (const [from, to, atIndent] of ranges) {
+      const v = envValueIn(key, from, to, atIndent);
       if (v !== null) return [v];
     }
     return [];
@@ -3056,7 +3166,16 @@ function workingDirFor(lines, runIdx) {
     // substitution is the reading that satisfies both, because an expression
     // that is the whole value still substitutes to nothing.
     const keep = new Set(known.map((a) => a.whole));
-    raw = raw.replace(/\$\{\{[^}]*\}\}/g, (m) => (keep.has(m) ? m : ''));
+    raw = raw.replace(/\$\{\{[^}]*\}\}/g, (m) => {
+      if (keep.has(m)) return m;
+      // A STATIC STRING LITERAL evaluates to itself: `${{ 'apps/agent' }}` is
+      // the agent directory, and blanking it made a real deploy unattributed
+      // (#1995 r16, on last round's empty-substitution rule). Only a bare
+      // quoted literal — anything with an operator, a function call or a
+      // context reference is still not evaluable from the text.
+      const lit = m.match(/^\$\{\{\s*(?:'([^']*)'|"([^"]*)")\s*\}\}$/);
+      return lit ? lit[1] ?? lit[2] : '';
+    });
     // With nothing left to choose BETWEEN, the substituted path is the answer:
     // there is no list of legs to pick a scoped one from.
     if (known.length === 0) return raw;
