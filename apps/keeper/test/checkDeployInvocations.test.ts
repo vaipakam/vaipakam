@@ -3987,6 +3987,107 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.out).toContain('apps/agent');
   });
 
+  // ── Seven more ways the shell reaches a deploy that the readers could not
+  // follow (#1995 r16).
+  it('a SOURCED helper moves the caller (#1995 r16)', () => {
+    // `source` runs the file's commands in the CURRENT shell, so neither file
+    // contains both the scope and the deploy and scanning them independently
+    // saw nothing in either.
+    seed('scripts/enter-agent.sh', 'cd apps/agent\n');
+    const r = runWith('w.sh', 'source scripts/enter-agent.sh\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the dot form does the same (#1995 r16)', () => {
+    seed('scripts/enter.sh', 'cd apps/agent\n');
+    const r = runWith('w2.sh', '. scripts/enter.sh\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a helper that moves nowhere scoped stays quiet (#1995 r16 control)', () => {
+    seed('scripts/e.sh', 'cd apps/www\n');
+    expect(runWith('w3.sh', 'source scripts/e.sh\nwrangler deploy\n').ok).toBe(true);
+  });
+
+  it('and an UNREADABLE helper contributes nothing (#1995 r16 control)', () => {
+    // It might do anything; the caller's own moves stay the best evidence, and
+    // clearing scope on a missing file would be a guess in the other direction.
+    // The `cd` BEFORE it is what makes this discriminate: without it, clearing
+    // and preserving both come out as "no scope" and the case cannot fail.
+    const r = runWith('w4.sh', 'cd apps/agent\nsource scripts/missing.sh\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and helpers that source EACH OTHER still terminate (#1995 r16 control)', () => {
+    // A cycle is not a realistic wrapper, but a guard must terminate on one.
+    // Without the depth bound this recurses until the stack gives out, and the
+    // process dies rather than reporting anything.
+    seed('scripts/a.sh', '. scripts/b.sh\ncd apps/agent\n');
+    seed('scripts/b.sh', '. scripts/a.sh\n');
+    const r = runWith('w5.sh', '. scripts/a.sh\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('dash and ash shebangs are shell (#1995 r16)', () => {
+    // Their names END in `sh` with no word boundary before it, so a
+    // `\b(ba|z|k)?sh\b` test matched neither and the file was scanned as prose.
+    expect(runWith('bin/d1', '#!/bin/dash\ncd apps/agent\nwrangler deploy\n').ok).toBe(false);
+    expect(runWith('bin/d2', '#!/bin/ash\ncd apps/agent\nwrangler deploy\n').ok).toBe(false);
+  });
+
+  it('yarn runs a script WITHOUT the run keyword (#1995 r16)', () => {
+    const r = runWith('y.sh', 'cd apps/agent\nyarn deploy --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the same form without a negation is safe (#1995 r16 control)', () => {
+    // Load-bearing: widening only the DETECTOR made this correct command read
+    // as an unrecognised bare deploy. Two halves of one decision.
+    expect(runWith('y2.sh', 'cd apps/agent\nyarn deploy\n').ok).toBe(true);
+  });
+
+  it('parameter-expansion OPERATORS resolve (#1995 r16)', () => {
+    // `${TARGET:?missing}` is the same variable; matching only `${TARGET` left
+    // the operator text attached and the modelled path matched no package.
+    expect(runWith('p1.sh', 'TARGET=apps/agent\ncd "${TARGET:?missing}"\nwrangler deploy\n').ok).toBe(false);
+    expect(runWith('p2.sh', 'TARGET=apps/agent\ncd "${TARGET:-apps/www}"\nwrangler deploy\n').ok).toBe(false);
+  });
+
+  it('EVERY binding in an assignment-only command is kept (#1995 r16)', () => {
+    // The single-pair matcher is end-anchored, so the combined form parsed as
+    // nothing and the binding was dropped entirely.
+    const r = runWith('as.sh', 'TARGET=apps/agent OTHER=x\ncd "$TARGET"\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while a later COMPUTED value still clears it (#1995 r16 control)', () => {
+    // r14's rule, applied per name rather than per command.
+    const r = runWith('as2.sh', 'TARGET=apps/agent OTHER=x\nTARGET=$(cat f)\ncd "$TARGET"\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a BRACE LIST in a for-loop is a list (#1995 r16)', () => {
+    const r = runWith('b.sh', 'for TARGET in apps/{indexer,agent}; do\ncd "$TARGET"\nwrangler deploy\ndone\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a DYNAMIC alternative does not hide its literal siblings (#1995 r16)', () => {
+    // bash expands `apps/{$X,agent}` to both, and the agent iteration runs.
+    // Refusing the whole group when any alternative held a `$` was my first cut
+    // and it was wrong; the per-value filter drops the unresolved alternative
+    // on its own, which is the right granularity. Mutation caught it — widening
+    // the pattern changed a verdict, and the widened answer was correct.
+    const r = runWith('b2.sh', 'for TARGET in apps/{$X,agent}; do\ncd "$TARGET"\nwrangler deploy\ndone\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

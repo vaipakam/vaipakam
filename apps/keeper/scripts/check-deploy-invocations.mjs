@@ -183,7 +183,12 @@ const RUN_ALIASES = String.raw`run(?:-script)?|rum|urn`;
 // first character of the value keeps the NEXT option from being eaten as this
 // one's value — the same rule `stripOtherOptionValues` uses, and the same one
 // `DEPLOY_RE` above has carried since it was written.
-const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+(?:${RUN_ALIASES})(?:\s+-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?)*\s+deploy\b`;
+// `yarn deploy` runs the package script WITHOUT the `run` keyword — Yarn's own
+// `run -h` says so — and the pattern required the keyword, so the file was
+// skipped entirely (#1995 r16). Yarn only, because `pnpm deploy` and
+// `npm deploy` are different commands: pnpm's is its own publish-style command
+// and npm has none, so admitting them would invent invocations.
+const RUN_DEPLOY_RE = String.raw`(?:(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+(?:${RUN_ALIASES})|yarn)(?:\s+-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?)*\s+deploy\b`;
 /** What counts as "this line performs a deploy" for DETECTION purposes. */
 const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE}|${ARGV_DEPLOY_RE})`;
 
@@ -1180,8 +1185,14 @@ function commandIsSafe(cmd) {
   const source = dequote(hasWrangler ? executedCommand(bare) : bare);
   const runDeploy = source.match(
     new RegExp(
-      `${hasWrangler ? '^' : ''}(pnpm|npm|yarn)(?:\\s+[^\\s]+)*?` +
-        `\\s+(?:${RUN_ALIASES})(?:\\s+-{1,2}[A-Za-z0-9-]+(?:[= ][^\\s-][^\\s]*)?)*\\s+deploy\\b([\\s\\S]*)$`,
+      // The run-less `yarn deploy` form has to be admitted HERE as well as in
+      // detection. Widening only the detector made a correct `yarn deploy` — the
+      // package script, which carries the flag — read as an unrecognised bare
+      // deploy and reported: a false red I introduced in the same change, caught
+      // by a control probe. These are two halves of one decision, which is the
+      // drift this file keeps being bitten by.
+      `${hasWrangler ? '^' : ''}(pnpm|npm|yarn)(?:(?:\\s+[^\\s]+)*?` +
+        `\\s+(?:${RUN_ALIASES}))?(?:\\s+-{1,2}[A-Za-z0-9-]+(?:[= ][^\\s-][^\\s]*)?)*\\s+deploy\\b([\\s\\S]*)$`,
     ),
   );
   if (!runDeploy) return false;
@@ -1700,13 +1711,25 @@ function staticCommandVars(text) {
 function expandCommandVars(text, vars) {
   if (!vars || vars.size === 0 || !/\$/.test(text)) return text;
   return text.replace(
-    /\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g,
-    (m, name) => vars.get(name) ?? m,
+      // `${TARGET:?missing}` and its siblings (`:-`, `:+`, `:=`, `#`, `%`) are
+      // the SAME variable with an operator. Matching only `${TARGET` left the
+      // operator text attached, so the modelled path became
+      // `apps/agent:?missing` and matched no package (#1995 r16).
+    /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:[:#%][^}]*|[-+=?][^}]*)?\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+    (m, braced, bare) => vars.get(braced ?? bare) ?? m,
   );
 }
 
 function isShellFile(rel, text) {
-  return SHELL_EXTENSIONS.some((e) => rel.endsWith(e)) || /^#!.*\b(ba|z|k)?sh\b/.test(text);
+  // `dash` and `ash` are POSIX shells and their names END in `sh` without a
+  // word boundary before it, so a `\b(ba|z|k)?sh\b` test matched neither and
+  // an extensionless `#!/bin/dash` wrapper was scanned as PROSE — its `cd` then
+  // could not reach the deploy below it (#1995 r16).
+  return (
+    SHELL_EXTENSIONS.some((e) => rel.endsWith(e)) ||
+    /^#!.*\b(?:ba|z|k|da|a)?sh\b/.test(text) ||
+    /^#!.*\benv\s+(?:ba|z|k|da|a)?sh\b/.test(text)
+  );
 }
 
 /**
@@ -1740,8 +1763,12 @@ function resolveDir(cwd, target, vars = null) {
   // stays unresolved.
   if (vars && /\$/.test(target)) {
     target = target.replace(
-      /\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g,
-      (m, name) => vars.get(name) ?? m,
+      // `${TARGET:?missing}` and its siblings (`:-`, `:+`, `:=`, `#`, `%`) are
+      // the SAME variable with an operator. Matching only `${TARGET` left the
+      // operator text attached, so the modelled path became
+      // `apps/agent:?missing` and matched no package (#1995 r16).
+      /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:[:#%][^}]*|[-+=?][^}]*)?\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+      (m, braced, bare) => vars.get(braced ?? bare) ?? m,
     );
   }
   // A `$KEEPER_DIR` / `$AGENT_DIR` reference is that package wherever it
@@ -1990,7 +2017,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     if (v === null) return null;
     const expanded =
       vars && /\$/.test(v)
-        ? v.replace(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g, (m, name) => vars.get(name) ?? m)
+        ? v.replace(/\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:[:#%][^}]*|[-+=?][^}]*)?\}|([A-Za-z_][A-Za-z0-9_]*))/g, (m, braced, bare) => vars.get(braced ?? bare) ?? m)
         : v;
     return /\$/.test(expanded) ? null : expanded;
   };
@@ -2093,8 +2120,50 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
  */
 const UNKNOWN_DIR = '\u0000unknown';
 
+/**
+ * Apply a SOURCED helper's directory moves to the caller's state.
+ *
+ * `source helper.sh` and `. helper.sh` run the file's commands in the CURRENT
+ * shell — bash's `help source` says so — so a helper whose whole job is
+ * `cd apps/agent` moves the caller. Neither file contains both the scope and
+ * the deploy, so scanning them independently saw nothing in either (#1995 r16).
+ *
+ * Statically named helpers only, read from the tree the scanner is already
+ * walking. A path that cannot be read contributes nothing rather than clearing
+ * scope: the helper might do anything, and the caller's own `cd`s remain the
+ * best evidence available.
+ *
+ * `depth` bounds recursion — helpers that source helpers are ordinary, helpers
+ * that source each other in a cycle are not, and a guard must terminate either
+ * way.
+ */
+function applySourcedFile(state, relPath, vars, depth = 0) {
+  if (depth > 3 || !relPath || /\u0000/.test(relPath)) return state;
+  let text;
+  try {
+    text = readFileSync(`${REPO_ROOT}/${relPath.replace(/^\.\//, '')}`, 'utf8');
+  } catch {
+    return state;
+  }
+  let cur = state;
+  for (const { text: line } of logicalLines(text)) {
+    for (const part of splitCommands(line)) {
+      const d = dirDirective(part.text.trim());
+      if (!d) continue;
+      cur =
+        d.kind === 'source'
+          ? applySourcedFile(cur, resolveDir(cur.cwd, d.target, vars), vars, depth + 1)
+          : applyDir(cur, d, vars);
+    }
+  }
+  return cur;
+}
+
 /** Apply one directory directive to one reachable state. */
 function applyDir(state, dir, vars = null) {
+  if (dir.kind === 'source') {
+    return applySourcedFile(state, resolveDir(state.cwd, dir.target, vars), vars);
+  }
   if (dir.kind === 'popd') {
     return state.stack.length > 0
       ? {
@@ -2251,6 +2320,9 @@ function dirDirective(seg) {
   // escape in bash, so `cd apps\agent` really is `appsagent` there; it is a
   // separator only where the command itself is Windows-specific, which is why
   // the conversion happens here and not in `dequote`.
+  // `source <file>` / `. <file>` runs the file IN THIS SHELL.
+  const sourced = seg.match(new RegExp(`^${LEAD}(?:source|\\.)\\s+(${WORD})`));
+  if (sourced) return { kind: 'source', target: dequote(sourced[1]) };
   const winCd = seg.match(
     new RegExp(`^${LEAD}(?:Set-Location|Push-Location|chdir|sl)\\s+(?:-Path\\s+)?(${WORD})`, 'i'),
   );
@@ -3911,10 +3983,27 @@ for (const file of walk(REPO_ROOT)) {
             );
             return entries.filter((e) => re.test(e)).map((e) => (dir ? `${dir}/${e}` : e));
           };
+          // A BRACE LIST is a list too: `apps/{indexer,agent}` is two words to
+          // bash, and splitting on whitespace alone left it a single literal
+          // that matched no package (#1995 r16).
+          //
+          // A `$` in ONE alternative does not make the others unknown: bash
+          // expands `apps/{$X,agent}` to both, and the agent iteration really
+          // does run. Refusing the whole group there was my first cut and it
+          // was simply wrong — the per-value `$` filter below already drops the
+          // alternatives that stay unresolved, which is the right granularity.
+          // Mutation caught it: widening the pattern changed a verdict, and the
+          // widened answer was the correct one.
+          const expandBraces = (v) => {
+            const m = v.match(/^([^{}]*)\{([^{}]*)\}([^{}]*)$/);
+            if (!m) return [v];
+            return m[2].split(',').map((alt) => `${m[1]}${alt}${m[3]}`);
+          };
           const vals = loop[2]
             .split(/\s+/)
             .map((v) => dequote(v))
             .filter(Boolean)
+            .flatMap(expandBraces)
             .flatMap((v) => (/[*?]/.test(v) ? expandGlob(v) : /\$/.test(v) ? [] : [v]));
           const hit = vals.find((v) =>
             SCOPED.some((sc) => v === sc.dir || v.startsWith(`${sc.dir}/`)),
@@ -3963,6 +4052,25 @@ for (const file of walk(REPO_ROOT)) {
             shellVars.set(asg[1], dequote(asg[2]));
           } else if (named) {
             shellVars.delete(named[1]);
+          }
+          // EVERY binding in the command, not just the first. Bash persists all
+          // of `TARGET=apps/agent OTHER=x`, but the matcher above is
+          // end-anchored and so accepted only a lone pair — the combined form
+          // parsed as nothing, the binding was dropped, and a later
+          // `cd "$TARGET"` cleared scope (#1995 r16).
+          //
+          // Same literal-only rule as the single form: a computed value CLEARS
+          // its name rather than leaving the previous binding standing, which
+          // is r14's rule applied per name.
+          for (const one of seg.matchAll(
+            new RegExp(
+              `(?:^|\\s)([A-Za-z_][A-Za-z0-9_]*)=` +
+                '((?:"[^"]*"|\'[^\']*\'|[^\\s"\'`;&|)\\\\])*)',
+              'g',
+            ),
+          )) {
+            if (one[2] && !/\$/.test(one[2])) shellVars.set(one[1], dequote(one[2]));
+            else shellVars.delete(one[1]);
           }
           // Recorded with the depth AND marked as an assignment, so a later
           // explicit `cd` on the same line can supersede it (#1995 r15).
