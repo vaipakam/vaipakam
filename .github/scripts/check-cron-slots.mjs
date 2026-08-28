@@ -490,7 +490,7 @@ const OCCUPANCY = [
     // is the r35 finding on the SAME list one round later — r35 added the
     // present-state adjectives and stopped at the ones already in mind. A
     // trigger that is `running` is the plainest possible way to say it.
-    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled|running)\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled|running|enabled)\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   // The postposed participle — "There are four cron triggers running." — and
@@ -581,11 +581,11 @@ const OCCUPANCY = [
   // somewhere other than this account ("no active cron triggers IN LOCAL
   // DEVELOPMENT" is a true sentence a test guide may write).
   new RegExp(
-    String.raw`\b(?:no${WRAP}|none${WRAP}of${WRAP}(?:the${WRAP})?)(?:live${WRAP}|active${WRAP}|cron${WRAP})*${CAP_NOUN}${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*(?:live|active|in${WRAP}use|taken|occupied)\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\b(?:no${WRAP}|none${WRAP}of${WRAP}(?:the${WRAP})?)(?:live${WRAP}|active${WRAP}|enabled${WRAP}|cron${WRAP})*${CAP_NOUN}${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*(?:live|active|enabled|in${WRAP}use|taken|occupied)\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   new RegExp(
-    String.raw`\bthere${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*no${WRAP}(?:live${WRAP}|active${WRAP}|cron${WRAP})*${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\bthere${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*no${WRAP}(?:live${WRAP}|active${WRAP}|enabled${WRAP}|cron${WRAP})*${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   // Codex #1978 r26: `headroom` must be ABOUT triggers. Unbound it fired on
@@ -644,7 +644,7 @@ const OCCUPANCY = [
   // account state. A bare `N (cron )?triggers` would have banned the cap and
   // fought its own fix — the trap the admission criterion names at the top.
   new RegExp(
-    String.raw`\b${N}${WRAP}(?:live|active|armed|scheduled|in-use)${WRAP}(?:cron${WRAP})?triggers?\b`,
+    String.raw`\b${N}${WRAP}(?:live|active|armed|scheduled|enabled|in-use)${WRAP}(?:cron${WRAP})?triggers?\b`,
     'i',
   ),
   // The SUBJECT is required here for the same reason it is on the verdicts
@@ -1859,7 +1859,13 @@ export function parseInventory(md) {
       continue;
     }
 
-    const row = /^\|\s*`([a-z0-9-]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
+    // Codex #1978 r43: UNDERSCORES are legal in a Worker name — Wrangler
+    // accepts them and Cloudflare's own client documents `this-is_my_script-01`
+    // — so this alphabet made such a Worker impossible to write down. Not a
+    // cosmetic limit: the row is reported unparseable AND `--live` reports the
+    // same script as ACCOUNT ONLY, so the authority could not be made correct
+    // by any edit. A gate with no passing state is worse than no gate.
+    const row = /^\|\s*`([a-z0-9_-]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
     // Codex #1978 r4: a row that LOOKS like data and does not parse was silently
     // skipped, and the "bolded name skipped" fixture documented the hole rather
     // than closing it. Bolding the keeper's name would drop its reservation from
@@ -2159,7 +2165,14 @@ export function readStatus(cell) {
   // parser does not. `\p{M}` closes it. Third narrowing of one lookahead, and
   // the direction is always the same: what the RENDERED cell says is one
   // grapheme cluster, and matching code points is not the same question.
-  const m = /^[\s*_]*([a-z]+)(?![\p{L}\p{N}\p{M}_])/iu.exec(cell);
+  // Codex #1978 r43: a HYPHEN continues a word too. `reserved-ish` read as
+  // `reserved` — a status the table renders as explicitly equivocal and the
+  // parser records as a definite reservation, which is the one row with no
+  // account-side witness. Fourth narrowing of this lookahead; the class is
+  // "characters a reader sees as part of the same token", and `-` is the
+  // obvious member I had not enumerated. (`.` and `/` are excluded for the
+  // same reason.)
+  const m = /^[\s*_]*([a-z]+)(?![\p{L}\p{N}\p{M}_\-./])/iu.exec(cell);
   const word = m?.[1]?.toLowerCase();
   return word && STATUSES.has(word) ? word : null;
 }
@@ -2376,8 +2389,28 @@ export function wranglerNameFrom(raw, isToml) {
     for (const line of raw.split('\n')) {
       const bare = line.replace(/#.*$/, '');
       if (/^\s*\[/.test(bare)) break; // a table header ends the top level
-      const m = /^\s*"?name"?\s*=\s*(?:"([^"]+)"|'([^']+)')/.exec(bare);
-      if (m) return m[1] ?? m[2];
+      const m = /^\s*"?name"?\s*=\s*(?:"([^"]*)"|'([^']*)')/.exec(bare);
+      if (m) {
+        // Codex #1978 r43: TOML escapes were not decoded, so a name spelled
+        // `vaipakam-\u0061gent` indexed a Worker that does not exist while
+        // Wrangler deploys `vaipakam-agent` — the r42 finding on the JSON
+        // branch, in the branch the r42 fix did not reach. Fixing one language
+        // and leaving its sibling, in a function whose ENTIRE history is that
+        // shape.
+        //
+        // Only BASIC strings (double-quoted) carry escapes; TOML literal
+        // strings (single-quoted) are raw by definition, so `m[2]` is
+        // returned untouched — decoding it would be a new bug in the opposite
+        // direction.
+        if (m[2] !== undefined) return m[2];
+        return m[1].replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (whole, esc) => {
+          if (esc[0] === 'u' || esc[0] === 'U') {
+            return String.fromCodePoint(parseInt(esc.slice(1), 16));
+          }
+          const simple = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', '"': '"', '\\': '\\' };
+          return simple[esc] ?? whole;
+        });
+      }
     }
     return null;
   }
@@ -2403,6 +2436,7 @@ export function wranglerNameFrom(raw, isToml) {
   let lastKey = null;
   let lastKeyDepth = -1;
   let awaitingValue = false;
+  let found = null;
   for (let k = 0; k < text.length; k += 1) {
     const ch = text[k];
     if (inString) {
@@ -2424,11 +2458,17 @@ export function wranglerNameFrom(raw, isToml) {
           // defines the escape is the one that should undo it. Falls back to
           // the raw literal if the fragment will not parse, since a malformed
           // config is not this check's business.
+          // Codex #1978 r43: Wrangler takes the LAST duplicate top-level
+          // `name`, so returning on the first indexed the config under a
+          // Worker it does not deploy. Record and keep scanning.
           try {
-            return JSON.parse(`"${literal}"`);
+            found = JSON.parse(`"${literal}"`);
           } catch {
-            return literal;
+            found = literal;
           }
+          lastKey = null;
+          awaitingValue = false;
+          continue;
         }
         lastKey = literal;
         lastKeyDepth = depth;
@@ -2451,7 +2491,7 @@ export function wranglerNameFrom(raw, isToml) {
       awaitingValue = false;
     }
   }
-  return null;
+  return found;
 }
 
 /**
@@ -2666,6 +2706,11 @@ const MUST_FIRE = [
   // Codex #1978 r41: `uses` — the verb the authority's own summary uses for
   // this ("Live right now") and the one an author reaches for first.
   ['the verbal form with uses', 'The account currently uses four cron triggers.'],
+  // r43: `enabled` — the word the Cloudflare dashboard itself puts on a
+  // trigger, and the one an operator copies out of it.
+  ['the direct form with an enabled predicate', 'Four cron triggers are enabled.'],
+  ['the attributive enabled form', 'There are four enabled cron triggers.'],
+  ['the zero form with an enabled predicate', 'There are no enabled cron triggers.'],
   ['the verbal form, possessive subject', 'Our Cloudflare account uses 4 cron triggers today.'],
   // Codex #1978 r39: a purpose phrase opens exactly like an environment scope
   // and is not one. These are the cases the grammatical test could not tell
@@ -2810,6 +2855,7 @@ const MUST_NOT_FIRE = [
   // `running in local development` and carried no preposition for the old
   // test to key on, so one was quiet and the other fired.
   ['the adverb form', 'Four cron triggers are running locally.'],
+  ['the enabled form scoped elsewhere', 'Four cron triggers are enabled locally.'],
   ['the postposed participle scoped elsewhere', 'There are four cron triggers running locally.'],
   ['the verbal form scoped elsewhere', 'The account runs four cron triggers locally.'],
   ['a leading temporal scope', 'When running locally, no cron triggers are live.'],
@@ -3092,6 +3138,25 @@ const INVENTORY_CASES = [
     [],
     0,
   ],
+  // r43: a hyphenated qualifier is not the status. `reserved-ish` renders as
+  // equivocal and parsed as a definite reservation — the row with no
+  // account-side witness.
+  [
+    'a hyphenated status qualifier is a finding',
+    '| `vaipakam-q` | *(none)* | `ops/q` | reserved-ish |',
+    {},
+    [],
+    1,
+  ],
+  // r43: underscores are legal in a Worker name; rejecting them left such a
+  // Worker impossible to write down while `--live` called it ACCOUNT ONLY.
+  [
+    'an underscore in a Worker name parses',
+    '| `valid_worker` | `* * * * *` | `ops/valid` | live |',
+    { valid_worker: ['* * * * *'] },
+    [],
+    0,
+  ],
   [
     'an unrecognised status is a finding, not a silent zero',
     '| `vaipakam-q` | *(none)* | `ops/q` | reservation held for its return |',
@@ -3331,6 +3396,18 @@ const WRANGLER_NAME_CASES = [
     'vaipakam-agent',
   ],
   ['an escaped quote in the name', '{"name":"vaipakam-\\"odd\\""}\n', false, 'vaipakam-"odd"'],
+  // r43: Wrangler takes the LAST duplicate top-level key; returning on the
+  // first indexed the config under a Worker it does not deploy.
+  [
+    'duplicate top-level names take the last',
+    '{"name":"first-worker","name":"second-worker"}\n',
+    false,
+    'second-worker',
+  ],
+  // r43: the r42 escape fix reached only the JSON branch.
+  ['a toml basic-string escape', 'name = "vaipakam-\\u0061gent"\n', true, 'vaipakam-agent'],
+  // ...and NOT the literal-string form, which is raw by definition.
+  ["a toml literal string is raw", "name = 'vaipakam-\\u0061gent'\n", true, 'vaipakam-\\u0061gent'],
   [
     'a property before name on the same line',
     '{ "main": "src/index.ts", "name": "vaipakam-keeper" }\n',
