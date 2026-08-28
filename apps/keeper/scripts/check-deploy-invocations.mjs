@@ -2227,6 +2227,46 @@ function applySourcedFile(state, relPath, vars, depth = 0) {
   return cur;
 }
 
+/**
+ * The UNSAFE deploy commands a sourced helper runs.
+ *
+ * `cd apps/agent` then `source deploy.sh`, where the helper holds
+ * `wrangler deploy`, deploys the agent — but the helper's own scan has no
+ * protected scope and the caller's scan discarded everything in the helper that
+ * was not a directory directive, so neither file saw a violation (#1995 r16).
+ *
+ * Returns the commands rather than a verdict, because the SCOPE is the
+ * caller's: the same helper sourced from two directories deploys two different
+ * Workers, and only the caller's state says which.
+ */
+const sourcedDeployCache = new Map();
+function sourcedDeploys(relPath, depth = 0) {
+  if (depth > 3 || !relPath || /\u0000/.test(relPath)) return [];
+  const key = `${depth}:${relPath}`;
+  if (sourcedDeployCache.has(key)) return sourcedDeployCache.get(key);
+  let out = [];
+  try {
+    const text = readFileSync(`${REPO_ROOT}/${relPath.replace(/^\.\//, '')}`, 'utf8');
+    for (const { text: line } of logicalLines(text)) {
+      for (const part of splitCommands(line)) {
+        const seg = part.text.trim();
+        const d = dirDirective(seg);
+        if (d?.kind === 'source') {
+          out.push(...sourcedDeploys(resolveDir('', d.target, null), depth + 1));
+          continue;
+        }
+        const isDeploy =
+          new RegExp(ANY_DEPLOY_RE).test(seg) || new RegExp(ANY_DEPLOY_RE).test(dequote(seg));
+        if (isDeploy && !commandIsSafe(seg)) out.push(seg);
+      }
+    }
+  } catch {
+    out = [];
+  }
+  sourcedDeployCache.set(key, out);
+  return out;
+}
+
 /** Apply one directory directive to one reachable state. */
 function applyDir(state, dir, vars = null) {
   if (dir.kind === 'source') {
@@ -2711,10 +2751,16 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           interp === 'cmd'
             ? windowsSeparators(foldCaretContinuations(body))
             : interp === 'pwsh' || interp === 'powershell'
-              ? windowsSeparators(body)
+              ? windowsSeparators(powershellAssignments(body))
               : body;
         out.push(
-          ...offset(logicalLines(folded), start, blockId, isYaml ? workingDirFor(lines, i) : ''),
+          ...offset(
+            logicalLines(folded),
+            start,
+            blockId,
+            isYaml ? workingDirFor(lines, i) : '',
+            isYaml ? stepEnvVars(lines, i) : null,
+          ),
         );
         blockId += 1;
       }
@@ -2744,7 +2790,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       ) {
         const wd = workingDirFor(lines, i);
         if (wd) {
-          out.push(...offset(logicalLines(flow[2]), i, blockId, wd));
+          out.push(...offset(logicalLines(flow[2]), i, blockId, wd, stepEnvVars(lines, i)));
           blockId += 1;
         }
       }
@@ -2770,6 +2816,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
               i,
               blockId,
               isYaml ? workingDirFor(lines, i) : '',
+              isYaml ? stepEnvVars(lines, i) : null,
             ),
           );
           blockId += 1;
@@ -2896,13 +2943,86 @@ function closesQuote(s, q) {
 }
 
 /** Shift a block's logical lines back to real file line numbers. */
-function offset(block, start, blockId, cwd = '') {
+function offset(block, start, blockId, cwd = '', env = null) {
   return block.map((l) => ({
     text: l.text,
     line: l.line + start,
     block: blockId,
     cwd,
+    env,
   }));
+}
+
+/**
+ * The literal `env` a workflow step actually runs with.
+ *
+ * Actions EXPORTS these, so `cd "$DEPLOY_DIR"` in the body resolves against
+ * them — but each block cleared `shellVars` and seeded nothing, so the variable
+ * was unknown and the modelled cwd went with it (#1995 r16).
+ *
+ * Workflow, then job, then step, so the NEAREST declaration wins the same way
+ * `workingDirFor`'s own reader resolves it.
+ *
+ * An unresolvable `${{ … }}` substitutes EMPTY rather than voiding the whole
+ * value — the same rule the working-directory resolver takes, and for the same
+ * reason: the LITERAL segments still identify the package. `${{ env.X }}/apps/agent`
+ * is the agent whatever X holds.
+ *
+ * My first cut refused any value carrying an expression. Mutation showed that
+ * choice was observable and WRONG rather than merely cautious: `resolveDir`
+ * keeps a static suffix after an unknown prefix, so refusing the value lost a
+ * package the path names outright.
+ */
+function stepEnvVars(lines, runIdx) {
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  const out = new Map();
+  const jobsIdx = lines.findIndex((l) => /^\s*jobs:\s*$/.test(l));
+  const topIndent = jobsIdx >= 0 ? indentOf(lines[jobsIdx]) : 0;
+  const step = stepBounds(lines, runIdx);
+  const job = jobBounds(lines, runIdx);
+  const levels = [
+    [0, lines.length, topIndent],
+    job && [job.start, job.end, job.indent + 2],
+    step && [step.start, step.end, step.keyIndent],
+  ].filter(Boolean);
+  for (const [from, to, atIndent] of levels) {
+    for (let i = from; i < to && i < lines.length; i += 1) {
+      if (!/^\s*env:\s*$/.test(lines[i]) || indentOf(lines[i]) !== atIndent) continue;
+      const ei = indentOf(lines[i]);
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (lines[j].trim() === '') continue;
+        if (indentOf(lines[j]) <= ei) break;
+        // The unquoted alternative admits an EXPRESSION, which contains
+        // spaces. `\S+` stopped at the space inside `${{ env.X }}` and the
+        // whole value then failed to match, so the binding was never recorded —
+        // the identical defect the `working-directory` pattern had two rounds
+        // ago, in the reader written after it.
+        const kv = lines[j].match(
+          /^\s*([A-Za-z_][A-Za-z0-9_]*):\s*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^\s])+))\s*$/,
+        );
+        const raw = kv && (kv[2] ?? kv[3] ?? kv[4]);
+        // Empty components are dropped, which is what `normalizePath` does for
+        // a working-directory: an expression that expanded to nothing leaves a
+        // separator behind, and `${{ env.X }}/apps/agent` is the agent rather
+        // than an absolute path that happens to end in it.
+        //
+        // Dropping them is an EQUIVALENT MUTANT and recorded as one — the same
+        // equivalence `normalizePath`'s root-climb guard carries, for the same
+        // reason: `scopeOfCwd` matches a package on a `/` boundary anywhere in
+        // the path, so `/apps/agent` and `apps/agent` reach the same verdict.
+        // Kept because the normalised form is the faithful one.
+        const value = raw
+          ? raw
+              .replace(/\$\{\{[^}]*\}\}/g, '')
+              .split('/')
+              .filter((part) => part !== '' && part !== '.')
+              .join('/')
+          : raw;
+        if (kv && value) out.set(kv[1], value);
+      }
+    }
+  }
+  return out.size > 0 ? out : null;
 }
 
 /**
@@ -3192,6 +3312,32 @@ function foldCaretContinuations(body) {
  */
 function windowsSeparators(body) {
   return body.replace(/(?<=[\w.$}])\\(?=[\w.$])/g, '/');
+}
+
+/**
+ * Rewrite PowerShell's `$name = 'value'` into the POSIX shape the state walk
+ * already understands.
+ *
+ * `$target = 'apps/agent'` then `Set-Location $target` is the ordinary pwsh
+ * sequence, and the assignment branch recognised only `NAME=value`, so the
+ * variable stayed unresolved and the modelled cwd went unknown (#1995 r16).
+ *
+ * Done as a REWRITE at block ingest rather than as a second assignment parser
+ * in the walk: the interpreter is known here and not there, and one assignment
+ * model with a translation in front of it cannot drift the way two models can.
+ * Literal values only, matching what the POSIX branch remembers.
+ *
+ * Widening it to admit COMPUTED values is an EQUIVALENT MUTANT, recorded as
+ * one: the POSIX assignment branch this feeds already refuses a value it cannot
+ * parse and DELETES the binding, so a rewritten `$x = (Get-Item .).Name` ends up
+ * unresolved either way. The narrow pattern states the rule where a reader
+ * looks for it rather than leaving it to be inferred two functions away.
+ */
+function powershellAssignments(body) {
+  return body.replace(
+    /^(\s*)\$([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:'([^']*)'|"([^"$`]*)")\s*$/gm,
+    (_m, pad, name, sq, dq) => `${pad}${name}=${sq ?? dq}`,
+  );
 }
 
 /**
@@ -3845,7 +3991,17 @@ for (const file of walk(REPO_ROOT)) {
         // for, on the other half of the same alternation.
         new RegExp(ANY_DEPLOY_RE).test(dequote(l.text)) ||
         // …and on the form with statically assigned command words substituted.
-        new RegExp(ANY_DEPLOY_RE).test(expandCommandVars(dequote(l.text), fileVars)),
+        new RegExp(ANY_DEPLOY_RE).test(expandCommandVars(dequote(l.text), fileVars)) ||
+        // A file that SOURCES another may hold the scope for a deploy written
+        // somewhere else. `cd apps/agent` then `source ../../deploy.sh` carries
+        // no deploy TEXT, so the prefilter skipped the caller and the helper's
+        // own scan had no protected scope — neither file was ever judged with
+        // both halves (#1995 r16).
+        //
+        // This is the one thing the prefilter cannot decide from the line
+        // alone, so it defers: sourcing is a reason to LOOK, and the walk then
+        // reads the helper and scores its deploys against the caller's state.
+        /(?:^|[\s;&|(])(?:source|\.)\s+\S/.test(l.text),
     )
   ) {
     continue;
@@ -3922,7 +4078,9 @@ for (const file of walk(REPO_ROOT)) {
   // The same-line form was fixed at r13 and this is that fix's other half.
   let depth = 0;
   const stateStack = [];
-  folded.forEach(({ text: line, line: lineNo, block, physical, cwd: blockCwd }) => {
+  /** Functions whose body deploys unsafely, by name, for the current block. */
+  const deployFns = new Map();
+  folded.forEach(({ text: line, line: lineNo, block, physical, cwd: blockCwd, env: blockEnv }) => {
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
     // made one block's `cd apps/keeper` reject the NEXT block's agent deploy
@@ -3931,6 +4089,7 @@ for (const file of walk(REPO_ROOT)) {
     if (block !== currentBlock) {
       currentBlock = block;
       shellVars.clear();
+      deployFns.clear();
       // A new shell starts outside every subshell the previous one opened.
       depth = 0;
       stateStack.length = 0;
@@ -3938,6 +4097,9 @@ for (const file of walk(REPO_ROOT)) {
       // run, so the block starts THERE rather than at an empty cwd (#1995 r7).
       states = blockCwd ? [{ cwd: blockCwd.replace(/\/+$/, ''), stack: [] }] : INITIAL;
       prior = states;
+      // A step's effective `env` is EXPORTED, so the block starts with those
+      // bindings rather than with none (#1995 r16).
+      if (blockEnv) for (const [k, v] of blockEnv) shellVars.set(k, v);
     }
     if (/^\s*$/.test(line) || /^\s*(?:`{3,}|~{3,})/.test(line)) {
       states = INITIAL;
@@ -4220,6 +4382,26 @@ for (const file of walk(REPO_ROOT)) {
               : after2;
         prior = input;
         states = next;
+        // BEFORE the directive short-circuit below. `source` is now a
+        // directive, so `if (dir) continue` skipped the very segment that
+        // carries the helper — the deferred handling was written after it and
+        // was unreachable for exactly the case it exists for. Traced, not
+        // guessed: two hypotheses about the prefilter and about path
+        // resolution were both wrong before the segment trace showed the loop
+        // exiting here.
+        const deferred = [];
+        if (dir?.kind === 'source') {
+          deferred.push(...sourcedDeploys(resolveDir(input[0]?.cwd ?? '', dir.target, shellVars)));
+        }
+        const callName = seg.match(/^([A-Za-z_][\w-]*)\s*$/)?.[1];
+        if (callName && deployFns.has(callName)) deferred.push(...deployFns.get(callName));
+        if (deferred.length > 0) {
+          const at = input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ?? null;
+          if (at) {
+            flagged = true;
+            hitScopes.add(at);
+          }
+        }
         if (dir) continue;
         // Only constructs that can actually ESTABLISH a target carry forward:
         // a `VAR=…` assignment, or a directory expression the dir-walk could
@@ -4384,6 +4566,37 @@ for (const file of walk(REPO_ROOT)) {
               namedPrefix.push({ text: seg, depth: atDepth });
             }
           }
+        }
+        // A deploy whose TEXT lives elsewhere but whose STATE is here (#1995
+        // r16). Two spellings, one proposition: the command runs in the
+        // caller's directory, and neither file alone shows both halves.
+        //
+        //   `deploy_worker() { wrangler deploy; }` … `cd apps/agent`;
+        //   `deploy_worker`     — the definition was read before any protected
+        //                         scope existed, and the CALL was ignored.
+        //   `cd apps/agent`;
+        //   `source deploy.sh`  — the helper's own scan has no scope, and the
+        //                         caller discarded everything in it that was
+        //                         not a directory directive.
+        //
+        // Scope comes from the CALLER's reachable states, because the same
+        // helper or function invoked from two directories deploys two different
+        // Workers and only the state says which.
+        const fnDef = seg.match(
+          /^(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)\s*\{([\s\S]*)$/,
+        );
+        if (fnDef) {
+          const body = fnDef[2].replace(/\}\s*$/, '');
+          const unsafe = splitCommands(body)
+            .map((c) => c.text.trim())
+            .filter(
+              (c) =>
+                (new RegExp(ANY_DEPLOY_RE).test(c) ||
+                  new RegExp(ANY_DEPLOY_RE).test(dequote(c))) &&
+                !commandIsSafe(c),
+            );
+          if (unsafe.length > 0) deployFns.set(fnDef[1], unsafe);
+          continue;
         }
         // `\b` so `wrangler deployments list` is not read as a deploy.
         if (

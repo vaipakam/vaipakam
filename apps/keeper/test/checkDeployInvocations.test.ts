@@ -4345,6 +4345,120 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ── A deploy whose TEXT lives elsewhere but whose STATE is here (#1995 r16),
+  // and the Actions environment the block actually runs with.
+  it("a workflow env value reaches the block's shell (#1995 r16)", () => {
+    // Actions EXPORTS these, so `cd "$DEPLOY_DIR"` resolves against them — but
+    // each block cleared shellVars and seeded nothing.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\nenv:\n  DEPLOY_DIR: apps/agent\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        run: |\n          cd "$DEPLOY_DIR"\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a STEP-level one does too (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w2.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        env:\n          DEPLOY_DIR: apps/agent\n' +
+        '        run: |\n          cd "$DEPLOY_DIR"\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('and its LITERAL segments still name the package (#1995 r16)', () => {
+    // `${{ env.X }}/apps/agent` is the agent whatever X holds. Refusing any
+    // value carrying an expression lost that — mutation showed the choice was
+    // observable and WRONG rather than merely cautious, because `resolveDir`
+    // keeps a static suffix after an unknown prefix.
+    const r = runWith(
+      '.github/workflows/w3b.yml',
+      'name: w\nenv:\n  DEPLOY_DIR: ${{ env.X }}/apps/agent\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        run: |\n          cd "$DEPLOY_DIR"\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a value carrying an EXPRESSION is not known (#1995 r16 control)', () => {
+    const r = runWith(
+      '.github/workflows/w3.yml',
+      'name: w\nenv:\n  DEPLOY_DIR: ${{ inputs.d }}\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        run: |\n          cd "$DEPLOY_DIR"\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("PowerShell's $name = 'value' binds like an assignment (#1995 r16)", () => {
+    // Rewritten at block ingest rather than parsed by a second assignment
+    // model in the walk: the interpreter is known here and not there, and one
+    // model with a translation in front of it cannot drift the way two can.
+    const r = runWith(
+      '.github/workflows/w4.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: pwsh\n        run: |\n' +
+        "          $target = 'apps/agent'\n          Set-Location $target\n          wrangler deploy\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while a computed one stays unknown (#1995 r16 control)', () => {
+    const r = runWith(
+      '.github/workflows/w5.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: pwsh\n        run: |\n' +
+        '          $target = (Get-Item .).Name\n          Set-Location $target\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a FUNCTION defined earlier is judged where it is CALLED (#1995 r16)', () => {
+    // The definition was read before any protected scope existed and the call
+    // was ignored, so neither half was ever seen together.
+    const r = runWith('f.sh', 'deploy_worker() { wrangler deploy; }\ncd apps/agent\ndeploy_worker\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a function whose body carries the FLAG is safe (#1995 r16 control)', () => {
+    // Probed but not fixtured on the first pass, so a mutant recording every
+    // function body — safe ones included — survived. Only bodies that would be
+    // reported on their own are remembered.
+    const r = runWith('f0.sh', 'deploy_worker() { wrangler deploy --keep-vars; }\ncd apps/agent\ndeploy_worker\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('but defining one without calling it deploys nothing (#1995 r16 control)', () => {
+    expect(runWith('f2.sh', 'deploy_worker() { wrangler deploy; }\ncd apps/agent\necho hi\n').ok).toBe(true);
+  });
+
+  it('and calling it from an UNSCOPED directory is not reported (#1995 r16 control)', () => {
+    // Scope comes from the caller's state: the same function called from two
+    // directories deploys two different Workers.
+    expect(runWith('f3.sh', 'deploy_worker() { wrangler deploy; }\ncd apps/www\ndeploy_worker\n').ok).toBe(true);
+  });
+
+  it('a SOURCED helper deploys in the caller\u2019s directory (#1995 r16)', () => {
+    // Reaching this needed the handling to sit BEFORE the directive
+    // short-circuit: `source` is itself a directive, so `if (dir) continue`
+    // skipped the very segment that carries the helper.
+    seed('deploy.sh', 'wrangler deploy\n');
+    const r = runWith('s.sh', 'cd apps/agent\nsource ../../deploy.sh\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while a helper that deploys SAFELY is not reported (#1995 r16 control)', () => {
+    seed('d.sh', 'wrangler deploy --keep-vars\n');
+    expect(runWith('s2.sh', 'cd apps/agent\nsource ../../d.sh\n').ok).toBe(true);
+  });
+
+  it('nor one sourced from an unscoped directory (#1995 r16 control)', () => {
+    seed('d.sh', 'wrangler deploy\n');
+    expect(runWith('s3.sh', 'cd apps/www\nsource ../../d.sh\n').ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',
