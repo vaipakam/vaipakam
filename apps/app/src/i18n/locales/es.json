@@ -1873,7 +1873,9 @@
         "vaultUpgradeRequired": "Una de las partes de esta operación usa una versión antigua del vault y necesita actualizarla antes de poder operar. No se ha enviado nada.",
         "selfTrade": "Esta es tu propia oferta, así que no puedes aceptarla. Cancélala si quieres retirarla del libro.",
         "unknown": "El protocolo no acepta esta oferta en este momento. No se ha enviado nada: actualiza e inténtalo de nuevo, o vuelve dentro de un rato."
-      }
+      },
+      "termsNotAccepted": "Necesitas aceptar las condiciones de Vaipakam antes de hacer esto. Abre la página de Inicio y se te pedirá una sola vez; devolver, reclamar y retirar siguen funcionando igualmente.",
+      "termsCheckUnavailable": "No hemos podido confirmar ahora mismo si las condiciones de Vaipakam se aplican a tu cartera: espera un momento e inténtalo de nuevo."
     },
     "fees": {
       "borrowerLIF": "Vaipakam cobra una comisión de iniciación de préstamo de {{pct}} sobre el importe prestado.",
@@ -2272,6 +2274,24 @@
       "copyAria": "Copiar dirección {{address}}",
       "viewAria": "Ver {{address}} en el explorador de bloques",
       "copied": "Dirección copiada"
+    },
+    "legalGate": {
+      "verifying": "Comprobando si las condiciones se aplican a tu cartera…",
+      "readErrorTitle": "No se han podido comprobar las condiciones",
+      "readErrorBody": "No hemos podido conectar con la red para saber si necesitas aceptar las condiciones de Vaipakam, así que la aplicación permanece cerrada en lugar de suponerlo. No pasa nada con tu cartera ni con tus posiciones: inténtalo de nuevo en un momento.",
+      "retry": "Reintentar",
+      "loadFailedTitle": "No se pudo cargar la comprobación de las condiciones",
+      "loadFailedBody": "Una parte de la aplicación no se cargó, así que no podemos saber si necesitas aceptar las condiciones de Vaipakam; permanece cerrada en lugar de suponerlo. Recargar la página suele solucionarlo. Devolver, reclamar y retirar siguen funcionando igualmente.",
+      "reload": "Recargar la página",
+      "title": "Acepta las condiciones para continuar",
+      "body": "Los operadores de Vaipakam han puesto en vigor una versión de las condiciones. Aceptar envía una transacción única que registra qué versión aceptaste, así que tu cartera te pedirá confirmarla y tiene una pequeña comisión de red. No se te volverá a preguntar salvo que las condiciones cambien, o que cambies a otra red, ya que cada red guarda su propio registro.",
+      "currentVersion": "Versión en vigor",
+      "contentHash": "Huella del contenido",
+      "readTerms": "Leer las Condiciones",
+      "privacyPolicy": "Política de Privacidad",
+      "signAccept": "Aceptar y continuar",
+      "signing": "Esperando a tu cartera…",
+      "footnote": "Tu aceptación queda registrada en la cadena frente a la versión y la huella exactas que se muestran arriba, de modo que lo que aceptaste sigue siendo comprobable más adelante. Devolver, reclamar y retirar nunca quedan bloqueados por esto."
     }
   },
   "contractError": {

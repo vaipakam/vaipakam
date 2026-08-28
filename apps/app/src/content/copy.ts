@@ -278,6 +278,36 @@ const copySource = {
     ),
     phaseSend: tmpl(`Submitting… ({{c}} of {{t}})`, ['c', 't']),
   },
+  // #1961 — the Terms-of-Service route gate. The contracts delegate
+  // this enforcement to the client, so this copy is the only place a
+  // user is ever told a ToS applies to them.
+  legalGate: {
+    verifying: 'Checking whether the terms apply to your wallet\u2026',
+    readErrorTitle: 'Couldn\u2019t check the terms',
+    readErrorBody:
+      'We couldn\u2019t reach the network to find out whether you need to accept Vaipakam\u2019s terms, so the app stays closed rather than guessing. Nothing is wrong with your wallet or your positions \u2014 try again in a moment.',
+    retry: 'Try again',
+    // Review round 12 P2 — distinct from `verifying`, because a
+    // chunk that failed to load is not a check in progress and
+    // must not be reported as one: the pending card offers no way
+    // out, and React caches a resolved lazy payload for the life
+    // of the page, so without a reload the user is stuck there.
+    loadFailedTitle: 'Couldn\u2019t load the terms check',
+    loadFailedBody:
+      'Part of the app didn\u2019t load, so we can\u2019t tell whether you need to accept Vaipakam\u2019s terms \u2014 it stays closed rather than guessing. Reloading the page usually fixes it. Repaying, claiming and withdrawing keep working either way.',
+    reload: 'Reload the page',
+    title: 'Accept the terms to continue',
+    body:
+      'Vaipakam\u2019s operators have put a version of the terms in force. Accepting sends a one-off transaction that records which version you agreed to, so your wallet will ask you to confirm it and it costs a small network fee. You won\u2019t be asked again unless the terms change \u2014 or unless you switch to another network, since each network keeps its own record.',
+    currentVersion: 'Version in force',
+    contentHash: 'Content fingerprint',
+    readTerms: 'Read the Terms',
+    privacyPolicy: 'Privacy Policy',
+    signAccept: 'Accept and continue',
+    signing: 'Waiting for your wallet\u2026',
+    footnote:
+      'Your acceptance is recorded on-chain against the exact version and fingerprint shown above, so what you agreed to stays checkable later. Repaying, claiming and withdrawing are never blocked by this.',
+  },
   killSwitch: {
     disabled:
       'This action is switched off right now — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, claims, and withdrawals all stay open.',
@@ -3378,6 +3408,26 @@ const copySource = {
   },
 
   errors: {
+    // #1961 review round 2 — refused at the write, not just at the route.
+    // A user can reach a page whose exit controls are exempt and still
+    // press something that is not an exit; this says why, in the terms
+    // the gate itself uses.
+    // Not knowing is not refusing. Covers every state short of a fresh
+    // successful answer: never read, still reading, read failed, or too
+    // old to trust. Saying "you need to accept the terms" in any of
+    // them tells a user they declined something they may well have
+    // already accepted (review round 6).
+    termsCheckUnavailable:
+      'We couldn\u2019t confirm whether Vaipakam\u2019s terms apply to your wallet just now \u2014 give it a moment and try again.',
+    // Review round 10 P2: names a GATED destination, not "any other
+    // page". Most of the pages a refused user is standing on are
+    // exempt \u2014 settings, VPFI, desk, positions, claims, vault \u2014 and
+    // exempt pages deliberately never show the prompt, so the old
+    // wording could send somebody between four of them and back to the
+    // same refusal. Home is gated, so it is the one instruction that
+    // always works.
+    termsNotAccepted:
+      'You need to accept Vaipakam\u2019s terms before doing this. Open the Home page and you\u2019ll be asked once \u2014 repaying, claiming and withdrawing keep working either way.',
     // F-20260703-005 (#988) — say HOW MUCH more whenever the caller can
     // compute the shortfall; the amount-less form is the fallback for
     // sites that can't (e.g. unknown decimals).

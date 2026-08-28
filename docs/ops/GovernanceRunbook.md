@@ -551,13 +551,15 @@ re-opens.
    mirrored copy in `apps/www/src/pages/TermsPage.tsx`. Verify the two
    bodies are byte-identical (modulo HTML wrapping in the React file).
 2. Compute the canonical content hash. **No derivation utility exists
-   in the repo, and no frontend derives it** — so whatever bytes32
-   governance commits IS the hash of record. (The retired connected app
-   carried a `useTosAcceptance` hook that read the on-chain
-   `currentTosHash` and echoed it back in `acceptTerms`; it was deleted
-   with that app in #1854, and `apps/app` reads no ToS hash at all
-   today. That makes the point below stronger, not weaker: nothing in
-   the tree cross-checks the committed hash against the text.) Before first
+   in the repo, and nothing cross-checks the hash against the text** —
+   so whatever bytes32 governance commits IS the hash of record.
+   (`apps/app` regained a `useTosAcceptance` hook in #1961: it reads the
+   on-chain version and hash, displays them, and echoes the hash back in
+   `acceptTerms`. That is an ECHO, not a derivation — the app never
+   computes a hash from any text, so it cannot notice a hash that does
+   not match what the site serves. An earlier revision of this step said
+   `apps/app` read no ToS hash at all, which stopped being true with
+   that gate.) Before first
    activation (the gate ships dormant, `currentTosVersion == 0`),
    governance must pick and record the derivation — e.g. keccak256
    over the exact committed bytes of `docs/Terms/TermsOfService.md` —
@@ -571,6 +573,15 @@ re-opens.
    before the text is live opens a window where users record
    acceptance of terms the public site does not yet show, and no
    gate exists that would catch it.
+
+   **This ordering now has a second cost, and it is unavoidable
+   today.** The #1961 gate links users to `/terms`, which is a single
+   MUTABLE page with no version-pinned route. So between this deploy and
+   step 5's execution, the gate correctly asks a wallet to accept the
+   OLD version while the site already serves the NEW text — the user
+   reads one and records the other. Keep the interval short, and treat
+   acceptances recorded inside it as anchored to text the user did not
+   see. Versioned hosting is the fix and is tracked in #1998.
 4. Governance Safe schedules
    `timelock.schedule(target=diamond, data=setCurrentTos(newVersion,
    newHash), delay=48h)`. `newVersion` MUST strictly exceed

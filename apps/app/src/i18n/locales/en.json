@@ -191,6 +191,24 @@
       "phasePermit": "Signing the permission… ({{c}} of {{t}}) — free, no gas",
       "phaseSend": "Submitting… ({{c}} of {{t}})"
     },
+    "legalGate": {
+      "verifying": "Checking whether the terms apply to your wallet…",
+      "readErrorTitle": "Couldn’t check the terms",
+      "readErrorBody": "We couldn’t reach the network to find out whether you need to accept Vaipakam’s terms, so the app stays closed rather than guessing. Nothing is wrong with your wallet or your positions — try again in a moment.",
+      "retry": "Try again",
+      "loadFailedTitle": "Couldn’t load the terms check",
+      "loadFailedBody": "Part of the app didn’t load, so we can’t tell whether you need to accept Vaipakam’s terms — it stays closed rather than guessing. Reloading the page usually fixes it. Repaying, claiming and withdrawing keep working either way.",
+      "reload": "Reload the page",
+      "title": "Accept the terms to continue",
+      "body": "Vaipakam’s operators have put a version of the terms in force. Accepting sends a one-off transaction that records which version you agreed to, so your wallet will ask you to confirm it and it costs a small network fee. You won’t be asked again unless the terms change — or unless you switch to another network, since each network keeps its own record.",
+      "currentVersion": "Version in force",
+      "contentHash": "Content fingerprint",
+      "readTerms": "Read the Terms",
+      "privacyPolicy": "Privacy Policy",
+      "signAccept": "Accept and continue",
+      "signing": "Waiting for your wallet…",
+      "footnote": "Your acceptance is recorded on-chain against the exact version and fingerprint shown above, so what you agreed to stays checkable later. Repaying, claiming and withdrawing are never blocked by this."
+    },
     "killSwitch": {
       "disabled": "This action is switched off right now — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, claims, and withdrawals all stay open."
     },
@@ -1823,6 +1841,8 @@
       "showMoreHidden": "Show {{next}} more ({{total}} hidden)"
     },
     "errors": {
+      "termsCheckUnavailable": "We couldn’t confirm whether Vaipakam’s terms apply to your wallet just now — give it a moment and try again.",
+      "termsNotAccepted": "You need to accept Vaipakam’s terms before doing this. Open the Home page and you’ll be asked once — repaying, claiming and withdrawing keep working either way.",
       "needMore": "You need more {{asset}} to continue.",
       "needMoreBy": "You need about {{shortBy}} more {{asset}} to continue.",
       "requiredAssetFallback": "the required asset",

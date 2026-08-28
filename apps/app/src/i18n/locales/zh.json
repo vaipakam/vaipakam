@@ -1873,7 +1873,9 @@
         "vaultUpgradeRequired": "这笔交易的其中一方使用的是旧版本 vault，需要先升级才能交易。未发送任何内容。",
         "selfTrade": "这是您自己的报价，无法接受。若想将其从报价簿撤下，请改为取消。",
         "unknown": "协议目前不接受这笔报价。未发送任何内容 — 请刷新重试，或稍后再来查看。"
-      }
+      },
+      "termsNotAccepted": "执行此操作前，你需要先接受 Vaipakam 的条款。打开首页，系统会询问你一次；还款、领取和提取在任何情况下都可继续使用。",
+      "termsCheckUnavailable": "我们暂时无法确认 Vaipakam 的条款是否适用于你的钱包——请稍候片刻再试。"
     },
     "fees": {
       "borrowerLIF": "Vaipakam 对借款金额收取 {{pct}} 的贷款发起费。",
@@ -2272,6 +2274,24 @@
       "copyAria": "复制地址 {{address}}",
       "viewAria": "在区块浏览器查看 {{address}}",
       "copied": "地址已复制"
+    },
+    "legalGate": {
+      "verifying": "正在检查这些条款是否适用于你的钱包…",
+      "readErrorTitle": "无法检查条款",
+      "readErrorBody": "我们无法连接网络以确认你是否需要接受 Vaipakam 的条款，因此应用保持关闭，而不是凭猜测放行。你的钱包和仓位都没有问题——请稍后再试。",
+      "retry": "重试",
+      "loadFailedTitle": "无法加载条款检查",
+      "loadFailedBody": "应用的一部分未能加载，因此我们无法判断你是否需要接受 Vaipakam 的条款——与其猜测，不如保持关闭。重新加载页面通常可以解决。还款、领取和提取在任何情况下都可继续使用。",
+      "reload": "重新加载页面",
+      "title": "接受条款后继续",
+      "body": "Vaipakam 的运营方已让某一版本的条款生效。接受会发送一笔一次性交易，用于记录你同意的是哪个版本，因此钱包会请你确认，并会产生少量网络手续费。除非条款变更，或你切换到另一条网络，否则不会再次询问你——每条网络各自保存记录。",
+      "currentVersion": "生效版本",
+      "contentHash": "内容指纹",
+      "readTerms": "阅读条款",
+      "privacyPolicy": "隐私政策",
+      "signAccept": "接受并继续",
+      "signing": "正在等待你的钱包…",
+      "footnote": "你的接受会针对上面显示的确切版本和指纹记录在链上，因此你同意过的内容以后仍可查证。还款、领取和提取都不会因此被阻止。"
     }
   },
   "contractError": {

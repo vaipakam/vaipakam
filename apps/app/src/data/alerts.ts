@@ -107,6 +107,59 @@ export const DEFAULT_PREFS: AlertPrefs = {
   ...DEFAULT_BANDS,
 };
 
+/**
+ * The four fields that are OPT-INS — each one a channel or a lane the
+ * user has asked to receive. The HF bands are not among them: they
+ * tune an opt-in already made (the advanced form only appears once
+ * `risky` is on), so changing one neither enrols nor withdraws.
+ */
+const OPT_IN_FLAGS = ['repayDue', 'risky', 'telegramLinked', 'pushEnabled'] as const;
+
+/**
+ * Does this save ADD an opt-in — i.e. is it enrolment (#1961 review
+ * round 9 P1)?
+ *
+ * The Terms gate holds enrolment and never holds an opt-out, so the
+ * question it has to ask about an alerts save is which of the two this
+ * one is. Round 8 answered it by asking whether anything was left
+ * enabled AFTERWARDS, which is not the same question and got it wrong
+ * in the common case: fresh preferences default `repayDue` and `risky`
+ * both on, so a held user switching either one off produced a record
+ * that still had the other on, was read as enrolment, and was refused.
+ * Every user with two lanes enabled was locked out of disabling either
+ * — the gate trapping somebody in a subscription, which is precisely
+ * the shape it exists to avoid.
+ *
+ * So the DIRECTION decides, per field, against what is stored now: a
+ * flag going false → true is enrolment; a flag going true → false, or
+ * a save that flips nothing, is not.
+ *
+ * The baseline is REQUIRED, and that is the honest signature rather
+ * than a convenience (review round 10 P1). An earlier version accepted
+ * `null` and failed closed on it, which read as a guard and was not
+ * one: `loadAlertPrefs` returns `DEFAULT_PREFS` when storage is empty,
+ * so no caller could ever reach that branch. Dead code shaped like
+ * protection is worse than no code, because it answers the question
+ * "what happens when the baseline is unknown" with something that
+ * never runs.
+ *
+ * What remains, stated rather than implied: on a device with no saved
+ * record the baseline IS the defaults, both lanes on, and a save posts
+ * the whole record — so a held user's first opt-out here also posts
+ * the other default lane's bands. Making that case fail closed instead
+ * would re-create exactly the lock-out this function was written to
+ * remove, since the untouched default lane is what would trip it. The
+ * fix is on the wire — send only the lane being changed — which is an
+ * `apps/agent` contract change, tracked as #2000. Bounded in
+ * the meantime by what a defaults-derived save can actually reach:
+ * `telegramLinked` is a local mirror that is never posted, and
+ * `push_channel` is sent only when `pushEnabled` is already true, so
+ * such a save can enrol no NEW delivery channel.
+ */
+export function addsAlertOptIn(prev: AlertPrefs, next: AlertPrefs): boolean {
+  return OPT_IN_FLAGS.some((flag) => next[flag] && !prev[flag]);
+}
+
 /** The agent re-validates warn > alert > critical > 1.00 and rejects
  *  otherwise — mirror it client-side so the advanced form can explain
  *  instead of surfacing a bare 400. */

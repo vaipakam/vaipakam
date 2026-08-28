@@ -26,7 +26,11 @@ import { SUPPORTED_CHAINS } from '../chain/chains';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
 import { readVpfiTokenLive, useVpfi, useVpfiTierTable, VPFI_DECIMALS, clearVpfiTokenCache } from '../data/vpfi';
-import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import {
+  DIAMOND_ABI_VIEM,
+  useDiamondWrite,
+  useTermsBlockNonExitWrites,
+} from '../contracts/diamond';
 import { SimulationPreview } from '../components/SimulationPreview';
 import type { TxSimInput } from '../contracts/useTxSimulation';
 import { ensureAllowance } from '../contracts/erc20';
@@ -55,6 +59,7 @@ export function Vpfi() {
   const { setOpen } = useModal();
   const vpfi = useVpfi();
   const { write } = useDiamondWrite();
+  const termsBlocked = useTermsBlockNonExitWrites();
   const permit2 = usePermit2Signing();
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
@@ -254,6 +259,18 @@ export function Vpfi() {
           }
         }
         if (!deposited) {
+          // #1961 review round 5 P2 — refuse BEFORE the approval, not
+          // after. `useDiamondWrite` would reject the deposit anyway,
+          // but only once this allowance had been mined and paid for,
+          // leaving the user with a standing approval and no deposit.
+          const termsVerdict = termsBlocked();
+          if (termsVerdict !== 'ok') {
+            throw new Error(
+              termsVerdict === 'unknown'
+                ? copy.errors.termsCheckUnavailable
+                : copy.errors.termsNotAccepted,
+            );
+          }
           await ensureAllowance({
             onPrompt: () => setPhase('approving'),
             publicClient,

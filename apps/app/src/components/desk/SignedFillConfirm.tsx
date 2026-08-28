@@ -31,7 +31,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { usePublicClient, useWalletClient } from 'wagmi';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
-import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../../contracts/diamond';
 import {
   useSignedOfferAcceptTermsSigning,
   useAcceptorCeilingRecheck,
@@ -78,6 +78,7 @@ export function SignedFillConfirm({
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const termsVerdict = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
   const signTerms = useSignedOfferAcceptTermsSigning();
 
@@ -254,6 +255,19 @@ export function SignedFillConfirm({
       });
       // Classic Diamond allowance for the taker's leg (no Permit2 lane
       // on this path — see the header note).
+      // #1961 review round 8 P2 — before the approval, not after the
+      // fill is refused. `/desk` is exempt so a held user can cancel a
+      // signed order; taking one is new exposure, and `acceptSignedOffer`
+      // would have rejected it only once a taker-side allowance had been
+      // mined and kept.
+      const termsForFill = termsVerdict();
+      if (termsForFill !== 'ok') {
+        throw new Error(
+          termsForFill === 'unknown'
+            ? copy.errors.termsCheckUnavailable
+            : copy.errors.termsNotAccepted,
+        );
+      }
       await ensureAllowance({
         // The signed-fill path had NO ceiling check before its approval at
         // all (Codex #1703 r3) — only before the final write — so a quote

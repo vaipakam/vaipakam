@@ -690,6 +690,81 @@ Thin-market honesty rules apply.
 - Wallet and analytics integrations should avoid unnecessary telemetry where
   the app can control it.
 
+### Terms of Service acceptance
+
+- The protocol can have a version of the Terms of Service in force, or none.
+  While none is in force, the app behaves as though the requirement does not
+  exist: no user is asked anything and no surface is withheld.
+- While a version IS in force, a connected wallet that has not accepted that
+  version cannot take on new exposure and cannot reach the surfaces that exist
+  only to create it. It is shown which version applies, a fingerprint of the
+  exact text, and links to read the Terms and the Privacy Policy before
+  deciding. The language control is available on that prompt, because a user
+  who cannot read the terms cannot meaningfully agree to them.
+- **Anything that reduces the user's commitments stays available**, whether or
+  not they have accepted. That covers repaying and closing positions,
+  claiming settled funds, withdrawing their own assets, cancelling their own
+  standing offers and orders, adding collateral to a position at risk, and —
+  in both cases where a third party or an automatic process holds authority —
+  withdrawing that authority: a keeper's permission over their positions, and
+  the consent that allows fees to be deducted automatically from their vault.
+  It also covers **handing a position over in one step** to someone who has
+  already offered to take it — a lender being bought out, or a borrower's
+  obligation moving to a replacement. Those end the user's position outright,
+  so refusing them would leave the slow route open and the instant one shut.
+  Publishing a standing offer of one's own is a different thing and is not
+  covered, even when the intent behind it is to leave.
+- The requirement applies to notification settings on the same terms, even
+  though nothing there touches the protocol. Signing up — linking a messaging
+  channel, or switching a reminder on — waits for acceptance. Switching a
+  reminder off, or unlinking a channel, always works. **Each reminder can be
+  switched off on its own**: turning one off is never read as signing up for
+  whichever others happen to be on, which would leave a user unable to
+  silence any of them.
+- A refusal never costs the user anything. Where an action needs a separate
+  approval transaction first, the requirement is checked before that approval,
+  not after it.
+- The check is made against the network the action is scoped to. A wallet
+  connected to a network the app does not support is not thereby exempt: an
+  action still aimed at a supported network is judged by that network's terms,
+  not permitted for want of an answer.
+- Acceptance is a single action recorded against that exact version and
+  fingerprint, so what a user agreed to remains checkable afterwards.
+- **A user is never asked to pay for the same acceptance twice.** Once an
+  acceptance has been confirmed as recorded, the app treats it as recorded even
+  while its own subsequent checks are still catching up. Re-presenting the
+  prompt in that window would invite a second payment that buys nothing.
+- Where the app refuses an action and tells the user to go and accept, the
+  destination it names is one that actually asks. The surfaces that stay open
+  regardless of acceptance deliberately do not ask, so naming them would send
+  the user back to the same refusal.
+- A user is asked again only when the terms change to a new version. An
+  earlier acceptance no longer counts once a new version is in force.
+- Acceptance is recorded separately per network. A user who has accepted on
+  one supported network is asked again on another.
+- A visitor with no wallet connected is never gated. The requirement is about
+  the party who would transact.
+- **Surfaces that only show information are never withheld.** The explainer,
+  the user's own history, and position-token verification carry no action at
+  all, so there is nothing on them for the requirement to withhold — and a
+  user asking what the terms mean must not be met by a page that will not
+  open.
+- **When the app cannot determine whether terms apply, it withholds new
+  exposure and says so, rather than allowing it.** This is the intended
+  behaviour and not a degraded one: the requirement is enforced by the app
+  alone — the protocol records acceptance and publishes the version in force,
+  but does not itself refuse an action from a wallet that has not accepted —
+  so allowing access on an unanswered check would mean the requirement stops
+  applying exactly when the check is unreliable.
+- **Not knowing is not refusing, and the user is told which it is.** A check
+  that has not finished, failed, or grown too old to trust is reported as an
+  inability to confirm, with an invitation to retry. Only a current, answered
+  check reports that the user has not accepted. Telling somebody who has
+  already accepted that they must accept is both untrue and leaves them
+  nothing to do.
+- Repaying, claiming and withdrawing are never withheld by this requirement.
+  A user must always be able to close a position and take their assets out.
+
 ## Regression Expectations
 
 The app should maintain an executable regression tier that drives the real app
