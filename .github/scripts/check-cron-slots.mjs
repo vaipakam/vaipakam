@@ -2171,7 +2171,13 @@ export function parseInventory(md) {
       [0, 7],
     ];
     const atomOk = (atom, [lo, hi], idx) => {
-      if (atom === '*' || atom === '?') return true;
+      if (atom === '*') return true;
+      // Codex #1978 r50: `?` is not a wildcard in every field — it stands for
+      // "no specific value" and is meaningful only in day-of-month and
+      // day-of-week, where one of the pair is left unspecified. Accepting it
+      // unconditionally admitted `? ? ? ? ?`, which Cloudflare will never
+      // register. Its step/range positions are rejected below with `*`.
+      if (atom === '?') return idx === 2 || idx === 4;
       // Extended forms are FIELD-SCOPED and still BOUNDED (#1978 r44
       // follow-on). Accepting them structurally in any field reopened the very
       // hole the range check was added to close one round earlier: `L 0 * * *`
@@ -2245,6 +2251,11 @@ export function parseInventory(md) {
         const parts = part.split('/');
         if (parts.length > 2) return false;
         const [range, step] = parts;
+        // Codex #1978 r50: `?` is a complete atom, so it cannot be a step
+        // BASE either — `?/2` parsed as a stepped range. r48 closed the range
+        // position and left the step position, which is the same half-closed
+        // shape as r46's composite finding.
+        if (step !== undefined && range === '?') return false;
         // Codex #1978 r37 follow-on: a step of zero never advances, so `*/0`
         // names no times at all. That is the same "shaped like a schedule,
         // cannot run" defect the bounds close, one atom smaller.
@@ -2498,7 +2509,14 @@ export function checkSources(sources) {
     // pattern here is worse than a wrong path: it cannot go stale. The cell
     // must name one literal path, and the lookup disables magic explicitly so
     // a future cell cannot turn it back on.
-    if (!/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(path) || path.includes('..')) {
+    // Codex #1978 r50: a substring test for `..` also rejects `ops/foo..bar`,
+    // a perfectly legal directory name — and with the row rejected AND
+    // `*none*` falsifiable by `trackedWranglerNames`, that Worker had no
+    // passing representation at all. Eighth such state on this PR. Traversal
+    // is a path COMPONENT equal to `..`, not the two characters appearing
+    // anywhere.
+    const traverses = path.split('/').some((seg) => seg === '..');
+    if (!/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(path) || traverses) {
       problems.push(
         `\`${name}\`'s source \`${path}\` is not a literal repository path; a glob ` +
           `or pathspec keeps matching after the real source moves, which is the ` +
@@ -3513,6 +3531,30 @@ const INVENTORY_CASES = [
     {},
     [],
     1,
+  ],
+  // r50: `?` means "no specific value" and is meaningful only in the
+  // day-of-month / day-of-week pair; it is also a complete atom, so it cannot
+  // be a step base.
+  [
+    'a question mark outside its fields is a finding',
+    '| `vaipakam-agent` | `? ? ? ? ?` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['? ? ? ? ?'] },
+    [],
+    1,
+  ],
+  [
+    'a question mark as a step base is a finding',
+    '| `vaipakam-agent` | `?/2 * * * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['?/2 * * * *'] },
+    [],
+    1,
+  ],
+  [
+    'a question mark in day-of-week is accepted',
+    '| `vaipakam-mw` | `0 0 1 * ?` | `ops/mesh-watcher` | live |',
+    { 'vaipakam-mw': ['0 0 1 * ?'] },
+    [],
+    0,
   ],
   [
     'a wildcard range endpoint is a finding',

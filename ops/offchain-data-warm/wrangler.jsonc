@@ -28,10 +28,15 @@
   // How much of the budget is actually spoken for is NOT stated here.
   // It was, for a long time, and it was wrong — the arithmetic in this
   // comment omitted `vaipakam-offchain-data-archive`, this Worker's own
-  // un-retired predecessor, which has no source in this repository and
-  // has been armed on the same minute as the schedule below (#1977).
-  // `docs/ops/CloudflareCronSlots.md` carries the count, once, with the
-  // date it was last checked against the account.
+  // predecessor, which has no source in this repository and is therefore
+  // invisible to anyone counting `crons` entries across the tree (#1977).
+  // WHETHER IT IS STILL ARMED IS NOT STATED HERE: the retirement procedure
+  // updates the authority and nothing else, so a present-tense claim in this
+  // file would survive it untouched and uncontradicted — the stale-state
+  // belief this whole change exists to remove, recreated in the config an
+  // operator reads while changing the cron.
+  // `docs/ops/CloudflareCronSlots.md` carries both the count and the status,
+  // once, with the date they were last checked against the account.
   //
   // If/when the account upgrades to Workers Paid ($5/mo, which RAISES the
   // cap to 250 rather than removing it), this can split back into two crons.
