@@ -1917,11 +1917,24 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
  * block starts it could picture and stopped at the ones written with
  * punctuation.
  *
- * These are CommonMark's HTML-block start conditions 1 to 6 — the six that
- * can interrupt a paragraph, and therefore a table. Condition 7 (any complete
- * tag on its own line) is deliberately absent: it cannot interrupt a
- * paragraph, so a table does not end on it either, and admitting it would end
- * the table on an autolink like `<https://example.com>`.
+ * These are CommonMark's HTML-block start conditions 1 to 7.
+ *
+ * The first cut stopped at 6, on the argument that condition 7 cannot
+ * interrupt a paragraph so a table does not end on it either. That argument
+ * is wrong, and I published it in a review reply before measuring it. A
+ * differential test against this repository's own Remark GFM parser — the
+ * same oracle the review has been using — shows the table ENDING on
+ * `<notatag>`, `<span>`, `</span>` and `<foo attr="v">`, each a complete tag
+ * alone on a line. So the gate reported every one of them as a malformed row
+ * while GFM renders it outside the table: the same CI-blocking false positive
+ * as `<details>`, for every tag NOT on condition 6's list.
+ *
+ * Condition 7 requires a complete tag followed by nothing but whitespace,
+ * which is what keeps an autolink out: `<https://example.com>` has a colon
+ * where a tag name must end, matches no tag grammar, and stays a row — as
+ * does `<span>x</span>`, which has content after the tag. Both are pinned
+ * against the parser rather than against my reading of the specification,
+ * because my reading of the specification is what produced this defect.
  *
  * Condition 6's tag list is closed and specified, which is the same reason
  * the cron grammar is implemented here and English is not: a fixed list is a
@@ -1935,6 +1948,13 @@ const HTML_BLOCK_TAGS =
   'form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|' +
   'menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|' +
   'summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul';
+// Condition 7's tag grammar, from CommonMark. A tag name, optional
+// attributes, and nothing else on the line.
+const HTML_ATTR_NAME = String.raw`[A-Za-z_:][A-Za-z0-9_.:-]*`;
+const HTML_ATTR_VALUE = String.raw`(?:[^\s"'=<>\`]+|'[^']*'|"[^"]*")`;
+const HTML_ATTR = String.raw`(?:\s+${HTML_ATTR_NAME}(?:\s*=\s*${HTML_ATTR_VALUE})?)`;
+const HTML_OPEN_TAG = String.raw`<[A-Za-z][A-Za-z0-9-]*${HTML_ATTR}*\s*/?>`;
+const HTML_CLOSE_TAG = String.raw`</[A-Za-z][A-Za-z0-9-]*\s*>`;
 const HTML_BLOCK_START = new RegExp(
   '^ {0,3}(?:' +
     String.raw`<(?:script|pre|style|textarea)(?:[\s>]|$)` +
@@ -1943,6 +1963,8 @@ const HTML_BLOCK_START = new RegExp(
     String.raw`|<![A-Za-z]` +
     String.raw`|<!\[CDATA\[` +
     String.raw`|</?(?:${HTML_BLOCK_TAGS})(?:\s|/?>|$)` +
+    // Condition 7: a complete open or closing tag, then only whitespace.
+    String.raw`|(?:${HTML_OPEN_TAG}|${HTML_CLOSE_TAG})\s*$` +
     ')',
   'i',
 );
@@ -4279,8 +4301,44 @@ const INVENTORY_CASES = [
     [],
     0,
   ],
-  // ...and an AUTOLINK is not an HTML block (CommonMark condition 7 cannot
-  // interrupt a paragraph), so it stays a row and is still reported.
+  // r59 follow-up, self-found by differential test against Remark GFM: a
+  // complete tag alone on a line (condition 7) ends the table too, for every
+  // tag NOT on condition 6's list. The gate reported those as malformed rows.
+  [
+    'a bare unknown tag ends the table',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |\n' +
+      '<span>\n' +
+      'The accepted labels are live | reserved | undeployed | uncertain.',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    0,
+  ],
+  [
+    'a bare closing tag ends the table',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |\n' +
+      '</details>\n' +
+      'The accepted labels are live | reserved | undeployed | uncertain.',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    0,
+  ],
+  // ...but a tag with CONTENT after it is not condition 7, so it stays a row.
+  [
+    'a tag with trailing content is still a row',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |\n' +
+      '<span>x</span>',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    1,
+  ],
+  // ...and an AUTOLINK matches no tag grammar — a colon where a tag name must
+  // end — so it stays a row and is still reported.
   [
     'an autolink under the table is still a row',
     '| Worker | Schedule | Source in this repo | Status |\n' +
