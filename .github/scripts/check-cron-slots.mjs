@@ -521,6 +521,20 @@ function checkInventoryFraming(inv) {
         `directly under the header, or Markdown renders no table at all`,
     );
   }
+  // Codex #1978 r23: ADJACENCY, which the message above already promised and
+  // the check did not enforce. Counting one of each accepts a delimiter moved
+  // below the first data row, where GFM renders no table — and my own error
+  // text said "directly under the header" while nothing verified it. A check
+  // whose message describes a stronger rule than it applies is worse than a
+  // silent one: it tells the next reader the case is covered.
+  const { headerAt, delimiterAt } = inv.framing;
+  if (sawHeader === 1 && sawDelimiter === 1 && delimiterAt !== headerAt + 1) {
+    problems.push(
+      `the inventory's alignment row is not directly under its header; Markdown ` +
+        `renders no table unless they are adjacent, so the rows below are text a ` +
+        `reader cannot read as an inventory`,
+    );
+  }
   return problems;
 }
 
@@ -1241,6 +1255,9 @@ export function parseInventory(md) {
   const statuses = new Map(); // every parsed row's status, for checks the account settles
   let sawHeader = 0;
   let sawDelimiter = 0;
+  let headerAt = -1;
+  let delimiterAt = -1;
+  let rowIdx = -1;
   /** name -> the `Source in this repo` path, or null for the explicit *none*. */
   const sources = new Map();
   const problems = [];
@@ -1280,7 +1297,14 @@ export function parseInventory(md) {
   // and every check would keep reading only the first. The same "exactly one"
   // discipline the summary anchors and the stamp already have; this was the
   // one structural element without it.
-  const headings = [...md.matchAll(/^##\s+The inventory\b/gm)];
+  // Codex #1978 r23: count over the VISIBLE document. A fenced EXAMPLE of the
+  // heading — the natural way to show an editor what the section looks like —
+  // read as a second section and BLOCKED CI on a correct authority. The
+  // section extraction below already derives from visibleLines; the duplicate
+  // count sitting three lines above it did not. Same split as the stamp
+  // markers in r19, in the same function, found two rounds later.
+  const visibleAll = [...visibleLines(md)];
+  const headings = visibleAll.filter((l) => /^##\s+The inventory\b/.test(l));
   if (headings.length > 1) {
     problems.push(
       `the authority has ${headings.length} "## The inventory" sections; there ` +
@@ -1294,7 +1318,7 @@ export function parseInventory(md) {
   // parsed every hidden row as visible. A slice cannot inherit state it was
   // cut away from; deciding visibility first is the only ordering that can be
   // right, rather than one more special case bolted onto the wrong one.
-  const visible = [...visibleLines(md)];
+  const visible = visibleAll;
   const headIdx = visible.findIndex((l) => /^##\s+The inventory\b/.test(l));
   let lines = visible;
   if (headIdx !== -1) {
@@ -1304,6 +1328,7 @@ export function parseInventory(md) {
   }
 
   for (const line of lines) {
+    rowIdx += 1;
     // Codex #1978 r8: a leading pipe is OPTIONAL in Markdown — the table still
     // renders — so skipping lines without one dropped a row a reader can see.
     // The fifth variant of the row-shape defect, and the first the principle
@@ -1336,13 +1361,16 @@ export function parseInventory(md) {
     // The header and the alignment separator are not data.
     if (/^[\s:-]+$/.test(cells[0])) {
       sawDelimiter += 1;
+      if (delimiterAt === -1) delimiterAt = rowIdx;
       // Codex #1978 r20: the DELIMITER row, checked like the header row above
       // it. It was skipped on its first cell alone, so `|---|` under a
       // four-column header left every data row parsed and no problem
       // reported — while GFM does not recognise that as a table at all, so
       // the rendered authority shows no inventory. Sibling of the header
       // finding, one line below it, missed in the same round I fixed that.
-      const cellsOk = cells.map((c) => c.trim()).every((c) => /^:?-{1,}:?$/.test(c));
+      // Codex #1978 r23: GFM requires at least THREE hyphens per delimiter
+      // cell, so `|-|-|-|-|` renders no table while passing a `-{1,}` test.
+      const cellsOk = cells.map((c) => c.trim()).every((c) => /^:?-{3,}:?$/.test(c));
       if (cells.length !== 4 || !cellsOk) {
         problems.push(
           `the inventory's alignment row has ${cells.length} cell(s), not 4 valid ` +
@@ -1354,6 +1382,7 @@ export function parseInventory(md) {
     }
     if (/^\s*Worker\s*$/i.test(cells[0])) {
       sawHeader += 1;
+      if (headerAt === -1) headerAt = rowIdx;
       // Codex #1978 r19: the header was skipped on its FIRST cell alone, while
       // the data rows below are parsed by fixed position. Reorder the headings
       // to `| Worker | Status | Source in this repo | Schedule |` and the
@@ -1468,6 +1497,27 @@ export function parseInventory(md) {
       continue;
     }
 
+    // Codex #1978 r23: a cell carrying backticked spans PLUS prose was
+    // silently classified as no-schedule, so `\`* * * * *\` active` on a row
+    // marked `reserved` passed both modes while the rendered row plainly
+    // claims a live schedule. The residue test decided "not a schedule" and
+    // nothing then asked whether the cell was a legitimate NO-schedule form
+    // either — it fell into the gap between the two categories.
+    // The ONE legitimate span-plus-prose form: `*(would be `*/15 * * * *`)*`,
+    // which the mesh-watcher row uses to show the schedule it WOULD register.
+    // Codex named it and I implemented the rule without it, breaking that row
+    // — the rule and its stated exception arrived together and I took half.
+    const isWouldBe = /^\s*\**\s*\(?\s*would\s+be\b/i.test(scheduleCell);
+    if (spans.length && residue !== '' && !isWouldBe) {
+      problems.push(
+        `\`${name}\`'s schedule cell carries a cron span AND other text ` +
+          `(${scheduleCell.trim().slice(0, 60)}); a reader sees a schedule and this ` +
+          `parser does not. Use a bare backticked expression, \`*(none)*\`, or the ` +
+          `explicit \`*(would be ...)*\` form`,
+      );
+      continue;
+    }
+
     // No schedule, so the status cell alone decides whether the budget is
     // spoken for. It must therefore be unambiguous — see readStatus.
     if (status === null) {
@@ -1483,7 +1533,7 @@ export function parseInventory(md) {
     }
   }
 
-  return { live, reserved, sources, statuses, framing: { sawHeader, sawDelimiter }, problems };
+  return { live, reserved, sources, statuses, framing: { sawHeader, sawDelimiter, headerAt, delimiterAt }, problems };
 }
 
 /**
@@ -1725,6 +1775,18 @@ async function runLive() {
   // only the account can falsify it — the offline half has no way to know.
   const undeployedProblems = [];
   for (const [name, status] of inv.statuses ?? []) {
+    // Codex #1978 r23, and this is the gap I FLAGGED MYSELF two rounds ago
+    // and did not close — "the reverse is now the remaining unchecked case…
+    // it is the safer direction, but it is not checked". Naming a hole is not
+    // closing it, and a reply saying so is not a tracking issue either.
+    if (status === 'reserved' && !deployed.has(name)) {
+      undeployedProblems.push(
+        `\`${name}\` is marked "reserved" but the account has no script for it at ` +
+          `all; "reserved" means deployed-without-a-trigger, so either the script ` +
+          `was deleted (the row should read "undeployed") or the reservation is ` +
+          `being held for something that no longer exists`,
+      );
+    }
     if (status === 'undeployed' && deployed.has(name)) {
       undeployedProblems.push(
         `\`${name}\` is marked "undeployed" but the account has a deployed script ` +
@@ -1753,6 +1815,16 @@ async function runLive() {
   // responsibility to a caller, and I updated one of the two callers: the
   // same one-sibling-of-two miss this PR keeps producing, this time created
   // by the fix for it.
+  // Codex #1978 r23: `--live` must run the document-level inventory checks the
+  // offline half runs. With an account at zero scheduled triggers, an authority
+  // whose data rows were all deleted and whose summary read 0/0/5 passed here
+  // while the offline gate correctly rejected it — the two halves disagreeing
+  // about whether the document is well-formed at all. Third time a check has
+  // been wired into one of the two entry points; the pattern is that offline is
+  // where I write them and live is where I forget them.
+  for (const p of checkInventoryPresent(inv)) {
+    problems.push(`INVENTORY     ${p}`);
+  }
   for (const p of checkNoHtmlComments(authorityMd)) {
     problems.push(p);
   }

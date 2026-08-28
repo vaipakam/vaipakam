@@ -32,7 +32,7 @@ acts — that is what `packages/lib/src/cronCadence.ts` is for.
 
 Read from the account, not from the tree.
 
-**Verified: 2026-08-28T00:55:16Z.** Re-verify with the command in
+**Verified: 2026-08-28T01:40:37Z.** Re-verify with the command in
 [Re-verifying](#re-verifying) below; update this table and this stamp in
 the same commit.
 
