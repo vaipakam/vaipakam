@@ -696,9 +696,21 @@ Thin-market honesty rules apply.
   While none is in force, the app behaves as though the requirement does not
   exist: no user is asked anything and no surface is withheld.
 - While a version IS in force, a connected wallet that has not accepted that
-  version cannot reach the app's surfaces. It is shown which version applies,
-  a fingerprint of the exact text, and links to read the Terms and the Privacy
-  Policy before deciding.
+  version cannot take on new exposure and cannot reach the surfaces that exist
+  only to create it. It is shown which version applies, a fingerprint of the
+  exact text, and links to read the Terms and the Privacy Policy before
+  deciding. The language control is available on that prompt, because a user
+  who cannot read the terms cannot meaningfully agree to them.
+- **Anything that reduces the user's commitments stays available**, whether or
+  not they have accepted. That covers repaying and closing positions,
+  claiming settled funds, withdrawing their own assets, cancelling their own
+  standing offers and orders, adding collateral to a position at risk, and —
+  in both cases where a third party or an automatic process holds authority —
+  withdrawing that authority: a keeper's permission over their positions, and
+  the consent that allows fees to be deducted automatically from their vault.
+- A refusal never costs the user anything. Where an action needs a separate
+  approval transaction first, the requirement is checked before that approval,
+  not after it.
 - Acceptance is a single action recorded against that exact version and
   fingerprint, so what a user agreed to remains checkable afterwards.
 - A user is asked again only when the terms change to a new version. An
@@ -707,13 +719,19 @@ Thin-market honesty rules apply.
   one supported network is asked again on another.
 - A visitor with no wallet connected is never gated. The requirement is about
   the party who would transact.
-- **When the app cannot determine whether terms apply, it withholds the
-  surfaces and says so, rather than allowing them.** This is the intended
+- **When the app cannot determine whether terms apply, it withholds new
+  exposure and says so, rather than allowing it.** This is the intended
   behaviour and not a degraded one: the requirement is enforced by the app
   alone — the protocol records acceptance and publishes the version in force,
   but does not itself refuse an action from a wallet that has not accepted —
   so allowing access on an unanswered check would mean the requirement stops
   applying exactly when the check is unreliable.
+- **Not knowing is not refusing, and the user is told which it is.** A check
+  that has not finished, failed, or grown too old to trust is reported as an
+  inability to confirm, with an invitation to retry. Only a current, answered
+  check reports that the user has not accepted. Telling somebody who has
+  already accepted that they must accept is both untrue and leaves them
+  nothing to do.
 - Repaying, claiming and withdrawing are never withheld by this requirement.
   A user must always be able to close a position and take their assets out.
 

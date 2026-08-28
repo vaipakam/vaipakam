@@ -34,16 +34,28 @@ its own record and the app can only read the one it is pointed at.
 Three deliberate choices are worth stating, because each is a place this
 kind of gate usually goes wrong.
 
-**It refuses to guess.** If the app cannot reach the network to find out
-whether terms apply, it does not assume they do not. It says so and
-offers to try again. The tempting alternative — let people through when
+**It refuses to guess, and it says which kind of "no" it means.** If the
+app cannot reach the network to find out whether terms apply, it does
+not assume they do not. It says it could not confirm and offers to try
+again — rather than telling you to accept terms you may well have
+accepted already, which would be both untrue and impossible to act on. The tempting alternative — let people through when
 the check fails — would mean the gate stops working precisely when the
 network is flaky, which is neither rare nor hard to arrange
 deliberately.
 
-**It never blocks getting your money out.** Repaying, claiming and
-withdrawing are not behind this. A rule about accepting terms should
-never become a reason somebody cannot close a position.
+**It never blocks getting your money out, or taking back control.**
+Repaying, claiming and withdrawing are not behind this, and neither is
+anything else that reduces what you are committed to: cancelling your
+own offers and orders, adding collateral to a position under pressure,
+and withdrawing permissions you granted earlier — a keeper's authority
+over your positions, or the consent that lets fees be taken
+automatically from your vault. A rule about accepting terms should never
+become a reason somebody cannot close a position, and it should never
+leave a permission running that they are no longer allowed to cancel.
+
+Nor does a refusal cost anything. Where an action needs a separate
+approval step first, the terms are checked before that step, so nobody
+pays a network fee for an approval that was going to be turned down.
 
 **It does not decide who has accepted.** That question is answered on
 chain, by the same contract that holds the terms, which checks both the
