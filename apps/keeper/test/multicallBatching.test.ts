@@ -60,6 +60,9 @@ const AGGREGATE3 = {
 } as const;
 
 const AGGREGATE3_SELECTOR = toFunctionSelector(AGGREGATE3).toLowerCase();
+const USER_LOANS_SELECTOR = toFunctionSelector(
+  'function getUserActiveLoans(address) view returns (uint256[])',
+).toLowerCase();
 
 /** `calculateHealthFactor(uint256)` — the per-loan read the fallback makes. */
 const CALC_HF_SELECTOR = toFunctionSelector(
@@ -148,14 +151,39 @@ function recordCalls(opts: { rejectAggregate?: boolean } = {}): { seen: Seen[]; 
         );
       }
 
+      if (selector === USER_LOANS_SELECTOR) {
+        seen.push({ to: (call.to ?? '').toLowerCase(), selector, innerSelectors: [] });
+        return ok(
+          encodeFunctionResult({
+            abi: [
+              {
+                type: 'function',
+                name: 'getUserActiveLoans',
+                stateMutability: 'view',
+                inputs: [{ name: 'user', type: 'address' }],
+                outputs: [{ name: 'loanIds', type: 'uint256[]' }],
+              },
+            ],
+            functionName: 'getUserActiveLoans',
+            result: [1n, 2n],
+          }),
+        );
+      }
+
       if (selector === AGGREGATE3_SELECTOR) {
         // Each inner callData is ABI-encoded at a dynamic offset; the
         // selectors are enough for this assertion, so scan for them rather
-        // than fully decoding the tuple array.
-        for (const m of data.matchAll(new RegExp(CALC_HF_SELECTOR.slice(2), 'g'))) {
-          innerSelectors.push(CALC_HF_SELECTOR);
-          void m;
+        // than fully decoding the tuple array. BOTH shapes are scanned and
+        // kept in CALL ORDER, because the watcher batches two different reads
+        // and the response has to answer each in kind.
+        const hits: { at: number; sel: string }[] = [];
+        for (const sel of [CALC_HF_SELECTOR, USER_LOANS_SELECTOR]) {
+          for (const m of data.matchAll(new RegExp(sel.slice(2), 'g'))) {
+            hits.push({ at: m.index ?? 0, sel });
+          }
         }
+        hits.sort((a, b) => a.at - b.at);
+        innerSelectors.push(...hits.map((h) => h.sel));
       }
       seen.push({ to: (call.to ?? '').toLowerCase(), selector, innerSelectors });
 
@@ -169,6 +197,19 @@ function recordCalls(opts: { rejectAggregate?: boolean } = {}): { seen: Seen[]; 
         };
       }
       if (selector === AGGREGATE3_SELECTOR) {
+        const loanList = encodeFunctionResult({
+          abi: [
+            {
+              type: 'function',
+              name: 'getUserActiveLoans',
+              stateMutability: 'view',
+              inputs: [{ name: 'user', type: 'address' }],
+              outputs: [{ name: 'loanIds', type: 'uint256[]' }],
+            },
+          ],
+          functionName: 'getUserActiveLoans',
+          result: [1n, 2n],
+        });
         const hf = encodeFunctionResult({
           abi: [
             {
@@ -186,9 +227,9 @@ function recordCalls(opts: { rejectAggregate?: boolean } = {}): { seen: Seen[]; 
           encodeFunctionResult({
             abi: [AGGREGATE3],
             functionName: 'aggregate3',
-            result: innerSelectors.map(() => ({
+            result: innerSelectors.map((sel) => ({
               success: true,
-              returnData: hf as `0x${string}`,
+              returnData: (sel === USER_LOANS_SELECTOR ? loanList : hf) as `0x${string}`,
             })),
           }),
         );
@@ -203,6 +244,30 @@ function recordCalls(opts: { rejectAggregate?: boolean } = {}): { seen: Seen[]; 
   }) as typeof fetch;
 
   return { seen, restore: () => { globalThis.fetch = real; } };
+}
+
+/**
+ * A D1 stub carrying subscriber rows, so `watchChain` gets past its
+ * `listThresholdsForChain` early return and actually reads on-chain.
+ */
+function watcherDb(): unknown {
+  const rows = Array.from({ length: 8 }, (_, i) => ({
+    wallet: `0x${(i + 1).toString(16).padStart(40, '0')}`,
+    chain_id: 84532,
+    warn_hf: 2.0,
+    alert_hf: 1.5,
+    critical_hf: 1.1,
+    tg_chat_id: null,
+    push_channel: null,
+    locale: 'en',
+    notify_maturity_approaching: 0,
+  }));
+  const stmt: Record<string, unknown> = {};
+  stmt.bind = () => stmt;
+  stmt.all = async () => ({ results: rows, success: true, meta: {} });
+  stmt.first = async () => null;
+  stmt.run = async () => ({ results: [], success: true, meta: {} });
+  return { prepare: () => stmt, batch: async () => [], exec: async () => ({}) };
 }
 
 afterEach(() => {
@@ -317,5 +382,82 @@ describe('Multicall3 batching (#1946)', () => {
 
     // And the operator can see why it degraded.
     expect(errors.join('\n')).toMatch(/aggregate3 rejected/i);
+  });
+});
+
+
+describe('watcher batching (#1896)', () => {
+  it('batches the loan lists AND the health factors, with no serial reads', async () => {
+    // The watcher was the largest consumer in the #1945 pass table for a
+    // structural reason: one `getUserActiveLoans` per subscriber, then one
+    // `calculateHealthFactor` per loan, sequentially. With the seeded fixture
+    // that is 20 + 500 subrequests per chain against a 50-per-invocation
+    // ceiling. This asserts BOTH loops are gone, not just the inner one — the
+    // outer per-user loop was the half that had no batching intent at all.
+    const { seen, restore } = recordCalls();
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { runWatcher } = await import('../src/watcher');
+      await runWatcher({
+        DB: watcherDb(),
+        RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
+        TG_BOT_TOKEN: 'test:token',
+      } as never);
+    } finally {
+      restore();
+      spy.mockRestore();
+    }
+
+    const batched = seen.filter((s) => s.selector === AGGREGATE3_SELECTOR);
+    const serialHf = seen.filter((s) => s.selector === CALC_HF_SELECTOR);
+    const serialLists = seen.filter((s) => s.selector === USER_LOANS_SELECTOR);
+
+    // 1. The batch path ran. A chainless client throws LOCALLY, so without
+    //    `multicallAddress` this is 0 and everything below falls to serial —
+    //    which still completes, which is why this assertion exists.
+    expect(batched.length).toBeGreaterThan(0);
+
+    // 2. Every batch went to Multicall3, not the diamond.
+    for (const b of batched) {
+      expect(b.to).toBe(MULTICALL3_ADDRESS.toLowerCase());
+    }
+
+    // 3. NEITHER read shape appears as a standalone call. A serial
+    //    `getUserActiveLoans` here means the outer loop survived; a serial
+    //    `calculateHealthFactor` means the inner one did.
+    expect(serialLists).toHaveLength(0);
+    expect(serialHf).toHaveLength(0);
+
+    // 4. Both shapes are present INSIDE the batches — proving the calls were
+    //    batched rather than simply not made.
+    const inner = batched.flatMap((b) => b.innerSelectors);
+    expect(inner).toContain(USER_LOANS_SELECTOR);
+    expect(inner).toContain(CALC_HF_SELECTOR);
+
+    // 5. The whole chain costs a handful of requests, not one per loan. The
+    //    point of the change is the subrequest ceiling, so bound it.
+    expect(batched.length).toBeLessThanOrEqual(4);
+  });
+
+  it('falls back to serial reads when the aggregate call is REJECTED', async () => {
+    // The fallback must still work for a chain genuinely missing Multicall3 —
+    // it is only dangerous when it fires silently on EVERY chain, which is
+    // what assertion 1 above pins.
+    const { seen, restore } = recordCalls({ rejectAggregate: true });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { runWatcher } = await import('../src/watcher');
+      await runWatcher({
+        DB: watcherDb(),
+        RPC_BASE_SEPOLIA: 'https://mock-rpc.invalid/base-sepolia',
+        TG_BOT_TOKEN: 'test:token',
+      } as never);
+    } finally {
+      restore();
+      spy.mockRestore();
+    }
+
+    expect(seen.filter((s) => s.selector === AGGREGATE3_SELECTOR).length).toBeGreaterThan(0);
+    expect(seen.filter((s) => s.selector === USER_LOANS_SELECTOR).length).toBeGreaterThan(0);
   });
 });
