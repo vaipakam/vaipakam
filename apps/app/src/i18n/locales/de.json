@@ -191,6 +191,31 @@
       "phasePermit": "Berechtigung signieren… ({{c}} von {{t}}) — kostenlos, kein Gas",
       "phaseSend": "Einreichen… ({{c}} von {{t}})"
     },
+    "dataRights": {
+      "title": "Ihre Daten",
+      "subtitle": "Was diese App in Ihrem Browser speichert und wie Sie eine Kopie erhalten oder sie löschen.",
+      "downloadTitle": "Eine Kopie herunterladen",
+      "downloadBody": "Speichert alles, was diese App in diesem Browser abgelegt hat, in einer einzigen Datei zum Aufbewahren oder Nachlesen: Ihre Anzeigeeinstellungen, Ihre Alarmeinstellungen, welche Benachrichtigungen Sie gesehen haben, und Markierungen für Begonnenes, das Sie nicht abgeschlossen haben.",
+      "downloadButton": "Meine Daten herunterladen",
+      "downloadDone": "Gespeichert",
+      "eraseTitle": "Aus diesem Browser löschen",
+      "eraseBody": "Entfernt alles von diesem Gerät. Ihre Einstellungen kehren zu den Standardwerten zurück, Sie werden erneut nach Cookies und Sprache gefragt, und alles Halbfertige verliert seine lokale Markierung.",
+      "eraseButton": "Meine Daten löschen",
+      "eraseConfirm": "Ja, löschen",
+      "eraseCancel": "Abbrechen",
+      "eraseConfirmPrompt": "Das lässt sich nicht rückgängig machen. Laden Sie vorher eine Kopie herunter, wenn Sie eine behalten möchten.",
+      "eraseDone": "{{count}} gespeicherte Einträge wurden aus diesem Browser gelöscht.",
+      "eraseNothing": "In diesem Browser war nichts gespeichert, das gelöscht werden könnte.",
+      "eraseBlocked": "Dieser Browser hat der App nicht erlaubt, ihren Speicher zu leeren, daher wurde nichts entfernt. Private Fenster und strenge Datenschutzeinstellungen können das bewirken — das Löschen der Websitedaten über die Einstellungen Ihres Browsers funktioniert.",
+      "holdingTitle": "Was derzeit gespeichert ist",
+      "holdingCount": "{{count}} Einträge",
+      "holdingNone": "Derzeit ist in diesem Browser nichts gespeichert.",
+      "scopeTitle": "Was hiervon nicht erfasst wird",
+      "scopeChain": "Alles, was auf der Blockchain liegt. Ihre Wallet-Adresse und jede von Ihnen signierte Transaktion sind öffentlich und dauerhaft — niemand, auch Vaipakam nicht, kann sie exportieren oder löschen.",
+      "scopeAlerts": "Benachrichtigungen. Wenn Sie Telegram verknüpft haben, liegt diese Verbindung beim Benachrichtigungsdienst, nicht in Ihrem Browser. Heben Sie die Verknüpfung in den Einstellungen auf, um sie zu entfernen.",
+      "scopeSite": "Die Hauptseite vaipakam.com. Sie führt einen eigenen, getrennten Speicher mit eigenen Bedienelementen auf jener Seite.",
+      "scopeCookies": "Sprache und Erscheinungsbild werden über ein Cookie der gemeinsamen Domain mit vaipakam.com geteilt; ein Löschen hier setzt sie also auch dort zurück."
+    },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."
     },
@@ -2244,7 +2269,8 @@
         "vpfiSub": "Optional — Protokollgebühren durch Halten von VPFI reduzieren",
         "activitySub": "Alles, was Ihre Wallet auf Vaipakam getan hat",
         "riskAccessSub": "Lege fest, wie riskant die Assets in deinen Geschäften sein dürfen",
-        "helpSub": "Antworten in einfacher Sprache und Build-Infos"
+        "helpSub": "Antworten in einfacher Sprache und Build-Infos",
+        "dataRightsSub": "Herunterladen oder Löschen dessen, was diese App in Ihrem Browser speichert"
       }
     },
     "common": {

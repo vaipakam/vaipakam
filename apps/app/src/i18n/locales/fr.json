@@ -191,6 +191,31 @@
       "phasePermit": "Signature de la permission… ({{c}} sur {{t}}) — gratuit, sans gas",
       "phaseSend": "Soumission… ({{c}} sur {{t}})"
     },
+    "dataRights": {
+      "title": "Vos données",
+      "subtitle": "Ce que cette application conserve dans votre navigateur, et comment en obtenir une copie ou l’effacer.",
+      "downloadTitle": "Télécharger une copie",
+      "downloadBody": "Enregistre dans un seul fichier tout ce que cette application a stocké dans ce navigateur, à conserver ou à consulter : vos préférences d’affichage, vos réglages d’alertes, les notifications déjà vues et les repères de ce que vous avez commencé sans le terminer.",
+      "downloadButton": "Télécharger mes données",
+      "downloadDone": "Enregistré",
+      "eraseTitle": "L’effacer de ce navigateur",
+      "eraseBody": "Supprime le tout de cet appareil. Vos préférences reviennent à leurs valeurs par défaut, les cookies et la langue vous seront redemandés, et ce qui était en cours perdra son repère local.",
+      "eraseButton": "Effacer mes données",
+      "eraseConfirm": "Oui, effacer",
+      "eraseCancel": "Annuler",
+      "eraseConfirmPrompt": "Cette action est irréversible. Téléchargez une copie d’abord si vous souhaitez en garder une.",
+      "eraseDone": "{{count}} éléments enregistrés ont été effacés de ce navigateur.",
+      "eraseNothing": "Il n’y avait rien d’enregistré à effacer dans ce navigateur.",
+      "eraseBlocked": "Ce navigateur n’a pas autorisé l’application à vider son stockage, donc rien n’a été supprimé. Les fenêtres de navigation privée et les réglages de confidentialité stricts peuvent produire cet effet — effacer les données du site depuis les réglages de votre navigateur fonctionnera.",
+      "holdingTitle": "Ce qui est enregistré actuellement",
+      "holdingCount": "{{count}} éléments",
+      "holdingNone": "Rien n’est enregistré dans ce navigateur pour le moment.",
+      "scopeTitle": "Ce que cela ne couvre pas",
+      "scopeChain": "Tout ce qui se trouve sur la blockchain. Votre adresse de portefeuille et chaque transaction que vous avez signée sont publiques et permanentes : personne, Vaipakam compris, ne peut les exporter ni les effacer.",
+      "scopeAlerts": "Les alertes. Si vous avez lié Telegram, cette connexion est détenue par le service d’alertes, pas par votre navigateur. Dissociez-la dans les Réglages pour la supprimer.",
+      "scopeSite": "Le site principal vaipakam.com. Il conserve son propre stockage distinct, avec ses propres commandes sur ce site.",
+      "scopeCookies": "Votre langue et votre thème sont partagés avec vaipakam.com via un cookie du domaine commun ; les effacer ici les réinitialise donc aussi là-bas."
+    },
     "killSwitch": {
       "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."
     },
@@ -2244,7 +2269,8 @@
         "vpfiSub": "Optionnel — réduire les frais du protocole en détenant VPFI",
         "activitySub": "Tout ce que votre wallet a fait sur Vaipakam",
         "riskAccessSub": "Choisissez le niveau de risque des actifs de vos opérations",
-        "helpSub": "Réponses en langage clair et infos de build"
+        "helpSub": "Réponses en langage clair et infos de build",
+        "dataRightsSub": "Téléchargez ou effacez ce que cette application conserve dans votre navigateur"
       }
     },
     "common": {

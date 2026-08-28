@@ -191,6 +191,31 @@
       "phasePermit": "Firmando el permiso… ({{c}} de {{t}}) — gratis, sin gas",
       "phaseSend": "Enviando… ({{c}} de {{t}})"
     },
+    "dataRights": {
+      "title": "Tus datos",
+      "subtitle": "Lo que esta aplicación guarda en tu navegador, y cómo obtener una copia o eliminarlo.",
+      "downloadTitle": "Descargar una copia",
+      "downloadBody": "Guarda en un solo archivo todo lo que esta aplicación ha almacenado en este navegador, para que lo conserves o lo leas: tus preferencias de visualización, tus ajustes de alertas, qué notificaciones has visto y marcadores de lo que hayas empezado y no terminado.",
+      "downloadButton": "Descargar mis datos",
+      "downloadDone": "Guardado",
+      "eraseTitle": "Borrarlo de este navegador",
+      "eraseBody": "Lo elimina todo de este dispositivo. Tus preferencias vuelven a sus valores por defecto, se te volverá a preguntar por las cookies y el idioma, y lo que tuvieras a medias perderá su marcador local.",
+      "eraseButton": "Borrar mis datos",
+      "eraseConfirm": "Sí, bórralo",
+      "eraseCancel": "Cancelar",
+      "eraseConfirmPrompt": "Esto no se puede deshacer. Descarga una copia antes si quieres conservarla.",
+      "eraseDone": "Se borraron {{count}} elementos almacenados en este navegador.",
+      "eraseNothing": "No había nada almacenado en este navegador para borrar.",
+      "eraseBlocked": "Este navegador no ha permitido que la aplicación borre su almacenamiento, así que no se eliminó nada. Las ventanas de navegación privada y los ajustes de privacidad restrictivos pueden provocarlo; borrar los datos del sitio desde los ajustes de tu navegador sí funcionará.",
+      "holdingTitle": "Qué hay almacenado ahora mismo",
+      "holdingCount": "{{count}} elementos",
+      "holdingNone": "Ahora mismo no hay nada almacenado en este navegador.",
+      "scopeTitle": "Qué no cubre esto",
+      "scopeChain": "Nada de lo que está en la cadena de bloques. Tu dirección de billetera y cada transacción que has firmado son públicas y permanentes: nadie, ni siquiera Vaipakam, puede exportarlas ni borrarlas.",
+      "scopeAlerts": "Las alertas. Si vinculaste Telegram, esa conexión la guarda el servicio de alertas, no tu navegador. Desvincúlala en Ajustes para eliminarla.",
+      "scopeSite": "El sitio principal vaipakam.com. Mantiene su propio almacén separado, con sus propios controles en ese sitio.",
+      "scopeCookies": "Tu idioma y tu tema se comparten con vaipakam.com mediante una cookie del dominio compartido, así que borrarlos aquí también los restablece allí."
+    },
     "killSwitch": {
       "disabled": "Esta acción está desactivada ahora mismo — los operadores la pausaron por precaución mientras revisan algo. Lo que ya es tuyo no se ve afectado: pagos, reclamos y retiros siguen abiertos."
     },
@@ -2244,7 +2269,8 @@
         "vpfiSub": "Opcional — reducir comisiones del protocolo manteniendo VPFI",
         "activitySub": "Todo lo que tu billetera ha hecho en Vaipakam",
         "riskAccessSub": "Elige qué tan arriesgados pueden ser los activos de tus operaciones",
-        "helpSub": "Respuestas en lenguaje claro e info de build"
+        "helpSub": "Respuestas en lenguaje claro e info de build",
+        "dataRightsSub": "Descarga o borra lo que esta aplicación guarda en tu navegador"
       }
     },
     "common": {

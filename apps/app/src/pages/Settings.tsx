@@ -15,6 +15,7 @@ import {
   Languages,
   Moon,
   MonitorCog,
+  ShieldAlert,
   ShieldCheck,
   Sun,
 } from 'lucide-react';
@@ -184,6 +185,17 @@ export function Settings() {
               <span className="row-title">{copy.chrome.nav.help}</span>
               <br />
               <span className="row-sub">{copy.settingsPage.more.helpSub}</span>
+            </span>
+          </Link>
+          {/* #1960 — reachable, not merely routed. A data-rights page
+              nobody can find is not a control, and Settings is where
+              somebody looking for it will look first. */}
+          <Link to="/data-rights" className="item-row">
+            <ShieldAlert aria-hidden size={18} />
+            <span className="row-main">
+              <span className="row-title">{copy.dataRights.title}</span>
+              <br />
+              <span className="row-sub">{copy.settingsPage.more.dataRightsSub}</span>
             </span>
           </Link>
         </div>

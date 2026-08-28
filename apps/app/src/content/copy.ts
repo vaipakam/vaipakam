@@ -308,6 +308,54 @@ const copySource = {
     footnote:
       'Your acceptance is recorded on-chain against the exact version and fingerprint shown above, so what you agreed to stays checkable later. Repaying, claiming and withdrawing are never blocked by this.',
   },
+  /**
+   * Data Rights (#1960) — the connected app's own export and local
+   * erasure controls.
+   *
+   * Deliberately explicit about SCOPE. The single most likely way this
+   * page misleads someone is by letting them believe an erase reaches
+   * further than it does: it clears this browser, on this device. It
+   * cannot touch the blockchain, the alerts service, or the store
+   * belonging to vaipakam.com. Saying so on the page is not caution
+   * for its own sake — a data-rights control that overstates itself is
+   * a false assurance about a legal right.
+   */
+  dataRights: {
+    title: 'Your data',
+    subtitle:
+      'What this app keeps in your browser, and how to take a copy of it or remove it.',
+    downloadTitle: 'Download a copy',
+    downloadBody:
+      'Saves everything this app has stored in this browser as a single file you can keep or read: your display preferences, your alert settings, which notifications you have seen, and markers for anything you have started but not finished.',
+    downloadButton: 'Download my data',
+    downloadDone: 'Saved',
+    eraseTitle: 'Erase it from this browser',
+    eraseBody:
+      'Removes all of it from this device. Your preferences go back to their defaults, you will be asked about cookies and language again, and anything you had part-way through will lose its local marker.',
+    eraseButton: 'Erase my data',
+    eraseConfirm: 'Yes, erase it',
+    eraseCancel: 'Cancel',
+    eraseConfirmPrompt:
+      'This cannot be undone. Download a copy first if you want to keep one.',
+    /** Counts are shown rather than a bare "done" — see `eraseMyData`
+     *  for why the three outcomes must stay distinguishable. */
+    eraseDone: tmpl('Erased {{count}} stored items from this browser.', ['count']),
+    eraseNothing: 'There was nothing stored in this browser to erase.',
+    eraseBlocked:
+      'This browser would not let the app clear its storage, so nothing was removed. Private-browsing windows and locked-down privacy settings can both do this — clearing site data through your browser’s own settings will work.',
+    holdingTitle: 'What is stored right now',
+    holdingCount: tmpl('{{count}} items', ['count']),
+    holdingNone: 'Nothing is stored in this browser at the moment.',
+    scopeTitle: 'What this does not cover',
+    scopeChain:
+      'Anything on the blockchain. Your wallet address and every transaction you have signed are public and permanent — no one, Vaipakam included, can export or erase them.',
+    scopeAlerts:
+      'Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlink it in Settings to remove it.',
+    scopeSite:
+      'The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.',
+    scopeCookies:
+      'Your language and theme are shared with vaipakam.com through a cookie on the shared domain, so erasing here resets them there too.',
+  },
   killSwitch: {
     disabled:
       'This action is switched off right now — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, claims, and withdrawals all stay open.',
@@ -4137,6 +4185,7 @@ const copySource = {
       activitySub: 'Everything your wallet has done on Vaipakam',
       riskAccessSub: 'Choose how risky the assets in your deals may be',
       helpSub: 'Plain-language answers and build info',
+      dataRightsSub: 'Download or erase what this app stores in your browser',
     },
   },
   common: {

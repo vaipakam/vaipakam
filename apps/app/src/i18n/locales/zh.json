@@ -191,6 +191,31 @@
       "phasePermit": "正在签署许可…（{{c}} / {{t}}）— 免费，无 gas",
       "phaseSend": "正在提交…（{{c}} / {{t}}）"
     },
+    "dataRights": {
+      "title": "你的数据",
+      "subtitle": "本应用在你的浏览器中保存了什么，以及如何取得副本或将其删除。",
+      "downloadTitle": "下载一份副本",
+      "downloadBody": "把本应用在此浏览器中保存的全部内容存为一个文件，供你保留或查看：显示偏好、提醒设置、你已查看过哪些通知，以及你已开始但未完成事项的标记。",
+      "downloadButton": "下载我的数据",
+      "downloadDone": "已保存",
+      "eraseTitle": "从此浏览器中清除",
+      "eraseBody": "把这些内容从本设备上全部删除。你的偏好会恢复默认，系统会再次询问 Cookie 和语言，未完成的事项会失去本地标记。",
+      "eraseButton": "清除我的数据",
+      "eraseConfirm": "是的，清除",
+      "eraseCancel": "取消",
+      "eraseConfirmPrompt": "此操作无法撤销。若想保留，请先下载一份副本。",
+      "eraseDone": "已从此浏览器清除 {{count}} 项已保存内容。",
+      "eraseNothing": "此浏览器中没有可清除的已保存内容。",
+      "eraseBlocked": "此浏览器不允许应用清除其存储，因此未删除任何内容。无痕窗口和严格的隐私设置都可能导致这种情况——通过浏览器自身的设置清除站点数据即可。",
+      "holdingTitle": "当前保存了什么",
+      "holdingCount": "{{count}} 项",
+      "holdingNone": "此浏览器中目前没有保存任何内容。",
+      "scopeTitle": "这不包括什么",
+      "scopeChain": "区块链上的任何内容。你的钱包地址和你签署过的每一笔交易都是公开且永久的——包括 Vaipakam 在内，没有人能导出或删除它们。",
+      "scopeAlerts": "提醒。如果你关联了 Telegram，该连接由提醒服务保存，而不是你的浏览器。要删除它，请在设置中解除关联。",
+      "scopeSite": "主站 vaipakam.com。它有自己独立的存储，控制项在那个站点上。",
+      "scopeCookies": "你的语言和主题通过共享域上的 Cookie 与 vaipakam.com 共用，因此在这里清除也会重置那边的设置。"
+    },
     "killSwitch": {
       "disabled": "此操作当前已关闭 — 运营方出于谨慎暂停了它，以便调查问题。已属于您的内容不受影响：还款、领取和提现都保持开放。"
     },
@@ -2244,7 +2269,8 @@
         "vpfiSub": "可选 — 持有 VPFI 以降低协议费用",
         "activitySub": "您的钱包在 Vaipakam 上做过的一切",
         "riskAccessSub": "选择你的交易中资产可以承受多大风险",
-        "helpSub": "简单语言回答和 build 信息"
+        "helpSub": "简单语言回答和 build 信息",
+        "dataRightsSub": "下载或清除本应用保存在你浏览器中的内容"
       }
     },
     "common": {
