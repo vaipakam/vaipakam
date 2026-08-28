@@ -1799,6 +1799,22 @@ caught at the cheapest stage.
       passing on a file that is now wrong about which Workers are live. Only
       `--live` sees it, and nothing runs `--live` on a schedule.
 
+      **So run it here, on the existing-account path, before you commit the
+      stamp** (Codex #1978 r47). The paragraph above says only `--live` can
+      catch this and the step never asked anyone to run it — a stamp is a
+      claim that the file was checked against the account, and refreshing one
+      without checking is the defect this whole document is about, performed
+      by the procedure that exists to prevent it. It also catches a row that
+      went stale elsewhere while nobody was looking, which is the only
+      opportunity anything has to notice.
+
+      ```bash
+      read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
+      CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
+        node .github/scripts/check-cron-slots.mjs --live
+      unset CF_API_TOKEN
+      ```
+
       **On the fresh-account branch, do the edit here and the `--live`
       confirmation in §7b** (Codex #1978 r35). Step 3 explains why `--live`
       cannot pass against the fresh account before then: the authority still

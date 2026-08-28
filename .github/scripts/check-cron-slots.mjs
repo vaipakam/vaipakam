@@ -397,6 +397,29 @@ const FUNCTION_WORD =
  * that its own mirror correctly allowed. `scopedElsewhere` now decides both,
  * over the claim's whole sentence.
  */
+/**
+ * The counted thing belongs to some OTHER container.
+ *
+ * Codex #1978 r47: "all five slots in the connection pool are occupied" and
+ * "all five slots in the semaphore" both fired — ordinary implementation prose
+ * blocking every PR in the repository. `triggers` and `schedules` name the
+ * thing they count; `slot` is a generic English container, so it is the one
+ * noun in the capacity list that carries no evidence on its own.
+ *
+ * Requiring cron/account qualification was tried first and failed a must-fire
+ * fixture: one of the ten originals says "this account's five Workers used all
+ * five slots", bare. So the test is positional instead — if the noun is
+ * immediately handed a container, that container must be the account's.
+ * Enumerating pools and semaphores would be the open-class mistake this file
+ * has already made four times.
+ */
+// The determiner is NON-CONSUMING, for the reason r39 established on
+// `NOT_SCOPED_ELSEWHERE` and which I reproduced here verbatim before catching
+// it: consumed greedily, "in THE account" fails the account test, backtracks
+// to the zero-width branch, and then passes the "some other container" test at
+// `the` — so the one container that must not suppress suppressed itself.
+const NOT_IN_ANOTHER_CONTAINER = String.raw`(?!${GAP}(?:in|of|on)${WRAP}(?!(?:(?:this|the|our|a|an)${WRAP})?(?:cloudflare${WRAP})?(?:account|cron|trigger|schedule|worker)s?\b)[A-Za-z])`;
+
 const NOT_SCOPED_ELSEWHERE = '';
 
 /**
@@ -475,7 +498,15 @@ const OCCUPANCY = [
   // (IncidentRunbook) are five of something else, in windows that happen to
   // mention cron. Bare "all five" fired on both.
   new RegExp(
-    String.raw`\ball${WRAP}(?:5|five)${WRAP}${CAP_NOUN}\b`,
+    // Codex #1978 r47: bare `slots` is not a capacity noun. "All five slots in
+    // the connection pool are occupied" and "all five slots in the semaphore"
+    // both fired, on a gate that blocks every PR — ordinary implementation
+    // prose rejected for counting something else entirely. `triggers` and
+    // `schedules` name the thing; `slot` is a generic English container, which
+    // is the r20 lesson (the word next to the number tells you what it counts)
+    // arriving at the one noun in the list that does not.
+    //
+    String.raw`\ball${WRAP}(?:5|five)${WRAP}${CAP_NOUN}\b${NOT_IN_ANOTHER_CONTAINER}`,
     'i',
   ),
   // "occupy 3 today", "occupies four", "the rest of the org already occupies 4"
@@ -1258,7 +1289,13 @@ function scopedElsewhere(text, at, len) {
   // entitlement test silently exempted two of the passages this gate was
   // built from. The qualifier has to attach to THIS claim's noun, which means
   // the window immediately after the match, not the sentence around it.
-  const trailing = text.slice(at + len, at + len + 40);
+  // Codex #1978 r47: a fixed 40-character window crosses punctuation, so
+  // "There are four cron triggers. Every account has a dashboard." was
+  // suppressed by the NEXT sentence's generic vocabulary. A qualifier cannot
+  // attach across a clause boundary; the window now stops at one.
+  const rawTrailing = text.slice(at + len, at + len + 40);
+  const cut = rawTrailing.search(/[.;:!?\n]/);
+  const trailing = cut === -1 ? rawTrailing : rawTrailing.slice(0, cut);
   return ENVIRONMENT.test(sentence) || PLAN_ENTITLEMENT.test(trailing);
 }
 
@@ -1627,12 +1664,27 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
   // being a name and the full spelling is required, which is decidable from
   // the table alone.
   const shortOf = (n) => n.replace(/^vaipakam-/, '').toLowerCase();
-  const shortCounts = new Map();
-  for (const n of allNames) shortCounts.set(shortOf(n), (shortCounts.get(shortOf(n)) ?? 0) + 1);
+  // Codex #1978 r47: counting short-to-short collisions missed the case where
+  // a short alias equals a DIFFERENT row's full name — with
+  // `vaipakam-keeper` and `vaipakam-vaipakam-keeper` listed, the token
+  // `vaipakam-keeper` is one row's full name and the other's short form at the
+  // same time, and a single-holder label satisfied both. Uniqueness has to be
+  // measured over the UNION of every form every row can go by, which is the
+  // r46 fix asking the same question one level too narrowly.
+  const claims = new Map();
+  const bump = (k) => claims.set(k, (claims.get(k) ?? 0) + 1);
+  for (const n of allNames) {
+    const full = n.toLowerCase();
+    const short = shortOf(n);
+    bump(full);
+    if (short !== full) bump(short);
+  }
   const identifiers = (n) => {
     const full = n.toLowerCase();
     const short = shortOf(n);
-    return shortCounts.get(short) === 1 && short !== full ? [full, short] : [full];
+    const ids = [full];
+    if (short !== full && claims.get(short) === 1) ids.push(short);
+    return ids;
   };
   const distinctiveOf = (n) => shortOf(n);
   const label = committedLabel.toLowerCase();
@@ -1935,7 +1987,12 @@ export function parseInventory(md) {
     // cosmetic limit: the row is reported unparseable AND `--live` reports the
     // same script as ACCOUNT ONLY, so the authority could not be made correct
     // by any edit. A gate with no passing state is worse than no gate.
-    const row = /^\|\s*`([a-z0-9_-]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
+    // Codex #1978 r47: the candidacy check allows `{0,3}` leading spaces (GFM
+    // renders such a table normally) and this regex demanded column zero, so a
+    // formatting-only indent made EVERY data row unparseable in both modes —
+    // the fifth unrepresentable state on this PR. The two tests have to agree
+    // about what a row looks like.
+    const row = /^ {0,3}\|\s*`([a-z0-9_-]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
     // Codex #1978 r4: a row that LOOKS like data and does not parse was silently
     // skipped, and the "bolded name skipped" fixture documented the hole rather
     // than closing it. Bolding the keeper's name would drop its reservation from
@@ -2092,12 +2149,34 @@ export function parseInventory(md) {
     // the composite unrunnable. So the special form is tested at the whole
     // component BEFORE any `/` or `-` splitting, and a component carrying
     // `L`, `W` or `#` without being one is rejected outright, not decomposed.
-    const EXT_CHAR = /[lw#]/i;
+    // Codex #1978 r47: searching a component for `l`/`w`/`#` also hits the
+    // LETTERS IN NAMES — `JUL-AUG` was rejected for the L in JUL, `WED-FRI`
+    // for the W in WED. That is the fourth unrepresentable legal state on this
+    // PR, and it was caused by the r46 fix for the third. A character search
+    // is not a form test; ask whether the component IS a special form, and
+    // otherwise reject only extension characters that appear where no valid
+    // atom could carry them.
+    const extFormsFor = (idx) =>
+      idx === 2
+        ? [/^L$/i, /^LW$/i, /^\d{1,2}W$/i]
+        : idx === 4
+          ? [/^L$/i, /^\dL$/i, /^\d#[1-5]$/]
+          : [];
     const fieldOk = (f, bounds, idx) =>
       f.split(',').every((part) => {
-        if (EXT_CHAR.test(part)) {
-          return NAMES[idx] && NAMES[idx].test(part) ? true : atomOk(part, bounds, idx);
+        if (extFormsFor(idx).some((re) => re.test(part))) {
+          return atomOk(part, bounds, idx);
         }
+        // A `#` is only ever part of a complete nth-weekday form, and an
+        // `L`/`W` only inside a name or a complete form — anywhere else the
+        // component is a composite that cannot run.
+        const stray = part
+          .split(/[-/]/)
+          .some(
+            (a) =>
+              /[lw#]/i.test(a) && !(NAMES[idx] && NAMES[idx].test(a)) && !/^\d+$/.test(a),
+          );
+        if (stray) return false;
         // Codex #1978 r38: destructuring two names out of `split('/')` DROPS
         // everything after the second, so `*/2/3` validated as `*` step `2`
         // and was counted as a live trigger. Destructuring is silent about
@@ -2518,47 +2597,39 @@ export function wranglerNameFrom(raw, isToml) {
   // everything before the first `[section]` header, and that is the whole
   // rule.
   if (isToml) {
-    for (const line of raw.split('\n')) {
-      const bare = line.replace(/#.*$/, '');
-      if (/^\s*\[/.test(bare)) break; // a table header ends the top level
-      // Codex #1978 r46: TOML MULTILINE strings. `name = """cron-check"""` is
-      // valid and Wrangler deploys it; the single-line pattern read the first
-      // two quotes as an empty value, so the Worker vanished from
-      // `trackedWranglerNames` and both source checks switched off - the same
-      // silent disabling this function has now produced by nine distinct
-      // routes. Multiline is tried FIRST, because `"""x"""` also matches the
-      // single-line alternative with an empty body.
-      const m = new RegExp(
-        String.raw`^\s*"?name"?\s*=\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)'''|"([^"]*)"|'([^']*)')`,
-      ).exec(bare);
-      if (m) {
-        // Codex #1978 r43: TOML escapes were not decoded, so a name spelled
-        // `vaipakam-\u0061gent` indexed a Worker that does not exist while
-        // Wrangler deploys `vaipakam-agent` — the r42 finding on the JSON
-        // branch, in the branch the r42 fix did not reach. Fixing one language
-        // and leaving its sibling, in a function whose ENTIRE history is that
-        // shape.
-        //
-        // Only BASIC strings (double-quoted) carry escapes; TOML literal
-        // strings (single-quoted) are raw by definition, so `m[2]` is
-        // returned untouched — decoding it would be a new bug in the opposite
-        // direction.
-        // Groups: 1 multiline-basic, 2 multiline-literal, 3 basic, 4 literal.
-        // Literal forms (either length) are RAW by definition and returned
-        // untouched — decoding them would be a new bug in the other direction.
-        if (m[2] !== undefined) return m[2];
-        if (m[4] !== undefined) return m[4];
-        const basic = m[1] !== undefined ? m[1] : m[3];
-        return basic.replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (whole, esc) => {
-          if (esc[0] === 'u' || esc[0] === 'U') {
-            return String.fromCodePoint(parseInt(esc.slice(1), 16));
-          }
-          const simple = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', '"': '"', '\\': '\\' };
-          return simple[esc] ?? whole;
-        });
+    // Codex #1978 r47: a multiline value BROKEN ACROSS PHYSICAL LINES still
+    // read as empty, because the r46 fix matched triple quotes but kept
+    // iterating one line at a time. Tenth distinct way this function has
+    // failed to read a valid config, and the ninth to do it silently.
+    //
+    // So the top-level table is taken as ONE BLOCK and matched as one string:
+    // a multiline value is by definition not a line, and iterating lines was
+    // the assumption underneath both this and the r41 JSON finding. `#`
+    // comments are stripped only at line starts, since a `#` inside a name is
+    // content.
+    const lines = raw.split('\n');
+    const stop = lines.findIndex((l) => /^\s*\[/.test(l));
+    const head = (stop === -1 ? lines : lines.slice(0, stop))
+      .join('\n')
+      .replace(/(^|\n)\s*#[^\n]*/g, '$1');
+    const m = new RegExp(
+      String.raw`(?:^|\n)\s*"?name"?\s*=\s*(?:"""([\s\S]*?)"""|'''([\s\S]*?)'''|"((?:[^"\\]|\\.)*)"|'([^']*)')`,
+    ).exec(head);
+    if (!m) return null;
+    // Groups: 1 multiline-basic, 2 multiline-literal, 3 basic, 4 literal.
+    // Literal forms are RAW by definition and returned untouched — decoding
+    // them would be a new bug in the other direction. A multiline value's
+    // opening newline is not part of it, per the TOML spec.
+    if (m[2] !== undefined) return m[2].replace(/^\r?\n/, '');
+    if (m[4] !== undefined) return m[4];
+    const basic = m[1] !== undefined ? m[1].replace(/^\r?\n/, '') : m[3];
+    return basic.replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (whole, esc) => {
+      if (esc[0] === 'u' || esc[0] === 'U') {
+        return String.fromCodePoint(parseInt(esc.slice(1), 16));
       }
-    }
-    return null;
+      const simple = { n: '\n', t: '\t', r: '\r', b: '\b', f: '\f', '"': '"', '\\': '\\' };
+      return simple[esc] ?? whole;
+    });
   }
   // Codex #1978 r41: the JSON side was still LINE-based — depth was updated
   // after each line's check, and `name` had to begin its line — so
@@ -2864,6 +2935,15 @@ const MUST_FIRE = [
   // r45: no predicate at all — the plainest way to state the count.
   ['the bare existential', 'There are four cron triggers.'],
   ['the exist form', 'Four cron triggers exist in the account.'],
+  // r47: the plan qualifier may not reach across a clause boundary.
+  [
+    'a claim followed by a generic sentence still fires',
+    'There are four cron triggers. Every account has a dashboard.',
+  ],
+  [
+    'a claim followed by a generic clause still fires',
+    'There are four cron triggers in this account; every account has an owner.',
+  ],
   ['the verbal form, possessive subject', 'Our Cloudflare account uses 4 cron triggers today.'],
   // Codex #1978 r39: a purpose phrase opens exactly like an environment scope
   // and is not one. These are the cases the grammatical test could not tell
@@ -3015,6 +3095,16 @@ const MUST_NOT_FIRE = [
   // — bound to the matched span, because two of the ten originals state the
   // cap and the occupancy in one sentence.
   ['the existential cap statement', 'There are five cron triggers per account.'],
+  // r47: `slot` is a generic container; the count belongs to whatever the
+  // sentence hands it.
+  [
+    'slots in another container',
+    'The cron handler uses a database pool. All five slots in the connection pool are occupied.',
+  ],
+  [
+    'slots in a semaphore',
+    'The trigger queues work only after all five slots in the semaphore are available.',
+  ],
   ['the existential plan entitlement', 'There are 250 cron triggers on Paid accounts.'],
   ['the postposed participle scoped elsewhere', 'There are four cron triggers running locally.'],
   ['the verbal form scoped elsewhere', 'The account runs four cron triggers locally.'],
@@ -3323,6 +3413,33 @@ const INVENTORY_CASES = [
     { 'vaipakam-agent': ['0 0 * * 5#2-6'] },
     [],
     1,
+  ],
+  // r47: the letters in NAMES are not extension characters. Rejecting these
+  // was the fourth unrepresentable legal state, caused by the r46 fix for the
+  // third.
+  [
+    'a named month range is accepted',
+    '| `vaipakam-mw` | `0 0 * JUL-AUG *` | `ops/mesh-watcher` | live |',
+    { 'vaipakam-mw': ['0 0 * JUL-AUG *'] },
+    [],
+    0,
+  ],
+  [
+    'a named weekday range is accepted',
+    '| `vaipakam-mw` | `0 0 * * WED-FRI` | `ops/mesh-watcher` | live |',
+    { 'vaipakam-mw': ['0 0 * * WED-FRI'] },
+    [],
+    0,
+  ],
+  // r47: GFM renders a table indented up to three spaces, and the candidacy
+  // check already allowed it; the row regex demanded column zero, so a
+  // formatting-only edit made every row unparseable in both modes.
+  [
+    'a row indented two spaces parses',
+    '  | `vaipakam-agent` | `* * * * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    0,
   ],
   [
     'step and list syntax is accepted',
@@ -3676,6 +3793,15 @@ const WRANGLER_NAME_CASES = [
   // single-line pattern read `"""x"""` as an empty value.
   ['a toml multiline basic string', 'name = """cron-check"""\n', true, 'cron-check'],
   ["a toml multiline literal string", "name = '''cron-check'''\n", true, 'cron-check'],
+  // r47: broken across PHYSICAL LINES — the tenth way this function has
+  // failed to read a valid config, and the reason the TOML head is now
+  // matched as one block rather than line by line.
+  [
+    'a toml multiline name across lines',
+    'name = @@@\ncron-check@@@\n'.replace(/@@@/g, '"'.repeat(3)),
+    true,
+    'cron-check',
+  ],
   // ...and NOT the literal-string form, which is raw by definition.
   ["a toml literal string is raw", "name = 'vaipakam-\\u0061gent'\n", true, 'vaipakam-\\u0061gent'],
   [
