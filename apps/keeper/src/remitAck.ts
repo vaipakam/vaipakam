@@ -36,6 +36,7 @@ import {
 import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, passIsArmed } from './keeper';
+import { batchedRead } from './batchRead';
 import {
   getRemitAckScanState,
   putRemitAckScanState,
@@ -56,6 +57,8 @@ const REPORTER_ABI = RewardReporterFacetABI as Abi;
 
 /** Max reservation ids examined per tick (scan stays O(bounded)). */
 const MAX_SCAN_PER_TICK = 200;
+/** Reservations per `aggregate3`. Matches the other passes' bound (#1946). */
+const SCAN_CHUNK = 100;
 /** Max ack sends per tick (each is a CCIP fee spend). */
 const MAX_ACKS_PER_TICK = 5;
 /** Min seconds between ack attempts for one reservation (CCIP delivery
@@ -135,13 +138,49 @@ async function ackFromBaseLedger(env: Env, chain: ChainConfig): Promise<void> {
   // it skipped).
   let prefixUnbroken = from === BigInt(frontier);
 
-  for (let id = from; id < to; id++) {
-    const r = (await publicClient.readContract({
-      address: diamond,
-      abi: REMIT_ABI,
-      functionName: 'getRemitReservation',
-      args: [id],
-    })) as RemitReservationView;
+  // BATCHED (#1896). This was one `getRemitReservation` per id in the window —
+  // up to MAX_SCAN_PER_TICK subrequests per tick against a 50-per-invocation
+  // ceiling, and the per-selector attribution measured 200 of them on a pass
+  // whose transaction work is 8% of its traffic. The window, its bounds and the
+  // order of processing are unchanged; only the round-trips collapse.
+  const windowIds: bigint[] = [];
+  for (let id = from; id < to; id++) windowIds.push(id);
+  const scanResults: { status: 'success' | 'failure'; result?: unknown; error?: unknown }[] = [];
+  for (let i = 0; i < windowIds.length; i += SCAN_CHUNK) {
+    const chunk = windowIds.slice(i, i + SCAN_CHUNK);
+    // eslint-disable-next-line no-await-in-loop
+    const part = await batchedRead(
+      publicClient as never,
+      chunk.map((id) => ({
+        address: diamond,
+        abi: REMIT_ABI,
+        functionName: 'getRemitReservation' as const,
+        args: [id] as const,
+      })),
+      `remitAck getRemitReservation ${i}/${windowIds.length}`,
+    );
+    scanResults.push(...part);
+  }
+
+  for (let idx = 0; idx < windowIds.length; idx++) {
+    const id = windowIds[idx];
+    const res = scanResults[idx];
+    if (!res || res.status !== 'success') {
+      // A read failure ABORTS the scan, which is what the sequential version
+      // did: the throw unwound to the per-chain catch, so `putRemitAckScanState`
+      // never ran and neither the frontier nor the cursor advanced past an id
+      // whose status is unknown. Advancing either on an unread reservation is
+      // the one outcome worth avoiding here, so the failure is preserved rather
+      // than turned into a per-id skip. Ids already processed above keep their
+      // (idempotent) acked marks, exactly as before.
+      console.warn(
+        `[keeper] remitAck scan aborted at remit=${id}: ${String(
+          res?.error ?? 'no result',
+        ).slice(0, 200)}`,
+      );
+      return;
+    }
+    const r = res.result as RemitReservationView;
     if (r.status === 2 || r.status === 3) {
       if (r.status === 2) await markRemitAcked(env.DB, baseChainId, diamond, Number(id));
       if (prefixUnbroken) contiguousTerminal = Number(id) + 1;
