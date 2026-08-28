@@ -1924,6 +1924,7 @@ export function parseInventory(md) {
     lines = nextIdx === -1 ? rest : rest.slice(0, nextIdx);
   }
 
+  let inTable = false;
   for (const line of lines) {
     rowIdx += 1;
     // Codex #1978 r8: a leading pipe is OPTIONAL in Markdown — the table still
@@ -1952,8 +1953,25 @@ export function parseInventory(md) {
     // this distinction one layer down — the candidacy test and the split
     // disagreed about what a separator is, which is the two-halves-of-one-
     // function shape for the fourth time on this PR.
+    // Codex #1978 r55: a pipe COUNT is not table membership, escaped or not.
+    // "The accepted labels are live | reserved | undeployed | uncertain."
+    // renders as a paragraph, and the leading-pipe diagnostic fired on it —
+    // blocking CI on an explanatory sentence in the document whose whole
+    // method is explaining itself.
+    //
+    // GFM says a table ends at a blank line, so membership is STRUCTURAL:
+    // inside the table block, a pipe-bearing line missing its leading pipe is
+    // the malformed row r8 exists to name; outside it, prose containing pipes
+    // is prose. r54 fixed WHICH pipes are counted and left the assumption
+    // that counting them decides anything.
+    if (line.trim() === '') {
+      inTable = false;
+      continue;
+    }
     const pipes = splitTableRow(line).length - 1;
-    if (!/^ {0,3}\|/.test(line) && pipes < 3) continue;
+    const startsRow = /^ {0,3}\|/.test(line);
+    if (startsRow) inTable = true;
+    if (!startsRow && !(inTable && pipes >= 3)) continue;
     if (!/^\s*\|/.test(line)) {
       problems.push(
         `an inventory row is missing its leading pipe; Markdown renders it, this ` +
@@ -2551,8 +2569,18 @@ export function checkSources(sources) {
     // passing representation at all. Eighth such state on this PR. Traversal
     // is a path COMPONENT equal to `..`, not the two characters appearing
     // anywhere.
-    const traverses = path.split('/').some((seg) => seg === '..');
-    if (!/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(path) || traverses) {
+    // Codex #1978 r55: normalise the spelling ONCE, before anything reads it —
+    // `./apps/agent` is as conventional as `apps/agent/`, `git ls-files`
+    // normalises its OUTPUT either way, and every downstream length arithmetic
+    // was using the unnormalised input. r54 fixed the trailing slash and left
+    // the class; this is the third instance-instead-of-rule in three rounds,
+    // so the rule is applied at the single point the value enters.
+    const dir = path
+      .replace(/^(?:\.\/)+/, '')
+      .replace(/\/{2,}/g, '/')
+      .replace(/\/+$/, '');
+    const traverses = dir.split('/').some((seg) => seg === '..');
+    if (!/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(dir) || traverses) {
       problems.push(
         `\`${name}\`'s source \`${path}\` is not a literal repository path; a glob ` +
           `or pathspec keeps matching after the real source moves, which is the ` +
@@ -2560,7 +2588,7 @@ export function checkSources(sources) {
       );
       continue;
     }
-    const out = execFileSync('git', ['ls-files', '-z', '--', `:(literal)${path}`], {
+    const out = execFileSync('git', ['ls-files', '-z', '--', `:(literal)${dir}`], {
       encoding: 'utf8',
       maxBuffer: 16 * 1024 * 1024,
     });
@@ -2589,7 +2617,6 @@ export function checkSources(sources) {
     // character too many — so a formatting-only edit made `checkSources`
     // claim the directory holds no config and blocked both modes. Strip the
     // separator rather than assuming exactly one follows.
-    const dir = path.replace(/\/+$/, '');
     const configPath = tracked.find((f) =>
       /^wrangler\.(jsonc|json|toml)$/.test(f.slice(dir.length + 1)),
     );
@@ -3929,11 +3956,28 @@ const INVENTORY_CASES = [
   // pipe optional and renders the row anyway, so skipping it dropped a
   // reservation a reader can plainly see.
   [
+    // Codex #1978 r55: this fixture now carries the TABLE AROUND IT, because
+    // that is the only place the defect exists. Membership is structural
+    // since r55 — a pipe-bearing line outside a table is prose, which is what
+    // stopped an explanatory sentence from blocking CI — so an isolated row
+    // is no longer a row, and asserting on one would have pinned the
+    // artificial case rather than the real one.
     'a row missing its leading pipe is a finding',
-    '`vaipakam-keeper` | *(none)* | `apps/keeper` | reserved — held |',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '`vaipakam-keeper` | *(none)* | `apps/keeper` | reserved — held |',
     {},
     [],
     1,
+  ],
+  // ...and the mirror: the same line with no table around it is prose, and
+  // must not be reported. This is the case that was blocking CI.
+  [
+    'pipes in prose outside a table are not a row',
+    'The accepted labels are live | reserved | undeployed | uncertain.',
+    {},
+    [],
+    0,
   ],
   ['header row ignored', '| Worker | Schedule | Source in this repo | Status |', {}, [], 0],
   ['separator ignored', '|---|---|---|---|', {}, [], 0],
