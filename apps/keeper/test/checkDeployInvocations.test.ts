@@ -1527,6 +1527,37 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('cd through a bash command builtin still moves the shell (#1995 r14)', () => {
+    // `help builtin` / `help command`: both run cd in the CURRENT shell.
+    for (const via of ['builtin', 'command']) {
+      const r = runWith(
+        'contracts/script/deploy-chain.sh',
+        `${via} cd apps/agent\nwrangler deploy\n`,
+      );
+      expect(r.ok, via).toBe(false);
+      expect(r.out, via).toContain('apps/agent');
+    }
+  });
+
+  it('cd - returns to OLDPWD, not a directory named - (#1995 r14)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\ncd ../indexer\ncd -\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('cd - with no previous directory returns to the root (#1995 r14)', () => {
+    // The control: OLDPWD is the repo root here, which is not a scoped
+    // package, so this must stay quiet rather than resolve somewhere.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\ncd -\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('...<pattern> reaches the pattern\'s DEPENDENTS (#1995 r9)', () => {
     // Both protected packages declare @vaipakam/lib, so pnpm selects both.
     // Stripping the dots reduced this to a literal no package has.

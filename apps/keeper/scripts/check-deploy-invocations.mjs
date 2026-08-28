@@ -1487,12 +1487,24 @@ function selectorScope(seg, states, hasCwdState = true) {
 function applyDir(state, dir, vars = null) {
   if (dir.kind === 'popd') {
     return state.stack.length > 0
-      ? { cwd: state.stack[state.stack.length - 1], stack: state.stack.slice(0, -1) }
-      : { cwd: '', stack: [] };
+      ? {
+          cwd: state.stack[state.stack.length - 1],
+          stack: state.stack.slice(0, -1),
+          prev: state.cwd,
+        }
+      : { cwd: '', stack: [], prev: state.cwd };
+  }
+  // `cd -` is `$OLDPWD`, per bash's `help cd` — not a child directory called
+  // `-` (#1995 r14). `cd apps/agent; cd ../indexer; cd -` is back in the agent,
+  // while resolving it as a path produced `apps/indexer/-`, which matches no
+  // package, so the bare deploy that followed was not attributed at all.
+  if (dir.kind === 'cd' && dir.target === '-') {
+    return { cwd: state.prev ?? '', stack: state.stack, prev: state.cwd };
   }
   return {
     cwd: resolveDir(state.cwd, dir.target, vars),
     stack: dir.kind === 'pushd' ? [...state.stack, state.cwd] : state.stack,
+    prev: state.cwd,
   };
 }
 
@@ -1518,7 +1530,11 @@ function dirDirective(seg) {
   // command named `{cd`, not a group. Braces are also deliberately absent from
   // `netParens` — they open no subshell, so nothing here needs restoring on
   // close, which is exactly the difference from the paren case.
-  const LEAD = String.raw`(?:\{\s+)?`;
+  // `builtin cd` and `command cd` both run `cd` in the CURRENT shell —
+  // bash's `help builtin` and `help command` say so — and an anchored `^cd`
+  // saw neither (#1995 r14). Ordered after the brace so `{ builtin cd x; }`
+  // resolves too.
+  const LEAD = String.raw`(?:\{\s+)?(?:(?:builtin|command)\s+)?`;
   const pushed = seg.match(new RegExp(`^${LEAD}pushd\\s+${OPTS}(${WORD})`));
   if (pushed) return { kind: 'pushd', target: dequote(pushed[1]) };
   if (new RegExp(`^${LEAD}popd\\b`).test(seg)) return { kind: 'popd' };
@@ -1534,7 +1550,9 @@ function dirDirective(seg) {
 function dedupeStates(states) {
   const seen = new Map();
   for (const st of states) {
-    const key = `${st.cwd}\u0000${st.stack.join('/')}`;
+    // `prev` is part of the state: two states with the same cwd but different
+    // OLDPWD diverge on the next `cd -` (#1995 r14).
+    const key = `${st.cwd}\u0000${st.stack.join('/')}\u0000${st.prev ?? ''}`;
     if (!seen.has(key)) seen.set(key, st);
     if (seen.size >= 32) break;
   }
