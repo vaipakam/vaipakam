@@ -129,7 +129,10 @@ const DEPLOY_RE = String.raw`wrangler(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= 
 // `run` itself takes options before the script name — pnpm documents
 // `--if-present` — and requiring `deploy` to be the very next token missed
 // `run --if-present deploy` entirely (#1995 r6).
-const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run(?:-script)?(?:\s+-{1,2}[A-Za-z0-9-]+(?:=[^\s]*)?)*\s+deploy\b`;
+// `npm run --help` lists `run-script`, `rum` and `urn` as aliases of `run`
+// (#1995 r10). A wrapper using one of them was not recognised as a deploy at
+// all, so the file prefilter skipped it.
+const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+(?:run(?:-script)?|rum|urn)(?:\s+-{1,2}[A-Za-z0-9-]+(?:=[^\s]*)?)*\s+deploy\b`;
 /** What counts as "this line performs a deploy" for DETECTION purposes. */
 const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
 
@@ -891,11 +894,18 @@ function filterScopes(line) {
   // protected Worker, destructively — passed the guard.
   if (
     /(?:^|\s)(?:-r|--recursive)(?:\s|=|$)/.test(line) ||
-    /(?:^|\s)pnpm\s+(?:recursive|multi|m)(?:\s|$)/.test(line)
+    /(?:^|\s)pnpm\s+(?:recursive|multi|m)(?:\s|$)/.test(line) ||
+    // npm's spelling of the same fan-out: `npm run --help` documents
+    // `[--workspaces]`, with `-ws` as its shorthand (#1995 r10).
+    /(?:^|\s)(?:--workspaces|-ws)(?:\s|=|$)/.test(line)
   ) {
     for (const sc of SCOPED) out.add(sc);
   }
-  const all = line.matchAll(new RegExp(`--filter(?:-prod)?(?:=|\\s+)(${WORD})`, 'g'));
+  // `-F` is pnpm's documented shorthand for `--filter` (#1995 r10). The
+  // lookbehind keeps it from matching the tail of another token.
+  const all = line.matchAll(
+    new RegExp(`(?<![\\w-])(?:--filter(?:-prod)?|-F)(?:=|\\s+)(${WORD})`, 'g'),
+  );
   for (const m of all) {
     let pat = dequote(m[1]).replace(/^\.\.\.|\.\.\.$/g, '');
     // A LEADING `!` excludes: pnpm selects the packages NOT matching, so
@@ -907,6 +917,15 @@ function filterScopes(line) {
     // package names missed `--filter './apps/*gent'` entirely (#1995 r7).
     const isDir = /^[.{]/.test(pat);
     pat = pat.replace(/^\{|\}$/g, '').replace(/^\.\//, '').replace(/\/+$/, '');
+    // `[<since>]` selects whatever changed since a ref (#1995 r10). Which
+    // packages that is cannot be known from the text, and it demonstrably
+    // reaches a protected one, so it is attributed to every scoped package the
+    // way `-r` is — the conservative direction for a selector we cannot
+    // resolve. Checked before the glob test, which would discard it.
+    if (/^\[.*\]$/.test(pat)) {
+      for (const sc of SCOPED) out.add(sc);
+      continue;
+    }
     if (!negated && !/[*]/.test(pat)) continue; // literals handled by scopeOf
     const re = new RegExp(
       `^${pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,

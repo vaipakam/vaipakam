@@ -1510,6 +1510,43 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it("pnpm's -F is --filter (#1995 r10)", () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm -F '@vaipakam/*gent' run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("npm's rum and urn are run (#1995 r10)", () => {
+    // `npm run --help` lists run-script, rum and urn as aliases.
+    for (const alias of ['rum', 'urn']) {
+      const r = runWith(
+        'contracts/script/deploy-chain.sh',
+        `cd apps/agent\nnpm ${alias} deploy -- --no-keep-vars\n`,
+      );
+      expect(r.ok, alias).toBe(false);
+    }
+  });
+
+  it("npm's --workspaces fans out like pnpm's -r (#1995 r10)", () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'npm --workspaces --if-present run deploy -- --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("a changed-since filter may reach any package (#1995 r10)", () => {
+    // `[<ref>]` selects whatever changed since that ref, which the text cannot
+    // tell us — attributed to every scoped package, as `-r` is.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter '[abc123]' exec wrangler deploy\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it("pnpm's --dir and wrangler's --cwd COMPOSE (#1995 r9)", () => {
     // pnpm moves to ../agent, then wrangler starts where it was left, so
     // `--cwd .` is the agent. Reading only one of the two resolved wrangler's
