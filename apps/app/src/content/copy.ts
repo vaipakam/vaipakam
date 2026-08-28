@@ -3403,13 +3403,13 @@ const copySource = {
     // A user can reach a page whose exit controls are exempt and still
     // press something that is not an exit; this says why, in the terms
     // the gate itself uses.
-    // Self-review after round 5: an in-flight read is not a refusal.
-    // With the Terms read now mounted on exempt routes, a fast click on
-    // `/vpfi` or `/desk` can land before it resolves, and saying "you
-    // need to accept the terms" there tells a user they declined
-    // something they were never shown.
-    termsCheckPending:
-      'Still checking whether Vaipakam\u2019s terms apply to your wallet \u2014 give it a moment and try again.',
+    // Not knowing is not refusing. Covers every state short of a fresh
+    // successful answer: never read, still reading, read failed, or too
+    // old to trust. Saying "you need to accept the terms" in any of
+    // them tells a user they declined something they may well have
+    // already accepted (review round 6).
+    termsCheckUnavailable:
+      'We couldn\u2019t confirm whether Vaipakam\u2019s terms apply to your wallet just now \u2014 give it a moment and try again.',
     termsNotAccepted:
       'You need to accept Vaipakam\u2019s terms before doing this. Open any other page in the app and you\u2019ll be asked once \u2014 repaying, claiming and withdrawing keep working either way.',
     // F-20260703-005 (#988) — say HOW MUCH more whenever the caller can

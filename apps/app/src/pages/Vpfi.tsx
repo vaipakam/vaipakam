@@ -266,8 +266,8 @@ export function Vpfi() {
           const termsVerdict = termsBlocked();
           if (termsVerdict !== 'ok') {
             throw new Error(
-              termsVerdict === 'pending'
-                ? copy.errors.termsCheckPending
+              termsVerdict === 'unknown'
+                ? copy.errors.termsCheckUnavailable
                 : copy.errors.termsNotAccepted,
             );
           }

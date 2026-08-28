@@ -48,6 +48,8 @@ describe('isExitRoute', () => {
       '/manage',
       '/claim',
       '/claim-center',
+      '/trade',
+      '/terminal',
       '/vpfi-vault',
       '/vault-assets',
     ]) {

@@ -1875,7 +1875,7 @@
         "unknown": "Le protocole n’accepte pas cette offre pour le moment. Rien n’a été envoyé — actualisez et réessayez, ou revenez un peu plus tard."
       },
       "termsNotAccepted": "Vous devez accepter les conditions de Vaipakam avant de faire cela. Ouvrez n’importe quelle autre page de l’application et la demande vous sera faite une seule fois ; rembourser, réclamer et retirer continuent de fonctionner dans tous les cas.",
-      "termsCheckPending": "Nous vérifions encore si les conditions de Vaipakam s’appliquent à votre portefeuille — patientez un instant et réessayez."
+      "termsCheckUnavailable": "Nous n’avons pas pu confirmer à l’instant si les conditions de Vaipakam s’appliquent à votre portefeuille — patientez un instant et réessayez."
     },
     "fees": {
       "borrowerLIF": "Vaipakam facture des frais d’initialisation de prêt de {{pct}} sur le montant emprunté.",

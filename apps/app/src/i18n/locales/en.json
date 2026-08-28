@@ -1838,7 +1838,7 @@
       "showMoreHidden": "Show {{next}} more ({{total}} hidden)"
     },
     "errors": {
-      "termsCheckPending": "Still checking whether Vaipakam’s terms apply to your wallet — give it a moment and try again.",
+      "termsCheckUnavailable": "We couldn’t confirm whether Vaipakam’s terms apply to your wallet just now — give it a moment and try again.",
       "termsNotAccepted": "You need to accept Vaipakam’s terms before doing this. Open any other page in the app and you’ll be asked once — repaying, claiming and withdrawing keep working either way.",
       "needMore": "You need more {{asset}} to continue.",
       "needMoreBy": "You need about {{shortBy}} more {{asset}} to continue.",

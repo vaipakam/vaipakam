@@ -51,8 +51,17 @@ export interface DiamondWriteResult {
  * the same cache under the same key: a second, looser copy would tell
  * users they may proceed and then refuse them.
  */
-/** What the cached Terms verdict says about proceeding right now. */
-export type TermsWriteVerdict = 'ok' | 'pending' | 'blocked';
+/**
+ * What the cached Terms verdict says about proceeding right now.
+ *
+ * `unknown` is separate from `blocked` on purpose (review round 6 P2).
+ * Both stop a write — enforcement fails closed either way — but only
+ * `blocked` means the wallet was ASKED and has not accepted. A cached
+ * `accepted: true` whose refresh expired or failed is not a refusal; it
+ * is an answer we could not re-confirm, and telling that user to accept
+ * terms they already accepted is both false and unactionable.
+ */
+export type TermsWriteVerdict = 'ok' | 'unknown' | 'blocked';
 
 /**
  * The one place the cached Terms verdict is interpreted.
@@ -71,13 +80,12 @@ export function readTermsWriteVerdict(
   const key = tosQueryKey(chainId, address);
   const verdict = queryClient.getQueryData<TosVerdictData>(key);
   const state = queryClient.getQueryState(key);
-  if (state?.status === 'pending') return 'pending';
-  const fresh =
-    verdict !== undefined &&
-    state !== undefined &&
-    state.status === 'success' &&
-    !isVerdictStale(state.dataUpdatedAt, Date.now());
-  if (!fresh) return verdict === undefined ? 'pending' : 'blocked';
+  // Never read, still reading, read failed, or read too old to trust:
+  // all of these are "we do not know", never "you declined".
+  if (verdict === undefined || state === undefined) return 'unknown';
+  if (state.status !== 'success') return 'unknown';
+  if (isVerdictStale(state.dataUpdatedAt, Date.now())) return 'unknown';
+  // Only a FRESH, SUCCESSFUL read may say the user has not accepted.
   return verdict.accepted ? 'ok' : 'blocked';
 }
 
@@ -147,8 +155,8 @@ export function useDiamondWrite() {
         // counts as knowing.
         if (termsVerdict !== 'ok') {
           throw new Error(
-            termsVerdict === 'pending'
-              ? copy.errors.termsCheckPending
+            termsVerdict === 'unknown'
+              ? copy.errors.termsCheckUnavailable
               : copy.errors.termsNotAccepted,
           );
         }

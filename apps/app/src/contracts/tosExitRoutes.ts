@@ -53,6 +53,8 @@ const EXIT_PREFIXES = [
   // hyphenated sibling is a different route. The test caught this exact
   // comment claiming otherwise.
   '/claim-center',
+  '/trade', // alias of /desk
+  '/terminal', // alias of /desk
   '/vpfi-vault',
   '/vault-assets',
   '/app/loans',
