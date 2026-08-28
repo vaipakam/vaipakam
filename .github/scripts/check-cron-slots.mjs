@@ -2085,7 +2085,7 @@ export function parseInventory(md) {
     // witness. That is r18's finding returning through the candidacy test my
     // own r55 change introduced.
     const isBlockStart =
-      /^ {0,3}(?:#{1,6}\s|>|[-*+]\s|\d+[.)]\s|```|~~~|(?:[-*_]\s*){3,}$)/.test(line) ||
+      /^ {0,3}(?:#{1,6}(?:\s|$)|>|[-*+]\s|\d+[.)]\s|```|~~~|(?:[-*_]\s*){3,}$)/.test(line) ||
       HTML_BLOCK_START.test(line);
     if (line.trim() === '' || isBlockStart) {
       inTable = false;
@@ -2645,8 +2645,20 @@ export function readStatus(cell) {
   // written). Everything else — every character anyone can attach to the word,
   // named or not — ends the match and the status is unrecognised. That closes
   // the class rather than its sixth member.
-  const m = /^[\s*_]*([a-z]+)(?=[\s*_]|$)/iu.exec(cell);
-  const word = m?.[1]?.toLowerCase();
+  // Codex #1978 r59: accepting a marker as the boundary is not the same as
+  // parsing the wrapper. `**reserved**?` opened with `**`, matched the word,
+  // and the lookahead was satisfied by the FIRST closing `*` — so the `?`
+  // that r51 was added to reject sailed past behind ordinary Markdown
+  // formatting, on the one row with no account-side witness. The r52
+  // inversion was right and applied one character too early: the wrapper is
+  // part of the token, so it has to be consumed before asking what follows.
+  //
+  // The emphasis run is captured and required to CLOSE with the same run,
+  // and only then must whitespace or the end of the cell follow. `reserved*`
+  // and `**reserved*` are unbalanced and are rejected with it, which is the
+  // same rule and not an extra one.
+  const m = /^\s*([*_]{0,3})([a-z]+)\1(?=\s|$)/iu.exec(cell);
+  const word = m?.[2]?.toLowerCase();
   return word && STATUSES.has(word) ? word : null;
 }
 
@@ -4006,6 +4018,37 @@ const INVENTORY_CASES = [
     [],
     1,
   ],
+  // r59: the qualifier hidden BEHIND emphasis. The boundary test accepted the
+  // first closing marker, so the `?` r51 rejects rode through as formatting.
+  [
+    'a question mark after emphasis is a finding',
+    '| `vaipakam-q` | *(none)* | `ops/q` | **reserved**? — maybe |',
+    {},
+    [],
+    1,
+  ],
+  [
+    'a bang after emphasis is a finding',
+    '| `vaipakam-q` | *(none)* | `ops/q` | *reserved*! |',
+    {},
+    [],
+    1,
+  ],
+  [
+    'unbalanced emphasis around a status is a finding',
+    '| `vaipakam-q` | *(none)* | `ops/q` | **reserved* |',
+    {},
+    [],
+    1,
+  ],
+  // ...and BALANCED emphasis is how several rows are written, so it parses.
+  [
+    'a bolded status parses',
+    '| `vaipakam-q` | *(none)* | `ops/q` | **reserved** — held |',
+    {},
+    ['vaipakam-q'],
+    0,
+  ],
   // r43: underscores are legal in a Worker name; rejecting them left such a
   // Worker impossible to write down while `--live` called it ACCOUNT ONLY.
   [
@@ -4207,6 +4250,20 @@ const INVENTORY_CASES = [
     { 'vaipakam-agent': ['* * * * *'] },
     [],
     1,
+  ],
+  // r59: an EMPTY ATX heading is a heading. `#{1,6}\\s` demanded whitespace
+  // after the marker, so `###` alone under the table left the table open and
+  // reported the heading and the prose after it as rows.
+  [
+    'an empty ATX heading ends the table',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |\n' +
+      '###\n' +
+      'The accepted labels are live | reserved | undeployed | uncertain.',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    0,
   ],
   [
     'pipes in prose outside a table are not a row',

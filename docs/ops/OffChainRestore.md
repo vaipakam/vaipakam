@@ -2408,6 +2408,25 @@ two procedures share the offline-key handling discipline.
    #1978 r42). If the predecessor was retired before you started — the #1977
    sequence — there is one cron and this reads as written.
 
+   **A dashboard pause does not survive a deploy — make the warm Worker's
+   pause durable in its config.** `ops/offchain-data-warm/wrangler.jsonc`
+   commits `"crons": ["17 3 * * *"]`, and a deploy republishes whatever that
+   file says. Any `wrangler deploy` of that Worker between here and step 4 —
+   somebody else's unrelated change, a CI deploy, your own step-4 command run
+   early — silently re-arms the old-key writer AFTER steps 2–3 fixed the set
+   of objects to migrate. The archive it then writes at 03:17 is old-key
+   ciphertext nobody enumerated, and step 6 destroys the key that could read
+   it. That is the #1450 r31 failure this pause exists to prevent, arriving
+   through the door the dashboard does not close.
+
+   So commit `"crons": []` in that file and deploy it, the way
+   `apps/keeper/wrangler.jsonc` already holds an empty schedule for its own
+   hold, and restore the committed schedule in step 4. Note the asymmetry
+   while #1977 is open: `vaipakam-offchain-data-archive` has no config in this
+   repository — that is the whole reason #1977 exists — so nothing here can
+   redeploy it and the dashboard pause is the only lever it has. One Worker
+   needs the config change; the other cannot have one.
+
    **Update the authority in the same sitting as the pause, before you begin
    step 2.** Disabling a cron removes a trigger from the account, so
    `docs/ops/CloudflareCronSlots.md` — the only place the count lives — now
@@ -2423,6 +2442,16 @@ two procedures share the offline-key handling discipline.
    step 4`, re-derive the three summary lines from the table, and re-stamp
    `Verified:` with the time you paused. Do not carry the numbers over from
    the old summary — derive them, which is what the gate checks.
+
+   **Commit and push that, together with the `"crons": []` change above.** An
+   edit sitting in your checkout is not the authority; the authority is what
+   the shared repository says, and that is what another operator reads. If the
+   rotation then aborts in the paused state this section explicitly supports,
+   an uncommitted correction leaves the repository telling everyone else both
+   Workers are live for as long as the pause lasts — which is the stale
+   inventory #1977 is about, now produced by the procedure written to prevent
+   it. The same applies in reverse at step 4: the restoration is committed and
+   pushed too, not left local.
 
    **If the rotation aborts, the document follows the account, not the plan.**
    Stopping with the crons still paused is the safe stopping point — a paused
@@ -2483,10 +2512,15 @@ two procedures share the offline-key handling discipline.
    repository root it finds no config at all.
 
    **Re-enable both schedules now, and restore the authority in the same
-   sitting** — put each paused Worker's schedule back in its Schedule cell,
-   set its Status back to `live`, re-derive the three summary lines, and
-   re-stamp `Verified:`. Step 1 took the rows down; this is where they come
-   back. Doing it here rather than "at the end" matters because step 5 waits
+   sitting.** Put `"crons": ["17 3 * * *"]` back in
+   `ops/offchain-data-warm/wrangler.jsonc` and deploy it — that is the warm
+   Worker's re-arm, since step 1 made its pause durable in the config, and a
+   dashboard toggle alone would be undone by the next deploy. Re-enable the
+   archive Worker's cron from the dashboard, which is the only lever it has.
+   Then put each Worker's schedule back in its Schedule cell in the authority,
+   set its Status back to `live`, re-derive the three summary lines, re-stamp
+   `Verified:`, and **commit and push both changes**. Step 1 took the rows
+   down; this is where they come back. Doing it here rather than "at the end" matters because step 5 waits
    a full nightly cycle plus a weekly healthcheck: leaving the document
    describing paused Workers across that wait is a stale inventory lasting
    days, and it is the state in which someone else deploys a Worker into what
