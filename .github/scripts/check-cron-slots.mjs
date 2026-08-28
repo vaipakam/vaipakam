@@ -1058,9 +1058,21 @@ function* visibleLines(md) {
     // prose. Fourth iteration on this one rule — four spaces, then a leading
     // tab, now mixed — because each time I matched the form of the example in
     // front of me rather than computing the quantity the rule is about.
-    if (openedWith === null && line.trim() !== '' && indentWidth(line) >= 4) continue;
+    // Codex #1978 r48: a fence inside a BLOCKQUOTE. `> ```md` is how this
+    // repository's docs show a format example, and the opener was not
+    // recognised through the `>` marker — so `visibleLines` yielded the whole
+    // example as prose and `checkStamp` rejected a correct authority for
+    // containing a second stamp. A false positive on the authority itself.
+    //
+    // This was DEFERRED to #1990 at round 30 as one of four CommonMark
+    // questions. The deferral is withdrawn for this member, on the same
+    // grounds as the escape-parity item in r40: it has a demonstrated
+    // CI-blocking consequence, and stripping a leading quote marker is one
+    // decidable line, not a specification. The other two stay deferred.
+    const bare = line.replace(/^ {0,3}(?:>\s?)+/, '');
+    if (openedWith === null && bare.trim() !== '' && indentWidth(bare) >= 4) continue;
 
-    const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(line);
+    const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(bare);
     if (fence) {
       const run = fence[1];
       const kind = run[0];
@@ -1294,7 +1306,12 @@ function scopedElsewhere(text, at, len) {
   // suppressed by the NEXT sentence's generic vocabulary. A qualifier cannot
   // attach across a clause boundary; the window now stops at one.
   const rawTrailing = text.slice(at + len, at + len + 40);
-  const cut = rawTrailing.search(/[.;:!?\n]/);
+  // Codex #1978 r48: commas and dashes bound a clause too. "There are four
+  // cron triggers, while every account has a dashboard." was suppressed by
+  // the SECOND clause's generic vocabulary. Third boundary correction on this
+  // one window (r46 sentence-wide, r47 terminal punctuation, now all clause
+  // delimiters) — each time I fixed the delimiters I had just been shown.
+  const cut = rawTrailing.search(/[.;:!?,\n]|\s[-\u2013\u2014]\s/);
   const trailing = cut === -1 ? rawTrailing : rawTrailing.slice(0, cut);
   return ENVIRONMENT.test(sentence) || PLAN_ENTITLEMENT.test(trailing);
 }
@@ -1715,10 +1732,32 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
   // be reported as an unknown holder: a blocking gate rejecting a correct
   // document over a character substitution nobody would look for.
   const holderText = /live plus\s+(.*?)\s*(?:['’]s)?\s*reserve/.exec(label)?.[1] ?? '';
-  const claimed = holderText
-    .split(/\s*(?:,|\band\b|\&)\s*/)
+  // Codex #1978 r48: a legal Worker name can CONTAIN a conjunction —
+  // `vaipakam-research-and-development` — and splitting first turned every
+  // spelling of it into unknown fragments, so no label could pass: the SIXTH
+  // unrepresentable state on this PR. Known identifiers are resolved out of
+  // the text first, and only what remains is split on conjunctions.
+  const knownIds = [...allNames].flatMap((n) => identifiers(n)).sort((a, b) => b.length - a.length);
+  const resolved = [];
+  let remainder = holderText;
+  for (const id of knownIds) {
+    const re = new RegExp(`(?:^|[^a-z0-9-])${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9-])`, 'i');
+    const m = re.exec(remainder);
+    if (m) {
+      resolved.push(id);
+      remainder = remainder.slice(0, m.index) + ' ' + remainder.slice(m.index + m[0].length);
+    }
+  }
+  const claimed = resolved.concat(
+    remainder
+      // Resolving a name out of the middle leaves its article and possessive
+      // behind, which the old split consumed as part of the token.
+      .replace(/\bthe\b/gi, ' ')
+      .replace(/['’]s\b/g, ' ')
+      .split(/\s*(?:,|\band\b|\&)\s*/)
     .map((t) => t.replace(/^the\s+/, '').replace(/['’]s$/, '').trim())
-    .filter(Boolean);
+      .filter(Boolean),
+  );
 
   // Codex #1978 r32: the holder list was PARSED and then not used for the
   // comparison. r18 replaced substring membership with a parsed list, and both
@@ -2194,6 +2233,11 @@ export function parseInventory(md) {
         }
         const ends = range.split('-');
         if (ends.length > 2) return false;
+        // Codex #1978 r48: `*` and `?` are COMPLETE atoms, not range
+        // endpoints — `*-5` and `JAN-*` passed because each end validated on
+        // its own. Same shape as r46's composite finding, at the other end of
+        // the grammar: a token legal alone is not legal in every position.
+        if (ends.length === 2 && ends.some((e) => e === '*' || e === '?')) return false;
         if (!ends.every((e) => atomOk(e, bounds, idx))) return false;
         if (ends.length === 2 && ends.every((e) => /^\d+$/.test(e))) {
           return Number(ends[0]) <= Number(ends[1]);
@@ -2622,7 +2666,15 @@ export function wranglerNameFrom(raw, isToml) {
     // opening newline is not part of it, per the TOML spec.
     if (m[2] !== undefined) return m[2].replace(/^\r?\n/, '');
     if (m[4] !== undefined) return m[4];
-    const basic = m[1] !== undefined ? m[1].replace(/^\r?\n/, '') : m[3];
+    // Codex #1978 r48: a multiline basic string may end a line with `\` to
+    // strip the newline and the following indentation — TOML's line
+    // continuation. Wrangler deploys the joined value; this returned the
+    // backslash and newline literally, so the Worker was indexed under a
+    // name that does not exist. Eleventh route, same silent consequence.
+    const basic =
+      m[1] !== undefined
+        ? m[1].replace(/^\r?\n/, '').replace(/\\\r?\n[ \t]*/g, '')
+        : m[3];
     return basic.replace(/\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)/g, (whole, esc) => {
       if (esc[0] === 'u' || esc[0] === 'U') {
         return String.fromCodePoint(parseInt(esc.slice(1), 16));
@@ -2943,6 +2995,11 @@ const MUST_FIRE = [
   [
     'a claim followed by a generic clause still fires',
     'There are four cron triggers in this account; every account has an owner.',
+  ],
+  // r48: commas and dashes bound a clause too.
+  [
+    'a claim followed by a comma clause still fires',
+    'There are four cron triggers, while every account has a dashboard.',
   ],
   ['the verbal form, possessive subject', 'Our Cloudflare account uses 4 cron triggers today.'],
   // Codex #1978 r39: a purpose phrase opens exactly like an environment scope
@@ -3417,6 +3474,21 @@ const INVENTORY_CASES = [
   // r47: the letters in NAMES are not extension characters. Rejecting these
   // was the fourth unrepresentable legal state, caused by the r46 fix for the
   // third.
+  // r48: `*` and `?` are complete atoms, not range endpoints.
+  [
+    'a wildcard range endpoint is a finding',
+    '| `vaipakam-agent` | `*-5 * * * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['*-5 * * * *'] },
+    [],
+    1,
+  ],
+  [
+    'a named wildcard range endpoint is a finding',
+    '| `vaipakam-agent` | `0 0 * JAN-* *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 * JAN-* *'] },
+    [],
+    1,
+  ],
   [
     'a named month range is accepted',
     '| `vaipakam-mw` | `0 0 * JUL-AUG *` | `ops/mesh-watcher` | live |',
@@ -3796,6 +3868,13 @@ const WRANGLER_NAME_CASES = [
   // r47: broken across PHYSICAL LINES — the tenth way this function has
   // failed to read a valid config, and the reason the TOML head is now
   // matched as one block rather than line by line.
+  // r48: TOML's line continuation — `\` strips the newline and the indent.
+  [
+    'a toml multiline name with a line continuation',
+    'name = @@@vaipakam-\\\n  agent@@@\n'.replace(/@@@/g, '"'.repeat(3)),
+    true,
+    'vaipakam-agent',
+  ],
   [
     'a toml multiline name across lines',
     'name = @@@\ncron-check@@@\n'.replace(/@@@/g, '"'.repeat(3)),
@@ -4041,7 +4120,12 @@ function runSelftest() {
       console.error(
         `selftest: wrangler-name case "${name}" read ${JSON.stringify(got)}, expected ${JSON.stringify(expected)}`,
       );
-      problems += 1;
+      // Codex #1978 r48: this said `problems`, which does not exist here —
+      // so the FIRST wrangler-name regression threw a ReferenceError before
+      // any later fixture ran or the summary printed. The suite still failed,
+      // but it lost exactly the aggregated diagnostics a parser regression
+      // needs. Every sibling loop increments `bad`.
+      bad += 1;
     }
   }
   for (const [name, cell, expected] of SOURCE_CASES) {
