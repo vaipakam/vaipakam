@@ -1783,11 +1783,21 @@ export function parseInventory(md) {
     // to a reader and was five columns to this parser — reported malformed and
     // the live Worker dropped. A blocking gate that forbids ordinary
     // explanatory prose in the column meant for explanatory prose.
-    const cells = line
-      .trim()
-      .replace(/^\||\|$/g, '')
-      .split(/(?<!\\)\|/)
-      .map((c) => c.replace(/\\\|/g, '|'));
+    // Codex #1978 r40: `(?<!\\)\|` treats a pipe after ANY backslash as
+    // escaped, but GFM escapes it only after an ODD-length run — `\|` is a
+    // literal pipe, `\\|` is an escaped backslash followed by a real cell
+    // separator. Verified against the repository's own Remark GFM parser:
+    // `live \\| reserved` renders as two cells while this split produced one,
+    // so a fifth cell could render that both gate modes never saw.
+    //
+    // I DEFERRED this exact item to #1990 at round 30, batched with three
+    // CommonMark questions on the argument that they were one decision about
+    // how much markup to implement. That was wrong about this member: parity
+    // of a backslash run is a single decidable rule, not a specification, and
+    // it is settled here in a few lines. The other three stay deferred. A
+    // batch is only as deferrable as its least deferrable member, and I did
+    // not check that before batching.
+    const cells = splitTableRow(line.trim().replace(/^\||\|$/g, ''));
     // The header and the alignment separator are not data.
     if (/^[\s:-]+$/.test(cells[0])) {
       sawDelimiter += 1;
@@ -2102,6 +2112,37 @@ export function readSource(cell) {
  */
 const STATUSES = new Set(['live', 'reserved', 'undeployed']);
 
+/**
+ * Split one GFM table row on its UNESCAPED pipes, honouring backslash parity.
+ *
+ * A backslash run of even length is escaped backslashes and leaves the pipe
+ * as a separator; an odd run escapes the pipe into content. Written as a scan
+ * because a lookbehind can only ask about the character immediately before,
+ * and the question is about the length of the run.
+ */
+export function splitTableRow(row) {
+  const cells = [];
+  let cur = '';
+  let slashes = 0;
+  for (const ch of row) {
+    if (ch === '\\') {
+      slashes += 1;
+      cur += ch;
+      continue;
+    }
+    if (ch === '|' && slashes % 2 === 0) {
+      cells.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+    slashes = 0;
+  }
+  cells.push(cur);
+  // Unescape only the pipes that were escaped: an odd run before a pipe.
+  return cells.map((c) => c.replace(/(\\*)\|/g, (m, run) => (run.length % 2 ? run.slice(1) + '|' : m)));
+}
+
 /** The leading status keyword, or null if the cell does not start with one. */
 export function readStatus(cell) {
   // Codex #1978 r30: the keyword must END at a real boundary. `[a-z]+` stops
@@ -2349,8 +2390,38 @@ function readWranglerName(configPath) {
         const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
         if (m) return m[1] ?? m[2];
       }
-      for (const ch of line.replace(/"[^"]*"|'[^']*'/g, '')) {
-        if (ch === '{' || ch === '[') depth += 1;
+      // Codex #1978 r40: `"[^"]*"` ends a string at an ESCAPED quote, so a
+      // value containing `\"` left the scanner believing it was outside a
+      // string and counting the `{` or `[` that followed as structure. Depth
+      // then never returned to 1, `readWranglerName` returned null, and a
+      // swapped source binding passed both modes.
+      //
+      // Sixth round on this function, and the third caused by a regex standing
+      // in for a tokenizer — r27 was `/\*...\*/` matching inside strings, r39
+      // was TOML through a JSON scanner, this is string literals with escapes.
+      // Each time the regex was correct on the input it was shown. Escapes are
+      // exactly what a regex character class cannot carry, so the scan below
+      // tracks state per character instead.
+      let inString = false;
+      let quote = '';
+      let escaped = false;
+      for (const ch of line) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (ch === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (inString) {
+          if (ch === quote) inString = false;
+          continue;
+        }
+        if (ch === '"' || ch === "'") {
+          inString = true;
+          quote = ch;
+        } else if (ch === '{' || ch === '[') depth += 1;
         else if (ch === '}' || ch === ']') depth -= 1;
       }
     }
@@ -2936,6 +3007,23 @@ const INVENTORY_CASES = [
     { 'vaipakam-agent': ['5-2 * * * *'] },
     [],
     1,
+  ],
+  // Codex #1978 r40: GFM escapes a pipe only after an ODD backslash run, so
+  // `\\|` is an escaped backslash followed by a real separator — five cells to
+  // a reader, four to the old lookbehind.
+  [
+    'a double-escaped pipe renders a fifth cell',
+    '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live \\\\| reserved |',
+    {},
+    [],
+    1,
+  ],
+  [
+    'a single-escaped pipe stays content',
+    '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live \\| reserved |',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    0,
   ],
   // Codex #1978 r38: destructuring dropped the third component silently.
   [
