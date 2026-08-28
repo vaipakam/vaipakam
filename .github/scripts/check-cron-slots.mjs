@@ -489,6 +489,42 @@ function trackedFiles() {
 }
 
 /**
+ * The inventory must be framed as an actual Markdown table.
+ *
+ * Codex #1978 r22: the header and delimiter checks only ran WHEN one was
+ * encountered, so deleting both left every data row parsed and nothing
+ * reported — a document Markdown renders as a run of pipe-separated text with
+ * no table in it, passing both modes. **Validating a thing when present is not
+ * the same as requiring it**, and I added those two checks in the two previous
+ * rounds without noticing that neither was mandatory.
+ *
+ * Document level, not inside {parseInventory}, for the reason the
+ * empty-inventory check is: the row fixtures run that against table FRAGMENTS,
+ * where having no header is correct. Second time this exact altitude mistake
+ * has cost a dozen fixtures, so it is worth saying plainly — a property of the
+ * whole document does not belong in the function that parses a piece of it.
+ */
+function checkInventoryFraming(inv) {
+  if (inv.sources.size === 0) return []; // empty inventory is reported elsewhere
+  const problems = [];
+  const { sawHeader, sawDelimiter } = inv.framing;
+  if (sawHeader !== 1) {
+    problems.push(
+      `the inventory has ${sawHeader} header row(s); it needs exactly one, or ` +
+        `Markdown renders no table and the rows below are text a reader cannot ` +
+        `read as an inventory`,
+    );
+  }
+  if (sawDelimiter !== 1) {
+    problems.push(
+      `the inventory has ${sawDelimiter} alignment row(s); it needs exactly one ` +
+        `directly under the header, or Markdown renders no table at all`,
+    );
+  }
+  return problems;
+}
+
+/**
  * The authority must actually CONTAIN an inventory.
  *
  * Codex #1978 r17: wrapping the table in `<!-- ... -->` left every check
@@ -817,6 +853,7 @@ function runOffline() {
     ...checkStamp(authorityMd),
     ...checkSkipList(),
     ...checkInventoryPresent(inv),
+    ...checkInventoryFraming(inv),
     ...inv.problems,
     ...checkSources(inv.sources),
     ...checkSummary(authorityMd, countTriggers(inv.live), inv.reserved, [
@@ -1202,6 +1239,8 @@ export function parseInventory(md) {
   /** names of rows the table marks reserved (no schedule, but budget spoken for). */
   const reserved = [];
   const statuses = new Map(); // every parsed row's status, for checks the account settles
+  let sawHeader = 0;
+  let sawDelimiter = 0;
   /** name -> the `Source in this repo` path, or null for the explicit *none*. */
   const sources = new Map();
   const problems = [];
@@ -1296,6 +1335,7 @@ export function parseInventory(md) {
     const cells = line.trim().replace(/^\||\|$/g, '').split('|');
     // The header and the alignment separator are not data.
     if (/^[\s:-]+$/.test(cells[0])) {
+      sawDelimiter += 1;
       // Codex #1978 r20: the DELIMITER row, checked like the header row above
       // it. It was skipped on its first cell alone, so `|---|` under a
       // four-column header left every data row parsed and no problem
@@ -1313,6 +1353,7 @@ export function parseInventory(md) {
       continue;
     }
     if (/^\s*Worker\s*$/i.test(cells[0])) {
+      sawHeader += 1;
       // Codex #1978 r19: the header was skipped on its FIRST cell alone, while
       // the data rows below are parsed by fixed position. Reorder the headings
       // to `| Worker | Status | Source in this repo | Schedule |` and the
@@ -1442,7 +1483,7 @@ export function parseInventory(md) {
     }
   }
 
-  return { live, reserved, sources, statuses, problems };
+  return { live, reserved, sources, statuses, framing: { sawHeader, sawDelimiter }, problems };
 }
 
 /**
@@ -1577,19 +1618,11 @@ export function checkSources(sources) {
       // comment-laden and this needs one top-level string field. A config that
       // declares no name is not a finding here; `--live` already ties Worker
       // NAMES to the account, so this check exists for the DIRECTORY binding.
-      // `^ {0,2}` — TOP-LEVEL only. `apps/agent/wrangler.jsonc` carries ELEVEN
-      // `"name"` fields: one top-level at indent 2, and ten rate-limit /
-      // binding names at indent 8. `^\s*` with /m takes the first in document
-      // ORDER, which is the right one today purely because it appears first —
-      // reorder the file and this compares the row against
-      // `QUOTE_0X_RATELIMIT` and rejects a correct row. Found by counting the
-      // matches in the real configs rather than trusting the one I had in
-      // mind; a false positive on a blocking gate is the expensive direction.
-      const declared = /^ {0,2}"name"\s*:\s*"([^"]+)"/m.exec(readFileSync(configPath, 'utf8'));
-      if (declared && declared[1] !== name) {
+      const declaredName = readWranglerName(configPath);
+      if (declaredName && declaredName !== name) {
         problems.push(
           `\`${name}\`'s source \`${path}\` holds a wrangler config for ` +
-            `\`${declared[1]}\` — the row points at another Worker's directory`,
+            `\`${declaredName}\` — the row points at another Worker's directory`,
         );
       }
     }
@@ -1606,6 +1639,33 @@ export function checkSources(sources) {
 }
 
 /**
+ * The Worker name a `wrangler` config declares, or null.
+ *
+ * ONE reader, deliberately. Codex #1978 r22: there were two — this logic in
+ * `trackedWranglerNames` and a JSON-only copy in `checkSources` — and r21
+ * taught the TOML literal-string form to one of them. The copy then accepted
+ * a `.toml` config, failed to read its name, and let a swapped source cell
+ * pass. That is the same divergence `visibleLines` was extracted to stop, two
+ * hundred lines further down the same file, and I created it in the round
+ * where I added the second call site.
+ *
+ * Regex rather than a parser: `.jsonc` is comment-laden, `.toml` is a
+ * different grammar again, and one top-level string field is all that is
+ * wanted. `^ {0,2}` keeps it to top level — `apps/agent/wrangler.jsonc` has
+ * eleven `"name"` fields and only the first is the Worker's.
+ */
+function readWranglerName(configPath) {
+  try {
+    const m = /^ {0,2}"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/m.exec(
+      readFileSync(configPath, 'utf8'),
+    );
+    return m ? (m[1] ?? m[2]) : null;
+  } catch {
+    return null; // unreadable config is not this check's business
+  }
+}
+
+/**
  * Every Worker name declared by a tracked `wrangler` config, mapped to its
  * config path. Used to falsify an explicit *none* claim in the source column.
  */
@@ -1617,18 +1677,8 @@ function trackedWranglerNames() {
   );
   const names = new Map();
   for (const f of out.split('\0').filter(Boolean)) {
-    try {
-      // Codex #1978 r21: TOML accepts LITERAL strings — `name = 'x'` — and a
-      // double-quote-only regex silently ignores them, so a restored source in
-      // TOML would leave a `*none*` claim green. Both quote forms now.
-      const m = /^ {0,2}"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/m.exec(
-        readFileSync(f, 'utf8'),
-      );
-      const declaredName = m && (m[1] ?? m[2]);
-      if (declaredName && !names.has(declaredName)) names.set(declaredName, f);
-    } catch {
-      // unreadable config is not this check's business
-    }
+    const declaredName = readWranglerName(f);
+    if (declaredName && !names.has(declaredName)) names.set(declaredName, f);
   }
   return names;
 }
@@ -1687,6 +1737,7 @@ async function runLive() {
   const problems = [
     ...undeployedProblems.map((p) => `STATUS        ${p}`),
     ...checkStamp(authorityMd).map((p) => `STAMP         ${p}`),
+    ...checkInventoryFraming(inv).map((p) => `INVENTORY     ${p}`),
     ...inv.problems.map((p) => `INVENTORY     ${p}`),
     ...checkSources(inv.sources).map((p) => `SOURCE        ${p}`),
   ];
