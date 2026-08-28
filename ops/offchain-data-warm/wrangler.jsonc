@@ -33,8 +33,8 @@
   // `docs/ops/CloudflareCronSlots.md` carries the count, once, with the
   // date it was last checked against the account.
   //
-  // If/when the account upgrades to Workers Paid ($5/mo, removes the
-  // cap), this can split back into two crons.
+  // If/when the account upgrades to Workers Paid ($5/mo, which RAISES the
+  // cap to 250 rather than removing it), this can split back into two crons.
   "triggers": {
     "crons": ["17 3 * * *"],
   },

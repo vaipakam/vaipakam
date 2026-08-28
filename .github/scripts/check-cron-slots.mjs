@@ -431,6 +431,25 @@ const NOT_SCOPED_ELSEWHERE = '';
  * text nobody thought to pin.
  */
 const OCCUPANCY = [
+  // Codex #1978 r45: the BARE EXISTENTIAL — "There are four cron triggers."
+  // and "Four cron triggers exist in the account." No predicate at all, so
+  // every predicate-keyed shape below misses them, and they are as direct a
+  // statement of the live count as the language has.
+  //
+  // Round 20 rejected a bare ratio beside a capacity noun because it fired on
+  // ordinary prose, and this is deliberately narrower: an EXISTENTIAL
+  // construction asserts that the things are there, which a ratio inside a
+  // sentence about something else does not. Measured against the whole
+  // tracked tree before keeping it — zero new findings — so it closes the
+  // plainest remaining phrasing at no cost in false alarms today.
+  new RegExp(
+    String.raw`\bthere${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*${N}${WRAP}${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:${TEMPORAL}${WRAP})*exists?\b${NOT_SCOPED_ELSEWHERE}`,
+    'i',
+  ),
   // "4/5 cron triggers", "3 of 5 slots". The NOUN is required and must be
   // adjacent. Codex #1978 r20: the bare ratio was validated only by cron
   // vocabulary somewhere in a 200-character window, so ordinary prose fired —
@@ -2767,6 +2786,9 @@ const MUST_FIRE = [
   // on the account.
   ['the direct form with a configured predicate', 'Four cron triggers are configured.'],
   ['the attributive configured form', 'There are four configured cron triggers.'],
+  // r45: no predicate at all — the plainest way to state the count.
+  ['the bare existential', 'There are four cron triggers.'],
+  ['the exist form', 'Four cron triggers exist in the account.'],
   ['the verbal form, possessive subject', 'Our Cloudflare account uses 4 cron triggers today.'],
   // Codex #1978 r39: a purpose phrase opens exactly like an environment scope
   // and is not one. These are the cases the grammatical test could not tell
@@ -2913,6 +2935,7 @@ const MUST_NOT_FIRE = [
   ['the adverb form', 'Four cron triggers are running locally.'],
   ['the enabled form scoped elsewhere', 'Four cron triggers are enabled locally.'],
   ['the configured form scoped elsewhere', 'Four cron triggers are configured locally.'],
+  ['the bare existential scoped elsewhere', 'There are four cron triggers in local development.'],
   ['the postposed participle scoped elsewhere', 'There are four cron triggers running locally.'],
   ['the verbal form scoped elsewhere', 'The account runs four cron triggers locally.'],
   ['a leading temporal scope', 'When running locally, no cron triggers are live.'],

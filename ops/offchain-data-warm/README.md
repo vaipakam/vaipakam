@@ -227,7 +227,7 @@ what the paragraph above tells you not to put here; I wrote one two lines
 later, in the sentence explaining why (Codex #1978 r29).
 
 Split back into two crons if/when the account upgrades to Workers
-Paid ($5/mo, removes the cap).
+Paid ($5/mo, which raises the cap to 250 rather than removing it).
 
 Both paths report to Telegram (`TG_OPS_CHAT_ID`).
 

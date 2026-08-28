@@ -181,7 +181,8 @@ export default {
    * in this tree, and one of them does not (#1977).
    *
    * Split back into two crons if/when the account upgrades to
-   * Workers Paid ($5/mo, removes the cap).
+   * Workers Paid ($5/mo, which raises the cap to 250 rather than
+   * removing it).
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     // Preflight: validate every required secret exists BEFORE any
