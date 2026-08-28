@@ -3792,6 +3792,98 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.out).toContain('apps/agent');
   });
 
+  // ── Detection matched a LITERAL `wrangler` command word, so every other way
+  // of naming the same executable was invisible — and the file-level prefilter
+  // then skipped the whole file (#1995 r16).
+  it('a command word held in a VARIABLE is still wrangler (#1995 r16)', () => {
+    const r = runWith('a.sh', 'CMD=wrangler\ncd apps/agent\n"$CMD" deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and so is a SUBCOMMAND held in one (#1995 r16)', () => {
+    const r = runWith('a2.sh', 'SUB=deploy\ncd apps/agent\nwrangler "$SUB"\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('the variable form with the flag still passes (#1995 r16 control)', () => {
+    // Pins that the file is SCANNED and SCORED, not merely pulled in: before
+    // the change this passed because the prefilter skipped it entirely.
+    const r = runWith('a3.sh', 'CMD=wrangler\ncd apps/agent\n"$CMD" deploy --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('an unrelated variable brings nothing in (#1995 r16 control)', () => {
+    const r = runWith('a4.sh', 'NAME=hello\ncd apps/agent\necho "$NAME"\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a MESSAGE variable holding the command text is not a command (#1995 r16 control)', () => {
+    // `MSG="wrangler deploy"` then `echo "$MSG"` echoes a string. Admitting
+    // multi-word values made the expansion report it as a destructive deploy —
+    // the r19 defect reappearing through my own fix. A command word is ONE
+    // word, so that is what the scan records. My probe caught this, not a
+    // review round.
+    expect(runWith('m.sh', 'MSG="wrangler deploy"\ncd apps/agent\necho "$MSG"\n').ok).toBe(true);
+    expect(runWith('m2.sh', 'MSG="wrangler deploy"\ncd apps/agent\necho $MSG\n').ok).toBe(true);
+  });
+
+  it('and a DYNAMIC assignment is not expanded either (#1995 r16 control)', () => {
+    const r = runWith('m3.sh', 'CMD=$(which wrangler)\ncd apps/agent\n"$CMD" deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('the PROSE path expands command words too (#1995 r16)', () => {
+    // A runbook writes the command in a code span, so the assignment is
+    // preceded by a backtick rather than whitespace — the leading boundary had
+    // to admit quotes and backticks for this to be reached at all. A mutant
+    // removing the prose-side expansion survived until this case existed.
+    const r = runWith('docs/x.md', 'Run `CMD=wrangler; cd apps/agent; "$CMD" deploy`\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it("npm's WINDOWS shim is the same executable (#1995 r16)", () => {
+    // The shell allow-list admits `cmd` and `pwsh` steps, so not recognising
+    // the shim meant admitting the step and then seeing nothing in it.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: cmd\n' +
+        '        working-directory: apps/agent\n        run: wrangler.cmd deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the PowerShell shim too (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w2.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: pwsh\n' +
+        '        working-directory: apps/agent\n        run: wrangler.ps1 deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a PROGRAMMATIC argv invocation counts (#1995 r16)', () => {
+    // A JS helper names the executable and its arguments as argv, with no
+    // whitespace between them, so the shell-string pattern could not match.
+    // This repo already uses that spawn form elsewhere.
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      "import { spawnSync } from 'node:child_process';\nspawnSync('wrangler', ['deploy']);\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but an argv invocation carrying the flag passes (#1995 r16 control)', () => {
+    const r = runWith(
+      'apps/agent/d2.mjs',
+      "import { spawnSync } from 'node:child_process';\nspawnSync('wrangler', ['deploy', '--keep-vars']);\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

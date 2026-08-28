@@ -126,7 +126,25 @@ const SKIP_DIRS = new Set([
 // Same sentence the `deploy` flag carries, and neither scoped `wrangler.jsonc`
 // sets `keep_vars`, so an unflagged `versions upload` deletes the dashboard
 // tuning the same way. It takes the same flag, so the remedy is the same one.
-const DEPLOY_RE = String.raw`wrangler2?(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*(?:deploy|versions\s+upload)\b`;
+// `(?:\.(?:cmd|ps1|bat))?`: npm installs Windows SHIMS beside the executable,
+// and `wrangler.cmd deploy` in a `shell: cmd` step is the same deployment. The
+// shell allow-list admits those steps, so not recognising the shim meant
+// admitting the step and then seeing nothing in it (#1995 r16).
+const DEPLOY_RE = String.raw`wrangler2?(?:\.(?:cmd|ps1|bat))?(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*(?:deploy|versions\s+upload)\b`;
+/**
+ * `spawn('wrangler', ['deploy', …])` and its execa/child_process siblings.
+ *
+ * A JS deploy helper names the executable and its arguments as ARGV, with no
+ * whitespace between them, so the shell-string pattern could not match and the
+ * file-level prefilter skipped the helper entirely (#1995 r16). This repo
+ * already uses that spawn form elsewhere, so it is an ordinary spelling here
+ * rather than an exotic one.
+ *
+ * Deliberately loose about what sits between the two: an options object, a
+ * spread, a variable holding the argument list. Being loose can only bring more
+ * files INTO the scan, where the ordinary scoring applies.
+ */
+const ARGV_DEPLOY_RE = String.raw`(['"\`])wrangler2?(?:\.(?:cmd|ps1|bat))?\1[\s\S]{0,200}?(['"\`])(?:deploy|versions)\2`;
 
 /**
  * The PACKAGE-SCRIPT form is a deploy too, and the guard could not see it
@@ -167,7 +185,7 @@ const RUN_ALIASES = String.raw`run(?:-script)?|rum|urn`;
 // `DEPLOY_RE` above has carried since it was written.
 const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+(?:${RUN_ALIASES})(?:\s+-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?)*\s+deploy\b`;
 /** What counts as "this line performs a deploy" for DETECTION purposes. */
-const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
+const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE}|${ARGV_DEPLOY_RE})`;
 
 /**
  * ONE SHELL WORD: adjacent quoted, unquoted and escaped chunks, which bash
@@ -1645,6 +1663,48 @@ function scopeOf(line, filePath) {
  * Shell continuation / comment rules apply to shell scripts, not to prose.
  * Detected by extension or shebang — the same two signals an editor uses.
  */
+/**
+ * Literal `NAME=<word>` assignments anywhere in a file, for DETECTION only.
+ *
+ * `WRANGLER=wrangler` then `"$WRANGLER" deploy` is a bare deploy that neither
+ * the raw nor the dequoted text spells, so the file-level prefilter skipped the
+ * whole file and nothing downstream ever saw it (#1995 r16). `CMD=deploy` with
+ * `wrangler "$CMD"` is the same defect on the other command word.
+ *
+ * File-wide and order-free ON PURPOSE. This map decides only whether text is
+ * WORTH SCANNING and which lines carry a deploy; it never decides scope or
+ * safety, which stay with the ordered `shellVars` walk.
+ *
+ * A value must be a SINGLE WORD, because a command word is one. Admitting text
+ * with spaces made `MSG="wrangler deploy"` then `echo "$MSG"` expand into a
+ * deploy and reported echoing a string as a destructive deployment — the r19
+ * defect (a message value read as a command) reappearing through the
+ * expansion. My own probe caught it, not a review round, and there is a control
+ * fixture for it.
+ *
+ * The leading boundary admits a QUOTE or BACKTICK as well as whitespace, so a
+ * runbook's `` `CMD=wrangler; "$CMD" deploy` `` code span reaches this at all.
+ */
+function staticCommandVars(text) {
+  const vars = new Map();
+  for (const m of text.matchAll(
+    /(?:^|[\s;&|(`'"])([A-Za-z_][A-Za-z0-9_]*)=(?:"([A-Za-z0-9_.\/-]*)"|'([A-Za-z0-9_.\/-]*)'|([A-Za-z0-9_.\/-]+))(?=[\s;&|)`'"]|$)/gm,
+  )) {
+    const value = m[2] ?? m[3] ?? m[4];
+    if (value) vars.set(m[1], value);
+  }
+  return vars;
+}
+
+/** Substitute those assignments into a line, for DETECTION only. */
+function expandCommandVars(text, vars) {
+  if (!vars || vars.size === 0 || !/\$/.test(text)) return text;
+  return text.replace(
+    /\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g,
+    (m, name) => vars.get(name) ?? m,
+  );
+}
+
 function isShellFile(rel, text) {
   return SHELL_EXTENSIONS.some((e) => rel.endsWith(e)) || /^#!.*\b(ba|z|k)?sh\b/.test(text);
 }
@@ -3276,6 +3336,7 @@ for (const file of walk(REPO_ROOT)) {
   // folded whole paragraphs into single "lines" and produced four false
   // positives on a clean tree. Every file still gets scanned; only the model
   // of what a line IS differs (Codex #1924 r27).
+  const fileVars = staticCommandVars(text);
   const folded = isShellFile(rel, text)
     ? logicalLines(text)
     : [
@@ -3297,7 +3358,9 @@ for (const file of walk(REPO_ROOT)) {
         // so `wrang"ler" deploy` and `wrangler de"ploy"` skipped the WHOLE
         // FILE at the prefilter — the composition defect the fallback exists
         // for, on the other half of the same alternation.
-        new RegExp(ANY_DEPLOY_RE).test(dequote(l.text)),
+        new RegExp(ANY_DEPLOY_RE).test(dequote(l.text)) ||
+        // …and on the form with statically assigned command words substituted.
+        new RegExp(ANY_DEPLOY_RE).test(expandCommandVars(dequote(l.text), fileVars)),
     )
   ) {
     continue;
@@ -3462,6 +3525,7 @@ for (const file of walk(REPO_ROOT)) {
         // in a `.sh` fixture was rejected — the same sentence judged two ways
         // by which file it sits in, and prose is what an operator copies.
         if (
+          !new RegExp(ANY_DEPLOY_RE).test(expandCommandVars(dequote(seg), fileVars)) &&
           !new RegExp(ANY_DEPLOY_RE).test(seg) &&
           !new RegExp(ANY_DEPLOY_RE).test(dequote(seg))
         ) {
@@ -3802,6 +3866,7 @@ for (const file of walk(REPO_ROOT)) {
         }
         // `\b` so `wrangler deployments list` is not read as a deploy.
         if (
+          !new RegExp(ANY_DEPLOY_RE).test(expandCommandVars(dequote(seg), fileVars)) &&
           !new RegExp(ANY_DEPLOY_RE).test(seg) &&
           // Same widening as the prefilter above (#1995 r9).
           !new RegExp(ANY_DEPLOY_RE).test(dequote(seg))
