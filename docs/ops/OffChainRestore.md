@@ -1693,18 +1693,33 @@ caught at the cheapest stage.
       What this step needs is the raw count, so ask for that directly:
 
       ```bash
-      for s in $(curl -sS -H "Authorization: Bearer $CF_API_TOKEN" \
-          "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts?per_page=100" \
-        | jq -r '.result[].id'); do
-        curl -sS -H "Authorization: Bearer $CF_API_TOKEN" \
-          "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/$s/schedules" \
-        | jq -r --arg s "$s" '.result.schedules[]? | "\($s) \(.cron)"'
-      done | tee /tmp/fresh-account-triggers.txt | wc -l
+      ( set -euo pipefail
+        cf() { curl -fsS -H "Authorization: Bearer $CF_API_TOKEN" "$1"; }
+        api="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID"
+        ok() { jq -e 'if .success then . else error("Cloudflare reported failure") end'; }
+        used=0
+        for s in $(cf "$api/workers/scripts?per_page=100" | ok | jq -r '.result[].id'); do
+          n=$(cf "$api/workers/scripts/$s/schedules" | ok \
+              | jq -r '(.result.schedules // []) | length')
+          [ "$n" -gt 0 ] && echo "$s: $n" >&2
+          used=$(( used + n ))
+        done
+        echo "triggers in use: $used of 5" )
       ```
 
-      Every line is one trigger, and the keeper needs one of the five. If the
-      count is already 5, stop and free one before deploying — a deploy over
-      the cap fails with error 10072 and leaves the keeper unscheduled.
+      The keeper needs one of the five. If `used` is already 5, stop and free
+      one before deploying — a deploy over the cap fails with error 10072 and
+      leaves the keeper unscheduled.
+
+      **This has to FAIL CLOSED, which is why it is not a one-liner** (Codex
+      #1978 r35). An expired token, a wrong account id, or any Cloudflare
+      error makes `.result` null; a plain `curl -sS | jq -r` then prints
+      nothing, the loop body never runs, and a count of `0` is reported —
+      telling the operator every trigger is free at precisely the moment the
+      read failed. `curl -f` turns an HTTP error into a non-zero exit,
+      `jq -e` on `.success` catches an API-level failure that still returned
+      200, and `set -euo pipefail` makes either abort the subshell instead of
+      falling through to a reassuring number.
 
       (If §1's token has already been unset, re-prompt for it the same way —
       `read -rs CF_API_TOKEN`, not via argv.)
@@ -1724,18 +1739,26 @@ caught at the cheapest stage.
       change "Live right now" to match, switch the "Committed" label from
       `**Committed, live plus the keeper's reserve:**` to
       `**Committed, live only:**` — the checker recognises exactly those two
-      forms and requires the one matching the table — refresh the `Verified:`
-      stamp, and re-run the `--live` command from step 3 to confirm the file
-      and the account agree. **Then COMMIT those edits**, for the reason step
+      forms and requires the one matching the table — and refresh the
+      `Verified:` stamp. **Then COMMIT those edits**, for the reason step
       2 gives about the schedule: a working-tree change that passes `--live`
       and is never committed leaves the branch carrying the pre-re-arm
       inventory, so the next clean checkout restores exactly the staleness
       this step exists to prevent.
 
       This step is easy to skip and hard to notice skipped: the conversion
-      leaves **committed and spare unchanged**, so the offline CI check keeps
+      leaves the derived totals unchanged, so the offline CI check keeps
       passing on a file that is now wrong about which Workers are live. Only
       `--live` sees it, and nothing runs `--live` on a schedule.
+
+      **On the fresh-account branch, do the edit here and the `--live`
+      confirmation in §7b** (Codex #1978 r35). Step 3 explains why `--live`
+      cannot pass against the fresh account before then: the authority still
+      describes the old one, and lists Workers that are not deployed here yet.
+      Requiring the confirmation at this point would make this step
+      impossible to complete rather than merely tedious — the bookkeeping is
+      still owed now, but the account-versus-file check has to wait until the
+      account is complete.
 
    7. Allow the propagation window (Cloudflare documents up to 15 minutes).
    8. **Validate the still-disarmed passes first**, across every cadence they
@@ -2110,10 +2133,13 @@ caught at the cheapest stage.
    that leaves those in place puts
    [`CloudflareCronSlots.md`](CloudflareCronSlots.md) back into exactly the
    stale state step 6 was added to prevent — and the offline check stays
-   green through it, because the conversion does not move `committed` or
-   `spare` in either direction. Restore the row to `reserved`, the label to
+   green through it, because the conversion does not move the derived totals
+   in either direction. Restore the row to `reserved`, the label to
    `Committed, live plus the keeper's reserve`, refresh the stamp, re-run
-   `--live`, and commit.
+   `--live`, and commit — **except on the fresh-account branch, where the
+   `--live` confirmation waits for §7b for the reason step 3 gives.** The
+   file edit and the commit are owed either way; only the account-versus-file
+   check is deferred.
 
    ```bash
    ( cd apps/keeper
@@ -2143,7 +2169,9 @@ caught at the cheapest stage.
       one armed and failing.
    3. Then roll the authority back exactly as the pre-arm rollback above
       describes — row to `reserved`, label to `Committed, live plus the
-      keeper's reserve`, refresh the stamp, re-run `--live`, commit.
+      keeper's reserve`, refresh the stamp, re-run `--live`, commit —
+      including its fresh-account caveat: before §7b the edit and the commit
+      still happen, the `--live` confirmation does not.
 
    `apps/keeper/wrangler.jsonc` has carried this post-arm rollback all
    along; this runbook did not, so an operator following the canonical
