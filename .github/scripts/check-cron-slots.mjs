@@ -2339,96 +2339,92 @@ function stripJsonLikeComments(text) {
  */
 function readWranglerName(configPath) {
   try {
-    // Codex #1978 r25: `^ {0,2}` treated TWO-SPACE INDENTATION as the
-    // definition of "top level", so reformatting a config to four spaces made
-    // this return null — and a false `*none*` or a swapped source binding then
-    // passed both modes after a whitespace-only edit. Structure, not layout:
-    // strip comments and strings, track brace/bracket depth, and take the
-    // first `name` at depth 1. `apps/agent/wrangler.jsonc` has eleven `name`
-    // fields and only that one is the Worker's.
-    // Codex #1978 r27: comments are stripped by a STRING-AWARE scan, not a
-    // regex. r26's `/\*[\s\S]*?\*\//g` recognised delimiters inside strings
-    // and inside line comments — so a line comment mentioning a route glob
-    // (`// Example route: watcher.vaipakam.com/*`) opened a "block comment"
-    // that the cron expression `"*/15 * * * *"` later closed, deleting every
-    // declaration in between. That is a regex pretending to be a tokenizer,
-    // and it broke BOTH ways: the real name vanished, so a false `*none*`
-    // passed AND a swapped binding passed.
-    //
-    // Three rounds on one small function — layout-keyed, then `//`-only, now
-    // this. Each fix was correct about the case it was shown; none asked what
-    // the input language actually is.
-    const isToml = /\.toml$/i.test(configPath);
-    const raw = readFileSync(configPath, 'utf8');
-    // Codex #1978 r39: TOML was routed past the extension check and then run
-    // through the JSON brace-depth tracker anyway, with only JSON comments
-    // stripped. So `# template syntax: {{` in a TOML comment raised the depth
-    // to two and `readWranglerName` returned null — and a null here silently
-    // disables BOTH swapped-source detection and false-`*none*` falsification.
-    //
-    // FIFTH round on this function. r38 chose the grammar correctly and then
-    // handed the file to the wrong parser regardless, which is the r32 shape:
-    // the fix was made, was right, and the code it was meant to replace kept
-    // running. TOML has no braces around top-level keys at all, so brace depth
-    // is not merely fragile here — it is meaningless. The top-level table is
-    // everything before the first `[section]` header, and that is the whole
-    // rule.
-    if (isToml) {
-      for (const line of raw.split('\n')) {
-        const bare = line.replace(/#.*$/, '');
-        if (/^\s*\[/.test(bare)) break; // a table header ends the top level
-        const m = /^\s*"?name"?\s*=\s*(?:"([^"]+)"|'([^']+)')/.exec(bare);
-        if (m) return m[1] ?? m[2];
-      }
-      return null;
-    }
-    const text = stripJsonLikeComments(raw);
-    let depth = 0;
-    for (const rawLine of text.split('\n')) {
-      const line = rawLine;
-      if (depth === 1) {
-        const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
-        if (m) return m[1] ?? m[2];
-      }
-      // Codex #1978 r40: `"[^"]*"` ends a string at an ESCAPED quote, so a
-      // value containing `\"` left the scanner believing it was outside a
-      // string and counting the `{` or `[` that followed as structure. Depth
-      // then never returned to 1, `readWranglerName` returned null, and a
-      // swapped source binding passed both modes.
-      //
-      // Sixth round on this function, and the third caused by a regex standing
-      // in for a tokenizer — r27 was `/\*...\*/` matching inside strings, r39
-      // was TOML through a JSON scanner, this is string literals with escapes.
-      // Each time the regex was correct on the input it was shown. Escapes are
-      // exactly what a regex character class cannot carry, so the scan below
-      // tracks state per character instead.
-      let inString = false;
-      let quote = '';
-      let escaped = false;
-      for (const ch of line) {
-        if (escaped) {
-          escaped = false;
-          continue;
-        }
-        if (ch === '\\') {
-          escaped = true;
-          continue;
-        }
-        if (inString) {
-          if (ch === quote) inString = false;
-          continue;
-        }
-        if (ch === '"' || ch === "'") {
-          inString = true;
-          quote = ch;
-        } else if (ch === '{' || ch === '[') depth += 1;
-        else if (ch === '}' || ch === ']') depth -= 1;
-      }
-    }
-    return null;
+    return wranglerNameFrom(
+      readFileSync(configPath, 'utf8'),
+      /\.toml$/i.test(configPath),
+    );
   } catch {
     return null; // unreadable config is not this check's business
   }
+}
+
+/**
+ * The PARSING half of {@link readWranglerName}, over text rather than a path.
+ *
+ * Split out so the selftest can state a case directly. Six rounds have landed
+ * on this logic and none of them could be pinned, because the function only
+ * ever took a PATH: every fix was exercised through whatever tracked config
+ * happened to contain the shape, and a shape no committed config held could
+ * not be written down at all. That is the actual reason an escaped quote
+ * survived to round 40 — not the regex, which was only how it survived.
+ */
+export function wranglerNameFrom(raw, isToml) {
+  // Codex #1978 r39: TOML was routed past the extension check and then run
+  // through the JSON brace-depth tracker anyway, with only JSON comments
+  // stripped. So `# template syntax: {{` in a TOML comment raised the depth
+  // to two and `readWranglerName` returned null — and a null here silently
+  // disables BOTH swapped-source detection and false-`*none*` falsification.
+  //
+  // FIFTH round on this function. r38 chose the grammar correctly and then
+  // handed the file to the wrong parser regardless, which is the r32 shape:
+  // the fix was made, was right, and the code it was meant to replace kept
+  // running. TOML has no braces around top-level keys at all, so brace depth
+  // is not merely fragile here — it is meaningless. The top-level table is
+  // everything before the first `[section]` header, and that is the whole
+  // rule.
+  if (isToml) {
+    for (const line of raw.split('\n')) {
+      const bare = line.replace(/#.*$/, '');
+      if (/^\s*\[/.test(bare)) break; // a table header ends the top level
+      const m = /^\s*"?name"?\s*=\s*(?:"([^"]+)"|'([^']+)')/.exec(bare);
+      if (m) return m[1] ?? m[2];
+    }
+    return null;
+  }
+  const text = stripJsonLikeComments(raw);
+  let depth = 0;
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine;
+    if (depth === 1) {
+      const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
+      if (m) return m[1] ?? m[2];
+    }
+    // Codex #1978 r40: `"[^"]*"` ends a string at an ESCAPED quote, so a
+    // value containing `\"` left the scanner believing it was outside a
+    // string and counting the `{` or `[` that followed as structure. Depth
+    // then never returned to 1, `readWranglerName` returned null, and a
+    // swapped source binding passed both modes.
+    //
+    // Sixth round on this function, and the third caused by a regex standing
+    // in for a tokenizer — r27 was `/\*...\*/` matching inside strings, r39
+    // was TOML through a JSON scanner, this is string literals with escapes.
+    // Each time the regex was correct on the input it was shown. Escapes are
+    // exactly what a regex character class cannot carry, so the scan below
+    // tracks state per character instead.
+    let inString = false;
+    let quote = '';
+    let escaped = false;
+    for (const ch of line) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escaped = true;
+        continue;
+      }
+      if (inString) {
+        if (ch === quote) inString = false;
+        continue;
+      }
+      if (ch === '"' || ch === "'") {
+        inString = true;
+        quote = ch;
+      } else if (ch === '{' || ch === '[') depth += 1;
+      else if (ch === '}' || ch === ']') depth -= 1;
+    }
+  }
+  return null;
 }
 
 /**
@@ -3283,6 +3279,56 @@ const COMMENT_CASES = [
  * perfectly well-formed backticked path and only fails once git is asked to
  * resolve it literally.
  */
+/**
+ * `wranglerNameFrom` fixtures — one per round this function has been through.
+ */
+const WRANGLER_NAME_CASES = [
+  ['a plain top-level name', '{\n  "name": "vaipakam-agent"\n}\n', false, 'vaipakam-agent'],
+  // r25: layout is not structure.
+  ['four-space indentation', '{\n    "name": "vaipakam-agent"\n}\n', false, 'vaipakam-agent'],
+  [
+    'a nested name does not win',
+    '{\n  "ratelimit": {\n    "name": "inner"\n  },\n  "name": "vaipakam-agent"\n}\n',
+    false,
+    'vaipakam-agent',
+  ],
+  // r27: a route glob in a line comment must not open a block comment that a
+  // later cron expression closes.
+  [
+    'a route glob in a line comment',
+    '{\n  // Example route: watcher.vaipakam.com/*\n  "triggers": { "crons": ["*/15 * * * *"] },\n  "name": "vaipakam-agent"\n}\n',
+    false,
+    'vaipakam-agent',
+  ],
+  // r40: an escaped quote followed by an unbalanced brace. The brace was
+  // counted as structure, depth never returned to 1, and the null return
+  // silently disabled BOTH source checks for that config.
+  [
+    'an escaped quote before a brace',
+    String.raw`{
+  "vars": { "note": "a quote \" then a brace {" },
+  "name": "vaipakam-agent"
+}
+`,
+    false,
+    'vaipakam-agent',
+  ],
+  // r38/r39: TOML has no braces around top-level keys.
+  ['a TOML top-level name', 'name = "vaipakam-agent"\n', true, 'vaipakam-agent'],
+  [
+    'a TOML comment containing braces',
+    '# template syntax: {{\nname = "vaipakam-agent"\n',
+    true,
+    'vaipakam-agent',
+  ],
+  [
+    'a TOML name below a table header is not top level',
+    '[env.production]\nname = "vaipakam-agent"\n',
+    true,
+    null,
+  ],
+];
+
 const CHECK_SOURCES_CASES = [
   ['a real tracked path resolves', new Map([['vaipakam-keeper', 'apps/keeper']]), 0],
   ['the none marker is accepted for a Worker with no source', new Map([['vaipakam-offchain-data-archive', null]]), 0],
@@ -3459,6 +3505,15 @@ function runSelftest() {
       bad++;
     }
   }
+  for (const [name, raw, isToml, expected] of WRANGLER_NAME_CASES) {
+    const got = wranglerNameFrom(raw, isToml);
+    if (got !== expected) {
+      console.error(
+        `selftest: wrangler-name case "${name}" read ${JSON.stringify(got)}, expected ${JSON.stringify(expected)}`,
+      );
+      problems += 1;
+    }
+  }
   for (const [name, cell, expected] of SOURCE_CASES) {
     const got = readSource(cell);
     if (got !== expected) {
@@ -3600,7 +3655,7 @@ function runSelftest() {
   console.log(
     `Cron-slot gate selftest OK (${MUST_FIRE.length} fire, ${MUST_NOT_FIRE.length} quiet, ` +
       `${INVENTORY_CASES.length} inventory rows, ${SUMMARY_CASES.length} summaries, ` +
-      `${STAMP_CASES.length} stamps, ${COMMENT_CASES.length} comment rules, ${SOURCE_CASES.length} sources, ` +
+      `${STAMP_CASES.length} stamps, ${COMMENT_CASES.length} comment rules, ${SOURCE_CASES.length} sources, ${WRANGLER_NAME_CASES.length} wrangler names, ` +
       `${CHECK_SOURCES_CASES.length} source resolutions).`,
   );
   return 0;

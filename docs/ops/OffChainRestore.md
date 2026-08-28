@@ -1694,7 +1694,17 @@ caught at the cheapest stage.
 
       ```bash
       ( set -euo pipefail
-        cf() { curl -fsS -H "Authorization: Bearer $CF_API_TOKEN" "$1"; }
+        # Token on STDIN, never in argv (Codex #1978 r40) — the rule this
+        # runbook already states for its other Cloudflare reads. `-H` puts the
+        # restore-scoped token in `/proc/<pid>/cmdline`, which is world-readable,
+        # for the lifetime of every request in the loop below; `-K -` puts it in
+        # the config curl reads from stdin. `fail`, `silent` and `show-error`
+        # are the config spellings of `-f`, `-s` and `-S`, so the fail-closed
+        # behaviour described under this block is unchanged.
+        cf() {
+          printf 'url = "%s"\nheader = "Authorization: Bearer %s"\nfail\nsilent\nshow-error\n' \
+            "$1" "$CF_API_TOKEN" | curl -K -
+        }
         api="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID"
         ok() { jq -e 'if .success then . else error("Cloudflare reported failure") end'; }
 
@@ -1723,7 +1733,8 @@ caught at the cheapest stage.
       error makes `.result` null; a plain `curl -sS | jq -r` then prints
       nothing, the loop body never runs, and a count of `0` is reported —
       telling the operator every trigger is free at precisely the moment the
-      read failed. `curl -f` turns an HTTP error into a non-zero exit,
+      read failed. `fail` in curl's config (the `-f` of the argv form) turns an
+      HTTP error into a non-zero exit,
       `jq -e` on `.success` catches an API-level failure that still returned
       200, and `set -euo pipefail` makes either abort the subshell instead of
       falling through to a reassuring number.
@@ -2255,10 +2266,26 @@ is #1977 again by a different route.
    it from.
 2. Re-derive "Live right now" and the `Committed` label from the rows that
    remain, and refresh the `Verified:` stamp.
-3. ```bash
+3. Re-read the token first. Branch B runs `unset CF_API_TOKEN` at the end of
+   its keeper-settings readback, which is far above this point, so following
+   the runbook in order arrives here with the variable GONE — under the
+   `set -u` these blocks use that aborts, and without it `--live` receives an
+   empty credential and reports missing credentials. Either way the operator
+   reads a failure of the gate rather than the reconciliation it was asked for
+   (Codex #1978 r40).
+
+   ```bash
+   read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
    CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
      node .github/scripts/check-cron-slots.mjs --live
+   unset CF_API_TOKEN
    ```
+
+   The token goes to the gate through the ENVIRONMENT, which is
+   `/proc/<pid>/environ` and readable only by its owner — unlike argv. That is
+   why this one does not need the `curl -K -` form the HTTP reads above use.
+   `unset` afterwards, per the same rule.
+
    Now that the account is complete, this is the check that was impossible
    earlier.
 4. **Commit it.** An uncommitted reconciliation leaves the branch carrying the
