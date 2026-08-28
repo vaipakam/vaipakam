@@ -231,7 +231,7 @@ const CONTEXT = /\b(cron|crons|trigger|triggers)\b/i;
  * has cost this repository real review rounds in ordinary prose; a rule that
  * inspects prose must not inherit it.
  */
-const WRAP = String.raw`(?:\s|\*|\/\/|#|>)+`;
+const WRAP = String.raw`(?:\s|\*|\/\/|#|>){1,40}`;
 
 /**
  * The same gap where a separator is OPTIONAL — `5/5` has none around the
@@ -244,7 +244,7 @@ const WRAP = String.raw`(?:\s|\*|\/\/|#|>)+`;
  * that exact phrase is a must-fire fixture, because the class of defect the
  * gate exists to catch was hiding in the gate itself.
  */
-const GAP = String.raw`(?:\s|\*|\/\/|#|>)*`;
+const GAP = String.raw`(?:\s|\*|\/\/|#|>){0,40}`;
 
 /**
  * Occupancy shapes. Each is a way the ten copies actually said it, plus the
@@ -323,7 +323,7 @@ const OCCUPANCY = [
   // pattern, "takes the account to 5 of 5" by the account pattern, and the
   // slash form carries "cron triggers" immediately after it.
   new RegExp(
-    String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)${WRAP}(?:(?:cron|account)[-\s]*${WRAP}?)*(?:cron-)?(?:slots?|triggers?|schedules?)\b`,
+    String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)${WRAP}(?:(?:cron|account)[-\s]{1,10})?(?:cron-)?(?:slots?|triggers?|schedules?)\b`,
     'i',
   ),
   // "all five slots", "used all 5 cron triggers". The noun is REQUIRED: "all
@@ -361,7 +361,7 @@ const OCCUPANCY = [
   // that finding: a restatement outside the authority is what this gate is
   // for, while a false positive is a nuisance.
   new RegExp(
-    String.raw`\b${N}${WRAP}(?:(?:cron|account)[-\s]*${WRAP}?)*(?:slots?|triggers?|schedules?)${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b`,
+    String.raw`\b${N}${WRAP}(?:(?:cron|account)[-\s]{1,10})?(?:slots?|triggers?|schedules?)${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b`,
     'i',
   ),
   new RegExp(
@@ -409,7 +409,7 @@ const OCCUPANCY = [
   // matcher in the same array untouched. A spare WHAT is the same question as
   // four of five WHAT.
   new RegExp(
-    String.raw`\bspare\b${WRAP}(?:(?:cron|account)[-\s]*${WRAP}?)*(?:cron-)?(?:slots?|triggers?|schedules?|capacity)\b`,
+    String.raw`\bspare\b${WRAP}(?:(?:cron|account)[-\s]{1,10})?(?:cron-)?(?:slots?|triggers?|schedules?|capacity)\b`,
     'i',
   ),
   // …and the reverse order: "no cron trigger is spare", "the slot is spare".
@@ -1707,7 +1707,12 @@ export function parseInventory(md) {
     // the rendered row plainly claims a cadence. One branch of a two-branch
     // condition, again: I wrote the rule for the shape in the finding and not
     // for the question it was asking.
-    const isNone = /^\s*\*?\*?\(?\s*none\s*\)?\*?\*?\s*$/i.test(scheduleCell);
+    // Codex #1978 r30: the CANONICAL spelling only. This accepted `none`,
+    // `(none)`, `**none**`, and malformed halves like `(none` or `*(none)**`
+    // — while the diagnostic it guards tells the editor the form is
+    // `*(none)*`. A check that names one spelling and accepts six is not
+    // enforcing a convention, it is describing one.
+    const isNone = /^\s*\*\(\s*none\s*\)\*\s*$/i.test(scheduleCell);
     // Codex #1978 r28: the empty cell is NOT exempt. I wrote
     // `scheduleCell.trim() !== ''` into the r25 rule without asking what an
     // empty Schedule column claims — which is nothing a reader can act on,
@@ -1781,7 +1786,14 @@ const STATUSES = new Set(['live', 'reserved', 'undeployed']);
 
 /** The leading status keyword, or null if the cell does not start with one. */
 export function readStatus(cell) {
-  const m = /^[\s*_]*([a-z]+)/i.exec(cell);
+  // Codex #1978 r30: the keyword must END at a real boundary. `[a-z]+` stops
+  // before a digit or underscore, so `reserved2`, `live123` and
+  // `undeployed_v2` were read as their valid prefixes — and `reserved2`
+  // silently creates a reservation that NO account check can contradict,
+  // because a reserved Worker has no schedule to compare against. A typo in
+  // the status cell was the one class of damage this parser promised to
+  // reject and quietly accepted.
+  const m = /^[\s*_]*([a-z]+)(?![a-z0-9_])/i.exec(cell);
   const word = m?.[1]?.toLowerCase();
   return word && STATUSES.has(word) ? word : null;
 }
@@ -2919,7 +2931,19 @@ function runSelftest() {
   // guard that reliably localises the fault is worth having even when it
   // cannot pretty-print it.
   {
-    const pathological = 'cron triggers spare headroom occupy ' + 'x'.repeat(50_000);
+    // TWO shapes, because the r27 guard only had one and missed the r29
+    // regression entirely: a long run with NO whitespace (catastrophic
+    // backtracking inside a token repeat) and a long run OF whitespace
+    // (quadratic partitioning between two separator quantifiers). The second
+    // is what Codex measured at ~19 s, on a matcher added the round after the
+    // guard was written — a guard testing one pathological input is a guard
+    // for one bug.
+    const pathological =
+      'cron triggers spare headroom occupy ' +
+      'x'.repeat(50_000) +
+      ' trigger context 4 cron' +
+      ' '.repeat(50_000) +
+      'zzz';
     const started = Date.now();
     findOccupancyClaims(pathological);
     const ms = Date.now() - started;
