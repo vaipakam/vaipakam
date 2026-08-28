@@ -271,6 +271,90 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// #1499 — a FORFEITED entry enters the funding requirement as a TERM,
+    /// through the same single formula, without re-adding the earmark.
+    ///
+    /// This is the forfeit x backing intersection. Seven cells combine a
+    /// forfeit with a backing manipulation, but only two assert on a funding
+    /// gate — one of those is the DROUGHT gate, and the other lives in
+    /// `RewardClaimBackingSeparationTest`, which never arms and so has no
+    /// recycled component at all. The requirement itself was unasserted here.
+    ///
+    /// The invariant is the one the predicate's own comment states: "ONE
+    /// predicate, no forfeit branch. Forfeit value enters as `treasuryLegs` —
+    /// a TERM, not a second formula with its own arithmetic". A second formula
+    /// is what Codex #1970 r2 found bypassing {LibVpfiRecycle.backingPosition}
+    /// entirely, so this pins the shape rather than the value: adding a
+    /// forfeited sibling must add its own contribution and NOTHING else.
+    ///
+    /// Written as an exact equation over the two measurements, so it fails in
+    /// both directions — drop the forfeit term and the requirement does not
+    /// grow; count the earmark per entry instead of once and it grows twice as
+    /// much.
+    function testForfeitedEntryEntersTheRequirementAsATermNotASecondFormula()
+        public
+    {
+        _cfg().setRewardClaimHorizonDays(180);
+        (, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "fixture: the armed day has a recycled component");
+
+        uint256 bucket = 1_000_000 ether;
+        _mut().setRecycleBucketRaw(bucket);
+
+        // Codex #1988 r1: the earmark must NOT equal the bucket, or this cell
+        // cannot tell {LibVpfiRecycle.backingPosition} from a bare
+        // `s.recycleBucket` read. With the stranded and recovery reservations
+        // at zero, `bal - unearmarked` IS exactly `bucket`, so the historical
+        // second-branch shape `payout + s.recycleBucket + forfeitFresh` — the
+        // very formula Codex #1970 r2 caught bypassing `backingPosition` —
+        // satisfied the equation below. A distinct reservation separates them.
+        uint256 stranded = 7_000 ether;
+        _mut().setStrandedRecoveryRaw(address(0xD1), 1, stranded, 1, 4);
+        uint256 earmark = bucket + stranded;
+
+        // One live entry: requirement = its own contribution + the earmark.
+        _seedEntry(alice, 100, 4, 6);
+        uint256 needLiveOnly = _mut().userClaimFundingNeedRaw(alice);
+        assertGt(needLiveOnly, earmark, "fixture: the live entry contributes");
+        uint256 perEntry = needLiveOnly - earmark;
+        (, uint256 userLegsLive, uint256 treasuryLegsLive) =
+            _lens().getUserArmedFreshNeedWithLegs(alice);
+
+        // An identical sibling, FORFEITED. Its value still has to be funded —
+        // the forfeit-credit path spends it — so it enters the same formula.
+        uint256 gone = _seedEntry(alice, 101, 4, 6);
+        _mut().setRewardEntryForfeitedRaw(gone);
+        uint256 needWithForfeit = _mut().userClaimFundingNeedRaw(alice);
+
+        // Codex #1988 r1: assert the sibling is priced through the TREASURY
+        // leg. The combined total alone is unchanged if the preview ignored
+        // the `forfeited` bit and priced both siblings as live `userLegs`, so
+        // the arithmetic could be satisfied by a classification regression.
+        (, uint256 userLegsAfter, uint256 treasuryLegsAfter) =
+            _lens().getUserArmedFreshNeedWithLegs(alice);
+        assertEq(
+            treasuryLegsLive,
+            0,
+            "fixture: with only a live entry there is no treasury leg"
+        );
+        assertGt(
+            treasuryLegsAfter,
+            0,
+            "the forfeited sibling is priced through the TREASURY leg"
+        );
+        assertEq(
+            userLegsAfter,
+            userLegsLive,
+            "and it does NOT inflate the user leg - it is not priced as live"
+        );
+
+        assertEq(
+            needWithForfeit,
+            perEntry * 2 + earmark,
+            "the forfeited sibling adds its own contribution and the earmark - bucket PLUS the stranded reservation - stays counted ONCE"
+        );
+    }
+
     function _armAndFinalize(uint256 armDay, uint256 creditedPerWindow)
         internal
         returns (uint256 floor_, uint256 recycled)
