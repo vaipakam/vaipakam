@@ -3415,6 +3415,93 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a PROCESS substitution is as opaque as a command substitution (#1995 r16)', () => {
+    // Two bugs in series: the redirection stripper ate `<` and its "operand"
+    // `(echo`, leaving the substitution's words standing as real arguments, so
+    // a `--keep-vars` written inside one blessed a bare deploy.
+    const r = runWith('p.sh', 'cd apps/agent\nwrangler deploy --message <(echo --keep-vars)\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while a REAL redirection is still stripped (#1995 r16 control)', () => {
+    // The lookahead is on the single-character operators only. Both of these
+    // put the safety flag where the shell does not: after a redirection
+    // operand, and inside a here-string.
+    expect(runWith('p2.sh', 'cd apps/agent\nwrangler deploy > out --keep-vars\n').ok).toBe(true);
+    expect(runWith('p3.sh', 'cd apps/agent\nwrangler deploy --keep-vars <<< done\n').ok).toBe(true);
+  });
+
+  it("a boolean flag does not eat wrangler's positional script (#1995 r16)", () => {
+    // `wrangler deploy [script]` takes an entrypoint and `--keep-vars` is a
+    // boolean, so the path is the SCRIPT — but the separated branch consumed
+    // it and, under the true-only rule, scored the flag off. A correct
+    // explicit-entrypoint deploy was reported as destructive.
+    const r = runWith('q.sh', 'cd apps/agent\nwrangler deploy --keep-vars apps/agent/src/index.ts\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('while a separated boolean LITERAL is still its value (#1995 r16 control)', () => {
+    // The attached form is untouched — `=yes` and `=garbage` are still false
+    // (r28) — and a separated `false` still disables.
+    expect(runWith('q2.sh', 'cd apps/agent\nwrangler deploy --keep-vars false\n').ok).toBe(false);
+    expect(runWith('q3.sh', 'cd apps/agent\nwrangler deploy --keep-vars=garbage\n').ok).toBe(false);
+  });
+
+  it('a package-manager option may take a SEPARATED value (#1995 r16)', () => {
+    // `pnpm help run` documents `-C, --dir <dir>`. The pattern could only step
+    // over `--opt` or `--opt=value`, so this never reached `deploy` and the
+    // whole destructive line was invisible to detection.
+    seedWorkspace();
+    const r = runWith('s.sh', 'pnpm run -C apps/agent deploy --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a JSON escape is decoded with JSON semantics (#1995 r16)', () => {
+    // `\u0079` is `y`. Dropping the backslash left `deployu0079`, which matched
+    // no deploy, so the whole file was skipped at the prefilter.
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n  "name": "@vaipakam/agent",\n  "scripts": {\n    "deploy": "wrangler deplo\\u0079"\n  }\n}\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('and every value on a MINIFIED line is read (#1995 r16)', () => {
+    // Found while fixing the escape: the decoded case passed pretty-printed
+    // and failed minified, which is the escape working and the EXTRACTION not.
+    // The value pattern was end-anchored, so only the last value on a line was
+    // ever scanned.
+    const r = runWith(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deplo\\u0079"}}\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a custom shell TEMPLATE names its interpreter first (#1995 r16)', () => {
+    // The unquoted spelling worked for the wrong reason — `\S+` stopped at the
+    // space and captured `bash` by accident — while the quoted one compared
+    // the whole scalar and classified a real Bash step as non-shell.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: "bash -e {0}"\n' +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a python TEMPLATE is still not a shell (#1995 r16 control)', () => {
+    const r = runWith(
+      '.github/workflows/w2.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: "python {0}"\n' +
+        '        working-directory: apps/agent\n        run: print("wrangler deploy")\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

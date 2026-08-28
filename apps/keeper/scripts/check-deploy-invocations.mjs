@@ -157,7 +157,15 @@ const DEPLOY_RE = String.raw`wrangler2?(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[
  * two that can drift apart.
  */
 const RUN_ALIASES = String.raw`run(?:-script)?|rum|urn`;
-const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+(?:${RUN_ALIASES})(?:\s+-{1,2}[A-Za-z0-9-]+(?:=[^\s]*)?)*\s+deploy\b`;
+// `[= ]` and not `=` alone: a package-manager option may take a SEPARATED
+// value, and `pnpm help run` documents `-C, --dir <dir>` as exactly that. The
+// pattern could only step over `--opt` or `--opt=value`, so `pnpm run -C
+// apps/agent deploy --no-keep-vars` never reached `deploy` and the whole
+// destructive line was invisible to detection (#1995 r16). `[^\s-]` on the
+// first character of the value keeps the NEXT option from being eaten as this
+// one's value — the same rule `stripOtherOptionValues` uses, and the same one
+// `DEPLOY_RE` above has carried since it was written.
+const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+(?:${RUN_ALIASES})(?:\s+-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?)*\s+deploy\b`;
 /** What counts as "this line performs a deploy" for DETECTION purposes. */
 const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
 
@@ -390,7 +398,20 @@ function stripRedirections(line) {
   // consumed the remaining `<<` as its operand, leaving the real operand to be
   // counted as an enabled flag (Codex #1924 r31).
   return line.replace(
-    /(?:&>>|&>|\d?(?:<<<|<<|<>|>>|>&|<&|>|<))\s*&?\s*(?:"[^"]*"|'[^']*'|[^\s"';&|)]+)/g,
+    // `<(` and `>(` open a PROCESS SUBSTITUTION, not a redirection. Stripping
+    // the bare operator ate `(echo` as its operand and left the substitution's
+    // remaining words standing as real arguments — so a `--keep-vars` written
+    // inside one blessed a bare deploy (#1995 r16). The lookahead is on the
+    // single-character alternatives only; no multi-character operator can be
+    // followed by `(` in that sense.
+    //
+    // Adding it to the multi-character operators as well is an EQUIVALENT
+    // MUTANT, recorded as one rather than fixtured: whichever operator the
+    // lookahead refuses, the alternation matches a shorter one at the same
+    // position and the strip happens anyway. Measured over ten shapes —
+    // `<<<(`, `>>(`, `<<(`, `2>(`, here-docs and plain redirects — and the
+    // narrow and wide forms produced identical output on all ten.
+    /(?:&>>|&>|\d?(?:<<<|<<|<>|>>|>&|<&|>(?!\()|<(?!\()))\s*&?\s*(?:"[^"]*"|'[^']*'|[^\s"';&|)]+)/g,
     ' ',
   );
 }
@@ -479,6 +500,33 @@ function stripCommandSubstitutions(text) {
     if (text[i] === '\\') {
       out += text[i] + (text[i + 1] ?? '');
       i += 1;
+      continue;
+    }
+    // `<( … )` and `>( … )` are PROCESS substitutions. They are as opaque as
+    // `$( … )` — the shell hands the command a `/dev/fd` path, never the text
+    // inside — but only `$(` was blanked, so safety-looking words inside one
+    // were scored as if they were arguments (#1995 r16). Same walk, same
+    // placeholder; only the opener differs.
+    if ((text[i] === '<' || text[i] === '>') && text[i + 1] === '(') {
+      let depth = 1;
+      let j = i + 2;
+      let q = null;
+      for (; j < text.length && depth > 0; j += 1) {
+        const c = text[j];
+        if (c === '\\') {
+          j += 1;
+          continue;
+        }
+        if (q) {
+          if (c === q) q = null;
+          continue;
+        }
+        if (c === '"' || c === "'" || c === '`') q = c;
+        else if (c === '(') depth += 1;
+        else if (c === ')') depth -= 1;
+      }
+      out += '\u0001';
+      i = j - 1;
       continue;
     }
     if (text[i] === '$' && text[i + 1] === '(') {
@@ -703,7 +751,24 @@ function flagEnabled(rawLine, flag) {
     // prefix scored it safe (Codex #1924 r30), so the attached branch captures
     // the whole word and the quotes are removed afterwards.
     const attached = m[1] === undefined ? undefined : m[1].replace(/["'`]/g, '');
-    const value = attached ?? m[2] ?? m[3] ?? m[4];
+    const separated = m[2] ?? m[3] ?? m[4];
+    // `wrangler deploy [script]` takes a POSITIONAL entrypoint, and
+    // `--keep-vars` is a boolean. `wrangler deploy --keep-vars
+    // apps/agent/src/index.ts` therefore passes the path as the script, not as
+    // the flag's value — but the separated branch consumed it and, under the
+    // true-only rule, scored the flag OFF. A correct, explicit-entrypoint
+    // deploy was reported as destructive (#1995 r16), which is a false red.
+    //
+    // Only a boolean LITERAL is taken as a separated value; anything else is a
+    // positional and leaves the flag bare, i.e. enabled. This does not touch
+    // the ATTACHED form, where `--keep-vars=yes` and `=garbage` really are
+    // values and really are false (r28) — the two forms have needed different
+    // rules since r29 and this is the same distinction again.
+    const value =
+      attached ??
+      (separated !== undefined && /^(?:true|false|1|0)$/i.test(separated.trim())
+        ? separated
+        : undefined);
     events.push({
       at: m.index,
       // wrangler declares these `[boolean] [default: false]`, and its parser
@@ -1098,7 +1163,7 @@ function commandIsSafe(cmd) {
   const runDeploy = source.match(
     new RegExp(
       `${hasWrangler ? '^' : ''}(pnpm|npm|yarn)(?:\\s+[^\\s]+)*?` +
-        `\\s+(?:${RUN_ALIASES})(?:\\s+-{1,2}[A-Za-z0-9-]+(?:=[^\\s]*)?)*\\s+deploy\\b([\\s\\S]*)$`,
+        `\\s+(?:${RUN_ALIASES})(?:\\s+-{1,2}[A-Za-z0-9-]+(?:[= ][^\\s-][^\\s]*)?)*\\s+deploy\\b([\\s\\S]*)$`,
     ),
   );
   if (!runDeploy) return false;
@@ -2614,7 +2679,14 @@ function stepIsShell(lines, runIdx) {
     /^\s*(?:-\s+)?shell:\s*(?:"([^"]*)"|'([^']*)'|(\S+))/,
   );
   if (!m) return true;
-  return SHELL_KEYWORDS.has((m[1] ?? m[2] ?? m[3] ?? '').trim());
+  // Actions accepts a custom TEMPLATE — `bash -e {0}` — and the interpreter is
+  // its first token. Comparing the whole scalar classified a quoted
+  // `shell: "bash -e {0}"` as non-shell and skipped a real deploy (#1995 r16).
+  // The unquoted spelling happened to work for the wrong reason: the `\S+`
+  // alternative stopped at the space, so it captured `bash` by accident. Both
+  // spellings take the first token now, deliberately.
+  const value = (m[1] ?? m[2] ?? m[3] ?? '').trim();
+  return SHELL_KEYWORDS.has(value.split(/\s+/)[0]);
 }
 
 function workingDirFor(lines, runIdx) {
@@ -2922,14 +2994,52 @@ function foldYamlScalar(raw) {
  * splitter can reason about rather than a delimiter it cannot.
  */
 function jsonValueLines(text) {
-  return text.split('\n').map((t, i) => {
-    const m = t.match(/:\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$/);
-    return {
-      text: m ? m[1].replace(/\\(.)/g, '$1') : t,
-      line: i + 1,
-      physical: true,
-    };
+  // EVERY string value on the line, not just one at the end. The pattern was
+  // end-anchored, so a MINIFIED manifest — every key on one line — had only its
+  // last value read and the rest never scanned at all. Found while fixing the
+  // escape decoding below: the decoded case passed pretty-printed and failed
+  // minified, which is the escape working and the extraction not (#1995 r16).
+  //
+  // One entry per value, all carrying the same physical line number, so a
+  // violation still points where an operator can open it. Values are NOT
+  // joined: concatenating them would put two unrelated scripts in one
+  // "command" and could manufacture a `cd` / deploy sequence that no script
+  // performs.
+  return text.split('\n').flatMap((t, i) => {
+    const all = [...t.matchAll(/:\s*"((?:[^"\\]|\\.)*)"/g)];
+    if (all.length > 0) {
+      return all.map((mm) => ({
+        text: decodeJsonString(mm[1]),
+        line: i + 1,
+        physical: true,
+      }));
+    }
+    const m = null;
+    return { text: t, line: i + 1, physical: true };
   });
+}
+
+/**
+ * A JSON string body, decoded with JSON semantics rather than by dropping
+ * backslashes.
+ *
+ * `\u0079` is the letter `y`, and stripping the backslash left the literal
+ * text `u0079` — so a manifest whose script reads `wrangler deplo\u0079` was
+ * scanned as `wrangler deployu0079`, matched no deploy, and the whole file was
+ * skipped at the prefilter (#1995 r16). The package manager runs
+ * `wrangler deploy`.
+ *
+ * `JSON.parse` on the re-quoted body, so every escape the format defines is
+ * handled rather than the two that were thought of. The fallback keeps the old
+ * behaviour when the body is not valid JSON — a `.jsonc` comment, say — so a
+ * malformed file degrades to the previous reading instead of vanishing.
+ */
+function decodeJsonString(body) {
+  try {
+    return JSON.parse(`"${body}"`);
+  } catch {
+    return body.replace(/\\(.)/g, '$1');
+  }
 }
 
 function plainLines(text) {
