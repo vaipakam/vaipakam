@@ -1510,6 +1510,39 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a positive and its own negation select NOTHING (#1995 r9)', () => {
+    // pnpm reports no projects for this pair, so reporting either package is a
+    // false red. Previously the negation's complement was added independently
+    // and it came out as a keeper violation.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter @vaipakam/agent --filter '!@vaipakam/agent' run --if-present deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('negations SUBTRACT from the positive selection (#1995 r9)', () => {
+    // The glob selects both protected packages; the negation removes one, so
+    // only the agent should be reported — not both, and not neither.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter '@vaipakam/*' --filter '!@vaipakam/keeper' run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+    expect(r.out).not.toContain('apps/keeper');
+  });
+
+  it('a negation ALONE still selects everything else (#1995 r8)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter '!@vaipakam/indexer' run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+    expect(r.out).toContain('apps/keeper');
+  });
+
   it('a top-level defaults: applies wherever it is declared (#1995 r10)', () => {
     // YAML mapping order is not significant, so a workflow may declare `jobs:`
     // first and `defaults:` after it.

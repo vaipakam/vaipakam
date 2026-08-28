@@ -948,7 +948,19 @@ function filterScopes(line) {
   // And every selector may select MORE THAN ONE package: `--filter
   // '@vaipakam/*'` covers both scoped Workers, and returning the first left the
   // other's remedy out of the same report (#1995 r7).
-  const out = new Set();
+  // POSITIVES are unioned and NEGATIVES are then subtracted, which is what
+  // pnpm does (#1995 r9). Adding each negation's complement independently made
+  // `--filter @vaipakam/agent --filter '!@vaipakam/agent'` — which pnpm reports
+  // as selecting NO projects — come out as a keeper violation.
+  //
+  // Returns `null` when the line carries no selector at all, and an ARRAY when
+  // it does, so callers can tell "nothing said" from "said, and it selects
+  // nothing". Those had the same spelling before, and only the first may fall
+  // through to matching package names in the surrounding text.
+  const included = new Set();
+  const excluded = new Set();
+  let sawSelector = false;
+  let sawPositive = false;
   // `-r` / `--recursive` runs the script in EVERY workspace package, naming
   // none of them, so no textual, filter or cwd signal exists at all (#1995 r8).
   //
@@ -964,7 +976,9 @@ function filterScopes(line) {
     // `[--workspaces]`, with `-ws` as its shorthand (#1995 r10).
     /(?:^|\s)(?:--workspaces|-ws)(?:\s|=|$)/.test(line)
   ) {
-    for (const sc of SCOPED) out.add(sc);
+    sawSelector = true;
+    sawPositive = true;
+    for (const sc of SCOPED) included.add(sc);
   }
   // `-F` is pnpm's documented shorthand for `--filter` (#1995 r10). The
   // lookbehind keeps it from matching the tail of another token.
@@ -972,6 +986,7 @@ function filterScopes(line) {
     new RegExp(`(?<![\\w-])(?:--filter(?:-prod)?|-F)(?:=|\\s+)(${WORD})`, 'g'),
   );
   for (const m of all) {
+    sawSelector = true;
     let pat = dequote(m[1]).replace(/^\.\.\.|\.\.\.$/g, '');
     // A LEADING `!` excludes: pnpm selects the packages NOT matching, so
     // `--filter '!@vaipakam/indexer'` reaches both protected Workers (#1995 r8).
@@ -988,24 +1003,38 @@ function filterScopes(line) {
     // way `-r` is — the conservative direction for a selector we cannot
     // resolve. Checked before the glob test, which would discard it.
     if (/^\[.*\]$/.test(pat)) {
-      for (const sc of SCOPED) out.add(sc);
+      sawPositive = true;
+      for (const sc of SCOPED) included.add(sc);
       continue;
     }
-    if (!negated && !/[*]/.test(pat)) continue; // literals handled by scopeOf
     const re = new RegExp(
       `^${pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,
     );
-    for (const sc of SCOPED) {
-      const subject = isDir ? sc.dir : sc.filter;
-      if (negated ? !re.test(subject) : re.test(subject)) out.add(sc);
+    // A positive LITERAL is a real selection and is resolved here now. It used
+    // to be skipped as "handled by scopeOf", which was true while selections
+    // were only ever added — but a negation has to subtract from something.
+    const matched = SCOPED.filter((sc) => re.test(isDir ? sc.dir : sc.filter));
+    if (negated) {
+      for (const sc of matched) excluded.add(sc);
+    } else {
+      sawPositive = true;
+      for (const sc of matched) included.add(sc);
     }
   }
-  return [...out];
+  if (!sawSelector) return null;
+  // With only negations, the base is every package — that is what
+  // `--filter '!@vaipakam/indexer'` means, and it still reaches both.
+  const base = sawPositive ? included : new Set(SCOPED);
+  for (const sc of excluded) base.delete(sc);
+  return [...base];
 }
 
 function scopeOf(line, filePath) {
   const byFilter = filterScopes(line);
-  if (byFilter.length > 0) return byFilter[0];
+  // An explicit selection that resolves to NOTHING stops here: falling through
+  // to the text would report a package the command demonstrably does not
+  // deploy (#1995 r9).
+  if (byFilter) return byFilter.length > 0 ? byFilter[0] : null;
   for (const s of SCOPED) {
     const base = s.dir.slice(s.dir.lastIndexOf('/') + 1);
     const parent = s.dir.slice(0, s.dir.lastIndexOf('/'));
@@ -1909,7 +1938,7 @@ for (const file of walk(REPO_ROOT)) {
         const sel = selectorScope(seg, [{ cwd: '', stack: [] }], false);
         // A single filter can select BOTH packages, and each needs its own
         // remedy in the same report (#1995 r7).
-        const many = filterScopes(seg);
+        const many = filterScopes(seg) ?? [];
         if (!sel && many.length > 1) {
           flagged = true;
           for (const sc of many) hitScopes.add(sc);
@@ -2080,7 +2109,7 @@ for (const file of walk(REPO_ROOT)) {
         if (!scope) continue;
         if (commandIsSafe(seg)) continue;
         flagged = true;
-        const many = sel ? [] : filterScopes(seg);
+        const many = sel ? [] : filterScopes(seg) ?? [];
         if (many.length > 1) for (const sc of many) hitScopes.add(sc);
         else hitScopes.add(scope);
       }
