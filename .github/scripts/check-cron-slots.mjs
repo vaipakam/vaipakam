@@ -347,7 +347,7 @@ const OCCUPANCY = [
   // asked the question this does: is the number counting something the
   // sentence names, and is that something a trigger?
   new RegExp(
-    String.raw`\boccup(?:y|ies|ied)\b[^.\n]{0,40}${GAP}\b${N}\b(?![-\s]+(?!${FUNCTION_WORD}|(?:cron|account)[-\s]|slots?\b|triggers?\b|schedules?\b)[A-Za-z])`,
+    String.raw`(?:cron|account|triggers?|slots?|schedules?)${GAP}[\s\S]{0,120}?\boccup(?:y|ies|ied)\b[^.\n]{0,40}${GAP}\b${N}\b(?![-\s]+(?!${FUNCTION_WORD}|total\b|currently\b|already\b|(?:cron|account)[-\s]|slots?\b|triggers?\b|schedules?\b)[A-Za-z])`,
     'i',
   ),
   // "4 are taken", "four were occupied", "3 in use", "4 in use today"
@@ -398,7 +398,7 @@ const OCCUPANCY = [
   ),
   // …and the reverse order: "no cron trigger is spare", "the slot is spare".
   new RegExp(
-    String.raw`(?:slots?|triggers?|schedules?|capacity)${GAP}(?:\w+${GAP}){0,6}?spare\b(?![-\s]+(?!${FUNCTION_WORD})[A-Za-z])`,
+    String.raw`(?:slots?|triggers?|schedules?|capacity)${GAP}[\s\S]{0,60}?spare\b(?![-\s]+(?!${FUNCTION_WORD})[A-Za-z])`,
     'i',
   ),
   // Codex #1978 r3: `packages/lib/src/cronCadence.ts` said "this account has no
@@ -426,15 +426,15 @@ const OCCUPANCY = [
   // earlier. `cron` is an adjective in all three sentences; what differs is
   // the noun it modifies.
   new RegExp(
-    String.raw`\b(?:account|triggers?|slots?|schedules?)${WRAP}(?:\w+${WRAP}){0,2}?(?:no|zero|little|any)${WRAP}(?:\w+${WRAP}){0,2}?(?:headroom|capacity${WRAP}(?:left|remaining|free))\b`,
+    String.raw`\b(?:account|triggers?|slots?|schedules?)${WRAP}[\s\S]{0,30}?(?:no|zero|little|any)${WRAP}[\s\S]{0,30}?(?:headroom|capacity${WRAP}(?:left|remaining|free))\b`,
     'i',
   ),
   new RegExp(
-    String.raw`\b(?:no|zero|little|any)${WRAP}(?:cron|trigger|slot|schedule|account)[-\s]*${WRAP}?(?:\w+${WRAP}){0,2}?(?:headroom|capacity${WRAP}(?:left|remaining|free))\b`,
+    String.raw`\b(?:no|zero|little|any)${WRAP}(?:cron|trigger|slot|schedule|account)[-\s]*${WRAP}?[\s\S]{0,30}?(?:headroom|capacity${WRAP}(?:left|remaining|free))\b`,
     'i',
   ),
   new RegExp(
-    String.raw`\b(?:no|zero|little|any)${WRAP}(?:headroom|capacity${WRAP}(?:left|remaining|free))${WRAP}(?:for|on)${WRAP}(?:\w+${WRAP}){0,3}?(?:cron|triggers?|slots?|schedules?)\b`,
+    String.raw`\b(?:no|zero|little|any)${WRAP}(?:headroom|capacity${WRAP}(?:left|remaining|free))${WRAP}(?:for|on)${WRAP}[\s\S]{0,40}?(?:cron|triggers?|slots?|schedules?)\b`,
     'i',
   ),
   // Codex #1978 r4 removed two restated VERDICTS — "**This step currently
@@ -512,9 +512,9 @@ const OCCUPANCY = [
     'i',
   ),
   /\bat\s+capacity\s+for\s+(?:cron\s+)?(?:triggers?|schedules?)\b/i,
-  /\bno\s+room\s+for\s+(?:a|an|another|one\s+more)?\s*(?:new\s+|cron\s+|scheduled\s+)*(?:trigger|schedule|worker)s?\b/i,
-  /\broom\s+for\s+(?:one\s+more|another)\s+(?:cron\s+|scheduled\s+)*(?:trigger|schedule|worker)s?\b/i,
-  /\bcan\s+(?:still\s+)?(?:take|fit|hold)\s+(?:one\s+more|another)\s+(?:cron\s+|scheduled\s+)*(?:trigger|schedule|worker)s?\b/i,
+  /\bno\s+room\s+for\s+(?:a|an|another|one\s+more)?\s*(?:new\s+)?(?:(?:cron|scheduled)\s+workers?|(?:cron\s+|scheduled\s+)?(?:trigger|schedule)s?)\b/i,
+  /\broom\s+for\s+(?:one\s+more|another)\s+(?:(?:cron|scheduled)\s+workers?|(?:cron\s+|scheduled\s+)?(?:trigger|schedule)s?)\b/i,
+  /\bcan\s+(?:still\s+)?(?:take|fit|hold)\s+(?:one\s+more|another)\s+(?:(?:cron|scheduled)\s+workers?|(?:cron\s+|scheduled\s+)?(?:trigger|schedule)s?)\b/i,
 ];
 
 /**
@@ -1496,7 +1496,16 @@ export function parseInventory(md) {
       );
       continue;
     }
-    const cells = line.trim().replace(/^\||\|$/g, '').split('|');
+    // Codex #1978 r27: split on UNESCAPED pipes. GFM renders `\\|` inside a
+    // cell, so status prose like `live — warm \\| archive overlap` is ONE cell
+    // to a reader and was five columns to this parser — reported malformed and
+    // the live Worker dropped. A blocking gate that forbids ordinary
+    // explanatory prose in the column meant for explanatory prose.
+    const cells = line
+      .trim()
+      .replace(/^\||\|$/g, '')
+      .split(/(?<!\\)\|/)
+      .map((c) => c.replace(/\\\|/g, '|'));
     // The header and the alignment separator are not data.
     if (/^[\s:-]+$/.test(cells[0])) {
       sawDelimiter += 1;
@@ -1851,6 +1860,46 @@ export function checkSources(sources) {
 }
 
 /**
+ * Remove `//` and block comments from JSONC/TOML-ish text, honouring strings.
+ *
+ * A single left-to-right scan with three states, because the delimiters are
+ * only delimiters outside a string and outside another comment. Codex #1978
+ * r27 demonstrated the alternative: a regex that treats `/*` inside a line
+ * comment as an opener, and a later `"*&#47;15 * * * *"` cron literal as its close.
+ */
+function stripJsonLikeComments(text) {
+  let out = '';
+  let i = 0;
+  let quote = null; // the quote char while inside a string
+  while (i < text.length) {
+    const c = text[i];
+    const next = text[i + 1];
+    if (quote) {
+      out += c;
+      if (c === '\\') { out += next ?? ''; i += 2; continue; }
+      if (c === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; out += c; i += 1; continue; }
+    if (c === '/' && next === '/') {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      continue; // keep the newline itself on the next pass
+    }
+    if (c === '/' && next === '*') {
+      i += 2;
+      while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) i += 1;
+      i += 2;
+      out += ' ';
+      continue;
+    }
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
+/**
  * The Worker name a `wrangler` config declares, or null.
  *
  * ONE reader, deliberately. Codex #1978 r22: there were two — this logic in
@@ -1875,16 +1924,22 @@ function readWranglerName(configPath) {
     // strip comments and strings, track brace/bracket depth, and take the
     // first `name` at depth 1. `apps/agent/wrangler.jsonc` has eleven `name`
     // fields and only that one is the Worker's.
-    // Codex #1978 r26: strip BLOCK comments too. Stripping only `//` meant a
-    // `/* … "name": "old-example" … */` above the real property was read as
-    // the declaration — rejecting a correct binding, passing a swapped one,
-    // and able to make a real Worker vanish from the declared set so a false
-    // `*none*` claim would pass. JSONC has two comment forms and I handled
-    // one, which is this PR's most-repeated shape in its smallest form.
-    const text = readFileSync(configPath, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    // Codex #1978 r27: comments are stripped by a STRING-AWARE scan, not a
+    // regex. r26's `/\*[\s\S]*?\*\//g` recognised delimiters inside strings
+    // and inside line comments — so a line comment mentioning a route glob
+    // (`// Example route: watcher.vaipakam.com/*`) opened a "block comment"
+    // that the cron expression `"*/15 * * * *"` later closed, deleting every
+    // declaration in between. That is a regex pretending to be a tokenizer,
+    // and it broke BOTH ways: the real name vanished, so a false `*none*`
+    // passed AND a swapped binding passed.
+    //
+    // Three rounds on one small function — layout-keyed, then `//`-only, now
+    // this. Each fix was correct about the case it was shown; none asked what
+    // the input language actually is.
+    const text = stripJsonLikeComments(readFileSync(configPath, 'utf8'));
     let depth = 0;
     for (const rawLine of text.split('\n')) {
-      const line = rawLine.replace(/\/\/.*$/, '');
+      const line = rawLine;
       if (depth === 1) {
         const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
         if (m) return m[1] ?? m[2];
@@ -2778,6 +2833,48 @@ function runSelftest() {
       bad++;
     }
   }
+  // ── CATASTROPHIC BACKTRACKING GUARD ──────────────────────────────────
+  //
+  // Codex #1978 r27 (self-found): every matcher runs against pathological
+  // input and must finish fast. Two rounds of binding matchers to their nouns
+  // introduced `(?:\w+<whitespace-star>){0,N}?` in FOUR patterns — a nested
+  // quantifier, and the classic ReDoS shape. A 5,000-character run with no
+  // spaces hung the scan; this gate reads 127 MB across the tree on every PR,
+  // and long unbroken runs are ordinary content. It would not have failed
+  // loudly — it would have hung the blocking step.
+  //
+  // I caught it because a verification command timed out, not because I was
+  // looking. So the check is now standing: the shape is easy to reintroduce
+  // (both fixes that caused it were correct about matching) and impossible to
+  // notice in a selftest of short strings.
+  //
+  // WHAT THIS ACTUALLY DOES, stated precisely because the obvious reading is
+  // wrong. Catastrophic backtracking does not return slowly — it does not
+  // return. So this does NOT fail with the message below; the selftest HANGS
+  // here and CI kills it. Verified by reintroducing the nested quantifier:
+  // the run was terminated at 45 s, never reaching the comparison.
+  //
+  // That is still the point. It converts a silent hang of the blocking SCAN,
+  // during a normal PR, into a visible hang of the SELFTEST, in the step
+  // whose job is to fail — and the elapsed-time branch does catch the merely
+  // slow case, which a healthy matcher clears in single-digit milliseconds. A
+  // guard that reliably localises the fault is worth having even when it
+  // cannot pretty-print it.
+  {
+    const pathological = 'cron triggers spare headroom occupy ' + 'x'.repeat(50_000);
+    const started = Date.now();
+    findOccupancyClaims(pathological);
+    const ms = Date.now() - started;
+    if (ms > 2_000) {
+      console.error(
+        `selftest: matching 50k characters took ${ms} ms — a matcher is ` +
+          `backtracking catastrophically. Look for a nested quantifier: ` +
+          `a token repeat wrapping a whitespace repeat.`,
+      );
+      bad++;
+    }
+  }
+
   for (const [name, md, expected] of COMMENT_CASES) {
     const got = checkNoHtmlComments(md).length;
     if (got !== expected) {
