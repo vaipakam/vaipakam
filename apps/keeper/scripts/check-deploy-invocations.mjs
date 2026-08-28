@@ -163,7 +163,16 @@ const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
  * that stops at the first chunk. It is named here so the next site copies THIS
  * rather than a neighbouring single-chunk pattern.
  */
-const WORD = String.raw`(?:"[^"]*"|'[^']*'|(?:\\[\s\S])|[^\s"'\`;&|)]+)+`;
+// The unquoted alternative EXCLUDES backslash (#1995 r15 follow-on). With it
+// admitted, a backslash matched both `(?:\\[\s\S])` and this class, so a run
+// of them could be partitioned exponentially many ways and any non-match walked
+// all of them. Measured on `^cd\s+(WORD)$` against `cd \a\a…` with a trailing
+// space: 10 repeats 207 ms, 14 repeats 14.7 SECONDS, 18 repeats did not finish
+// in five minutes. Disjoint, the same inputs are 0.1 ms.
+//
+// CodeQL flagged the sibling `$'…'` pattern and not this one; it was found by
+// sweeping the shape rather than the alert.
+const WORD = String.raw`(?:"[^"]*"|'[^']*'|(?:\\[\s\S])|[^\s"'\`;&|)\\]+)+`;
 /**
  * Shell DECLARATION builtins that may precede an assignment (#1995 r12).
  *
@@ -186,7 +195,17 @@ function dequote(w) {
       // and the `$` never left a stray `$`, which then read as an unresolved
       // parameter expansion and cleared scope on a static target: bash enters
       // `apps/agent` for `cd apps/$'agent'` (#1995 r15).
-      .replace(/\$'((?:\\[\s\S]|[^'])*)'/g, '$1')
+      // `[^'\\]`, not `[^']` — CodeQL js/redos, high (#1995 r15 follow-on).
+      // A backslash matched BOTH alternatives, so a run of them could be
+      // partitioned exponentially many ways, and an unterminated `$'…` forced
+      // the engine through all of them. Measured before and after: 24 repeats
+      // of `\&` took 226 ms on the overlapping form and 0.007 ms on this one,
+      // roughly quadrupling per two characters added.
+      //
+      // Same defect I introduced in the assignment matcher earlier in this PR
+      // and fixed the same way: make the alternatives DISJOINT so each
+      // character has exactly one parse.
+      .replace(/\$'((?:\\[\s\S]|[^'\\])*)'/g, '$1')
       .replace(/\\([\s\S])/g, '$1')
       .replace(/["'`]/g, '')
   );
@@ -1409,7 +1428,9 @@ function selectorScope(seg, states, hasCwdState = true) {
   // own value pattern: selectors are read from PROSE too, where a command lives
   // in a code span, and without this `--cwd ../agent`` captured the closing
   // backtick and named `agent``.
-  const VALUE = `((?:"[^"]*"|'[^']*'|(?:\\\\[\\s\\S])|[^\\s"'\`;&|)]+)+)`;
+  // Backslash excluded from the unquoted class, as in `WORD` above — same
+  // overlapping-alternative ReDoS (#1995 r15 follow-on).
+  const VALUE = `((?:"[^"]*"|'[^']*'|(?:\\\\[\\s\\S])|[^\\s"'\`;&|)\\\\]+)+)`;
   // Neutralise OTHER options' values first, exactly as `commandIsSafe` does,
   // keeping our own flags. Scanning the raw segment let
   // `--message="note --name vaipakam-indexer"` parse as a real selector, and
