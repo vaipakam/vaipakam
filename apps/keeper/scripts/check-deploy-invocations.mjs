@@ -1172,24 +1172,40 @@ function selectorScope(seg, states, hasCwdState = true) {
   // specified folder" — and it was missed when pnpm's was added (#1995 r9).
   // Same resolution for all three, so they are read here rather than
   // duplicated elsewhere.
-  const cwdRaw = valueOf('--cwd') ?? valueOf('--dir|-C|--prefix');
+  //
+  // They COMPOSE, and are read separately for that reason (#1995 r9). A `??`
+  // here took whichever appeared first and ignored the other, so
+  // `pnpm --dir ../agent run deploy -- --cwd .` resolved wrangler's `--cwd`
+  // straight from the shell's directory instead of from the one pnpm had
+  // already moved to. The package manager moves first and wrangler starts
+  // where it was left, so the two chain rather than compete.
+  const pkgDirRaw = valueOf('--dir|-C|--prefix');
+  const wrCwdRaw = valueOf('--cwd');
   const cfg = known(cfgRaw);
-  const cwdFlag = known(cwdRaw);
+  const pkgDir = known(pkgDirRaw);
+  const wrCwd = known(wrCwdRaw);
   // A path selector is present but unresolvable: we know a target was named and
   // cannot say what it is, so defer rather than assert "targets nothing".
-  if ((cfgRaw !== null && cfg === null) || (cwdRaw !== null && cwdFlag === null)) {
+  if (
+    (cfgRaw !== null && cfg === null) ||
+    (pkgDirRaw !== null && pkgDir === null) ||
+    (wrCwdRaw !== null && wrCwd === null)
+  ) {
     return null;
   }
-  if (cfg === null && cwdFlag === null) return null;
+  if (cfg === null && pkgDir === null && wrCwd === null) return null;
 
   // ORDER MATTERS: `--cwd` runs wrangler "as if started in the specified
   // directory", so a relative `--config` resolves FROM it. Resolving the two
   // independently let `--cwd apps/indexer --config ../agent/wrangler.jsonc` —
   // verified against 4.90.0 to bundle the AGENT — pass the guard (#1995 r2).
-  const bases =
-    cwdFlag !== null
-      ? states.map((st) => resolveDir(st.cwd, cwdFlag))
-      : states.map((st) => st.cwd);
+  const bases = states.map((st) => {
+    // Package manager first, wrangler second — the order the shell runs them.
+    let base = st.cwd;
+    if (pkgDir !== null) base = resolveDir(base, pkgDir);
+    if (wrCwd !== null) base = resolveDir(base, wrCwd);
+    return base;
+  });
   // `--config` names a FILE; its directory is the package.
   const target =
     cfg !== null ? cfg.slice(0, cfg.lastIndexOf('/') + 1) || '.' : null;
@@ -1206,7 +1222,9 @@ function selectorScope(seg, states, hasCwdState = true) {
   // wrangler.jsonc`" pass (#1995 r3). A relative value there is unresolved, not
   // resolved-to-nothing, so defer to the text.
   if (!hasCwdState) {
-    const raw = (target ?? cwdFlag ?? '').replace(/\/+$/, '');
+    // Both directory selectors are candidates here, most specific first
+    // (#1995 r9) — `cwdFlag` was one variable before they were split apart.
+    const raw = (target ?? wrCwd ?? pkgDir ?? '').replace(/\/+$/, '');
     // Before deferring, read what the value NAMES. `--cwd ../agent` cannot be
     // resolved without knowing where the reader stands, but its trailing
     // segments identify the package on their own, and no text elsewhere on the

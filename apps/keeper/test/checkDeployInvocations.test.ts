@@ -1510,6 +1510,18 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it("pnpm's --dir and wrangler's --cwd COMPOSE (#1995 r9)", () => {
+    // pnpm moves to ../agent, then wrangler starts where it was left, so
+    // `--cwd .` is the agent. Reading only one of the two resolved wrangler's
+    // path straight from the shell cwd and the deploy escaped.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/indexer\npnpm --dir ../agent exec wrangler deploy --cwd .\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it("pnpm's recursive COMMAND aliases fan out like -r (#1995 r9)", () => {
     // `pnpm help recursive` documents recursive/multi/m as running an action
     // across every package, so each reaches both protected Workers.
