@@ -161,6 +161,20 @@ const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
  * rather than a neighbouring single-chunk pattern.
  */
 const WORD = String.raw`(?:"[^"]*"|'[^']*'|(?:\\[\s\S])|[^\s"'\`;&|)]+)+`;
+/**
+ * Shell DECLARATION builtins that may precede an assignment (#1995 r12).
+ *
+ * `export TARGET=apps/agent` binds the variable exactly as `TARGET=apps/agent`
+ * does, but only the bare spelling was recognised, so a later `cd "$TARGET"`
+ * cleared scope instead of entering the protected package.
+ *
+ * ONE constant, read by both the gate and the matcher below it. Those two have
+ * to agree about what an assignment looks like, and the last thing to break on
+ * this file was exactly that shape of drift — a widened detector beside an
+ * unwidened judge (#1995 r11).
+ */
+const DECL_PREFIX = String.raw`(?:(?:export|declare|typeset|local|readonly)\s+(?:-[A-Za-z]+\s+)*)?`;
+
 /** Collapse a captured word to what the shell would hand the command. */
 function dequote(w) {
   return w.replace(/\\([\s\S])/g, '$1').replace(/["'`]/g, '');
@@ -2098,7 +2112,7 @@ for (const file of walk(REPO_ROOT)) {
         // wrangler deploy` was reported as an agent violation even though the
         // `cd` moves to the explicitly out-of-scope indexer (#1995 r5). That is
         // a false red in a check that blocks the unfiltered CI job.
-        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(seg)) {
+        if (new RegExp(`^${DECL_PREFIX}[A-Za-z_][A-Za-z0-9_]*=`).test(seg)) {
           // Deliberately NOT the WORD pattern: anchoring its nested quantifiers
           // with `$` backtracks catastrophically on a non-matching line and hung
           // the guard. A literal value needs only simple alternatives, and a
@@ -2116,7 +2130,10 @@ for (const file of walk(REPO_ROOT)) {
           // to over five minutes on this tree before it was caught. One
           // character per iteration admits exactly one partition.
           const asg = seg.match(
-            /^([A-Za-z_][A-Za-z0-9_]*)=((?:"[^"]*"|'[^']*'|\\[\s\S]|[^\s"'`;&|)\\])*)\s*$/,
+            new RegExp(
+              `^${DECL_PREFIX}([A-Za-z_][A-Za-z0-9_]*)=` +
+                '((?:"[^"]*"|\'[^\']*\'|\\\\[\\s\\S]|[^\\s"\'`;&|)\\\\])*)\\s*$',
+            ),
           );
           // Only a LITERAL value is remembered; one containing a `$` is still
           // computed as far as this scanner can tell.

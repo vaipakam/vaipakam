@@ -1510,6 +1510,30 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a declaration builtin still binds the variable (#1995 r12)', () => {
+    // `export TARGET=apps/agent` binds exactly as the bare form does; only the
+    // bare spelling was recognised, so `cd "$TARGET"` cleared scope instead of
+    // entering the protected package.
+    for (const decl of ['export', 'declare', 'readonly', 'declare -r']) {
+      const r = runWith(
+        'contracts/script/deploy-chain.sh',
+        `#!/usr/bin/env bash\n${decl} TARGET=apps/agent\ncd "$TARGET"\nwrangler deploy\n`,
+      );
+      expect(r.ok, decl).toBe(false);
+      expect(r.out, decl).toContain('apps/agent');
+    }
+  });
+
+  it('a declared value that is COMPUTED stays unremembered (#1995 r12)', () => {
+    // The safe direction is preserved: an unknown variable clears scope rather
+    // than inventing one.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '#!/usr/bin/env bash\nexport TARGET=$OTHER\ncd "$TARGET"\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it("npm's run ALIASES are safe when they invoke the safe script (#1995 r11)", () => {
     // r10 widened the DETECTOR for rum/urn and left the SAFETY matcher on
     // run|run-script, so these became candidates that could never be judged
