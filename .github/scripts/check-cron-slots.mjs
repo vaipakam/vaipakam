@@ -269,6 +269,65 @@ const GAP = String.raw`(?:\s|\*|\/\/|#|>){0,400}`;
 const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
 
 /**
+ * The capacity noun, with its optional compound qualifiers.
+ *
+ * "triggers", "cron triggers", "account cron triggers", "cron-slots" — one
+ * thing, four spellings, and every matcher below needs the same one. It was
+ * open-coded in each, and Codex #1978 r30/r31/r32 found the predictable
+ * consequence three rounds running: the ratio matcher learned compound
+ * qualifiers while its `all five` sibling stayed on a single one, and the
+ * separator between qualifiers was `[-\s]{1,10}` in one place and `WRAP` in
+ * another — so `4 of 5 account\n// cron triggers` was invisible while the
+ * same phrase unwrapped fired.
+ *
+ * This is the "fix one member of a family, leave the sibling" shape that has
+ * cost five rounds on this PR. The durable answer is not to fix the sibling;
+ * it is to stop having siblings. One definition, one separator, wrap-aware
+ * throughout — a hyphen is admitted alongside the wrap characters so
+ * `cron-triggers` reads the same as `cron triggers`.
+ *
+ * The nested quantifier is safe because a mandatory literal (`cron`/`account`)
+ * separates each repetition and the wrap class contains no letters, so the
+ * partition is forced rather than searched. That is asserted, not assumed —
+ * see the ReDoS guard in the selftest.
+ */
+const NOUN_GAP = String.raw`(?:\s|\*|\/\/|#|>|-){1,400}`;
+const CAP_NOUN = String.raw`(?:(?:cron|account)${NOUN_GAP}){0,2}(?:slots?|triggers?|schedules?)`;
+
+/**
+ * Present-state adverbs, which may appear anywhere a claim asserts NOW.
+ *
+ * Codex #1978 r32: "No cron triggers are **currently** live." matched nothing,
+ * because the r31 patterns put the predicate immediately after `are`. The
+ * adverb is not incidental — it is the word that makes the sentence a claim
+ * about the present, which is precisely what goes stale. Requiring the
+ * predicate to be adjacent excluded the most explicitly time-bound form of
+ * the very thing being matched.
+ */
+const TEMPORAL = String.raw`(?:currently|now|today|presently|still|right${WRAP}now|at${WRAP}present)`;
+
+/**
+ * A claim explicitly scoped to somewhere OTHER than the inventoried account.
+ *
+ * Codex #1978 r32: "There are no active cron triggers in local development."
+ * is a true and useful sentence for a test or deployment guide, and this gate
+ * blocks every PR in the repository — so firing on it is the expensive
+ * direction of failure, not the cheap one.
+ *
+ * Written as a test of the SUBJECT rather than an enumeration of environments,
+ * which is the same move that settled `headroom` in r26 and the entitlement
+ * subject in r31: if the claim attaches a locative scope, that scope must be
+ * the account for the claim to be about the account. An enumeration of the
+ * places somebody might mean instead is the open-world list this file has
+ * watched leak four times.
+ *
+ * `FUNCTION_WORD` does the work that would otherwise need a fifth enumeration:
+ * "no cron triggers are live in total" attaches a preposition but no scope,
+ * and must keep firing. That dependency is why this constant is defined below
+ * `FUNCTION_WORD` rather than here beside its siblings.
+ */
+
+/**
  * Words that may follow a PREDICATIVE `spare` without it modifying them.
  *
  * Codex #1978 r25: the distinction across the whole corpus is what comes after
@@ -285,6 +344,16 @@ const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
  */
 const FUNCTION_WORD =
   String.raw`(?:in|on|at|for|to|of|by|with|from|right|now|today|tonight|here|there|yet|anymore|and|or|but|so|because|while|since|until|unless|though|although|when|that|before|after|during|per|as|than|then|already|still|total|currently|each|both|only)\b`;
+
+/** See the note above `TEMPORAL`; deferred to here for `FUNCTION_WORD`. */
+// The determiner is inside the inner lookahead rather than consumed before it.
+// Consuming it looked equivalent and was not: with `(?:this${WRAP})?` matched
+// greedily, "in THIS Cloudflare account" failed the inner test, backtracked to
+// the zero-width branch, and then passed it at `this` — so the one scope that
+// must NOT suppress suppressed itself by giving up the determiner. JS has no
+// possessive quantifier to forbid that backtrack; keeping the determiner
+// non-consuming removes the second parse instead of forbidding it.
+const NOT_SCOPED_ELSEWHERE = String.raw`(?!${GAP}(?:in|on|under|within|inside)${WRAP}(?!(?:(?:this|the|our|your|any)${WRAP})?(?:cloudflare${WRAP})?(?:account|production|prod)\b|${FUNCTION_WORD})[A-Za-z])`;
 
 /**
  * ── THE TEN ORIGINALS ARE RE-VERIFIED, NOT ASSUMED ────────────────────────
@@ -306,7 +375,11 @@ const FUNCTION_WORD =
  *   apps/indexer/src/cronRouting.ts          1
  *   packages/lib/src/cronCadence.ts          1
  *
- * Ten of ten, thirteen findings. The fixtures below quote several of these
+ * Ten of ten. The invariant is that NO FILE DROPS TO ZERO; the finding count
+ * is deliberately not stated, because it moves whenever a matcher widens —
+ * it went from thirteen to fifteen in r32 when the capacity noun was
+ * consolidated, and a number here would have been one more restated count in
+ * the file whose subject is restated counts. The fixtures below quote several of these
  * verbatim, which is why they are worded so oddly — a fixture invented to
  * describe a rule tests the rule; a fixture lifted from the tree tests the
  * job. If a future narrowing is proposed, re-run this check before believing
@@ -331,7 +404,7 @@ const OCCUPANCY = [
   // pattern, "takes the account to 5 of 5" by the account pattern, and the
   // slash form carries "cron triggers" immediately after it.
   new RegExp(
-    String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)${WRAP}(?:(?:cron|account)[-\s]{1,10}){0,2}(?:cron-)?(?:slots?|triggers?|schedules?)\b`,
+    String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)${WRAP}${CAP_NOUN}\b`,
     'i',
   ),
   // "all five slots", "used all 5 cron triggers". The noun is REQUIRED: "all
@@ -339,7 +412,7 @@ const OCCUPANCY = [
   // (IncidentRunbook) are five of something else, in windows that happen to
   // mention cron. Bare "all five" fired on both.
   new RegExp(
-    String.raw`\ball${WRAP}(?:5|five)${WRAP}(?:(?:cron|account)${WRAP})?(?:slots?|triggers?|schedules?)\b`,
+    String.raw`\ball${WRAP}(?:5|five)${WRAP}${CAP_NOUN}\b`,
     'i',
   ),
   // "occupy 3 today", "occupies four", "the rest of the org already occupies 4"
@@ -443,12 +516,16 @@ const OCCUPANCY = [
   // use." — zero is a live account state, this file says so in the fixture
   // for "zero live cron triggers", and every matcher required a NUMBER. The
   // vocabulary knew about zero as a word and not as a quantifier.
+  // Codex #1978 r32, both halves: the predicate may carry a present-state
+  // adverb ("are CURRENTLY live"), and the claim must not be explicitly scoped
+  // somewhere other than this account ("no active cron triggers IN LOCAL
+  // DEVELOPMENT" is a true sentence a test guide may write).
   new RegExp(
-    String.raw`\b(?:no${WRAP}|none${WRAP}of${WRAP}(?:the${WRAP})?)(?:live${WRAP}|active${WRAP}|cron${WRAP})*(?:slots?|triggers?|schedules?)${WRAP}(?:are|is)${WRAP}(?:live|active|in${WRAP}use|taken|occupied)\b`,
+    String.raw`\b(?:no${WRAP}|none${WRAP}of${WRAP}(?:the${WRAP})?)(?:live${WRAP}|active${WRAP}|cron${WRAP})*${CAP_NOUN}${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*(?:live|active|in${WRAP}use|taken|occupied)\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   new RegExp(
-    String.raw`\bthere${WRAP}(?:are|is)${WRAP}no${WRAP}(?:live${WRAP}|active${WRAP}|cron${WRAP})*(?:slots?|triggers?|schedules?)\b`,
+    String.raw`\bthere${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*no${WRAP}(?:live${WRAP}|active${WRAP}|cron${WRAP})*${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   // Codex #1978 r26: `headroom` must be ABOUT triggers. Unbound it fired on
@@ -525,7 +602,18 @@ const OCCUPANCY = [
   // itself must make. A plural or plan-qualified subject is generic; a
   // specific one ("this account has 5 cron triggers today") is a live claim.
   // The gate was contradicting its own stated allowance.
-  String.raw`(?<!\b(?:free|paid|each|every|a|an|any|per)${WRAP})\b(?:this${WRAP}|the${WRAP}|our${WRAP})?(?:account|org|we)${WRAP}(?:currently${WRAP}|now${WRAP}|already${WRAP})?(?:has|have|holds?)${WRAP}${N}${WRAP}(?:live${WRAP}|active${WRAP}|cron${WRAP})*triggers?\b`,
+  // Codex #1978 r32: the r31 lookbehind only saw the word immediately before
+  // `account`, so "Each **Cloudflare** account has five cron triggers" slipped
+  // past it — one modifier was enough to hide the determiner that makes the
+  // sentence generic. Rejecting a list of generic determiners is the wrong
+  // shape for the same reason every other closed world in this file was: it
+  // enumerates the ways somebody might write the thing to EXCLUDE.
+  //
+  // So require the SPECIFIC subject instead. A live claim is about `this`,
+  // `the` or `our` account; every generic determiner — named, unnamed, or
+  // separated from the noun by any number of modifiers — simply fails to be
+  // one of those three, with nothing to enumerate and nothing to keep current.
+  String.raw`\b(?:(?:this|the|our)${WRAP}(?:cloudflare${WRAP})?(?:account|org)|we)${WRAP}(?:${TEMPORAL}${WRAP}|already${WRAP})*(?:has|have|holds?)${WRAP}${N}${WRAP}(?:live${WRAP}|active${WRAP})*${CAP_NOUN}\b`,
     'i',
   ),
   // Capacity VERDICTS — the same claim as `spare` and `headroom` with the
@@ -1364,11 +1452,6 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
   // this check has been fixed in the direction of the previous fix's blind
   // spot; the token boundary is what makes it an identity test rather than a
   // containment one.
-  const named = (n) => {
-    const d = distinctiveOf(n).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?:^|[^a-z0-9-])${d}(?:[^a-z0-9-]|$)`).test(label);
-  };
-
   // Codex #1978 r18: filtering the KNOWN names can only ever find known
   // names. `live plus the keeper and intruder's reserve` passed, because
   // `intruder` is in no table row and so was never a candidate to reject —
@@ -1393,7 +1476,17 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
     .map((t) => t.replace(/^the\s+/, '').replace(/['’]s$/, '').trim())
     .filter(Boolean);
 
-  const namedInLabel = new Set([...allNames].filter(named));
+  // Codex #1978 r32: the holder list was PARSED and then not used for the
+  // comparison. r18 replaced substring membership with a parsed list, and both
+  // reservation loops kept reading a `namedInLabel` set built by searching the
+  // WHOLE label for each known name — so a summary whose holder list was empty
+  // still satisfied the "is this reservation named?" check on the strength of
+  // the word `keeper` appearing later in the sentence for some other reason.
+  // The parse was correct and inert; the fix that replaced containment left
+  // containment running beside it. Fifth round on this check, and the first
+  // where the previous fix was already present and simply not consulted.
+  const claimedSet = new Set(claimed);
+  const claimedNames = new Set([...allNames].filter((n) => claimedSet.has(distinctiveOf(n))));
   for (const token of claimed) {
     if (![...allNames].some((n) => distinctiveOf(n) === token)) {
       problems.push(
@@ -1404,7 +1497,7 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
     }
   }
   for (const name of reservedNames) {
-    if (!namedInLabel.has(name)) {
+    if (!claimedNames.has(name)) {
       problems.push(
         `the inventory reserves a trigger for \`${name}\` but the "Committed" line ` +
           `does not name it — the summary and the table disagree about WHO holds ` +
@@ -1412,7 +1505,7 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
       );
     }
   }
-  for (const name of namedInLabel) {
+  for (const name of claimedNames) {
     if (!reservedSet.has(name)) {
       problems.push(
         `the "Committed" line names \`${name}\` as holding a reservation, but the ` +
@@ -1825,7 +1918,14 @@ export function readStatus(cell) {
   // because a reserved Worker has no schedule to compare against. A typo in
   // the status cell was the one class of damage this parser promised to
   // reject and quietly accepted.
-  const m = /^[\s*_]*([a-z]+)(?![\p{L}\p{N}_])/iu.exec(cell);
+  //
+  // Codex #1978 r31 made the boundary Unicode-aware; r32 found that combining
+  // marks are category `M`, so `reserved́` still read as `reserved` — the
+  // mark is part of the preceding grapheme, and a reader sees a word this
+  // parser does not. `\p{M}` closes it. Third narrowing of one lookahead, and
+  // the direction is always the same: what the RENDERED cell says is one
+  // grapheme cluster, and matching code points is not the same question.
+  const m = /^[\s*_]*([a-z]+)(?![\p{L}\p{N}\p{M}_])/iu.exec(cell);
   const word = m?.[1]?.toLowerCase();
   return word && STATUSES.has(word) ? word : null;
 }
@@ -2983,11 +3083,18 @@ function runSelftest() {
     // is what Codex measured at ~19 s, on a matcher added the round after the
     // guard was written — a guard testing one pathological input is a guard
     // for one bug.
+    // THREE shapes now. Codex #1978 r32's compound-noun consolidation admits
+    // `-` into the qualifier separator so `cron-triggers` reads as one noun,
+    // which makes a long hyphen run a separator run — a class the two existing
+    // shapes do not produce. Adding the input costs nothing and the omission
+    // is exactly how the r29 regression got past the r27 guard.
     const pathological =
       'cron triggers spare headroom occupy ' +
       'x'.repeat(50_000) +
       ' trigger context 4 cron' +
       ' '.repeat(50_000) +
+      ' 4 of 5 account' +
+      '-'.repeat(50_000) +
       'zzz';
     const started = Date.now();
     findOccupancyClaims(pathological);
