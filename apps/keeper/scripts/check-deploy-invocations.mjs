@@ -1549,9 +1549,15 @@ function filterScopes(rawLine) {
     sawSelector = true;
     let pat = dequote(m[1]);
     // Which DIRECTION the dependency selector runs, before the dots are lost.
-    const wantsDependents = /^\.\.\./.test(pat);
-    const wantsDependencies = /\.\.\.$/.test(pat);
-    pat = pat.replace(/^\.\.\.|\.\.\.$/g, '');
+    const wantsDependents = /^\.\.\.\^?/.test(pat) && /^\.\.\./.test(pat);
+    const wantsDependencies = /\^?\.\.\.$/.test(pat) && /\.\.\.$/.test(pat);
+    // `^` is pnpm's EXCLUSIVE marker — `...^X` is X's dependents WITHOUT X
+    // itself. The dots were stripped and the caret left in the pattern, so the
+    // selector matched no package name at all and resolved to an authoritative
+    // empty (#1995 r16). Exclusion only removes the matched package, and a
+    // scoped package is never the one being excluded here in practice, so the
+    // direction is modelled and the marker dropped.
+    pat = pat.replace(/^\.\.\.\^?|\^?\.\.\.$/g, '');
     // A LEADING `!` excludes: pnpm selects the packages NOT matching, so
     // `--filter '!@vaipakam/indexer'` reaches both protected Workers (#1995 r8).
     const negated = pat.startsWith('!');
@@ -1627,7 +1633,13 @@ function filterScopes(rawLine) {
       for (const sc of matched) included.add(sc);
     }
   }
-  if (!sawSelector || unresolved) return null;
+  // An unresolved selector defers ONLY when nothing else resolved. pnpm runs on
+  // packages satisfying AT LEAST ONE selector, so `--filter . --filter
+  // '@vaipakam/*gent'` selects the agent whatever `.` turns out to be — and
+  // discarding the resolved half because the other one was unknown threw away a
+  // protected selection that was right there (#1995 r16).
+  if (!sawSelector) return null;
+  if (unresolved && included.size === 0) return null;
   // With only negations, the base is every package — that is what
   // `--filter '!@vaipakam/indexer'` means, and it still reaches both.
   const base = sawPositive ? included : new Set(SCOPED);
@@ -1989,13 +2001,32 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // lookbehind so `-c` cannot match inside `--config` or at the tail of another
   // token. `-c` is wrangler's DOCUMENTED alias (4.90.0: "-c, --config  Path to
   // Wrangler configuration file"); `--cwd` and `--name` have none.
-  const valueOf = (spellings) => {
+  // A NESTED SHELL's `-c` is not wrangler's `--config`. `sh -c 'cd apps/agent;
+  // wrangler deploy'` had the shell's own flag read as a config path, and the
+  // resulting authoritative no-scope answer suppressed BOTH the literal target
+  // inside the payload and the scoped-file fallback (#1995 r16).
+  //
+  // Answered by REGION rather than by naming every wrapper: the option is read
+  // only from wrangler's own argument text, which begins at its command word.
+  //
+  // BOTH spellings, not just the short one. My first cut kept `--config` on the
+  // whole segment on the reasoning that the long form is unambiguous — true, but
+  // a `--config` outside wrangler's argv is not wrangler's whatever it is
+  // spelled, and the distinction turned out to have no observable effect: a
+  // segment with no wrangler word has the whole of itself as its region, which
+  // is every package-script line. Mutation showed the two forms agreeing on the
+  // entire suite, so this is one rule rather than two with an untested seam.
+  const wranglerRegion = (() => {
+    const at = clean.search(/\bwrangler2?(?:\.(?:cmd|ps1|bat))?\b/);
+    return at === -1 ? clean : clean.slice(at);
+  })();
+  const valueOf = (spellings, region = clean) => {
     // LAST occurrence, because that is what the CLIs do — the same rule the
     // safety flag is scored by. `pnpm --dir apps/indexer --dir apps/agent run
     // deploy` runs the AGENT script (confirmed against the pinned pnpm), and
     // taking the first match handed the guard an out-of-scope directory and
     // blessed a destructive deploy (#1995 r16).
-    const all = [...clean.matchAll(new RegExp(`(?<![\\w-])(?:${spellings})(?:=|\\s+)${VALUE}`, 'g'))];
+    const all = [...region.matchAll(new RegExp(`(?<![\\w-])(?:${spellings})(?:=|\\s+)${VALUE}`, 'g'))];
     const m = all[all.length - 1];
     if (!m) return null;
     // Quotes are removed and BACKSLASH ESCAPES decoded: the shell hands wrangler
@@ -2033,7 +2064,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     return { scope: SCOPED.find((s) => s.workerName === name) ?? null };
   }
 
-  const cfgRaw = valueOf('--config|-c');
+  const cfgRaw = valueOf('--config|-c', wranglerRegion);
   // `--cwd` is wrangler's; `--dir` / `-C` is pnpm's own, documented as "change
   // to that directory", and it decides which package's script runs (#1995 r8).
   // `--prefix` is npm's spelling of the same idea — its config documentation
@@ -2569,8 +2600,15 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       // a live deploy (#1995 r16). Checked at each of the three ingest points
       // rather than inside the scanner, because it is a property of the STEP.
       if (!isYaml || stepIsShell(lines, i)) {
+        const interp = isYaml ? stepShellName(lines, i) : null;
+        const folded =
+          interp === 'cmd'
+            ? windowsSeparators(foldCaretContinuations(body))
+            : interp === 'pwsh' || interp === 'powershell'
+              ? windowsSeparators(body)
+              : body;
         out.push(
-          ...offset(logicalLines(body), start, blockId, isYaml ? workingDirFor(lines, i) : ''),
+          ...offset(logicalLines(folded), start, blockId, isYaml ? workingDirFor(lines, i) : ''),
         );
         blockId += 1;
       }
@@ -2945,6 +2983,59 @@ function matrixShellValues(lines, runIdx, raw) {
   }
   return vals.filter(Boolean);
 }
+/**
+ * The interpreter a step will actually use, or null when unresolved.
+ *
+ * Same precedence as `stepIsShell` and read from the same places; kept separate
+ * because that one answers "is this shell at all" and this one answers "which",
+ * and a caller that needs the name should not have to re-derive it from a
+ * boolean.
+ */
+function stepShellName(lines, runIdx) {
+  const m = scanStepKeys(
+    lines,
+    runIdx,
+    /^\s*(?:-\s+)?shell:\s*(?:"([^"]*)"|'([^']*)'|(\$\{\{[^}]*\}\}|\S+))/,
+  );
+  const raw = m ? (m[1] ?? m[2] ?? m[3] ?? '').trim() : defaultShellFor(lines, runIdx);
+  if (!raw || /\$\{\{/.test(raw)) return null;
+  return interpreterOf(raw);
+}
+
+/**
+ * `cmd` continues a line with a trailing CARET, and routing every workflow body
+ * through the Unix-oriented folder left `wrangler ^` and `deploy` as two source
+ * lines, so the deploy was never detected (#1995 r16).
+ *
+ * Applied only where the step's interpreter is known to be `cmd`: `^` at the end
+ * of a POSIX line is an ordinary character, and folding it there would join
+ * lines the shell never joined — the r27 mistake in another spelling.
+ */
+function foldCaretContinuations(body) {
+  return body.replace(/\^\r?\n/g, ' ');
+}
+
+/**
+ * Rewrite `\\` to `/` in a body a WINDOWS shell will run.
+ *
+ * `cd apps\\agent` enters the agent under PowerShell, and `dequote` removes the
+ * backslash as a Bash escape, modelling `appsagent` (#1995 r16). The
+ * `Set-Location` and `cd /d` forms carried their own conversion because the
+ * COMMAND identified the platform; the plain `cd` alias does not, so the
+ * conversion has to come from the step's interpreter instead.
+ *
+ * My first attempt converted whenever the result named a scoped package, with no
+ * interpreter at all. That is not decidable without one, and it broke the
+ * standing control that `cd apps\\agent` in BASH is `cd appsagent` — the same
+ * text means different things and only the `shell:` key says which.
+ *
+ * Scoped to path-shaped words, so a caret continuation or a `\\"` escape
+ * elsewhere in the body is left alone.
+ */
+function windowsSeparators(body) {
+  return body.replace(/(?<=[\w.$}])\\(?=[\w.$])/g, '/');
+}
+
 function stepIsShell(lines, runIdx) {
   const m = scanStepKeys(
     lines,
@@ -3036,7 +3127,13 @@ function workingDirFor(lines, runIdx) {
   const normalizePath = (raw) => {
     if (!raw || /\$/.test(raw)) return raw;
     const out = [];
-    for (const part of raw.split('/')) {
+    // `\` is a separator on a Windows runner, and `working-directory:
+    // apps\agent` really does enter the agent — splitting on `/` alone left the
+    // whole string as one component and `scopeOfCwd` missed it (#1995 r16).
+    // Safe for POSIX paths too: a backslash is not a legal separator there and
+    // is vanishingly rare inside a directory NAME, so treating it as one can
+    // only resolve a path that would otherwise match nothing.
+    for (const part of raw.split(/[\\/]/)) {
       if (part === '' || part === '.') continue;
       if (part === '..' && out.length > 0 && out[out.length - 1] !== '..') out.pop();
       else out.push(part);

@@ -4088,6 +4088,91 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.out).toContain('apps/agent');
   });
 
+  // ── Selectors and Windows interpreters (#1995 r16).
+  it("pnpm's EXCLUSIVE dependency selector resolves (#1995 r16)", () => {
+    // `...^X` is X's dependents WITHOUT X. The dots were stripped and the caret
+    // left in the pattern, so it matched no package name at all.
+    seedWorkspace();
+    const r = runWith('s.sh', "pnpm --filter '...^@vaipakam/lib' run --if-present deploy --no-keep-vars\n");
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a RESOLVED filter survives beside an unresolved one (#1995 r16)', () => {
+    // pnpm runs on packages satisfying AT LEAST ONE selector, so discarding the
+    // resolved half because the other was unknown threw away a protected
+    // selection that was right there.
+    seedWorkspace();
+    const r = runWith('s2.sh', "pnpm --filter . --filter '@vaipakam/*gent' run deploy --no-keep-vars\n");
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while an unresolved selector ALONE still defers (#1995 r16 control)', () => {
+    seedWorkspace();
+    expect(runWith('s3.sh', 'pnpm --filter . run deploy --no-keep-vars\n').ok).toBe(true);
+  });
+
+  it("a nested shell's -c is not wrangler's --config (#1995 r16)", () => {
+    // The shell's own flag was read as a config path, and the resulting
+    // authoritative no-scope answer suppressed BOTH the literal target inside
+    // the payload and the scoped-file fallback.
+    const r = runWith('n.sh', "sh -c 'cd apps/agent; wrangler deploy'\n");
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it("but wrangler's own -c still redirects (#1995 r16 control)", () => {
+    expect(runWith('n2.sh', 'cd apps/agent\nwrangler deploy -c ../www/wrangler.jsonc\n').ok).toBe(true);
+    expect(
+      runWith('n3.sh', 'cd apps/agent\nwrangler deploy --config ../www/wrangler.jsonc\n').ok,
+    ).toBe(true);
+  });
+
+  it('a WINDOWS working-directory separator resolves (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        working-directory: apps\\agent\n' +
+        '        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it("PowerShell's cd alias takes a Windows path (#1995 r16)", () => {
+    // The `Set-Location` and `cd /d` forms carried their own conversion because
+    // the COMMAND identified the platform; the plain `cd` alias does not, so it
+    // comes from the step's interpreter instead.
+    const r = runWith(
+      '.github/workflows/w2.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: pwsh\n' +
+        '        run: |\n          cd apps\\agent\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('cmd folds a CARET continuation (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w3.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: cmd\n' +
+        '        working-directory: apps/agent\n        run: |\n          wrangler ^\n          deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a caret at end-of-line in BASH joins nothing (#1995 r16 control)', () => {
+    // `^` is an ordinary character in a POSIX line, and folding it there would
+    // join lines the shell never joined.
+    const r = runWith(
+      '.github/workflows/w4.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: bash\n' +
+        '        working-directory: apps/agent\n        run: |\n          echo wrangler ^\n          deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',
