@@ -211,6 +211,66 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// #1499 — the funding requirement agrees with the claim under a BINDING
+    /// loan-side cap: `need == what the claim pays + the earmark`, exactly.
+    ///
+    /// This is the cap x backing intersection. Surveying the suites, exactly
+    /// one cell combined a binding loan-side cap with a backing manipulation
+    /// ({testDroughtGateUsesRawRecycledUnderLoanSideCap}), and it covers the
+    /// DROUGHT gate — raw recycled against the bucket — not the funding gate.
+    ///
+    /// The property matters because the cap changes the post-cap figures the
+    /// predicate consumes, and the predicate's correctness claim is precisely
+    /// that it reads post-cap values rather than raw ones. The cap here is set
+    /// the way the drought cell sets it, small enough that the aggregate
+    /// fresh-first trim consumes the headroom from fresh alone.
+    ///
+    /// Asserted as an EXACT equation rather than an inequality, so it fails in
+    /// both directions: drop the earmark and `need` collapses to the payout;
+    /// read raw instead of post-cap and `need` exceeds it.
+    function testFundingNeedEqualsCappedPayoutPlusEarmarkUnderLoanSideCap()
+        public
+    {
+        _cfg().setRewardClaimHorizonDays(180);
+        (uint256 floor5, uint256 recycled5) = _armAndFinalize(5, 700 ether);
+        assertGt(recycled5, 0, "fixture: the armed day has a recycled component");
+
+        uint256 id = _seedEntry(alice, 57, 5, 6);
+        uint256 cap = floor5 / 8;
+        _mut().setFeeEntitlementRaw(
+            57,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: uint128(0),
+                loanSideRewardCapOpen: uint128(cap)
+            })
+        );
+
+        uint256 bucket = 1_000_000 ether;
+        _mut().setRecycleBucketRaw(bucket); // ample: not a drought
+        uint256[] memory ids = new uint256[](1);
+        ids[0] = id;
+        _sweeper().sweepExpiredInteractionRewards(ids);
+
+        uint256 need = _mut().userClaimFundingNeedRaw(alice);
+
+        vm.prank(alice);
+        (uint256 paid, , ) =
+            RewardClaimFacet(address(diamond)).claimInteractionRewards();
+
+        assertEq(paid, cap, "fixture: the loan-side cap is what BINDS the payout");
+        assertEq(
+            need,
+            paid + bucket,
+            "the requirement is the capped payout plus the earmark - post-cap, not raw"
+        );
+    }
+
     function _armAndFinalize(uint256 armDay, uint256 creditedPerWindow)
         internal
         returns (uint256 floor_, uint256 recycled)
