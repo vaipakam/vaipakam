@@ -1885,6 +1885,13 @@ function offset(block, start, blockId, cwd = '') {
 function workingDirFor(lines, runIdx) {
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
   const WD = /^\s*working-directory:\s*(?:"([^"]*)"|'([^']*)'|(\S+))/;
+  // FLOW-style mapping (#1995 r13): `defaults: { run: { working-directory: X } }`
+  // is the same Actions configuration as the block form, and only the block
+  // form was recognised — so a workflow written this way ran its inline deploy
+  // from the protected directory with the guard reporting success. `WD` cannot
+  // see it because that pattern is anchored at the start of a line.
+  const FLOW_DEFAULTS_WD =
+    /defaults:\s*\{[^}]*working-directory:\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/;
   const valueOf = (m) => m[1] ?? m[2] ?? m[3];
 
   // STEP: walk up to this step's `- ` marker, then scan the step's own body.
@@ -1913,6 +1920,8 @@ function workingDirFor(lines, runIdx) {
   // indent; a workflow-level `defaults:` outside `jobs:` still applies.
   const declaredIn = (from, to) => {
     for (let i = from; i < to && i < lines.length; i += 1) {
+      const flowJob = lines[i].match(FLOW_DEFAULTS_WD);
+      if (flowJob) return flowJob[1] ?? flowJob[2] ?? flowJob[3];
       if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
       const di = indentOf(lines[i]);
       for (let j = i + 1; j < lines.length; j += 1) {
@@ -1961,6 +1970,10 @@ function workingDirFor(lines, runIdx) {
   // handled above by `declaredIn` over the containing job.
   const topIndent = jobsIdx >= 0 ? indentOf(lines[jobsIdx]) : 0;
   for (let i = 0; i < lines.length; i += 1) {
+    const flowTop = lines[i].match(FLOW_DEFAULTS_WD);
+    if (flowTop && indentOf(lines[i]) === topIndent) {
+      return flowTop[1] ?? flowTop[2] ?? flowTop[3];
+    }
     if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
     if (indentOf(lines[i]) !== topIndent) continue;
     for (let j = i + 1; j < lines.length; j += 1) {

@@ -1527,6 +1527,37 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a FLOW-style defaults mapping is the same configuration (#1995 r13)', () => {
+    // `defaults: { run: { working-directory: X } }` is valid YAML for the same
+    // Actions setting; only the block form was recognised.
+    for (const [name, yml] of [
+      [
+        'workflow level',
+        'name: w\ndefaults: { run: { working-directory: apps/agent } }\n' +
+          'jobs:\n  d:\n    steps:\n      - run: wrangler deploy\n',
+      ],
+      [
+        'job level',
+        'name: w\njobs:\n  d:\n    defaults: { run: { working-directory: apps/agent } }\n' +
+          '    steps:\n      - run: wrangler deploy\n',
+      ],
+    ] as const) {
+      const r = runWith('.github/workflows/w.yml', yml);
+      expect(r.ok, name).toBe(false);
+      expect(r.out, name).toContain('apps/agent');
+    }
+  });
+
+  it('a job-level FLOW defaults does not leak to a later job (#1995 r13)', () => {
+    // r8's property, restated for the flow spelling.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  a:\n    defaults: { run: { working-directory: apps/agent } }\n' +
+        '    steps:\n      - run: echo hi\n  b:\n    steps:\n      - run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('cd through a bash command builtin still moves the shell (#1995 r14)', () => {
     // `help builtin` / `help command`: both run cd in the CURRENT shell.
     for (const via of ['builtin', 'command']) {
