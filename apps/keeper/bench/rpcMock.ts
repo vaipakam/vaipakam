@@ -20,6 +20,7 @@
 import {
   encodeFunctionResult,
   decodeFunctionData,
+  erc20Abi,
   toFunctionSelector,
   type Abi,
   type AbiFunction,
@@ -203,9 +204,24 @@ const QUOTER_V2_ABI = [
   },
 ] as const satisfies Abi;
 
-/** selector -> function item, across the Diamond surface plus external ABIs. */
+/**
+ * selector -> function item, across the Diamond surface plus external ABIs.
+ *
+ * `erc20Abi` goes FIRST so the Diamond wins any selector it shares (it is
+ * itself an ERC-721 collection, so `name`, `symbol`, `totalSupply`,
+ * `balanceOf` and `approve` collide — identically shaped in both, but the
+ * Diamond is the authority here).
+ *
+ * It has to be present at all because the passes call token contracts
+ * directly, not through the Diamond: `liquidityConfidence` reads
+ * `decimals()` on every collateral asset and every PAA quote token. Without an
+ * ERC-20 ABI the mock answered `0x`, viem threw, and `tokenDecimals` swallowed
+ * it and fell back to 18 — WITHOUT logging, so the runner reported the pass at
+ * `err/run` 0.0 while it failed 78 reads per run, and no memoisation of that
+ * read could ever show up in the numbers.
+ */
 const BY_SELECTOR = new Map<string, AbiFunction>();
-for (const abi of [DIAMOND_ABI_VIEM, QUOTER_V2_ABI] as readonly Abi[]) {
+for (const abi of [erc20Abi, DIAMOND_ABI_VIEM, QUOTER_V2_ABI] as readonly Abi[]) {
   for (const item of abi as readonly AbiFunction[]) {
     if (item.type !== 'function') continue;
     try {
@@ -323,6 +339,13 @@ function defaultFor(p: AbiParameter, fnName = '', chainKey = ''): unknown {
       if (/^endday$/i.test(p.name ?? '')) return 30000n;
       if (/^side$/i.test(p.name ?? '')) return 0n;
     }
+
+    // ERC-20 decimals must be REALISTIC, not the in-range enum default. The
+    // `uint8` branch below would answer 1, and `liquidityConfidence` sizes
+    // every quote in base units from it — a 1-decimal token makes every
+    // sell amount three orders of magnitude off and the tier machine reads
+    // noise. 18 is the ordinary case.
+    if (/^decimals$/i.test(fnName)) return 18n;
 
     // The on-chain keeper tier must DIFFER from the aggregate the quote resolves
     // to (tier 1), or liquidityConfidence logs `(no change)` and skips keeper
