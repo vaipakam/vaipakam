@@ -1299,6 +1299,63 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a deploy from a SUBDIRECTORY of a scoped package (#1995 r1)', () => {
+    // wrangler walks UP for its config: verified against the repo's 4.90.0, a
+    // dry run from apps/agent/src reports `Processing ../wrangler.jsonc`. The
+    // end-anchored cwd test missed it — a bug that predates #1933, since the
+    // keeper-only predicate was anchored the same way.
+    const r = runWith('contracts/script/deploy-chain.sh', 'cd apps/agent/src\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('the same subdirectory form for the keeper (#1995 r1)', () => {
+    const r = runWith('contracts/script/deploy-chain.sh', 'cd apps/keeper/scripts\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('--config pointing at a scoped package from outside it (#1995 r1)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/indexer\nwrangler deploy --config ../agent/wrangler.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('--cwd pointing at a scoped package from outside it (#1995 r1)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/indexer\nwrangler deploy --cwd ../agent\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('--name naming the deployed Worker, with no path at all (#1995 r1)', () => {
+    const r = runWith('docs/ops/DeploymentRunbook.md', 'wrangler deploy --name vaipakam-agent\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('attributes a two-package prose line to the ACTUAL offender (#1995 r1)', () => {
+    // Reported under apps/keeper before the fix — purely because it is first in
+    // SCOPED — so the reader got the keeper's filter and HF_SCALE remedy beside
+    // an agent problem. Scope has to come from the segment carrying the unsafe
+    // command, not from the line.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'For apps/keeper use pnpm run deploy; for apps/agent use wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('@vaipakam/agent');
+    expect(r.out).toContain('RECIPIENT_VALIDATING_TOKENS');
+    expect(r.out).not.toContain('HF_SCALE');
+  });
+
+  it('still does not flag a subdirectory of an OUT-OF-SCOPE package (#1995 r1)', () => {
+    // The descendant match must widen scope for scoped packages only; if it
+    // widened generally the 13 leak fixtures would pass for the wrong reason.
+    const r = runWith('contracts/script/deploy-chain.sh', 'cd apps/indexer/src\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

@@ -714,6 +714,9 @@ const SCOPED = [
     dir: 'apps/keeper',
     dirVar: 'KEEPER_DIR',
     filter: '@vaipakam/keeper',
+    // The DEPLOYED Worker name, so `--name vaipakam-keeper` is recognised as
+    // targeting this package from anywhere (#1995 r1).
+    workerName: 'vaipakam-keeper',
     // Declares only TG_BOT_USERNAME (which nothing reads); env.ts reads eight
     // dashboard-only values that govern liquidation.
     vars: 'HF_SCALE / LIQ_* / SPLIT_* / PARTIAL_LIQ_*',
@@ -722,6 +725,7 @@ const SCOPED = [
     dir: 'apps/agent',
     dirVar: 'AGENT_DIR',
     filter: '@vaipakam/agent',
+    workerName: 'vaipakam-agent',
     // env.ts reads both; wrangler.jsonc declares neither (OPENSEA_OFFERS_MAX_PAGES
     // appears there only inside a comment). A bare deploy silently switches
     // recipient-token validation off and resets OpenSea pagination.
@@ -793,6 +797,12 @@ function resolveDir(cwd, target) {
   for (const s of SCOPED) {
     if (new RegExp(`\\b${s.dirVar}\\b`).test(target)) return s.dir;
   }
+  // An UNRESOLVED variable is an unknown destination, and #1924 r40 settled
+  // that it must CLEAR scope rather than be treated as a literal path segment.
+  // Appending it (`apps/keeper` + `$INDEXER_DIR`) was harmless while the cwd
+  // test was end-anchored; once descendants count, the nested spelling would
+  // hold the outer package's scope over a deploy that runs somewhere unknown.
+  if (/\$/.test(target)) return '\u0000unknown';
   const parts = target.startsWith('/') ? [] : cwd.split('/').filter(Boolean);
   for (const part of target.split('/')) {
     if (part === '' || part === '.') continue;
@@ -806,13 +816,75 @@ function resolveDir(cwd, target) {
   return parts.join('/');
 }
 
-/** The scoped package the shell is standing in, if any. */
+/**
+ * The scoped package the shell is standing in, if any — INCLUDING from a
+ * subdirectory of it.
+ *
+ * The end-anchored form this replaces missed `cd apps/agent/src && wrangler
+ * deploy` (#1995 r1). Wrangler walks UP for its configuration: verified against
+ * the repo's wrangler 4.90.0, a dry run from `apps/agent/src` reports
+ * `Processing ../wrangler.jsonc configuration` — so standing anywhere beneath a
+ * scoped package deploys that package, and the guard has to say so. The bug
+ * predates this PR (the keeper-only predicate was anchored the same way); it is
+ * fixed for both rather than carried forward.
+ */
 function scopeOfCwd(cwd) {
   return (
-    SCOPED.find((s) =>
-      new RegExp(`(^|/)${s.dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`).test(cwd),
-    ) ?? null
+    SCOPED.find((s) => {
+      const m = cwd.match(
+        new RegExp(`(^|/)${s.dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(/(.*))?$`),
+      );
+      if (!m) return false;
+      // A descendant counts only while it stays INSIDE this package. wrangler
+      // walks up to the NEAREST config, so a path that dives into another
+      // package root belongs to that one — and this scanner models a sibling
+      // move as a nested path (`cd apps/keeper; cd apps/indexer` resolves to
+      // `apps/keeper/apps/indexer`), so without this the descendant match
+      // reclaimed every such line for the outer package and broke three
+      // deliberate #1924 non-flag cases.
+      const tail = m[3] ?? '';
+      return !/(^|\/)(apps|ops|packages)\//.test(tail);
+    }) ?? null
   );
+}
+
+/**
+ * The scope a segment names through wrangler's own TARGET SELECTORS, rather
+ * than through the path the shell happens to be standing in (#1995 r1).
+ *
+ * `wrangler deploy --config ../agent/wrangler.jsonc` from anywhere deploys the
+ * agent; so does `--cwd ../agent`, and so does `--name vaipakam-agent`. All
+ * three were invisible to a purely path-based predicate. Values are resolved
+ * against every REACHABLE cwd, the same states the `cd` walk maintains, so a
+ * relative selector lands where the shell would put it.
+ */
+function selectorScope(seg, states) {
+  const VALUE = `(?:"([^"]*)"|'([^']*)'|([^\\s"';&|)]+))`;
+  const valueOf = (flag) => {
+    const m = seg.match(new RegExp(`--${flag}(?:=|\\s+)${VALUE}`));
+    return m ? m[1] ?? m[2] ?? m[3] : null;
+  };
+
+  const name = valueOf('name');
+  if (name) {
+    const byName = SCOPED.find((s) => s.workerName === name);
+    if (byName) return byName;
+  }
+
+  // `--config` names a FILE; its directory is what wrangler treats as the
+  // package. `--cwd` names the directory directly.
+  const cfg = valueOf('config');
+  const cwdFlag = valueOf('cwd');
+  const targets = [];
+  if (cfg) targets.push(cfg.slice(0, cfg.lastIndexOf('/') + 1) || '.');
+  if (cwdFlag) targets.push(cwdFlag);
+  for (const t of targets) {
+    for (const st of states) {
+      const hit = scopeOfCwd(resolveDir(st.cwd, t));
+      if (hit) return hit;
+    }
+  }
+  return null;
 }
 
 /** Apply one directory directive to one reachable state. */
@@ -1210,10 +1282,26 @@ for (const file of walk(REPO_ROOT)) {
     if (physical) {
       // Prose cannot cd a shell, so a non-shell line is judged on its own
       // content only — it neither reads nor writes the directory state.
-      const scope = scopeOf(line, rel);
-      if (new RegExp(DEPLOY_RE).test(line) && scope && !isSafe(line)) {
+      // PER SEGMENT, not per line (#1995 r1). One prose line can name both
+      // packages — "for apps/keeper use pnpm run deploy; for apps/agent use
+      // wrangler deploy" — and attributing it to the whole line reported the
+      // KEEPER, purely because it is first in SCOPED, with the keeper's filter
+      // and HF_SCALE remedy beside an agent problem. The scope has to come from
+      // the segment carrying the unsafe command.
+      const lineScope = scopeOf(line, rel);
+      for (const part of splitCommands(line)) {
+        const seg = part.text;
+        if (!new RegExp(DEPLOY_RE).test(seg)) continue;
+        if (commandIsSafe(seg)) continue;
+        // Fall back to the whole line only when the segment itself names
+        // nothing: prose often establishes the package in an earlier clause,
+        // and a file inside a scoped tree scopes every line in it.
+        const scope =
+          scopeOf(seg, rel) ?? selectorScope(seg, [{ cwd: '', stack: [] }]) ?? lineScope;
+        if (!scope) continue;
         flagged = true;
         hitScope = scope;
+        break;
       }
     } else {
       // `pushd` moves the shell exactly as `cd` does and is ordinary in deploy
@@ -1273,6 +1361,7 @@ for (const file of walk(REPO_ROOT)) {
         if (!new RegExp(DEPLOY_RE).test(seg)) continue;
         const scope =
           scopeOf(namedPrefix.join(' '), rel) ??
+          selectorScope(seg, input) ??
           input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
           null;
         if (!scope) continue;
