@@ -1,4 +1,4 @@
-## Thread — The remittance-ack pass reads its ledger window in one go (PR #TBD)
+## Thread — The remittance-ack pass reads its ledger window in one go (PR #1994)
 
 The keeper drives the acknowledgement that finalises each cross-chain reward
 remittance. To find which remittances are still waiting, it walks a bounded
