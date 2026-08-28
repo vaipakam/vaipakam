@@ -490,7 +490,7 @@ const OCCUPANCY = [
     // is the r35 finding on the SAME list one round later — r35 added the
     // present-state adjectives and stopped at the ones already in mind. A
     // trigger that is `running` is the plainest possible way to say it.
-    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled|running|enabled)\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled|running|enabled|configured)\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   // The postposed participle — "There are four cron triggers running." — and
@@ -581,11 +581,11 @@ const OCCUPANCY = [
   // somewhere other than this account ("no active cron triggers IN LOCAL
   // DEVELOPMENT" is a true sentence a test guide may write).
   new RegExp(
-    String.raw`\b(?:no${WRAP}|none${WRAP}of${WRAP}(?:the${WRAP})?)(?:live${WRAP}|active${WRAP}|enabled${WRAP}|cron${WRAP})*${CAP_NOUN}${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*(?:live|active|enabled|in${WRAP}use|taken|occupied)\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\b(?:no${WRAP}|none${WRAP}of${WRAP}(?:the${WRAP})?)(?:live${WRAP}|active${WRAP}|enabled${WRAP}|configured${WRAP}|cron${WRAP})*${CAP_NOUN}${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*(?:live|active|enabled|configured|in${WRAP}use|taken|occupied)\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   new RegExp(
-    String.raw`\bthere${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*no${WRAP}(?:live${WRAP}|active${WRAP}|enabled${WRAP}|cron${WRAP})*${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\bthere${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*no${WRAP}(?:live${WRAP}|active${WRAP}|enabled${WRAP}|configured${WRAP}|cron${WRAP})*${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   // Codex #1978 r26: `headroom` must be ABOUT triggers. Unbound it fired on
@@ -644,7 +644,7 @@ const OCCUPANCY = [
   // account state. A bare `N (cron )?triggers` would have banned the cap and
   // fought its own fix — the trap the admission criterion names at the top.
   new RegExp(
-    String.raw`\b${N}${WRAP}(?:live|active|armed|scheduled|enabled|in-use)${WRAP}(?:cron${WRAP})?triggers?\b`,
+    String.raw`\b${N}${WRAP}(?:live|active|armed|scheduled|enabled|configured|in-use)${WRAP}(?:cron${WRAP})?triggers?\b`,
     'i',
   ),
   // The SUBJECT is required here for the same reason it is on the verdicts
@@ -1957,6 +1957,26 @@ export function parseInventory(md) {
     // problem. And unlike Markdown or English, cron IS a closed specified
     // format with five fields and known bounds — the argument against
     // implementing more of a format does not reach a grammar this small.
+    // Codex #1978 r44: `L`, `W` and `#` are part of Cloudflare's supported
+    // cron syntax, and this validator rejected them — so an account legally
+    // scheduled `0 0 L * *` could not be written into the authority, the
+    // offline gate failed, and `--live` could not accept an inventory that
+    // exactly matched the account. That is the SECOND unrepresentable legal
+    // state in two rounds, after the underscore in a Worker name, and both
+    // came from validating against what I pictured instead of what the
+    // platform documents.
+    //
+    // So the posture is corrected along with the grammar. This check exists
+    // to catch a cell that is not a schedule at all — `not a cron` — and its
+    // failure direction is a FALSE REJECTION, which has no remedy: the
+    // operator cannot edit the file into a passing state, and the only way
+    // out is to switch the gate off. It is therefore deliberately permissive
+    // about anything built from the platform's alphabet, and strict only
+    // where a token is unambiguously numeric and out of range.
+    const NAMES = {
+      3: /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)$/i,
+      4: /^(?:sun|mon|tue|wed|thu|fri|sat)$/i,
+    };
     const BOUNDS = [
       [0, 59],
       [0, 23],
@@ -1964,7 +1984,19 @@ export function parseInventory(md) {
       [1, 12],
       [0, 7],
     ];
-    const fieldOk = (f, [lo, hi]) =>
+    const atomOk = (atom, [lo, hi], idx) => {
+      if (atom === '*' || atom === '?') return true;
+      // Extended forms, accepted structurally: last (`L`, `5L`), nearest
+      // weekday (`LW`, `15W`), nth weekday (`5#3`).
+      if (/^(?:l|lw|\d{1,2}[lw]|\d{1,2}#\d)$/i.test(atom)) return true;
+      if (NAMES[idx]?.test(atom)) return true;
+      if (/^\d+$/.test(atom)) {
+        const n = Number(atom);
+        return n >= lo && n <= hi;
+      }
+      return false;
+    };
+    const fieldOk = (f, bounds, idx) =>
       f.split(',').every((part) => {
         // Codex #1978 r38: destructuring two names out of `split('/')` DROPS
         // everything after the second, so `*/2/3` validated as `*` step `2`
@@ -1977,21 +2009,21 @@ export function parseInventory(md) {
         const [range, step] = parts;
         // Codex #1978 r37 follow-on: a step of zero never advances, so `*/0`
         // names no times at all. That is the same "shaped like a schedule,
-        // cannot run" defect the bounds below close, one atom smaller —
-        // `\d+` alone admits it.
+        // cannot run" defect the bounds close, one atom smaller.
         if (step !== undefined && !(/^\d+$/.test(step) && Number(step) >= 1)) {
           return false;
         }
-        if (range === '*') return true;
         const ends = range.split('-');
-        if (ends.length > 2 || !ends.every((e) => /^\d+$/.test(e))) return false;
-        const nums = ends.map(Number);
-        if (!nums.every((n) => n >= lo && n <= hi)) return false;
-        return nums.length === 1 || nums[0] <= nums[1];
+        if (ends.length > 2) return false;
+        if (!ends.every((e) => atomOk(e, bounds, idx))) return false;
+        if (ends.length === 2 && ends.every((e) => /^\d+$/.test(e))) {
+          return Number(ends[0]) <= Number(ends[1]);
+        }
+        return true;
       });
     for (const span of spans) {
       const fields = span.split(/\s+/);
-      if (fields.length !== 5 || !fields.every((f, i) => fieldOk(f, BOUNDS[i]))) {
+      if (fields.length !== 5 || !fields.every((f, i) => fieldOk(f, BOUNDS[i], i))) {
         problems.push(
           `\`${name}\` carries \`${span}\` as a schedule, which is not a cron ` +
             `expression — five space-separated fields, each within its own ` +
@@ -2711,6 +2743,10 @@ const MUST_FIRE = [
   ['the direct form with an enabled predicate', 'Four cron triggers are enabled.'],
   ['the attributive enabled form', 'There are four enabled cron triggers.'],
   ['the zero form with an enabled predicate', 'There are no enabled cron triggers.'],
+  // r44: `configured` — Cloudflare's own term for a Cron Trigger that exists
+  // on the account.
+  ['the direct form with a configured predicate', 'Four cron triggers are configured.'],
+  ['the attributive configured form', 'There are four configured cron triggers.'],
   ['the verbal form, possessive subject', 'Our Cloudflare account uses 4 cron triggers today.'],
   // Codex #1978 r39: a purpose phrase opens exactly like an environment scope
   // and is not one. These are the cases the grammatical test could not tell
@@ -2856,6 +2892,7 @@ const MUST_NOT_FIRE = [
   // test to key on, so one was quiet and the other fired.
   ['the adverb form', 'Four cron triggers are running locally.'],
   ['the enabled form scoped elsewhere', 'Four cron triggers are enabled locally.'],
+  ['the configured form scoped elsewhere', 'Four cron triggers are configured locally.'],
   ['the postposed participle scoped elsewhere', 'There are four cron triggers running locally.'],
   ['the verbal form scoped elsewhere', 'The account runs four cron triggers locally.'],
   ['a leading temporal scope', 'When running locally, no cron triggers are live.'],
@@ -3057,6 +3094,30 @@ const INVENTORY_CASES = [
     { 'vaipakam-agent': ['17 3 * *'] },
     [],
     1,
+  ],
+  // r44: Cloudflare's EXTENDED syntax. Rejecting these made a legal account
+  // state unrepresentable — the offline gate failed and `--live` could not
+  // accept an inventory exactly matching the account.
+  [
+    'last-day-of-month is accepted',
+    '| `vaipakam-mw` | `0 0 L * *` | `ops/mesh-watcher` | live |',
+    { 'vaipakam-mw': ['0 0 L * *'] },
+    [],
+    0,
+  ],
+  [
+    'nth-weekday and nearest-weekday are accepted',
+    '| `vaipakam-mw` | `0 0 15W * *` | `ops/mesh-watcher` | live |',
+    { 'vaipakam-mw': ['0 0 15W * *'] },
+    [],
+    0,
+  ],
+  [
+    'month and weekday names are accepted',
+    '| `vaipakam-mw` | `0 0 * JAN MON` | `ops/mesh-watcher` | live |',
+    { 'vaipakam-mw': ['0 0 * JAN MON'] },
+    [],
+    0,
   ],
   [
     'step and list syntax is accepted',

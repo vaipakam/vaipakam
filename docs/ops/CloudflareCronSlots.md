@@ -24,7 +24,12 @@ time, for the Worker that happens to be deploying — not for whoever
 consumed the budget. `apps/indexer/src/cronRouting.ts` exists because that
 happened once already.
 
-Workers Paid ($5/mo) removes the cap. Until then a Worker that wants two
+Workers Paid ($5/mo) **raises** the cap to 250 per account — it does not
+remove it. An earlier revision of this line said "removes the cap", which
+would have given an operator planning an upgrade an unbounded figure to work
+from; the number is small enough today that nothing depended on it, and that
+is exactly when a wrong upper bound gets written down. Until then a Worker
+that wants two
 cadences registers **one** every-minute schedule and decides per tick who
 acts — that is what `packages/lib/src/cronCadence.ts` is for.
 
