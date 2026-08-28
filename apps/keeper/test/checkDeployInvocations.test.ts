@@ -3333,6 +3333,88 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a matrix expression inside a LARGER path interpolates (#1995 r16)', () => {
+    // r11 gave the expression its own branch, which works exactly when the
+    // value IS the expression — so `apps/${{ matrix.app }}`, the more ordinary
+    // spelling, had `\S+` stop at the first space and captured `apps/${{`.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        app: [agent]\n    steps:\n' +
+        '      - name: go\n        working-directory: apps/${{ matrix.app }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a leg that lands outside every package stays quiet (#1995 r16 control)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        app: [www]\n    steps:\n' +
+        '      - name: go\n        working-directory: apps/${{ matrix.app }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a FLOW-style matrix include carries its values (#1995 r16)', () => {
+    // `include: [{ dir: apps/agent }]` has no line beginning with `dir:`, so
+    // the anchored matcher recorded nothing — the identical omission the
+    // `defaults:` reader had at r13, in the matrix reader.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        include: [{ dir: apps/agent }]\n' +
+        '    steps:\n      - name: go\n        working-directory: ${{ matrix.dir }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it("pnpm's UNSCOPED name selects the scoped package (#1995 r16)", () => {
+    // `--filter agent` selects `@vaipakam/agent`; comparing only the full name
+    // resolved the selection to an authoritative empty.
+    const r = runWith('u.sh', 'pnpm --filter agent run deploy --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a DIRECTORY filter is matched as a path, never as a name (#1995 r16)', () => {
+    // `--filter {agent}` means "the package in ./agent", which does not exist
+    // here, so pnpm selects nothing. Letting the unscoped-name comparison
+    // apply to directory filters too would report the agent for a selector
+    // that never reaches it — and that widening survived a mutation until this
+    // case existed.
+    const r = runWith('u3.sh', "pnpm --filter '{agent}' run deploy --no-keep-vars\n");
+    expect(r.ok).toBe(true);
+  });
+
+  it('but an unscoped name matching nothing selects nothing (#1995 r16 control)', () => {
+    const r = runWith('u2.sh', 'pnpm --filter www run deploy --no-keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('wrangler deploy --help uploads nothing (#1995 r16)', () => {
+    // A false red blocks the unfiltered CI job over a command that deploys
+    // nothing, and the credibility of a guard is spent on those.
+    const r = runWith('h.sh', 'cd apps/agent\nwrangler deploy --help\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('while --help=false is not a help invocation (#1995 r16 control)', () => {
+    // Scored through flagEnabled rather than by substring, so the CLI's own
+    // reading of the value decides.
+    const r = runWith('h2.sh', 'cd apps/agent\nwrangler deploy --help=false\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('nor is the word --help inside another option value (#1995 r16 control)', () => {
+    const r = runWith('h3.sh', 'cd apps/agent\nwrangler deploy --message="see --help"\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('nor one that arrives after the option terminator (#1995 r16 control)', () => {
+    const r = runWith('h4.sh', 'cd apps/agent\nwrangler deploy -- --help\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

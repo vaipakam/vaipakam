@@ -1023,7 +1023,29 @@ function stripShellComment(text) {
   return text;
 }
 
+/**
+ * `--help` / `-h` prints usage and uploads nothing.
+ *
+ * The pinned wrangler documents `-h, --help  Show help [boolean]` and exits
+ * without building. Reporting `wrangler deploy --help` as destructive blocks
+ * the unfiltered CI job over a command that deploys nothing (#1995 r16) —
+ * a false red, and the credibility of a guard is spent on those.
+ *
+ * Before the option TERMINATOR only, for the same reason the selector reader
+ * stops there: what follows `--` is not an option wrangler acts on. And scored
+ * through `flagEnabled` rather than by substring, so `--help=false` and a
+ * `--message="see --help"` are read the way the CLI reads them.
+ */
+function isHelpInvocation(cmd) {
+  const upTo = cmd.replace(
+    /(\bwrangler2?(?:@\S+)?\b[^\n]*?\b(?:deploy|versions\s+upload)\b[\s\S]*?)\s--(?=\s|$)[\s\S]*$/,
+    '$1',
+  );
+  return flagEnabled(upTo, '--help') || flagEnabled(upTo, '-h');
+}
+
 function commandIsSafe(cmd) {
+  if (isHelpInvocation(cmd)) return true;
   // `run deploy` gets the same option-value strip the flags do: it was a raw
   // substring test, so `--message="run deploy"` blessed a bare deploy that
   // never invokes the package script (Codex #1924 r22). `flagEnabled` already
@@ -1503,7 +1525,14 @@ function filterScopes(rawLine) {
     // A positive LITERAL is a real selection and is resolved here now. It used
     // to be skipped as "handled by scopeOf", which was true while selections
     // were only ever added — but a negation has to subtract from something.
-    const direct = SCOPED.filter((sc) => re.test(isDir ? sc.dir : sc.filter));
+    // pnpm matches an UNSCOPED name against the scoped package: `--filter
+    // agent` selects `@vaipakam/agent`, which its own help documents with the
+    // example `foo`. Comparing only the full name resolved the selection to an
+    // authoritative empty and suppressed every other source of scope (#1995
+    // r16).
+    const direct = SCOPED.filter(
+      (sc) => re.test(isDir ? sc.dir : sc.filter) || (!isDir && re.test(sc.filter.replace(/^@[^/]+\//, ''))),
+    );
     // `...X` reaches whatever DEPENDS on X; `X...` reaches what X depends on.
     const viaGraph = wantsDependents
       ? SCOPED.filter((sc) => scopedWorkspaceDeps(sc).some((d) => re.test(d)))
@@ -2597,8 +2626,15 @@ function workingDirFor(lines, runIdx) {
   // leading whitespace could not see it — so the step had no scope and its
   // bare deploy passed. Found while probing the six reported cases; nobody
   // reported this one (#1995 r16).
+  // The unquoted alternative admits an expression ANYWHERE in the value, not
+  // only as the whole of it. `${{ matrix.dir }}` was handled at r11 by giving
+  // the expression its own branch, which works exactly when the value IS the
+  // expression — so `apps/${{ matrix.app }}`, the more ordinary spelling, had
+  // `\S+` stop at the first space and captured `apps/${{` (#1995 r16).
+  // Ordered expression-first so the braces' inner spaces are consumed by that
+  // branch rather than ending the word.
   const WD =
-    /^\s*(?:-\s+)?working-directory:\s*(?:"([^"]*)"|'([^']*)'|(\$\{\{[^}]*\}\}|\S+))/;
+    /^\s*(?:-\s+)?working-directory:\s*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^\s])+))/;
   // FLOW-style mapping (#1995 r13): `defaults: { run: { working-directory: X } }`
   // is the same Actions configuration as the block form, and only the block
   // form was recognised — so a workflow written this way ran its inline deploy
@@ -2678,6 +2714,16 @@ function workingDirFor(lines, runIdx) {
         new RegExp(`^\\s*(?:-\\s+)?${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
       );
       if (inc) vals.push(inc[1] ?? inc[2] ?? inc[3]);
+      // FLOW-style mappings put the key mid-line: `include: [{ dir: apps/agent }]`
+      // has no line beginning with `dir:`, so an anchored matcher recorded
+      // nothing. The block form was added first and the flow form is the same
+      // configuration written the other way — the identical omission the
+      // `defaults:` reader had at r13 (#1995 r16).
+      for (const fm of lines[i].matchAll(
+        new RegExp(`[{,]\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^\\s,}\\]]+))`, 'g'),
+      )) {
+        vals.push(fm[1] ?? fm[2] ?? fm[3]);
+      }
     }
     return vals.filter(Boolean);
   };
@@ -2726,8 +2772,18 @@ function workingDirFor(lines, runIdx) {
     if (!mm) return raw;
     const vals = matrixValues(mm[1]);
     if (vals.length === 0) return '';
+    // SUBSTITUTE into the surrounding path, rather than returning the leg on
+    // its own. `working-directory: apps/${{ matrix.app }}` with `app: [agent]`
+    // runs in `apps/agent`, but returning the raw leg required the leg itself
+    // to BE a package path — so the far more ordinary spelling, where the
+    // expression is one component of a larger path, resolved to nothing
+    // (#1995 r16). The whole-value case still works: substituting into a
+    // string that is only the expression gives the value back.
+    const candidates = vals.map((v) => raw.replace(mm[0], v));
     return (
-      vals.find((v) => SCOPED.some((sc) => v === sc.dir || v.startsWith(`${sc.dir}/`))) ?? ''
+      candidates.find((c) =>
+        SCOPED.some((sc) => c === sc.dir || c.startsWith(`${sc.dir}/`)),
+      ) ?? ''
     );
   };
   const valueOf = (m) => normalizePath(resolveExpression(m[1] ?? m[2] ?? m[3]));
