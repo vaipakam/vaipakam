@@ -3650,6 +3650,148 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.out).toContain('apps/agent');
   });
 
+  // ── The expression resolver I added at r16 handled ONE expression, of ONE
+  // kind, and the env branch RETURNED its value instead of substituting it.
+  // Four reports plus a shell one, all the same shape.
+  it('env resolution reads an actual env: MAPPING (#1995 r16)', () => {
+    // An action input under `with:` reusing the key was read as an environment
+    // declaration and shadowed the real one.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\nenv:\n  DEPLOY_DIR: apps/agent\njobs:\n  d:\n    steps:\n      - name: a\n' +
+        '        with:\n          DEPLOY_DIR: apps/indexer\n      - name: go\n' +
+        '        working-directory: ${{ env.DEPLOY_DIR }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('an env value SUBSTITUTES into the surrounding path (#1995 r16)', () => {
+    // `ROOT: .` with `${{ env.ROOT }}/apps/agent` runs in apps/agent; returning
+    // the value alone seeded `.`. The scope test also had to normalise, because
+    // the caller normalises the RESULT — too late to choose between candidates.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\nenv:\n  ROOT: .\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        working-directory: ${{ env.ROOT }}/apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a FLOW-style matrix axis is an axis (#1995 r16)', () => {
+    // `strategy: { matrix: { dir: [apps/agent] } }` — the inline matcher is
+    // start-anchored and the scalar flow matcher reads mapping members, not
+    // arrays, so an ordinary matrix written in flow style resolved to nothing.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy: { matrix: { dir: [apps/agent] } }\n    steps:\n' +
+        '      - name: go\n        working-directory: ${{ matrix.dir }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('EVERY expression in a path resolves, not just the first (#1995 r16)', () => {
+    // Chosen by COMBINATION: with more than one expression the choices
+    // interact, so the question is not whether a leg lands in a scoped package
+    // but whether an assignment of all of them does.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        root: [apps]\n        app: [agent]\n' +
+        '    steps:\n      - name: go\n        working-directory: ${{ matrix.root }}/${{ matrix.app }}\n' +
+        '        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('an UNDECLARED axis substitutes empty, keeping the literals (#1995 r16)', () => {
+    // Actions evaluates an undefined context expression to the empty string, so
+    // this step runs inside the agent. Discarding the whole value lost that —
+    // found by mutation, not by a report.
+    const r = runWith(
+      '.github/workflows/w4.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        working-directory: apps/agent/${{ matrix.x }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and an UNMODELLED expression is treated the same way (#1995 r16)', () => {
+    // `${{ inputs.x }}` is not a context this resolver models, and it used to
+    // make the whole value unusable. Actions evaluates it to the empty string
+    // like any other undefined expression, so the literal segments stand and
+    // the step runs inside the agent. Uniform treatment came from two mutants
+    // that both survived by keeping the text literally.
+    const r = runWith(
+      '.github/workflows/w6.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        working-directory: apps/agent/${{ inputs.x }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a suffix expression with no separator still lands in the package (#1995 r16)', () => {
+    // `apps/agent${{ matrix.x }}` substitutes to `apps/agent`. Keeping the text
+    // literally left a string that matches no package on a `/` boundary, so
+    // this passed — which is the mutant that survived until this case existed.
+    const r = runWith(
+      '.github/workflows/w7.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        working-directory: apps/agent${{ matrix.x }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while an expression that is the WHOLE value still resolves to nothing (#1995 r11 control)', () => {
+    // The r11 rule: `${{` is not a directory name.
+    const r = runWith(
+      '.github/workflows/w5.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        working-directory: ${{ matrix.x }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a matrix-selected SHELL resolves before being judged (#1995 r16)', () => {
+    // Testing the literal token `${{` against the keyword set classified a real
+    // bash leg as non-shell and skipped its body.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        shell: [bash]\n    steps:\n' +
+        '      - name: go\n        shell: ${{ matrix.shell }}\n        working-directory: apps/agent\n' +
+        '        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a matrix shell of python is still not a shell (#1995 r16 control)', () => {
+    const r = runWith(
+      '.github/workflows/w2.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        shell: [python]\n    steps:\n' +
+        '      - name: go\n        shell: ${{ matrix.shell }}\n        working-directory: apps/agent\n' +
+        '        run: print("wrangler deploy")\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('and an UNRESOLVED shell expression is scanned, not skipped (#1995 r16)', () => {
+    // Skipping is the fail-open direction: the whole point of the allow-list is
+    // that an unknown interpreter must not silence a deploy it might execute.
+    const r = runWith(
+      '.github/workflows/w3.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: ${{ inputs.shell }}\n' +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

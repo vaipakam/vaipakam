@@ -2733,13 +2733,52 @@ function scanStepKeys(lines, runIdx, re) {
  * `command {0}` template names its own interpreter and is not among them.
  */
 const SHELL_KEYWORDS = new Set(['bash', 'sh', 'pwsh', 'powershell', 'cmd']);
+
+/**
+ * The declared values a `shell:` matrix expression can take.
+ *
+ * ANY leg being a shell is enough to scan: the guard must see the body if even
+ * one leg executes it. Reusing `workingDirFor`'s resolver was not an option —
+ * that one answers "which value lands in a scoped package", which is the wrong
+ * question for an interpreter name.
+ */
+function matrixShellValues(lines, runIdx, raw) {
+  const mm = raw.match(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/);
+  if (!mm) return [];
+  const key = mm[1];
+  const vals = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const inline = lines[i].match(new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`));
+    if (inline) vals.push(...inline[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
+    for (const fa of lines[i].matchAll(new RegExp(`[{,]\\s*${key}:\\s*\\[([^\\]]*)\\]`, 'g'))) {
+      vals.push(...fa[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
+    }
+    const inc = lines[i].match(
+      new RegExp(`^\\s*(?:-\\s+)?${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
+    );
+    if (inc) vals.push(inc[1] ?? inc[2] ?? inc[3]);
+  }
+  return vals.filter(Boolean);
+}
 function stepIsShell(lines, runIdx) {
   const m = scanStepKeys(
     lines,
     runIdx,
-    /^\s*(?:-\s+)?shell:\s*(?:"([^"]*)"|'([^']*)'|(\S+))/,
+    /^\s*(?:-\s+)?shell:\s*(?:"([^"]*)"|'([^']*)'|(\$\{\{[^}]*\}\}|\S+))/,
   );
   if (!m) return true;
+  // `shell: ${{ matrix.shell }}` is not the literal token `${{`. Testing it
+  // against the keyword set classified a real bash leg as non-shell and skipped
+  // its body entirely (#1995 r16). An UNRESOLVED expression is scanned rather
+  // than skipped: skipping is the fail-open direction here, and the whole point
+  // of the allow-list is that an unknown interpreter must not silence a deploy
+  // it might well execute.
+  const rawShell = (m[1] ?? m[2] ?? m[3] ?? '').trim();
+  if (/\$\{\{/.test(rawShell)) {
+    const resolved = matrixShellValues(lines, runIdx, rawShell);
+    if (resolved.length === 0) return true;
+    return resolved.some((v) => SHELL_KEYWORDS.has(v.trim().split(/\s+/)[0]));
+  }
   // Actions accepts a custom TEMPLATE — `bash -e {0}` — and the interpreter is
   // its first token. Comparing the whole scalar classified a quoted
   // `shell: "bash -e {0}"` as non-shell and skipped a real deploy (#1995 r16).
@@ -2847,6 +2886,16 @@ function workingDirFor(lines, runIdx) {
         new RegExp(`^\\s*(?:-\\s+)?${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
       );
       if (inc) vals.push(inc[1] ?? inc[2] ?? inc[3]);
+      // A flow mapping may also carry an ARRAY-valued axis:
+      // `strategy: { matrix: { dir: [apps/agent] } }`. The start-anchored
+      // inline matcher above never sees it, and the scalar flow matcher below
+      // reads mapping members, not arrays — so an ordinary matrix written in
+      // flow style resolved to nothing (#1995 r16).
+      for (const fa of lines[i].matchAll(
+        new RegExp(`[{,]\\s*${key}:\\s*\\[([^\\]]*)\\]`, 'g'),
+      )) {
+        vals.push(...fa[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
+      }
       // FLOW-style mappings put the key mid-line: `include: [{ dir: apps/agent }]`
       // has no line beginning with `dir:`, so an anchored matcher recorded
       // nothing. The block form was added first and the flow form is the same
@@ -2862,60 +2911,116 @@ function workingDirFor(lines, runIdx) {
   };
 
   /**
-   * An expression is not a literal directory (#1995 r11, widened at r16).
+   * The values a workflow `env` key can hold at one precedence level.
    *
-   * `matrix.*` resolves against the declared legs: if any lands in a scoped
-   * package that value is used; if the values are found and none do, the step
-   * is genuinely out of scope; if they cannot be found at all, the expression
-   * resolves to nothing rather than being taken literally — which is what
-   * recorded `${{` as a directory name before.
-   *
-   * `env.*` is the same question with a different source, and it was left
-   * whole: a workflow declaring `env: { DEPLOY_DIR: apps/agent }` ran its bare
-   * deploy from the agent while `scopeOfCwd` matched nothing (#1995 r16).
-   * Static declarations only — anything computed stays unresolved, the same
-   * rule `shellVars` follows.
+   * Scoped to an actual `env:` MAPPING, which the first cut was not: it
+   * matched any `KEY: value` line in range, so an action input under
+   * `with: { DEPLOY_DIR: … }` was read as an environment declaration and
+   * shadowed the real one (#1995 r16).
    */
-  const resolveExpression = (raw) => {
-    const em = raw.match(/\$\{\{\s*env\.([A-Za-z_][\w-]*)\s*\}\}/);
-    if (em) {
-      // Actions resolves `env` from the STEP, then the JOB, then the workflow,
-      // and the nearer declaration wins. Scanning the whole file and taking the
-      // first match ignored that entirely: a workflow-level value shadowed the
-      // job-level override beneath it, so a step that really runs in the agent
-      // was seeded with the indexer (#1995 r16, on the r16 fix itself).
-      const step = stepBounds(lines, runIdx);
-      const job = jobBounds(lines, runIdx);
-      const ranges = [
-        step && [step.start, step.end],
-        job && [job.start, job.end],
-        [0, lines.length],
-      ].filter(Boolean);
-      for (const [from, to] of ranges) {
-        for (let i = from; i < to; i += 1) {
-          const kv = lines[i].match(
-            new RegExp(`^\\s*${em[1]}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
-          );
-          if (kv) return kv[1] ?? kv[2] ?? kv[3];
-        }
+  const envValueIn = (key, from, to) => {
+    for (let i = from; i < to && i < lines.length; i += 1) {
+      if (!/^\s*env:\s*$/.test(lines[i])) continue;
+      const ei = indentOf(lines[i]);
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (lines[j].trim() === '') continue;
+        if (indentOf(lines[j]) <= ei) break;
+        const kv = lines[j].match(
+          new RegExp(`^\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
+        );
+        if (kv) return kv[1] ?? kv[2] ?? kv[3];
       }
-      return '';
+      // Flow form: `env: { DEPLOY_DIR: apps/agent }` on one line.
     }
-    const mm = raw.match(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/);
-    if (!mm) return raw;
-    const vals = matrixValues(mm[1]);
-    if (vals.length === 0) return '';
-    // SUBSTITUTE into the surrounding path, rather than returning the leg on
-    // its own. `working-directory: apps/${{ matrix.app }}` with `app: [agent]`
-    // runs in `apps/agent`, but returning the raw leg required the leg itself
-    // to BE a package path — so the far more ordinary spelling, where the
-    // expression is one component of a larger path, resolved to nothing
-    // (#1995 r16). The whole-value case still works: substituting into a
-    // string that is only the expression gives the value back.
-    const candidates = vals.map((v) => raw.replace(mm[0], v));
+    for (let i = from; i < to && i < lines.length; i += 1) {
+      const fm = lines[i].match(
+        new RegExp(`env:\\s*\\{[^}]*?[{,]?\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^\\s,}]+))`),
+      );
+      if (fm) return fm[1] ?? fm[2] ?? fm[3];
+    }
+    return null;
+  };
+
+  /** `env` resolved from the STEP, then the JOB, then the workflow. */
+  const envValues = (key) => {
+    const step = stepBounds(lines, runIdx);
+    const job = jobBounds(lines, runIdx);
+    const ranges = [
+      step && [step.start, step.end],
+      job && [job.start, job.end],
+      [0, lines.length],
+    ].filter(Boolean);
+    for (const [from, to] of ranges) {
+      const v = envValueIn(key, from, to);
+      if (v !== null) return [v];
+    }
+    return [];
+  };
+
+  /**
+   * Substitute EVERY `${{ … }}` in a value, of either kind.
+   *
+   * Four separate reports, one shape (#1995 r16). The first cut resolved ONE
+   * expression, of ONE kind, and the `env` branch RETURNED its value instead of
+   * substituting it — so `${{ env.ROOT }}/apps/agent` became `.`, and
+   * `${{ matrix.root }}/${{ matrix.app }}` kept its second expression whole.
+   *
+   * Values are chosen by COMBINATION, because with more than one expression the
+   * choices interact: the question is not "does this leg land in a scoped
+   * package" but "does this ASSIGNMENT of all of them". The product is capped —
+   * a matrix wide enough to exceed it is not one a workflow writes by hand, and
+   * exceeding it resolves to nothing rather than to a guess.
+   *
+   * An expression whose values cannot be found makes the whole value
+   * unresolvable, rather than being left in place: `${{` is not a directory
+   * name, which is what recorded it as one before r11.
+   */
+  const resolveExpression = (rawIn) => {
+    let raw = rawIn;
+    const found = [...raw.matchAll(/\$\{\{\s*(env|matrix)\.([A-Za-z_][\w-]*)\s*\}\}/g)];
+    if (!/\$\{\{/.test(raw)) return raw;
+    const axes = found.map((m) => ({
+      whole: m[0],
+      values: m[1] === 'env' ? envValues(m[2]) : matrixValues(m[2]),
+    }));
+    const known = axes.filter((a) => a.values.length > 0);
+    // EVERY expression that cannot be resolved substitutes EMPTY — an axis with
+    // no declared values, and equally one this resolver does not model at all
+    // (`${{ inputs.x }}`, `${{ github.workspace }}`). That is Actions' own
+    // semantics, an undefined context expression evaluates to the empty string,
+    // and it keeps the LITERAL segments: `apps/agent/${{ matrix.x }}` runs
+    // inside the agent whatever `x` turns out to be.
+    //
+    // Discarding the whole value instead lost that, and treating the text as a
+    // PATH was the r11 defect — `${{` recorded as a directory name. Empty
+    // substitution is the reading that satisfies both, because an expression
+    // that is the whole value still substitutes to nothing.
+    const keep = new Set(known.map((a) => a.whole));
+    raw = raw.replace(/\$\{\{[^}]*\}\}/g, (m) => (keep.has(m) ? m : ''));
+    // With nothing left to choose BETWEEN, the substituted path is the answer:
+    // there is no list of legs to pick a scoped one from.
+    if (known.length === 0) return raw;
+    let combos = [raw];
+    for (const axis of known) {
+      const next = [];
+      for (const base of combos) {
+        for (const v of axis.values) {
+          next.push(base.split(axis.whole).join(v));
+          if (next.length >= 256) break;
+        }
+        if (next.length >= 256) break;
+      }
+      combos = next;
+    }
+    // NORMALISED before the scope test. `ROOT: .` substitutes to
+    // `./apps/agent`, which is the agent and matched nothing (#1995 r16). The
+    // caller normalises the RESULT, which is too late to choose between
+    // combinations — the choice is what needs the normal form.
     return (
-      candidates.find((c) =>
-        SCOPED.some((sc) => c === sc.dir || c.startsWith(`${sc.dir}/`)),
+      combos.find((c) =>
+        SCOPED.some(
+          (sc) => normalizePath(c) === sc.dir || normalizePath(c).startsWith(`${sc.dir}/`),
+        ),
       ) ?? ''
     );
   };
