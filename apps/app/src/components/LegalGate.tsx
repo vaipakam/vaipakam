@@ -34,7 +34,7 @@ import { tosGateVerdict } from '../contracts/tosGate';
 import { LEGAL_URLS } from '../lib/legalUrls';
 
 export function LegalGate({ children }: { children: ReactNode }) {
-  const { address } = useActiveChain();
+  const { address, onSupportedChain } = useActiveChain();
   const {
     hasAccepted,
     readOk,
@@ -154,12 +154,18 @@ export function LegalGate({ children }: { children: ReactNode }) {
           </div>
         ) : null}
 
+        {/* Disabled off a supported chain. `NetworkBanner` already sits
+            ABOVE this card (outside the gate, so a held user still sees
+            it) and carries the switch action; leaving the button live
+            would send that user into `useDiamondWrite`'s "connect a
+            wallet" error, which names the wrong problem. The remedy is
+            one banner up, not in a second copy here. */}
         <div className="legal-gate-actions">
           <button
             type="button"
             className="btn btn-primary"
             onClick={() => void accept()}
-            disabled={submitting}
+            disabled={submitting || !onSupportedChain}
           >
             {submitting ? copy.legalGate.signing : copy.legalGate.signAccept}
           </button>

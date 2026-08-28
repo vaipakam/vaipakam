@@ -141,13 +141,20 @@ export function useTosAcceptance(): TosAcceptanceState {
     }
   }, [query.data, write, queryClient, queryKey]);
 
+  // Self-review before review round 1: a DISABLED query is `isPending`
+  // in TanStack v5 — status 'pending', fetchStatus 'idle' — so a wallet
+  // connected while `usePublicClient` returns undefined sat on the
+  // "checking" card forever, with no retry and no way out. Fail-closed
+  // was right; offering no exit was not. Treating it as a failed read
+  // keeps the gate shut AND gives the user the retry.
+  const clientMissing = Boolean(address) && !publicClient;
   const readOk = query.isSuccess;
   return {
     hasAccepted: readOk && query.data.accepted,
     readOk,
     currentVersion: query.data?.version ?? 0,
     currentHash: query.data?.hash ?? ZERO_HASH,
-    loading: query.isPending,
+    loading: query.isPending && !clientMissing,
     error:
       writeError ??
       (query.error instanceof Error ? query.error.message : null),
