@@ -314,6 +314,21 @@ const GAP = String.raw`(?:\s|\*|\/\/|#|>){0,400}`;
 const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
 
 /**
+ * A quantity that is not a numeral.
+ *
+ * Codex #1978 r56: "Both cron triggers are live." and "The only cron trigger
+ * is live." state the occupancy exactly, and every matcher required a number
+ * or a number-word. `both` IS two and `the only` IS one — the count is in the
+ * determiner rather than in a digit, which is the same class of miss as r45's
+ * bare existential (no predicate) and r51's finite verb (no copula): the
+ * family was built around one way of expressing a quantity.
+ *
+ * `only` and `sole` are required to carry `the`, because a bare "only" is an
+ * ordinary adverb and would fire on prose.
+ */
+const QUANT = String.raw`(?:${N}|both|the${WRAP}(?:only|sole|single))`;
+
+/**
  * The capacity noun, with its optional compound qualifiers.
  *
  * "triggers", "cron triggers", "account cron triggers", "cron-slots" — one
@@ -466,7 +481,7 @@ const OCCUPANCY = [
   // tracked tree before keeping it — zero new findings — so it closes the
   // plainest remaining phrasing at no cost in false alarms today.
   new RegExp(
-    String.raw`\bthere${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*${N}${WRAP}${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\bthere${WRAP}(?:are|is)${WRAP}(?:${TEMPORAL}${WRAP})*${QUANT}${WRAP}${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   new RegExp(
@@ -540,7 +555,7 @@ const OCCUPANCY = [
     // is the r35 finding on the SAME list one round later — r35 added the
     // present-state adjectives and stopped at the ones already in mind. A
     // trigger that is `running` is the plainest possible way to say it.
-    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled|running|runs?|enabled|configured)\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\b${QUANT}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled|running|runs?|enabled|configured)\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   // The postposed participle — "There are four cron triggers running." — and
@@ -1964,14 +1979,41 @@ export function parseInventory(md) {
     // the malformed row r8 exists to name; outside it, prose containing pipes
     // is prose. r54 fixed WHICH pipes are counted and left the assumption
     // that counting them decides anything.
-    if (line.trim() === '') {
+    // Codex #1978 r56, two halves of one correction to r55.
+    //
+    // A BLANK LINE is not the only thing that ends a GFM table: a heading, a
+    // list, a blockquote, a thematic break or a fence ends it too, with no
+    // blank line required. Resetting only on blank lines left `inTable` set
+    // across such a block, so a later pipe-bearing paragraph was reported as
+    // a malformed row — the same CI-blocking false positive r55 fixed, one
+    // construct over.
+    //
+    // And ONCE INSIDE the table, a pipe count must not gate the column check.
+    // `\`vaipakam-keeper\` | *(none)*` has two separators, renders as a row
+    // with empty trailing cells, and was skipped — dropping a reservation
+    // that `--live` cannot recover, because a reservation has no account
+    // witness. That is r18's finding returning through the candidacy test my
+    // own r55 change introduced.
+    const isBlockStart = /^ {0,3}(?:#{1,6}\s|>|[-*+]\s|\d+[.)]\s|```|~~~|(?:[-*_]\s*){3,}$)/.test(
+      line,
+    );
+    if (line.trim() === '' || isBlockStart) {
       inTable = false;
       continue;
     }
     const pipes = splitTableRow(line).length - 1;
     const startsRow = /^ {0,3}\|/.test(line);
     if (startsRow) inTable = true;
-    if (!startsRow && !(inTable && pipes >= 3)) continue;
+    // Inside the table, ANY line carrying a separator is a row — short,
+    // malformed or otherwise — and goes to the column check. A line with no
+    // separator at all ends the table rather than being judged as a row.
+    if (!startsRow) {
+      if (!inTable) continue;
+      if (pipes < 1) {
+        inTable = false;
+        continue;
+      }
+    }
     if (!/^\s*\|/.test(line)) {
       problems.push(
         `an inventory row is missing its leading pipe; Markdown renders it, this ` +
@@ -2575,9 +2617,18 @@ export function checkSources(sources) {
     // was using the unnormalised input. r54 fixed the trailing slash and left
     // the class; this is the third instance-instead-of-rule in three rounds,
     // so the rule is applied at the single point the value enters.
+    // Codex #1978 r56: `apps/./agent` — an EMBEDDED dot component. r55 stripped
+    // a leading `./` and collapsed doubled separators and I described it as
+    // normalising "once, completely"; it did neither, because I again handled
+    // the spellings I had been shown. FOURTH instance-instead-of-rule in four
+    // rounds. Normalising a path is a component operation, so this now does
+    // the component operation: split, drop every `.`, rejoin. `..` is still
+    // rejected below rather than resolved — traversal is not a spelling
+    // difference.
     const dir = path
-      .replace(/^(?:\.\/)+/, '')
-      .replace(/\/{2,}/g, '/')
+      .split('/')
+      .filter((seg, i, all) => seg !== '.' && (seg !== '' || i === 0 || i === all.length - 1))
+      .join('/')
       .replace(/\/+$/, '');
     const traverses = dir.split('/').some((seg) => seg === '..');
     if (!/^[A-Za-z0-9._][A-Za-z0-9._/-]*$/.test(dir) || traverses) {
@@ -3135,6 +3186,10 @@ const MUST_FIRE = [
   // or a participle; `run` is what the sentence uses when the triggers are
   // the subject and the verb is not a copula.
   ['the finite run verb', 'Four cron triggers run nightly.'],
+  // r56: the count lives in the DETERMINER — `both` is two, `the only` is one.
+  ['the both determiner', 'Both cron triggers are live.'],
+  ['the both determiner with a finite verb', 'Both cron triggers run nightly.'],
+  ['the only determiner', 'The only cron trigger is live.'],
   ['the finite run verb with all', 'All four cron triggers run nightly.'],
   // r45: no predicate at all — the plainest way to state the count.
   ['the bare existential', 'There are four cron triggers.'],
@@ -3310,6 +3365,7 @@ const MUST_NOT_FIRE = [
   ['the enabled form scoped elsewhere', 'Four cron triggers are enabled locally.'],
   ['the configured form scoped elsewhere', 'Four cron triggers are configured locally.'],
   ['the run verb scoped elsewhere', 'Four cron triggers run nightly in local development.'],
+  ['the both determiner scoped elsewhere', 'Both cron triggers are live in local development.'],
   ['the bare existential scoped elsewhere', 'There are four cron triggers in local development.'],
   // r46: the existential form of a CAP statement, which the gate must permit
   // — bound to the matched span, because two of the ten originals state the
@@ -3972,6 +4028,18 @@ const INVENTORY_CASES = [
   ],
   // ...and the mirror: the same line with no table around it is prose, and
   // must not be reported. This is the case that was blocking CI.
+  // r56: a short row INSIDE the table still renders, and skipping it dropped
+  // a reservation nothing could recover.
+  [
+    'a short row inside the table is a finding',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |\n' +
+      '`vaipakam-keeper` | *(none)*',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    1,
+  ],
   [
     'pipes in prose outside a table are not a row',
     'The accepted labels are live | reserved | undeployed | uncertain.',
