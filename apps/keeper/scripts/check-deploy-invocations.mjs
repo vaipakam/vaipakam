@@ -1685,8 +1685,28 @@ function workingDirFor(lines, runIdx) {
     const inJob = declaredIn(jobStart, jobEnd);
     if (inJob) return inJob;
   }
-  // Workflow level: a `defaults:` declared before `jobs:` applies to every job.
-  return declaredIn(0, jobsIdx >= 0 ? jobsIdx : lines.length);
+  // Workflow level: a top-level `defaults:` applies to every job WHEREVER it is
+  // declared. YAML mapping order is not significant, so searching only the text
+  // before `jobs:` missed a perfectly valid workflow that declares `jobs:`
+  // first (#1995 r10) — and missing it means an inline bare deploy runs from
+  // the agent's directory with the guard reporting success.
+  //
+  // Selected by INDENT rather than by position: anything belonging to a job is
+  // more deeply indented than `jobs:` itself, so the indent test excludes
+  // job-level blocks without needing to bound the jobs region. That keeps the
+  // r8 property — one job's default must not leak into a later job — which is
+  // handled above by `declaredIn` over the containing job.
+  const topIndent = jobsIdx >= 0 ? indentOf(lines[jobsIdx]) : 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
+    if (indentOf(lines[i]) !== topIndent) continue;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (lines[j].trim() !== '' && indentOf(lines[j]) <= topIndent) break;
+      const m = lines[j].match(WD);
+      if (m) return valueOf(m);
+    }
+  }
+  return '';
 }
 
 /**

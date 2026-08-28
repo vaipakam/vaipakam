@@ -1510,6 +1510,30 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a top-level defaults: applies wherever it is declared (#1995 r10)', () => {
+    // YAML mapping order is not significant, so a workflow may declare `jobs:`
+    // first and `defaults:` after it.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - run: wrangler deploy\n' +
+        'defaults:\n  run:\n    working-directory: apps/agent\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a JOB-level defaults: still does not leak to a later job (#1995 r8)', () => {
+    // The property the indent test must preserve: selecting top-level
+    // `defaults:` by indent must not start admitting job-level ones.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  a:\n    defaults:\n      run:\n' +
+        '        working-directory: apps/agent\n    steps:\n      - run: echo hi\n' +
+        '  b:\n    steps:\n      - run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('an explicit cd OUTRANKS where the wrapper file lives (#1995 r9)', () => {
     // Script inside apps/agent, but the shell moves to the indexer, which is
     // not a protected package. Reporting it as an agent violation is a false
