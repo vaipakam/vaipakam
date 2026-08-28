@@ -1998,6 +1998,8 @@ for (const file of walk(REPO_ROOT)) {
       let pendingDepth = 0;
       // Indexed, because whether a segment runs in a subshell depends on the
       // separator that FOLLOWS it, and `sep` records the one that PRECEDES.
+      // States entering each open subshell, so `)` can restore them (#1995 r13).
+      const stateStack = [];
       const segments = splitCommands(line);
       for (let pi = 0; pi < segments.length; pi += 1) {
         const part = segments[pi];
@@ -2006,6 +2008,15 @@ for (const file of walk(REPO_ROOT)) {
         if (pendingDepth < depth) {
           for (let k = namedPrefix.length - 1; k >= 0; k -= 1) {
             if (namedPrefix[k].depth > pendingDepth) namedPrefix.splice(k, 1);
+          }
+          // A `( … )` subshell cannot move the PARENT either (#1995 r13). The
+          // r9 fix covered `|` and `&` and stopped there, so
+          // `cd apps/agent; (echo x; cd ../indexer); wrangler deploy` still
+          // recorded the indexer while bash stays in apps/agent. Restore the
+          // state that was current when each level opened.
+          for (let k = depth; k > pendingDepth; k -= 1) {
+            const saved = stateStack.pop();
+            if (saved) states = saved;
           }
         }
         depth = pendingDepth;
@@ -2021,6 +2032,11 @@ for (const file of walk(REPO_ROOT)) {
         // `||` means the PREVIOUS segment failed, so this one starts from the
         // state that preceded it — a failed `cd` moves nothing.
         const input = part.sep === '||' ? prior : states;
+        // Snapshot BEFORE this segment's own `cd` is applied: the paren opens
+        // at its start, so the state entering the subshell is `input`.
+        if (segDepth > depth) {
+          for (let k = depth; k < segDepth; k += 1) stateStack.push(input);
+        }
         const dir = dirDirective(seg);
         // A `cd` that runs as a PIPELINE or BACKGROUND element executes in a
         // SUBSHELL and cannot move the parent (#1995 r9). In
@@ -2038,7 +2054,15 @@ for (const file of walk(REPO_ROOT)) {
           dir && !inSubshell ? input.map((st) => applyDir(st, dir, shellVars)) : input;
         // After `A || B` both outcomes remain reachable: A succeeded and B was
         // skipped, or A failed and B ran.
-        const next = part.sep === '||' ? dedupeStates([...states, ...after]) : after;
+        //
+        // `&&` is the mirror and was missing (#1995 r13): its right-hand side
+        // runs ONLY if the left succeeded, so `false && cd ../indexer` may move
+        // nothing at all. Applying it unconditionally let a later bare deploy
+        // be judged against a directory the shell need never have entered.
+        const next =
+          part.sep === '||' || part.sep === '&&'
+            ? dedupeStates([...states, ...after])
+            : after;
         prior = input;
         states = next;
         if (dir) continue;
@@ -2130,6 +2154,15 @@ for (const file of walk(REPO_ROOT)) {
         const many = sel ? [] : filterScopes(seg) ?? [];
         if (many.length > 1) for (const sc of many) hitScopes.add(sc);
         else hitScopes.add(scope);
+      }
+      // A subshell that closes at the END of the line restores HERE. The pop
+      // above runs at the start of the next segment, and there may not be one
+      // (#1995 r13) — which is exactly the reported shape, `(echo x; cd
+      // ../indexer)` on a line of its own, leaking the indexer into the state
+      // the following line's deploy is judged against.
+      for (let k = depth; k > pendingDepth; k -= 1) {
+        const saved = stateStack.pop();
+        if (saved) states = saved;
       }
     }
 

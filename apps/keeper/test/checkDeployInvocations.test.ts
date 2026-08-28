@@ -1510,6 +1510,39 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a ( ) subshell cannot move the parent either (#1995 r13)', () => {
+    // The r9 fix covered `|` and `&` and stopped there. Bash stays in
+    // apps/agent; the scanner recorded the indexer and let the deploy through.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\n(echo x; cd ../indexer)\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a cd on the right of && may never run (#1995 r13)', () => {
+    // `false && cd ../indexer` moves nothing, so the deploy is still judged
+    // against apps/agent.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nfalse && cd ../indexer\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a cd INSIDE a subshell still applies within it (#1995 r13)', () => {
+    // The other side: restoring on `)` must not blind the deploy that sits
+    // inside the same subshell.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '( cd apps/agent && wrangler deploy )\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('a cd in a PIPELINE runs in a subshell and does not move the parent (#1995 r9)', () => {
     // bash is still in apps/agent when the deploy runs; the scanner had
     // recorded the indexer and let the protected bare deploy through.
