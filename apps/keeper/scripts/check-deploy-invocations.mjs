@@ -2438,10 +2438,29 @@ for (const file of walk(REPO_ROOT)) {
         // runs ONLY if the left succeeded, so `false && cd ../indexer` may move
         // nothing at all. Applying it unconditionally let a later bare deploy
         // be judged against a directory the shell need never have entered.
+        // `&&` corrected twice over (#1995 r15), both by the same reasoning:
+        // WHEN is this segment skipped, and where does the shell stand then?
+        //
+        // It is skipped iff the PREVIOUS command failed, and in that case the
+        // cwd is the one from before THAT command — `prior`, not `states`.
+        // Unioning `states` modelled "we are where the previous cd left us and
+        // this one did not run", which cannot happen: if the previous `cd`
+        // failed it moved nothing. That reported `cd apps/agent && cd
+        // ../indexer && wrangler deploy` against the AGENT, although the deploy
+        // runs only when both moves succeeded and therefore runs from the
+        // indexer. A false red, from my own r13 fix.
+        //
+        // And the skipped branch cannot reach a further `&&` at all: the chain
+        // short-circuits, so a later `&&` command does not run either. It is
+        // dropped when the next separator is `&&`, rather than carried into a
+        // command it can never reach.
+        const skipped = nextPart?.sep === '&&' ? [] : prior;
         const next =
-          part.sep === '||' || part.sep === '&&'
+          part.sep === '||'
             ? dedupeStates([...states, ...after])
-            : after;
+            : part.sep === '&&'
+              ? dedupeStates([...skipped, ...after])
+              : after;
         prior = input;
         states = next;
         if (dir) continue;

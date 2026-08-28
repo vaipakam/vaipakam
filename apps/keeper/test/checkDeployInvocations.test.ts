@@ -1881,6 +1881,19 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.out).toContain('apps/agent');
   });
 
+  it('a && CHAIN deploys from where the chain leaves it (#1995 r15)', () => {
+    // The deploy runs only if BOTH moves succeeded, so it runs from the
+    // indexer — which is not a protected package. Reporting the agent was a
+    // false red introduced by r13's union.
+    for (const body of [
+      'cd apps/agent && cd ../indexer && wrangler deploy\n',
+      'cd apps/agent && cd ../indexer\nwrangler deploy\n',
+    ]) {
+      const r = runWith('contracts/script/deploy-chain.sh', body);
+      expect(r.ok, body).toBe(true);
+    }
+  });
+
   it('a cd on the right of && may never run (#1995 r13)', () => {
     // `false && cd ../indexer` moves nothing, so the deploy is still judged
     // against apps/agent.
