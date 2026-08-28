@@ -851,8 +851,14 @@ then deploy.
 >   revision allowed only the missing-listing case, which would have sent a
 >   restore backwards through the warm bucket's older nights while an
 >   independently written copy of the night you actually want sat in the
->   other bucket. That copy exists precisely because both Workers are
->   scheduled; it is the one upside of the state #1977 is about.
+>   other bucket — **if one was written**. Both Workers being scheduled is
+>   why such a copy *may* exist; it is not evidence that it does, and this
+>   sentence previously said it was. **List the archive bucket for your date
+>   and verify the object before treating this as a fallback at all**: a
+>   run can be armed and still upload nothing, which the box above states
+>   and this bullet contradicted. If the archive bucket does not list your
+>   date either, you have two failed sources and an incident finding, not a
+>   fallback.
 >
 >   **After a compromise, this trigger is suspended — but the other bucket is
 >   not off-limits.** The distinction is what you are reacting to:
@@ -1692,6 +1698,19 @@ caught at the cheapest stage.
 
       What this step needs is the raw count, so ask for that directly:
 
+      **Re-read the token first.** The prerequisites `unset CF_API_TOKEN`
+      after their account check, so following branch B in order arrives here
+      with the variable gone: under the `set -u` this block enables, the very
+      first `cf` call aborts. That is a failure of the *procedure*, not of the
+      account, and an operator reads it as the latter. Codex #1978 r41 found
+      the same defect at §7b and the re-prompt was added there; this is the
+      earlier of the two uses and it was missed — the sweep fixed the instance
+      it was shown rather than every site the `unset` governs.
+
+      ```bash
+      read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
+      ```
+
       ```bash
       ( set -euo pipefail
         # Token on STDIN, never in argv (Codex #1978 r40) — the rule this
@@ -1747,8 +1766,11 @@ caught at the cheapest stage.
       exits 0. Verified by reproducing exactly that. Assigning to `scripts`
       first makes the failure the assignment's, where `||` can catch it.
 
-      (If §1's token has already been unset, re-prompt for it the same way —
-      `read -rs CF_API_TOKEN`, not via argv.)
+      **Keep `CF_API_TOKEN` set from the prompt above until the end of this
+      section, then `unset` it.** The schedule readback in step 5 expands the
+      same variable and made the same assumption; a re-prompt placed *after*
+      the command that needs it — which is what this parenthetical used to be
+      — cannot help an operator whose shell has already aborted.
    4. Deploy from the keeper's directory, with the flag — the command shown
       in branch A above.
    5. Read the schedule back trigger-aware — the `/schedules` query below.
@@ -2264,8 +2286,19 @@ is #1977 again by a different route.
 1. Remove the `vaipakam-offchain-data-archive` row: on the fresh account that
    Worker does not exist, and it has no source in this repository to restore
    it from.
-2. Re-derive "Live right now" and the `Committed` label from the rows that
-   remain, and refresh the `Verified:` stamp.
+2. Re-derive **all three summary lines** — "Live right now", the `Committed`
+   label, **and "Genuinely spare"** — from the rows that remain, and refresh
+   the `Verified:` stamp.
+
+   **The spare line is the one this step used to omit, and omitting it fails
+   the very next command** (Codex #1978 r42). Dropping the archive row after
+   the keeper has consumed its reservation takes committed from five to four,
+   so spare must go from `0` to `1`; `checkSummary` derives spare as
+   `5 − committed` and rejects the stale `0`, so step 3's `--live` exits
+   non-zero and the reconciliation cannot complete. The three lines are one
+   derivation and have to be re-done together — which is exactly what the
+   authority says about itself, in the sentence explaining why the summary is
+   pinned to the table.
 3. Re-read the token first. Branch B runs `unset CF_API_TOKEN` at the end of
    its keeper-settings readback, which is far above this point, so following
    the runbook in order arrives here with the variable GONE — under the
@@ -2338,8 +2371,14 @@ two procedures share the offline-key handling discipline.
    your enumeration; steps 4–6 then switch the key, validate only
    new-key output, and destroy the old key — leaving that late
    archive (and its monthly/yearly siblings on a boundary date)
-   permanently undecryptable (#1450 r31). Re-enable the cron after
-   step 4; step 5's green nightly needs it back on.
+   permanently undecryptable (#1450 r31). Re-enable **both crons** after
+   step 4 — the singular "the cron" here was the same one-Worker assumption
+   this box exists to correct, and it is worse than the others: step 5
+   requires a fresh archive from EVERY Worker, so leaving the predecessor
+   disabled stalls the rotation outright, and skipping that validation
+   instead leaves the fallback bucket silently receiving nothing (Codex
+   #1978 r42). If the predecessor was retired before you started — the #1977
+   sequence — there is one cron and this reads as written.
 
 2. Enumerate and download **every retained ciphertext across all
    three tiers** — `archives/` (daily), `archives-monthly/`, and

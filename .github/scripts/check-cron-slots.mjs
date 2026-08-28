@@ -2412,7 +2412,23 @@ export function wranglerNameFrom(raw, isToml) {
         inString = false;
         const literal = text.slice(strStart, k);
         if (awaitingValue && lastKey === 'name' && lastKeyDepth === 1) {
-          return literal.replace(/\\(.)/g, '$1');
+          // Codex #1978 r42: `\\(.)` drops the backslash and keeps the rest,
+          // which is right for `\"` and `\\` and WRONG for every multi-
+          // character escape — `a` became the literal `u0061`. Wrangler
+          // decodes and deploys `vaipakam-agent` as `vaipakam-agent`, so
+          // the Worker was indexed under a name that does not exist and an
+          // inventory row claiming `*none*` for the real one passed silently.
+          //
+          // Decoded with JSON's own semantics rather than a hand-rolled
+          // table: the string came from a JSON file, so the language that
+          // defines the escape is the one that should undo it. Falls back to
+          // the raw literal if the fragment will not parse, since a malformed
+          // config is not this check's business.
+          try {
+            return JSON.parse(`"${literal}"`);
+          } catch {
+            return literal;
+          }
         }
         lastKey = literal;
         lastKeyDepth = depth;
@@ -3305,6 +3321,16 @@ const WRANGLER_NAME_CASES = [
   // `name` is not the first property, both returned null while the scan was
   // line-based — an ordinary reformat switched off both source checks.
   ['the whole config on one line', '{"name":"vaipakam-agent"}\n', false, 'vaipakam-agent'],
+  // r42: a Unicode escape is a valid spelling of an ASCII character, and
+  // Wrangler deploys the DECODED name. Indexing the undecoded one let a
+  // `*none*` source claim for the real Worker pass.
+  [
+    'a unicode escape in the name',
+    '{"name":"vaipakam-\\u0061gent"}\n',
+    false,
+    'vaipakam-agent',
+  ],
+  ['an escaped quote in the name', '{"name":"vaipakam-\\"odd\\""}\n', false, 'vaipakam-"odd"'],
   [
     'a property before name on the same line',
     '{ "main": "src/index.ts", "name": "vaipakam-keeper" }\n',
