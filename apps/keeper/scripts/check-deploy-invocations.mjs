@@ -132,7 +132,20 @@ const DEPLOY_RE = String.raw`wrangler(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= 
 // `npm run --help` lists `run-script`, `rum` and `urn` as aliases of `run`
 // (#1995 r10). A wrapper using one of them was not recognised as a deploy at
 // all, so the file prefilter skipped it.
-const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+(?:run(?:-script)?|rum|urn)(?:\s+-{1,2}[A-Za-z0-9-]+(?:=[^\s]*)?)*\s+deploy\b`;
+/**
+ * The spellings of `run`, in ONE place (#1995 r11).
+ *
+ * `npm run --help` lists `run-script`, `rum` and `urn` as aliases. r10 taught
+ * the DETECTOR about them and left the SAFETY matcher on `run|run-script`, so
+ * `npm rum deploy` — which invokes the package's `--keep-vars` script — became
+ * a deploy candidate that could never be judged safe, and was reported as a
+ * violation. A false red, from widening one of two matchers that have to agree.
+ *
+ * They read the same constant now, so the next alias is one edit rather than
+ * two that can drift apart.
+ */
+const RUN_ALIASES = String.raw`run(?:-script)?|rum|urn`;
+const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+(?:${RUN_ALIASES})(?:\s+-{1,2}[A-Za-z0-9-]+(?:=[^\s]*)?)*\s+deploy\b`;
 /** What counts as "this line performs a deploy" for DETECTION purposes. */
 const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
 
@@ -793,7 +806,7 @@ function commandIsSafe(cmd) {
   const runDeploy = source.match(
     new RegExp(
       `${hasWrangler ? '^' : ''}(pnpm|npm|yarn)(?:\\s+[^\\s]+)*?` +
-        `\\s+run(?:-script)?(?:\\s+-{1,2}[A-Za-z0-9-]+(?:=[^\\s]*)?)*\\s+deploy\\b([\\s\\S]*)$`,
+        `\\s+(?:${RUN_ALIASES})(?:\\s+-{1,2}[A-Za-z0-9-]+(?:=[^\\s]*)?)*\\s+deploy\\b([\\s\\S]*)$`,
     ),
   );
   if (!runDeploy) return false;

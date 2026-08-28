@@ -1510,6 +1510,26 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it("npm's run ALIASES are safe when they invoke the safe script (#1995 r11)", () => {
+    // r10 widened the DETECTOR for rum/urn and left the SAFETY matcher on
+    // run|run-script, so these became candidates that could never be judged
+    // safe — a false red on the command the guard's own remedy recommends.
+    for (const alias of ['rum', 'urn', 'run-script']) {
+      const r = runWith('contracts/script/deploy-chain.sh', `cd apps/agent\nnpm ${alias} deploy\n`);
+      expect(r.ok, alias).toBe(true);
+    }
+  });
+
+  it('an alias with a negation appended is still caught (#1995 r11)', () => {
+    // The other direction: sharing the alias list must not make the aliases
+    // unconditionally safe.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nnpm rum deploy -- --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a BRACE GROUP runs in the current shell and its cd persists (#1995 r12)', () => {
     // The mirror of the subshell cases: `{ … ; }` is not a subshell, so the
     // move is real and the next line's bare deploy is the agent's.
