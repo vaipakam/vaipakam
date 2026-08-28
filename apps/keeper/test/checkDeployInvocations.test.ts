@@ -1686,6 +1686,97 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a protected glob that is not the FIRST filter selector (#1995 r6)', () => {
+    // pnpm runs on packages satisfying "at least one of the selectors".
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter @vaipakam/indexer --filter '@vaipakam/*gent' run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the --filter-prod spelling of the same selector (#1995 r6)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter-prod '@vaipakam/*gent' run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('reports BOTH packages when one line offends for each (#1995 r6)', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'For apps/keeper run wrangler deploy; for apps/agent run wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('@vaipakam/keeper');
+    expect(r.out).toContain('@vaipakam/agent');
+  });
+
+  it('an assignment value mixing quoted and unquoted chunks (#1995 r6)', () => {
+    // bash reads `NOTE=foo" --keep-vars"` as ONE assignment and passes wrangler
+    // only `deploy`; the quoted tail was left behind as an apparent flag.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent; NOTE=foo" --keep-vars" wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('sentence punctuation is not part of a --name value in prose (#1995 r6)', () => {
+    // `vaipakam-agent.` matched no Worker, and since r2 that non-match was
+    // authoritative and erased the correct line scope.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'From apps/agent, run `wrangler deploy --name vaipakam-agent`.\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('run options between `run` and the script name (#1995 r6)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pnpm --filter @vaipakam/agent run --if-present deploy --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('cd options before the destination (#1995 r6)', () => {
+    // bash `help cd`: `cd [-L|[-P [-e]] [-@]] [dir]`.
+    expect(runWith('a.sh', 'cd -P apps/agent; wrangler deploy\n').ok).toBe(false);
+    expect(runWith('b.sh', 'cd -L apps/agent; wrangler deploy\n').ok).toBe(false);
+  });
+
+  it('a subshell directory change dies with the subshell (#1995 r6)', () => {
+    // The deploy runs from the ORIGINAL directory. Carrying the prefix through
+    // the rest of the line was a false red in the unfiltered CI job. The second
+    // form nets zero parens within one segment, so depth tracking alone misses
+    // it — the change has to be recognised as confined.
+    expect(
+      runWith('a.sh', '(cd apps/agent && echo prepared); wrangler deploy\n').ok,
+    ).toBe(true);
+    expect(runWith('b.sh', '(cd apps/agent); wrangler deploy\n').ok).toBe(true);
+  });
+
+  // NOTE for anyone adding to these: `runWith` writes into the SAME fixture
+  // tree for the whole test and re-runs the guard over all of it, so a call
+  // expecting `ok: true` must not follow one that planted a violation. Assert
+  // the two directions in separate tests rather than relying on ordering.
+  it('but a deploy INSIDE the subshell is still scoped (#1924 r8)', () => {
+    // The counterpart the fix above must not break: here the deploy is before
+    // the closing paren, so the directory change is still in effect.
+    const r = runWith('a.sh', '( cd "$AGENT_DIR" && pnpm exec wrangler deploy )\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('and its safe form is still accepted (#1924 r8)', () => {
+    const r = runWith(
+      'b.sh',
+      '( cd "$AGENT_DIR" && pnpm exec wrangler deploy --keep-vars )\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('still does not flag a subdirectory of an OUT-OF-SCOPE package (#1995 r1)', () => {
     // The descendant match must widen scope for scoped packages only; if it
     // widened generally the 13 leak fixtures would pass for the wrong reason.

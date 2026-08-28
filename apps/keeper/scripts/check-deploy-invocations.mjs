@@ -126,7 +126,10 @@ const DEPLOY_RE = String.raw`wrangler(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= 
  * `run-script` is a documented alias of `run` (verified: `pnpm help run` lists
  * it), so both spellings count (#1995 r5).
  */
-const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run(?:-script)?\s+deploy\b`;
+// `run` itself takes options before the script name — pnpm documents
+// `--if-present` — and requiring `deploy` to be the very next token missed
+// `run --if-present deploy` entirely (#1995 r6).
+const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run(?:-script)?(?:\s+-{1,2}[A-Za-z0-9-]+)*\s+deploy\b`;
 /** What counts as "this line performs a deploy" for DETECTION purposes. */
 const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
 
@@ -665,9 +668,16 @@ function normalizeFlagEquals(line) {
  * bash never runs.
  */
 function executedCommand(cmd) {
+  // An assignment's value is ONE SHELL WORD, and a word can mix adjacent quoted
+  // and unquoted chunks or carry escaped whitespace: bash reads
+  // `NOTE=foo" --keep-vars"` as a single assignment and passes wrangler only
+  // `deploy`. Matching wholly-quoted or whitespace-free values left the quoted
+  // tail behind as apparent arguments (#1995 r6) — the same chunked-word lesson
+  // as #1924 r23/r24 and #1995 r4a, in its fourth place.
+  const CHUNKS = '(?:"[^"]*"|\'[^\']*\'|(?:\\\\[\\s\\S])|[^\\s"\'\\\\]+)*';
   return cmd
     .replace(/^[\s(){]*/, '')
-    .replace(/^(?:[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|[^\s]*)\s+)*/, '');
+    .replace(new RegExp(`^(?:[A-Za-z_][A-Za-z0-9_]*=${CHUNKS}\\s+)*`), '');
 }
 
 function commandIsSafe(cmd) {
@@ -692,7 +702,10 @@ function commandIsSafe(cmd) {
   const hasWrangler = new RegExp(DEPLOY_RE).test(bare);
   const source = hasWrangler ? executedCommand(bare) : bare;
   const runDeploy = source.match(
-    new RegExp(`${hasWrangler ? '^' : ''}(pnpm|npm|yarn)(?:\\s+[^\\s]+)*?\\s+run(?:-script)?\\s+deploy\\b([\\s\\S]*)$`),
+    new RegExp(
+      `${hasWrangler ? '^' : ''}(pnpm|npm|yarn)(?:\\s+[^\\s]+)*?` +
+        `\\s+run(?:-script)?(?:\\s+-{1,2}[A-Za-z0-9-]+)*\\s+deploy\\b([\\s\\S]*)$`,
+    ),
   );
   if (!runDeploy) return false;
 
@@ -827,14 +840,22 @@ const SCOPED = [
  * NAME, which is the spelling a wrapper uses.
  */
 function filterScope(line) {
-  const m = line.match(/--filter(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"';&|)]+))/);
-  if (!m) return null;
-  const pat = (m[1] ?? m[2] ?? m[3]).replace(/^\.\.\.|\.\.\.$/g, '');
-  if (!/[*]/.test(pat)) return null; // literal names are handled by scopeOf
-  const re = new RegExp(
-    `^${pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,
+  // EVERY selector, not the first: pnpm runs on packages satisfying "at least
+  // one of the selectors", so a protected glob sitting second was ignored
+  // (#1995 r6). `--filter-prod` is the same selector with a different name.
+  const all = line.matchAll(
+    /--filter(?:-prod)?(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"';&|)]+))/g,
   );
-  return SCOPED.find((s) => re.test(s.filter)) ?? null;
+  for (const m of all) {
+    const pat = (m[1] ?? m[2] ?? m[3]).replace(/^\.\.\.|\.\.\.$/g, '');
+    if (!/[*]/.test(pat)) continue; // literal names are handled by scopeOf
+    const re = new RegExp(
+      `^${pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,
+    );
+    const hit = SCOPED.find((s) => re.test(s.filter));
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function scopeOf(line, filePath) {
@@ -940,6 +961,30 @@ function resolveDir(cwd, target) {
     else parts.push('..');
   }
   return parts.join('/');
+}
+
+/** Net change in subshell nesting across a fragment, ignoring quoted text. */
+function netParens(text) {
+  let n = 0;
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '\\') {
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      continue;
+    }
+    if (ch === '(') n += 1;
+    else if (ch === ')') n -= 1;
+  }
+  return n;
 }
 
 /**
@@ -1104,10 +1149,15 @@ function applyDir(state, dir) {
 
 /** The directory directive a segment performs, if any. */
 function dirDirective(seg) {
-  const pushed = seg.match(/^pushd\s+["']?([^\s"';&|)]+)/);
+  // `cd` and `pushd` take OPTIONS before the destination — bash's `help cd`
+  // gives `cd [-L|[-P [-e]] [-@]] [dir]` — and recording the option as the
+  // target moved the modelled cwd to `-P` instead of the directory, so
+  // `cd -P apps/agent; wrangler deploy` resolved nowhere (#1995 r6).
+  const OPTS = String.raw`(?:-[LPe@]+\s+)*`;
+  const pushed = seg.match(new RegExp(`^pushd\\s+${OPTS}["']?([^\\s"';&|)]+)`));
   if (pushed) return { kind: 'pushd', target: pushed[1] };
   if (/^popd\b/.test(seg)) return { kind: 'popd' };
-  const cd = seg.match(/^cd\s+["']?([^\s"';&|)]+)/);
+  const cd = seg.match(new RegExp(`^cd\\s+${OPTS}["']?([^\\s"';&|)]+)`));
   return cd ? { kind: 'cd', target: cd[1] } : null;
 }
 
@@ -1480,7 +1530,12 @@ for (const file of walk(REPO_ROOT)) {
       return;
     }
     let flagged = false;
-    let hitScope = null;
+    // EVERY offending scope on the line, not the first (#1995 r6). A line can
+    // carry an unsafe deploy for both packages — "For apps/keeper run wrangler
+    // deploy; for apps/agent run wrangler deploy" — and reporting one of them
+    // omits the other's remedy entirely, so the second is only discovered on a
+    // later CI round after the first is fixed.
+    const hitScopes = new Set();
     if (physical) {
       // Prose cannot cd a shell, so a non-shell line is judged on its own
       // content only — it neither reads nor writes the directory state.
@@ -1502,8 +1557,7 @@ for (const file of walk(REPO_ROOT)) {
         const scope = sel ? sel.scope : scopeOf(seg, rel) ?? lineScope;
         if (!scope) continue;
         flagged = true;
-        hitScope = scope;
-        break;
+        hitScopes.add(scope);
       }
     } else {
       // `pushd` moves the shell exactly as `cd` does and is ordinary in deploy
@@ -1542,11 +1596,33 @@ for (const file of walk(REPO_ROOT)) {
       // already represented by `cwdIsKeeper`; only the rest can name the keeper
       // independently — `KEEPER_DIR=…` assignments and the subshell form, which
       // is not `^cd`-shaped and so stays in this prefix.
+      // Entries carry the PAREN DEPTH they were added at. A directory change
+      // inside a subshell does not outlive it — `(cd apps/agent && echo x);
+      // wrangler deploy` runs the deploy from the original directory — but the
+      // prefix was carried through the rest of the line and reported it as an
+      // agent violation (#1995 r6). A false red, in the unfiltered CI job.
       const namedPrefix = [];
+      let depth = 0;
       // The previous line ran to completion, so this line starts from `states`.
       prior = states;
+      let pendingDepth = 0;
       for (const part of splitCommands(line)) {
+        // Close any subshell the PREVIOUS segment ended.
+        if (pendingDepth < depth) {
+          for (let k = namedPrefix.length - 1; k >= 0; k -= 1) {
+            if (namedPrefix[k].depth > pendingDepth) namedPrefix.splice(k, 1);
+          }
+        }
+        depth = pendingDepth;
         const seg = part.text.trim();
+        // Depth AFTER this segment. The segment is evaluated at the CURRENT
+        // depth, because a closing paren at its end comes after the command it
+        // contains: in `( cd X && wrangler deploy )` the deploy is still inside
+        // the subshell. Entries are dropped only once the segment is done.
+        const segDepth = Math.max(0, depth + netParens(part.text));
+        // Applied as a deferred transition so it runs for EVERY segment,
+        // including the ones below that `continue` early.
+        pendingDepth = segDepth;
         // `||` means the PREVIOUS segment failed, so this one starts from the
         // state that preceded it — a failed `cd` moves nothing.
         const input = part.sep === '||' ? prior : states;
@@ -1566,11 +1642,23 @@ for (const file of walk(REPO_ROOT)) {
         // wrangler deploy` was reported as an agent violation even though the
         // `cd` moves to the explicitly out-of-scope indexer (#1995 r5). That is
         // a false red in a check that blocks the unfiltered CI job.
-        if (
-          /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg) ||
-          /(?:^|[\s({])(?:cd|pushd)\s/.test(seg)
-        ) {
-          namedPrefix.push(seg);
+        if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(seg)) {
+          namedPrefix.push({ text: seg, depth: segDepth });
+        } else {
+          const at = seg.search(/(?:^|[\s({])(?:cd|pushd)\s/);
+          if (at >= 0) {
+            // The depth the directory change happens AT, and the depth this
+            // segment ends at. A subshell that opens and closes within one
+            // segment nets zero, so the transition below never sees it —
+            // `(cd apps/agent); wrangler deploy` kept agent scope for the rest
+            // of the line and reported a false violation (#1995 r6). If the
+            // segment ends shallower than the change, the change is confined to
+            // a subshell that has already closed and never applied outside it.
+            const atDepth = depth + netParens(seg.slice(0, at + 1));
+            if (segDepth >= atDepth) {
+              namedPrefix.push({ text: seg, depth: atDepth });
+            }
+          }
         }
         // `\b` so `wrangler deployments list` is not read as a deploy.
         if (!new RegExp(ANY_DEPLOY_RE).test(seg)) continue;
@@ -1583,19 +1671,25 @@ for (const file of walk(REPO_ROOT)) {
         const sel = selectorScope(seg, input);
         const scope = sel
           ? sel.scope
-          : scopeOf([...namedPrefix, seg].join(' '), rel) ??
+          : scopeOf([...namedPrefix.map((e) => e.text), seg].join(' '), rel) ??
             input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
             null;
         if (!scope) continue;
         if (commandIsSafe(seg)) continue;
         flagged = true;
-        hitScope = scope;
+        hitScopes.add(scope);
       }
     }
 
     if (!flagged) return;
     if (allowReason(line)) return;
-    violations.push({ where: `${rel}:${lineNo}`, line: line.trim(), scope: hitScope });
+    if (hitScopes.size === 0) {
+      violations.push({ where: `${rel}:${lineNo}`, line: line.trim(), scope: null });
+      return;
+    }
+    for (const sc of hitScopes) {
+      violations.push({ where: `${rel}:${lineNo}`, line: line.trim(), scope: sc });
+    }
   });
 }
 
