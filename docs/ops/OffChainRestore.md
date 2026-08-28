@@ -2216,7 +2216,11 @@ two procedures share the offline-key handling discipline.
 
 2. Enumerate and download **every retained ciphertext across all
    three tiers** — `archives/` (daily), `archives-monthly/`, and
-   `archives-yearly/` — to a local workstation. The backup writer
+   `archives-yearly/` — to a local workstation, **in EACH bucket while
+   #1977 is open**. This step names tiers and not buckets, which reads as
+   complete until you notice it never says where; an operator who has just
+   come from §2 has been told to prefer the warm bucket, and would
+   reasonably enumerate only that one. Three tiers times two buckets. The backup writer
    populates all three (`backup.ts`), and the yearly tier is
    retained indefinitely: any object skipped here is **permanently
    undecryptable** the moment step 6 destroys the old key. An
@@ -2247,7 +2251,10 @@ two procedures share the offline-key handling discipline.
    generic.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
-6. **Sweep for stragglers before retiring anything**: list every
+6. **Sweep for stragglers before retiring anything — in EVERY bucket you
+   paused in step 1.** The old key is destroyed at the end of this step, so
+   a bucket left unswept is a bucket whose stragglers become permanently
+   undecryptable with no further warning. List every
    object uploaded between the step-1 pause time and the step-4 key
    switch (the `--long` listing carries upload timestamps), then
    **subtract the file ids step 3 recorded** — step 3's own
