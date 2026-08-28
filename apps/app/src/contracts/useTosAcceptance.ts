@@ -43,7 +43,7 @@ import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
-import { isVerdictStale, tosQueryKey } from './tosGate';
+import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
 import { captureTxError } from '../lib/errors';
 
 const ZERO_HASH = `0x${'0'.repeat(64)}` as const;
@@ -80,6 +80,9 @@ export function useTosAcceptance(): TosAcceptanceState {
   const queryClient = useQueryClient();
   const [writeError, setWriteError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // The ToS version this wallet accepted in a transaction THIS session
+  // mined and waited for — see `accept`. `null` until that happens.
+  const [acceptedVersion, setAcceptedVersion] = useState<number | null>(null);
   // A clock the gate can read without calling `Date.now()` during
   // render, which `react-hooks/purity` rightly rejects. Starts at 0 —
   // read as "no age known yet", which cannot make a fresh verdict look
@@ -115,6 +118,21 @@ export function useTosAcceptance(): TosAcceptanceState {
     () => tosQueryKey(readChain.chainId, address),
     [readChain.chainId, address],
   );
+
+  // The acceptance pin is scoped to ONE wallet on ONE chain, and is
+  // dropped the moment either changes. Acceptance is recorded per
+  // network and per wallet, so a pin surviving a switch would let a
+  // second wallet — or the same wallet on another chain — inherit an
+  // acceptance it never made, which is the one thing this whole module
+  // exists to prevent. Derived during render rather than in an effect,
+  // the pattern used elsewhere in the app, so the stale pin is never
+  // observable for even one paint.
+  const scope = `${readChain.chainId}:${address ?? ''}`;
+  const [pinScope, setPinScope] = useState(scope);
+  if (pinScope !== scope) {
+    setPinScope(scope);
+    setAcceptedVersion(null);
+  }
 
   const query = useQuery({
     queryKey,
@@ -188,6 +206,36 @@ export function useTosAcceptance(): TosAcceptanceState {
       // time it mines. A version installed mid-flow makes this call
       // revert rather than silently record consent to unseen terms.
       await write('acceptTerms', [query.data.version, query.data.hash]);
+      // Review round 10 P2: the acceptance is CONFIRMED at this point —
+      // `write` returns only after the receipt is settled — but the
+      // reads that follow can still be behind it. A public RPC serving
+      // the parent block answers `accepted: false`, and until round 10
+      // that answer put the prompt and an enabled Accept button back in
+      // front of a user who had just paid, for at least the four
+      // seconds to the delayed re-read and longer if that read lagged
+      // too. Paying twice for `acceptTerms` buys nothing but a second
+      // timestamp.
+      //
+      // So the mined result is written into the cache directly. This is
+      // not optimism about an unknown outcome — it is the outcome,
+      // anchored to a receipt this call waited for, and a later read
+      // that genuinely disagrees (governance installing a new version
+      // in between) still overwrites it. Writing it here rather than
+      // holding it in component state matters because the write gate
+      // reads this same cache entry: without it, the wallet that just
+      // accepted would be refused its next non-exit write.
+      const acceptedVersion = query.data.version;
+      queryClient.setQueryData<TosVerdictData>(queryKey, {
+        accepted: true,
+        version: acceptedVersion,
+        hash: query.data.hash,
+      });
+      // ...and pinned locally as well, because the invalidations below
+      // can land a lagging `false` on top of the line above. The pin is
+      // scoped to the version that was accepted, so it stops applying
+      // by itself the moment a new one is in force — it can never hold
+      // the gate open across a version bump.
+      setAcceptedVersion(acceptedVersion);
       await queryClient.invalidateQueries({ queryKey });
       // Codex review round 1 P2: one immediate re-read is not enough.
       // A public RPC can still serve the parent block for seconds after
@@ -230,8 +278,18 @@ export function useTosAcceptance(): TosAcceptanceState {
   const stale =
     query.isSuccess && nowMs > 0 && isVerdictStale(query.dataUpdatedAt, nowMs);
   const readOk = query.isSuccess && !stale;
+  // The acceptance this session mined, applied only while the read
+  // agrees about WHICH version is in force. Deliberately gated on
+  // `readOk` rather than standing on its own: a failed or stale read
+  // closes the gate as it always did, so the pin cannot become a way
+  // for a session to stay open on an answer it can no longer confirm.
+  // What it does cover is the one case it is for — a fresh, successful
+  // read of the SAME version that has not yet caught up to the
+  // transaction whose receipt this session waited for.
+  const pinned =
+    readOk && acceptedVersion !== null && query.data.version === acceptedVersion;
   return {
-    hasAccepted: readOk && query.data.accepted,
+    hasAccepted: readOk && (query.data.accepted || pinned),
     readOk,
     currentVersion: query.data?.version ?? 0,
     currentHash: query.data?.hash ?? ZERO_HASH,

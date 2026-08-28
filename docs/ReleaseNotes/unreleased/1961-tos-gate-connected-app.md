@@ -66,6 +66,13 @@ somebody unable to stop being messaged.
 Nor does a refusal cost anything. Where an action needs a separate
 approval step first, the terms are checked before that step, so nobody
 pays a network fee for an approval that was going to be turned down.
+Nobody is asked to pay for the same acceptance twice either: once the
+network has confirmed it, the app treats it as done even while its own
+next check is still catching up, rather than putting the prompt back in
+front of someone who has already paid. And when the app does refuse
+something, it names a page that will actually ask — the pages that stay
+open regardless of acceptance deliberately never ask, so pointing at one
+of those would have sent people in a circle.
 
 **It does not decide who has accepted.** That question is answered on
 chain, by the same contract that holds the terms, which checks both the

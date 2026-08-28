@@ -724,6 +724,14 @@ Thin-market honesty rules apply.
   not permitted for want of an answer.
 - Acceptance is a single action recorded against that exact version and
   fingerprint, so what a user agreed to remains checkable afterwards.
+- **A user is never asked to pay for the same acceptance twice.** Once an
+  acceptance has been confirmed as recorded, the app treats it as recorded even
+  while its own subsequent checks are still catching up. Re-presenting the
+  prompt in that window would invite a second payment that buys nothing.
+- Where the app refuses an action and tells the user to go and accept, the
+  destination it names is one that actually asks. The surfaces that stay open
+  regardless of acceptance deliberately do not ask, so naming them would send
+  the user back to the same refusal.
 - A user is asked again only when the terms change to a new version. An
   earlier acceptance no longer counts once a new version is in force.
 - Acceptance is recorded separately per network. A user who has accepted on

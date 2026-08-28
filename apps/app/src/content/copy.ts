@@ -3410,8 +3410,15 @@ const copySource = {
     // already accepted (review round 6).
     termsCheckUnavailable:
       'We couldn\u2019t confirm whether Vaipakam\u2019s terms apply to your wallet just now \u2014 give it a moment and try again.',
+    // Review round 10 P2: names a GATED destination, not "any other
+    // page". Most of the pages a refused user is standing on are
+    // exempt \u2014 settings, VPFI, desk, positions, claims, vault \u2014 and
+    // exempt pages deliberately never show the prompt, so the old
+    // wording could send somebody between four of them and back to the
+    // same refusal. Home is gated, so it is the one instruction that
+    // always works.
     termsNotAccepted:
-      'You need to accept Vaipakam\u2019s terms before doing this. Open any other page in the app and you\u2019ll be asked once \u2014 repaying, claiming and withdrawing keep working either way.',
+      'You need to accept Vaipakam\u2019s terms before doing this. Open the Home page and you\u2019ll be asked once \u2014 repaying, claiming and withdrawing keep working either way.',
     // F-20260703-005 (#988) — say HOW MUCH more whenever the caller can
     // compute the shortfall; the amount-less form is the fallback for
     // sites that can't (e.g. unknown decimals).

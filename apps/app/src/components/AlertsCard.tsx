@@ -94,7 +94,11 @@ export function AlertsCard() {
   }
 
   async function persist(next: AlertPrefs, opts?: { dueDateChanged?: boolean }) {
-    if (!address) return;
+    // `prefs` is the direction baseline and is required, not optional —
+    // every caller below is inside the branch that renders only once it
+    // is loaded, and the guard makes that reachability explicit rather
+    // than papering over it with a nullable comparison.
+    if (!address || !prefs) return;
     // Only an ENROLMENT is held — a save that ADDS an opt-in. Turning
     // one off, or tuning bands, goes through whatever the Terms say.
     // The direction is compared per field against what is stored now;

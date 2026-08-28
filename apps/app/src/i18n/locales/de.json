@@ -1874,7 +1874,7 @@
         "selfTrade": "Das ist Ihr eigenes Angebot, Sie können es daher nicht annehmen. Stornieren Sie es stattdessen, wenn Sie es vom Buch nehmen möchten.",
         "unknown": "Das Protokoll nimmt dieses Angebot derzeit nicht an. Es wurde nichts gesendet — aktualisieren und erneut versuchen oder später noch einmal vorbeischauen."
       },
-      "termsNotAccepted": "Sie müssen die Bedingungen von Vaipakam annehmen, bevor Sie das tun. Öffnen Sie eine beliebige andere Seite der App und Sie werden einmalig gefragt – Rückzahlen, Beanspruchen und Abheben funktionieren in beiden Fällen weiter.",
+      "termsNotAccepted": "Sie müssen die Bedingungen von Vaipakam annehmen, bevor Sie das tun. Öffnen Sie die Startseite und Sie werden einmalig gefragt – Rückzahlen, Beanspruchen und Abheben funktionieren in beiden Fällen weiter.",
       "termsCheckUnavailable": "Wir konnten gerade nicht bestätigen, ob die Bedingungen von Vaipakam für Ihre Wallet gelten – warten Sie einen Moment und versuchen Sie es erneut."
     },
     "fees": {

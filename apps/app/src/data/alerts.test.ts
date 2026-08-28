@@ -64,15 +64,28 @@ describe('addsAlertOptIn', () => {
     expect(addsAlertOptIn(on, { ...on })).toBe(false);
   });
 
-  it('fails closed with no baseline to compare against', () => {
-    // Nothing stored means nothing to take a direction from, so any
-    // enabled flag counts as enrolment.
-    expect(addsAlertOptIn(null, prefs({ repayDue: true }))).toBe(true);
+  it('treats an untouched default lane as already enrolled', () => {
+    // Review round 10 P1. On a device with no saved record the
+    // baseline IS the defaults, so a first opt-out is judged against
+    // them. Failing closed here instead would re-create the round-9
+    // lock-out, since the untouched default lane is what would trip
+    // it. Pinned so the choice is deliberate rather than incidental —
+    // and bounded by the case below.
+    const fresh = DEFAULT_PREFS;
+    expect(addsAlertOptIn(fresh, { ...fresh, repayDue: false })).toBe(false);
+  });
+
+  it('never lets a defaults-derived save enrol a delivery channel', () => {
+    // What bounds the case above: the two flags that establish where a
+    // message would actually GO are false in the defaults, so a save
+    // derived from them is held the moment it turns either on.
+    expect(DEFAULT_PREFS.telegramLinked).toBe(false);
+    expect(DEFAULT_PREFS.pushEnabled).toBe(false);
     expect(
-      addsAlertOptIn(
-        null,
-        prefs({ repayDue: false, risky: false, telegramLinked: false, pushEnabled: false }),
-      ),
-    ).toBe(false);
+      addsAlertOptIn(DEFAULT_PREFS, { ...DEFAULT_PREFS, pushEnabled: true }),
+    ).toBe(true);
+    expect(
+      addsAlertOptIn(DEFAULT_PREFS, { ...DEFAULT_PREFS, telegramLinked: true }),
+    ).toBe(true);
   });
 });

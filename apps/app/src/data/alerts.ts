@@ -134,18 +134,29 @@ const OPT_IN_FLAGS = ['repayDue', 'risky', 'telegramLinked', 'pushEnabled'] as c
  * flag going false → true is enrolment; a flag going true → false, or
  * a save that flips nothing, is not.
  *
- * One residual is worth naming rather than hiding. On a device with no
- * saved record the baseline is the DEFAULTS, both lanes on, and the
- * save posts the whole record — so a held user's first opt-out can
- * register the other default lane server-side. That is an alert about
- * the user's own loans, not new exposure, and the alternative is the
- * lock-out above.
+ * The baseline is REQUIRED, and that is the honest signature rather
+ * than a convenience (review round 10 P1). An earlier version accepted
+ * `null` and failed closed on it, which read as a guard and was not
+ * one: `loadAlertPrefs` returns `DEFAULT_PREFS` when storage is empty,
+ * so no caller could ever reach that branch. Dead code shaped like
+ * protection is worse than no code, because it answers the question
+ * "what happens when the baseline is unknown" with something that
+ * never runs.
  *
- * `null` baseline (no prefs loaded) has nothing to compare against, so
- * any enabled flag counts as enrolment — fail closed.
+ * What remains, stated rather than implied: on a device with no saved
+ * record the baseline IS the defaults, both lanes on, and a save posts
+ * the whole record — so a held user's first opt-out here also posts
+ * the other default lane's bands. Making that case fail closed instead
+ * would re-create exactly the lock-out this function was written to
+ * remove, since the untouched default lane is what would trip it. The
+ * fix is on the wire — send only the lane being changed — which is an
+ * `apps/agent` contract change, tracked as #2000. Bounded in
+ * the meantime by what a defaults-derived save can actually reach:
+ * `telegramLinked` is a local mirror that is never posted, and
+ * `push_channel` is sent only when `pushEnabled` is already true, so
+ * such a save can enrol no NEW delivery channel.
  */
-export function addsAlertOptIn(prev: AlertPrefs | null, next: AlertPrefs): boolean {
-  if (!prev) return OPT_IN_FLAGS.some((flag) => next[flag]);
+export function addsAlertOptIn(prev: AlertPrefs, next: AlertPrefs): boolean {
   return OPT_IN_FLAGS.some((flag) => next[flag] && !prev[flag]);
 }
 
