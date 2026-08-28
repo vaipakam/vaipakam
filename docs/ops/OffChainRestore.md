@@ -2200,27 +2200,6 @@ caught at the cheapest stage.
 ---
 
 ## 7b. LAST: activate the backup writer
-> **First, finish the cron-slot reconciliation deferred from §6** (Codex #1978
-> r36). §6 makes the authority's keeper edit but explicitly leaves the
-> account-versus-file confirmation until now, because before this point the
-> fresh account is incomplete and `--live` cannot pass. This is the point at
-> which it can, and if it is skipped a successful restore ends with
-> [`CloudflareCronSlots.md`](CloudflareCronSlots.md) still listing a live
-> `vaipakam-offchain-data-archive` that exists only in the abandoned account —
-> the authority then over-states occupancy and misdirects the next deploy,
-> which is #1977 again by a different route.
->
-> 1. Remove the `vaipakam-offchain-data-archive` row: on the fresh account that
->    Worker does not exist, and it has no source in this repository to restore
->    it from.
-> 2. Re-derive "Live right now" and the `Committed` label from the rows that
->    remain, and refresh the `Verified:` stamp.
-> 3. `CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
->    node .github/scripts/check-cron-slots.mjs --live` — now that the account is
->    complete, this is the check that was impossible earlier.
-> 4. **Commit it.** An uncommitted reconciliation leaves the branch carrying the
->    old-account inventory, which is the staleness the whole exercise removes.
-
 
 Only now — after §§4–5 have restored D1 and R2, and §7's smoke test says
 the stack is real — deploy `ops/offchain-data-warm`:
@@ -2253,6 +2232,37 @@ wrangler tail vaipakam-offchain-data-warm
 The run should produce a fresh archive plus a green Telegram alert. It is
 safe to trigger here precisely because §§4–5 have already restored the
 data — the archive it writes is of the RESTORED account, not an empty one.
+
+### Finally, reconcile the cron-slot authority
+
+§6 makes the authority's keeper edit but explicitly defers the
+account-versus-file confirmation. This is where it lands, and the ordering is
+load-bearing: `--live` compares every row the file calls live against the
+schedules the account actually holds, and `vaipakam-offchain-data-warm` only
+acquires its trigger at the `npm run deploy` above. Run earlier — as an
+in-between revision of this runbook did (Codex #1978 r37) — and the warm Worker
+is committed-but-not-live, so the check exits non-zero on the restore's own
+incompleteness and reads as a failure of the thing it is confirming.
+
+Skip it and a successful restore ends with
+[`CloudflareCronSlots.md`](CloudflareCronSlots.md) still listing a live
+`vaipakam-offchain-data-archive` that exists only in the abandoned account —
+the authority then over-states occupancy and misdirects the next deploy, which
+is #1977 again by a different route.
+
+1. Remove the `vaipakam-offchain-data-archive` row: on the fresh account that
+   Worker does not exist, and it has no source in this repository to restore
+   it from.
+2. Re-derive "Live right now" and the `Committed` label from the rows that
+   remain, and refresh the `Verified:` stamp.
+3. ```bash
+   CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
+     node .github/scripts/check-cron-slots.mjs --live
+   ```
+   Now that the account is complete, this is the check that was impossible
+   earlier.
+4. **Commit it.** An uncommitted reconciliation leaves the branch carrying the
+   old-account inventory, which is the staleness the whole exercise removes.
 
 Confirm one clean nightly before considering the restore complete — the
 first successful unattended run is the evidence that the whole pipeline,

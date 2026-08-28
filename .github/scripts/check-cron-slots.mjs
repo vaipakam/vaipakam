@@ -1935,7 +1935,13 @@ export function parseInventory(md) {
     const fieldOk = (f, [lo, hi]) =>
       f.split(',').every((part) => {
         const [range, step] = part.split('/');
-        if (step !== undefined && !/^\d+$/.test(step)) return false;
+        // Codex #1978 r37 follow-on: a step of zero never advances, so `*/0`
+        // names no times at all. That is the same "shaped like a schedule,
+        // cannot run" defect the bounds below close, one atom smaller —
+        // `\d+` alone admits it.
+        if (step !== undefined && !(/^\d+$/.test(step) && Number(step) >= 1)) {
+          return false;
+        }
         if (range === '*') return true;
         const ends = range.split('-');
         if (ends.length > 2 || !ends.every((e) => /^\d+$/.test(e))) return false;
@@ -2863,6 +2869,13 @@ const INVENTORY_CASES = [
     'an inverted range is a finding',
     '| `vaipakam-agent` | `5-2 * * * *` | `apps/agent` | live |',
     { 'vaipakam-agent': ['5-2 * * * *'] },
+    [],
+    1,
+  ],
+  [
+    'a zero step never advances and is a finding',
+    '| `vaipakam-agent` | `*/0 * * * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['*/0 * * * *'] },
     [],
     1,
   ],
