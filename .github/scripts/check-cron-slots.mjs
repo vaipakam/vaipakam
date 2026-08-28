@@ -540,7 +540,7 @@ const OCCUPANCY = [
     // is the r35 finding on the SAME list one round later — r35 added the
     // present-state adjectives and stopped at the ones already in mind. A
     // trigger that is `running` is the plainest possible way to say it.
-    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled|running|enabled|configured)\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled|running|runs?|enabled|configured)\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   // The postposed participle — "There are four cron triggers running." — and
@@ -2050,8 +2050,13 @@ export function parseInventory(md) {
     // RESERVED row has no account-side witness — so the summary could be
     // balanced around a Worker that cannot be deployed. Must start
     // alphanumeric; the underscore alphabet from r43 is retained.
+    // Codex #1978 r51: Wrangler accepts a LEADING UNDERSCORE and rejects only
+    // a leading dash. My r49 fix required alphanumeric, which excluded
+    // `_future-worker` — the NINTH unrepresentable state, and the second
+    // caused by a fix for the previous one (r43 widened for underscores, r49
+    // narrowed the first character and took them back out at position 1).
     const row =
-      /^ {0,3}\|\s*`([a-z0-9][a-z0-9_-]*)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
+      /^ {0,3}\|\s*`([a-z0-9_][a-z0-9_-]*)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
     // Codex #1978 r4: a row that LOOKS like data and does not parse was silently
     // skipped, and the "bolded name skipped" fixture documented the hole rather
     // than closing it. Bolding the keeper's name would drop its reservation from
@@ -2227,8 +2232,15 @@ export function parseInventory(md) {
         : idx === 4
           ? [/^L$/i, /^\dL$/i, /^\d#[1-5]$/]
           : [];
-    const fieldOk = (f, bounds, idx) =>
-      f.split(',').every((part) => {
+    const fieldOk = (f, bounds, idx) => {
+      // Codex #1978 r51: `?` means the WHOLE FIELD has no specific value, so
+      // it cannot be one member of a list — `0 0 ?,1 * *` is contradictory.
+      // r48 closed the range position, r50 the step position, this the list:
+      // the FOURTH half-closed grammar position, discovered one at a time.
+      // Stated once, generally, so there is no fifth: an atom that denotes an
+      // entire field may not appear inside any composite.
+      if (f.includes('?') && f !== '?') return false;
+      return f.split(',').every((part) => {
         if (extFormsFor(idx).some((re) => re.test(part))) {
           return atomOk(part, bounds, idx);
         }
@@ -2275,6 +2287,7 @@ export function parseInventory(md) {
         }
         return true;
       });
+    };
     for (const span of spans) {
       const fields = span.split(/\s+/);
       if (fields.length !== 5 || !fields.every((f, i) => fieldOk(f, BOUNDS[i], i))) {
@@ -2458,7 +2471,12 @@ export function readStatus(cell) {
   // "characters a reader sees as part of the same token", and `-` is the
   // obvious member I had not enumerated. (`.` and `/` are excluded for the
   // same reason.)
-  const m = /^[\s*_]*([a-z]+)(?![\p{L}\p{N}\p{M}_\-./])/iu.exec(cell);
+  // Codex #1978 r51: `?` too. `reserved?` renders as explicitly uncertain and
+  // was recorded as a definite reservation — the same defect as `reserved-ish`
+  // (r43), with the punctuation that most plainly marks doubt. FIFTH narrowing
+  // of this lookahead, and I have added the characters I was shown each time
+  // rather than the class: anything a reader sees as attached to the word.
+  const m = /^[\s*_]*([a-z]+)(?![\p{L}\p{N}\p{M}_\-./?!])/iu.exec(cell);
   const word = m?.[1]?.toLowerCase();
   return word && STATUSES.has(word) ? word : null;
 }
@@ -2777,7 +2795,17 @@ export function wranglerNameFrom(raw, isToml) {
           awaitingValue = false;
           continue;
         }
-        lastKey = literal;
+        // Codex #1978 r51: the VALUE was decoded and the KEY was not, so a
+        // config legally spelling its key `"n\u0061me"` — which Wrangler
+        // reads as `name` — stored a key that matched nothing and the whole
+        // config went unread. Both source checks then switch off, which is
+        // the twelfth route to that outcome and the first through the key
+        // rather than the value. One decode, both sides.
+        try {
+          lastKey = JSON.parse(`"${literal}"`);
+        } catch {
+          lastKey = literal;
+        }
         lastKeyDepth = depth;
         awaitingValue = false;
       }
@@ -3022,6 +3050,11 @@ const MUST_FIRE = [
   // on the account.
   ['the direct form with a configured predicate', 'Four cron triggers are configured.'],
   ['the attributive configured form', 'There are four configured cron triggers.'],
+  // r51: the FINITE verb. Every predicate in this list had been an adjective
+  // or a participle; `run` is what the sentence uses when the triggers are
+  // the subject and the verb is not a copula.
+  ['the finite run verb', 'Four cron triggers run nightly.'],
+  ['the finite run verb with all', 'All four cron triggers run nightly.'],
   // r45: no predicate at all — the plainest way to state the count.
   ['the bare existential', 'There are four cron triggers.'],
   ['the exist form', 'Four cron triggers exist in the account.'],
@@ -3195,6 +3228,7 @@ const MUST_NOT_FIRE = [
   ['the adverb form', 'Four cron triggers are running locally.'],
   ['the enabled form scoped elsewhere', 'Four cron triggers are enabled locally.'],
   ['the configured form scoped elsewhere', 'Four cron triggers are configured locally.'],
+  ['the run verb scoped elsewhere', 'Four cron triggers run nightly in local development.'],
   ['the bare existential scoped elsewhere', 'There are four cron triggers in local development.'],
   // r46: the existential form of a CAP statement, which the gate must permit
   // — bound to the matched span, because two of the ten originals state the
@@ -3549,6 +3583,22 @@ const INVENTORY_CASES = [
     [],
     1,
   ],
+  // r51: `?` denotes the whole field, so it cannot be a list member.
+  [
+    'a question mark inside a list is a finding',
+    '| `vaipakam-agent` | `0 0 ?,1 * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 ?,1 * *'] },
+    [],
+    1,
+  ],
+  // r51: Wrangler accepts a leading underscore; only a leading dash is out.
+  [
+    'a leading underscore in a Worker name parses',
+    '| `_future-worker` | *(none)* | `ops/future` | reserved — held |',
+    {},
+    ['_future-worker'],
+    0,
+  ],
   [
     'a question mark in day-of-week is accepted',
     '| `vaipakam-mw` | `0 0 1 * ?` | `ops/mesh-watcher` | live |',
@@ -3677,6 +3727,14 @@ const INVENTORY_CASES = [
   // r43: a hyphenated qualifier is not the status. `reserved-ish` renders as
   // equivocal and parsed as a definite reservation — the row with no
   // account-side witness.
+  // r51: a question mark marks doubt as plainly as `-ish` does.
+  [
+    'a question-marked status is a finding',
+    '| `vaipakam-q` | *(none)* | `ops/q` | reserved? — maybe |',
+    {},
+    [],
+    1,
+  ],
   [
     'a hyphenated status qualifier is a finding',
     '| `vaipakam-q` | *(none)* | `ops/q` | reserved-ish |',
@@ -3932,6 +3990,14 @@ const WRANGLER_NAME_CASES = [
     'vaipakam-agent',
   ],
   ['an escaped quote in the name', '{"name":"vaipakam-\\"odd\\""}\n', false, 'vaipakam-"odd"'],
+  // r51: the KEY may be escaped too — Wrangler reads `n\\u0061me` as `name`,
+  // and decoding only the value left the whole config unread.
+  [
+    'a unicode escape in the key',
+    '{"n\\u0061me":"vaipakam-agent"}\n',
+    false,
+    'vaipakam-agent',
+  ],
   // r43: Wrangler takes the LAST duplicate top-level key; returning on the
   // first indexed the config under a Worker it does not deploy.
   [
