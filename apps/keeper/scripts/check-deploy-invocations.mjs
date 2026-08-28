@@ -122,8 +122,11 @@ const DEPLOY_RE = String.raw`wrangler(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= 
  * to `wrangler deploy --keep-vars --no-keep-vars`, which wrangler parses as
  * keepVars:false — a destructive deploy on a line containing no `wrangler
  * deploy` at all, so nothing here ever examined it.
+ *
+ * `run-script` is a documented alias of `run` (verified: `pnpm help run` lists
+ * it), so both spellings count (#1995 r5).
  */
-const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run\s+deploy\b`;
+const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run(?:-script)?\s+deploy\b`;
 /** What counts as "this line performs a deploy" for DETECTION purposes. */
 const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
 
@@ -242,7 +245,11 @@ function allowReason(line) {
   // fragments and see whether a deploy is still standing.
   let rest = line;
   for (const h of hits) rest = rest.split(h.match).join(' ');
-  return new RegExp(DEPLOY_RE).test(rest) ? null : hits.map((h) => h.why).join(' ');
+  // ANY_DEPLOY_RE, not DEPLOY_RE: once the package-script form counts as a
+  // deploy (#1995 r4), an exemption that leaves `pnpm … run deploy
+  // --no-keep-vars` standing must not clear the line (#1995 r5). The residue
+  // test only means anything if it looks for everything detection looks for.
+  return new RegExp(ANY_DEPLOY_RE).test(rest) ? null : hits.map((h) => h.why).join(' ');
 }
 
 /**
@@ -674,10 +681,21 @@ function commandIsSafe(cmd) {
   // ("Use `pnpm --filter … run deploy`"), where an anchored match fails and
   // would report the recommended command as a violation.
   const hasWrangler = new RegExp(DEPLOY_RE).test(bare);
-  const runDeploy = (hasWrangler ? executedCommand(bare) : bare).match(
-    new RegExp(`${hasWrangler ? '^' : ''}${RUN_DEPLOY_RE}([\\s\\S]*)$`),
+  const source = hasWrangler ? executedCommand(bare) : bare;
+  const runDeploy = source.match(
+    new RegExp(`${hasWrangler ? '^' : ''}(pnpm|npm|yarn)(?:\\s+[^\\s]+)*?\\s+run(?:-script)?\\s+deploy\\b([\\s\\S]*)$`),
   );
   if (!runDeploy) return false;
+
+  // npm forwards ONLY what follows `--` (`npm run <command> [-- <args>]`);
+  // pnpm and yarn forward directly. Treating npm's own options as forwarded
+  // arguments reported `npm run deploy --no-keep-vars` as destructive when npm
+  // actually warns about an unknown option and runs the script with nothing
+  // appended — a false CI failure on a correct command (#1995 r5).
+  const appended =
+    runDeploy[1] === 'npm'
+      ? (runDeploy[2].match(/(?:^|\s)--(?:\s|$)([\s\S]*)$/)?.[1] ?? '')
+      : runDeploy[2];
 
   // ARGUMENTS APPENDED TO THE PACKAGE SCRIPT STILL COUNT. `pnpm --filter
   // @vaipakam/agent run deploy --no-keep-vars` expands to
@@ -690,7 +708,7 @@ function commandIsSafe(cmd) {
   // re-using `flagEnabled` gets every negation spelling for free —
   // `--no-keep-vars`, `--keep-vars=false`, `--keep-vars=` — rather than
   // enumerating them here and missing one.
-  return flagEnabled(`--keep-vars ${runDeploy[1]}`, '--keep-vars');
+  return flagEnabled(`--keep-vars ${appended}`, '--keep-vars');
 }
 
 /**
@@ -790,7 +808,29 @@ const SCOPED = [
  * looked for the expanded spelling. The brace test now checks the package's
  * BASENAME, so `apps/{keeper,agent}` matches on either.
  */
+/**
+ * The scope a package-manager `--filter` selects, including pattern form.
+ *
+ * pnpm's filter accepts globs, so `--filter '@vaipakam/*gent'` selects the agent
+ * without either its literal name or its path appearing on the line (verified
+ * against pnpm 10.4.1) — and the textual match required one of those spellings
+ * (#1995 r5). Only `*` is translated; a filter is matched against the package
+ * NAME, which is the spelling a wrapper uses.
+ */
+function filterScope(line) {
+  const m = line.match(/--filter(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"';&|)]+))/);
+  if (!m) return null;
+  const pat = (m[1] ?? m[2] ?? m[3]).replace(/^\.\.\.|\.\.\.$/g, '');
+  if (!/[*]/.test(pat)) return null; // literal names are handled by scopeOf
+  const re = new RegExp(
+    `^${pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,
+  );
+  return SCOPED.find((s) => re.test(s.filter)) ?? null;
+}
+
 function scopeOf(line, filePath) {
+  const byFilter = filterScope(line);
+  if (byFilter) return byFilter;
   for (const s of SCOPED) {
     const base = s.dir.slice(s.dir.lastIndexOf('/') + 1);
     const parent = s.dir.slice(0, s.dir.lastIndexOf('/'));
@@ -861,7 +901,25 @@ function resolveDir(cwd, target) {
   // Appending it (`apps/keeper` + `$INDEXER_DIR`) was harmless while the cwd
   // test was end-anchored; once descendants count, the nested spelling would
   // hold the outer package's scope over a deploy that runs somewhere unknown.
-  if (/\$/.test(target)) return '\u0000unknown';
+  //
+  // But a variable PREFIX does not erase a static SUFFIX. `cd "$ROOT/apps/agent"`
+  // is an ordinary root-relative wrapper, and the segments after the variable
+  // identify the package regardless of where the root points (#1995 r5). Root
+  // the path at an unknown marker and keep the rest — `scopeOfCwd` matches on a
+  // `/` boundary, so the suffix still resolves while a bare `$VAR` does not.
+  if (/\$/.test(target)) {
+    const kept = target
+      .split('/')
+      .filter((x, i) => i > 0 && x && x !== '.' && !/\$/.test(x))
+      .join('/');
+    return kept ? `\u0000unknown/${kept}` : '\u0000unknown';
+  }
+  // A target naming a repository package root is REPO-ROOT-relative, not
+  // cwd-relative: wrappers write `cd apps/indexer` from the repo root, never
+  // from inside another package. Modelling it as nested is what produced
+  // `apps/keeper/apps/indexer` and forced a tail exclusion that then dropped
+  // real subdirectories like `apps/agent/packages/generated` (#1995 r5).
+  if (/^(?:apps|ops|packages)\//.test(target)) return target.replace(/\/+$/, '');
   const parts = target.startsWith('/') ? [] : cwd.split('/').filter(Boolean);
   for (const part of target.split('/')) {
     if (part === '' || part === '.') continue;
@@ -893,16 +951,14 @@ function scopeOfCwd(cwd) {
       const m = cwd.match(
         new RegExp(`(^|/)${s.dir.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(/(.*))?$`),
       );
-      if (!m) return false;
-      // A descendant counts only while it stays INSIDE this package. wrangler
-      // walks up to the NEAREST config, so a path that dives into another
-      // package root belongs to that one — and this scanner models a sibling
-      // move as a nested path (`cd apps/keeper; cd apps/indexer` resolves to
-      // `apps/keeper/apps/indexer`), so without this the descendant match
-      // reclaimed every such line for the outer package and broke three
-      // deliberate #1924 non-flag cases.
-      const tail = m[3] ?? '';
-      return !/(^|\/)(apps|ops|packages)\//.test(tail);
+      // Any descendant counts. The tail exclusion this replaces existed only to
+      // undo the scanner's own modelling of a sibling move as a nested path;
+      // `resolveDir` now treats a package-root-relative target as repo-relative,
+      // so `apps/keeper` + `apps/indexer` lands on `apps/indexer` and the
+      // nesting never arises. Excluding the tail also dropped REAL subdirectories
+      // — `apps/agent/packages/generated` is inside the agent, and wrangler walks
+      // up from it to the agent's own config (#1995 r5).
+      return Boolean(m);
     }) ?? null
   );
 }
@@ -950,7 +1006,11 @@ function selectorScope(seg, states, hasCwdState = true) {
   // Wrangler configuration file"); `--cwd` and `--name` have none.
   const valueOf = (spellings) => {
     const m = clean.match(new RegExp(`(?<![\\w-])(?:${spellings})(?:=|\\s+)${VALUE}`));
-    return m ? m[1].replace(/["'`]/g, '') : null;
+    if (!m) return null;
+    // Quotes are removed and BACKSLASH ESCAPES decoded: the shell hands wrangler
+    // `vaipakam-agent` for `vaipakam\\-agent`, and comparing the escaped form
+    // made it an authoritative non-match (#1995 r5).
+    return m[1].replace(/\\([\s\S])/g, '$1').replace(/["'`]/g, '');
   };
   /** A value we cannot resolve carries no information — treat it as absent. */
   const known = (v) => (v !== null && !/\$/.test(v) ? v : null);
@@ -1489,7 +1549,20 @@ for (const file of walk(REPO_ROOT)) {
         prior = input;
         states = next;
         if (dir) continue;
-        namedPrefix.push(seg);
+        // Only constructs that can actually ESTABLISH a target carry forward:
+        // a `VAR=…` assignment, or a directory expression the dir-walk could
+        // not claim (the subshell form `( cd "$AGENT_DIR" && …`, which is not
+        // `^cd`-shaped). Accumulating EVERY preceding command let an unrelated
+        // mention scope a later deploy — `echo apps/agent; cd apps/indexer;
+        // wrangler deploy` was reported as an agent violation even though the
+        // `cd` moves to the explicitly out-of-scope indexer (#1995 r5). That is
+        // a false red in a check that blocks the unfiltered CI job.
+        if (
+          /^[A-Za-z_][A-Za-z0-9_]*=/.test(seg) ||
+          /(?:^|[\s({])(?:cd|pushd)\s/.test(seg)
+        ) {
+          namedPrefix.push(seg);
+        }
         // `\b` so `wrangler deployments list` is not read as a deploy.
         if (!new RegExp(ANY_DEPLOY_RE).test(seg)) continue;
         // An explicit selector WINS. wrangler's help makes `--name` the "Name
@@ -1501,7 +1574,7 @@ for (const file of walk(REPO_ROOT)) {
         const sel = selectorScope(seg, input);
         const scope = sel
           ? sel.scope
-          : scopeOf(namedPrefix.join(' '), rel) ??
+          : scopeOf([...namedPrefix, seg].join(' '), rel) ??
             input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
             null;
         if (!scope) continue;

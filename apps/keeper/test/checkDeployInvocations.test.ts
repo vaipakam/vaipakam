@@ -1566,6 +1566,106 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('the run-script alias of run (#1995 r5)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pnpm --filter @vaipakam/agent run-script deploy --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an allowlisted quote does not clear a package-script deploy (#1995 r5)', () => {
+    // The residue test looked only for `wrangler deploy`, so once the
+    // package-script form counted as a deploy the exemption suppressed it.
+    const r = runWith(
+      'docs/ToDo.md',
+      'added the matching binding to `apps/agent/wrangler.jsonc` + `npx wrangler deploy` (live version x) ' +
+        'and pnpm --filter @vaipakam/agent run deploy --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a selector word with a shell ESCAPE (#1995 r5)', () => {
+    // The shell hands wrangler `vaipakam-agent`; comparing the escaped form
+    // made it an authoritative non-match.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/indexer\nwrangler deploy --name vaipakam\\-agent\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a static suffix beneath a VARIABLE path prefix (#1995 r5)', () => {
+    // `cd "$ROOT/apps/agent"` is an ordinary root-relative wrapper: the
+    // segments after the variable identify the package wherever $ROOT points.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'ROOT=/workspace/vaipakam\ncd "$ROOT/apps/agent"\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but a wholly unknown variable target still clears scope (#1924 r40)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper; cd "$INDEXER_DIR"; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a pnpm --filter PATTERN that selects a scoped package (#1995 r5)', () => {
+    // pnpm filters accept globs, so neither the package name nor its path need
+    // appear literally.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter '@vaipakam/*gent' run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a real subdirectory named like a package root (#1995 r5)', () => {
+    // `apps/agent/packages/generated` is INSIDE the agent — wrangler walks up
+    // from it to the agent's own config. The tail exclusion that used to undo
+    // the scanner's sibling-move modelling dropped this valid descendant.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent/packages/generated\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a sibling move still lands on the sibling (#1995 r5)', () => {
+    // The case the tail exclusion existed for. A package-root-relative target
+    // is repo-relative, so this resolves to apps/indexer rather than nesting.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/keeper; cd apps/indexer\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('npm forwards only what follows -- (#1995 r5)', () => {
+    // `npm run deploy --no-keep-vars` passes npm an unknown OPTION and runs the
+    // script with nothing appended. Reporting it destructive is a false red on
+    // a correct command.
+    expect(runWith('apps/agent/x.sh', 'npm run deploy --no-keep-vars\n').ok).toBe(true);
+    // After the separator it really is forwarded.
+    expect(runWith('apps/agent/y.sh', 'npm run deploy -- --no-keep-vars\n').ok).toBe(false);
+    // pnpm and yarn forward directly, with no separator needed.
+    expect(runWith('apps/agent/z.sh', 'pnpm run deploy --no-keep-vars\n').ok).toBe(false);
+  });
+
+  it('an unrelated earlier command does not scope a later deploy (#1995 r5)', () => {
+    // `echo apps/agent` cannot establish a target; the `cd` moves to the
+    // out-of-scope indexer. Carrying every preceding command's text forward
+    // made this a false red.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'echo apps/agent; cd apps/indexer; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('still does not flag a subdirectory of an OUT-OF-SCOPE package (#1995 r1)', () => {
     // The descendant match must widen scope for scoped packages only; if it
     // widened generally the 13 leak fixtures would pass for the wrong reason.
