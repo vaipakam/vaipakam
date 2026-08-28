@@ -2222,6 +2222,14 @@ const MUST_NOT_FIRE = [
   ['headroom in a memory budget', 'The cron job has no headroom in its memory budget.'],
   ['occupying bytes', 'The cron worker stores metadata whose fields occupy 3 bytes.'],
   ['occupying queue partitions', 'The cron Worker schedules jobs and already occupies 2 queue partitions.'],
+  // The rest of the r26 sweep. These already passed; pinning them turns a
+  // one-off audit into a standing one, which is the whole lesson of that
+  // round — the unbound-matcher family was visible for three rounds and
+  // nobody had enumerated it. A new matcher added later gets swept by these
+  // whether or not its author thinks to try them.
+  ['a ratio counting shards', 'The cron tick found 3 of 5 shards already in use.'],
+  ['no room for a retry', 'This cron worker has no room for another retry attempt.'],
+  ['at capacity for retention', 'Cron logs are at capacity for retention.'],
   ['a spare key, near cron', 'The cron trigger rotates between the primary and spare encryption keys.'],
   // Codex #1978 r20: a cron IMPLEMENTATION note. The window contains "cron",
   // the ratio counts something else entirely, and firing here would have
@@ -2283,6 +2291,38 @@ const MUST_NOT_FIRE = [
     '// Do not reopen the two-schedule design on the strength of apparent\n// headroom. Headroom here is temporary — the trigger is reserved.',
   ],
 ];
+
+/**
+ * ── ACCEPTED RESIDUALS: sentences that FIRE and arguably should not ───────
+ *
+ * Recorded rather than fixed, and recorded rather than left implicit. Both
+ * use this project's reserved vocabulary for trigger capacity — "cron slots",
+ * "cron budget" — to mean something else:
+ *
+ *   "Cron retries occupy 4 slots in the local queue buffer."
+ *   "The cron budget is exhausted for this billing period."
+ *
+ * They are NOT in MUST_NOT_FIRE because they would fail; they are here so the
+ * next person knows the state was chosen rather than missed.
+ *
+ * The reason for stopping: every attempt to separate these from real claims
+ * has to distinguish two senses of the same noun in the same document, and
+ * this file's record on that is bad. Tightening produced the r25 hyphen miss
+ * (`cron-trigger slots` stopped matching) and, in one cycle, two opposite
+ * `headroom` regressions. A gate that occasionally objects to a sentence
+ * using "cron slots" for something else is cheap to satisfy — reword it, or
+ * say "queue slots" — while a gate that has been tuned until it misses a real
+ * restatement has failed at its only job.
+ *
+ * If a legitimate sentence in this tree ever trips one of these, that is the
+ * signal to revisit. Until then this is a deliberate asymmetry, not an
+ * oversight.
+ */
+const _ACCEPTED_RESIDUALS = [
+  'Cron retries occupy 4 slots in the local queue buffer.',
+  'The cron budget is exhausted for this billing period.',
+];
+void _ACCEPTED_RESIDUALS;
 
 /**
  * Inventory-parser fixtures. The `--live` half is the one CI never runs, so
