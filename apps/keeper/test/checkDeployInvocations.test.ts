@@ -2773,6 +2773,90 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ── The directive parser only saw moves that carried a DESTINATION WORD.
+  // Four argument-less spellings move the shell and were all ignored (#1995
+  // r16). Two of these assert the reported PACKAGE, not just that something
+  // was reported: the defect was the guard standing in the wrong directory, and
+  // a bare `ok === false` cannot tell a right report from a wrong one.
+  it('a bare pushd SWAPS the top two directories (#1995 r16)', () => {
+    // Bash: "With no arguments, exchanges the top two directories." The swap
+    // walks back INTO the agent after the shell had left it.
+    const r = runWith(
+      'a.sh',
+      'pushd apps/agent\npushd ../indexer\ncd ../www\npushd\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the swap PUSHES the old directory back, for a later popd (#1995 r16)', () => {
+    // The swap is two halves and the cwd fixture above pins only one: dropping
+    // the old cwd from the stack instead of exchanging it leaves the same
+    // resulting directory and shows up only on a LATER popd. Mutating that
+    // half survived until this case existed.
+    const r = runWith(
+      'a2.sh',
+      'pushd apps/indexer\npushd apps/agent\npushd\npopd\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('popd +N removes an entry WITHOUT changing directory (#1995 r16)', () => {
+    // Collapsing every popd spelling onto the top-pop transition walked the
+    // model to the indexer while the shell was still in the agent.
+    const r = runWith(
+      'b.sh',
+      'pushd apps/indexer\npushd ../agent\npopd +1\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while popd +0 IS the ordinary pop (#1995 r16 control)', () => {
+    const r = runWith('b2.sh', 'pushd apps/agent\npushd ../www\npopd +0\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a bare cd goes to $HOME, which the text does not name (#1995 r16)', () => {
+    // Ignoring it held the agent's scope over a deploy that runs elsewhere —
+    // reporting the wrong package rather than the right one.
+    const r = runWith('c.sh', 'cd apps/agent\ncd\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and so does cd ~ (#1995 r16)', () => {
+    // `cd "$HOME"` already resolved to an unknown destination through the
+    // variable rule; the tilde reached resolveDir as a directory named `~`.
+    const r = runWith('c2.sh', 'cd apps/agent\ncd ~\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a console PROMPT still moves the shell (#1995 r16)', () => {
+    // ```console is an accepted fence and a prompted block is exactly what an
+    // operator copies. Detection was never anchored, so only the SCOPE was
+    // lost: the deploy was seen and attributed to the repo root.
+    const r = runWith('d.md', '```console\n$ cd apps/agent\n$ wrangler deploy\n```\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a # line in a fence stays a COMMENT (#1995 r16 control)', () => {
+    // A root prompt is indistinguishable from a comment, and the docs are full
+    // of `# wrangler deploy` written as commentary. Stripping `#` would invent
+    // commands out of prose — a new false-red class in exchange for a narrow
+    // one.
+    const r = runWith('h.md', '```bash\ncd apps/agent\n# wrangler deploy\n```\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and a leading $VAR is not a prompt (#1995 r16 control)', () => {
+    // The `$` must be followed by whitespace; no real shell word can be.
+    const r = runWith('i.sh', 'cd apps/www\n$WRANGLER deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

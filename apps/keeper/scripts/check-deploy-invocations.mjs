@@ -1491,7 +1491,7 @@ function resolveDir(cwd, target, vars = null) {
       .split('/')
       .filter((x, i) => i > 0 && x && x !== '.' && !/\$/.test(x))
       .join('/');
-    return kept ? `\u0000unknown/${kept}` : '\u0000unknown';
+    return kept ? `${UNKNOWN_DIR}/${kept}` : UNKNOWN_DIR;
   }
   // A target naming a repository package root is REPO-ROOT-relative, not
   // cwd-relative: wrappers write `cd apps/indexer` from the repo root, never
@@ -1733,6 +1733,14 @@ function selectorScope(seg, states, hasCwdState = true) {
   return { scope: null };
 }
 
+/**
+ * A destination the scanner cannot name. Matches nothing in `scopeOfCwd`
+ * except through a static SUFFIX, so a deploy that runs there is attributed to
+ * no package — which is the honest answer when the shell has been sent
+ * somewhere the text does not say.
+ */
+const UNKNOWN_DIR = '\u0000unknown';
+
 /** Apply one directory directive to one reachable state. */
 function applyDir(state, dir, vars = null) {
   if (dir.kind === 'popd') {
@@ -1743,6 +1751,40 @@ function applyDir(state, dir, vars = null) {
           prev: state.cwd,
         }
       : { cwd: '', stack: [], prev: state.cwd };
+  }
+  // `popd +N` / `popd -N` / `popd -n` remove a stack ENTRY and, per bash's
+  // `help popd`, only the no-argument form changes directory. Collapsing every
+  // spelling onto the top-pop transition moved the model somewhere the shell
+  // never went: `pushd apps/indexer; pushd ../agent; popd +1; wrangler deploy`
+  // still runs in the AGENT while the guard had walked to the indexer (#1995
+  // r16).
+  //
+  // Recorded limit: the stack is left as-is rather than having the indexed
+  // entry removed. The index is what decides scope only through a LATER popd,
+  // and modelling a wrong removal is not better than modelling none.
+  if (dir.kind === 'popd-keep') return state;
+  // `pushd` with no arguments EXCHANGES the top two directories (bash's `help
+  // pushd`), so it is a move even though it names no destination — and one
+  // that walks BACK into a package the shell had left. It was ignored
+  // entirely, so `pushd apps/agent; pushd ../indexer; cd ../www; pushd;
+  // wrangler deploy` deployed the agent while the guard stood in www (#1995
+  // r16). With an empty stack bash errors and stays put.
+  if (dir.kind === 'pushd-swap') {
+    return state.stack.length > 0
+      ? {
+          cwd: state.stack[state.stack.length - 1],
+          stack: [...state.stack.slice(0, -1), state.cwd],
+          prev: state.cwd,
+        }
+      : state;
+  }
+  // `cd` with no argument goes to `$HOME`, and `cd ~…` starts there — neither
+  // of which the text names. Ignoring them held the OLD cwd over a deploy that
+  // runs elsewhere, which reported the wrong package rather than the right one
+  // (#1995 r16). An unknown destination is the existing answer for an
+  // unresolved variable; this is the same question in another spelling.
+  if (dir.kind === 'cd-home') {
+    return { cwd: UNKNOWN_DIR, stack: state.stack, prev: state.cwd };
   }
   // `cd -` is `$OLDPWD`, per bash's `help cd` — not a child directory called
   // `-` (#1995 r14). `cd apps/agent; cd ../indexer; cd -` is back in the agent,
@@ -1787,9 +1829,29 @@ function dirDirective(seg) {
   const LEAD = String.raw`(?:\{\s+)?(?:(?:builtin|command)\s+)?`;
   const pushed = seg.match(new RegExp(`^${LEAD}pushd\\s+${OPTS}(${WORD})`));
   if (pushed) return { kind: 'pushd', target: dequote(pushed[1]) };
-  if (new RegExp(`^${LEAD}popd\\b`).test(seg)) return { kind: 'popd' };
+  // Ordered AFTER the destination form, so only a genuinely bare `pushd`
+  // reaches the swap. `-n` and `+N` take no destination either and are not
+  // swaps, so they are excluded by name rather than by the absence of a word.
+  if (new RegExp(`^${LEAD}pushd\\s*$`).test(seg)) return { kind: 'pushd-swap' };
+  const popped = seg.match(new RegExp(`^${LEAD}popd\\b(.*)$`));
+  if (popped) {
+    const args = popped[1].trim();
+    // `+0` IS the top of the stack, so it is the ordinary pop.
+    const idx = /^\+0\b/.test(args);
+    return args === '' || idx ? { kind: 'popd' } : { kind: 'popd-keep' };
+  }
   const cd = seg.match(new RegExp(`^${LEAD}cd\\s+${OPTS}(${WORD})`));
-  return cd ? { kind: 'cd', target: dequote(cd[1]) } : null;
+  if (cd) {
+    const target = dequote(cd[1]);
+    // `~` and `~/…` are `$HOME` and a path under it. `cd "$HOME"` already
+    // resolved to an unknown destination through the variable rule; the tilde
+    // spelling reached `resolveDir` as a literal directory named `~`.
+    return /^~/.test(target) ? { kind: 'cd-home' } : { kind: 'cd', target };
+  }
+  // Ordered last for the same reason as the pushd swap: a `cd` naming a
+  // destination is handled above, so what is left really is the bare form.
+  // The option terminator is consumed, or `cd --` reads as a destination.
+  return new RegExp(`^${LEAD}cd\\s*(?:--\\s*)?$`).test(seg) ? { kind: 'cd-home' } : null;
 }
 
 /**
@@ -1807,6 +1869,29 @@ function dedupeStates(states) {
     if (seen.size >= 32) break;
   }
   return [...seen.values()];
+}
+
+/**
+ * Remove the `$` prompt a runbook writes in front of a copyable command.
+ *
+ * ```console` is an accepted fence, and a prompted block is exactly the form an
+ * operator copies and runs. But the directive matchers are `^`-anchored, so
+ * `$ cd apps/agent` recorded no move and the `$ wrangler deploy` under it was
+ * judged from the repo root — a directly copyable destructive deploy that
+ * exited 0 (#1995 r16). Detection itself was never anchored, which is why only
+ * the SCOPE was lost and not the command.
+ *
+ * `$` only, never `#`. A root prompt is indistinguishable from a comment, and
+ * this guard walks docs full of `# wrangler deploy` written as commentary;
+ * reading those as commands would flag documentation that runs nothing. A
+ * missed root-prompted example is a recorded limit — inventing commands out of
+ * comments would be a new false-red class.
+ *
+ * The `$` must be followed by whitespace, so no real shell word can match:
+ * `$FOO` and `$(cmd)` have no space after the sigil.
+ */
+function stripConsolePrompts(blockLines) {
+  return blockLines.map((l) => l.replace(/^(\s*)\$[ \t]+/, '$1'));
 }
 
 /**
@@ -1865,7 +1950,13 @@ function embeddedShellLines(text, isYaml = false) {
       const closer = new RegExp(`^\\s*${anyFence[1][0] === '`' ? '`' : '~'}{${anyFence[1].length},}\\s*$`);
       while (j < lines.length && !closer.test(lines[j])) j += 1;
       if (fence) {
-        out.push(...offset(logicalLines(lines.slice(start, j).join('\n')), start, blockId));
+        out.push(
+          ...offset(
+            logicalLines(stripConsolePrompts(lines.slice(start, j)).join('\n')),
+            start,
+            blockId,
+          ),
+        );
         blockId += 1;
       }
       i = j + 1;
