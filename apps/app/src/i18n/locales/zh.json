@@ -206,6 +206,7 @@
       "eraseConfirmPrompt": "此操作无法撤销。若想保留，请先下载一份副本。",
       "eraseDone": "已从此浏览器清除 {{count}} 项已保存内容。",
       "eraseNothing": "此浏览器中没有可清除的已保存内容。",
+      "erasePartial": "已清除 {{removed}} 项，但有 {{left}} 项无法删除。通过浏览器自身的设置清除站点数据即可移除其余部分。",
       "eraseBlocked": "此浏览器不允许应用清除其存储，因此未删除任何内容。无痕窗口和严格的隐私设置都可能导致这种情况——通过浏览器自身的设置清除站点数据即可。",
       "holdingTitle": "当前保存了什么",
       "holdingCount": "{{count}} 项",

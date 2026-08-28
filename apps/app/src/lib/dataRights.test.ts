@@ -79,38 +79,97 @@ describe('isAppStorageKey', () => {
 });
 
 describe('storage-prefix coverage', () => {
-  it('covers every storage key literal in the source tree', () => {
-    // The real guard. `KNOWN_KEYS` above is a hand-list and hand-lists
-    // rot; this reads the source and fails when a new prefix appears,
-    // so a future feature cannot quietly store something outside the
-    // reach of the erasure control.
+  /**
+   * Every source file that WRITES browser storage, with the key
+   * prefixes it writes under.
+   *
+   * A file allowlist rather than a literal scan, and that is the whole
+   * point. The first version of this guard grepped for `NAME_KEY = '…'`
+   * declarations, and `app.alerts` — a live key — evaded it, because
+   * `alerts.ts` builds its key in a lowercase arrow function returning
+   * a template literal. The hand-list below caught that one; the
+   * automated half did not, which is the exact failure this guard is
+   * supposed to make impossible.
+   *
+   * Written this way, a NEW file that touches storage fails the test
+   * until somebody registers it and its prefixes. That converts a
+   * silent miss into a loud one, and it cannot be evaded by how the key
+   * happens to be spelled.
+   */
+  const STORAGE_WRITERS: Readonly<Record<string, readonly string[]>> = {
+    'src/app/ModeContext.tsx': ['app.mode'],
+    'src/app/ThemeContext.tsx': ['app.theme'],
+    'src/chain/receiptSync.ts': ['vaipakam-receipt-sync-ping-v1'],
+    'src/components/PowerSurfaceNote.tsx': ['app.powerSurfaceNoteDismissed'],
+    'src/data/alerts.ts': ['app.alerts.'],
+    'src/diagnostics/lastError.ts': ['vaipakam.app.lastError'],
+    'src/lib/notifSeen.ts': ['app.notif.lastseen.'],
+    'src/lib/pendingMarker.ts': [
+      'app.loanSaleOffer.',
+      'app.offsetOffer.',
+      'app.refinanceOffer.',
+      'app.recoverPending.',
+    ],
+    'src/main.tsx': ['app.chunkReloaded'],
+    // The data-rights page itself reads and clears; it writes nothing.
+    'src/lib/dataRights.ts': [],
+    // Written OUTSIDE this app, by the shared i18n package's detector,
+    // so it never appears in the src/ scan below. Registered anyway —
+    // the export and the erasure both have to reach it, and the
+    // cross-check found it missing the moment this registry existed,
+    // which is the argument for having one.
+    '(packages/i18n — language detector)': ['vaipakam:language'],
+  };
+
+  it('every file that writes storage is registered, and its keys are covered', () => {
     const out = execFileSync(
       'grep',
       [
-        '-rhoE',
-        // Key CONSTANTS and template prefixes: a quoted literal that
-        // looks like a storage key, at the point it is declared.
-        "(KEY|PREFIX|STORAGE_KEY|DISMISS_KEY|STORAGE_PING_KEY)[A-Z_]* = '[^']+'|makePendingMarkerStore\\('[^']+'\\)",
+        '-rlE',
+        String.raw`(localStorage|sessionStorage)\.setItem\(`,
         'src',
         '--include=*.ts',
         '--include=*.tsx',
       ],
       { cwd: process.cwd(), encoding: 'utf8' },
     );
+    const writers = out
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((f) => !f.includes('.test.'));
 
-    const literals = [...out.matchAll(/'([^']+)'/g)].map((m) => m[1]);
-    expect(literals.length).toBeGreaterThan(5);
+    // External writers are registered with a parenthesised label rather
+    // than a path, so they cannot accidentally satisfy the scan below.
+    const unregistered = writers.filter((f) => !(f in STORAGE_WRITERS));
+    expect(
+      unregistered,
+      `files writing browser storage without a data-rights registration: ${unregistered.join(', ')}. ` +
+        'Add the file and its key prefixes to STORAGE_WRITERS, and make sure the ' +
+        'prefixes fall inside STORAGE_PREFIXES so an erasure actually reaches them.',
+    ).toEqual([]);
 
-    const uncovered = literals.filter((literal) => {
-      // Only judge things that look like storage keys — the pattern
-      // also catches unrelated constants, and a false failure here
-      // would train people to delete the test.
-      if (!/^(app|vaipakam)/.test(literal)) return false;
-      return !isAppStorageKey(literal);
-    });
-    expect(uncovered, `storage keys outside the data-rights scan: ${uncovered.join(', ')}`).toEqual(
-      [],
-    );
+    // ...and every registered prefix must be one the scan reaches.
+    // Registering a key the erasure cannot see would be a hand-list
+    // that agrees with itself and not with the code.
+    for (const [file, prefixes] of Object.entries(STORAGE_WRITERS)) {
+      for (const prefix of prefixes) {
+        expect(isAppStorageKey(prefix), `${file} → ${prefix}`).toBe(true);
+      }
+    }
+  });
+
+  it('registers a writer for every known key', () => {
+    // The two halves check each other: KNOWN_KEYS is what the export
+    // must contain, STORAGE_WRITERS is where each comes from. A key in
+    // one and not the other means one of them is stale.
+    const registered = Object.values(STORAGE_WRITERS).flat();
+    for (const key of KNOWN_KEYS) {
+      expect(
+        registered.some((prefix) => key.startsWith(prefix)),
+        `${key} has no registered writer`,
+      ).toBe(true);
+    }
   });
 
   it('names the preference cookies the app shares with the marketing site', () => {

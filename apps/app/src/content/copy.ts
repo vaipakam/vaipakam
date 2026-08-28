@@ -341,6 +341,14 @@ const copySource = {
      *  for why the three outcomes must stay distinguishable. */
     eraseDone: tmpl('Erased {{count}} stored items from this browser.', ['count']),
     eraseNothing: 'There was nothing stored in this browser to erase.',
+    /* A PARTIAL clear is possible: the erase skips a key that throws
+       and keeps going, so some can go while others stay. Reporting
+       that as a plain success would overstate it on the one page that
+       must not. */
+    erasePartial: tmpl(
+      'Erased {{removed}} items, but {{left}} could not be removed. Clearing site data through your browser’s own settings will remove the rest.',
+      ['removed', 'left'],
+    ),
     eraseBlocked:
       'This browser would not let the app clear its storage, so nothing was removed. Private-browsing windows and locked-down privacy settings can both do this — clearing site data through your browser’s own settings will work.',
     holdingTitle: 'What is stored right now',

@@ -130,13 +130,20 @@ export function DataRights() {
 
         {result ? (
           <div
-            className={result.total > 0 ? 'banner banner-success' : 'banner'}
+            className={
+              result.total > 0 && stored === 0 ? 'banner banner-success' : 'banner'
+            }
             role="status"
           >
             {/* Three outcomes, three messages. Reporting a refusal as a
                 success is the failure this page must not have. */}
             {result.total > 0
-              ? copy.dataRights.eraseDone(result.total)
+              ? stored > 0
+                ? // Some went, some stayed — `clearStorage` skips a key
+                  // that throws and continues, so this is reachable and
+                  // must not be reported as a clean success.
+                  copy.dataRights.erasePartial(result.total, stored)
+                : copy.dataRights.eraseDone(result.total)
               : stored > 0
                 ? copy.dataRights.eraseBlocked
                 : copy.dataRights.eraseNothing}

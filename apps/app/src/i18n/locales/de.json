@@ -206,6 +206,7 @@
       "eraseConfirmPrompt": "Das lässt sich nicht rückgängig machen. Laden Sie vorher eine Kopie herunter, wenn Sie eine behalten möchten.",
       "eraseDone": "{{count}} gespeicherte Einträge wurden aus diesem Browser gelöscht.",
       "eraseNothing": "In diesem Browser war nichts gespeichert, das gelöscht werden könnte.",
+      "erasePartial": "{{removed}} Einträge wurden gelöscht, {{left}} konnten jedoch nicht entfernt werden. Das Löschen der Websitedaten über die Einstellungen Ihres Browsers entfernt den Rest.",
       "eraseBlocked": "Dieser Browser hat der App nicht erlaubt, ihren Speicher zu leeren, daher wurde nichts entfernt. Private Fenster und strenge Datenschutzeinstellungen können das bewirken — das Löschen der Websitedaten über die Einstellungen Ihres Browsers funktioniert.",
       "holdingTitle": "Was derzeit gespeichert ist",
       "holdingCount": "{{count}} Einträge",

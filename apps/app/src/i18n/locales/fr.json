@@ -206,6 +206,7 @@
       "eraseConfirmPrompt": "Cette action est irréversible. Téléchargez une copie d’abord si vous souhaitez en garder une.",
       "eraseDone": "{{count}} éléments enregistrés ont été effacés de ce navigateur.",
       "eraseNothing": "Il n’y avait rien d’enregistré à effacer dans ce navigateur.",
+      "erasePartial": "{{removed}} éléments ont été effacés, mais {{left}} n’ont pas pu être supprimés. Effacer les données du site depuis les réglages de votre navigateur supprimera le reste.",
       "eraseBlocked": "Ce navigateur n’a pas autorisé l’application à vider son stockage, donc rien n’a été supprimé. Les fenêtres de navigation privée et les réglages de confidentialité stricts peuvent produire cet effet — effacer les données du site depuis les réglages de votre navigateur fonctionnera.",
       "holdingTitle": "Ce qui est enregistré actuellement",
       "holdingCount": "{{count}} éléments",
