@@ -37,13 +37,14 @@
  *    structural: a superseded query's data is never the active query's
  *    data, so there is no window to get wrong.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
+import { acceptanceIsPinned, acceptanceScope, pinAcceptance } from './tosAcceptancePin';
 import { captureTxError } from '../lib/errors';
 
 const ZERO_HASH = `0x${'0'.repeat(64)}` as const;
@@ -80,28 +81,6 @@ export function useTosAcceptance(): TosAcceptanceState {
   const queryClient = useQueryClient();
   const [writeError, setWriteError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  // The ToS version this wallet accepted in a transaction THIS session
-  // mined and waited for — see `accept`. `null` until that happens.
-  //
-  // Held in a REF rather than in state, because the correction belongs
-  // where data ENTERS the cache rather than beside it. A pin kept in
-  // component state would open the gate while `readTermsWriteVerdict`
-  // — which reads the cache, not this hook — still refused the
-  // wallet's next write and told it to accept terms it had already
-  // paid to accept. One mechanism, in the one place both surfaces
-  // read from, so they cannot disagree.
-  //
-  // The ref carries its OWN scope rather than being cleared when the
-  // wallet or chain changes. Two reasons, and the second is why it is
-  // shaped this way: `react-hooks/refs` rightly forbids mutating a ref
-  // during render, so a reset would have to run in an effect and would
-  // be observable for a paint; and a pin that must be actively revoked
-  // is one forgotten path away from applying to the wrong wallet. A
-  // pin that only matches its own wallet, chain and version cannot be
-  // inherited at all — there is no window to get wrong, the same
-  // reasoning that made the query key structural rather than a
-  // sequence counter.
-  const acceptedRef = useRef<{ scope: string; version: number } | null>(null);
   // A clock the gate can read without calling `Date.now()` during
   // render, which `react-hooks/purity` rightly rejects. Starts at 0 —
   // read as "no age known yet", which cannot make a fresh verdict look
@@ -143,7 +122,7 @@ export function useTosAcceptance(): TosAcceptanceState {
   // so a pin that could outlive a switch would let a second wallet — or
   // the same wallet on another chain — inherit an acceptance it never
   // made, which is the one thing this whole module exists to prevent.
-  const scope = `${readChain.chainId}:${address ?? ''}`;
+  const scope = acceptanceScope(readChain.chainId, address);
 
   const query = useQuery({
     queryKey,
@@ -212,9 +191,7 @@ export function useTosAcceptance(): TosAcceptanceState {
       // `setCurrentTos` refuses any version that does not strictly
       // increase. So at a matching version, `false` from a node can
       // only mean that node is behind.
-      const pin = acceptedRef.current;
-      const correctLag =
-        !accepted && pin !== null && pin.scope === scope && pin.version === version;
+      const correctLag = !accepted && acceptanceIsPinned(scope, version, Date.now());
       return {
         accepted: accepted || correctLag,
         version,
@@ -265,8 +242,10 @@ export function useTosAcceptance(): TosAcceptanceState {
       });
       // ...and pinned, because the invalidations below can land a
       // lagging `false` on top of the line above. `queryFn` applies the
-      // pin to every later read, so this survives any number of them.
-      acceptedRef.current = { scope, version: acceptedVersion };
+      // pin to every later read, so this survives any number of them —
+      // and, being module-scoped, survives this component unmounting
+      // and remounting on a brief disconnect.
+      pinAcceptance(scope, acceptedVersion, Date.now());
       await queryClient.invalidateQueries({ queryKey });
       // Codex review round 1 P2: one immediate re-read is not enough.
       // A public RPC can still serve the parent block for seconds after

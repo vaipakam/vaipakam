@@ -57,7 +57,21 @@ interface GateProps {
  * bypass it.
  */
 function LegalGateUnavailable({ exempt, children }: GateProps) {
-  return exempt ? <>{children}</> : <TermsStatusCard />;
+  if (exempt) return <>{children}</>;
+  // Review round 12 P2: with a RETRY, because React caches a resolved
+  // lazy payload permanently — and this one resolves successfully, to
+  // this component. So a single transient chunk failure would otherwise
+  // pin every gated route on the checking card for the life of the
+  // page: the Terms query never mounts, the user can neither accept nor
+  // write, and nothing recovers even once the asset is back. Failing
+  // closed is right; failing closed with no way out is a trap, the same
+  // one the disabled-query fix removed before review round 1.
+  //
+  // A reload is the honest control here rather than a re-import: the
+  // chunk is fetched by URL from a build the page already has, so
+  // recovering from a deployment that invalidated it means fetching the
+  // document again, not retrying the same URL.
+  return <TermsStatusCard onRetry={() => window.location.reload()} />;
 }
 
 // Review round 10 P2: the import rejection is handled HERE rather than

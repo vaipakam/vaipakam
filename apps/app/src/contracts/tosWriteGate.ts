@@ -44,6 +44,27 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   'repayLoan',
   'repayPartial',
   'precloseDirect',
+  // The ATOMIC handoffs (review round 11 P1). Both end the caller's own
+  // position in one transaction against a commitment somebody else has
+  // already made: `sellLoanViaBuyOffer` pays a lender out into a
+  // standing buy offer, `transferObligationViaOffer` moves a borrower's
+  // obligation to a replacement who has already offered to take it.
+  //
+  // I had these in the REFUSED list, and wrote a test asserting it —
+  // the classification error and its own guard, shipped together. The
+  // line that actually matters is not "does this touch an offer" but
+  // "does the caller end up with more or less". These leave the caller
+  // with nothing, which is what an exit is. Refusing them told a lender
+  // who declined new Terms that their only instant exit was closed,
+  // while the slow route through a listing stayed open — protecting
+  // nobody and costing them the spread.
+  //
+  // The listing routes are deliberately NOT here: `createLoanSaleOffer`
+  // and `offsetWithNewOffer` publish a standing commitment of the
+  // caller's own, which is new business even though it is aimed at an
+  // exit. Direct and atomic is the line.
+  'sellLoanViaBuyOffer',
+  'transferObligationViaOffer',
   // Claims — the user's own settled funds.
   'claimAsBorrower',
   'claimAsLender',

@@ -54,6 +54,23 @@ const EXIT_PREFIXES = [
   // `/settings` also carries the language picker, which is the other
   // reason a held user needs it.
   '/settings',
+  // READ-ONLY surfaces (review round 11 P2). Not exits — nothing here
+  // gets a user out of anything — but nothing here takes on exposure
+  // either: `/help` is the explainer, `/activity` is the user's own
+  // history, `/nft` verifies a position token. None makes a single
+  // write, Diamond or otherwise, which the module docstring's own rule
+  // makes the test: the gate applies to routes that let a user take on
+  // NEW exposure.
+  //
+  // Withholding them was a plain contradiction of the functional spec
+  // this PR itself edited — "only surfaces that exist to create new
+  // exposure become unreachable" — and the practical cost lands
+  // exactly wrong: a user asking what the terms mean, or checking what
+  // they already agreed to, gets a page that will not open. The write
+  // gate still covers anything these pages might grow later.
+  '/help',
+  '/activity',
+  '/nft',
   // Aliases that redirect INTO the above.
   '/loans',
   '/dashboard',

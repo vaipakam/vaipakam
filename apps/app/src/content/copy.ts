@@ -287,6 +287,15 @@ const copySource = {
     readErrorBody:
       'We couldn\u2019t reach the network to find out whether you need to accept Vaipakam\u2019s terms, so the app stays closed rather than guessing. Nothing is wrong with your wallet or your positions \u2014 try again in a moment.',
     retry: 'Try again',
+    // Review round 12 P2 — distinct from `verifying`, because a
+    // chunk that failed to load is not a check in progress and
+    // must not be reported as one: the pending card offers no way
+    // out, and React caches a resolved lazy payload for the life
+    // of the page, so without a reload the user is stuck there.
+    loadFailedTitle: 'Couldn\u2019t load the terms check',
+    loadFailedBody:
+      'Part of the app didn\u2019t load, so we can\u2019t tell whether you need to accept Vaipakam\u2019s terms \u2014 it stays closed rather than guessing. Reloading the page usually fixes it. Repaying, claiming and withdrawing keep working either way.',
+    reload: 'Reload the page',
     title: 'Accept the terms to continue',
     body:
       'Vaipakam\u2019s operators have put a version of the terms in force. Accepting sends a one-off transaction that records which version you agreed to, so your wallet will ask you to confirm it and it costs a small network fee. You won\u2019t be asked again unless the terms change \u2014 or unless you switch to another network, since each network keeps its own record.',

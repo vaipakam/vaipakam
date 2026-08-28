@@ -72,14 +72,30 @@ describe('isExitRoute', () => {
       '/lend',
       '/rent',
       '/offers',
-      '/activity',
       '/faucet',
-      '/help',
-      '/nft',
       '/risk-access',
     ]) {
       expect(isExitRoute(path), path).toBe(false);
     }
+  });
+
+  it('does not withhold the read-only surfaces', () => {
+    // Review round 11 P2. Not exits, but nothing on them takes on
+    // exposure — none makes a write of any kind — and withholding them
+    // contradicted the functional spec's rule that only surfaces
+    // existing to CREATE exposure become unreachable. A held user
+    // asking what the terms mean must be able to open the explainer.
+    for (const path of ['/help', '/activity', '/nft', '/nft/7']) {
+      expect(isExitRoute(path), path).toBe(true);
+    }
+  });
+
+  it('still withholds the read-only-looking routes that DO write', () => {
+    // The test is writes, not vibes: `/faucet` mints test tokens with a
+    // direct wallet write and `/risk-access` calls `setVaultRiskTier`
+    // through the Diamond, so neither joins the group above.
+    expect(isExitRoute('/faucet')).toBe(false);
+    expect(isExitRoute('/risk-access')).toBe(false);
   });
 
   it('does not let a lookalike route inherit an exemption', () => {

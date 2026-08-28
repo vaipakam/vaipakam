@@ -708,6 +708,12 @@ Thin-market honesty rules apply.
   in both cases where a third party or an automatic process holds authority —
   withdrawing that authority: a keeper's permission over their positions, and
   the consent that allows fees to be deducted automatically from their vault.
+  It also covers **handing a position over in one step** to someone who has
+  already offered to take it — a lender being bought out, or a borrower's
+  obligation moving to a replacement. Those end the user's position outright,
+  so refusing them would leave the slow route open and the instant one shut.
+  Publishing a standing offer of one's own is a different thing and is not
+  covered, even when the intent behind it is to leave.
 - The requirement applies to notification settings on the same terms, even
   though nothing there touches the protocol. Signing up — linking a messaging
   channel, or switching a reminder on — waits for acceptance. Switching a
@@ -738,6 +744,11 @@ Thin-market honesty rules apply.
   one supported network is asked again on another.
 - A visitor with no wallet connected is never gated. The requirement is about
   the party who would transact.
+- **Surfaces that only show information are never withheld.** The explainer,
+  the user's own history, and position-token verification carry no action at
+  all, so there is nothing on them for the requirement to withhold — and a
+  user asking what the terms mean must not be met by a page that will not
+  open.
 - **When the app cannot determine whether terms apply, it withholds new
   exposure and says so, rather than allowing it.** This is the intended
   behaviour and not a degraded one: the requirement is enforced by the app

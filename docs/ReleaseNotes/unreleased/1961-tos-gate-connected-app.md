@@ -43,15 +43,25 @@ the check fails — would mean the gate stops working precisely when the
 network is flaky, which is neither rare nor hard to arrange
 deliberately.
 
+Pages that only show you something — the explainer, your own history,
+checking a position token — are never withheld either. There is nothing
+on them to withhold, and somebody trying to find out what the terms
+mean should not be met by a page that will not open.
+
 **It never blocks getting your money out, or taking back control.**
 Repaying, claiming and withdrawing are not behind this, and neither is
 anything else that reduces what you are committed to: cancelling your
 own offers and orders, adding collateral to a position under pressure,
 and withdrawing permissions you granted earlier — a keeper's authority
 over your positions, or the consent that lets fees be taken
-automatically from your vault. A rule about accepting terms should never
-become a reason somebody cannot close a position, and it should never
-leave a permission running that they are no longer allowed to cancel.
+automatically from your vault. Handing a position over in one step to
+someone who has already offered to take it counts too — a lender being
+bought out, a borrower's obligation moving to a replacement — because
+those end the position outright, and blocking them would have left the
+slow way out open while shutting the instant one. A rule about
+accepting terms should never become a reason somebody cannot close a
+position, and it should never leave a permission running that they are
+no longer allowed to cancel.
 
 The same rule reaches the alert settings, which never touch the
 protocol at all. Signing up for reminders — linking a messaging channel,

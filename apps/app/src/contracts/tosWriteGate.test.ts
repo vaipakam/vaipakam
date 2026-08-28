@@ -51,13 +51,31 @@ describe('isExitWrite', () => {
       'depositVPFIToVaultWithPermit',
       'setVPFIDiscountConsent',
       'offsetWithNewOffer',
-      'transferObligationViaOffer',
       'createLoanSaleOffer',
-      'sellLoanViaBuyOffer',
       'modifyOffer',
     ]) {
       expect(isExitWrite(fn, []), fn).toBe(false);
     }
+  });
+
+  it('permits the atomic handoffs that end the caller\u2019s position', () => {
+    // Review round 11 P1, and a correction to this very file: both were
+    // in the refusal list above, with a test pinning them there. Each
+    // ends the caller's own position in one transaction against a
+    // commitment somebody else already made — the lender is paid out,
+    // the borrower's obligation moves to a replacement who offered to
+    // take it — so the caller is left with nothing. That is an exit.
+    expect(isExitWrite('sellLoanViaBuyOffer', [])).toBe(true);
+    expect(isExitWrite('transferObligationViaOffer', [])).toBe(true);
+  });
+
+  it('still gates the routes that PUBLISH a standing commitment', () => {
+    // The line is direct-and-atomic, not "aimed at an exit". Listing a
+    // loan for sale or posting an offset offer creates a commitment of
+    // the caller's own that outlives the transaction, which is new
+    // business even when the intent is to leave.
+    expect(isExitWrite('createLoanSaleOffer', [])).toBe(false);
+    expect(isExitWrite('offsetWithNewOffer', [])).toBe(false);
   });
 
   it('permits a batch whose every call is an exit', () => {
