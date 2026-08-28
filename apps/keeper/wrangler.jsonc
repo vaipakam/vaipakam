@@ -57,9 +57,10 @@
   // EXCLUDE suspects, not name one. Attribution needs a profile.
   //
   // It also returns a cron trigger to the account pool. The free plan
-  // caps triggers at FIVE per ACCOUNT and all five were in use — see
+  // caps triggers at FIVE per ACCOUNT and the pool was full — see
   // `apps/indexer/src/cronRouting.ts`, which records a deploy that
-  // failed for exactly that reason.
+  // failed for exactly that reason, and
+  // `docs/ops/CloudflareCronSlots.md` for what the pool holds today.
   //
   // WHAT STOPS THAT WAS NOT ALREADY STOPPED. FOUR passes run ungated by
   // `KEEPER_ENABLED`, so unscheduling does cost function. Two earlier
@@ -96,7 +97,7 @@
   //      a secret's VALUE cannot be read back — so "it should be false"
   //      is unverifiable, not a check. If it is in fact `true`, the six
   //      gated passes begin submitting transactions the moment the
-  //      restored schedule propagates, which is one step before step 7
+  //      restored schedule propagates, which is one step before step 8
   //      would have observed anything.
   //   2. Restore the schedule below (`"crons": ["* * * * *"]`) AND
   //      COMMIT IT (Codex #1924 r8). An edit that lives only in the
@@ -109,15 +110,25 @@
   //      deploy from a clean checkout KEEPS it stopped. The commit is
   //      what makes the restoration durable, so it belongs with the CPU
   //      fix rather than being left to whoever ran the procedure.
-  //   3. Confirm a cron slot is free — the cap is five per account.
-  //      This slot is meant to be waiting: the capacity notes in
-  //      `ops/offchain-data-warm`, `apps/indexer` and
-  //      `docs/DesignsAndPlans/OffChainDataResilience.md` all count the
-  //      keeper's slot as RESERVED rather than spare, precisely so this
-  //      step cannot be blocked by something that moved in during the
-  //      hold (Codex #1924 r9). If it IS taken, that is a real problem
-  //      to resolve here — not something to work around by leaving the
-  //      keeper stopped.
+  //   3. Confirm a cron trigger is free — the cap is five per account,
+  //      and `docs/ops/CloudflareCronSlots.md` is the one place that
+  //      says what is using them. Confirm it against the ACCOUNT
+  //      (`node .github/scripts/check-cron-slots.mjs --live`), not
+  //      against a comment.
+  //
+  //      This slot is meant to be waiting, and an earlier revision of
+  //      this step cited three other capacity notes as evidence that it
+  //      was (Codex #1924 r9). All three were wrong together: none of
+  //      them could see `vaipakam-offchain-data-archive`, a Worker with
+  //      no source in this repository that has been holding a trigger
+  //      the whole time (#1977). If this step fails, that is the
+  //      likeliest reason, and #1977 carries the sequence to free the
+  //      trigger. Read the outcome from the live check rather than from
+  //      this comment, which cannot know when the cleanup has happened.
+  //
+  //      That is a real problem to resolve here — not something to work
+  //      around by leaving the keeper stopped, and not something to
+  //      settle by reading another comment.
   //   4. `( cd apps/keeper && wrangler deploy --keep-vars )` — or the
   //      equivalent `pnpm --filter @vaipakam/keeper run deploy`, whose
   //      script now carries the flag. RUN IT FROM THIS DIRECTORY: a bare
@@ -134,9 +145,16 @@
   //      `TG_BOT_USERNAME`. Every dashboard-managed tuning override —
   //      `HF_SCALE`, the `LIQ_*` confidence and Tier-3 thresholds,
   //      `SPLIT_MIN_IMPROVEMENT_BPS`, `PARTIAL_LIQ_MIN_HF_BPS` (see
-  //      `env.ts`) — would be wiped one step before step 6 arms the
-  //      fund-moving passes. That is liquidation behaviour silently
-  //      reverting to defaults at the exact moment it starts mattering.
+  //      `env.ts`) — would be wiped HERE, at step 4, and step 9 is
+  //      what arms the fund-moving passes. That is liquidation
+  //      behaviour silently reverting to defaults several steps before
+  //      it starts mattering, which is worse than it sounds: nothing
+  //      between the two steps reads those overrides, so the loss is
+  //      invisible until the passes that depend on them are live.
+  //      (This sentence said "one step before step 6" through several
+  //      revisions. Step 6 did not arm anything under that numbering
+  //      either — the reference was stale, and renumbering for the new
+  //      step 6 is what surfaced it. Codex #1978 r15.)
   //      Capture the live vars first if you have any doubt they are all
   //      recoverable.
   //   5. Read the schedule back TRIGGER-AWARE — Settings → Trigger
@@ -144,9 +162,43 @@
   //      mistyped or wrongly-nested key leaves the previous state in
   //      place, and a quiet `wrangler tail` only proves no tick has
   //      fired YET.
-  //   6. Allow the propagation window: Cloudflare documents cron
+  //   6. UPDATE THE AUTHORITY, IN THE SAME SITTING (Codex #1978 r15).
+  //      Arming the keeper converts its reservation into a live
+  //      trigger, and `docs/ops/CloudflareCronSlots.md` still describes
+  //      the state before that. Move the keeper's row to `live` with
+  //      its schedule, change "Live right now" to match, switch the
+  //      label from `**Committed, live plus the keeper's reserve:**` to
+  //      `**Committed, live only:**` — the checker recognises exactly
+  //      those two forms and requires the one matching the table —
+  //      refresh the `Verified:` stamp, re-run
+  //      `node .github/scripts/check-cron-slots.mjs --live` to confirm
+  //      the file and the account agree, and COMMIT those edits. A
+  //      working-tree change that passes `--live` and is never
+  //      committed leaves the branch carrying the pre-re-arm inventory,
+  //      so the next clean checkout restores exactly the staleness this
+  //      step prevents.
+  //
+  //      This step is easy to skip and hard to notice skipped: the
+  //      conversion leaves committed and spare UNCHANGED, so the
+  //      offline gate keeps passing on a file that is now wrong about
+  //      which Workers are live. Only `--live` sees it, and nothing
+  //      runs `--live` on a schedule.
+  //
+  //      `docs/ops/OffChainRestore.md` carries the same step for the
+  //      operator who arrives via that runbook. Both procedures are
+  //      canonical for their own entry point, so this one needed it
+  //      too — adding it there alone left whoever followed THIS file
+  //      leaving the authority stale, which is one procedure fixed and
+  //      its sibling missed.
+  //
+  //      AND ON EVERY ROLLBACK BELOW: if you restore `"crons": []`,
+  //      roll this edit back with it. A rollback that leaves the keeper
+  //      reading `live` puts the authority into precisely the stale
+  //      state this step exists to prevent, with the offline gate still
+  //      green.
+  //   7. Allow the propagation window: Cloudflare documents cron
   //      updates taking up to 15 minutes to reach every location.
-  //   7. VALIDATE THE UNARMED PASSES FIRST, ACROSS EVERY CADENCE THEY
+  //   8. VALIDATE THE UNARMED PASSES FIRST, ACROSS EVERY CADENCE THEY
   //      RUN AT (Codex #1924 r3, tightened in r6). With `KEEPER_ENABLED`
   //      set to `false` in step 1, `wrangler tail vaipakam-keeper` and
   //      confirm the outcome is `ok` rather than `exceededCpu`. Arming
@@ -162,9 +214,9 @@
   //      `passIsArmed` / `isKeeperEnabled` reference in either module,
   //      and for the snapshot that is deliberate (#1466, declined) — so
   //      both can and MUST be exercised while still disarmed. Cover a
-  //      full 15-minute cycle, and the daily window, BEFORE step 8.
+  //      full 15-minute cycle, and the daily window, BEFORE step 9.
   //      Skipping that leaves the worst ordering available: arm at step
-  //      8, then first reach the missed cadence at step 9 up to a day
+  //      9, then first reach the missed cadence at step 10 up to a day
   //      later, having let the fund-moving passes submit for that whole
   //      period on a Worker that then turns out to still die.
   //      ALSO CHECK THE CHAIN SET, on every tick you accept as evidence
@@ -178,7 +230,7 @@
   //      chain shows up as an ABSENCE — which is exactly what nobody
   //      reads off a tail. A tick that ends `ok` against four of six
   //      chains has not validated the CPU cost of six, and the work
-  //      scales with the set: when the binding recovers after step 8,
+  //      scales with the set: when the binding recovers after step 9,
   //      the untested load returns and can re-exhaust the budget with
   //      the fund-moving passes already armed.
   //      AND REJECT ANY TICK THAT LOGS AN ERROR AT ALL — not a
@@ -214,13 +266,13 @@
   //      Worker was targeted (Codex #1924 r5, r7). Leave
   //      `KEEPER_ENABLED` at `false`. That is the rollback, and it costs
   //      nothing because nothing was armed.
-  //   8. Only then set the `KEEPER_ENABLED` secret to `true`. The
+  //   9. Only then set the `KEEPER_ENABLED` secret to `true`. The
   //      fund-moving passes stay inert until it is, and `passIsArmed`
   //      names any binding still blocking each pass, one line per pass
   //      per tick.
-  //   9. Now validate the GATED passes, again across every cadence they
-  //      run at (Codex #1924 r5 P1). Step 7 has already cleared the
-  //      ungated set; what step 8 newly switched on is the six gated
+  //  10. Now validate the GATED passes, again across every cadence they
+  //      run at (Codex #1924 r5 P1). Step 8 has already cleared the
+  //      ungated set; what step 9 newly switched on is the six gated
   //      passes, and one armed tick exercises only the
   //      `cadenceMinutes: 1` ones among them. `rewardBudgetRemit` is
   //      gated AND staggered (5 min, offset 2), so cover at least one
@@ -231,7 +283,7 @@
   //      pass returns immediately from `passIsArmed`. That matters most
   //      for `rewardBudgetRemit` and `remitAck`, which are gated TWICE —
   //      `KEEPER_ENABLED` plus `REWARD_REMIT_ENABLED` — and for
-  //      `commitmentReport` (plus `REWARD_COMMIT_ENABLED`). Step 8 flips
+  //      `commitmentReport` (plus `REWARD_COMMIT_ENABLED`). Step 9 flips
   //      only the master gate, so with the reward flags off, waiting out
   //      the 5-minute cycle produces a reassuring line from a pass that
   //      did nothing. Read the accompanying `passIsArmed` skip line,
@@ -244,13 +296,13 @@
   //      was still in flight when the invocation ended. If any of it
   //      fails, roll back BOTH halves: `KEEPER_ENABLED` to `false` first
   //      (it is now genuinely armed), then `"crons": []` — reverted and
-  //      COMMITTED, per the same reasoning as step 7's rollback — and
+  //      COMMITTED, per the same reasoning as step 8's rollback — and
   //      `( cd apps/keeper && wrangler deploy --keep-vars )`.
   //      Why the split rather than one big validation at the end: every
   //      pass that CAN be cleared before arming SHOULD be, because the
   //      cost of discovering the CPU fix is incomplete rises the moment
   //      the fund-moving passes start submitting.
-  //  10. Clear any checks DEFERRED during the hold. Specifically: if
+  //  11. Clear any checks DEFERRED during the hold. Specifically: if
   //      `PUSH_CHANNEL_PK` was rotated while the keeper was unscheduled,
   //      `docs/ops/IncidentRunbook.md`'s Push-rotation step 6 could only
   //      be satisfied against the agent — the keeper had no invocation
