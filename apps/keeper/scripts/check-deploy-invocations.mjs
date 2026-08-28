@@ -1668,7 +1668,12 @@ for (const file of walk(REPO_ROOT)) {
     !folded.some(
       (l) =>
         new RegExp(ANY_DEPLOY_RE).test(l.text) ||
-        new RegExp(RUN_DEPLOY_RE).test(dequote(l.text)),
+        // ANY_DEPLOY_RE on the dequoted form too (#1995 r9). The fallback was
+        // added for composed package-script names and used RUN_DEPLOY_RE only,
+        // so `wrang"ler" deploy` and `wrangler de"ploy"` skipped the WHOLE
+        // FILE at the prefilter — the composition defect the fallback exists
+        // for, on the other half of the same alternation.
+        new RegExp(ANY_DEPLOY_RE).test(dequote(l.text)),
     )
   ) {
     continue;
@@ -1740,7 +1745,17 @@ for (const file of walk(REPO_ROOT)) {
       const lineScope = scopeOf(line, rel);
       for (const part of splitCommands(line)) {
         const seg = part.text;
-        if (!new RegExp(ANY_DEPLOY_RE).test(seg)) continue;
+        // The dequoted fallback belongs here too (#1995 r9). Only the shell
+        // path had it, so `From apps/agent run pnpm run de"ploy"
+        // --no-keep-vars` in a runbook was accepted while the identical text
+        // in a `.sh` fixture was rejected — the same sentence judged two ways
+        // by which file it sits in, and prose is what an operator copies.
+        if (
+          !new RegExp(ANY_DEPLOY_RE).test(seg) &&
+          !new RegExp(ANY_DEPLOY_RE).test(dequote(seg))
+        ) {
+          continue;
+        }
         if (commandIsSafe(seg)) continue;
         // Fall back to the whole line only when the segment itself names
         // nothing: prose often establishes the package in an earlier clause,
@@ -1848,12 +1863,23 @@ for (const file of walk(REPO_ROOT)) {
           // the guard. A literal value needs only simple alternatives, and a
           // mixed-chunk assignment simply stays unremembered — which is the safe
           // direction, since an unknown variable clears scope.
+          // The value is a shell WORD, not one chunk of one (#1995 r9).
+          // `TARGET=apps/"agent"` is the literal `apps/agent` to bash; this
+          // matcher rejected it, the variable stayed unremembered, and a later
+          // `cd "$TARGET"` then cleared scope instead of entering the agent.
+          // Spelled with a ONE-CHARACTER unquoted alternative rather than the
+          // shared `WORD`, which ends in `[^...]+` nested inside a `(?:...)+`.
+          // That is ambiguous — a run of n characters can be partitioned n
+          // ways — and ANCHORED here with `$`, every NON-matching segment
+          // explores all of them. Using `WORD` here took the guard from ~30s
+          // to over five minutes on this tree before it was caught. One
+          // character per iteration admits exactly one partition.
           const asg = seg.match(
-            /^([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|[^\s"';&|)]*)\s*$/,
+            /^([A-Za-z_][A-Za-z0-9_]*)=((?:"[^"]*"|'[^']*'|\\[\s\S]|[^\s"'`;&|)\\])*)\s*$/,
           );
           // Only a LITERAL value is remembered; one containing a `$` is still
           // computed as far as this scanner can tell.
-          if (asg && !/\$/.test(asg[2])) shellVars.set(asg[1], dequote(asg[2]));
+          if (asg && asg[2] && !/\$/.test(asg[2])) shellVars.set(asg[1], dequote(asg[2]));
           namedPrefix.push({ text: seg, depth: segDepth });
         } else {
           const at = seg.search(/(?:^|[\s({])(?:cd|pushd)\s/);
@@ -1874,7 +1900,8 @@ for (const file of walk(REPO_ROOT)) {
         // `\b` so `wrangler deployments list` is not read as a deploy.
         if (
           !new RegExp(ANY_DEPLOY_RE).test(seg) &&
-          !new RegExp(RUN_DEPLOY_RE).test(dequote(seg))
+          // Same widening as the prefilter above (#1995 r9).
+          !new RegExp(ANY_DEPLOY_RE).test(dequote(seg))
         ) {
           continue;
         }

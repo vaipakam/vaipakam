@@ -1510,6 +1510,46 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a composed wrangler COMMAND name still counts as a deploy (#1995 r9)', () => {
+    // The dequoted fallback existed but tested only the package-script
+    // alternation, so a composed DIRECT wrangler command skipped the whole
+    // file at the prefilter.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nwrang"ler" deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a composed wrangler SUBcommand still counts as a deploy (#1995 r9)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nwrangler de"ploy"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('composed package scripts are caught in PROSE too (#1995 r9)', () => {
+    // Only the shell path dequoted, so the same sentence was judged two ways
+    // by which file it sat in — and prose is what an operator copies.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'From apps/agent run `pnpm run de"ploy" --no-keep-vars` before the cutover.\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a composed literal assignment is still remembered (#1995 r9)', () => {
+    // `TARGET=apps/"agent"` is the literal `apps/agent` to bash. The
+    // single-chunk matcher rejected it, so the variable stayed unremembered and
+    // the later `cd "$TARGET"` cleared scope instead of entering the agent.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '#!/usr/bin/env bash\nTARGET=apps/"agent"\ncd "$TARGET"\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a dry-run flag in a leading ENV ASSIGNMENT does not bless (#1995 r6)', () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',
