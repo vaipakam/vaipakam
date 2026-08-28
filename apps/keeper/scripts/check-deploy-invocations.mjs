@@ -396,6 +396,53 @@ function stripOtherOptionValues(line, keep = []) {
  * `--flag`, `--flag true` and `--flag=true` all enable; only an explicit
  * false-ish value disables.
  */
+/**
+ * Blank COMMAND SUBSTITUTIONS before scoring safety flags (#1995 r14).
+ *
+ * `wrangler deploy $(echo --keep-vars >&2)` runs a bare deploy — the
+ * substitution writes to stderr and contributes no argument — but its source
+ * text contains `--keep-vars`, and that was enough to bless it.
+ *
+ * A flag whose presence depends on what a command PRINTS cannot be verified
+ * from the text, so it must not count as safe. That is the direction this file
+ * takes everywhere else for unknowns: an assignment whose value contains `$`
+ * is left unremembered rather than guessed. The cost is that
+ * `deploy $(echo --keep-vars)` — which really does emit the flag — is now
+ * reported; that is a contrived spelling, and erring toward reporting is the
+ * side a SAFETY predicate should err on.
+ *
+ * `$( … )` only, and deliberately NOT backticks: `flagEnabled` also runs on
+ * prose, where a backtick is a Markdown code span and the command itself sits
+ * inside one. Blanking those would delete the command being judged. Backtick
+ * substitution in a shell file is a recorded limit, not a claim.
+ *
+ * Replaced with the same NUL placeholder `stripOtherOptionValues` uses, so no
+ * token boundary is manufactured where the shell saw none.
+ */
+function stripCommandSubstitutions(text) {
+  let out = '';
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '\\') {
+      out += text[i] + (text[i + 1] ?? '');
+      i += 1;
+      continue;
+    }
+    if (text[i] === '$' && text[i + 1] === '(') {
+      let depth = 1;
+      let j = i + 2;
+      for (; j < text.length && depth > 0; j += 1) {
+        if (text[j] === '(') depth += 1;
+        else if (text[j] === ')') depth -= 1;
+      }
+      out += '\u0000';
+      i = j - 1;
+      continue;
+    }
+    out += text[i];
+  }
+  return out;
+}
+
 function flagEnabled(rawLine, flag) {
   // `executedCommand` FIRST (#1995 r6). A leading environment assignment is
   // passed through the ENVIRONMENT, never as an argument, so
@@ -405,7 +452,9 @@ function flagEnabled(rawLine, flag) {
   // spelling. Both of those were fixed at their own call site, which is why
   // this one survived: the SAFETY predicate had never been asked the question.
   const line = stripOtherOptionValues(
-    executedCommand(stripRedirections(normalizeFlagEquals(rawLine))),
+    executedCommand(
+      stripCommandSubstitutions(stripRedirections(normalizeFlagEquals(rawLine))),
+    ),
   );
   // Quoted values are values. An earlier pattern excluded quotes from the
   // captured value, so `--keep-vars="false"` failed the capture, backtracked

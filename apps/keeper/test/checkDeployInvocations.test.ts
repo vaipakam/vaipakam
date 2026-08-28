@@ -1510,6 +1510,33 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a safety flag inside a COMMAND SUBSTITUTION does not bless (#1995 r14)', () => {
+    // The substitution writes to stderr and contributes no argument, so this
+    // is a bare deploy — but its source text contains --keep-vars.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nwrangler deploy $(echo --keep-vars >&2)\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a REAL safety flag is still safe (#1995 r14 control)', () => {
+    for (const flag of ['--keep-vars', '--dry-run']) {
+      const r = runWith('contracts/script/deploy-chain.sh', `cd apps/agent\nwrangler deploy ${flag}\n`);
+      expect(r.ok, flag).toBe(true);
+    }
+  });
+
+  it('a backticked command in PROSE is not blanked (#1995 r14 control)', () => {
+    // Backticks are deliberately left alone: in prose the command being judged
+    // sits inside a Markdown code span, and blanking it would delete it.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'In apps/agent run `wrangler deploy --keep-vars` now.\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('a dynamic reassignment CLEARS the stale binding (#1995 r14)', () => {
     // Without this, the scanner kept resolving TARGET to the keeper and
     // reported a keeper violation for a command that enters the agent — the
