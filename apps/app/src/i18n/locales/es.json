@@ -2272,6 +2272,21 @@
       "copyAria": "Copiar dirección {{address}}",
       "viewAria": "Ver {{address}} en el explorador de bloques",
       "copied": "Dirección copiada"
+    },
+    "legalGate": {
+      "verifying": "Comprobando si las condiciones se aplican a tu cartera…",
+      "readErrorTitle": "No se han podido comprobar las condiciones",
+      "readErrorBody": "No hemos podido conectar con la red para saber si necesitas aceptar las condiciones de Vaipakam, así que la aplicación permanece cerrada en lugar de suponerlo. No pasa nada con tu cartera ni con tus posiciones: inténtalo de nuevo en un momento.",
+      "retry": "Reintentar",
+      "title": "Acepta las condiciones para continuar",
+      "body": "Los operadores de Vaipakam han puesto en vigor una versión de las condiciones. Aceptar es una firma única que registra qué versión aceptaste; solo se te volverá a preguntar si las condiciones cambian.",
+      "currentVersion": "Versión en vigor",
+      "contentHash": "Huella del contenido",
+      "readTerms": "Leer las Condiciones",
+      "privacyPolicy": "Política de Privacidad",
+      "signAccept": "Aceptar y continuar",
+      "signing": "Esperando a tu cartera…",
+      "footnote": "Tu aceptación queda registrada en la cadena frente a la versión y la huella exactas que se muestran arriba, de modo que lo que aceptaste sigue siendo comprobable más adelante. Devolver, reclamar y retirar nunca quedan bloqueados por esto."
     }
   },
   "contractError": {

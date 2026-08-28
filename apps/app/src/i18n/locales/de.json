@@ -2272,6 +2272,21 @@
       "copyAria": "Adresse {{address}} kopieren",
       "viewAria": "{{address}} im Block-Explorer anzeigen",
       "copied": "Adresse kopiert"
+    },
+    "legalGate": {
+      "verifying": "Wird geprüft, ob die Bedingungen für Ihre Wallet gelten…",
+      "readErrorTitle": "Bedingungen konnten nicht geprüft werden",
+      "readErrorBody": "Wir konnten das Netzwerk nicht erreichen, um festzustellen, ob Sie die Bedingungen von Vaipakam annehmen müssen. Deshalb bleibt die App geschlossen, statt zu raten. Mit Ihrer Wallet und Ihren Positionen ist alles in Ordnung – versuchen Sie es gleich noch einmal.",
+      "retry": "Erneut versuchen",
+      "title": "Bedingungen annehmen, um fortzufahren",
+      "body": "Die Betreiber von Vaipakam haben eine Fassung der Bedingungen in Kraft gesetzt. Die Annahme ist eine einmalige Signatur, die festhält, welcher Fassung Sie zugestimmt haben; erneut gefragt werden Sie nur, wenn sich die Bedingungen ändern.",
+      "currentVersion": "Geltende Fassung",
+      "contentHash": "Inhalts-Fingerabdruck",
+      "readTerms": "Bedingungen lesen",
+      "privacyPolicy": "Datenschutzerklärung",
+      "signAccept": "Annehmen und fortfahren",
+      "signing": "Warten auf Ihre Wallet…",
+      "footnote": "Ihre Annahme wird on-chain gegen genau die oben gezeigte Fassung und den Fingerabdruck festgehalten, sodass später überprüfbar bleibt, wozu Sie zugestimmt haben. Rückzahlen, Beanspruchen und Abheben werden dadurch nie blockiert."
     }
   },
   "contractError": {

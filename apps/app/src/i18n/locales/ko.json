@@ -2272,6 +2272,21 @@
       "copyAria": "address {{address}} 복사",
       "viewAria": "block explorer에서 {{address}} 보기",
       "copied": "주소가 복사되었습니다"
+    },
+    "legalGate": {
+      "verifying": "약관이 지갑에 적용되는지 확인하는 중…",
+      "readErrorTitle": "약관을 확인하지 못했습니다",
+      "readErrorBody": "Vaipakam 약관에 동의해야 하는지 확인하기 위해 네트워크에 연결하지 못했습니다. 추측하는 대신 앱을 닫아 둡니다. 지갑이나 포지션에는 문제가 없습니다. 잠시 후 다시 시도해 주세요.",
+      "retry": "다시 시도",
+      "title": "계속하려면 약관에 동의하세요",
+      "body": "Vaipakam 운영자가 약관의 한 버전을 시행했습니다. 동의는 어떤 버전에 동의했는지 기록하는 일회성 서명입니다. 약관이 바뀔 때만 다시 요청됩니다.",
+      "currentVersion": "시행 중인 버전",
+      "contentHash": "콘텐츠 지문",
+      "readTerms": "약관 읽기",
+      "privacyPolicy": "개인정보 처리방침",
+      "signAccept": "동의하고 계속",
+      "signing": "지갑 응답을 기다리는 중…",
+      "footnote": "동의는 위에 표시된 정확한 버전과 지문에 대해 온체인에 기록되므로, 무엇에 동의했는지 나중에도 확인할 수 있습니다. 상환, 청구, 출금은 이 절차로 인해 막히지 않습니다."
     }
   },
   "contractError": {

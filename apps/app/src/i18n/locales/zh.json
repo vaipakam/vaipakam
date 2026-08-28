@@ -2272,6 +2272,21 @@
       "copyAria": "复制地址 {{address}}",
       "viewAria": "在区块浏览器查看 {{address}}",
       "copied": "地址已复制"
+    },
+    "legalGate": {
+      "verifying": "正在检查这些条款是否适用于你的钱包…",
+      "readErrorTitle": "无法检查条款",
+      "readErrorBody": "我们无法连接网络以确认你是否需要接受 Vaipakam 的条款，因此应用保持关闭，而不是凭猜测放行。你的钱包和仓位都没有问题——请稍后再试。",
+      "retry": "重试",
+      "title": "接受条款后继续",
+      "body": "Vaipakam 的运营方已让某一版本的条款生效。接受是一次性签名，用于记录你同意的是哪个版本；只有条款变更时才会再次询问你。",
+      "currentVersion": "生效版本",
+      "contentHash": "内容指纹",
+      "readTerms": "阅读条款",
+      "privacyPolicy": "隐私政策",
+      "signAccept": "接受并继续",
+      "signing": "正在等待你的钱包…",
+      "footnote": "你的接受会针对上面显示的确切版本和指纹记录在链上，因此你同意过的内容以后仍可查证。还款、领取和提取都不会因此被阻止。"
     }
   },
   "contractError": {

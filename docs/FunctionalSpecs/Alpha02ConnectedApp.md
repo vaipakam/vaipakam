@@ -690,6 +690,32 @@ Thin-market honesty rules apply.
 - Wallet and analytics integrations should avoid unnecessary telemetry where
   the app can control it.
 
+### Terms of Service acceptance
+
+- The protocol can have a version of the Terms of Service in force, or none.
+  While none is in force, the app behaves as though the requirement does not
+  exist: no user is asked anything and no surface is withheld.
+- While a version IS in force, a connected wallet that has not accepted that
+  version cannot reach the app's surfaces. It is shown which version applies,
+  a fingerprint of the exact text, and links to read the Terms and the Privacy
+  Policy before deciding.
+- Acceptance is a single action recorded against that exact version and
+  fingerprint, so what a user agreed to remains checkable afterwards.
+- A user is asked again only when the terms change. A change of version, or a
+  change to the text at an unchanged version, both require fresh acceptance;
+  an earlier acceptance no longer counts.
+- A visitor with no wallet connected is never gated. The requirement is about
+  the party who would transact.
+- **When the app cannot determine whether terms apply, it withholds the
+  surfaces and says so, rather than allowing them.** This is the intended
+  behaviour and not a degraded one: the requirement is enforced by the app
+  alone — the protocol records acceptance and publishes the version in force,
+  but does not itself refuse an action from a wallet that has not accepted —
+  so allowing access on an unanswered check would mean the requirement stops
+  applying exactly when the check is unreliable.
+- Repaying, claiming and withdrawing are never withheld by this requirement.
+  A user must always be able to close a position and take their assets out.
+
 ## Regression Expectations
 
 The app should maintain an executable regression tier that drives the real app

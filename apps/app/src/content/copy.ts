@@ -278,6 +278,27 @@ const copySource = {
     ),
     phaseSend: tmpl(`Submitting… ({{c}} of {{t}})`, ['c', 't']),
   },
+  // #1961 — the Terms-of-Service route gate. The contracts delegate
+  // this enforcement to the client, so this copy is the only place a
+  // user is ever told a ToS applies to them.
+  legalGate: {
+    verifying: 'Checking whether the terms apply to your wallet\u2026',
+    readErrorTitle: 'Couldn\u2019t check the terms',
+    readErrorBody:
+      'We couldn\u2019t reach the network to find out whether you need to accept Vaipakam\u2019s terms, so the app stays closed rather than guessing. Nothing is wrong with your wallet or your positions \u2014 try again in a moment.',
+    retry: 'Try again',
+    title: 'Accept the terms to continue',
+    body:
+      'Vaipakam\u2019s operators have put a version of the terms in force. Accepting is a one-off signature that records which version you agreed to; you\u2019ll only be asked again if the terms change.',
+    currentVersion: 'Version in force',
+    contentHash: 'Content fingerprint',
+    readTerms: 'Read the Terms',
+    privacyPolicy: 'Privacy Policy',
+    signAccept: 'Accept and continue',
+    signing: 'Waiting for your wallet\u2026',
+    footnote:
+      'Your acceptance is recorded on-chain against the exact version and fingerprint shown above, so what you agreed to stays checkable later. Repaying, claiming and withdrawing are never blocked by this.',
+  },
   killSwitch: {
     disabled:
       'This action is switched off right now — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, claims, and withdrawals all stay open.',

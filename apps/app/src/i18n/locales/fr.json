@@ -2272,6 +2272,21 @@
       "copyAria": "Copier l'adresse {{address}}",
       "viewAria": "Voir {{address}} dans l'explorateur de blocs",
       "copied": "Adresse copiée"
+    },
+    "legalGate": {
+      "verifying": "Vérification que les conditions s’appliquent à votre portefeuille…",
+      "readErrorTitle": "Impossible de vérifier les conditions",
+      "readErrorBody": "Nous n’avons pas pu joindre le réseau pour savoir si vous devez accepter les conditions de Vaipakam ; l’application reste donc fermée plutôt que de le supposer. Ni votre portefeuille ni vos positions ne sont en cause — réessayez dans un instant.",
+      "retry": "Réessayer",
+      "title": "Acceptez les conditions pour continuer",
+      "body": "Les opérateurs de Vaipakam ont mis en vigueur une version des conditions. L’acceptation est une signature unique qui enregistre la version que vous avez acceptée ; vous ne serez sollicité de nouveau que si les conditions changent.",
+      "currentVersion": "Version en vigueur",
+      "contentHash": "Empreinte du contenu",
+      "readTerms": "Lire les Conditions",
+      "privacyPolicy": "Politique de confidentialité",
+      "signAccept": "Accepter et continuer",
+      "signing": "En attente de votre portefeuille…",
+      "footnote": "Votre acceptation est enregistrée sur la chaîne face à la version et à l’empreinte exactes affichées ci-dessus, de sorte que ce que vous avez accepté reste vérifiable par la suite. Rembourser, réclamer et retirer ne sont jamais bloqués par ce contrôle."
     }
   },
   "contractError": {
