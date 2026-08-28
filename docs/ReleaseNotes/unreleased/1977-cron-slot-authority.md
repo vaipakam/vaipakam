@@ -10,15 +10,24 @@ not.
 
 That Worker is `vaipakam-offchain-data-archive`, the pre-rename predecessor of
 the nightly backup Worker. It was supposed to be retired once its replacement
-had completed a run; it never was. It is still armed on the same minute as the
-replacement, with its own storage credentials and its own copy of the backup
-encryption key, and it has been running a full second backup every night for
-at least three weeks. Reading the account rather than the prose is what
-surfaced it.
+had completed a run; it never was. **As read from the account on 2026-08-27**
+it was still armed on the same minute as the replacement, with its own storage
+credentials and its own copy of the backup encryption key, having run a full
+second backup every night for at least three weeks. Reading the account rather
+than the prose is what surfaced it.
+
+Those are dated observations, deliberately. This note lives in the pending
+folder until the day's notes are assembled, the account can change in the
+meantime, and the checker that forbids stale counts everywhere else skips the
+release-notes tree by design — so a present-tense claim here could ship
+describing a state that had already been cleaned up. The one place that
+carries the live figure is the authority, which is checked against the
+account; everything here is history with a date on it.
 
 Three things follow from that, and this change addresses all three. The budget
-is four triggers live, not three, so the slot every one of those comments
-reserved for the undeployed mesh watcher is already occupied — the keeper's
+was four triggers live on that date, not the three every one of those comments
+assumed — so the slot they reserved for the undeployed mesh watcher was already
+occupied — the keeper's
 re-enable procedure, whose first step is "confirm a trigger is free", would
 have failed at that step with no explanation available. The restore runbook's
 rule for choosing between the two backup buckets ("the two never both hold a

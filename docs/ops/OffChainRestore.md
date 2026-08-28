@@ -302,12 +302,25 @@ then deploy.
    >   `docs/ops/CloudflareCronSlots.md` names which Workers exist, and
    >   #1977 tracks the retirement that will make this a single pair again.
    >
-   >   Then, for EACH credential set that must remain in service, create
-   >   the replacement scoped key with the same capability sets
-   >   (write-only: `listBuckets` + `writeFiles`; read-only:
-   >   `listBuckets` + `listFiles` + `readFiles`), and delete **every** old
-   >   key you enumerated — including the predecessor Worker's, whose
-   >   replacement is needed only if that Worker is still running. Leave
+   >   Then create replacement scoped keys **only for Workers running in the
+   >   NEW account** — the same capability sets (write-only: `listBuckets` +
+   >   `writeFiles`; read-only: `listBuckets` + `listFiles` + `readFiles`) —
+   >   and delete **every** old key you enumerated.
+   >
+   >   **`vaipakam-offchain-data-archive` gets NO replacement key in this
+   >   branch.** Revoke its key and stop. It has no source in this
+   >   repository, so it can only be running in the account you are
+   >   escaping — and issuing it fresh `writeFiles` credentials puts a
+   >   working write key inside the compromised account, where the same
+   >   attacker who took Workers Edit can read it and resume poisoning the
+   >   archive bucket the moment you finish revoking the old one. That
+   >   defeats the rotate-first containment this whole step exists for.
+   >
+   >   An earlier revision of this line said its replacement was "needed
+   >   only if that Worker is still running", which reads as a condition to
+   >   evaluate and answers YES on the compromise branch — the one branch
+   >   where the answer must be no. Deploy credentials only to Workers in
+   >   the fresh account (Codex #1978 r28). Leave
    >   the bucket's lifecycle rules untouched. Then
    >   treat the archive history as
    >   **attacker-WRITABLE, not merely readable** — see the archive-
@@ -2261,6 +2274,19 @@ two procedures share the offline-key handling discipline.
    that contradicts it were written minutes apart.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
+
+   **Then DECRYPT fresh output from every Worker and every bucket with the
+   retained offline new key, before step 6 destroys the old one** (Codex
+   #1978 r28). A green run is not proof the key is right: a mistyped but
+   valid 64-hex secret lets a Worker encrypt and upload successfully, and
+   its own in-Worker verification uses that same mistyped value, so it
+   agrees with itself. The warm Worker's weekly healthcheck reads only the
+   warm bucket, so nothing at all examines the predecessor's output while
+   #1977 is open — its bucket, the one §2 now names as a restore fallback,
+   can quietly fill with ciphertext no retained key opens.
+   Pull one archive written after step 4 from each bucket and decrypt it
+   OFFLINE with the new key you hold. Only that proves the secret each
+   Worker received is the secret you kept.
 6. **Sweep for stragglers before retiring anything — in EVERY bucket you
    paused in step 1.** The old key is destroyed at the end of this step, so
    a bucket left unswept is a bucket whose stragglers become permanently

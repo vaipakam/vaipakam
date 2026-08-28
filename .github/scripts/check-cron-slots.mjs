@@ -276,7 +276,7 @@ const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
  * other closed world in this file leaked because it enumerated an open class.
  */
 const FUNCTION_WORD =
-  String.raw`(?:in|on|at|for|to|of|by|with|from|right|now|today|tonight|here|there|yet|anymore|and|or|but|so|because|while|since|until|unless|though|although)\b`;
+  String.raw`(?:in|on|at|for|to|of|by|with|from|right|now|today|tonight|here|there|yet|anymore|and|or|but|so|because|while|since|until|unless|though|although|when|that|before|after|during|per|as|than|then|already|still|total|currently|each|both|only)\b`;
 
 /**
  * ── THE TEN ORIGINALS ARE RE-VERIFIED, NOT ASSUMED ────────────────────────
@@ -351,7 +351,13 @@ const OCCUPANCY = [
     'i',
   ),
   // "4 are taken", "four were occupied", "3 in use", "4 in use today"
-  new RegExp(String.raw`\b${N}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b`, 'i'),
+  // Codex #1978 r28: the FIFTH matcher in this array to need binding. "four
+  // are taken by other consumers" counts leases; the subject must be trigger
+  // vocabulary, or the count must be followed by it.
+  new RegExp(
+    String.raw`(?:account|triggers?|slots?|schedules?)[\s\S]{0,160}?\b${N}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b(?![-\s]+(?!${FUNCTION_WORD}|total\b|currently\b|already\b)[A-Za-z])`,
+    'i',
+  ),
   // "takes the account to 5", "brings the account to five"
   new RegExp(
     String.raw`\b(?:takes?|brings?|puts?)${WRAP}the${WRAP}account${WRAP}to${WRAP}${N}\b`,
@@ -794,7 +800,12 @@ function* visibleLines(md) {
     // anyway because the deferral was about unbounded hardening against
     // deliberate EVASION, not about tolerating CI breakage on a natural edit.
     // It is also one bounded rule I had already written for fences.
-    if (openedWith === null && /^ {4,}\S/.test(line) && line.trim() !== '') continue;
+    // Codex #1978 r28: TABS indent code as well. A tab counts to the next
+    // multiple of four, so one tab is already an indented code block — and a
+    // tab-indented format example beside the real stamp read as a duplicate
+    // and BLOCKED the gate. I implemented "four spaces" from the rule's most
+    // common spelling rather than from the rule.
+    if (openedWith === null && /^(?: {4,}|\t)\S/.test(line) && line.trim() !== '') continue;
 
     const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(line);
     if (fence) {
@@ -1670,9 +1681,15 @@ export function parseInventory(md) {
     // condition, again: I wrote the rule for the shape in the finding and not
     // for the question it was asking.
     const isNone = /^\s*\*?\*?\(?\s*none\s*\)?\*?\*?\s*$/i.test(scheduleCell);
-    if (!spans.length && !isNone && !isWouldBe && scheduleCell.trim() !== '') {
+    // Codex #1978 r28: the empty cell is NOT exempt. I wrote
+    // `scheduleCell.trim() !== ''` into the r25 rule without asking what an
+    // empty Schedule column claims — which is nothing a reader can act on,
+    // in the one column whose whole job is to say whether a trigger is spent.
+    // Every other non-canonical value is reported; blank was exempted purely
+    // because it was not the shape in front of me.
+    if (!spans.length && !isNone && !isWouldBe) {
       problems.push(
-        `\`${name}\`'s schedule cell reads ${scheduleCell.trim().slice(0, 60)}, which is ` +
+        `\`${name}\`'s schedule cell reads ${scheduleCell.trim() ? scheduleCell.trim().slice(0, 60) : '(empty)'}, which is ` +
           `neither a backticked cron expression nor a canonical no-schedule form ` +
           `(\`*(none)*\` or \`*(would be ...)*\`); a reader cannot tell what it claims ` +
           `and this parser assumes it claims nothing`,
@@ -2285,6 +2302,10 @@ const MUST_NOT_FIRE = [
   ['a ratio counting shards', 'The cron tick found 3 of 5 shards already in use.'],
   ['no room for a retry', 'This cron worker has no room for another retry attempt.'],
   ['at capacity for retention', 'Cron logs are at capacity for retention.'],
+  // Codex #1978 r28: three more, and the sweep grows with them.
+  ['leases taken by consumers', 'The cron handler requests five leases; four are taken by other consumers.'],
+  ['a worker in a thread pool', 'The cron dispatcher has no room for another worker in its thread pool.'],
+  ['a worker in a parser pool', 'This cron tick leaves room for one more worker in the parser pool.'],
   ['a spare key, near cron', 'The cron trigger rotates between the primary and spare encryption keys.'],
   // Codex #1978 r20: a cron IMPLEMENTATION note. The window contains "cron",
   // the ratio counts something else entirely, and firing here would have
