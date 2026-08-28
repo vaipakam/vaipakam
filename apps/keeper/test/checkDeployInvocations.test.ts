@@ -1498,6 +1498,26 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a keep-vars flag in a leading ENV ASSIGNMENT does not bless (#1995 r6)', () => {
+    // The mirror of the r4 selector case, on the SAFETY predicate rather than
+    // the scope one. The shell passes NOTE through the environment, so wrangler
+    // receives a bare deploy — but `flagEnabled` read the raw segment and found
+    // `--keep-vars` inside the quoted value.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nNOTE="--keep-vars" wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a dry-run flag in a leading ENV ASSIGNMENT does not bless (#1995 r6)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nNOTE="--dry-run" wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a DOT-continued sibling name is not the scoped package (#1995 r4)', () => {
     const r = runWith(
       'docs/ops/DeploymentRunbook.md',

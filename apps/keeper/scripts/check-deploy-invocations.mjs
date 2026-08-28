@@ -344,7 +344,16 @@ function stripOtherOptionValues(line, keep = []) {
  * false-ish value disables.
  */
 function flagEnabled(rawLine, flag) {
-  const line = stripOtherOptionValues(stripRedirections(normalizeFlagEquals(rawLine)));
+  // `executedCommand` FIRST (#1995 r6). A leading environment assignment is
+  // passed through the ENVIRONMENT, never as an argument, so
+  // `NOTE="--keep-vars" wrangler deploy` is a bare, destructive deploy — but
+  // the flag was read out of the assignment's quoted value and BLESSED it.
+  // This is the r40 `run deploy` case and the r4 `--name` case in a third
+  // spelling. Both of those were fixed at their own call site, which is why
+  // this one survived: the SAFETY predicate had never been asked the question.
+  const line = stripOtherOptionValues(
+    executedCommand(stripRedirections(normalizeFlagEquals(rawLine))),
+  );
   // Quoted values are values. An earlier pattern excluded quotes from the
   // captured value, so `--keep-vars="false"` failed the capture, backtracked
   // to the optional-group-absent branch, and read as a bare — i.e. ENABLED —
