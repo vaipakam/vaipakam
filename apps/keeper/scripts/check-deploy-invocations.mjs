@@ -1381,10 +1381,21 @@ function dirDirective(seg) {
   // The destination is ONE SHELL WORD. Stopping at the first closing quote lost
   // the static suffix of `cd "$ROOT"/apps/agent` — bash concatenates the chunks
   // and enters apps/agent (#1995 r8).
-  const pushed = seg.match(new RegExp(`^pushd\\s+${OPTS}(${WORD})`));
+  // A BRACE GROUP runs in the CURRENT shell, so its `cd` persists — unlike a
+  // `( … )` subshell (#1995 r12). `{ cd apps/agent; }` on one line left the
+  // process in apps/agent, but this matcher is `^cd`-anchored and the segment
+  // begins `{ cd …`, so the move was never recorded and the next line's bare
+  // deploy was judged from the repo root.
+  //
+  // `\{\s+` and not `\{\s*`: bash requires the space, and `{cd x; }` is a
+  // command named `{cd`, not a group. Braces are also deliberately absent from
+  // `netParens` — they open no subshell, so nothing here needs restoring on
+  // close, which is exactly the difference from the paren case.
+  const LEAD = String.raw`(?:\{\s+)?`;
+  const pushed = seg.match(new RegExp(`^${LEAD}pushd\\s+${OPTS}(${WORD})`));
   if (pushed) return { kind: 'pushd', target: dequote(pushed[1]) };
-  if (/^popd\b/.test(seg)) return { kind: 'popd' };
-  const cd = seg.match(new RegExp(`^cd\\s+${OPTS}(${WORD})`));
+  if (new RegExp(`^${LEAD}popd\\b`).test(seg)) return { kind: 'popd' };
+  const cd = seg.match(new RegExp(`^${LEAD}cd\\s+${OPTS}(${WORD})`));
   return cd ? { kind: 'cd', target: dequote(cd[1]) } : null;
 }
 

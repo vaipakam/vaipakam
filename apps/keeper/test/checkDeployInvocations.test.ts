@@ -1510,6 +1510,35 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a BRACE GROUP runs in the current shell and its cd persists (#1995 r12)', () => {
+    // The mirror of the subshell cases: `{ … ; }` is not a subshell, so the
+    // move is real and the next line's bare deploy is the agent's.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '{ cd apps/agent; }\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a ( ) subshell still does NOT persist (#1995 r12 control)', () => {
+    // The distinction the brace fix must not blur.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '( cd apps/agent )\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('{cd without a space is a command name, not a group (#1995 r12)', () => {
+    // bash requires the space; `{cd` is the command `{cd`.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '{cd apps/agent; }\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('a ( ) subshell cannot move the parent either (#1995 r13)', () => {
     // The r9 fix covered `|` and `&` and stopped there. Bash stays in
     // apps/agent; the scanner recorded the indexer and let the deploy through.
