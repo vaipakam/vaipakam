@@ -1019,6 +1019,41 @@ const SCOPED = [
  * (#1995 r5). Only `*` is translated; a filter is matched against the package
  * NAME, which is the spelling a wrapper uses.
  */
+/**
+ * Workspace dependency names a scoped package declares, read once per package.
+ *
+ * pnpm's `...<pattern>` selects the pattern's DEPENDENTS and `<pattern>...` its
+ * DEPENDENCIES (#1995 r9). Stripping the dots and matching the remainder as a
+ * plain literal reduced `--filter ...@vaipakam/lib` to a name no scoped package
+ * has, so it selected nothing — while pnpm selects BOTH protected Workers,
+ * because each declares `@vaipakam/lib`.
+ *
+ * Resolved from the manifests rather than guessed. The conservative
+ * alternative — attributing every `...` selector to every scoped package —
+ * would report the keeper for `...@vaipakam/agent`, which is a false red unless
+ * the keeper really does depend on the agent.
+ */
+const workspaceDepsCache = new Map();
+function scopedWorkspaceDeps(sc) {
+  if (!workspaceDepsCache.has(sc.dir)) {
+    let names = [];
+    try {
+      const m = JSON.parse(
+        readFileSync(`${REPO_ROOT}/${sc.dir}/package.json`, 'utf8'),
+      );
+      names = [
+        ...Object.keys(m.dependencies ?? {}),
+        ...Object.keys(m.devDependencies ?? {}),
+        ...Object.keys(m.peerDependencies ?? {}),
+      ];
+    } catch {
+      names = [];
+    }
+    workspaceDepsCache.set(sc.dir, names);
+  }
+  return workspaceDepsCache.get(sc.dir);
+}
+
 function filterScopes(line) {
   // EVERY selector, not the first: pnpm runs on packages satisfying "at least
   // one of the selectors", so a protected glob sitting second was ignored
@@ -1066,7 +1101,11 @@ function filterScopes(line) {
   );
   for (const m of all) {
     sawSelector = true;
-    let pat = dequote(m[1]).replace(/^\.\.\.|\.\.\.$/g, '');
+    let pat = dequote(m[1]);
+    // Which DIRECTION the dependency selector runs, before the dots are lost.
+    const wantsDependents = /^\.\.\./.test(pat);
+    const wantsDependencies = /\.\.\.$/.test(pat);
+    pat = pat.replace(/^\.\.\.|\.\.\.$/g, '');
     // A LEADING `!` excludes: pnpm selects the packages NOT matching, so
     // `--filter '!@vaipakam/indexer'` reaches both protected Workers (#1995 r8).
     const negated = pat.startsWith('!');
@@ -1092,7 +1131,16 @@ function filterScopes(line) {
     // A positive LITERAL is a real selection and is resolved here now. It used
     // to be skipped as "handled by scopeOf", which was true while selections
     // were only ever added — but a negation has to subtract from something.
-    const matched = SCOPED.filter((sc) => re.test(isDir ? sc.dir : sc.filter));
+    const direct = SCOPED.filter((sc) => re.test(isDir ? sc.dir : sc.filter));
+    // `...X` reaches whatever DEPENDS on X; `X...` reaches what X depends on.
+    const viaGraph = wantsDependents
+      ? SCOPED.filter((sc) => scopedWorkspaceDeps(sc).some((d) => re.test(d)))
+      : wantsDependencies
+        ? SCOPED.filter((sc) =>
+            direct.some((d) => scopedWorkspaceDeps(d).includes(sc.filter)),
+          )
+        : [];
+    const matched = [...new Set([...direct, ...viaGraph])];
     if (negated) {
       for (const sc of matched) excluded.add(sc);
     } else {

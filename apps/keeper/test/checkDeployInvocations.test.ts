@@ -45,6 +45,23 @@ function runWith(relPath: string, content: string): { ok: boolean; out: string }
   }
 }
 
+/** Write a fixture file WITHOUT running the guard, for multi-file cases. */
+function seed(relPath: string, content: string): void {
+  const full = join(root, relPath);
+  mkdirSync(dirname(full), { recursive: true });
+  writeFileSync(full, content);
+}
+
+/** The two protected manifests, so `...<pattern>` has a graph to resolve. */
+function seedWorkspace(): void {
+  for (const name of ['agent', 'keeper']) {
+    seed(
+      `apps/${name}/package.json`,
+      `{"name":"@vaipakam/${name}","dependencies":{"@vaipakam/lib":"workspace:*"}}\n`,
+    );
+  }
+}
+
 describe('check-deploy-invocations — forms it must CATCH', () => {
   it('the deploy-wrapper subshell form (#1924 r8)', () => {
     const r = runWith(
@@ -1508,6 +1525,41 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
       'cd apps/agent\nNOTE="--keep-vars" wrangler deploy\n',
     );
     expect(r.ok).toBe(false);
+  });
+
+  it('...<pattern> reaches the pattern\'s DEPENDENTS (#1995 r9)', () => {
+    // Both protected packages declare @vaipakam/lib, so pnpm selects both.
+    // Stripping the dots reduced this to a literal no package has.
+    seedWorkspace();
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter ...@vaipakam/lib run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+    expect(r.out).toContain('apps/keeper');
+  });
+
+  it('...<pattern> does NOT over-report (#1995 r9)', () => {
+    // The keeper does not depend on the agent, so it must not be named. A
+    // blanket "attribute every ... selector to everything" would report it.
+    seedWorkspace();
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter ...@vaipakam/agent run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+    expect(r.out).not.toContain('apps/keeper');
+  });
+
+  it('a ... selector matching nothing selects nothing (#1995 r9)', () => {
+    seedWorkspace();
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter ...@vaipakam/nothing run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(true);
   });
 
   it('a JSON script value is split on its own operators (#1995 r14)', () => {
