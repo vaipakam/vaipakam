@@ -1,4 +1,4 @@
-## Thread — The liquidity-confidence pass stops re-reading what cannot change (PR #TBD)
+## Thread — The liquidity-confidence pass stops re-reading what cannot change (PR #1993)
 
 The keeper's liquidity-confidence pass decides, per collateral asset, whether
 real aggregator routing supports the depth tier the protocol has on file. Its
