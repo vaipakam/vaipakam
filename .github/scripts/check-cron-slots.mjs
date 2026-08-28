@@ -325,6 +325,20 @@ const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
  *
  * `only` and `sole` are required to carry `the`, because a bare "only" is an
  * ordinary adverb and would fire on prose.
+ *
+ * Codex #1978 r57: introduced in two of the family's forms and left out of the
+ * other six, so "Both cron triggers exist in the account." and "The account
+ * currently runs both cron triggers." stayed invisible one round after the
+ * shape was accepted as a miss. That is the fix-one-member-leave-the-sibling
+ * shape this file names three separate times and has now committed seven
+ * times — including in the change that extracted `CAP_NOUN` to stop it.
+ *
+ * It is used in every position where a determiner can carry the quantity: the
+ * subject of a predicate, the complement of `has`/`runs`, and the counted noun
+ * phrase. It is deliberately NOT used in three: `N of 5` (a ratio needs a
+ * numerator, and "both of 5" is not English), `takes the account to N` (an
+ * endpoint), and the `occupy` complement — "occupies both" reads as a claim
+ * about which two, not how many.
  */
 const QUANT = String.raw`(?:${N}|both|the${WRAP}(?:only|sole|single))`;
 
@@ -485,7 +499,7 @@ const OCCUPANCY = [
     'i',
   ),
   new RegExp(
-    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:${TEMPORAL}${WRAP})*exists?\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\b${QUANT}${WRAP}${CAP_NOUN}${WRAP}(?:${TEMPORAL}${WRAP})*exists?\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   // "4/5 cron triggers", "3 of 5 slots". The NOUN is required and must be
@@ -563,15 +577,15 @@ const OCCUPANCY = [
   // puts a predicate adjective after a copula, so neither shape above reaches
   // them.
   new RegExp(
-    String.raw`\bthere${WRAP}(?:are|is)${WRAP}${N}${WRAP}${CAP_NOUN}${WRAP}(?:${TEMPORAL}${WRAP})*running\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\bthere${WRAP}(?:are|is)${WRAP}${QUANT}${WRAP}${CAP_NOUN}${WRAP}(?:${TEMPORAL}${WRAP})*running\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   new RegExp(
-    String.raw`\b(?:(?:this|the|our)${WRAP}(?:cloudflare${WRAP})?(?:account|org)|we)${WRAP}(?:${TEMPORAL}${WRAP})*(?:runs?|uses?|is${WRAP}running|is${WRAP}using)${WRAP}${N}${WRAP}${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\b(?:(?:this|the|our)${WRAP}(?:cloudflare${WRAP})?(?:account|org)|we)${WRAP}(?:${TEMPORAL}${WRAP})*(?:runs?|uses?|is${WRAP}running|is${WRAP}using)${WRAP}${QUANT}${WRAP}${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   new RegExp(
-    String.raw`(?:account|triggers?|slots?|schedules?)[\s\S]{0,160}?\b${N}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b(?![-\s]+(?!${FUNCTION_WORD}|total\b|currently\b|already\b)[A-Za-z])`,
+    String.raw`(?:account|triggers?|slots?|schedules?)[\s\S]{0,160}?\b${QUANT}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b(?![-\s]+(?!${FUNCTION_WORD}|total\b|currently\b|already\b)[A-Za-z])`,
     'i',
   ),
   // "takes the account to 5", "brings the account to five"
@@ -709,7 +723,7 @@ const OCCUPANCY = [
   // account state. A bare `N (cron )?triggers` would have banned the cap and
   // fought its own fix — the trap the admission criterion names at the top.
   new RegExp(
-    String.raw`\b${N}${WRAP}(?:live|active|armed|scheduled|enabled|configured|in-use)${WRAP}(?:cron${WRAP})?triggers?\b`,
+    String.raw`\b${QUANT}${WRAP}(?:live|active|armed|scheduled|enabled|configured|in-use)${WRAP}(?:cron${WRAP})?triggers?\b`,
     'i',
   ),
   // The SUBJECT is required here for the same reason it is on the verdicts
@@ -738,7 +752,7 @@ const OCCUPANCY = [
   // `the` or `our` account; every generic determiner — named, unnamed, or
   // separated from the noun by any number of modifiers — simply fails to be
   // one of those three, with nothing to enumerate and nothing to keep current.
-  String.raw`\b(?:(?:this|the|our)${WRAP}(?:cloudflare${WRAP})?(?:account|org)|we)${WRAP}(?:${TEMPORAL}${WRAP}|already${WRAP})*(?:has|have|holds?)${WRAP}${N}${WRAP}(?:live${WRAP}|active${WRAP})*${CAP_NOUN}\b`,
+  String.raw`\b(?:(?:this|the|our)${WRAP}(?:cloudflare${WRAP})?(?:account|org)|we)${WRAP}(?:${TEMPORAL}${WRAP}|already${WRAP})*(?:has|have|holds?)${WRAP}${QUANT}${WRAP}(?:live${WRAP}|active${WRAP})*${CAP_NOUN}\b`,
     'i',
   ),
   // Capacity VERDICTS — the same claim as `spare` and `headroom` with the
@@ -1049,6 +1063,21 @@ function* visibleLines(md) {
   // Parsing a language is a bad way to answer a question you can just rule
   // out. (See the escalation on #1978: two thirds of that PR's findings were
   // on this file, and the recent ones were CommonMark edge cases.)
+  // Codex #1978 r57: an omitted line is yielded as an EMPTY line, not dropped.
+  // Dropping made the two lines either side of a code block ADJACENT to every
+  // consumer, and adjacency is what those consumers read structure from. The
+  // consequence Codex demonstrated: `parseInventory` resets `inTable` on a
+  // fence — the r56 fix — and the fence never reached it, because this
+  // generator had already consumed both delimiters. A fenced example directly
+  // after the inventory left `inTable` set, and the pipe-bearing prose after
+  // the example was reported as a malformed row. CI blocked on a valid
+  // authority, by the very line added to stop that happening.
+  //
+  // A blank line is the one block boundary every consumer here already
+  // understands, so this states the omission in the vocabulary they read
+  // rather than adding a sentinel each would have to learn. It also makes the
+  // yielded sequence line-for-line with the source, which is what the r56
+  // comment assumed all along.
   let openedWith = null; // { kind, len } while inside a fence
   for (const line of md.split('\n')) {
     // At most three leading spaces: four or more is an indented code block,
@@ -1085,7 +1114,10 @@ function* visibleLines(md) {
     // CI-blocking consequence, and stripping a leading quote marker is one
     // decidable line, not a specification. The other two stay deferred.
     const bare = line.replace(/^ {0,3}(?:>\s?)+/, '');
-    if (openedWith === null && bare.trim() !== '' && indentWidth(bare) >= 4) continue;
+    if (openedWith === null && bare.trim() !== '' && indentWidth(bare) >= 4) {
+      yield '';
+      continue;
+    }
 
     const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(bare);
     if (fence) {
@@ -1097,8 +1129,7 @@ function* visibleLines(md) {
         // backtick — CommonMark does not treat ``` bad`info as an opener, so
         // opening one here hid the real inventory that followed and failed a
         // valid document. Tilde fences have no such rule.
-        if (kind === '`' && info.includes('`')) continue;
-        openedWith = { kind, len: run.length };
+        if (!(kind === '`' && info.includes('`'))) openedWith = { kind, len: run.length };
       } else if (
         openedWith.kind === kind &&
         run.length >= openedWith.len &&
@@ -1106,9 +1137,10 @@ function* visibleLines(md) {
       ) {
         openedWith = null;
       }
+      yield '';
       continue;
     }
-    if (openedWith === null) yield line;
+    yield openedWith === null ? line : '';
   }
 }
 
@@ -2001,19 +2033,20 @@ export function parseInventory(md) {
       inTable = false;
       continue;
     }
-    const pipes = splitTableRow(line).length - 1;
     const startsRow = /^ {0,3}\|/.test(line);
     if (startsRow) inTable = true;
-    // Inside the table, ANY line carrying a separator is a row — short,
-    // malformed or otherwise — and goes to the column check. A line with no
-    // separator at all ends the table rather than being judged as a row.
-    if (!startsRow) {
-      if (!inTable) continue;
-      if (pipes < 1) {
-        inTable = false;
-        continue;
-      }
-    }
+    // Inside the table, EVERY line is a row and goes to the column check —
+    // short, malformed, or carrying no separator at all.
+    //
+    // Codex #1978 r57: the previous line ended the table on a line with zero
+    // separators. GFM does not: a table body runs until a blank line or a new
+    // block, and a line with no pipe renders as a one-cell row (spec example
+    // 205). So a bare `` `vaipakam-keeper` `` under the table rendered as a
+    // visible row and left `problems` empty — the r18 defect a THIRD time, one
+    // pipe further down. Each round I have narrowed the skip by one case
+    // instead of removing it; there is no count of separators that decides
+    // membership, which is what r55 established and this line kept denying.
+    if (!startsRow && !inTable) continue;
     if (!/^\s*\|/.test(line)) {
       problems.push(
         `an inventory row is missing its leading pipe; Markdown renders it, this ` +
@@ -3190,6 +3223,14 @@ const MUST_FIRE = [
   ['the both determiner', 'Both cron triggers are live.'],
   ['the both determiner with a finite verb', 'Both cron triggers run nightly.'],
   ['the only determiner', 'The only cron trigger is live.'],
+  // r57: the same determiner in the family's other count positions. Accepted
+  // as a miss in r56 and fixed in two forms out of eight.
+  ['the both determiner in the exist form', 'Both cron triggers exist in the account.'],
+  ['the both determiner after a verb', 'The account currently runs both cron triggers.'],
+  ['the both determiner after has', 'This account has both cron triggers.'],
+  ['the both determiner in the taken form', 'Of the account triggers, both are taken.'],
+  ['the only determiner before live', 'The only live cron trigger is the indexer.'],
+  ['the both determiner in there-are-running', 'There are both cron triggers running.'],
   ['the finite run verb with all', 'All four cron triggers run nightly.'],
   // r45: no predicate at all — the plainest way to state the count.
   ['the bare existential', 'There are four cron triggers.'],
@@ -4039,6 +4080,35 @@ const INVENTORY_CASES = [
     { 'vaipakam-agent': ['* * * * *'] },
     [],
     1,
+  ],
+  // r57: ZERO separators, inside the table. GFM renders it as a one-cell row
+  // (spec example 205), so the reservation is on the page; the parser ended
+  // the table on it and reported nothing. r18 for the third time.
+  [
+    'a separator-less row inside the table is a finding',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |\n' +
+      '`vaipakam-keeper`',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    1,
+  ],
+  // r57: a fenced example between the table and pipe-bearing prose. The fence
+  // never reached `parseInventory` — `visibleLines` had already consumed both
+  // delimiters — so `inTable` survived the block and the prose was reported.
+  [
+    'a fenced block between the table and pipe prose ends the table',
+    '| Worker | Schedule | Source in this repo | Status |\n' +
+      '|---|---|---|---|\n' +
+      '| `vaipakam-agent` | `* * * * *` | `apps/agent` | live |\n' +
+      '```bash\n' +
+      'node .github/scripts/check-cron-slots.mjs --live\n' +
+      '```\n' +
+      'The accepted labels are live | reserved | undeployed | uncertain.',
+    { 'vaipakam-agent': ['* * * * *'] },
+    [],
+    0,
   ],
   [
     'pipes in prose outside a table are not a row',

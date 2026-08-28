@@ -137,6 +137,17 @@ attention:
   nothing was left untouched and nothing was overlooked in another file. The
   remedy was present, adjacent, and inert. Nothing that examines a change can
   see this; only reading the finished function can.
+- **The correction the producer had already made unreachable.** A later round
+  taught the table parser that a code block ends a table, which is what the
+  Markdown specification says and what the reader sees. The line was correct
+  and it could never run: the stage that strips code blocks out of the
+  document runs first, and by the time the parser sees anything the block and
+  both of its delimiters are gone. The parser was watching for a marker its
+  own input could not contain. The remedy was not to look harder for the
+  marker but to stop deleting it — omitted lines are now handed on as blank
+  ones, which is the same boundary in a form every reader of that stream
+  already understood. A test written against the parser alone would have
+  passed; only feeding it the real pipeline's output shows the gap.
 - **One rule, two threat models, opposite meanings.** The restore runbook
   gained a rule saying that if a backup fails its checksum, fall back to the
   other bucket. That is right on an ordinary restore, where the second bucket
