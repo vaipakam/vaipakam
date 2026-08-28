@@ -37,7 +37,7 @@
  *    structural: a superseded query's data is never the active query's
  *    data, so there is no window to get wrong.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
@@ -82,7 +82,26 @@ export function useTosAcceptance(): TosAcceptanceState {
   const [submitting, setSubmitting] = useState(false);
   // The ToS version this wallet accepted in a transaction THIS session
   // mined and waited for — see `accept`. `null` until that happens.
-  const [acceptedVersion, setAcceptedVersion] = useState<number | null>(null);
+  //
+  // Held in a REF rather than in state, because the correction belongs
+  // where data ENTERS the cache rather than beside it. A pin kept in
+  // component state would open the gate while `readTermsWriteVerdict`
+  // — which reads the cache, not this hook — still refused the
+  // wallet's next write and told it to accept terms it had already
+  // paid to accept. One mechanism, in the one place both surfaces
+  // read from, so they cannot disagree.
+  //
+  // The ref carries its OWN scope rather than being cleared when the
+  // wallet or chain changes. Two reasons, and the second is why it is
+  // shaped this way: `react-hooks/refs` rightly forbids mutating a ref
+  // during render, so a reset would have to run in an effect and would
+  // be observable for a paint; and a pin that must be actively revoked
+  // is one forgotten path away from applying to the wrong wallet. A
+  // pin that only matches its own wallet, chain and version cannot be
+  // inherited at all — there is no window to get wrong, the same
+  // reasoning that made the query key structural rather than a
+  // sequence counter.
+  const acceptedRef = useRef<{ scope: string; version: number } | null>(null);
   // A clock the gate can read without calling `Date.now()` during
   // render, which `react-hooks/purity` rightly rejects. Starts at 0 —
   // read as "no age known yet", which cannot make a fresh verdict look
@@ -119,20 +138,12 @@ export function useTosAcceptance(): TosAcceptanceState {
     [readChain.chainId, address],
   );
 
-  // The acceptance pin is scoped to ONE wallet on ONE chain, and is
-  // dropped the moment either changes. Acceptance is recorded per
-  // network and per wallet, so a pin surviving a switch would let a
-  // second wallet — or the same wallet on another chain — inherit an
-  // acceptance it never made, which is the one thing this whole module
-  // exists to prevent. Derived during render rather than in an effect,
-  // the pattern used elsewhere in the app, so the stale pin is never
-  // observable for even one paint.
+  // Identifies ONE wallet on ONE chain, and is what the acceptance pin
+  // is stamped with. Acceptance is recorded per network and per wallet,
+  // so a pin that could outlive a switch would let a second wallet — or
+  // the same wallet on another chain — inherit an acceptance it never
+  // made, which is the one thing this whole module exists to prevent.
   const scope = `${readChain.chainId}:${address ?? ''}`;
-  const [pinScope, setPinScope] = useState(scope);
-  if (pinScope !== scope) {
-    setPinScope(scope);
-    setAcceptedVersion(null);
-  }
 
   const query = useQuery({
     queryKey,
@@ -182,9 +193,24 @@ export function useTosAcceptance(): TosAcceptanceState {
           blockNumber,
         }) as Promise<readonly [number, `0x${string}`]>,
       ]);
+      const version = Number(current[0]);
+      // A read that says "not accepted" at the SAME version this
+      // session already mined an acceptance for is known to be behind
+      // the chain, not informative about it — a public RPC serving the
+      // parent block. Correcting it here, at the single point where
+      // data enters the cache, is what keeps the gate and the write
+      // gate telling a user the same thing.
+      //
+      // Narrow on purpose. It applies only to the exact version whose
+      // receipt this session waited for, so a governance bump reads
+      // through untouched and re-prompts as it should, and it is
+      // cleared on any wallet or chain change.
+      const pin = acceptedRef.current;
+      const correctLag =
+        !accepted && pin !== null && pin.scope === scope && pin.version === version;
       return {
-        accepted,
-        version: Number(current[0]),
+        accepted: accepted || correctLag,
+        version,
         hash: current[1],
       };
     },
@@ -230,12 +256,10 @@ export function useTosAcceptance(): TosAcceptanceState {
         version: acceptedVersion,
         hash: query.data.hash,
       });
-      // ...and pinned locally as well, because the invalidations below
-      // can land a lagging `false` on top of the line above. The pin is
-      // scoped to the version that was accepted, so it stops applying
-      // by itself the moment a new one is in force — it can never hold
-      // the gate open across a version bump.
-      setAcceptedVersion(acceptedVersion);
+      // ...and pinned, because the invalidations below can land a
+      // lagging `false` on top of the line above. `queryFn` applies the
+      // pin to every later read, so this survives any number of them.
+      acceptedRef.current = { scope, version: acceptedVersion };
       await queryClient.invalidateQueries({ queryKey });
       // Codex review round 1 P2: one immediate re-read is not enough.
       // A public RPC can still serve the parent block for seconds after
@@ -262,7 +286,7 @@ export function useTosAcceptance(): TosAcceptanceState {
     } finally {
       setSubmitting(false);
     }
-  }, [query.data, write, queryClient, queryKey]);
+  }, [query.data, write, queryClient, queryKey, scope]);
 
   // Self-review before review round 1: a DISABLED query is `isPending`
   // in TanStack v5 — status 'pending', fetchStatus 'idle' — so a wallet
@@ -278,18 +302,12 @@ export function useTosAcceptance(): TosAcceptanceState {
   const stale =
     query.isSuccess && nowMs > 0 && isVerdictStale(query.dataUpdatedAt, nowMs);
   const readOk = query.isSuccess && !stale;
-  // The acceptance this session mined, applied only while the read
-  // agrees about WHICH version is in force. Deliberately gated on
-  // `readOk` rather than standing on its own: a failed or stale read
-  // closes the gate as it always did, so the pin cannot become a way
-  // for a session to stay open on an answer it can no longer confirm.
-  // What it does cover is the one case it is for — a fresh, successful
-  // read of the SAME version that has not yet caught up to the
-  // transaction whose receipt this session waited for.
-  const pinned =
-    readOk && acceptedVersion !== null && query.data.version === acceptedVersion;
   return {
-    hasAccepted: readOk && (query.data.accepted || pinned),
+    // Still gated on `readOk`: the lag correction lives in `queryFn`,
+    // so a failed or stale read closes the gate exactly as it always
+    // did. Correcting a read the app HAS is a different thing from
+    // opening the gate on a read it does not have.
+    hasAccepted: readOk && query.data.accepted,
     readOk,
     currentVersion: query.data?.version ?? 0,
     currentHash: query.data?.hash ?? ZERO_HASH,
