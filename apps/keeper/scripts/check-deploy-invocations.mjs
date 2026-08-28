@@ -883,7 +883,16 @@ function filterScopes(line) {
   const out = new Set();
   // `-r` / `--recursive` runs the script in EVERY workspace package, naming
   // none of them, so no textual, filter or cwd signal exists at all (#1995 r8).
-  if (/(?:^|\s)(?:-r|--recursive)(?:\s|=|$)/.test(line)) {
+  //
+  // pnpm spells the same thing as a COMMAND as well as an option: `pnpm help
+  // recursive` documents `recursive`, `multi` and `m` as running an action
+  // across every package (#1995 r9). r8 added the option spellings and stopped
+  // there, so `pnpm recursive --if-present run deploy --no-keep-vars` — every
+  // protected Worker, destructively — passed the guard.
+  if (
+    /(?:^|\s)(?:-r|--recursive)(?:\s|=|$)/.test(line) ||
+    /(?:^|\s)pnpm\s+(?:recursive|multi|m)(?:\s|$)/.test(line)
+  ) {
     for (const sc of SCOPED) out.add(sc);
   }
   const all = line.matchAll(new RegExp(`--filter(?:-prod)?(?:=|\\s+)(${WORD})`, 'g'));
@@ -1116,7 +1125,18 @@ function selectorScope(seg, states, hasCwdState = true) {
   // `commandIsSafe` already strips these for the package-script test.
   const clean = stripOtherOptionValues(
     executedCommand(stripRedirections(seg)),
-    ['name', 'config', 'cwd', 'dir'],
+    // Every option whose VALUE this function goes on to read must be kept, or
+    // the strip blanks it first and `valueOf` finds only a placeholder — which
+    // is why npm's `--prefix` read as absent even after it was added to the
+    // `valueOf` alternation (#1995 r9). The list and the alternation are two
+    // halves of one decision and drift silently, because a missing entry looks
+    // exactly like an option that was not present.
+    //
+    // `C` is here defensively rather than as a fix: `pnpm -C ../agent run
+    // deploy --no-keep-vars` was ALREADY reported before this change, so it
+    // reaches scope by another path. Measured, not assumed — an earlier draft
+    // of this comment claimed `-C` was broken.
+    ['name', 'config', 'cwd', 'dir', 'C', 'prefix'],
   );
   // `--config` before `-c` so the long spelling wins the alternation, and a
   // lookbehind so `-c` cannot match inside `--config` or at the tail of another
@@ -1147,8 +1167,12 @@ function selectorScope(seg, states, hasCwdState = true) {
   const cfgRaw = valueOf('--config|-c');
   // `--cwd` is wrangler's; `--dir` / `-C` is pnpm's own, documented as "change
   // to that directory", and it decides which package's script runs (#1995 r8).
-  // Same resolution, so it is read here rather than duplicated elsewhere.
-  const cwdRaw = valueOf('--cwd') ?? valueOf('--dir|-C');
+  // `--prefix` is npm's spelling of the same idea — its config documentation
+  // says a command-line prefix "forces non-global commands to run in the
+  // specified folder" — and it was missed when pnpm's was added (#1995 r9).
+  // Same resolution for all three, so they are read here rather than
+  // duplicated elsewhere.
+  const cwdRaw = valueOf('--cwd') ?? valueOf('--dir|-C|--prefix');
   const cfg = known(cfgRaw);
   const cwdFlag = known(cwdRaw);
   // A path selector is present but unresolvable: we know a target was named and

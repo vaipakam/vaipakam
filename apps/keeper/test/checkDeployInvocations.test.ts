@@ -1510,6 +1510,26 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it("pnpm's recursive COMMAND aliases fan out like -r (#1995 r9)", () => {
+    // `pnpm help recursive` documents recursive/multi/m as running an action
+    // across every package, so each reaches both protected Workers.
+    for (const alias of ['recursive', 'multi', 'm']) {
+      const r = runWith(
+        'contracts/script/deploy-chain.sh',
+        `pnpm ${alias} --if-present run deploy --no-keep-vars\n`,
+      );
+      expect(r.ok, alias).toBe(false);
+    }
+  });
+
+  it("npm's --prefix moves the package cwd like pnpm's --dir (#1995 r9)", () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/indexer\nnpm --prefix ../agent run deploy -- --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('a composed wrangler COMMAND name still counts as a deploy (#1995 r9)', () => {
     // The dequoted fallback existed but tested only the package-script
     // alternation, so a composed DIRECT wrangler command skipped the whole
