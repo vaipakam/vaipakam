@@ -12,7 +12,7 @@
  * so the suite never touches the repo.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -50,6 +50,13 @@ function seed(relPath: string, content: string): void {
   const full = join(root, relPath);
   mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, content);
+}
+
+/** Create a symlink inside the fixture tree. */
+function link(from: string, to: string): void {
+  const full = join(root, from);
+  mkdirSync(dirname(full), { recursive: true });
+  symlinkSync(join(root, to), full);
 }
 
 /** The two protected manifests, so `...<pattern>` has a graph to resolve. */
@@ -4258,6 +4265,84 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
   it('and a backslash continuation is one command either way (#1995 r16 control)', () => {
     const r = runWith('Makefile', 'deploy:\n\tcd apps/agent && \\\n\twrangler deploy\n');
     expect(r.ok).toBe(false);
+  });
+
+  // ── Scoping siblings, launchers and links (#1995 r16).
+  it('wrangler global flags may sit between versions and upload (#1995 r16)', () => {
+    const r = runWith('v.sh', 'cd apps/agent\nwrangler versions --config wrangler.jsonc upload\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('the SHELL matrix collector is job-bounded too (#1995 r16)', () => {
+    // The working-directory collector took this correction a round earlier; the
+    // shell one was written afterwards and did not get it, so an axis of the
+    // same name in an unrelated job answered for this step.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  other:\n    strategy:\n      matrix:\n        interp: [bash]\n    steps:\n' +
+        '      - name: x\n        run: echo hi\n  d:\n    strategy:\n      matrix:\n        interp: [python]\n' +
+        '    steps:\n      - name: go\n        shell: ${{ matrix.interp }}\n' +
+        '        working-directory: apps/agent\n        run: print("wrangler deploy")\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('defaults text inside a run PAYLOAD is not metadata (#1995 r16)', () => {
+    // Heredoc data shaped like `defaults: / run: / shell: python` classified a
+    // later ordinary bash step as python and omitted it.
+    const r = runWith(
+      '.github/workflows/w2.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: a\n        run: |\n          cat <<EOT > f\n' +
+        '          defaults:\n            run:\n              shell: python\n          EOT\n' +
+        '      - name: go\n        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a NON-SHELL step can still LAUNCH a deploy (#1995 r16)', () => {
+    // Dropping the block left the argv text to the physical-line scan, which has
+    // no working directory to attribute it to. Shell state is not modelled for
+    // these bodies and does not need to be: an argv call names its own
+    // executable, and what the guard needs from the step is WHERE it runs.
+    const r = runWith(
+      '.github/workflows/w3.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: "python {0}"\n' +
+        '        working-directory: apps/agent\n        run: subprocess.run(["wrangler", "deploy"])\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while a python step that only PRINTS still runs nothing (#1995 r16 control)', () => {
+    const r = runWith(
+      '.github/workflows/w4.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: "python {0}"\n' +
+        '        working-directory: apps/agent\n        run: print("wrangler deploy")\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a repository SYMLINK resolves to what it points at (#1995 r16)', () => {
+    // `cd worker` where `worker -> apps/agent` puts the shell physically in the
+    // agent and wrangler finds that configuration.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    link('worker', 'apps/agent');
+    const r = runWith('l.sh', 'cd worker\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but the walk does not LEAVE the tree through one (#1995 r16)', () => {
+    // `statSync` follows a directory symlink, so a link to the parent had the
+    // guard scanning whatever sits beside the checkout and reporting violations
+    // in files it does not own. Found while writing a control for the
+    // resolution above; it predates that change rather than being caused by it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    link('outside', '..');
+    const r = runWith('l2.sh', 'cd outside\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
   });
 
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {

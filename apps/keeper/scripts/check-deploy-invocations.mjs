@@ -77,7 +77,7 @@
  * `run deploy` form). That deliberately includes prose — see `ALLOWED` below
  * for why the burden is inverted rather than inferred.
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 // `CHECK_DEPLOY_ROOT` exists so the test suite can point this at a fixture
@@ -130,7 +130,7 @@ const SKIP_DIRS = new Set([
 // and `wrangler.cmd deploy` in a `shell: cmd` step is the same deployment. The
 // shell allow-list admits those steps, so not recognising the shim meant
 // admitting the step and then seeing nothing in it (#1995 r16).
-const DEPLOY_RE = String.raw`wrangler2?(?:\.(?:cmd|ps1|bat))?(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*(?:deploy|versions\s+upload)\b`;
+const DEPLOY_RE = String.raw`wrangler2?(?:\.(?:cmd|ps1|bat))?(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*(?:deploy|versions(?:\s+-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?)*\s+upload)\b`;
 /**
  * `spawn('wrangler', ['deploy', …])` and its execa/child_process siblings.
  *
@@ -155,7 +155,7 @@ const DEPLOY_RE = String.raw`wrangler2?(?:\.(?:cmd|ps1|bat))?(?:@[^\s]+)?\s+(?:-
 // the subcommand, because being loose there can only bring more files into the
 // ordinary scoring; strict about what sits BEFORE it, because that is what
 // decides whether anything runs at all.
-const ARGV_DEPLOY_RE = String.raw`\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork)\s*\(\s*(['"\`])wrangler2?(?:\.(?:cmd|ps1|bat))?\1[\s\S]{0,200}?(['"\`])(?:deploy|versions\2\s*,\s*(['"\`])upload)\3?`;
+const ARGV_DEPLOY_RE = String.raw`\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(\s*\[?\s*(['"\`])wrangler2?(?:\.(?:cmd|ps1|bat))?\1[\s\S]{0,200}?(['"\`])(?:deploy|versions\2\s*,\s*(['"\`])upload)\3?`;
 
 /**
  * The PACKAGE-SCRIPT form is a deploy too, and the guard could not see it
@@ -1855,6 +1855,28 @@ function resolveDir(cwd, target, vars = null) {
       }
     }
   }
+  // A repository SYMLINK resolves to what it points at. `cd worker` where
+  // `worker -> apps/agent` is tracked puts the shell physically in the agent and
+  // wrangler finds that configuration, but a purely lexical resolver recorded
+  // the link name and matched no package (#1995 r16).
+  //
+  // Only links that exist INSIDE the tree being scanned, and only when the
+  // destination stays inside it: a link out of the repository is not a scoped
+  // package, and following one would attribute a deploy to a directory this
+  // guard does not own.
+  if (!/\$/.test(target) && !target.startsWith('/')) {
+    const candidate = `${cwd ? `${cwd}/` : ''}${target}`.replace(/^\.\//, '');
+    try {
+      const rootReal = realpathSync(REPO_ROOT);
+      const real = realpathSync(`${REPO_ROOT}/${candidate}`);
+      if (real !== rootReal && real.startsWith(`${rootReal}/`)) {
+        const inside = real.slice(rootReal.length + 1);
+        if (inside !== candidate) return inside;
+      }
+    } catch {
+      /* not a path in this tree */
+    }
+  }
   // A target naming a repository package root is REPO-ROOT-relative, not
   // cwd-relative: wrappers write `cd apps/indexer` from the repo root, never
   // from inside another package. Modelling it as nested is what produced
@@ -2669,7 +2691,21 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       // feeding its body to the scanner reported `print("wrangler deploy")` as
       // a live deploy (#1995 r16). Checked at each of the three ingest points
       // rather than inside the scanner, because it is a property of the STEP.
-      if (!isYaml || (stepIsShell(lines, i) && !stepIsDisabled(lines, i))) {
+      // A non-shell step is not scanned as SHELL, but it can still LAUNCH the
+      // deploy: `shell: python {0}` with `subprocess.run(["wrangler","deploy"])`
+      // is a real deployment, and dropping the block left the argv text to the
+      // physical-line scan, which has no working directory to attribute it to
+      // (#1995 r16). The block is kept when the body carries an argv-shaped
+      // invocation, so the step's `working-directory` still reaches it.
+      //
+      // Shell state is not modelled for those bodies and does not need to be —
+      // an argv call names its own executable and arguments, and what the guard
+      // needs from the step is WHERE it runs.
+      const launchesDeploy = new RegExp(ARGV_DEPLOY_RE).test(body);
+      if (
+        !isYaml ||
+        ((stepIsShell(lines, i) || launchesDeploy) && !stepIsDisabled(lines, i))
+      ) {
         const interp = isYaml ? stepShellName(lines, i) : null;
         const folded =
           interp === 'cmd'
@@ -2695,7 +2731,17 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       // `workingDirFor` (#1995 r8). Emitted as its own block so the cwd applies;
       // the duplicate with the physical line is removed by the dedupe at the
       // reporting site.
-      if (end === i && isYaml && stepIsShell(lines, i) && !stepIsDisabled(lines, i)) {
+      // The same allowance as the block path: a non-shell step can still LAUNCH
+      // the deploy, and what the guard needs from it is WHERE it runs. Adding it
+      // to one ingest point and not the others is how this file drifts, and a
+      // single-line `run:` is exactly where the argv spelling fits.
+      const flowLaunches = new RegExp(ARGV_DEPLOY_RE).test(flow[2]);
+      if (
+        end === i &&
+        isYaml &&
+        (stepIsShell(lines, i) || flowLaunches) &&
+        !stepIsDisabled(lines, i)
+      ) {
         const wd = workingDirFor(lines, i);
         if (wd) {
           out.push(...offset(logicalLines(flow[2]), i, blockId, wd));
@@ -2713,7 +2759,11 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
             parts[last] = parts[last].slice(0, close) + parts[last].slice(close + 1);
           }
         }
-        if (!isYaml || (stepIsShell(lines, i) && !stepIsDisabled(lines, i))) {
+        const multiLaunches = new RegExp(ARGV_DEPLOY_RE).test(foldFlowScalar(parts, q));
+        if (
+          !isYaml ||
+          ((stepIsShell(lines, i) || multiLaunches) && !stepIsDisabled(lines, i))
+        ) {
           out.push(
             ...offset(
               logicalLines(foldFlowScalar(parts, q)),
@@ -3026,13 +3076,16 @@ function interpreterOf(value) {
 function defaultShellFor(lines, runIdx) {
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
   const SH = /^\s*shell:\s*(?:"([^"]*)"|'([^']*)'|(\S+))/;
-  const inRange = (from, to) => {
+  const inRange = (from, to, atIndent = null) => {
     for (let i = from; i < to && i < lines.length; i += 1) {
       const flow = lines[i].match(
         /defaults:\s*\{[^}]*shell:\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/,
       );
-      if (flow) return flow[1] ?? flow[2] ?? flow[3];
+      if (flow && (atIndent === null || indentOf(lines[i]) === atIndent)) {
+        return flow[1] ?? flow[2] ?? flow[3];
+      }
       if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
+      if (atIndent !== null && indentOf(lines[i]) !== atIndent) continue;
       const di = indentOf(lines[i]);
       for (let j = i + 1; j < lines.length; j += 1) {
         if (lines[j].trim() !== '' && indentOf(lines[j]) <= di) break;
@@ -3044,14 +3097,19 @@ function defaultShellFor(lines, runIdx) {
   };
   const job = jobBounds(lines, runIdx);
   if (job) {
-    const v = inRange(job.start, job.end);
+    // At the job's OWN key column. A job-wide text search accepted `defaults:` /
+    // `run:` / `shell: python` written INSIDE an earlier step's `run: |` payload
+    // — heredoc data, say — as Actions metadata, and a later ordinary bash step
+    // was then classified as python and omitted (#1995 r16). The `env` reader
+    // took the same correction; this one is its sibling and did not have it.
+    const v = inRange(job.start, job.end, job.indent + 2);
     if (v !== null) return v;
   }
   const jobsIdx = lines.findIndex((l) => /^\s*jobs:\s*$/.test(l));
   const topIndent = jobsIdx >= 0 ? indentOf(lines[jobsIdx]) : 0;
   for (let i = 0; i < lines.length; i += 1) {
     if (!/^\s*defaults:\s*$/.test(lines[i]) || indentOf(lines[i]) !== topIndent) continue;
-    const v = inRange(i, lines.length);
+    const v = inRange(i, lines.length, topIndent);
     if (v !== null) return v;
   }
   return null;
@@ -3062,7 +3120,15 @@ function matrixShellValues(lines, runIdx, raw) {
   if (!mm) return [];
   const key = mm[1];
   const vals = [];
-  for (let i = 0; i < lines.length; i += 1) {
+  // BOUNDED TO THE JOB, the same correction the working-directory collector
+  // took one round earlier. This one was written afterwards and did not get it:
+  // an axis of the same name in an unrelated job answered for this step, so a
+  // python-only deploy job was read as bash and its `print(...)` reported
+  // (#1995 r16). A false red, and the two collectors disagreeing about scope.
+  const jb = jobBounds(lines, runIdx);
+  const from = jb ? jb.start : 0;
+  const to = jb ? jb.end : lines.length;
+  for (let i = from; i < to; i += 1) {
     const inline = lines[i].match(new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`));
     if (inline) vals.push(...inline[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
     for (const fa of lines[i].matchAll(new RegExp(`[{,]\\s*${key}:\\s*\\[([^\\]]*)\\]`, 'g'))) {
@@ -3703,6 +3769,21 @@ function* walk(dir) {
       continue;
     }
     if (st.isDirectory()) {
+      // A directory SYMLINK must not carry the walk out of the repository.
+      // `statSync` follows it, so a link to the parent had the guard scanning
+      // whatever sits beside the checkout and reporting violations in files it
+      // does not own — and a link back into the tree recurses forever. Found
+      // while writing a control for the symlink RESOLUTION above; it is not
+      // caused by that change and predates it.
+      let inside = true;
+      try {
+        const real = realpathSync(full);
+        const rootReal = realpathSync(REPO_ROOT);
+        inside = real === rootReal || real.startsWith(`${rootReal}/`);
+      } catch {
+        inside = false;
+      }
+      if (!inside) continue;
       yield* walk(full);
     } else if (EXTENSIONS.some((e) => entry.endsWith(e)) || looksExecutable(entry)) {
       // The header claims shebang detection, but an extension allow-list never
