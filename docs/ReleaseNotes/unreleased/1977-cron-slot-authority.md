@@ -47,6 +47,10 @@ a defect in it — so the sequence (confirm, unschedule, delete, rotate its
 credentials, expire the old bucket) is an operator decision recorded in the
 issue rather than something to take unilaterally.
 
+The case for doing it soon got considerably stronger during this work: two
+separate emergency procedures turned out to be written for one Worker where
+there are now two, and the consequences are described below.
+
 One thing is worth recording rather than smoothing over, because it is the
 most transferable part. **The mechanism did not work first time, or for many
 times after.** Review round after review round found the same defect it was
@@ -123,6 +127,22 @@ the ability to upload after the procedure believes the breach is closed. It
 now enumerates the keys from the account before deleting anything, rather
 than trusting a number written down in advance.
 
+A second one would destroy data rather than admit an attacker. The routine for
+changing the backup encryption key pauses one Worker, migrates one bucket, and
+then destroys the old key — while the second Worker carries on writing under
+it. Everything that Worker has stored becomes permanently unreadable,
+including the copies **this very change had just designated** as the fallback
+when the primary ones fail verification. So the edit that made those backups
+load-bearing left standing a procedure that would have quietly rendered them
+useless. It now says, at each step rather than in a note further up, that the
+work applies to both Workers and both buckets — and that the durable fix is
+retiring the duplicate.
+
+Neither of those two is wrong sentence by sentence. Each is simply wrong about
+how many of something exists, which is the same defect as the copied counts
+that started all this, relocated from comments into instructions somebody
+follows during an emergency.
+
 And the procedure for bringing the paused keeper back had no failure path for
 the validation that runs *after* the fund-moving passes are switched on. The
 rollback it did document covers the earlier, still-inert validation, where
@@ -137,6 +157,33 @@ uploaded, and an operator restoring under pressure would have taken it as
 licence to skip the listing. And a mistyped verification flag printed "OK"
 and exited zero without contacting the account at all, in the procedure whose
 next step is a deploy that fails if the check was wrong.
+
+Partway through, the review stopped being worth continuing in the same
+direction, and it is worth saying how that was decided rather than by feel.
+The findings were counted: the rate of new ones was flat across two long
+stretches of fixing every single one, the change had doubled in size while
+that happened, and two thirds of everything raised concerned the checking tool
+rather than the documents it checks. The recent findings had also drifted in
+character — they were no longer about the count being wrong, but about
+increasingly obscure ways of writing Markdown that the tool interpreted
+differently from a reader.
+
+That last part is the diagnosis. The tool had started growing its own
+understanding of the document format, one review finding at a time, and each
+correction gave the next review more to examine. Two of the bugs *it* caused
+were worse than the ones it caught: both would have rejected a perfectly
+correct document, which on a check that gates every change means stopping all
+work rather than letting one mistake through.
+
+So that machinery was deleted rather than corrected again, and replaced with a
+rule: the one file this all protects may not hide any part of itself. That is
+a single condition anybody can check, it costs nothing — the file has never
+done so, and there is no reason a document whose job is to state one number
+plainly would want to — and it makes the entire class of problem impossible
+instead of handling it case by case. **Ruling something out is decidable;
+interpreting it is not.** Each finding had arrived phrased as an interpretation
+problem, and had been answered on those terms for several rounds before anyone
+asked whether interpretation was required at all.
 
 Every one of these was written carefully, by someone actively thinking about
 this exact failure. That is the argument for the gate rather than an
