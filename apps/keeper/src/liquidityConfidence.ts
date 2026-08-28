@@ -60,6 +60,7 @@ import type { ChainConfig, Env } from './env';
 import { getChainConfigs } from './env';
 import { buildKeeperContext, isKeeperEnabled } from './keeper';
 import { orchestrateServerQuotes } from './serverQuotes';
+import { batchedRead } from './batchRead';
 import {
   getLiquidityConfidence,
   upsertLiquidityConfidence,
@@ -79,6 +80,9 @@ const RELAY_ABI: Abi = [
 
 /** Pagination size for `getActiveLoansPaginated`. */
 const SCAN_PAGE = 200n;
+
+/** Loan details per `aggregate3`. Matches the other passes' bound (#1946). */
+const DETAIL_CHUNK = 100;
 /** Hard cap on distinct collateral assets re-evaluated per tick — a
  *  busy book shouldn't burn the whole aggregator-quote budget. */
 const MAX_ASSETS_PER_TICK = 24;
@@ -192,30 +196,85 @@ async function activeCollateralAssets(
     ids.push(...page);
   }
 
+  // BATCHED, but still chunk-by-chunk so the MAX_ASSETS_PER_TICK cap can
+  // short-circuit (#1896).
+  //
+  // This was one `getLoanDetails` per active loan, sequentially — 50 per chain
+  // against the fixture, and one subrequest each against a 50-per-invocation
+  // ceiling, all of it to answer a question about DISTINCT collateral assets
+  // that a handful of loans usually settles. The per-selector attribution put
+  // this pass at 428 requests per tick with 1% of them on a transaction path.
+  //
+  // Reading every id in one batch would be simpler but would discard the cap:
+  // the original stopped as soon as it had MAX_ASSETS_PER_TICK distinct assets,
+  // and on a chain with thousands of active loans an unbounded batch trades one
+  // problem for another. Chunking keeps both properties — one subrequest per
+  // DETAIL_CHUNK loans, and the walk still stops at the cap.
   const seen = new Set<string>();
   const out: Address[] = [];
-  for (const id of ids) {
-    if (out.length >= MAX_ASSETS_PER_TICK) break;
-    let loan: { collateralAsset: Address; collateralAssetType: number; status: number };
-    try {
-      loan = (await client.readContract({
+  for (let i = 0; i < ids.length && out.length < MAX_ASSETS_PER_TICK; i += DETAIL_CHUNK) {
+    const chunk = ids.slice(i, i + DETAIL_CHUNK);
+    // eslint-disable-next-line no-await-in-loop
+    const results = await batchedRead(
+      client as never,
+      chunk.map((id) => ({
         address: diamond,
         abi: RELAY_ABI,
-        functionName: 'getLoanDetails',
-        args: [id],
-      })) as typeof loan;
-    } catch {
-      continue;
+        functionName: 'getLoanDetails' as const,
+        args: [id] as const,
+      })),
+      `liq-confidence getLoanDetails ${i}/${ids.length}`,
+    );
+    for (const r of results) {
+      if (out.length >= MAX_ASSETS_PER_TICK) break;
+      // Per-loan failure isolation, unchanged: the old code's `catch` skipped
+      // the loan and continued, and a failed batch entry does the same.
+      if (!r || r.status !== 'success') continue;
+      const loan = r.result as {
+        collateralAsset: Address;
+        collateralAssetType: number;
+        status: number;
+      };
+      if (loan.status !== LOAN_STATUS_ACTIVE) continue;
+      if (loan.collateralAssetType !== ASSET_TYPE_ERC20) continue;
+      const key = loan.collateralAsset.toLowerCase();
+      if (key === '0x0000000000000000000000000000000000000000') continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(loan.collateralAsset);
     }
-    if (loan.status !== LOAN_STATUS_ACTIVE) continue;
-    if (loan.collateralAssetType !== ASSET_TYPE_ERC20) continue;
-    const key = loan.collateralAsset.toLowerCase();
-    if (key === '0x0000000000000000000000000000000000000000') continue;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(loan.collateralAsset);
   }
   return out;
+}
+
+/**
+ * Per-chain, per-tick memo for the two token-scoped reads this pass repeats.
+ *
+ * `getAssetPadPrice` and `tokenDecimals` are called once for the collateral
+ * asset and then once per PAA quote token — for EVERY asset under evaluation.
+ * With A assets and Q quote tokens that is 2·A·Q sequential round-trips per
+ * chain per tick, all of them re-reading values that do not change within a
+ * tick. The attribution run had this pass re-reading one token's price 26 times
+ * and its `decimals()` 26 times in a single tick; `decimals()` is immutable, so
+ * those 25 repeats were pure waste.
+ *
+ * SCOPED PER CHAIN, deliberately. The same address is a different token on a
+ * different chain, so a cache shared across `runRelayForChain` calls would
+ * answer with another chain's price. It is created inside the per-chain
+ * function and dies with it.
+ *
+ * ONLY SUCCESSES ARE CACHED. A missing feed or a transient RPC failure stays
+ * uncached so the next use retries, exactly as it did before — otherwise one
+ * blip would pin `decimals` to its 18 fallback for the rest of the tick, and a
+ * wrong decimals silently skews every slippage figure computed from it.
+ */
+interface TickCache {
+  price: Map<string, { price: bigint; feedDec: number }>;
+  decimals: Map<string, number>;
+}
+
+function newTickCache(): TickCache {
+  return { price: new Map(), decimals: new Map() };
 }
 
 /** Best-effort `(price, feedDecimals)` from the diamond's `getAssetPrice`
@@ -224,7 +283,11 @@ async function getAssetPadPrice(
   client: PublicClient,
   diamond: Address,
   asset: Address,
+  cache?: TickCache,
 ): Promise<{ price: bigint; feedDec: number } | null> {
+  const key = asset.toLowerCase();
+  const hit = cache?.price.get(key);
+  if (hit) return hit;
   try {
     const r = (await client.readContract({
       address: diamond,
@@ -233,7 +296,9 @@ async function getAssetPadPrice(
       args: [asset],
     })) as readonly [bigint, number];
     if (r[0] === 0n) return null;
-    return { price: BigInt(r[0]), feedDec: Number(r[1]) };
+    const out = { price: BigInt(r[0]), feedDec: Number(r[1]) };
+    cache?.price.set(key, out);
+    return out;
   } catch {
     return null;
   }
@@ -243,14 +308,23 @@ async function getAssetPadPrice(
 async function tokenDecimals(
   client: PublicClient,
   token: Address,
+  cache?: TickCache,
 ): Promise<number> {
+  const key = token.toLowerCase();
+  const hit = cache?.decimals.get(key);
+  if (hit !== undefined) return hit;
   try {
     const d = (await client.readContract({
       address: token,
       abi: erc20Abi,
       functionName: 'decimals',
     })) as number;
-    return Number.isFinite(d) && d >= 0 && d <= 36 ? Number(d) : 18;
+    // The out-of-range branch falls back to 18 WITHOUT caching: the read
+    // succeeded but answered something this code does not trust, and caching a
+    // distrusted value would make it the tick's answer everywhere.
+    if (!Number.isFinite(d) || d < 0 || d > 36) return 18;
+    cache?.decimals.set(key, Number(d));
+    return Number(d);
   } catch {
     return 18;
   }
@@ -297,8 +371,9 @@ async function aggregatorConfirmedTier(
   asset: Address,
   slippageBps: bigint,
   sizesPad: readonly [bigint, bigint, bigint, bigint],
+  cache: TickCache,
 ): Promise<number | null> {
-  const assetPrice = await getAssetPadPrice(client, diamond, asset);
+  const assetPrice = await getAssetPadPrice(client, diamond, asset, cache);
   if (!assetPrice) return 0; // not Liquid per the oracle ⇒ untierable
 
   // PAA quote tokens (resolved on-chain — falls back to [WETH]).
@@ -312,7 +387,7 @@ async function aggregatorConfirmedTier(
   } catch {
     return null;
   }
-  const assetDec = await tokenDecimals(client, asset);
+  const assetDec = await tokenDecimals(client, asset, cache);
 
   // best[i] = lowest slippage-bps seen at sizesPad[i] across PAA routes.
   const best: bigint[] = [-1n, -1n, -1n, -1n]; // -1 = no successful quote yet
@@ -320,9 +395,9 @@ async function aggregatorConfirmedTier(
 
   for (const quote of paa) {
     if (quote.toLowerCase() === asset.toLowerCase()) continue;
-    const qPrice = await getAssetPadPrice(client, diamond, quote);
+    const qPrice = await getAssetPadPrice(client, diamond, quote, cache);
     if (!qPrice) continue;
-    const qDec = await tokenDecimals(client, quote);
+    const qDec = await tokenDecimals(client, quote, cache);
 
     for (let i = 0; i < 4; i++) {
       const sizePad = sizesPad[i];
@@ -689,6 +764,10 @@ async function runRelayForChain(
   const assets = await activeCollateralAssets(client, diamond);
   if (assets.length === 0) return;
 
+  // One cache for this chain's whole tick — see the TickCache note. It dies
+  // with this function, so nothing carries between chains or between ticks.
+  const cache = newTickCache();
+
   const nowSec = Math.floor(Date.now() / 1000);
   let submits = 0;
 
@@ -718,6 +797,7 @@ async function runRelayForChain(
       asset,
       cfg.slippageBps,
       cfg.sizesPad,
+      cache,
     );
     if (aggTier === null) continue; // every quote failed — leave the counter alone
     // Cap the *aggregator-confirmed* tier at 2 unless the Tier-3
