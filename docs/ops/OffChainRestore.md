@@ -1676,25 +1676,38 @@ caught at the cheapest stage.
       commit it** — an edit living only in your checkout leaves `[]` on the
       branch, and the next clean-checkout deploy re-unschedules the keeper
       after this procedure has declared success.
-   3. Confirm a cron trigger is free — cap is five per account, and the
-      keeper's is meant to be held for it rather than released. Check the
-      ACCOUNT, not a comment. The checker reads `CLOUDFLARE_*` names, which
-      are NOT the `CF_*` ones §1 establishes, and §1 deliberately leaves the
-      token unexported — so pass them for this one command rather than
-      widening their scope:
+   3. Confirm a cron trigger is free on the FRESH account — cap is five per
+      account. Check the ACCOUNT, not a comment.
+
+      **Do NOT run `check-cron-slots.mjs --live` here.** That compares an
+      account against `CloudflareCronSlots.md`, and the authority describes
+      the OLD account. On the fresh account the comparison cannot pass and
+      says nothing about capacity: `vaipakam-offchain-data-archive` has no
+      source in this repository and is never deployed here at all, and
+      `vaipakam-offchain-data-warm` is deliberately deferred to §7b. Both
+      would be reported `INVENTORY ONLY` and the command would exit non-zero
+      however much room the account has — so branch B could never clear its
+      own prerequisite. Reconciling the authority is a §7b-or-later job, once
+      the fresh account is the real one.
+
+      What this step needs is the raw count, so ask for that directly:
 
       ```bash
-      CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
-        node .github/scripts/check-cron-slots.mjs --live
+      for s in $(curl -sS -H "Authorization: Bearer $CF_API_TOKEN" \
+          "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts?per_page=100" \
+        | jq -r '.result[].id'); do
+        curl -sS -H "Authorization: Bearer $CF_API_TOKEN" \
+          "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/$s/schedules" \
+        | jq -r --arg s "$s" '.result.schedules[]? | "\($s) \(.cron)"'
+      done | tee /tmp/fresh-account-triggers.txt | wc -l
       ```
 
+      Every line is one trigger, and the keeper needs one of the five. If the
+      count is already 5, stop and free one before deploying — a deploy over
+      the cap fails with error 10072 and leaves the keeper unscheduled.
+
       (If §1's token has already been unset, re-prompt for it the same way —
-      `read -rs CF_API_TOKEN`, not via argv.) Compare against
-      [`CloudflareCronSlots.md`](CloudflareCronSlots.md). If it fails, the
-      likeliest reason is #1977 — an un-retired Worker holding the reserve —
-      and that issue carries the sequence to free it. Read the outcome from
-      the check rather than from this sentence, which cannot know when the
-      cleanup has happened.
+      `read -rs CF_API_TOKEN`, not via argv.)
    4. Deploy from the keeper's directory, with the flag — the command shown
       in branch A above.
    5. Read the schedule back trigger-aware — the `/schedules` query below.
@@ -2262,6 +2275,19 @@ two procedures share the offline-key handling discipline.
    step 6 is about to make undecryptable; naming only the warm Worker here
    is what makes that easy to miss, since every other step reads as
    generic.
+
+   ```bash
+   ( cd ops/offchain-data-warm && wrangler secret put BACKUP_ENCRYPTION_KEY )
+   wrangler secret put BACKUP_ENCRYPTION_KEY --name vaipakam-offchain-data-archive
+   ```
+
+   **The `--name` on the second is not optional** (Codex #1978 r33). The
+   predecessor has no Wrangler config in this repository — that is the whole
+   reason #1977 exists — so there is no directory to run it from. Without
+   `--name`, Wrangler takes the Worker from the config it finds: run from
+   `ops/offchain-data-warm` it silently rotates the WARM Worker a second time
+   and reports success, leaving the predecessor on the old key; run from the
+   repository root it finds no config at all.
 
    Deliberately NOT "while it is still scheduled" (Codex #1978 r24): step 1
    disabled BOTH schedules and step 1's own note says to re-enable only after

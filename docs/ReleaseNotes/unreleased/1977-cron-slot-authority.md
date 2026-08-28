@@ -27,9 +27,14 @@ account; everything here is history with a date on it.
 Three things follow from that, and this change addresses all three. The budget
 was four triggers live on that date, not the three every one of those comments
 assumed — so the slot they reserved for the undeployed mesh watcher was already
-occupied — the keeper's
-re-enable procedure, whose first step is "confirm a trigger is free", would
-have failed at that step with no explanation available. The restore runbook's
+occupied. That does not mean the keeper's re-enable would have stopped at its
+first step: four live under a cap of five leaves one real trigger free, so
+whichever of the two deployments went first would have taken it and succeeded.
+What those comments had actually lost was the SECOND one. Deploy mesh-watcher
+first and the keeper's re-enable is the deploy that fails; re-arm the keeper
+first and mesh-watcher's first deploy fails. Either way the failure is a 10072
+at deploy time with no explanation available, and an operator reading those
+comments would go looking for a sixth trigger that does not exist. The restore runbook's
 rule for choosing between the two backup buckets ("the two never both hold a
 given night") stopped being true the moment both Workers were left running, so
 an operator restoring under pressure would have found two candidates and no

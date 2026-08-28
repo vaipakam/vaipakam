@@ -1105,6 +1105,41 @@ export function checkStamp(md) {
  * Findings for one file's text. Exported shape so the fixtures below drive
  * the same code path CI does, rather than a paraphrase of it.
  */
+/**
+ * Is the claim already scoped to somewhere that is NOT the inventoried account,
+ * by a qualifier that comes BEFORE it?
+ *
+ * Codex #1978 r33: `NOT_SCOPED_ELSEWHERE` is a lookahead, so it only ever saw
+ * text FOLLOWING the claim. "No cron triggers are live in local development"
+ * was correctly quiet while "In local development, no cron triggers are live"
+ * fired — the same sentence, reordered. This gate blocks every PR in the
+ * repository, so a deployment or testing guide written the second way failed
+ * CI for saying nothing about the account at all.
+ *
+ * Deliberately the SAME predicate as the forward case rather than a list of
+ * environments: a scope preposition, then the first noun it governs, and the
+ * claim is suppressed unless that noun is the account itself. Enumerating
+ * "local development", "CI", "staging", "tests" would be the open-class
+ * mistake this file has already made three times (`slot`, `schedule`,
+ * `headroom`).
+ */
+const PRECEDING_SCOPE =
+  /(?:^|[.;!?]\s+|\n\s*)(?:in|on|under|within|inside|for|when|while|during)\s+(?:(?:this|the|our|your|any)\s+)?(?:cloudflare\s+)?([A-Za-z][A-Za-z-]*)/i;
+
+function scopedBeforeClaim(text, at) {
+  // Only the clause the claim sits in: a scope two sentences back governs
+  // nothing here.
+  const start = Math.max(
+    text.lastIndexOf('.', at - 1),
+    text.lastIndexOf(';', at - 1),
+    text.lastIndexOf('\n', at - 1),
+  );
+  const clause = text.slice(start + 1, at);
+  const m = PRECEDING_SCOPE.exec(clause);
+  if (!m) return false;
+  return !/^(?:account|production|prod)$/i.test(m[1]);
+}
+
 export function findOccupancyClaims(text) {
   const found = [];
   const seen = new Set();
@@ -1117,6 +1152,7 @@ export function findOccupancyClaims(text) {
         at + m[0].length + CONTEXT_RADIUS,
       );
       if (!CONTEXT.test(window)) continue;
+      if (scopedBeforeClaim(text, at)) continue;
       const line = text.slice(0, at).split('\n').length;
       if (seen.has(line)) continue; // one finding per line, whichever shape hit
       seen.add(line);
@@ -2327,6 +2363,14 @@ async function runLive() {
 // fixtures never execute is decoration.
 
 const MUST_FIRE = [
+  // ...and the mirror: a leading scope naming the ACCOUNT must NOT suppress.
+  // Suppressing on any leading preposition would have silently disarmed the
+  // gate for the exact sentences it exists to catch.
+  [
+    'a leading scope naming the account still fires',
+    'In this Cloudflare account, there is no spare cron trigger.',
+  ],
+  ['a leading production scope still fires', 'In production, there is no spare cron trigger.'],
   // Codex #1978 r4: the verdict shape — a live conclusion carrying no number.
   [
     'a restated verdict on the capacity step',
@@ -2447,6 +2491,12 @@ const MUST_FIRE = [
  * cannot be wrong about them.)
  */
 const MUST_NOT_FIRE = [
+  // Codex #1978 r33: the scope test was a LOOKAHEAD, so it only saw text after
+  // the claim. These three say nothing about the inventoried account, and this
+  // gate blocks every PR in the repository.
+  ['a leading environment scope', 'In local development, no cron triggers are live.'],
+  ['a leading purpose scope', 'For local development, no cron triggers are live.'],
+  ['a leading temporal scope', 'When running locally, no cron triggers are live.'],
   // The CONDITIONAL is the correct way to write it, and is what
   // `apps/keeper/wrangler.jsonc` says today. If this ever starts firing, the
   // pattern has regressed into mood-guessing.
