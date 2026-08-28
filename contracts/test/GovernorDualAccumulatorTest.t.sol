@@ -299,13 +299,26 @@ contract GovernorDualAccumulatorTest is SetupTest {
         assertGt(recycled5, 0, "fixture: the armed day has a recycled component");
 
         uint256 bucket = 1_000_000 ether;
-        _mut().setRecycleBucketRaw(bucket); // the earmark under test
+        _mut().setRecycleBucketRaw(bucket);
+
+        // Codex #1988 r1: the earmark must NOT equal the bucket, or this cell
+        // cannot tell {LibVpfiRecycle.backingPosition} from a bare
+        // `s.recycleBucket` read. With the stranded and recovery reservations
+        // at zero, `bal - unearmarked` IS exactly `bucket`, so the historical
+        // second-branch shape `payout + s.recycleBucket + forfeitFresh` — the
+        // very formula Codex #1970 r2 caught bypassing `backingPosition` —
+        // satisfied the equation below. A distinct reservation separates them.
+        uint256 stranded = 7_000 ether;
+        _mut().setStrandedRecoveryRaw(address(0xD1), 1, stranded, 1, 4);
+        uint256 earmark = bucket + stranded;
 
         // One live entry: requirement = its own contribution + the earmark.
         _seedEntry(alice, 100, 4, 6);
         uint256 needLiveOnly = _mut().userClaimFundingNeedRaw(alice);
-        assertGt(needLiveOnly, bucket, "fixture: the live entry contributes");
-        uint256 perEntry = needLiveOnly - bucket;
+        assertGt(needLiveOnly, earmark, "fixture: the live entry contributes");
+        uint256 perEntry = needLiveOnly - earmark;
+        (, uint256 userLegsLive, uint256 treasuryLegsLive) =
+            _lens().getUserArmedFreshNeedWithLegs(alice);
 
         // An identical sibling, FORFEITED. Its value still has to be funded —
         // the forfeit-credit path spends it — so it enters the same formula.
@@ -313,10 +326,32 @@ contract GovernorDualAccumulatorTest is SetupTest {
         _mut().setRewardEntryForfeitedRaw(gone);
         uint256 needWithForfeit = _mut().userClaimFundingNeedRaw(alice);
 
+        // Codex #1988 r1: assert the sibling is priced through the TREASURY
+        // leg. The combined total alone is unchanged if the preview ignored
+        // the `forfeited` bit and priced both siblings as live `userLegs`, so
+        // the arithmetic could be satisfied by a classification regression.
+        (, uint256 userLegsAfter, uint256 treasuryLegsAfter) =
+            _lens().getUserArmedFreshNeedWithLegs(alice);
+        assertEq(
+            treasuryLegsLive,
+            0,
+            "fixture: with only a live entry there is no treasury leg"
+        );
+        assertGt(
+            treasuryLegsAfter,
+            0,
+            "the forfeited sibling is priced through the TREASURY leg"
+        );
+        assertEq(
+            userLegsAfter,
+            userLegsLive,
+            "and it does NOT inflate the user leg - it is not priced as live"
+        );
+
         assertEq(
             needWithForfeit,
-            perEntry * 2 + bucket,
-            "the forfeited sibling adds its own contribution and the earmark stays counted ONCE"
+            perEntry * 2 + earmark,
+            "the forfeited sibling adds its own contribution and the earmark - bucket PLUS the stranded reservation - stays counted ONCE"
         );
     }
 
