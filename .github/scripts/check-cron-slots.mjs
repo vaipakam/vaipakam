@@ -1986,9 +1986,29 @@ export function parseInventory(md) {
     ];
     const atomOk = (atom, [lo, hi], idx) => {
       if (atom === '*' || atom === '?') return true;
-      // Extended forms, accepted structurally: last (`L`, `5L`), nearest
-      // weekday (`LW`, `15W`), nth weekday (`5#3`).
-      if (/^(?:l|lw|\d{1,2}[lw]|\d{1,2}#\d)$/i.test(atom)) return true;
+      // Extended forms are FIELD-SCOPED and still BOUNDED (#1978 r44
+      // follow-on). Accepting them structurally in any field reopened the very
+      // hole the range check was added to close one round earlier: `L 0 * * *`
+      // (last-day in the MINUTE column), `0 0 32W * *`, `0 0 * * 8#1` and
+      // `0 0 * * 5#7` were all accepted as live triggers, and not one of them
+      // can run. Widening a grammar is where a range rule quietly stops
+      // applying, so the widening carries the range with it.
+      //
+      // `L`/`W` mean something only in day-of-month, `L`/`#` only in
+      // day-of-week, and every number these forms carry obeys its own field —
+      // with `#` taking 1-5, there being no sixth same-weekday in a month.
+      const ext =
+        idx === 2
+          ? [/^L$/i, /^LW$/i, /^(\d{1,2})W$/i]
+          : idx === 4
+            ? [/^L$/i, /^(\d)L$/i, /^(\d)#([1-5])$/]
+            : [];
+      for (const re of ext) {
+        const m = re.exec(atom);
+        if (!m) continue;
+        const n = m[1] === undefined ? null : Number(m[1]);
+        return n === null || (n >= lo && n <= hi);
+      }
       if (NAMES[idx]?.test(atom)) return true;
       if (/^\d+$/.test(atom)) {
         const n = Number(atom);
@@ -3081,6 +3101,65 @@ const INVENTORY_CASES = [
   // Codex #1978 r35: a backticked span was counted as a trigger without ever
   // being asked whether it is a schedule. Only `--live` would have noticed,
   // and `--live` needs credentials CI does not have.
+  // r44 follow-on: the extended forms are legal only where they mean
+  // something, and only with in-range numbers. Both directions, because the
+  // widening that admitted them is exactly where the range rule can lapse.
+  [
+    'last-day-of-month is legal in its own field',
+    '| `vaipakam-agent` | `0 0 L * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 L * *'] },
+    [],
+    0,
+  ],
+  [
+    'nearest-weekday is legal in day-of-month',
+    '| `vaipakam-agent` | `0 0 15W * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 15W * *'] },
+    [],
+    0,
+  ],
+  [
+    'nth-weekday is legal in day-of-week',
+    '| `vaipakam-agent` | `0 0 * * 5#3` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 * * 5#3'] },
+    [],
+    0,
+  ],
+  [
+    'last-day in the MINUTE field is a finding',
+    '| `vaipakam-agent` | `L 0 * * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['L 0 * * *'] },
+    [],
+    1,
+  ],
+  [
+    'a 32nd day-of-month is a finding even with W',
+    '| `vaipakam-agent` | `0 0 32W * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 32W * *'] },
+    [],
+    1,
+  ],
+  [
+    'an out-of-range weekday is a finding even with a hash',
+    '| `vaipakam-agent` | `0 0 * * 8#1` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 * * 8#1'] },
+    [],
+    1,
+  ],
+  [
+    'there is no seventh same-weekday in a month',
+    '| `vaipakam-agent` | `0 0 * * 5#7` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 * * 5#7'] },
+    [],
+    1,
+  ],
+  [
+    'nor a zeroth one',
+    '| `vaipakam-agent` | `0 0 * * 5#0` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['0 0 * * 5#0'] },
+    [],
+    1,
+  ],
   [
     'a span that is not a cron expression is a finding',
     '| `vaipakam-agent` | `not a cron` | `apps/agent` | live |',
