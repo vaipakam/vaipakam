@@ -23,6 +23,7 @@ import { useAccount, useSignMessage } from 'wagmi';
 import { useMode } from '../app/ModeContext';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
+import { useTermsBlockNonExitWrites } from '../contracts/diamond';
 import {
   alertsConfigured,
   bandsValid,
@@ -40,6 +41,7 @@ import {
 export function AlertsCard() {
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
+  const termsVerdict = useTermsBlockNonExitWrites();
   const { readChain } = useActiveChain();
   const { isAdvanced } = useMode();
   const chainId = readChain.chainId;
@@ -66,8 +68,43 @@ export function AlertsCard() {
   const configured = alertsConfigured();
   const pushUrl = pushChannelUrl();
 
+
+  /**
+   * #1961 review round 8 P1 — enrolment is gated, opting out is not.
+   *
+   * `/settings` is exempt so a held user can revoke a token allowance,
+   * which also exposed every control on this card. None of them reaches
+   * `useDiamondWrite` — linking signs and posts to the agent, saving
+   * writes the agent's threshold record — so the write gate cannot see
+   * them, and neither the agent nor the indexer carries a Terms check.
+   *
+   * The direction decides: turning something ON, or linking a channel,
+   * is enrolment and waits for acceptance. Turning something OFF, or
+   * unlinking, is an opt-out and must always work — the same rule as
+   * keeper and fee-consent revocation, applied to a surface that never
+   * touches the chain.
+   */
+  function termsBlockEnrolment(): string | null {
+    const v = termsVerdict();
+    if (v === 'ok') return null;
+    return v === 'unknown'
+      ? copy.errors.termsCheckUnavailable
+      : copy.errors.termsNotAccepted;
+  }
+
   async function persist(next: AlertPrefs, opts?: { dueDateChanged?: boolean }) {
     if (!address) return;
+    // Only an ENROLMENT is held. A save that turns everything off is an
+    // opt-out and goes through whatever the Terms say.
+    const enrolling =
+      next.repayDue || next.risky || next.telegramLinked || next.pushEnabled;
+    if (enrolling) {
+      const blocked = termsBlockEnrolment();
+      if (blocked) {
+        setError(blocked);
+        return;
+      }
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -93,6 +130,11 @@ export function AlertsCard() {
   }
 
   async function startLink() {
+    const blockedLink = termsBlockEnrolment();
+    if (blockedLink) {
+      setError(blockedLink);
+      return;
+    }
     if (!address) return;
     setBusy(true);
     setError(null);

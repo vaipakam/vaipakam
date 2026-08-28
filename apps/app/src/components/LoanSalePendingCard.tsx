@@ -15,7 +15,7 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { copy } from '../content/copy';
 import { captureTxError } from '../lib/errors';
 import { useActiveChain } from '../chain/useActiveChain';
-import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance, revokeAllowance, type TokenMeta } from '../contracts/erc20';
 import {
   BASIS_POINTS,
@@ -58,6 +58,7 @@ export function LoanSalePendingCard({
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const termsVerdict = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -101,6 +102,26 @@ export function LoanSalePendingCard({
   }
 
   async function restore() {
+    // #1961 review round 8 P1 — RESTORE is not cancellation.
+    //
+    // I left these cards alone last round on the reasoning that their
+    // only Diamond write is `cancelOffer`, an exit, so their allowance
+    // must serve the cancel. That was wrong: the allowance serves THIS
+    // control, which re-funds a pending refinance / offset / sale so a
+    // counterparty can complete it. There is no later Diamond write to
+    // refuse, so the write gate never sees it — a wallet that had
+    // declined the Terms could restore its own funding and let somebody
+    // else create the exposure. Cancelling needs no approval and stays
+    // available.
+    const termsForRestore = termsVerdict();
+    if (termsForRestore !== 'ok') {
+      setError(
+        termsForRestore === 'unknown'
+          ? copy.errors.termsCheckUnavailable
+          : copy.errors.termsNotAccepted,
+      );
+      return;
+    }
     if (!address || !walletChain || !walletClient || !publicClient) return;
     setBusy(true);
     setError(null);

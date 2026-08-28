@@ -41,6 +41,7 @@ import { useLocation } from 'react-router-dom';
 import { useActiveChain } from '../chain/useActiveChain';
 import { isExitRoute } from '../contracts/tosExitRoutes';
 import { TermsStatusCard } from './TermsStatusCard';
+import { ErrorBoundary } from './ErrorBoundary';
 
 const LegalGateActive = lazy(() =>
   import('./LegalGateActive').then((m) => ({ default: m.LegalGateActive })),
@@ -66,9 +67,27 @@ export function LegalGate({ children }: { children: ReactNode }) {
   // fetch, the same fail-open this component exists to prevent,
   // arriving through the loader. On an exempt route the opposite rule
   // applies: the exit is never withheld, chunk fetch included.
+  // Review round 8 P1: the chunk can FAIL, not merely be slow — a
+  // deployment invalidating a cached asset, or a CDN blip. Suspense
+  // covers pending; a rejected import throws, and without this boundary
+  // it would bubble to `AppShell`'s route ErrorBoundary and replace the
+  // routed children with a crash card. On an exempt route that means a
+  // connected user loses repay, claim and withdraw at exactly the
+  // moment things are already going wrong — worse than the pending
+  // case, which correctly kept them.
+  //
+  // So the boundary mirrors the Suspense fallback: children on an
+  // exempt route, the closed card on a gated one. The gate failing to
+  // load is not permission to bypass it, and it is not grounds to trap
+  // anyone either.
   return (
-    <Suspense fallback={exempt ? <>{children}</> : <TermsStatusCard />}>
-      <LegalGateActive exempt={exempt}>{children}</LegalGateActive>
-    </Suspense>
+    <ErrorBoundary
+      resetKey={pathname}
+      fallback={exempt ? <>{children}</> : <TermsStatusCard />}
+    >
+      <Suspense fallback={exempt ? <>{children}</> : <TermsStatusCard />}>
+        <LegalGateActive exempt={exempt}>{children}</LegalGateActive>
+      </Suspense>
+    </ErrorBoundary>
   );
 }
