@@ -1643,8 +1643,20 @@ caught at the cheapest stage.
       to act on. Supply the context explicitly: `--cwd apps/keeper` or
       `--name vaipakam-keeper` do the same job as the `cd`.
    2. A trigger-aware readback shows **no** schedule — the `/schedules`
-      query later in this step, expected to return an EMPTY `result`. Empty
-      is the pass condition here; it is the failure condition in branch B.
+      query later in this step, expected to return an **empty
+      `result.schedules` ARRAY**, not an empty `result`. That endpoint
+      always returns `result` as an object, `{"schedules": []}` when
+      nothing is armed, so "empty `result`" describes a response shape the
+      API does not produce — an operator checking for it during a recovery
+      would read the correct held state as a broken deployment and go
+      looking for a fault that is not there. An empty array is the pass
+      condition here; a non-empty one is what branch B requires instead.
+
+      Branch B's step 5 already said this, and said that an earlier
+      revision of ITS line had the same error. The correction was made once
+      and applied to one of the two branches that carry the same readback —
+      which is the shape #1977 is about, in the runbook rather than in a
+      count.
    3. The hold is recorded in the restore log, naming #1896, together with
       the checks deferred by it: every step-4 flag confirmation, and the
       Push-rotation check in `docs/ops/IncidentRunbook.md` step 6 if
