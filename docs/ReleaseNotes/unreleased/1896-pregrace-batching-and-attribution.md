@@ -39,4 +39,15 @@ A test pins the traffic shape for all four of the pass's reads separately —
 a partial regression where one stage quietly falls back to per-item reads while
 the others batch is exactly what a combined count would hide.
 
+One thing surfaced while checking that guard would hold: the keeper's test
+suite ran in no CI workflow at all. The Worker is typechecked, which is what
+made the gap easy to miss — a green column on every pull request meant "it
+compiles", never "its tests pass". Two hundred and twenty-one tests had never
+executed in CI, among them the guard added earlier for exactly this class of
+defect, where multicall batching silently degrades to one request per item and
+the pass reports success either way. A guard for an invisible failure is worth
+little if the guard itself never runs. The keeper's suite now gates alongside
+the connected app's, the shared library's and the indexer's. The agent's suite
+remains in the same unrun state and stays tracked separately.
+
 Refs #1896.

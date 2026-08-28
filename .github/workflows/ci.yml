@@ -65,12 +65,18 @@
 #                     — incl. the indexer's event-coverage script,
 #                     apps/agent, apps/app via `tsc -b --noEmit`,
 #                     apps/www). Vitest suites are NOT run in this job.
-#                     `app-vitest.yml` runs @vaipakam/{lib,app,indexer}.
+#                     `app-vitest.yml` runs
+#                     @vaipakam/{lib,app,indexer,keeper}.
 #                     The AGENT suite is run by NOTHING — it is outside
 #                     app-vitest.yml's change detector and no other
 #                     workflow invokes it, so agent test regressions are
-#                     currently ungated (#1962). Issue #85, which used to
-#                     be cited here, died with the deleted app (#1854).
+#                     currently ungated (#1962). The KEEPER suite was in
+#                     that same state until #1992: typechecked here, run
+#                     nowhere, so its 221 tests — including the #1946
+#                     guard that exists to catch Multicall3 batching
+#                     silently falling back — had never executed in CI.
+#                     Issue #85, which used to be cited here, died with
+#                     the deleted app (#1854).
 #
 # The `Protect main` ruleset's required-status-checks rule wires
 # `contracts-fast`, `workspaces`, `detect-changes`, `Slither static

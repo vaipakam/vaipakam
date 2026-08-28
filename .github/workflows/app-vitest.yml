@@ -14,9 +14,9 @@
 #
 # apps/defi was retired in #1854 and the connected app is now apps/app
 # (developed as apps/alpha02). Its pure-logic suite inherited this gate's
-# connected-app slot; the job also runs the shared @vaipakam/lib (#1099)
-# and apps/indexer (#1149) suites. See the `vitest` job for the rationale
-# on gating the suites together.
+# connected-app slot; the job also runs the shared @vaipakam/lib (#1099),
+# apps/indexer (#1149) and apps/keeper (#1992) suites. See the `vitest` job
+# for the rationale on gating the suites together.
 #
 # The workflow's display name stays `defi vitest` even though nothing named
 # defi survives. A required status check is keyed on
@@ -111,7 +111,15 @@ jobs:
           # (route SQL semantics + the SQL-vs-schema guard) previously ran
           # nowhere in CI, so the exact statement that wedged production
           # ingest had no gate.
-          DEFI_RE='^(apps/(app|indexer)/|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
+          # apps/keeper joined post-#1992: its suite ran in NO workflow at
+          # all. The keeper is typechecked by ci.yml's `workspaces` job, so
+          # the gap was invisible — a green PR meant "it compiles", never
+          # "its tests pass". That included the #1946 guard, whose entire
+          # purpose is to catch Multicall3 batching silently degrading to
+          # per-item reads, a failure the pass itself reports as success.
+          # The one Worker holding KEEPER_PRIVATE_KEY is not where an
+          # unrun test suite belongs.
+          DEFI_RE='^(apps/(app|indexer|keeper)/|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else
@@ -166,3 +174,15 @@ jobs:
       # executed it. Needs Node >= 22 for node:sqlite (this job pins '22').
       - name: Run @vaipakam/indexer vitest
         run: pnpm --filter @vaipakam/indexer test
+
+      # apps/keeper's suite (#1992) gates here for the same reason the other
+      # three do: it ran nowhere. `workspaces` typechecks the keeper, which
+      # is what made the gap easy to miss — the Worker had a green column on
+      # every PR while none of its 221 tests executed. Among them is the
+      # #1946 Multicall3 guard, which asserts on the SHAPE OF THE TRAFFIC
+      # precisely because the failure it catches (a chainless client falling
+      # back to one subrequest per loan) leaves the pass completing normally
+      # with the right output. A guard for an invisible failure is worth
+      # little if the guard itself never runs.
+      - name: Run @vaipakam/keeper vitest
+        run: pnpm --filter @vaipakam/keeper test
