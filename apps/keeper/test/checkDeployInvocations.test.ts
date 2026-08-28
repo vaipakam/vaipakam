@@ -1510,6 +1510,33 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('an explicit cd OUTRANKS where the wrapper file lives (#1995 r9)', () => {
+    // Script inside apps/agent, but the shell moves to the indexer, which is
+    // not a protected package. Reporting it as an agent violation is a false
+    // red in a check that blocks the unfiltered CI job.
+    for (const body of [
+      'cd apps/indexer; wrangler deploy\n',
+      'cd apps/indexer\nwrangler deploy\n',
+    ]) {
+      const r = runWith('apps/agent/deploy.sh', body);
+      expect(r.ok, body).toBe(true);
+    }
+  });
+
+  it('the file-path fallback still applies with no cd (#1995 r9)', () => {
+    // The other half: without an explicit cd, living inside the package IS the
+    // scope, and suppressing the fallback unconditionally would lose it.
+    const r = runWith('apps/agent/deploy.sh', 'wrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a cd to ANOTHER scoped package re-attributes it (#1995 r9)', () => {
+    const r = runWith('apps/agent/deploy.sh', 'cd apps/keeper\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/keeper');
+  });
+
   it("wrangler stops parsing options at -- (#1995 r10)", () => {
     // `wrangler deploy -- --dry-run` is a LIVE bare deploy; the flag after the
     // terminator is inert.

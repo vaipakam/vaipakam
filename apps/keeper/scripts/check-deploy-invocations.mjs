@@ -2038,9 +2038,23 @@ for (const file of walk(REPO_ROOT)) {
         // (#1995 r2). Textual and cwd scope apply only when no selector
         // resolved.
         const sel = selectorScope(seg, input);
+        // An explicit `cd` OUTRANKS where the wrapper file happens to live
+        // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
+        // package", and it ran before the modelled cwd — so in a script under
+        // `apps/agent`, `cd apps/indexer; wrangler deploy` was reported as an
+        // AGENT violation although the shell is demonstrably in the indexer,
+        // which is not a protected package at all. A false red, in a check that
+        // blocks the unfiltered CI job.
+        //
+        // Passing an empty path suppresses only that fallback; the textual
+        // signals in `scopeOf` still apply, and the cwd model answers next.
+        const movedCwd = input.some((st) => st.cwd !== '');
         const scope = sel
           ? sel.scope
-          : scopeOf([...namedPrefix.map((e) => e.text), seg].join(' '), rel) ??
+          : scopeOf(
+              [...namedPrefix.map((e) => e.text), seg].join(' '),
+              movedCwd ? '' : rel,
+            ) ??
             input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
             null;
         if (!scope) continue;
