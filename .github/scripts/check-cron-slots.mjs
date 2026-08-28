@@ -254,6 +254,24 @@ const GAP = String.raw`(?:\s|\*|\/\/|#|>)*`;
 // the word was missing.
 const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
 
+/**
+ * Words that may follow a PREDICATIVE `spare` without it modifying them.
+ *
+ * Codex #1978 r25: the distinction across the whole corpus is what comes after
+ * the word. "a spare B2 credential", "the primary and spare encryption keys" —
+ * `spare` modifies a noun, and the sentence is about that noun. "is genuinely
+ * spare today", "not spare right now", "never spare in this account",
+ * "reserved rather than spare" — `spare` stands alone and the capacity noun
+ * before it is what it describes.
+ *
+ * Enumerating FUNCTION words is defensible where enumerating nouns is not:
+ * prepositions and this handful of adverbs are a closed class of English,
+ * unlike the open-ended set of things somebody might keep a spare of. Every
+ * other closed world in this file leaked because it enumerated an open class.
+ */
+const FUNCTION_WORD =
+  String.raw`(?:in|on|at|for|to|of|by|with|from|right|now|today|tonight|here|there|yet|anymore|and|or|but|so|because|while|since|until|unless|though|although)\b`;
+
 const OCCUPANCY = [
   // "4/5 cron triggers", "3 of 5 slots". The NOUN is required and must be
   // adjacent. Codex #1978 r20: the bare ratio was validated only by cron
@@ -316,7 +334,26 @@ const OCCUPANCY = [
   // protecting exactly one sentence, which is now reworded — every other
   // "spare" in scope is ordinary English ("room to spare", "spare bits") and
   // nowhere near cron vocabulary, so CONTEXT keeps the gate off them.
-  /\bspare\b/i,
+  // Codex #1978 r25: `spare` must modify CAPACITY, not merely sit near cron
+  // vocabulary. Bare, it fired on "The cron worker keeps a spare B2 credential
+  // for disaster recovery" and "rotates between the primary and spare
+  // encryption keys" — ordinary sentences in this very tree's subject matter,
+  // each of which would have blocked EVERY PR in the repository.
+  //
+  // This is the r20 ratio finding on its sibling. I fixed the bare `N of 5`
+  // by requiring an adjacent noun, wrote a reply about detached context being
+  // unable to tell what a number counts, and left the other detached-context
+  // matcher in the same array untouched. A spare WHAT is the same question as
+  // four of five WHAT.
+  new RegExp(
+    String.raw`\bspare\b${WRAP}(?:(?:cron|account)[-\s]*${WRAP}?)*(?:cron-)?(?:slots?|triggers?|schedules?|capacity)\b`,
+    'i',
+  ),
+  // …and the reverse order: "no cron trigger is spare", "the slot is spare".
+  new RegExp(
+    String.raw`(?:slots?|triggers?|schedules?|capacity)${GAP}(?:\w+${GAP}){0,6}?spare\b(?![-\s]+(?!${FUNCTION_WORD})[A-Za-z])`,
+    'i',
+  ),
   // Codex #1978 r3: `packages/lib/src/cronCadence.ts` said "this account has no
   // headroom to spend on a second one" — a zero-capacity claim in a synonym the
   // patterns did not know, three lines above a sentence saying the count is
@@ -527,7 +564,27 @@ function checkInventoryFraming(inv) {
   // text said "directly under the header" while nothing verified it. A check
   // whose message describes a stronger rule than it applies is worse than a
   // silent one: it tells the next reader the case is covered.
-  const { headerAt, delimiterAt } = inv.framing;
+  const { headerAt, delimiterAt, firstDataAt, lastDataAt, rowCount } = inv.framing;
+  // Codex #1978 r25: CONTIGUITY, not just header-to-delimiter adjacency. GFM
+  // ends a table at the first blank line, so a blank line or prose after the
+  // delimiter leaves the rendered inventory as a header alone with its rows
+  // below it as ordinary text — while this parser reads rows anywhere in the
+  // section. I fixed adjacency one round ago and checked only the pair I had
+  // been shown; a table is a contiguous block, and two of its three joins
+  // were unverified.
+  if (firstDataAt !== -1 && delimiterAt !== -1 && firstDataAt !== delimiterAt + 1) {
+    problems.push(
+      `the inventory's first row does not immediately follow the alignment row; ` +
+        `Markdown ends the table at the first blank line, so the rows below it ` +
+        `render as ordinary text`,
+    );
+  }
+  if (firstDataAt !== -1 && lastDataAt - firstDataAt + 1 !== rowCount) {
+    problems.push(
+      `the inventory's rows are not contiguous — something sits between them, ` +
+        `which ends the table there and leaves the remaining rows as text`,
+    );
+  }
   if (sawHeader === 1 && sawDelimiter === 1 && delimiterAt !== headerAt + 1) {
     problems.push(
       `the inventory's alignment row is not directly under its header; Markdown ` +
@@ -659,6 +716,17 @@ function* visibleLines(md) {
   for (const line of md.split('\n')) {
     // At most three leading spaces: four or more is an indented code block,
     // not a fence, in BOTH directions.
+    // Codex #1978 r25: FOUR-SPACE INDENTED CODE is not prose either. An
+    // indented example of the stamp beside the real one made the gate report
+    // two stamps and reject a correct authority — the same false positive the
+    // fenced case already avoided, in the other way Markdown marks code.
+    //
+    // This is inside the surface I said I would defer, and I am fixing it
+    // anyway because the deferral was about unbounded hardening against
+    // deliberate EVASION, not about tolerating CI breakage on a natural edit.
+    // It is also one bounded rule I had already written for fences.
+    if (openedWith === null && /^ {4,}\S/.test(line) && line.trim() !== '') continue;
+
     const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(line);
     if (fence) {
       const run = fence[1];
@@ -1258,6 +1326,8 @@ export function parseInventory(md) {
   let headerAt = -1;
   let delimiterAt = -1;
   let rowIdx = -1;
+  let firstDataAt = -1;
+  let lastDataAt = -1;
   /** name -> the `Source in this repo` path, or null for the explicit *none*. */
   const sources = new Map();
   const problems = [];
@@ -1483,6 +1553,8 @@ export function parseInventory(md) {
     const residue = scheduleCell.replace(/`[^`]+`/g, '').replace(/[\s,]/g, '');
     const status = readStatus(statusCell);
 
+    if (firstDataAt === -1) firstDataAt = rowIdx;
+    lastDataAt = rowIdx;
     sources.set(name, readSource(sourceCell));
     if (status !== null) statuses.set(name, status);
 
@@ -1513,6 +1585,22 @@ export function parseInventory(md) {
     // very check that had just been added to catch span-plus-prose cells. An
     // exception matched on a prefix is a hole shaped like whatever follows it.
     const isWouldBe = /^\s*\*\(\s*would\s+be\s+`[^`]+`\s*\)\*\s*$/i.test(scheduleCell);
+    // Codex #1978 r25: and the SPAN-FREE case. My r23 fix only rejected cells
+    // that had spans AND residue, so `every minute` — no spans at all —
+    // classified as no-schedule and the status alone decided occupancy, while
+    // the rendered row plainly claims a cadence. One branch of a two-branch
+    // condition, again: I wrote the rule for the shape in the finding and not
+    // for the question it was asking.
+    const isNone = /^\s*\*?\*?\(?\s*none\s*\)?\*?\*?\s*$/i.test(scheduleCell);
+    if (!spans.length && !isNone && !isWouldBe && scheduleCell.trim() !== '') {
+      problems.push(
+        `\`${name}\`'s schedule cell reads ${scheduleCell.trim().slice(0, 60)}, which is ` +
+          `neither a backticked cron expression nor a canonical no-schedule form ` +
+          `(\`*(none)*\` or \`*(would be ...)*\`); a reader cannot tell what it claims ` +
+          `and this parser assumes it claims nothing`,
+      );
+      continue;
+    }
     if (spans.length && residue !== '' && !isWouldBe) {
       problems.push(
         `\`${name}\`'s schedule cell carries a cron span AND other text ` +
@@ -1538,7 +1626,7 @@ export function parseInventory(md) {
     }
   }
 
-  return { live, reserved, sources, statuses, framing: { sawHeader, sawDelimiter, headerAt, delimiterAt }, problems };
+  return { live, reserved, sources, statuses, framing: { sawHeader, sawDelimiter, headerAt, delimiterAt, firstDataAt, lastDataAt, rowCount: sources.size }, problems };
 }
 
 /**
@@ -1711,10 +1799,33 @@ export function checkSources(sources) {
  */
 function readWranglerName(configPath) {
   try {
-    const m = /^ {0,2}"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/m.exec(
-      readFileSync(configPath, 'utf8'),
-    );
-    return m ? (m[1] ?? m[2]) : null;
+    // Codex #1978 r25: `^ {0,2}` treated TWO-SPACE INDENTATION as the
+    // definition of "top level", so reformatting a config to four spaces made
+    // this return null — and a false `*none*` or a swapped source binding then
+    // passed both modes after a whitespace-only edit. Structure, not layout:
+    // strip comments and strings, track brace/bracket depth, and take the
+    // first `name` at depth 1. `apps/agent/wrangler.jsonc` has eleven `name`
+    // fields and only that one is the Worker's.
+    const text = readFileSync(configPath, 'utf8');
+    let depth = 0;
+    for (const rawLine of text.split('\n')) {
+      const line = rawLine.replace(/\/\/.*$/, '');
+      if (depth === 1) {
+        const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
+        if (m) return m[1] ?? m[2];
+      }
+      // TOML has no braces around top-level keys: depth stays 0, so accept
+      // depth 0 too when the file never opens one.
+      if (depth === 0 && !text.includes('{')) {
+        const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
+        if (m) return m[1] ?? m[2];
+      }
+      for (const ch of line.replace(/"[^"]*"|'[^']*'/g, '')) {
+        if (ch === '{' || ch === '[') depth += 1;
+        else if (ch === '}' || ch === ']') depth -= 1;
+      }
+    }
+    return null;
   } catch {
     return null; // unreadable config is not this check's business
   }
@@ -2028,6 +2139,10 @@ const MUST_NOT_FIRE = [
   ['cap as entitlement, modal', 'Free accounts may have five cron triggers.'],
   ['cap as entitlement, allows-to', 'Cloudflare allows an account to have 5 cron triggers.'],
   ['unrelated N-of-5', ' * twice before it did: the first cut caught 3 of 5 known violation forms,'],
+  // Codex #1978 r25: a spare SOMETHING ELSE, in a sentence about cron. Either
+  // of these would have blocked every PR in the repository.
+  ['a spare credential, near cron', 'The cron worker keeps a spare B2 credential for disaster recovery.'],
+  ['a spare key, near cron', 'The cron trigger rotates between the primary and spare encryption keys.'],
   // Codex #1978 r20: a cron IMPLEMENTATION note. The window contains "cron",
   // the ratio counts something else entirely, and firing here would have
   // blocked every PR in the repository.
@@ -2181,11 +2296,16 @@ const INVENTORY_CASES = [
   // and reporting a false SCHEDULE disagreement against a correct table.
   // Codex #1978 r14: backticks left around nothing are not a schedule.
   [
-    'an emptied schedule span is not a trigger',
+    // Codex #1978 r15 pinned that an emptied span is not counted as a trigger;
+    // r25's span-free rule now also REPORTS it, because `` is not a canonical
+    // no-schedule form and a reader cannot tell what it claims. Both hold: the
+    // row still contributes no trigger, and it is now a finding rather than a
+    // silent reclassification. Expectation updated deliberately, not relaxed.
+    'an emptied schedule span is not a trigger, and is now also reported',
     '| `vaipakam-e` | `` | `ops/e` | reserved — parked |',
     {},
-    ['vaipakam-e'],
-    0,
+    [],
+    1,
   ],
   [
     'a comma INSIDE one expression is one trigger',
