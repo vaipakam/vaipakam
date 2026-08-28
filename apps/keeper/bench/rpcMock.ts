@@ -682,8 +682,108 @@ function answer(
   }
 }
 
-/** Counts requests served, so a pass that did nothing cannot look cheap. */
-export const rpcStats = { calls: 0 };
+/**
+ * The JSON-RPC methods that only ever appear on a WRITE path — the keeper is
+ * preparing, signing, submitting or confirming a transaction. Nothing here is
+ * ever issued while merely scanning, which is what makes the split mechanical
+ * rather than a judgement call.
+ *
+ * `eth_call` is deliberately absent: a read is a read whether it scanned the
+ * book or priced one actionable item. Which of those it was is answered by the
+ * SELECTOR breakdown, not by the method.
+ *
+ * `eth_chainId` and `eth_getBlockByNumber` are absent too, and that is a
+ * deliberate UNDER-count rather than an oversight: viem issues both while
+ * preparing a transaction, but scans issue them as well, so attributing them
+ * to the write path would overstate it. The action share printed by the runner
+ * is therefore a lower bound.
+ *
+ * `eth_fillTransaction` is viem 2.48's one-shot prepare. It is real: viem
+ * probes it first and falls back to the manual nonce/fee/gas sequence when the
+ * node answers null, which is what public RPCs — and this mock — do.
+ */
+const WRITE_PATH_METHODS = new Set([
+  'eth_fillTransaction',
+  'eth_estimateGas',
+  'eth_gasPrice',
+  'eth_maxPriorityFeePerGas',
+  'eth_feeHistory',
+  'eth_getTransactionCount',
+  'eth_sendRawTransaction',
+  'eth_getTransactionReceipt',
+]);
+
+/**
+ * Counts requests served, so a pass that did nothing cannot look cheap — and
+ * ATTRIBUTES them, so a pass that is expensive says where.
+ *
+ * WHY THE BREAKDOWN EXISTS. A bare per-pass call count cannot distinguish the
+ * two costs that need opposite fixes. A pass whose calls are all book SCAN is
+ * fixed by batching; a pass whose calls are mostly per-item ACTION is fixed by
+ * bounding how many items it acts on per tick, or not at all. The first
+ * published table for #1896 had `liquidator` at 528 calls and I read that as a
+ * scan cost — the fixture answers every health factor below the liquidation
+ * line, so all 50 scanned loans were actionable and most of those 528 were the
+ * submission path. That is a fixture artifact, and batching it would have
+ * optimised nothing.
+ *
+ * `calls` counts SUBREQUESTS (one `fetch`), which is what the Worker's 50-per-
+ * invocation ceiling counts. `byLabel` counts JSON-RPC REQUESTS, so the two
+ * differ whenever a transport packs several requests into one HTTP body; they
+ * are reported separately rather than reconciled.
+ */
+export const rpcStats = {
+  calls: 0,
+  /** requests per selector name (or bare JSON-RPC method), at subrequest level */
+  byLabel: new Map<string, number>(),
+  /** sub-calls carried INSIDE an `aggregate3`, by selector name */
+  inner: new Map<string, number>(),
+  /** subset of `byLabel` that is transaction-submission work */
+  writeCalls: 0,
+};
+
+/** Clear the attribution maps without touching `calls` (which passCpu diffs). */
+export function resetRpcBreakdown(): void {
+  rpcStats.byLabel.clear();
+  rpcStats.inner.clear();
+  rpcStats.writeCalls = 0;
+}
+
+function bump(m: Map<string, number>, k: string, n = 1): void {
+  m.set(k, (m.get(k) ?? 0) + n);
+}
+
+/** The human name for a piece of calldata: a function name where we know it. */
+function labelForCallData(data: string): string {
+  const selector = data.slice(0, 10).toLowerCase();
+  const fn = BY_SELECTOR.get(selector);
+  return fn ? fn.name : `unknown(${selector})`;
+}
+
+/** Attribute one JSON-RPC request, descending into `aggregate3` batches. */
+function attribute(req: { method: string; params?: unknown[] }): void {
+  const { method, params = [] } = req;
+  if (WRITE_PATH_METHODS.has(method)) rpcStats.writeCalls += 1;
+  if (method !== 'eth_call') {
+    bump(rpcStats.byLabel, method);
+    return;
+  }
+  const data = ((params[0] as { data?: string })?.data ?? '0x') as string;
+  if (data.slice(0, 10).toLowerCase() === toFunctionSelector(MULTICALL3_ABI[0]).toLowerCase()) {
+    bump(rpcStats.byLabel, 'aggregate3(batch)');
+    try {
+      const { args } = decodeFunctionData({ abi: MULTICALL3_ABI, data: data as `0x${string}` });
+      for (const c of args[0] as readonly { callData: string }[]) {
+        bump(rpcStats.inner, labelForCallData(c.callData));
+      }
+    } catch {
+      // An undecodable batch is still one attributed subrequest; its contents
+      // are simply unknown, which is better than aborting the profile.
+    }
+    return;
+  }
+  bump(rpcStats.byLabel, labelForCallData(data));
+}
 
 /**
  * Serialized-response cache, keyed on (chain, request body).
@@ -745,6 +845,9 @@ export function installRpcMock(): () => void {
       params?: unknown[];
       id?: unknown;
     }[];
+    // Attribute BEFORE the cache lookup: the cache exists to keep the fixture's
+    // ABI encoding out of the measured interval, not to hide a repeated call.
+    for (const r of reqs) attribute(r);
     const cacheKey = `${url}|${JSON.stringify(reqs.map((r) => [r.method, r.params]))}`;
     let results = responseCache.get(cacheKey);
     if (results === undefined) {
