@@ -3502,6 +3502,92 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ── Markdown blocks and prose command spans (#1995 r16).
+  it('an INDENTED markdown code block is one shell block (#1995 r16)', () => {
+    // CommonMark's fence-free spelling of the same copyable example. Only
+    // fenced blocks were grouped, so the first line's directory could not
+    // reach the second.
+    const r = runWith('docs/r.md', 'Steps:\n\n    cd apps/agent\n    wrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the same block with the flag still passes (#1995 r16 control)', () => {
+    // Pins that the block is SCANNED, not merely ignored: before the change
+    // this passed because nothing looked at it at all.
+    const r = runWith('docs/r2.md', 'Steps:\n\n    cd apps/agent\n    wrangler deploy --keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('an indented block with a COMPOSED command name is still grouped (#1995 r16)', () => {
+    // The block filter read raw text only, so `wrang"ler" deploy` — a deploy by
+    // the r9 rule — did not qualify the block and its `cd` never reached the
+    // command. Mutation found it: widening the filter changed a verdict, which
+    // a filter that was only a blast-radius bound could not have done.
+    const r = runWith('docs/r5.md', 'Steps:\n\n    cd apps/agent\n    wrang"ler" deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but indented lines in YAML are DATA, not a shell block (#1995 r16 control)', () => {
+    // Indentation is structure in YAML and JSON, and a `run:` block is already
+    // handled on its own path. Grouping every indented run would put ordinary
+    // mapping content through a shell parser — the r27 mistake, which cost
+    // four false positives on a clean tree.
+    const r = runWith('config/notes.yml', 'notes:\n    cd apps/agent\n    wrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a MAKEFILE recipe folds its backslash continuation (#1995 r16)', () => {
+    // GNU Make preserves the continuation, so this is one command and each
+    // physical line alone says nothing.
+    const r = runWith('Makefile', 'deploy:\n\tcd apps/agent && \\\n\twrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('two command SPANS on one prose line are two commands (#1995 r16)', () => {
+    // No shell separator between them, so `splitCommands` returned one segment
+    // and the safe span blessed the bare one beside it.
+    const r = runWith(
+      'docs/r3.md',
+      'Use `wrangler deploy --keep-vars` for apps/keeper and `wrangler deploy` for apps/agent.\n',
+    );
+    expect(r.ok).toBe(false);
+    // The clause AFTER the span names the package. Reporting the keeper here —
+    // first in SCOPED — would be the r1 defect again: wrong package, wrong
+    // remedy, and a reader acts on the remedy.
+    expect(r.out).toContain('apps/agent');
+    expect(r.out).not.toContain('@vaipakam/keeper');
+  });
+
+  it('but ONE command span with a flag beside it is one command (#1995 r16 control)', () => {
+    // `keeper-scoped `wrangler deploy` that lacks `--keep-vars`` is a sentence
+    // ABOUT a command. Splitting on every span reported it as a deploy — this
+    // is the standing #1924 r19 fixture, and breaking it is how the
+    // two-or-more rule was found.
+    const r = runWith(
+      'apps/keeper/README.md',
+      'keeper-scoped `wrangler deploy` that lacks `--keep-vars`. It exists because\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('and an UNATTRIBUTED span is not reported at all (#1995 r16 control)', () => {
+    // The shape that caught this on the real tree: a documentation row saying a
+    // bare deploy must NOT be used. Two command spans, but the clause after the
+    // bare one names no package — so there is nothing to attribute it to, and
+    // falling back to the whole line would report every sentence warning
+    // against the command. A guard that blocks CI over the sentence telling you
+    // not to do the thing is how a guard gets switched off.
+    const r = runWith(
+      'docs/r4.md',
+      'Use `pnpm --filter @vaipakam/agent run deploy` — NOT a bare `wrangler deploy` — ' +
+        'because those scripts carry `--keep-vars`.\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

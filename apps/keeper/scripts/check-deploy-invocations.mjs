@@ -1234,22 +1234,6 @@ function appendedTurnsOff(appended, flag) {
 }
 
 /**
- * Safe only if EVERY `wrangler deploy` on the line is safe. A line with no
- * deploy at all is safe by vacuity — the caller has already established that
- * the line mentions one, so this cannot mask anything.
- */
-function isSafe(line) {
-  const deploys = splitCommands(line)
-    .map((c) => c.text)
-    .filter(
-      (c) =>
-        new RegExp(ANY_DEPLOY_RE).test(c) || new RegExp(RUN_DEPLOY_RE).test(dequote(c)),
-    );
-  if (deploys.length === 0) return true;
-  return deploys.every(commandIsSafe);
-}
-
-/**
  * The Workers whose deploys must preserve dashboard vars, and why each is here.
  *
  * SCOPE IS EVIDENCE, NOT CAUTION (#1933). A Worker belongs here when its source
@@ -2299,9 +2283,86 @@ function stripConsolePrompts(blockLines) {
  * physical lines rather than replacing them, so prose that merely quotes a
  * command is still caught by the default-deny path.
  */
-function embeddedShellLines(text, isYaml = false) {
+/**
+ * Contiguous runs of INDENTED lines, as one shell block each.
+ *
+ * Two shapes need this and neither was reached (#1995 r16):
+ *   - CommonMark's four-space indented code block, the fence-free spelling of
+ *     the same copyable example. `cd apps/agent` and `wrangler deploy` stayed
+ *     independent prose lines, so the first line's directory could not reach
+ *     the second.
+ *   - A Makefile recipe, whose lines start with a TAB and whose `\`
+ *     continuations GNU Make preserves — `cd apps/agent && \` then `wrangler
+ *     deploy` is one command, and each physical line alone says nothing.
+ *
+ * Only blocks that actually CONTAIN a deploy are emitted. An indented run is
+ * otherwise indistinguishable from indented prose, and scanning every one of
+ * them would put paragraph text through a shell parser — the r27 mistake,
+ * which cost four false positives on a clean tree.
+ *
+ * Dropping that condition is an EQUIVALENT MUTANT as the code stands, and is
+ * recorded as one rather than given a fixture that would only look like
+ * coverage: a block with no deploy in either its raw or its dequoted form
+ * contributes no reportable line, and blocks share no state. It is kept as a
+ * bound on how much text reaches the shell parser at all, which is a property
+ * of the blast radius rather than of any one verdict.
+ *
+ * The DEQUOTED half of the condition is NOT equivalent — mutation showed it
+ * changing a verdict — and has its own fixture.
+ *
+ * The common indent is stripped so `logicalLines` sees ordinary commands, and
+ * each line keeps the number of the physical line it came from.
+ */
+function indentedBlocks(lines, indentRe, startAt = 0) {
+  const out = [];
+  let i = startAt;
+  let blockId = 0;
+  while (i < lines.length) {
+    if (!indentRe.test(lines[i])) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < lines.length && (indentRe.test(lines[j]) || lines[j].trim() === '')) j += 1;
+    // Trailing blank lines belong to the prose after the block, not to it.
+    let end = j;
+    while (end > i && lines[end - 1].trim() === '') end -= 1;
+    const body = lines.slice(i, end);
+    // The DEQUOTED form too, the r9 rule: `wrang"ler" deploy` is a deploy and
+    // a raw-text-only filter skipped the block that contained it — the same
+    // composition defect the prefilter had, in the newer reader. Found by
+    // mutation: widening the filter changed a verdict, which a filter that was
+    // only a blast-radius bound could not have done.
+    if (
+      body.some(
+        (l) => new RegExp(ANY_DEPLOY_RE).test(l) || new RegExp(ANY_DEPLOY_RE).test(dequote(l)),
+      )
+    ) {
+      const strip = Math.min(
+        ...body.filter((l) => l.trim() !== '').map((l) => (l.match(/^[ \t]*/) ?? [''])[0].length),
+      );
+      out.push(
+        ...offset(
+          logicalLines(body.map((l) => l.slice(strip)).join('\n')),
+          i,
+          `indent${blockId}`,
+        ),
+      );
+      blockId += 1;
+    }
+    i = j;
+  }
+  return out;
+}
+
+function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
   const lines = text.split('\n');
   const out = [];
+  // CommonMark's indented code block is the fence-free spelling of the same
+  // copyable example, and only fenced ones were grouped (#1995 r16). Markdown
+  // only: in YAML and JSON an indented run is ordinary structure, and putting
+  // those through a shell parser is the r27 mistake.
+  if (isMarkdown) out.push(...indentedBlocks(lines, /^ {4,}\S/));
   let i = 0;
   let blockId = 0;
   while (i < lines.length) {
@@ -3114,7 +3175,13 @@ for (const file of walk(REPO_ROOT)) {
     ? logicalLines(text)
     : [
         ...(/\.jsonc?$/.test(rel) ? jsonValueLines(text) : plainLines(text)),
-        ...embeddedShellLines(text, /\.ya?ml$/.test(rel)),
+        ...embeddedShellLines(text, /\.ya?ml$/.test(rel), /\.mdx?$/.test(rel)),
+        // Makefile recipes are tab-indented and are shell, whatever the file
+        // extension says. Kept out of `embeddedShellLines` because the trigger
+        // is the FILE, not a construct inside it.
+        ...(/(^|\/)([Mm]akefile|.*\.mk)$/.test(rel)
+          ? indentedBlocks(text.split('\n'), /^\t/)
+          : []),
       ];
   if (
     !folded.some(
@@ -3230,7 +3297,48 @@ for (const file of walk(REPO_ROOT)) {
       // and HF_SCALE remedy beside an agent problem. The scope has to come from
       // the segment carrying the unsafe command.
       const lineScope = scopeOf(line, rel) ?? labelScope.get(lineNo) ?? null;
-      for (const part of splitCommands(line)) {
+      // A markdown CODE SPAN is a command boundary, and prose has no shell
+      // separator between two of them. `Use `wrangler deploy --keep-vars` for
+      // the keeper and `wrangler deploy` for the agent.` is ONE segment to
+      // `splitCommands`, so the safe span blessed the bare one beside it —
+      // and the bare one is exactly the copyable command this guard exists to
+      // reject (#1995 r16).
+      //
+      // APPENDED to the segments rather than replacing them, so this can only
+      // make the pass stricter. A span that is the whole command scores
+      // identically either way, which is why the fenced and shell paths see no
+      // change at all.
+      //
+      // TWO OR MORE spans must each carry a deploy before any of them counts.
+      // With only one, the other spans are COMMENTARY ABOUT it, not commands
+      // beside it — `keeper-scoped `wrangler deploy` that lacks `--keep-vars``
+      // is one command described across two spans, and scoring the first alone
+      // reported a documentation sentence as a destructive deploy. That
+      // sentence is a standing #1924 r19 fixture, and splitting on every span
+      // broke it, which is how the rule was found.
+      //
+      // Each span carries the CLAUSE THAT FOLLOWS IT as its scope hint. Without
+      // that, a span names no package and falls back to the whole line — which,
+      // when the line names two, resolved to whichever is first in SCOPED and
+      // reported the keeper for an agent problem. That is the r1 defect
+      // exactly: the wrong package means the wrong remedy, and a reader acts on
+      // the remedy.
+      const spanMatches = [...line.matchAll(/`([^`]*)`/g)];
+      const hasDeploy = (t) =>
+        new RegExp(ANY_DEPLOY_RE).test(t) || new RegExp(ANY_DEPLOY_RE).test(dequote(t));
+      const commandSpans = spanMatches.filter((m) => hasDeploy(m[1]));
+      const spans =
+        commandSpans.length > 1
+          ? commandSpans.map((m) => {
+              const after = spanMatches.find((n) => n.index > m.index);
+              return {
+                isSpan: true,
+                text: m[1],
+                scopeHint: line.slice(m.index + m[0].length, after ? after.index : line.length),
+              };
+            })
+          : [];
+      for (const part of [...splitCommands(line), ...spans]) {
         const seg = part.text;
         // The dequoted fallback belongs here too (#1995 r9). Only the shell
         // path had it, so `From apps/agent run pnpm run de"ploy"
@@ -3256,7 +3364,25 @@ for (const file of walk(REPO_ROOT)) {
           for (const sc of many) hitScopes.add(sc);
           continue;
         }
-        const scope = sel ? sel.scope : scopeOf(seg, rel) ?? lineScope;
+        // `''` and not `rel` for the hint: the file-level fallback would give
+        // every span the enclosing package's scope, which is the whole-line
+        // answer again under another name.
+        const hinted = part.scopeHint ? scopeOf(part.scopeHint, '') : null;
+        // A SPAN never falls back to the whole line, and that restriction is
+        // what makes span-splitting safe to ship. A line offering two commands
+        // attributes each one — "`…` for apps/agent" — so the clause after the
+        // span names its package. A line that merely QUOTES the bare command
+        // does not, and the whole-line fallback would then report every
+        // sentence warning against it.
+        //
+        // That is not hypothetical: without this, the staging deploy plan's own
+        // row explaining that a bare `wrangler deploy` must NOT be used for the
+        // agent was reported as an agent violation, on the real tree. The
+        // guard blocking CI over the sentence telling you not to do the thing
+        // is precisely how a guard gets switched off.
+        const scope = sel
+          ? sel.scope
+          : scopeOf(seg, rel) ?? hinted ?? (part.isSpan ? null : lineScope);
         if (!scope) continue;
         flagged = true;
         hitScopes.add(scope);
