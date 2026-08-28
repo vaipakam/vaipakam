@@ -1,4 +1,4 @@
-## Thread — The deploy guard now covers the agent, and says which Worker it means (PR #TBD)
+## Thread — The deploy guard now covers the agent, and says which Worker it means (PR #1995)
 
 A guard added earlier this year fails the build on any deploy command anywhere
 in the repository that would wipe the keeper Worker's dashboard-managed
