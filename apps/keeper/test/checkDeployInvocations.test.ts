@@ -1476,6 +1476,96 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a selector value assembled from adjacent quoted chunks (#1995 r4)', () => {
+    // `--name vaipakam"-"agent` is ONE shell argument, `vaipakam-agent`.
+    // Capturing only the first chunk made the value `vaipakam`, and that
+    // non-match then read as authoritative no-scope.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/indexer\nwrangler deploy --name vaipakam"-"agent\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('selector text in a leading ENV ASSIGNMENT is not a selector (#1995 r4)', () => {
+    // `NOTE="--name vaipakam-indexer" wrangler deploy` passes no such option —
+    // the shell puts it in the environment — but the fake name was suppressing
+    // the cwd scope of a bare agent deploy.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nNOTE="--name vaipakam-indexer" wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a DOT-continued sibling name is not the scoped package (#1995 r4)', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Deploy apps/agent.backup with wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('but a sentence-ending period still matches (#1995 r4)', () => {
+    // The commonest spelling in a runbook. Disallowing `.` outright to fix the
+    // case above would have stopped matching this one.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Deploy apps/agent. Then verify with wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a negating flag appended to the package script (#1995 r4)', () => {
+    // `run deploy --no-keep-vars` expands to
+    // `wrangler deploy --keep-vars --no-keep-vars` => keepVars:false. The line
+    // contains no `wrangler deploy` at all, so nothing examined it before.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pnpm --filter @vaipakam/agent run deploy --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the same negation spelled --keep-vars=false (#1995 r4)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pnpm --filter @vaipakam/agent run deploy --keep-vars=false\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('and in PROSE telling an operator to run it (#1995 r4)', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Run `pnpm --filter @vaipakam/agent run deploy --no-keep-vars` to redeploy.\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('still accepts the plain package script, in shell and in prose (#1995 r4)', () => {
+    // The widened detection must not report the RECOMMENDED command — it
+    // appears in this guard's own remedy text and across the runbooks, so a
+    // false positive here would be immediate and everywhere.
+    expect(
+      runWith('contracts/script/deploy-chain.sh', 'pnpm --filter @vaipakam/agent run deploy\n').ok,
+    ).toBe(true);
+    expect(
+      runWith(
+        'docs/ops/DeploymentRunbook.md',
+        'Use `pnpm --filter @vaipakam/agent run deploy` (the script carries the flag).\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('and ignores the package script of an UNSCOPED package (#1995 r4)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pnpm --filter @vaipakam/www run deploy --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('still does not flag a subdirectory of an OUT-OF-SCOPE package (#1995 r1)', () => {
     // The descendant match must widen scope for scoped packages only; if it
     // widened generally the 13 leak fixtures would pass for the wrong reason.

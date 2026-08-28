@@ -116,6 +116,17 @@ const SKIP_DIRS = new Set([
  */
 const DEPLOY_RE = String.raw`wrangler(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*deploy\b`;
 
+/**
+ * The PACKAGE-SCRIPT form is a deploy too, and the guard could not see it
+ * (#1995 r4). `pnpm --filter @vaipakam/agent run deploy --no-keep-vars` expands
+ * to `wrangler deploy --keep-vars --no-keep-vars`, which wrangler parses as
+ * keepVars:false — a destructive deploy on a line containing no `wrangler
+ * deploy` at all, so nothing here ever examined it.
+ */
+const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run\s+deploy\b`;
+/** What counts as "this line performs a deploy" for DETECTION purposes. */
+const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
+
 /** Vendored trees excluded by exact repo-relative path, not by basename. */
 const SKIP_PATHS = new Set(['contracts/lib']);
 
@@ -649,16 +660,37 @@ function commandIsSafe(cmd) {
   // never invokes the package script (Codex #1924 r22). `flagEnabled` already
   // strips internally; this call is for the `run deploy` test.
   const bare = stripOtherOptionValues(stripRedirections(cmd));
-  return (
-    flagEnabled(cmd, '--keep-vars') ||
-    flagEnabled(cmd, '--dry-run') ||
-    // ANCHORED at the segment's executed command. As a free substring test,
-    // `NOTE=" pnpm run deploy" wrangler deploy` — a bare deploy carrying an
-    // unrelated environment assignment — matched inside the quoted value and
-    // was blessed (Codex #1924 r40). The package script is a safe deploy only
-    // when it is the thing being RUN.
-    /^(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run\s+deploy\b/.test(executedCommand(bare))
+  if (flagEnabled(cmd, '--keep-vars') || flagEnabled(cmd, '--dry-run')) return true;
+
+  // ANCHORED at the segment's executed command. As a free substring test,
+  // `NOTE=" pnpm run deploy" wrangler deploy` — a bare deploy carrying an
+  // unrelated environment assignment — matched inside the quoted value and was
+  // blessed (Codex #1924 r40). The package script is a safe deploy only when it
+  // is the thing being RUN.
+  // ANCHORED only when a wrangler deploy is actually present. That anchor
+  // exists because `NOTE=" pnpm run deploy" wrangler deploy` blessed itself
+  // through a quoted value (#1924 r40) — a hazard that needs a wrangler command
+  // to exist. In PROSE the package-script form is the whole content of the line
+  // ("Use `pnpm --filter … run deploy`"), where an anchored match fails and
+  // would report the recommended command as a violation.
+  const hasWrangler = new RegExp(DEPLOY_RE).test(bare);
+  const runDeploy = (hasWrangler ? executedCommand(bare) : bare).match(
+    new RegExp(`${hasWrangler ? '^' : ''}${RUN_DEPLOY_RE}([\\s\\S]*)$`),
   );
+  if (!runDeploy) return false;
+
+  // ARGUMENTS APPENDED TO THE PACKAGE SCRIPT STILL COUNT. `pnpm --filter
+  // @vaipakam/agent run deploy --no-keep-vars` expands to
+  // `wrangler deploy --keep-vars --no-keep-vars`, which wrangler parses as
+  // keepVars:false — a destructive deploy that the bare `run deploy` test
+  // blessed on the strength of the script name alone (#1995 r4).
+  //
+  // The script supplies `--keep-vars`, so anything appended arrives AFTER it
+  // and the CLI takes the last occurrence. Reconstructing that order and
+  // re-using `flagEnabled` gets every negation spelling for free —
+  // `--no-keep-vars`, `--keep-vars=false`, `--keep-vars=` — rather than
+  // enumerating them here and missing one.
+  return flagEnabled(`--keep-vars ${runDeploy[1]}`, '--keep-vars');
 }
 
 /**
@@ -669,7 +701,7 @@ function commandIsSafe(cmd) {
 function isSafe(line) {
   const deploys = splitCommands(line)
     .map((c) => c.text)
-    .filter((c) => new RegExp(DEPLOY_RE).test(c));
+    .filter((c) => new RegExp(ANY_DEPLOY_RE).test(c));
   if (deploys.length === 0) return true;
   return deploys.every(commandIsSafe);
 }
@@ -696,19 +728,29 @@ function isSafe(line) {
  *     `REPORT_LAG_WINDOW_TICKS`, `STALE_LOCAL_SECONDS`, `STUCK_WINDOW_TICKS`,
  *     `TG_OPS_CHAT_ID`. Its bare `deploy` script is safe as written.
  *   - `ops/offchain-data-warm` (#1933) — it LOOKS unsafe: `wrangler.jsonc`
- *     carries `"vars": {}` and the source reads three names that are not in it.
- *     All three are accounted for. `TG_OPS_CHAT_ID` is a SECRET there (the
- *     README's setup step is `wrangler secret put TG_OPS_CHAT_ID`), and secrets
- *     survive a deploy. `ARCHIVE_FIRST_MONTHLY` / `ARCHIVE_FIRST_YEARLY` are
- *     vars, currently unset on purpose, and the documented way to set them
- *     (`npm run archive:baselines`) prints them for pasting into the COMMITTED
- *     wrangler config — its own output says they "are plain configuration, NOT
- *     secrets … so they belong in the committed wrangler config where a
- *     reviewer can see them". A value that lives in the config is re-applied by
- *     every deploy, bare or not. Its README's claim that "every operator-specific
- *     value lives in the secret store, so `wrangler deploy` takes no flags" is
- *     therefore accurate, and adding it to scope would have contradicted a
- *     correct document on the strength of a wrong classification.
+ *     carries `"vars": {}` while the source reads FIVE settings absent from it.
+ *     Every one is accounted for, in two groups (corrected in #1995 r4 — an
+ *     earlier version of this note said "three", conflating the groups, and
+ *     this record is what a future maintainer is told to re-verify from).
+ *
+ *     SECRET-MANAGED, so a deploy never touches them: `B2_ENDPOINT`,
+ *     `B2_BUCKET`, `TG_OPS_CHAT_ID`. That Worker's own config says so —
+ *     "All three of B2_ENDPOINT, B2_BUCKET, and TG_OPS_CHAT_ID are
+ *     operator-configured via `wrangler secret put` rather than baked into this
+ *     JSONC file" — with reasons (region-specific endpoint, globally unique
+ *     bucket names, and chat-id obfuscation).
+ *
+ *     OPTIONAL COMMITTED VARS, currently unset on purpose:
+ *     `ARCHIVE_FIRST_MONTHLY` / `ARCHIVE_FIRST_YEARLY`. The documented way to
+ *     set them (`npm run archive:baselines`) prints them for pasting into the
+ *     COMMITTED wrangler config — its own output says they "are plain
+ *     configuration, NOT secrets … so they belong in the committed wrangler
+ *     config where a reviewer can see them" — and a value that lives in the
+ *     config is re-applied by every deploy, bare or not.
+ *
+ *     So its README's claim that "every operator-specific value lives in the
+ *     secret store, so `wrangler deploy` takes no flags" is accurate, and adding
+ *     it to scope would have contradicted a correct document.
  * Re-verify rather than inherit any of these if the config changes.
  *
  * The static front-end packages (`apps/{www,app,alpha02,…}`) upload assets and
@@ -758,10 +800,17 @@ function scopeOf(line, filePath) {
     // contained the agent's spellings as substrings and were reported with the
     // agent's remedy (#1995 r3). This guard blocks an unfiltered CI job, so a
     // false red on an unrelated Worker is expensive.
+    //
+    // A DOT breaks the boundary too — `apps/agent.backup` and
+    // `@vaipakam/agent.tools` are distinct names (#1995 r4) — but only when a
+    // name CONTINUES after it. A bare `.` is how prose ends a sentence, and
+    // disallowing it outright would stop matching "Deploy apps/agent." which is
+    // the commonest spelling in a runbook.
+    const BOUND = '(?![\\w-])(?!\\.[A-Za-z0-9_-])';
     if (
-      new RegExp(`${esc(s.filter)}(?![\\w-])`).test(line) ||
+      new RegExp(`${esc(s.filter)}${BOUND}`).test(line) ||
       new RegExp(`\\b${esc(s.dirVar)}\\b`).test(line) ||
-      new RegExp(`${esc(s.dir)}(?![\\w-])`).test(line) ||
+      new RegExp(`${esc(s.dir)}${BOUND}`).test(line) ||
       new RegExp(`${esc(parent)}/\\{[^}]*\\b${esc(base)}\\b[^}]*\\}`).test(line) ||
       filePath.startsWith(`${s.dir}/`)
     ) {
@@ -869,28 +918,39 @@ function scopeOfCwd(cwd) {
  * relative selector lands where the shell would put it.
  */
 function selectorScope(seg, states, hasCwdState = true) {
-  // The backtick is excluded from the unquoted class, matching `flagEnabled`'s
-  // own value pattern. Selectors are read from PROSE too, where a command is
-  // written inside a code span, and without this `--cwd ../agent\`` captured the
-  // closing backtick — so the value named `agent\`` and matched no package.
-  const VALUE = `(?:"([^"]*)"|'([^']*)'|([^\\s"'\`;&|)]+))`;
+  // A value is ONE SHELL WORD, and a word can mix adjacent quoted and unquoted
+  // chunks: `--name vaipakam"-"agent` is the single argument `vaipakam-agent`.
+  // Capturing only the first chunk made the value `vaipakam`, which matched no
+  // package — and that non-match then read as authoritative no-scope, so the
+  // deploy passed (#1995 r4). The same shape as #1924 r23/r24, one function
+  // over. Quotes are removed after capture.
+  //
+  // The backtick is excluded from the unquoted chunk, matching `flagEnabled`'s
+  // own value pattern: selectors are read from PROSE too, where a command lives
+  // in a code span, and without this `--cwd ../agent`` captured the closing
+  // backtick and named `agent``.
+  const VALUE = `((?:"[^"]*"|'[^']*'|(?:\\\\[\\s\\S])|[^\\s"'\`;&|)]+)+)`;
   // Neutralise OTHER options' values first, exactly as `commandIsSafe` does,
   // keeping our own flags. Scanning the raw segment let
   // `--message="note --name vaipakam-indexer"` parse as a real selector, and
   // the fake name then suppressed the cwd scope of a bare agent deploy
   // (#1995 r3).
-  const clean = stripOtherOptionValues(stripRedirections(seg), [
-    'name',
-    'config',
-    'cwd',
-  ]);
+  // `executedCommand` FIRST: a leading `VAR=value` assignment is environment,
+  // not argv, so `NOTE="--name vaipakam-indexer" wrangler deploy` passes no
+  // such option — but the text was parsed as a real selector and the fake name
+  // then suppressed the cwd scope of a bare agent deploy (#1995 r4).
+  // `commandIsSafe` already strips these for the package-script test.
+  const clean = stripOtherOptionValues(
+    executedCommand(stripRedirections(seg)),
+    ['name', 'config', 'cwd'],
+  );
   // `--config` before `-c` so the long spelling wins the alternation, and a
   // lookbehind so `-c` cannot match inside `--config` or at the tail of another
   // token. `-c` is wrangler's DOCUMENTED alias (4.90.0: "-c, --config  Path to
   // Wrangler configuration file"); `--cwd` and `--name` have none.
   const valueOf = (spellings) => {
     const m = clean.match(new RegExp(`(?<![\\w-])(?:${spellings})(?:=|\\s+)${VALUE}`));
-    return m ? m[1] ?? m[2] ?? m[3] : null;
+    return m ? m[1].replace(/["'`]/g, '') : null;
   };
   /** A value we cannot resolve carries no information — treat it as absent. */
   const known = (v) => (v !== null && !/\$/.test(v) ? v : null);
@@ -1306,7 +1366,7 @@ for (const file of walk(REPO_ROOT)) {
   const folded = isShellFile(rel, text)
     ? logicalLines(text)
     : [...plainLines(text), ...embeddedShellLines(text, /\.ya?ml$/.test(rel))];
-  if (!folded.some((l) => new RegExp(DEPLOY_RE).test(l.text))) continue;
+  if (!folded.some((l) => new RegExp(ANY_DEPLOY_RE).test(l.text))) continue;
   // Directory context carries across lines, but only within a CONTIGUOUS
   // block. The form to catch is
   //     cd apps/keeper
@@ -1364,7 +1424,7 @@ for (const file of walk(REPO_ROOT)) {
       const lineScope = scopeOf(line, rel);
       for (const part of splitCommands(line)) {
         const seg = part.text;
-        if (!new RegExp(DEPLOY_RE).test(seg)) continue;
+        if (!new RegExp(ANY_DEPLOY_RE).test(seg)) continue;
         if (commandIsSafe(seg)) continue;
         // Fall back to the whole line only when the segment itself names
         // nothing: prose often establishes the package in an earlier clause,
@@ -1431,7 +1491,7 @@ for (const file of walk(REPO_ROOT)) {
         if (dir) continue;
         namedPrefix.push(seg);
         // `\b` so `wrangler deployments list` is not read as a deploy.
-        if (!new RegExp(DEPLOY_RE).test(seg)) continue;
+        if (!new RegExp(ANY_DEPLOY_RE).test(seg)) continue;
         // An explicit selector WINS. wrangler's help makes `--name` the "Name
         // of the Worker", so `For apps/keeper: wrangler deploy --name
         // vaipakam-agent` deploys the AGENT however the line reads — and

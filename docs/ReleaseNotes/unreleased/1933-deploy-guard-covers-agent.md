@@ -25,9 +25,9 @@ real command is still caught.
 The two operations Workers that had never been audited were audited, and
 **neither belongs in scope**. One declares everything it reads. The other looks
 unsafe at a glance — its configuration declares no settings at all while its
-code reads three — but one of the three is a secret, which a deploy never
-touches, and the other two are set by writing them into the committed
-configuration, where every deploy re-applies them. Its own documentation says
+code reads five — but three of them are secrets, which a deploy never touches,
+and the other two are set by writing them into the committed configuration,
+where every deploy re-applies them. Its own documentation says
 plainly that it needs no flags, and that documentation is correct; adding it
 would have contradicted a true statement on the strength of a wrong reading. The
 finding, and the evidence for it, is recorded in the guard itself so the next
