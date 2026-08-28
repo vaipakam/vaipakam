@@ -114,7 +114,10 @@ const SKIP_DIRS = new Set([
  * The executable may also be version-qualified — `npx wrangler@4.90.0 deploy`
  * is the ordinary npm pinning form (Codex #1924 r33).
  */
-const DEPLOY_RE = String.raw`wrangler(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*deploy\b`;
+// `wrangler2` is the SAME binary: wrangler's package manifest maps both names
+// to `./bin/wrangler.js`, and `wrangler2 deploy --help` describes the same
+// command (#1995 r13).
+const DEPLOY_RE = String.raw`wrangler2?(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*deploy\b`;
 
 /**
  * The PACKAGE-SCRIPT form is a deploy too, and the guard could not see it
@@ -2137,7 +2140,23 @@ for (const file of walk(REPO_ROOT)) {
           );
           // Only a LITERAL value is remembered; one containing a `$` is still
           // computed as far as this scanner can tell.
-          if (asg && asg[2] && !/\$/.test(asg[2])) shellVars.set(asg[1], dequote(asg[2]));
+          // A COMPUTED value invalidates the binding rather than leaving the
+          // previous one standing (#1995 r14). `TARGET=apps/indexer` then
+          // `TARGET=$(printf %s apps/agent)` kept resolving to the indexer,
+          // so `cd "$TARGET"` modelled the wrong package and the protected
+          // deploy passed. Not knowing must clear what was known.
+          // The name is read from the GATE, not from `asg` — a value the
+          // matcher cannot parse at all (`TARGET=$(printf %s apps/agent)`
+          // stops at the space inside the substitution) leaves `asg` null, and
+          // that is precisely the case where the old binding must go.
+          const named = seg.match(
+            new RegExp(`^${DECL_PREFIX}([A-Za-z_][A-Za-z0-9_]*)=`),
+          );
+          if (asg && asg[2] && !/\$/.test(asg[2])) {
+            shellVars.set(asg[1], dequote(asg[2]));
+          } else if (named) {
+            shellVars.delete(named[1]);
+          }
           namedPrefix.push({ text: seg, depth: segDepth });
         } else {
           const at = seg.search(/(?:^|[\s({])(?:cd|pushd)\s/);

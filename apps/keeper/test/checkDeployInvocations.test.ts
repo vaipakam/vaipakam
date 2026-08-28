@@ -1510,6 +1510,43 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a dynamic reassignment CLEARS the stale binding (#1995 r14)', () => {
+    // Without this, the scanner kept resolving TARGET to the keeper and
+    // reported a keeper violation for a command that enters the agent — the
+    // wrong package named in the remedy. Deleting the binding does not let the
+    // agent deploy be DETECTED (the substitution's value is unknowable here);
+    // it stops the guard asserting a package it cannot know.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '#!/usr/bin/env bash\nTARGET=apps/keeper\nTARGET=$(printf %s apps/agent)\n' +
+        'cd "$TARGET"\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a re-bound LITERAL still wins (#1995 r14 control)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '#!/usr/bin/env bash\nTARGET=apps/indexer\nTARGET=apps/agent\ncd "$TARGET"\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('wrangler2 is the same executable (#1995 r13)', () => {
+    // wrangler's manifest maps both names to ./bin/wrangler.js.
+    const r = runWith('contracts/script/deploy-chain.sh', 'cd apps/agent\npnpm exec wrangler2 deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('wrangler2 with --keep-vars is safe (#1995 r13 control)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\npnpm exec wrangler2 deploy --keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('a declaration builtin still binds the variable (#1995 r12)', () => {
     // `export TARGET=apps/agent` binds exactly as the bare form does; only the
     // bare spelling was recognised, so `cd "$TARGET"` cleared scope instead of
