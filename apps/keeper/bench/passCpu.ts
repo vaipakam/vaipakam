@@ -24,7 +24,15 @@
  */
 import { KEEPER_PASSES } from '../src/passSchedule';
 import { getChainConfigs, type Env } from '../src/env';
-import { installRpcMock, rpcStats, resetPages, budget, CALL_BUDGET, ARRAY_LEN } from './rpcMock';
+import {
+  installRpcMock,
+  rpcStats,
+  resetPages,
+  resetRpcBreakdown,
+  budget,
+  CALL_BUDGET,
+  ARRAY_LEN,
+} from './rpcMock';
 import { d1Stub, resetD1, d1Stats, ROWS } from './d1Stub';
 
 const REPS = Number(process.env.BENCH_REPS ?? 5);
@@ -130,6 +138,12 @@ type Row = {
   unbounded: boolean;
   /** Failures during the untimed warm-up — a pass that only ever fails. */
   warmUpErrors: number;
+  /** Per-run request attribution: selector (or bare method) -> calls. */
+  byLabel: [string, number][];
+  /** Per-run sub-calls carried inside `aggregate3` batches. */
+  inner: [string, number][];
+  /** Per-run transaction-submission requests, a subset of `byLabel`. */
+  writeCalls: number;
 };
 
 async function main(): Promise<void> {
@@ -234,6 +248,9 @@ async function main(): Promise<void> {
         hung: 1,
         unbounded: false,
         warmUpErrors: errors,
+        byLabel: [],
+        inner: [],
+        writeCalls: 0,
       });
       break;
     }
@@ -246,6 +263,10 @@ async function main(): Promise<void> {
     const warmUpErrors = errors;
     errors = 0;
     const rpcBefore = rpcStats.calls;
+    // The attribution maps are cleared here for the same reason the counters
+    // are: the warm-up is a full extra invocation, so leaving it in doubles
+    // every label.
+    resetRpcBreakdown();
 
     let hung = 0;
     let unbounded = false;
@@ -270,6 +291,11 @@ async function main(): Promise<void> {
     console.warn = realWarn;
     Date.now = realNow;
     samples.sort((a, b) => a - b);
+    const runs = Math.max(samples.length, 1);
+    const perRun = (m: Map<string, number>): [string, number][] =>
+      [...m.entries()]
+        .map(([k, v]) => [k, v / runs] as [string, number])
+        .sort((a, b) => b[1] - a[1]);
     rows.push({
       name: pass.name,
       // True median: the average of the two middle samples for an even count,
@@ -282,11 +308,14 @@ async function main(): Promise<void> {
           : (samples[samples.length / 2 - 1] + samples[samples.length / 2]) / 2
         : 0,
       max: samples.length ? samples[samples.length - 1] : 0,
-      rpc: (rpcStats.calls - rpcBefore) / Math.max(samples.length, 1),
-      errors: errors / Math.max(samples.length, 1),
+      rpc: (rpcStats.calls - rpcBefore) / runs,
+      errors: errors / runs,
       hung,
       unbounded,
       warmUpErrors,
+      byLabel: perRun(rpcStats.byLabel),
+      inner: perRun(rpcStats.inner),
+      writeCalls: rpcStats.writeCalls / runs,
     });
     if (hung > 0) {
       // Same reasoning as the warm-up timeout above: a measured rep that did
@@ -322,6 +351,51 @@ async function main(): Promise<void> {
         `${r.max.toFixed(1).padStart(9)}${r.rpc.toFixed(0).padStart(9)}` +
         `${r.errors.toFixed(1).padStart(9)}   ${share.toFixed(1).padStart(5)}% ${bar}`,
     );
+  }
+
+  // WHERE the calls went, per pass. The `rpc/run` column above says a pass is
+  // expensive; this says whether batching is the fix. A pass dominated by one
+  // paginated read plus one per-item read is a SCAN and batches down (that is
+  // what `watcher` did: 1,560 -> 6). A pass whose calls are quotes, nonces,
+  // gas estimates and sends is doing per-item ACTION work, and batching the
+  // reads around it changes almost nothing.
+  //
+  // Read the ACTION share with the fixture in mind: the mock answers every
+  // health factor below the liquidation line and every remit reservation as
+  // Pending, so every scanned item is actionable. The action share here is a
+  // WORST CASE — a fully saturated book — not an ordinary minute. The scan
+  // share is the part that does not depend on that.
+  console.log('per-pass RPC attribution (calls/run) — selector, or bare method\n');
+  const TOP = Number(process.env.BENCH_TOP ?? 8);
+  for (const r of rows) {
+    if (r.byLabel.length === 0) continue;
+    const totalLabelled = r.byLabel.reduce((s, [, n]) => s + n, 0);
+    const actionPct = totalLabelled > 0 ? (r.writeCalls / totalLabelled) * 100 : 0;
+    console.log(
+      `${r.name}  —  ${totalLabelled.toFixed(0)} requests/run, ` +
+        `${r.writeCalls.toFixed(0)} of them transaction-submission ` +
+        `(${actionPct.toFixed(0)}%)`,
+    );
+    for (const [label, n] of r.byLabel.slice(0, TOP)) {
+      console.log(`    ${label.padEnd(38)}${n.toFixed(1).padStart(8)}`);
+    }
+    if (r.byLabel.length > TOP) {
+      const rest = r.byLabel.slice(TOP).reduce((s, [, n]) => s + n, 0);
+      console.log(
+        `    ${`… ${r.byLabel.length - TOP} more`.padEnd(38)}${rest.toFixed(1).padStart(8)}`,
+      );
+    }
+    if (r.inner.length > 0) {
+      const innerTotal = r.inner.reduce((s, [, n]) => s + n, 0);
+      console.log(
+        `    inside aggregate3 batches: ${innerTotal.toFixed(0)} sub-calls — ` +
+          r.inner
+            .slice(0, 4)
+            .map(([k, n]) => `${k} ${n.toFixed(0)}`)
+            .join(', '),
+      );
+    }
+    console.log('');
   }
 
   const wild = rows.filter((r) => r.unbounded);

@@ -70,6 +70,7 @@ import {
   getPreGraceNotifyState,
   putPreGraceNotifyState,
 } from './db';
+import { batchedRead } from './batchRead';
 import { sendMessage as sendTelegramMessage } from './telegram';
 import { sendPush } from './push';
 
@@ -82,6 +83,37 @@ const OFFER_CANCEL_ABI: Abi = OfferCancelFacetABI as Abi;
 const LOAN_ABI: Abi = LoanFacetABI as Abi;
 
 const SCAN_PAGE = 200n;
+
+/** Reads per `aggregate3`. Matches the watcher's and liquidator's bound. */
+const READ_CHUNK = 100;
+
+/**
+ * One `aggregate3` per chunk over a list of items, flattened back into a
+ * result array positionally aligned with `items`.
+ *
+ * All three of this pass's per-loan reads and its offer hydration have the same
+ * shape — a list in, one read each, per-entry failure isolation out — so they
+ * share this rather than repeating the chunk loop four times.
+ */
+async function chunkedRead<T>(
+  client: PublicClient,
+  items: readonly T[],
+  build: (item: T) => unknown,
+  label: string,
+): Promise<{ status: 'success' | 'failure'; result?: unknown; error?: unknown }[]> {
+  const out: { status: 'success' | 'failure'; result?: unknown; error?: unknown }[] = [];
+  for (let i = 0; i < items.length; i += READ_CHUNK) {
+    const chunk = items.slice(i, i + READ_CHUNK);
+    // eslint-disable-next-line no-await-in-loop
+    const part = await batchedRead(
+      client as never,
+      chunk.map(build),
+      `${label} ${i}/${items.length}`,
+    );
+    out.push(...part);
+  }
+  return out;
+}
 
 /** How close to `endTime` triggers the warning. 24 hours mirrors
  *  the conservative HF watcher's lead-time on band 'alert'. */
@@ -211,16 +243,125 @@ async function watchChain(env: Env, chain: ChainConfig): Promise<void> {
 
   const nowSec = Math.floor(Date.now() / 1000);
 
-  for (const loanIdBig of loanIds) {
+  // BATCHED IN THREE STAGES, not three sequential reads per loan (#1896).
+  //
+  // This loop used to call `getAutoRefinanceCaps`, then `getLoanDetails`, then
+  // `ownerOf` one loan at a time — 150 subrequests per chain for a 50-loan book,
+  // 450 across the fixture's three chains, against a 50-per-invocation ceiling.
+  // The #1945 harness's per-selector attribution showed this pass at 612 calls
+  // per tick with ZERO of them on a transaction path: unlike the liquidator or
+  // the matcher, every single call here is book scan, which is the case
+  // batching actually fixes.
+  //
+  // The stages are sequential because each one's input is the previous one's
+  // survivors — reading loan details for a loan whose caps are disabled would
+  // trade the saved round-trips back for wasted ones. Within a stage the reads
+  // are one `aggregate3` per `READ_CHUNK`. Per-loan failure isolation is
+  // preserved: `batchedRead` returns one entry per contract, so a loan whose
+  // read reverted is warned about and skipped exactly as its own `catch` did.
+  const capsResults = await chunkedRead(
+    publicClient,
+    loanIds,
+    (loanIdBig) => ({
+      address: diamond,
+      abi: AUTO_LIFECYCLE_ABI,
+      functionName: 'getAutoRefinanceCaps' as const,
+      args: [loanIdBig] as const,
+    }),
+    `${chain.id} getAutoRefinanceCaps`,
+  );
+
+  const optedIn: bigint[] = [];
+  loanIds.forEach((loanIdBig, i) => {
+    const r = capsResults[i];
+    if (!r || r.status !== 'success') {
+      console.warn(
+        `[keeper] preGraceWatcher caps loan=${loanIdBig} chain=${chain.id}: ${String(
+          r?.error ?? 'no result',
+        ).slice(0, 200)}`,
+      );
+      return;
+    }
+    // No opt-in → no warning expected.
+    if ((r.result as RefinanceCaps).enabled) optedIn.push(loanIdBig);
+  });
+  if (optedIn.length === 0) return;
+
+  const detailResults = await chunkedRead(
+    publicClient,
+    optedIn,
+    (loanIdBig) => ({
+      address: diamond,
+      abi: LOAN_ABI,
+      functionName: 'getLoanDetails' as const,
+      args: [loanIdBig] as const,
+    }),
+    `${chain.id} getLoanDetails`,
+  );
+
+  const due: { loanId: bigint; loan: LoanDetails; endTime: number }[] = [];
+  optedIn.forEach((loanIdBig, i) => {
+    const r = detailResults[i];
+    if (!r || r.status !== 'success') {
+      console.warn(
+        `[keeper] preGraceWatcher details loan=${loanIdBig} chain=${chain.id}: ${String(
+          r?.error ?? 'no result',
+        ).slice(0, 200)}`,
+      );
+      return;
+    }
+    const loan = r.result as LoanDetails;
+    if (loan.status !== 0 /* Active */) return;
+    const endTime = Number(loan.startTime + loan.durationDays * 86400n);
+    if (endTime <= nowSec) return; // already past natural end
+    if (endTime - nowSec > PRE_GRACE_WINDOW_SECONDS) return; // too early
+    // T-092 #547 — viable-counterparty pre-check. When the offer book scan
+    // succeeded (lenderOffers !== null) AND a compatible lender offer exists for
+    // this loan, skip the warning — the matcher will likely fire on the next
+    // tick. When the scan failed or the book exceeded OFFER_SCAN_CAP we fall
+    // back to unconditional warning (lenderOffers === null) — conservative-safe.
+    if (lenderOffers !== null && _hasViableLenderForLoan(loan, lenderOffers)) return;
+    due.push({ loanId: loanIdBig, loan, endTime });
+  });
+  if (due.length === 0) return;
+
+  // Resolve borrower-NFT owners. The Diamond IS the ERC721 collection for
+  // position NFTs.
+  const ownerResults = await chunkedRead(
+    publicClient,
+    due,
+    (d) => ({
+      address: diamond,
+      abi: erc721Abi,
+      functionName: 'ownerOf' as const,
+      args: [d.loan.borrowerTokenId] as const,
+    }),
+    `${chain.id} ownerOf`,
+  );
+
+  // The dispatch tail stays serial: it writes D1 and sends messages, so it is
+  // not a read to batch, and it runs only for loans that survived all three
+  // filters.
+  for (let i = 0; i < due.length; i += 1) {
+    const { loanId: loanIdBig, endTime } = due[i];
+    const r = ownerResults[i];
+    if (!r || r.status !== 'success') {
+      console.warn(
+        `[keeper] preGraceWatcher owner loan=${loanIdBig} chain=${chain.id}: ${String(
+          r?.error ?? 'no result',
+        ).slice(0, 200)}`,
+      );
+      continue;
+    }
     try {
-      await checkLoan(
+      // eslint-disable-next-line no-await-in-loop
+      await notifyLoan(
         env,
         chain,
-        publicClient,
-        diamond,
         loanIdBig,
+        r.result as Address,
         subsByWallet,
-        lenderOffers,
+        endTime,
         nowSec,
       );
     } catch (err) {
@@ -289,40 +430,49 @@ async function _scanLenderOfferBook(
     }
   }
 
+  // Batched (#1896) — this was one `getOffer` per id, up to OFFER_SCAN_CAP of
+  // them per chain per tick. Per-offer failure isolation is unchanged:
+  // `batchedRead` returns one entry per contract, so a single unhydratable
+  // offer is logged and skipped rather than aborting the pre-check.
+  const offerResults = await chunkedRead(
+    publicClient,
+    offerIds,
+    (offerIdBig) => ({
+      address: diamond,
+      abi: OFFER_CANCEL_ABI,
+      functionName: 'getOffer' as const,
+      args: [offerIdBig] as const,
+    }),
+    `${chainId} getOffer`,
+  );
+
   const lenderOffers: OfferRow[] = [];
-  for (const offerIdBig of offerIds) {
-    try {
-      const o = (await publicClient.readContract({
-        address: diamond,
-        abi: OFFER_CANCEL_ABI,
-        functionName: 'getOffer',
-        args: [offerIdBig],
-      })) as Record<string, unknown>;
-      // Only lender offers that haven't already accepted are
-      // candidates for matching a refinance-tagged borrower offer.
-      if (
-        Number(o.offerType) === 0 /* Lender */ &&
-        !o.accepted
-      ) {
-        lenderOffers.push({
-          offerType: Number(o.offerType),
-          accepted: Boolean(o.accepted),
-          lendingAsset: o.lendingAsset as Address,
-          collateralAsset: o.collateralAsset as Address,
-          assetType: Number(o.assetType),
-          collateralAssetType: Number(o.collateralAssetType),
-          amount: o.amount as bigint,
-          amountMax: o.amountMax as bigint,
-        });
-      }
-    } catch (err) {
-      // Hydration of a single offer failing isn't fatal; continue
-      // with the rest.
+  offerIds.forEach((offerIdBig, i) => {
+    const r = offerResults[i];
+    if (!r || r.status !== 'success') {
       console.log(
-        `[keeper] preGraceWatcher offer-hydrate skipped offerId=${offerIdBig}: ${String(err).slice(0, 120)}`,
+        `[keeper] preGraceWatcher offer-hydrate skipped offerId=${offerIdBig}: ${String(
+          r?.error ?? 'no result',
+        ).slice(0, 120)}`,
       );
+      return;
     }
-  }
+    const o = r.result as Record<string, unknown>;
+    // Only lender offers that haven't already accepted are candidates for
+    // matching a refinance-tagged borrower offer.
+    if (Number(o.offerType) === 0 /* Lender */ && !o.accepted) {
+      lenderOffers.push({
+        offerType: Number(o.offerType),
+        accepted: Boolean(o.accepted),
+        lendingAsset: o.lendingAsset as Address,
+        collateralAsset: o.collateralAsset as Address,
+        assetType: Number(o.assetType),
+        collateralAssetType: Number(o.collateralAssetType),
+        amount: o.amount as bigint,
+        amountMax: o.amountMax as bigint,
+      });
+    }
+  });
   return lenderOffers;
 }
 
@@ -357,59 +507,20 @@ function _hasViableLenderForLoan(
   return false;
 }
 
-async function checkLoan(
+/**
+ * Dedupe-check, format and dispatch the warning for one loan that has already
+ * cleared every on-chain filter. Reads nothing from the chain — the three reads
+ * this used to make are batched by `watchChain`.
+ */
+async function notifyLoan(
   env: Env,
   chain: ChainConfig,
-  publicClient: PublicClient,
-  diamond: Address,
   loanIdBig: bigint,
+  ownerAddr: Address,
   subsByWallet: Map<string, UserThresholds>,
-  lenderOffers: OfferRow[] | null,
+  endTime: number,
   nowSec: number,
 ): Promise<void> {
-  // Auto-refinance caps — skip when not enabled (no opt-in → no
-  // warning expected).
-  const caps = (await publicClient.readContract({
-    address: diamond,
-    abi: AUTO_LIFECYCLE_ABI,
-    functionName: 'getAutoRefinanceCaps',
-    args: [loanIdBig],
-  })) as RefinanceCaps;
-  if (!caps.enabled) return;
-
-  // Loan details — compute endTime + skip if Status != Active or
-  // outside the warning window.
-  const loan = (await publicClient.readContract({
-    address: diamond,
-    abi: LOAN_ABI,
-    functionName: 'getLoanDetails',
-    args: [loanIdBig],
-  })) as LoanDetails;
-  if (loan.status !== 0 /* Active */) return;
-
-  const endTime = Number(loan.startTime + loan.durationDays * 86400n);
-  if (endTime <= nowSec) return; // already past natural end
-  if (endTime - nowSec > PRE_GRACE_WINDOW_SECONDS) return; // too early
-
-  // T-092 #547 — viable-counterparty pre-check. When the offer book
-  // scan succeeded (lenderOffers !== null) AND a compatible lender
-  // offer exists for this loan, skip the warning — the matcher will
-  // likely fire on the next tick. When the scan failed or the book
-  // exceeded OFFER_SCAN_CAP, we fall back to unconditional warning
-  // (lenderOffers === null) — conservative-safe.
-  if (lenderOffers !== null && _hasViableLenderForLoan(loan, lenderOffers)) {
-    return;
-  }
-
-  // Resolve borrower-NFT owner. The Diamond IS the ERC721 collection
-  // for position NFTs.
-  const ownerAddr = (await publicClient.readContract({
-    address: diamond,
-    abi: erc721Abi,
-    functionName: 'ownerOf',
-    args: [loan.borrowerTokenId],
-  })) as Address;
-
   const sub = subsByWallet.get(ownerAddr.toLowerCase());
   if (!sub) return; // borrower hasn't subscribed → no channel to dispatch on
   // #1033 — the "message me before a payment comes due" opt-out
