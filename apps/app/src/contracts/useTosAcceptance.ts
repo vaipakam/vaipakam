@@ -19,9 +19,17 @@
  * 1. `hasAcceptedCurrentTerms(address)` replaces reading the user's
  *    record and comparing it here. The retired hook compared VERSIONS
  *    client-side; the contract compares version AND hash
- *    (`LegalFacet.sol:165`), so a hash rotation at an unchanged version
- *    also forces re-acceptance. Reimplementing a predicate the contract
- *    already exposes is how the client and the chain come to disagree.
+ *    (`LegalFacet.sol:165`), so a version bump whose content ALSO
+ *    changed is caught on both fields rather than the number alone.
+ *    Reimplementing a predicate the contract already exposes is how the
+ *    client and the chain come to disagree.
+ *
+ *    Codex review round 1 corrected an overstatement here: I wrote that
+ *    a hash rotation at an UNCHANGED version re-prompts. It cannot be
+ *    reached — `setCurrentTos` reverts unless `newVersion >
+ *    currentTosVersion` (`LegalFacet.sol:140`), so governance cannot
+ *    rotate a hash in place. The contract's hash comparison is defence
+ *    on the bump path, not a same-version mechanism.
  * 2. Staleness is TanStack Query's, not a hand-rolled sequence counter.
  *    The retired hook carried `reqSeq` (#828 r2) so a read resolving
  *    after the wallet changed could not apply its result to the new

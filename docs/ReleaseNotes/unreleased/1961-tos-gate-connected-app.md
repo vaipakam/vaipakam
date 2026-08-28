@@ -26,6 +26,10 @@ signature. Nobody is asked again unless the terms themselves change — and
 if they do change, the previous acceptance stops counting, which is the
 point of recording a version rather than a tick.
 
+Acceptance is recorded per network. A wallet that has accepted on one
+supported chain is asked again on another, because each deployment keeps
+its own record and the app can only read the one it is pointed at.
+
 Three deliberate choices are worth stating, because each is a place this
 kind of gate usually goes wrong.
 
@@ -41,11 +45,10 @@ withdrawing are not behind this. A rule about accepting terms should
 never become a reason somebody cannot close a position.
 
 **It does not decide who has accepted.** That question is answered on
-chain, by the same contract that holds the terms — including the part
-people forget, which is that re-publishing the text without changing its
-version number still requires fresh acceptance. Working that out in the
-app would have been a second implementation of a rule that already
-exists, free to drift from it.
+chain, by the same contract that holds the terms, which checks both the
+version and a fingerprint of the text. Working that out in the app would
+have been a second implementation of a rule that already exists, free to
+drift from it.
 
 This clears one of the two capabilities that had to exist before users
 could be moved from the old connected app to the new one. The other, the

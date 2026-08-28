@@ -24,16 +24,25 @@
  *   - Read succeeded and says accepted (which includes "no ToS is in
  *     force") → pass through.
  *   - Read succeeded and says not accepted → the acceptance card.
+ *
+ * ...and above all of that, the EXIT ROUTES are never gated, whatever
+ * the verdict — see `tosExitRoutes.ts`. A control over new business is
+ * legitimate; the same control over somebody's ability to repay a loan
+ * or withdraw their own assets is not, and the first cut of this
+ * component did exactly that while its own footnote promised otherwise.
  */
 import type { ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { ExternalLink, FileText, ShieldCheck } from 'lucide-react';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useTosAcceptance } from '../contracts/useTosAcceptance';
 import { tosGateVerdict } from '../contracts/tosGate';
+import { isExitRoute } from '../contracts/tosExitRoutes';
 import { LEGAL_URLS } from '../lib/legalUrls';
 
 export function LegalGate({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation();
   const { address, onSupportedChain } = useActiveChain();
   const {
     hasAccepted,
@@ -56,6 +65,12 @@ export function LegalGate({ children }: { children: ReactNode }) {
     loading,
     accepted: hasAccepted,
   });
+
+  // Codex review round 1, P1: the exit is never gated. Checked BEFORE
+  // the verdict, not as one more verdict, because it must hold in the
+  // states where the verdict is unknown — a failed read must not lock a
+  // user out of repaying.
+  if (isExitRoute(pathname)) return <>{children}</>;
 
   if (verdict === 'pass-unconnected' || verdict === 'pass') return <>{children}</>;
 

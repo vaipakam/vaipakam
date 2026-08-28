@@ -289,7 +289,7 @@ const copySource = {
     retry: 'Try again',
     title: 'Accept the terms to continue',
     body:
-      'Vaipakam\u2019s operators have put a version of the terms in force. Accepting is a one-off signature that records which version you agreed to; you\u2019ll only be asked again if the terms change.',
+      'Vaipakam\u2019s operators have put a version of the terms in force. Accepting is a one-off signature that records which version you agreed to. You won\u2019t be asked again unless the terms change \u2014 or unless you switch to another network, since each network keeps its own record.',
     currentVersion: 'Version in force',
     contentHash: 'Content fingerprint',
     readTerms: 'Read the Terms',

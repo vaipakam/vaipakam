@@ -197,7 +197,7 @@
       "readErrorBody": "We couldn’t reach the network to find out whether you need to accept Vaipakam’s terms, so the app stays closed rather than guessing. Nothing is wrong with your wallet or your positions — try again in a moment.",
       "retry": "Try again",
       "title": "Accept the terms to continue",
-      "body": "Vaipakam’s operators have put a version of the terms in force. Accepting is a one-off signature that records which version you agreed to; you’ll only be asked again if the terms change.",
+      "body": "Vaipakam’s operators have put a version of the terms in force. Accepting is a one-off signature that records which version you agreed to. You won’t be asked again unless the terms change — or unless you switch to another network, since each network keeps its own record.",
       "currentVersion": "Version in force",
       "contentHash": "Content fingerprint",
       "readTerms": "Read the Terms",

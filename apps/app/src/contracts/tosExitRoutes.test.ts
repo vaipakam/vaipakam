@@ -1,0 +1,76 @@
+/**
+ * The exit is never gated (#1961, review round 1 P1).
+ *
+ * The gate's own footnote promises repaying, claiming and withdrawing
+ * are never blocked by it, and the first cut wrapped every route, so the
+ * promise and the code disagreed. These cases pin the promise: they are
+ * about which routes a user in ANY terms state can still reach.
+ */
+import { describe, expect, it } from 'vitest';
+import { isExitRoute } from './tosExitRoutes';
+
+describe('isExitRoute', () => {
+  it('exempts every route carrying an exit action', () => {
+    for (const path of [
+      '/positions',
+      '/positions/7',
+      '/claims',
+      '/vpfi',
+      '/vault',
+      '/recover',
+    ]) {
+      expect(isExitRoute(path), path).toBe(true);
+    }
+  });
+
+  it('exempts the aliases that redirect into them', () => {
+    // An alias renders its <Navigate> INSIDE the gate, so holding the
+    // alias means the redirect never runs and the exit is unreachable
+    // by the URL a user actually has.
+    for (const path of [
+      '/loans',
+      '/loans/7',
+      '/app/loans/7',
+      '/dashboard',
+      '/manage',
+      '/claim',
+      '/claim-center',
+      '/vpfi-vault',
+      '/vault-assets',
+    ]) {
+      expect(isExitRoute(path), path).toBe(true);
+    }
+  });
+
+  it('gates the routes that take on new exposure', () => {
+    for (const path of [
+      '/',
+      '/borrow',
+      '/lend',
+      '/rent',
+      '/offers',
+      '/desk',
+      '/activity',
+      '/faucet',
+      '/settings',
+      '/help',
+      '/nft',
+      '/risk-access',
+    ]) {
+      expect(isExitRoute(path), path).toBe(false);
+    }
+  });
+
+  it('does not let a lookalike route inherit an exemption', () => {
+    // A gate that can be widened by naming a route carefully is not a
+    // gate; the prefix match stops at a segment boundary.
+    for (const path of ['/vaults-of-x', '/positionsomething', '/claiming', '/recovery']) {
+      expect(isExitRoute(path), path).toBe(false);
+    }
+  });
+
+  it('ignores a trailing slash', () => {
+    expect(isExitRoute('/claims/')).toBe(true);
+    expect(isExitRoute('/borrow/')).toBe(false);
+  });
+});

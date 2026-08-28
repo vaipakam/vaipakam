@@ -2279,7 +2279,7 @@
       "readErrorBody": "Nous n’avons pas pu joindre le réseau pour savoir si vous devez accepter les conditions de Vaipakam ; l’application reste donc fermée plutôt que de le supposer. Ni votre portefeuille ni vos positions ne sont en cause — réessayez dans un instant.",
       "retry": "Réessayer",
       "title": "Acceptez les conditions pour continuer",
-      "body": "Les opérateurs de Vaipakam ont mis en vigueur une version des conditions. L’acceptation est une signature unique qui enregistre la version que vous avez acceptée ; vous ne serez sollicité de nouveau que si les conditions changent.",
+      "body": "Les opérateurs de Vaipakam ont mis en vigueur une version des conditions. L’acceptation est une signature unique qui enregistre la version que vous avez acceptée. Vous ne serez pas sollicité de nouveau, sauf si les conditions changent — ou si vous passez à un autre réseau, chaque réseau conservant son propre enregistrement.",
       "currentVersion": "Version en vigueur",
       "contentHash": "Empreinte du contenu",
       "readTerms": "Lire les Conditions",

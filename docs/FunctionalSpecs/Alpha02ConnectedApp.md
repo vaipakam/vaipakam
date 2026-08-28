@@ -701,9 +701,10 @@ Thin-market honesty rules apply.
   Policy before deciding.
 - Acceptance is a single action recorded against that exact version and
   fingerprint, so what a user agreed to remains checkable afterwards.
-- A user is asked again only when the terms change. A change of version, or a
-  change to the text at an unchanged version, both require fresh acceptance;
-  an earlier acceptance no longer counts.
+- A user is asked again only when the terms change to a new version. An
+  earlier acceptance no longer counts once a new version is in force.
+- Acceptance is recorded separately per network. A user who has accepted on
+  one supported network is asked again on another.
 - A visitor with no wallet connected is never gated. The requirement is about
   the party who would transact.
 - **When the app cannot determine whether terms apply, it withholds the
