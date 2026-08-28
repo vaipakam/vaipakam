@@ -351,6 +351,13 @@ const copySource = {
       'Anything on the blockchain. Your wallet address and every transaction you have signed are public and permanent — no one, Vaipakam included, can export or erase them.',
     scopeAlerts:
       'Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlink it in Settings to remove it.',
+    /* #2002 — named rather than omitted. The Privacy Policy tells
+       users they can erase these records by signing a request in the
+       app, and that control does not exist yet. Staying silent here
+       would leave somebody hunting for a button that is not there;
+       pointing at the working route is the honest interim. */
+    scopeDiagnostics:
+      'Error reports kept by our support service. Those are separate from your browser, and are erased on request — email support@vaipakam.com and we will remove the records for your wallet.',
     scopeSite:
       'The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.',
     scopeCookies:

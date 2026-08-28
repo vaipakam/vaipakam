@@ -183,6 +183,7 @@ export function DataRights() {
         <ul className="stack" style={{ gap: 8, paddingLeft: 20, margin: 0 }}>
           <li>{copy.dataRights.scopeChain}</li>
           <li>{copy.dataRights.scopeAlerts}</li>
+          <li>{copy.dataRights.scopeDiagnostics}</li>
           <li>{copy.dataRights.scopeSite}</li>
           <li>{copy.dataRights.scopeCookies}</li>
         </ul>

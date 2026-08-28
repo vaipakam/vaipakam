@@ -213,6 +213,7 @@
       "scopeTitle": "Was hiervon nicht erfasst wird",
       "scopeChain": "Alles, was auf der Blockchain liegt. Ihre Wallet-Adresse und jede von Ihnen signierte Transaktion sind öffentlich und dauerhaft — niemand, auch Vaipakam nicht, kann sie exportieren oder löschen.",
       "scopeAlerts": "Benachrichtigungen. Wenn Sie Telegram verknüpft haben, liegt diese Verbindung beim Benachrichtigungsdienst, nicht in Ihrem Browser. Heben Sie die Verknüpfung in den Einstellungen auf, um sie zu entfernen.",
+      "scopeDiagnostics": "Fehlerberichte, die unser Support-Dienst aufbewahrt. Sie liegen getrennt von Ihrem Browser und werden auf Anfrage gelöscht — schreiben Sie an support@vaipakam.com, und wir entfernen die Datensätze zu Ihrer Wallet.",
       "scopeSite": "Die Hauptseite vaipakam.com. Sie führt einen eigenen, getrennten Speicher mit eigenen Bedienelementen auf jener Seite.",
       "scopeCookies": "Sprache und Erscheinungsbild werden über ein Cookie der gemeinsamen Domain mit vaipakam.com geteilt; ein Löschen hier setzt sie also auch dort zurück."
     },

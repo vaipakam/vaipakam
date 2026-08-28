@@ -690,6 +690,36 @@ Thin-market honesty rules apply.
 - Wallet and analytics integrations should avoid unnecessary telemetry where
   the app can control it.
 
+### Data rights over locally-held data
+
+- The app offers a page where a user can **download everything the app keeps in
+  their browser** as a single readable file, and **erase it from that device**.
+  Both are reachable without connecting a wallet and without accepting any
+  terms.
+- The page states the number of stored items before an erasure is confirmed,
+  and what was actually removed afterwards. **A browser that refuses to let the
+  app clear its storage is reported as a refusal, not a success** — private
+  windows and restrictive privacy settings do this, and reporting it as done
+  would be a false assurance about a legal right. The user is pointed at the
+  browser's own controls, which work.
+- Erasure covers what this app stored and nothing else. State belonging to a
+  wallet connector or another tool is left untouched: removing it would
+  disconnect the user as a side effect of exercising a data right.
+- The page states its limits as prominently as its controls. It does not reach
+  on-chain data (public and permanent, erasable by nobody), the alerts service
+  (removed by unlinking), the marketing site's separate store, or error reports
+  held by support (removed on request). **Overstating reach is the primary way
+  a page of this kind misleads**, so each exclusion is named.
+- The language and theme preference is shared with the marketing site, so
+  erasing resets it there too. This is stated on the page rather than
+  discovered afterwards.
+- Erasing does not reload the page, so the confirmation of what happened
+  survives long enough to be read.
+- **The marketing site's equivalent page does not cover the connected app, and
+  cannot.** Browser origin isolation means neither site can read or clear the
+  other's stored data. Each surface needs its own controls; neither may claim
+  to cover the other's.
+
 ### Terms of Service acceptance
 
 - The protocol can have a version of the Terms of Service in force, or none.

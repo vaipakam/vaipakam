@@ -231,6 +231,7 @@
       "scopeTitle": "What this does not cover",
       "scopeChain": "Anything on the blockchain. Your wallet address and every transaction you have signed are public and permanent — no one, Vaipakam included, can export or erase them.",
       "scopeAlerts": "Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlink it in Settings to remove it.",
+      "scopeDiagnostics": "Error reports kept by our support service. Those are separate from your browser, and are erased on request — email support@vaipakam.com and we will remove the records for your wallet.",
       "scopeSite": "The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.",
       "scopeCookies": "Your language and theme are shared with vaipakam.com through a cookie on the shared domain, so erasing here resets them there too."
     },

@@ -10,9 +10,21 @@
  * user agent) and copy-to-clipboard for people without GitHub.
  *
  * Deliberately lighter than defi's: no journey-log timeline, no
- * client-state purge, no advanced-mode gating — the button is there
- * for everyone precisely because the least technical users are the
- * ones who need a "report a problem" affordance.
+ * advanced-mode gating — the button is there for everyone precisely
+ * because the least technical users are the ones who need a "report a
+ * problem" affordance.
+ *
+ * The missing JOURNEY LOG is a decision, not a gap (#1960 asked for it
+ * to be recorded either way): the ring buffer was replaced by the
+ * one-slot sink in `diagnostics/lastError.ts`, because this product
+ * needs "what just broke" attached to a support report rather than a
+ * forensic timeline. There is therefore nothing here to export.
+ *
+ * The missing CLIENT-STATE PURGE was a gap, and #1960 closed it
+ * elsewhere: erasing local state is a data RIGHT, not a support tool,
+ * so it lives on `/data-rights` where the consequences can be spelled
+ * out before anyone presses anything — not behind a support button
+ * whose other controls are all non-destructive.
  *
  * The probes live in DrawerPanel, which mounts ONLY while the drawer
  * is open: with the observers unmounted, gcTime 0 actually clears the

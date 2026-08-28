@@ -213,6 +213,7 @@
       "scopeTitle": "Qué no cubre esto",
       "scopeChain": "Nada de lo que está en la cadena de bloques. Tu dirección de billetera y cada transacción que has firmado son públicas y permanentes: nadie, ni siquiera Vaipakam, puede exportarlas ni borrarlas.",
       "scopeAlerts": "Las alertas. Si vinculaste Telegram, esa conexión la guarda el servicio de alertas, no tu navegador. Desvincúlala en Ajustes para eliminarla.",
+      "scopeDiagnostics": "Los informes de errores que guarda nuestro servicio de soporte. Están separados de tu navegador y se eliminan a petición: escribe a support@vaipakam.com y borraremos los registros de tu billetera.",
       "scopeSite": "El sitio principal vaipakam.com. Mantiene su propio almacén separado, con sus propios controles en ese sitio.",
       "scopeCookies": "Tu idioma y tu tema se comparten con vaipakam.com mediante una cookie del dominio compartido, así que borrarlos aquí también los restablece allí."
     },
