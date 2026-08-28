@@ -178,7 +178,13 @@ function binaryTrackedPaths() {
       binary.add(path);
       continue;
     }
-    if (/(^|,)text(=|,|$)/.test(attr)) continue; // declared text: scan it
+    // Codex #1978 r26: `text=auto` is NOT a forced-text declaration — it asks
+    // git to DETECT, and git's answer is the `i/` field. A repo-wide
+    // `* text=auto eol=lf` therefore made every binary look explicitly
+    // declared, and the scan decoded and read them; embedded bytes matching an
+    // occupancy phrase would fail the blocking gate on a file git calls
+    // binary. Only an explicit `text` (no `=auto`) overrides detection.
+    if (/(^|,)text(,|$)/.test(attr)) continue; // explicitly forced text: scan it
     if (/(^|\s)i\/-text(\s|$)/.test(fields)) binary.add(path);
   }
   return binary;
@@ -329,7 +335,21 @@ const OCCUPANCY = [
     'i',
   ),
   // "occupy 3 today", "occupies four", "the rest of the org already occupies 4"
-  new RegExp(String.raw`\boccup(?:y|ies|ied)\b[^.\n]{0,40}${GAP}\b${N}\b`, 'i'),
+  // Codex #1978 r26: bound by what FOLLOWS the count, the same test that
+  // settled `spare` in r25 — because the real claims often have no noun at
+  // all ("apps/{agent,indexer} plus this Worker occupy 3", bound by "cron
+  // triggers" a line above), while the false ones name the thing they count
+  // ("occupies 2 queue partitions", "occupy 3 bytes").
+  //
+  // My first attempt required a capacity noun AFTER the number and broke that
+  // real fixture; my second added a reverse pattern that matched "schedules
+  // jobs and already occupies", because `schedules` is also a verb. Neither
+  // asked the question this does: is the number counting something the
+  // sentence names, and is that something a trigger?
+  new RegExp(
+    String.raw`\boccup(?:y|ies|ied)\b[^.\n]{0,40}${GAP}\b${N}\b(?![-\s]+(?!${FUNCTION_WORD}|(?:cron|account)[-\s]|slots?\b|triggers?\b|schedules?\b)[A-Za-z])`,
+    'i',
+  ),
   // "4 are taken", "four were occupied", "3 in use", "4 in use today"
   new RegExp(String.raw`\b${N}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b`, 'i'),
   // "takes the account to 5", "brings the account to five"
@@ -394,7 +414,29 @@ const OCCUPANCY = [
   // thing the admission criterion forbids, and the third time in this file a
   // word looked specific and was not (`slot`, `schedule`, now `headroom`).
   // Requiring an absence quantifier keeps the claim and drops the measurements.
-  /\b(?:no|zero|little|any)\s+(?:cron\s+|trigger\s+)?(?:headroom|capacity\s+(?:left|remaining|free))\b/i,
+  // Codex #1978 r26: `headroom` must be ABOUT triggers. Unbound it fired on
+  // "little headroom under the CPU limit" and "no headroom in its memory
+  // budget" — both ordinary notes about a cron Worker's runtime, neither a
+  // claim about the account's trigger budget.
+  // The SUBJECT must be the thing that has a trigger budget — the account, or
+  // the triggers themselves. Not merely cron-adjacent: "The cron invocation
+  // has little headroom under the CPU limit" and "The cron job has no
+  // headroom in its memory budget" are about an invocation and a job, and my
+  // first backward pattern matched both because `cron` appeared somewhere
+  // earlier. `cron` is an adjective in all three sentences; what differs is
+  // the noun it modifies.
+  new RegExp(
+    String.raw`\b(?:account|triggers?|slots?|schedules?)${WRAP}(?:\w+${WRAP}){0,2}?(?:no|zero|little|any)${WRAP}(?:\w+${WRAP}){0,2}?(?:headroom|capacity${WRAP}(?:left|remaining|free))\b`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`\b(?:no|zero|little|any)${WRAP}(?:cron|trigger|slot|schedule|account)[-\s]*${WRAP}?(?:\w+${WRAP}){0,2}?(?:headroom|capacity${WRAP}(?:left|remaining|free))\b`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`\b(?:no|zero|little|any)${WRAP}(?:headroom|capacity${WRAP}(?:left|remaining|free))${WRAP}(?:for|on)${WRAP}(?:\w+${WRAP}){0,3}?(?:cron|triggers?|slots?|schedules?)\b`,
+    'i',
+  ),
   // Codex #1978 r4 removed two restated VERDICTS — "**This step currently
   // fails**" and "**As things stand this step FAILS**" — but nothing pins the
   // shape, so a third file can reintroduce it. Every pattern above keys on a
@@ -1833,7 +1875,13 @@ function readWranglerName(configPath) {
     // strip comments and strings, track brace/bracket depth, and take the
     // first `name` at depth 1. `apps/agent/wrangler.jsonc` has eleven `name`
     // fields and only that one is the Worker's.
-    const text = readFileSync(configPath, 'utf8');
+    // Codex #1978 r26: strip BLOCK comments too. Stripping only `//` meant a
+    // `/* … "name": "old-example" … */` above the real property was read as
+    // the declaration — rejecting a correct binding, passing a swapped one,
+    // and able to make a real Worker vanish from the declared set so a false
+    // `*none*` claim would pass. JSONC has two comment forms and I handled
+    // one, which is this PR's most-repeated shape in its smallest form.
+    const text = readFileSync(configPath, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
     let depth = 0;
     for (const rawLine of text.split('\n')) {
       const line = rawLine.replace(/\/\/.*$/, '');
@@ -2169,6 +2217,11 @@ const MUST_NOT_FIRE = [
   // Codex #1978 r25: a spare SOMETHING ELSE, in a sentence about cron. Either
   // of these would have blocked every PR in the repository.
   ['a spare credential, near cron', 'The cron worker keeps a spare B2 credential for disaster recovery.'],
+  // Codex #1978 r26: three more matchers relying on detached context.
+  ['headroom under a CPU limit', 'The cron invocation has little headroom under the CPU limit.'],
+  ['headroom in a memory budget', 'The cron job has no headroom in its memory budget.'],
+  ['occupying bytes', 'The cron worker stores metadata whose fields occupy 3 bytes.'],
+  ['occupying queue partitions', 'The cron Worker schedules jobs and already occupies 2 queue partitions.'],
   ['a spare key, near cron', 'The cron trigger rotates between the primary and spare encryption keys.'],
   // Codex #1978 r20: a cron IMPLEMENTATION note. The window contains "cron",
   // the ratio counts something else entirely, and firing here would have
