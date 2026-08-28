@@ -201,10 +201,17 @@ export function useTosAcceptance(): TosAcceptanceState {
       // data enters the cache, is what keeps the gate and the write
       // gate telling a user the same thing.
       //
-      // Narrow on purpose. It applies only to the exact version whose
-      // receipt this session waited for, so a governance bump reads
-      // through untouched and re-prompts as it should, and it is
-      // cleared on any wallet or chain change.
+      // Narrow on purpose, and narrow by MATCHING rather than by being
+      // revoked: the pin carries its own wallet, chain and version, and
+      // applies only where all three agree. A governance bump reads
+      // through untouched and re-prompts as it should; another wallet
+      // or another chain never matches it at all.
+      //
+      // Sound because on-chain acceptance is write-only —
+      // `LegalFacet.acceptTerms` records and nothing clears it, and
+      // `setCurrentTos` refuses any version that does not strictly
+      // increase. So at a matching version, `false` from a node can
+      // only mean that node is behind.
       const pin = acceptedRef.current;
       const correctLag =
         !accepted && pin !== null && pin.scope === scope && pin.version === version;
