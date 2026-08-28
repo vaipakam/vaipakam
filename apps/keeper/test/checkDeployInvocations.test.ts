@@ -2891,6 +2891,11 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     const r = runWith('a.sh', "pnpm --filter '{apps/agent}[HEAD~100]' run deploy --no-keep-vars\n");
     expect(r.ok).toBe(false);
     expect(r.out).toContain('apps/agent');
+    // The NEGATIVE is what pins the resolution. Refusing to resolve the prefix
+    // falls through to "negations only, so every package" and reports the
+    // keeper as well — the fixture passes either way without this line, which
+    // is how a mutant dropping the positive branch survived.
+    expect(r.out).not.toContain('@vaipakam/keeper');
   });
 
   it('filter-like text inside ANOTHER option cannot subtract a package (#1995 r16)', () => {
@@ -3935,6 +3940,16 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('and a config WITHOUT keep_vars leaves the upload reported (#1995 r16 control)', () => {
+    // The config must actually DECLARE it. Accepting any config at all would
+    // bless every upload in a package that happens to have one — which is both
+    // scoped packages today.
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent"}\n');
+    seed('apps/keeper/wrangler.jsonc', '{"name": "vaipakam-keeper"}\n');
+    const r = runWith('u3.sh', 'cd apps/agent\nwrangler versions upload\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('while the same matrix without the exclusion still flags (#1995 r16 control)', () => {
     const r = runWith(
       '.github/workflows/w5.yml',
@@ -4457,6 +4472,79 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
   it('nor one sourced from an unscoped directory (#1995 r16 control)', () => {
     seed('d.sh', 'wrangler deploy\n');
     expect(runWith('s3.sh', 'cd apps/www\nsource ../../d.sh\n').ok).toBe(true);
+  });
+
+  // ── Selector corrections and the versions-upload path (#1995 r16).
+  it('...^ excludes its own ANCHOR (#1995 r16)', () => {
+    // My previous round claimed exclusion "only removes the matched package,
+    // and a scoped package is never the one being excluded here" — simply
+    // false: `...^@vaipakam/agent` excludes the agent, and the agent IS scoped.
+    // The selector reported a deploy pnpm does not perform.
+    seedWorkspace();
+    const r = runWith('e.sh', "pnpm --filter '...^@vaipakam/agent' run --if-present deploy --no-keep-vars\n");
+    expect(r.ok).toBe(true);
+  });
+
+  it('while plain ... still selects dependents (#1995 r16 control)', () => {
+    seedWorkspace();
+    const r = runWith('e2.sh', "pnpm --filter '...@vaipakam/lib' run --if-present deploy --no-keep-vars\n");
+    expect(r.ok).toBe(false);
+  });
+
+  it('a NEGATIVE changed-since filter cannot subtract (#1995 r16)', () => {
+    // `[HEAD]` matches no changed package, so pnpm still selects the agent;
+    // stripping the suffix excluded it unconditionally.
+    seedWorkspace();
+    const r = runWith(
+      'n.sh',
+      "pnpm --filter '@vaipakam/agent' --filter '!{apps/agent}[HEAD]' run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a plain negative filter still subtracts (#1995 r16 control)', () => {
+    seedWorkspace();
+    const r = runWith(
+      'n2.sh',
+      "pnpm --filter '@vaipakam/agent' --filter '!@vaipakam/agent' run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a safety flag in the OPTIONS object is not an argument (#1995 r16)', () => {
+    // The third argument is process options; wrangler receives only `deploy`.
+    const r = runWith(
+      'apps/agent/d.mjs',
+      "import { spawnSync } from 'node:child_process';\n" +
+        "spawnSync('wrangler', ['deploy'], { env: { NOTE: '--keep-vars' } });\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('while one in the argv ARRAY still counts (#1995 r16 control)', () => {
+    const r = runWith(
+      'apps/agent/d2.mjs',
+      "import { spawnSync } from 'node:child_process';\nspawnSync('wrangler', ['deploy', '--keep-vars']);\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('versions upload is guarded by CONFIG, not by the flag (#1995 r16)', () => {
+    // The pinned wrangler lists no `--keep-vars` for that path and derives
+    // `keepVars` from `config.keep_vars`, so the guard was blessing a command
+    // that cannot run while blocking every upload that can.
+    const r = runWith('u.sh', 'cd apps/agent\nwrangler versions upload\n');
+    expect(r.ok).toBe(false);
+    // …and the remedy names the setting rather than the flag the CLI rejects.
+    expect(r.out).toContain('keep_vars');
+  });
+
+  it('and a config declaring keep_vars makes it safe (#1995 r16)', () => {
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
+    seed('apps/keeper/wrangler.jsonc', '{"keep_vars": true}\n');
+    const r = runWith('u2.sh', 'cd apps/agent\nwrangler versions upload\n');
+    expect(r.ok).toBe(true);
   });
 
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {

@@ -1174,11 +1174,37 @@ function commandIsSafe(cmd) {
     const rel = noComment.slice(from).search(/(?:^|\s)--(?=\s|$)/);
     return rel === -1 ? noComment : noComment.slice(0, from + rel);
   })();
-  if (
-    flagEnabled(forFlags, '--keep-vars') ||
-    flagEnabled(forFlags, '--dry-run')
-  ) {
+  // A CHILD-PROCESS call carries its flags in the argv ARRAY. The third
+  // argument is process options, and `spawnSync('wrangler', ['deploy'], { env:
+  // { NOTE: '--keep-vars' } })` passes wrangler only the bare `deploy` — but a
+  // whole-text scan read the environment value as an enabled flag and blessed a
+  // destructive invocation (#1995 r16). Scored from the array alone.
+  const argv = cmd.match(new RegExp(`${ARGV_DEPLOY_RE}[\\s\\S]*?\\]`));
+  const flagText = argv ? argv[0] : forFlags;
+  if (flagEnabled(flagText, '--keep-vars') || flagEnabled(flagText, '--dry-run')) {
     return true;
+  }
+  // `versions upload` HAS NO `--keep-vars`. The pinned wrangler lists only
+  // `--dry-run` for it and derives `keepVars` from `config.keep_vars`, so the
+  // guard was blessing a command that cannot run while blocking every upload
+  // that can (#1995 r16) — it recommended a remedy the CLI rejects.
+  //
+  // The preservation is CONFIGURED for that path, so that is what is read: an
+  // upload is safe when the wrangler config of the package it targets declares
+  // `keep_vars: true`. Neither scoped config does today, which is the true
+  // state of affairs rather than something this predicate should paper over.
+  if (/\bversions\b[\s\S]*?\bupload\b/.test(bare)) {
+    const target = SCOPED.find((sc) => new RegExp(`(^|/)${sc.dir}(/|$)`).test(cmd));
+    for (const sc of target ? [target] : SCOPED) {
+      for (const name of ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml']) {
+        try {
+          const cfg = readFileSync(`${REPO_ROOT}/${sc.dir}/${name}`, 'utf8');
+          if (/["']?keep_vars["']?\s*[:=]\s*true/.test(cfg)) return true;
+        } catch {
+          /* no such config */
+        }
+      }
+    }
   }
 
   // ANCHORED at the segment's executed command. As a free substring test,
@@ -1564,14 +1590,21 @@ function filterScopes(rawLine) {
     sawSelector = true;
     let pat = dequote(m[1]);
     // Which DIRECTION the dependency selector runs, before the dots are lost.
-    const wantsDependents = /^\.\.\.\^?/.test(pat) && /^\.\.\./.test(pat);
-    const wantsDependencies = /\^?\.\.\.$/.test(pat) && /\.\.\.$/.test(pat);
+    const wantsDependents = /^\.\.\./.test(pat);
+    const wantsDependencies = /\.\.\.$/.test(pat);
     // `^` is pnpm's EXCLUSIVE marker — `...^X` is X's dependents WITHOUT X
     // itself. The dots were stripped and the caret left in the pattern, so the
     // selector matched no package name at all and resolved to an authoritative
-    // empty (#1995 r16). Exclusion only removes the matched package, and a
-    // scoped package is never the one being excluded here in practice, so the
-    // direction is modelled and the marker dropped.
+    // empty (#1995 r16).
+    //
+    // The ANCHOR is then dropped from the result, which my first cut did not
+    // do. I claimed exclusion "only removes the matched package, and a scoped
+    // package is never the one being excluded here in practice" — that is
+    // simply false: `...^@vaipakam/agent` excludes the agent, and the agent is
+    // exactly a scoped package. The selector reported a deploy pnpm does not
+    // perform, which is a false red produced by my own reasoning rather than by
+    // the code it replaced.
+    const exclusive = /^\.\.\.\^|\^\.\.\.$/.test(pat);
     pat = pat.replace(/^\.\.\.\^?|\^?\.\.\.$/g, '');
     // A LEADING `!` excludes: pnpm selects the packages NOT matching, so
     // `--filter '!@vaipakam/indexer'` reaches both protected Workers (#1995 r8).
@@ -1603,6 +1636,13 @@ function filterScopes(rawLine) {
     // attributing the prefix's packages is the conservative reading.
     const since = pat.match(/^(.*)\[[^\]]*\]$/);
     if (since) {
+      // A NEGATIVE selector whose changed-since set is unknown cannot subtract.
+      // `--filter X --filter '!{apps/agent}[HEAD]'` selects the agent when
+      // nothing changed, but stripping the suffix excluded it unconditionally
+      // and the destructive command passed (#1995 r16). The positive direction
+      // stays conservative — the suffix only NARROWS what the prefix selects —
+      // and the negative one has to be conservative the other way round.
+      if (negated) continue;
       pat = since[1];
       // `{}[]` with nothing but a ref left is the standalone form again.
       if (pat === '') {
@@ -1640,7 +1680,8 @@ function filterScopes(rawLine) {
             direct.some((d) => scopedWorkspaceDeps(d).includes(sc.filter)),
           )
         : [];
-    const matched = [...new Set([...direct, ...viaGraph])];
+    // With the exclusive marker the anchor itself is NOT selected.
+    const matched = [...new Set(exclusive ? viaGraph : [...direct, ...viaGraph])];
     if (negated) {
       for (const sc of matched) excluded.add(sc);
     } else {
@@ -4693,6 +4734,18 @@ if (violations.length > 0) {
         `    not in ${s.dir}/wrangler.jsonc — including the ${s.vars}\n` +
         `    tuning its source reads.\n`,
     );
+    // `versions upload` takes no `--keep-vars` — the pinned wrangler derives
+    // `keepVars` from `config.keep_vars` — so the remedy above is not a command
+    // an operator can run for that path. Naming the real one matters: a remedy
+    // the CLI rejects sends the reader in a circle, and the finding that
+    // surfaced this was as much about what the guard RECOMMENDS as about what
+    // it accepts (#1995 r16).
+    if (hits.some((v) => /\bversions\b[\s\S]*?\bupload\b/.test(v.line))) {
+      console.error(
+        `    For \`versions upload\` the flag does not exist: set \`"keep_vars": true\`\n` +
+          `    in ${s.dir}/wrangler.jsonc, which is where wrangler reads it from.\n`,
+      );
+    }
   }
   const unattributed = violations.filter((v) => !v.scope);
   for (const v of unattributed) {
