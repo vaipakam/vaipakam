@@ -1406,6 +1406,76 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a resolved --name survives another selector being dynamic (#1995 r3)', () => {
+    // wrangler's getScriptName is `args.name ?? config.name`, so the explicit
+    // name decides regardless of what the config path turns out to be. A single
+    // early return on "any value is dynamic" threw the resolved name away.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/indexer\nwrangler deploy --name vaipakam-agent --config "$CFG"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a relative --config in PROSE defers to the textual scope (#1995 r3)', () => {
+    // No shell state on the prose path, so resolving `wrangler.jsonc` against an
+    // invented empty cwd produced "targets nothing" — which then suppressed the
+    // correct textual scope. Unresolved must mean defer, not decide.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'From apps/agent, run `wrangler deploy --config wrangler.jsonc`\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a relative --cwd in PROSE is read by what it NAMES (#1995 r3)', () => {
+    // `../agent` cannot be resolved without knowing where the reader stands, but
+    // its trailing segment identifies the package on its own — and nothing else
+    // on this line names the agent.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'From apps/indexer, run `wrangler deploy --cwd ../agent`\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('that segment match is by whole PATH SEGMENT, not prefix (#1995 r3)', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'From apps/indexer, run `wrangler deploy --cwd ../agent-backup`\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('selector text inside another option value is not a selector (#1995 r3)', () => {
+    // The fake name parsed as real and then AUTHORITATIVELY suppressed the cwd
+    // scope of a bare agent deploy — a bypass anyone could write by accident in
+    // a deployment message.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nwrangler deploy --message="note --name vaipakam-indexer"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('does not claim a longer sibling package by prefix (#1995 r3)', () => {
+    // `apps/agent-backup` is a different, out-of-scope directory. This guard
+    // blocks an unfiltered CI job, so a false red here is expensive.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Deploy apps/agent-backup with wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('nor by a prefixed pnpm filter name (#1995 r3)', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Use @vaipakam/agent-tools then wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('still does not flag a subdirectory of an OUT-OF-SCOPE package (#1995 r1)', () => {
     // The descendant match must widen scope for scoped packages only; if it
     // widened generally the 13 leak fixtures would pass for the wrong reason.

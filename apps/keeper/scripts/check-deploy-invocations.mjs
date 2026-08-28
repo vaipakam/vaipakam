@@ -275,7 +275,7 @@ function stripRedirections(line) {
   );
 }
 
-function stripOtherOptionValues(line) {
+function stripOtherOptionValues(line, keep = []) {
   // Replaced with a NUL escape, NOT a space (Codex #1924 r23). A space would
   // create a token boundary the shell never saw: in
   // `--message='note'--keep-vars` the shell builds ONE argument,
@@ -304,11 +304,16 @@ function stripOtherOptionValues(line) {
   // REJECTED a perfectly safe command. That is the failure mode that gets a
   // guard deleted: it runs in typecheck, so it would block CI on valid input.
   const CHUNKS = '(?:"[^"]*"|\'[^\']*\'|(?:\\\\[\\s\\S])|[^\\s"\'\\\\]+)+';
+  // `keep` extends the never-stripped set. `selectorScope` passes its own
+  // flags, because it needs the SAME neutralisation for everything else:
+  // `--message="note --name vaipakam-indexer"` had its quoted text parsed as a
+  // real target selector, and the fake name then authoritatively suppressed the
+  // cwd scope of a bare agent deploy (#1995 r3).
+  const never = ['keep-vars', 'dry-run', 'no-keep-vars', 'no-dry-run', ...keep]
+    .map((f) => `${f}\\b`)
+    .join('|');
   return line.replace(
-    new RegExp(
-      `--(?!keep-vars\\b|dry-run\\b|no-keep-vars\\b|no-dry-run\\b)[A-Za-z0-9-]+(?:=${CHUNKS}|\\s+(?!-)${CHUNKS})`,
-      'g',
-    ),
+    new RegExp(`--(?!${never})[A-Za-z0-9-]+(?:=${CHUNKS}|\\s+(?!-)${CHUNKS})`, 'g'),
     '\u0000',
   );
 }
@@ -748,10 +753,15 @@ function scopeOf(line, filePath) {
     const base = s.dir.slice(s.dir.lastIndexOf('/') + 1);
     const parent = s.dir.slice(0, s.dir.lastIndexOf('/'));
     const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // A trailing boundary is required, or a longer SIBLING name is claimed as
+    // this package: `apps/agent-backup` and `@vaipakam/agent-tools` both
+    // contained the agent's spellings as substrings and were reported with the
+    // agent's remedy (#1995 r3). This guard blocks an unfiltered CI job, so a
+    // false red on an unrelated Worker is expensive.
     if (
-      new RegExp(esc(s.filter)).test(line) ||
+      new RegExp(`${esc(s.filter)}(?![\\w-])`).test(line) ||
       new RegExp(`\\b${esc(s.dirVar)}\\b`).test(line) ||
-      new RegExp(esc(s.dir)).test(line) ||
+      new RegExp(`${esc(s.dir)}(?![\\w-])`).test(line) ||
       new RegExp(`${esc(parent)}/\\{[^}]*\\b${esc(base)}\\b[^}]*\\}`).test(line) ||
       filePath.startsWith(`${s.dir}/`)
     ) {
@@ -858,55 +868,94 @@ function scopeOfCwd(cwd) {
  * against every REACHABLE cwd, the same states the `cd` walk maintains, so a
  * relative selector lands where the shell would put it.
  */
-function selectorScope(seg, states) {
-  const VALUE = `(?:"([^"]*)"|'([^']*)'|([^\\s"';&|)]+))`;
+function selectorScope(seg, states, hasCwdState = true) {
+  // The backtick is excluded from the unquoted class, matching `flagEnabled`'s
+  // own value pattern. Selectors are read from PROSE too, where a command is
+  // written inside a code span, and without this `--cwd ../agent\`` captured the
+  // closing backtick — so the value named `agent\`` and matched no package.
+  const VALUE = `(?:"([^"]*)"|'([^']*)'|([^\\s"'\`;&|)]+))`;
+  // Neutralise OTHER options' values first, exactly as `commandIsSafe` does,
+  // keeping our own flags. Scanning the raw segment let
+  // `--message="note --name vaipakam-indexer"` parse as a real selector, and
+  // the fake name then suppressed the cwd scope of a bare agent deploy
+  // (#1995 r3).
+  const clean = stripOtherOptionValues(stripRedirections(seg), [
+    'name',
+    'config',
+    'cwd',
+  ]);
   // `--config` before `-c` so the long spelling wins the alternation, and a
   // lookbehind so `-c` cannot match inside `--config` or at the tail of another
   // token. `-c` is wrangler's DOCUMENTED alias (4.90.0: "-c, --config  Path to
-  // Wrangler configuration file"), and omitting it left the same destructive
-  // bypass open in short form (#1995 r2). `--cwd` and `--name` have no alias.
+  // Wrangler configuration file"); `--cwd` and `--name` have none.
   const valueOf = (spellings) => {
-    const m = seg.match(new RegExp(`(?<![\\w-])(?:${spellings})(?:=|\\s+)${VALUE}`));
+    const m = clean.match(new RegExp(`(?<![\\w-])(?:${spellings})(?:=|\\s+)${VALUE}`));
     return m ? m[1] ?? m[2] ?? m[3] : null;
   };
+  /** A value we cannot resolve carries no information — treat it as absent. */
+  const known = (v) => (v !== null && !/\$/.test(v) ? v : null);
 
-  const name = valueOf('--name');
-  const cfg = valueOf('--config|-c');
-  const cwdFlag = valueOf('--cwd');
-  // NO selector at all: this segment says nothing about its target, so the
-  // caller falls back to the text and the cwd walk.
-  if (name === null && cfg === null && cwdFlag === null) return null;
-  // A selector whose value is an unresolved variable carries no information
-  // either. Treat it as absent rather than as "targets nothing", so it cannot
-  // SUPPRESS the cwd reasoning that would otherwise flag the deploy.
-  if ([name, cfg, cwdFlag].some((v) => v !== null && /\$/.test(v))) return null;
-
+  // EACH SELECTOR IS JUDGED ON ITS OWN. A single early return on "any value is
+  // dynamic" discarded a perfectly resolved `--name` whenever some other
+  // selector happened to be a variable, so
+  // `--name vaipakam-agent --config "$CFG"` passed the guard (#1995 r3).
+  const name = known(valueOf('--name'));
   if (name !== null) {
+    // wrangler's `getScriptName` is `args.name ?? config.name`, so an explicit
+    // name is authoritative no matter what the config path turns out to be.
     return { scope: SCOPED.find((s) => s.workerName === name) ?? null };
   }
 
+  const cfgRaw = valueOf('--config|-c');
+  const cwdRaw = valueOf('--cwd');
+  const cfg = known(cfgRaw);
+  const cwdFlag = known(cwdRaw);
+  // A path selector is present but unresolvable: we know a target was named and
+  // cannot say what it is, so defer rather than assert "targets nothing".
+  if ((cfgRaw !== null && cfg === null) || (cwdRaw !== null && cwdFlag === null)) {
+    return null;
+  }
+  if (cfg === null && cwdFlag === null) return null;
+
   // ORDER MATTERS: `--cwd` runs wrangler "as if started in the specified
-  // directory", so a relative `--config` is resolved FROM it, not from the
-  // shell's own cwd. Resolving the two independently let
-  // `--cwd apps/indexer --config ../agent/wrangler.jsonc` — verified against
-  // 4.90.0 to bundle the AGENT — pass the guard (#1995 r2).
+  // directory", so a relative `--config` resolves FROM it. Resolving the two
+  // independently let `--cwd apps/indexer --config ../agent/wrangler.jsonc` —
+  // verified against 4.90.0 to bundle the AGENT — pass the guard (#1995 r2).
   const bases =
     cwdFlag !== null
       ? states.map((st) => resolveDir(st.cwd, cwdFlag))
       : states.map((st) => st.cwd);
+  // `--config` names a FILE; its directory is the package.
+  const target =
+    cfg !== null ? cfg.slice(0, cfg.lastIndexOf('/') + 1) || '.' : null;
 
-  if (cfg !== null) {
-    // `--config` names a FILE; its directory is the package.
-    const dir = cfg.slice(0, cfg.lastIndexOf('/') + 1) || '.';
-    for (const b of bases) {
-      const hit = scopeOfCwd(resolveDir(b, dir));
-      if (hit) return { scope: hit };
-    }
-    return { scope: null };
-  }
   for (const b of bases) {
-    const hit = scopeOfCwd(b);
+    const hit = scopeOfCwd(target === null ? b : resolveDir(b, target));
     if (hit) return { scope: hit };
+  }
+
+  // NOT AUTHORITATIVE WITHOUT A CWD. On the prose path there is no shell state,
+  // so a RELATIVE selector was being resolved against an invented empty cwd and
+  // its failure then read as "targets nothing" — which suppressed the correct
+  // textual scope and let "From apps/agent, run `wrangler deploy --config
+  // wrangler.jsonc`" pass (#1995 r3). A relative value there is unresolved, not
+  // resolved-to-nothing, so defer to the text.
+  if (!hasCwdState) {
+    const raw = (target ?? cwdFlag ?? '').replace(/\/+$/, '');
+    // Before deferring, read what the value NAMES. `--cwd ../agent` cannot be
+    // resolved without knowing where the reader stands, but its trailing
+    // segments identify the package on their own, and no text elsewhere on the
+    // line has to say so. Compared as whole PATH SEGMENTS, so `../agent-backup`
+    // does not match `apps/agent`.
+    const tail = raw
+      .split('/')
+      .filter((x) => x && x !== '.' && x !== '..')
+      .join('/');
+    if (tail) {
+      const named = SCOPED.find((s) => s.dir === tail || s.dir.endsWith(`/${tail}`));
+      if (named) return { scope: named };
+    }
+    if (!raw.startsWith('/')) return null;
   }
   return { scope: null };
 }
@@ -1320,7 +1369,7 @@ for (const file of walk(REPO_ROOT)) {
         // Fall back to the whole line only when the segment itself names
         // nothing: prose often establishes the package in an earlier clause,
         // and a file inside a scoped tree scopes every line in it.
-        const sel = selectorScope(seg, [{ cwd: '', stack: [] }]);
+        const sel = selectorScope(seg, [{ cwd: '', stack: [] }], false);
         const scope = sel ? sel.scope : scopeOf(seg, rel) ?? lineScope;
         if (!scope) continue;
         flagged = true;
