@@ -442,7 +442,7 @@ const OCCUPANCY = [
   // that finding: a restatement outside the authority is what this gate is
   // for, while a false positive is a nuisance.
   new RegExp(
-    String.raw`\b${N}${WRAP}(?:(?:cron|account)[-\s]{1,10}){0,2}(?:slots?|triggers?|schedules?)${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b`,
+    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled)\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   new RegExp(
@@ -1123,8 +1123,26 @@ export function checkStamp(md) {
  * mistake this file has already made three times (`slot`, `schedule`,
  * `headroom`).
  */
+// Codex #1978 r35: `during` and `while` are gone, and the governed word is now
+// tested against the same FUNCTION_WORD/TEMPORAL vocabulary the forward case
+// uses. Three real claims were being suppressed — "For now, no cron triggers
+// are live", "During the current outage, ...", "While maintenance continues,
+// ..." — because every clause opening with one of these words was read as a
+// deployment scope.
+//
+// The discriminator is grammatical rather than a list of environments, which is
+// the open-class mistake this file has made three times. `during` and `while`
+// take TEMPORAL complements: "during local development" and "while local
+// development" are not things anyone writes, so neither word can introduce the
+// scope this check exists to spare. `when` stays, because "when running
+// locally" is exactly that scope. And `for now` is separated from `for local
+// development` by the word it governs, which is already a function word.
+const TEMPORAL_HEAD = new RegExp(
+  String.raw`^(?:${TEMPORAL}|current|present|outage|maintenance|incident)$`,
+  'i',
+);
 const PRECEDING_SCOPE =
-  /(?:^|[.;!?]\s+|\n\s*)(?:in|on|under|within|inside|for|when|while|during)\s+(?:(?:this|the|our|your|any)\s+)?(?:cloudflare\s+)?([A-Za-z][A-Za-z-]*)/i;
+  /(?:^|[.;!?]\s+|\n\s*)(?:in|on|under|within|inside|for|when)\s+(?:(?:this|the|our|your|any)\s+)?(?:cloudflare\s+)?([A-Za-z][A-Za-z-]*)/i;
 
 function scopedBeforeClaim(text, at) {
   // Only the clause the claim sits in: a scope two sentences back governs
@@ -1137,6 +1155,9 @@ function scopedBeforeClaim(text, at) {
   const clause = text.slice(start + 1, at);
   const m = PRECEDING_SCOPE.exec(clause);
   if (!m) return false;
+  // A time is not a place. "For now" and "for local development" open
+  // identically and mean opposite things for this check.
+  if (TEMPORAL_HEAD.test(m[1]) || new RegExp(`^${FUNCTION_WORD}`, 'i').test(m[1])) return false;
   return !/^(?:account|production|prod)$/i.test(m[1]);
 }
 
@@ -1830,6 +1851,31 @@ export function parseInventory(md) {
     sources.set(name, readSource(sourceCell));
     if (status !== null) statuses.set(name, status);
 
+    // Codex #1978 r35: a span was counted as a trigger on the strength of being
+    // non-empty and backticked. `` `not a cron` `` parsed clean, the summary
+    // still balanced, and only the credentialed `--live` half would ever have
+    // noticed — so CI could accept an authority whose table names a schedule
+    // that cannot run. That is the r14 empty-span finding one step out: the
+    // question was never "is there text between the backticks" but "is this a
+    // schedule", and both times the cheaper question was answered instead.
+    //
+    // Five fields, each a cron atom. Deliberately syntactic and not a
+    // range-checking parser — `99 * * * *` is somebody's problem at deploy
+    // time, while `not a cron` is this file's, and the gate has been punished
+    // three times for implementing more of a format than it needed.
+    const CRON_FIELD = /^(?:\*|\d+|\d+-\d+)(?:\/\d+)?(?:,(?:\*|\d+|\d+-\d+)(?:\/\d+)?)*$/;
+    for (const span of spans) {
+      const fields = span.split(/\s+/);
+      if (fields.length !== 5 || !fields.every((f) => CRON_FIELD.test(f))) {
+        problems.push(
+          `\`${name}\` carries \`${span}\` as a schedule, which is not a cron ` +
+            `expression — five space-separated fields are required. An ` +
+            `unrunnable schedule counted as a live trigger is a budget this ` +
+            `file states wrongly while every offline check passes`,
+        );
+      }
+    }
+
     if (spans.length && residue === '') {
       live.set(name, spans);
       if (status !== 'live') {
@@ -2371,6 +2417,24 @@ const MUST_FIRE = [
     'In this Cloudflare account, there is no spare cron trigger.',
   ],
   ['a leading production scope still fires', 'In production, there is no spare cron trigger.'],
+  // Codex #1978 r35: the r33 suppression read every clause opening with a
+  // scope word as a foreign environment, so three claims about the account's
+  // present state went quiet. A time is not a place.
+  ['a leading temporal qualifier is not a scope', 'For now, no cron triggers are live.'],
+  [
+    'a leading circumstance is not a scope',
+    'During the current outage, no cron triggers are live.',
+  ],
+  [
+    'a leading subordinate clause is not a scope',
+    'While maintenance continues, no cron triggers are live.',
+  ],
+  // Codex #1978 r35: the direct form with a PRESENT-STATE predicate. The r29
+  // pattern took `taken|occupied|in use` only, so reordering "there are four
+  // live cron triggers" into "four cron triggers are live" walked past the
+  // gate — a restatement of the live count, which is the whole subject.
+  ['the direct form with a live predicate', 'Four cron triggers are live.'],
+  ['the direct form with an armed predicate', '4 cron schedules are armed today.'],
   // Codex #1978 r4: the verdict shape — a live conclusion carrying no number.
   [
     'a restated verdict on the capacity step',
@@ -2496,6 +2560,8 @@ const MUST_NOT_FIRE = [
   // gate blocks every PR in the repository.
   ['a leading environment scope', 'In local development, no cron triggers are live.'],
   ['a leading purpose scope', 'For local development, no cron triggers are live.'],
+  // The r35 widening of the direct form must not reach a scoped sentence.
+  ['the direct form scoped elsewhere', 'Four cron triggers are live in local development.'],
   ['a leading temporal scope', 'When running locally, no cron triggers are live.'],
   // The CONDITIONAL is the correct way to write it, and is what
   // `apps/keeper/wrangler.jsonc` says today. If this ever starts firing, the
@@ -2676,6 +2742,30 @@ const INVENTORY_CASES = [
     'undeployed is neither live nor reserved',
     '| `vaipakam-mesh-watcher` | *(would be `*/15 * * * *`)* | `ops/mesh-watcher` | undeployed — code-complete |',
     {},
+    [],
+    0,
+  ],
+  // Codex #1978 r35: a backticked span was counted as a trigger without ever
+  // being asked whether it is a schedule. Only `--live` would have noticed,
+  // and `--live` needs credentials CI does not have.
+  [
+    'a span that is not a cron expression is a finding',
+    '| `vaipakam-agent` | `not a cron` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['not a cron'] },
+    [],
+    1,
+  ],
+  [
+    'a four-field schedule is a finding',
+    '| `vaipakam-agent` | `17 3 * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['17 3 * *'] },
+    [],
+    1,
+  ],
+  [
+    'step and list syntax is accepted',
+    '| `vaipakam-mw` | `*/15 0,12 1-7 * *` | `ops/mesh-watcher` | live |',
+    { 'vaipakam-mw': ['*/15 0,12 1-7 * *'] },
     [],
     0,
   ],
