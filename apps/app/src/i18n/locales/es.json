@@ -2280,7 +2280,7 @@
       "readErrorBody": "No hemos podido conectar con la red para saber si necesitas aceptar las condiciones de Vaipakam, así que la aplicación permanece cerrada en lugar de suponerlo. No pasa nada con tu cartera ni con tus posiciones: inténtalo de nuevo en un momento.",
       "retry": "Reintentar",
       "title": "Acepta las condiciones para continuar",
-      "body": "Los operadores de Vaipakam han puesto en vigor una versión de las condiciones. Aceptar es una firma única que registra qué versión aceptaste. No se te volverá a preguntar salvo que las condiciones cambien, o que cambies a otra red, ya que cada red guarda su propio registro.",
+      "body": "Los operadores de Vaipakam han puesto en vigor una versión de las condiciones. Aceptar envía una transacción única que registra qué versión aceptaste, así que tu cartera te pedirá confirmarla y tiene una pequeña comisión de red. No se te volverá a preguntar salvo que las condiciones cambien, o que cambies a otra red, ya que cada red guarda su propio registro.",
       "currentVersion": "Versión en vigor",
       "contentHash": "Huella del contenido",
       "readTerms": "Leer las Condiciones",

@@ -2280,7 +2280,7 @@
       "readErrorBody": "Wir konnten das Netzwerk nicht erreichen, um festzustellen, ob Sie die Bedingungen von Vaipakam annehmen müssen. Deshalb bleibt die App geschlossen, statt zu raten. Mit Ihrer Wallet und Ihren Positionen ist alles in Ordnung – versuchen Sie es gleich noch einmal.",
       "retry": "Erneut versuchen",
       "title": "Bedingungen annehmen, um fortzufahren",
-      "body": "Die Betreiber von Vaipakam haben eine Fassung der Bedingungen in Kraft gesetzt. Die Annahme ist eine einmalige Signatur, die festhält, welcher Fassung Sie zugestimmt haben. Erneut gefragt werden Sie nur, wenn sich die Bedingungen ändern – oder wenn Sie zu einem anderen Netzwerk wechseln, da jedes Netzwerk seinen eigenen Eintrag führt.",
+      "body": "Die Betreiber von Vaipakam haben eine Fassung der Bedingungen in Kraft gesetzt. Die Annahme sendet eine einmalige Transaktion, die festhält, welcher Fassung Sie zugestimmt haben – Ihre Wallet fragt nach einer Bestätigung, und es fällt eine kleine Netzwerkgebühr an. Erneut gefragt werden Sie nur, wenn sich die Bedingungen ändern – oder wenn Sie zu einem anderen Netzwerk wechseln, da jedes Netzwerk seinen eigenen Eintrag führt.",
       "currentVersion": "Geltende Fassung",
       "contentHash": "Inhalts-Fingerabdruck",
       "readTerms": "Bedingungen lesen",

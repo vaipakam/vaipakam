@@ -21,8 +21,9 @@ none are. In that state nothing changes: the app behaves exactly as it
 does now, for everybody. The moment operators put a version in force,
 anyone with a wallet connected is asked once to accept it, shown the
 version and a fingerprint of the exact text, with links to read the
-Terms and the Privacy Policy before agreeing. Accepting is a single
-signature. Nobody is asked again unless the terms themselves change — and
+Terms and the Privacy Policy before agreeing. Accepting sends one
+transaction — the wallet asks for confirmation and it costs a small
+network fee, since the record is kept on chain rather than in the app. Nobody is asked again unless the terms themselves change — and
 if they do change, the previous acceptance stops counting, which is the
 point of recording a version rather than a tick.
 
