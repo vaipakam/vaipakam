@@ -214,9 +214,17 @@ rather than two.
 [`docs/ops/CloudflareCronSlots.md`](../../docs/ops/CloudflareCronSlots.md),
 not here.** This paragraph used to do the arithmetic itself and got it
 wrong for months, in the company of every other copy of the same
-arithmetic: none of them could see `vaipakam-offchain-data-archive` — this Worker's own un-retired
-predecessor, which has no source in this repository and is still armed on
-the same minute as the schedule below (#1977).
+arithmetic: none of them could see `vaipakam-offchain-data-archive` — this
+Worker's own predecessor, which has no source in this repository and so is
+invisible to anyone counting `crons` entries across the tree (#1977).
+
+**Whether it is still armed is the authority's answer, not this file's.** An
+earlier revision said here that it *is* armed on the same minute as the
+schedule below — true when written, and it would have survived the #1977
+retirement untouched, because the occupancy gate matches numbers and this
+sentence carries none. A present-tense claim about the account is exactly
+what the paragraph above tells you not to put here; I wrote one two lines
+later, in the sentence explaining why (Codex #1978 r29).
 
 Split back into two crons if/when the account upgrades to Workers
 Paid ($5/mo, removes the cap).

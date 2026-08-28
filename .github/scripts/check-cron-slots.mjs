@@ -354,6 +354,16 @@ const OCCUPANCY = [
   // Codex #1978 r28: the FIFTH matcher in this array to need binding. "four
   // are taken by other consumers" counts leases; the subject must be trigger
   // vocabulary, or the count must be followed by it.
+  // Codex #1978 r29: the DIRECT form, which the positional binding missed
+  // entirely — "Four cron triggers are taken.", "4 cron schedules are in use
+  // today." The count sits immediately before the capacity noun, so no window
+  // and no subject search is involved. Missing these was the worse half of
+  // that finding: a restatement outside the authority is what this gate is
+  // for, while a false positive is a nuisance.
+  new RegExp(
+    String.raw`\b${N}${WRAP}(?:(?:cron|account)[-\s]*${WRAP}?)*(?:slots?|triggers?|schedules?)${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b`,
+    'i',
+  ),
   new RegExp(
     String.raw`(?:account|triggers?|slots?|schedules?)[\s\S]{0,160}?\b${N}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b(?![-\s]+(?!${FUNCTION_WORD}|total\b|currently\b|already\b)[A-Za-z])`,
     'i',
@@ -769,6 +779,17 @@ function checkSkipList() {
  * check and the inventory-table parser were each asking "is this visible?"
  * separately, and only one of them had ever been told about fences.
  */
+/** Markdown indentation width: a tab advances to the next multiple of four. */
+function indentWidth(line) {
+  let w = 0;
+  for (const ch of line) {
+    if (ch === ' ') w += 1;
+    else if (ch === '\t') w += 4 - (w % 4);
+    else break;
+  }
+  return w;
+}
+
 function* visibleLines(md) {
   // FENCES ONLY. HTML-comment tracking used to live here and is gone —
   // `checkNoHtmlComments` forbids `<!--` in the authority outright instead.
@@ -805,7 +826,13 @@ function* visibleLines(md) {
     // tab-indented format example beside the real stamp read as a duplicate
     // and BLOCKED the gate. I implemented "four spaces" from the rule's most
     // common spelling rather than from the rule.
-    if (openedWith === null && /^(?: {4,}|\t)\S/.test(line) && line.trim() !== '') continue;
+    // Codex #1978 r29: measure the indentation WIDTH, expanding tabs to the
+    // next multiple of four, instead of matching its spelling. CommonMark
+    // allows one to three spaces THEN a tab, which `/^(?: {4,}|\t)/` reads as
+    // prose. Fourth iteration on this one rule — four spaces, then a leading
+    // tab, now mixed — because each time I matched the form of the example in
+    // front of me rather than computing the quantity the rule is about.
+    if (openedWith === null && line.trim() !== '' && indentWidth(line) >= 4) continue;
 
     const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(line);
     if (fence) {
@@ -2397,6 +2424,16 @@ const MUST_NOT_FIRE = [
 const _ACCEPTED_RESIDUALS = [
   'Cron retries occupy 4 slots in the local queue buffer.',
   'The cron budget is exhausted for this billing period.',
+  // Codex #1978 r29: the positional binding still reaches across a sentence
+  // boundary — "The cron triggers call the allocator for leases. Four are
+  // taken by other consumers." Separating it from the genuine "cron triggers.
+  // Counting it as occupied, 4 are taken" needs to tell two senses of one
+  // noun apart across a full stop, which is where this file's tightening has
+  // repeatedly overshot. The DIRECT form ("Four cron triggers are taken") is
+  // now matched adjacently, which was the half that mattered: a restatement
+  // escaping the authority defeats the gate, while a false positive is a
+  // nuisance an author fixes by rewording.
+  'The cron triggers call the allocator for leases. Four are taken by other consumers.',
 ];
 void _ACCEPTED_RESIDUALS;
 
