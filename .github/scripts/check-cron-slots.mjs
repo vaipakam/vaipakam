@@ -231,7 +231,15 @@ const CONTEXT = /\b(cron|crons|trigger|triggers)\b/i;
  * has cost this repository real review rounds in ordinary prose; a rule that
  * inspects prose must not inherit it.
  */
-const WRAP = String.raw`(?:\s|\*|\/\/|#|>){1,40}`;
+// The {1,400} / {0,400} bounds are a ReDoS guard, not a formatting opinion
+// (Codex #1978 r30 P1, r31). Unbounded, these overlap the lazy spans beside
+// them and one whitespace run partitions quadratically — 100k spaces took
+// ~22 s. Bounded, 10 ms. The first bound I chose was 40, which was arbitrary
+// and cut a REAL claim wrapped onto a 38-space-indented comment line: a
+// formatting-dependent cap on the gate's core job. 400 covers any plausible
+// indentation and measures the same. If #1990 removes the need to parse
+// wrapped comments at all, this goes with it.
+const WRAP = String.raw`(?:\s|\*|\/\/|#|>){1,400}`;
 
 /**
  * The same gap where a separator is OPTIONAL — `5/5` has none around the
@@ -244,7 +252,7 @@ const WRAP = String.raw`(?:\s|\*|\/\/|#|>){1,40}`;
  * that exact phrase is a must-fire fixture, because the class of defect the
  * gate exists to catch was hiding in the gate itself.
  */
-const GAP = String.raw`(?:\s|\*|\/\/|#|>){0,40}`;
+const GAP = String.raw`(?:\s|\*|\/\/|#|>){0,400}`;
 
 /**
  * Occupancy shapes. Each is a way the ten copies actually said it, plus the
@@ -323,7 +331,7 @@ const OCCUPANCY = [
   // pattern, "takes the account to 5 of 5" by the account pattern, and the
   // slash form carries "cron triggers" immediately after it.
   new RegExp(
-    String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)${WRAP}(?:(?:cron|account)[-\s]{1,10})?(?:cron-)?(?:slots?|triggers?|schedules?)\b`,
+    String.raw`\b${N}${GAP}(?:of|\/)${GAP}(?:5|five)${WRAP}(?:(?:cron|account)[-\s]{1,10}){0,2}(?:cron-)?(?:slots?|triggers?|schedules?)\b`,
     'i',
   ),
   // "all five slots", "used all 5 cron triggers". The noun is REQUIRED: "all
@@ -361,7 +369,7 @@ const OCCUPANCY = [
   // that finding: a restatement outside the authority is what this gate is
   // for, while a false positive is a nuisance.
   new RegExp(
-    String.raw`\b${N}${WRAP}(?:(?:cron|account)[-\s]{1,10})?(?:slots?|triggers?|schedules?)${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b`,
+    String.raw`\b${N}${WRAP}(?:(?:cron|account)[-\s]{1,10}){0,2}(?:slots?|triggers?|schedules?)${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:taken|occupied|in${WRAP}use)\b`,
     'i',
   ),
   new RegExp(
@@ -409,7 +417,7 @@ const OCCUPANCY = [
   // matcher in the same array untouched. A spare WHAT is the same question as
   // four of five WHAT.
   new RegExp(
-    String.raw`\bspare\b${WRAP}(?:(?:cron|account)[-\s]{1,10})?(?:cron-)?(?:slots?|triggers?|schedules?|capacity)\b`,
+    String.raw`\bspare\b${WRAP}(?:(?:cron|account)[-\s]{1,10}){0,2}(?:cron-)?(?:slots?|triggers?|schedules?|capacity)\b`,
     'i',
   ),
   // …and the reverse order: "no cron trigger is spare", "the slot is spare".
@@ -430,6 +438,19 @@ const OCCUPANCY = [
   // thing the admission criterion forbids, and the third time in this file a
   // word looked specific and was not (`slot`, `schedule`, now `headroom`).
   // Requiring an absence quantifier keeps the claim and drops the measurements.
+  // Codex #1978 r31: NEGATIVE quantifiers. "No cron triggers are live.",
+  // "There are no active cron triggers.", "None of the cron triggers are in
+  // use." — zero is a live account state, this file says so in the fixture
+  // for "zero live cron triggers", and every matcher required a NUMBER. The
+  // vocabulary knew about zero as a word and not as a quantifier.
+  new RegExp(
+    String.raw`\b(?:no${WRAP}|none${WRAP}of${WRAP}(?:the${WRAP})?)(?:live${WRAP}|active${WRAP}|cron${WRAP})*(?:slots?|triggers?|schedules?)${WRAP}(?:are|is)${WRAP}(?:live|active|in${WRAP}use|taken|occupied)\b`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`\bthere${WRAP}(?:are|is)${WRAP}no${WRAP}(?:live${WRAP}|active${WRAP}|cron${WRAP})*(?:slots?|triggers?|schedules?)\b`,
+    'i',
+  ),
   // Codex #1978 r26: `headroom` must be ABOUT triggers. Unbound it fired on
   // "little headroom under the CPU limit" and "no headroom in its memory
   // budget" — both ordinary notes about a cron Worker's runtime, neither a
@@ -498,7 +519,13 @@ const OCCUPANCY = [
   // "accounts MAY have" and "an account TO have" do not put the verb next to
   // the subject, and a claim about this account's current state does.
   new RegExp(
-    String.raw`\b(?:account|accounts|org|we)${WRAP}(?:currently${WRAP}|now${WRAP}|already${WRAP})?(?:has|have|holds?)${WRAP}${N}${WRAP}(?:live${WRAP}|active${WRAP}|cron${WRAP})*triggers?\b`,
+    // Codex #1978 r31: "Free accounts have five cron triggers." and "Each
+  // account has five cron triggers." are statements of the CAP — which this
+  // gate's own documentation says are permitted, and which the authority
+  // itself must make. A plural or plan-qualified subject is generic; a
+  // specific one ("this account has 5 cron triggers today") is a live claim.
+  // The gate was contradicting its own stated allowance.
+  String.raw`(?<!\b(?:free|paid|each|every|a|an|any|per)${WRAP})\b(?:this${WRAP}|the${WRAP}|our${WRAP})?(?:account|org|we)${WRAP}(?:currently${WRAP}|now${WRAP}|already${WRAP})?(?:has|have|holds?)${WRAP}${N}${WRAP}(?:live${WRAP}|active${WRAP}|cron${WRAP})*triggers?\b`,
     'i',
   ),
   // Capacity VERDICTS — the same claim as `spare` and `headroom` with the
@@ -1712,7 +1739,12 @@ export function parseInventory(md) {
     // — while the diagnostic it guards tells the editor the form is
     // `*(none)*`. A check that names one spelling and accepts six is not
     // enforcing a convention, it is describing one.
-    const isNone = /^\s*\*\(\s*none\s*\)\*\s*$/i.test(scheduleCell);
+    // Codex #1978 r31: the CELL may be padded (Markdown tables are written
+    // with alignment spaces); the VALUE may not. `*( none )*` and `*(NONE)*`
+    // are not the spelling the diagnostic names, and my r30 "exact" fix still
+    // admitted both through an inner `\s*` and the `i` flag. Trim the cell,
+    // then compare exactly.
+    const isNone = scheduleCell.trim() === '*(none)*';
     // Codex #1978 r28: the empty cell is NOT exempt. I wrote
     // `scheduleCell.trim() !== ''` into the r25 rule without asking what an
     // empty Schedule column claims — which is nothing a reader can act on,
@@ -1793,7 +1825,7 @@ export function readStatus(cell) {
   // because a reserved Worker has no schedule to compare against. A typo in
   // the status cell was the one class of damage this parser promised to
   // reject and quietly accepted.
-  const m = /^[\s*_]*([a-z]+)(?![a-z0-9_])/i.exec(cell);
+  const m = /^[\s*_]*([a-z]+)(?![\p{L}\p{N}_])/iu.exec(cell);
   const word = m?.[1]?.toLowerCase();
   return word && STATUSES.has(word) ? word : null;
 }
@@ -2250,6 +2282,15 @@ const MUST_FIRE = [
   ['direct live count', 'The account currently has four live cron triggers.'],
   ['zero is a live-account state too', 'The account currently has zero live cron triggers.'],
   ['has N triggers', 'This account has 5 cron triggers today.'],
+  // Codex #1978 r31: zero as a QUANTIFIER, not just as a word. Every matcher
+  // required a number, so the natural phrasings for an empty account escaped.
+  ['no triggers are live', 'No cron triggers are live.'],
+  ['there are no active triggers', 'There are no active cron triggers.'],
+  ['none of the triggers in use', 'None of the cron triggers are in use.'],
+  // …and the compound qualifier my r30 collapse had dropped.
+  ['compound qualifier, ratio', '4 of 5 account cron triggers are in use.'],
+  ['compound qualifier, taken', 'four account cron triggers are taken.'],
+  ['a claim wrapped onto a deeply indented line', '4 of 5\n' + ' '.repeat(38) + '// cron triggers'],
   ['the org holds N', '// the org holds three triggers today'],
   // Capacity verdicts — the claim with the number removed entirely. Self-found
   // after r5 rather than reported, by asking what a restatement looks like
@@ -2341,6 +2382,10 @@ const MUST_NOT_FIRE = [
   ['a ratio counting shards', 'The cron tick found 3 of 5 shards already in use.'],
   ['no room for a retry', 'This cron worker has no room for another retry attempt.'],
   ['at capacity for retention', 'Cron logs are at capacity for retention.'],
+  // Codex #1978 r31: statements of the CAP, which this gate documents as
+  // permitted — the authority itself has to make one.
+  ['a plan entitlement, plural subject', 'Free accounts have five cron triggers.'],
+  ['a plan entitlement, distributive subject', 'Each account has five cron triggers.'],
   // Codex #1978 r28: three more, and the sweep grows with them.
   ['leases taken by consumers', 'The cron handler requests five leases; four are taken by other consumers.'],
   ['a worker in a thread pool', 'The cron dispatcher has no room for another worker in its thread pool.'],
