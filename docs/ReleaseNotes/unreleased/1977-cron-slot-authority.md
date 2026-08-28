@@ -29,7 +29,7 @@ those comments was a trigger short of the account's real state — so the slot
 they reserved for the undeployed mesh watcher was already occupied. The figures
 are in the authority; this fragment deliberately does not restate them, for the
 reason the whole change exists. That does not mean the keeper's re-enable would have stopped at its
-first step: four live under a cap of five leaves one real trigger free, so
+first step: the real occupancy still left a trigger free, so
 whichever of the two deployments went first would have taken it and succeeded.
 What those comments had actually lost was the SECOND one. Deploy mesh-watcher
 first and the keeper's re-enable is the deploy that fails; re-arm the keeper
@@ -89,10 +89,13 @@ attention:
   enumeration of what somebody might write, each leaked twice, and each was
   finally fixed by replacing the enumeration with a decidable test rather than
   extending it a third time.
-- **Fixing one member of a family and leaving its sibling**, five times — a
+- **Fixing one member of a family and leaving its sibling**, repeatedly — a
   wrap-tolerant matcher applied to one pattern and not the rest; a short-row
   guard added beside the malformed-row finding it belonged with; one file
-  extension added while its sibling stayed out.
+  extension added while its sibling stayed out; a predicate list taught one
+  vocabulary while the matcher beside it kept another. The durable answer
+  turned out not to be fixing the sibling but removing the seam: one shared
+  definition, used everywhere the thing appears.
 - **Closing one direction and opening the reverse.** Requiring every
   reservation to be named, without rejecting a name for a reservation that no
   longer exists. Dropping an anchor so a hidden duplicate could not escape,
