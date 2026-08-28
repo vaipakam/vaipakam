@@ -1629,6 +1629,40 @@ function resolveDir(cwd, target, vars = null) {
       .join('/');
     return kept ? `${UNKNOWN_DIR}/${kept}` : UNKNOWN_DIR;
   }
+  // `CDPATH` is bash's search path for a RELATIVE `cd` target, per `help cd`:
+  // `CDPATH=apps` then `cd agent` enters `apps/agent`. Resolving the target
+  // only against the modelled cwd recorded a directory called `agent`, which
+  // matches no package, so the bare deploy under it passed (#1995 r16).
+  //
+  // Statically known values only, the same rule every other expansion here
+  // follows, and only when the entry actually lands on a SCOPED package —
+  // a search path that resolves somewhere unremarkable changes nothing, and
+  // guessing at one would invent scope rather than find it. A target that
+  // begins with `/`, `.` or `..` is not searched, which is bash's own rule.
+  //
+  // That condition is an EQUIVALENT MUTANT, recorded as one rather than
+  // fixtured: a candidate carrying a `./` or `../` segment cannot match a
+  // scoped directory, which is stored normalised, so removing it changes no
+  // verdict. Measured over twelve CDPATH/target pairs mixing absolute,
+  // dot-relative, hidden and multi-entry forms; all twelve agreed. Kept
+  // because it states bash's rule where a reader looks for it.
+  //
+  // The scoped-package condition below is NOT equivalent, and the same
+  // measurement is what told them apart: it makes the loop keep SEARCHING past
+  // an entry that matches nothing, so `CDPATH=vendor:apps` still finds the
+  // agent. That case is fixtured.
+  if (vars && !/^[/.]/.test(target)) {
+    const cdpath = vars.get('CDPATH');
+    if (cdpath && !/\$/.test(cdpath)) {
+      for (const entry of cdpath.split(':')) {
+        if (!entry || /^[/.]/.test(entry)) continue;
+        const candidate = `${entry.replace(/\/+$/, '')}/${target}`;
+        if (SCOPED.some((sc) => candidate === sc.dir || candidate.startsWith(`${sc.dir}/`))) {
+          return candidate;
+        }
+      }
+    }
+  }
   // A target naming a repository package root is REPO-ROOT-relative, not
   // cwd-relative: wrappers write `cd apps/indexer` from the repo root, never
   // from inside another package. Modelling it as nested is what produced
@@ -1943,12 +1977,37 @@ function applyDir(state, dir, vars = null) {
   // entry removed. The index is what decides scope only through a LATER popd,
   // and modelling a wrong removal is not better than modelling none.
   if (dir.kind === 'popd-keep') return state;
+  // The stack gains the directory; the shell does not move. In bash's own
+  // ordering the new entry sits directly below the current directory, which is
+  // the END of `state.stack` here — `stack` is oldest-first and `popd` reads
+  // its last element.
+  if (dir.kind === 'pushd-stack') {
+    return {
+      cwd: state.cwd,
+      stack: [...state.stack, resolveDir(state.cwd, dir.target, vars)],
+      prev: state.prev,
+    };
+  }
   // `pushd` with no arguments EXCHANGES the top two directories (bash's `help
   // pushd`), so it is a move even though it names no destination — and one
   // that walks BACK into a package the shell had left. It was ignored
   // entirely, so `pushd apps/agent; pushd ../indexer; cd ../www; pushd;
   // wrangler deploy` deployed the agent while the guard stood in www (#1995
   // r16). With an empty stack bash errors and stays put.
+  // The directory STACK as bash presents it: the current directory is entry 0
+  // and the saved ones follow, most recent first. `state.stack` holds the same
+  // set oldest-first, which is why this reverses.
+  if (dir.kind === 'pushd-rotate') {
+    const ds = [state.cwd, ...[...state.stack].reverse()];
+    const idx = dir.sign === '+' ? dir.n : ds.length - 1 - dir.n;
+    if (idx <= 0 || idx >= ds.length) return state;
+    const rotated = [...ds.slice(idx), ...ds.slice(0, idx)];
+    return {
+      cwd: rotated[0],
+      stack: [...rotated.slice(1)].reverse(),
+      prev: state.cwd,
+    };
+  }
   if (dir.kind === 'pushd-swap') {
     return state.stack.length > 0
       ? {
@@ -2006,7 +2065,29 @@ function dirDirective(seg) {
   // bash's `help builtin` and `help command` say so — and an anchored `^cd`
   // saw neither (#1995 r14). Ordered after the brace so `{ builtin cd x; }`
   // resolves too.
-  const LEAD = String.raw`(?:\{\s+)?(?:(?:builtin|command)\s+)?`;
+  // `then` / `do` / `else` open the BODY of a compound command, and the body
+  // runs in the current shell like any other command. `splitCommands` hands
+  // this function the segment `then cd "$TARGET"`, and a prefix that admitted
+  // only braces and the two builtins did not recognise it — so `if true; then
+  // cd "$TARGET"; wrangler deploy; fi` moved the shell into the agent while
+  // the model stayed at the root (#1995 r16). The same shape as the r14
+  // `builtin`/`command` fix and the r12 brace-group fix: a word in front of
+  // `cd` that does not stop `cd` from running.
+  const LEAD = String.raw`(?:(?:then|do|else)\s+)*(?:\{\s+)?(?:(?:builtin|command)\s+)?`;
+  // `pushd +N` / `-N` ROTATES the stack so that entry becomes current; it is
+  // not a destination, and it must be tested BEFORE the destination match or
+  // that match claims `+1` as a directory name — which is what it did, so my
+  // first cut of this fix changed nothing at all. Falling through modelled a
+  // directory literally named `+1` (#1995 r16). `-n` suppresses the change of
+  // directory altogether.
+  const rot = seg.match(new RegExp(`^${LEAD}pushd\\s+([+-])(\\d+)\\s*$`));
+  if (rot) return { kind: 'pushd-rotate', sign: rot[1], n: Number(rot[2]) };
+  // `pushd -n <dir>` pushes the directory onto the stack and suppresses the
+  // change of directory. Modelling it as "nothing happened" was wrong in the
+  // other direction: a later `popd` then went somewhere the shell would not.
+  const pushNoCd = seg.match(new RegExp(`^${LEAD}pushd\\s+-n\\s+${OPTS}(${WORD})`));
+  if (pushNoCd) return { kind: 'pushd-stack', target: dequote(pushNoCd[1]) };
+  if (new RegExp(`^${LEAD}pushd\\s+-n\\s*$`).test(seg)) return { kind: 'popd-keep' };
   const pushed = seg.match(new RegExp(`^${LEAD}pushd\\s+${OPTS}(${WORD})`));
   if (pushed) return { kind: 'pushd', target: dequote(pushed[1]) };
   // Ordered AFTER the destination form, so only a genuinely bare `pushd`
@@ -2041,11 +2122,23 @@ function dirDirective(seg) {
  */
 function dedupeStates(states) {
   const seen = new Map();
-  for (const st of states) {
-    // `prev` is part of the state: two states with the same cwd but different
-    // OLDPWD diverge on the next `cd -` (#1995 r14).
-    const key = `${st.cwd}\u0000${st.stack.join('/')}\u0000${st.prev ?? ''}`;
-    if (!seen.has(key)) seen.set(key, st);
+  // PROTECTED states first. The cap is a runaway guard, but it was applied in
+  // ARRIVAL order, so a long `||` chain of failing `cd`s could fill it with
+  // thirty-two irrelevant directories and drop the one scoped destination that
+  // arrives last — the only state that decides anything (#1995 r16). Ordering
+  // by relevance keeps the guard's purpose (bounded work) while removing its
+  // ability to lose the answer. Dropping the tail can still only lose an
+  // unprotected state, which is what the original note claimed for all of
+  // them and was true of none.
+  for (const pass of [true, false]) {
+    for (const st of states) {
+      if ((scopeOfCwd(st.cwd) !== null) !== pass) continue;
+      // `prev` is part of the state: two states with the same cwd but different
+      // OLDPWD diverge on the next `cd -` (#1995 r14).
+      const key = `${st.cwd}\u0000${st.stack.join('/')}\u0000${st.prev ?? ''}`;
+      if (!seen.has(key)) seen.set(key, st);
+      if (seen.size >= 32) break;
+    }
     if (seen.size >= 32) break;
   }
   return [...seen.values()];

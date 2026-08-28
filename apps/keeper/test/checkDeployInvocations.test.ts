@@ -3151,6 +3151,89 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.out).toContain('apps/agent');
   });
 
+  // ── Four more ways the shell was told to move that the state model did not
+  // see (#1995 r16). Each asserts the reported PACKAGE where the defect was
+  // standing in the wrong directory rather than missing the command.
+  it('a CONTROL WORD in front of cd does not stop cd running (#1995 r16)', () => {
+    // `splitCommands` hands the directive parser `then cd "$TARGET"`, and the
+    // prefix admitted only braces and `builtin`/`command`. The variable is
+    // load-bearing: with a literal path the line carries textual scope and the
+    // case passes for the wrong reason.
+    const r = runWith(
+      'a.sh',
+      'TARGET=apps/agent\nif true; then cd "$TARGET"; wrangler deploy; fi\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('pushd +N ROTATES the stack rather than naming a directory (#1995 r16)', () => {
+    // Bash rotates so the Nth entry becomes current. The destination match
+    // claimed `+1` as a directory name — and because it runs first, my first
+    // cut of this fix changed nothing at all until the order was corrected.
+    const r = runWith('b.sh', 'pushd apps/agent\npushd ../indexer\npushd +1\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while pushd -n STACKS without moving, and a later popd lands there (#1995 r16)', () => {
+    // Two wrong versions of this before it discriminated. Asserting only that
+    // the shell does not move cannot fail: the fall-through models a directory
+    // literally named `-n`, and `apps/agent/-n` is still inside the agent, so
+    // both behaviours report the same package. The stack is where the
+    // difference lives — bash pops to `apps/agent` here — and that also caught
+    // my own handling being incomplete: it suppressed the move but never
+    // pushed, so a later popd went somewhere the shell would not.
+    const r = runWith('b2.sh', 'cd apps/www\npushd -n apps/agent\npopd\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the deploy right after pushd -n still runs where it was (#1995 r16 control)', () => {
+    const r = runWith('b3.sh', 'cd apps/www\npushd -n apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('CDPATH is the search path for a relative cd (#1995 r16)', () => {
+    // `CDPATH=apps` then `cd agent` enters apps/agent; resolving only against
+    // the modelled cwd recorded a directory called `agent`, matching nothing.
+    const r = runWith('c.sh', 'CDPATH=apps\ncd agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a CDPATH that lands nowhere scoped invents no scope (#1995 r16 control)', () => {
+    const r = runWith('c2.sh', 'CDPATH=vendor\ncd agent\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and EVERY CDPATH entry is searched, not just the first (#1995 r16)', () => {
+    // This is what the "must land on a scoped package" condition really buys,
+    // and the single-entry control could not show it: with a first entry that
+    // matches nothing, accepting it and stopping loses the agent entirely.
+    // Bash searches the entries in order until one exists.
+    const r = runWith('c4.sh', 'CDPATH=vendor:apps\ncd agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a dot-relative target is not searched at all (#1995 r16 control)', () => {
+    // Bash searches CDPATH only for targets that do not begin with `/`, `.`
+    // or `..`. Without that rule `./agent` would resolve through CDPATH too.
+    const r = runWith('c3.sh', 'CDPATH=apps\ncd ./agent\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('the state cap keeps the PROTECTED destination (#1995 r16)', () => {
+    // A long `||` chain of failing `cd`s filled the cap with thirty-two
+    // irrelevant directories, so the one scoped state — which arrives last and
+    // is the only one that decides anything — was dropped.
+    const chain = Array.from({ length: 40 }, (_, i) => `cd missing${i} ||`).join(' ');
+    const r = runWith('d.sh', `${chain} cd apps/agent; wrangler deploy\n`);
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',
