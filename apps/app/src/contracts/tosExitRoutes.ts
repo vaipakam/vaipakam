@@ -44,6 +44,16 @@ const EXIT_PREFIXES = [
   // division of labour this pair now has — the route list decides what
   // a held user can SEE, the write list decides what they can DO.
   '/desk',
+  // Review round 7 P2: `/settings` hosts `ApprovalsCard`, whose
+  // `revokeAllowance` is a direct ERC-20 transaction — it never reaches
+  // the Diamond write allowlist, so gating the route removed the only
+  // one-click way to withdraw a standing spending authorisation from
+  // the Diamond. Same shape as the desk's cancel: an exit the
+  // enforcement layer cannot see, hidden by the affordance layer.
+  //
+  // `/settings` also carries the language picker, which is the other
+  // reason a held user needs it.
+  '/settings',
   // Aliases that redirect INTO the above.
   '/loans',
   '/dashboard',

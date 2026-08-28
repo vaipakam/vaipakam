@@ -36,6 +36,14 @@ describe('isExitRoute', () => {
     expect(isExitRoute('/desk')).toBe(true);
   });
 
+  it('exempts settings, the only route that can revoke a token allowance', () => {
+    // Review round 7 P2. `ApprovalsCard`'s `revokeAllowance` is a direct
+    // ERC-20 transaction, so the Diamond write allowlist cannot see it;
+    // gating the route removed the only one-click way to withdraw a
+    // standing spending authorisation.
+    expect(isExitRoute('/settings')).toBe(true);
+  });
+
   it('exempts the aliases that redirect into them', () => {
     // An alias renders its <Navigate> INSIDE the gate, so holding the
     // alias means the redirect never runs and the exit is unreachable
@@ -66,7 +74,6 @@ describe('isExitRoute', () => {
       '/offers',
       '/activity',
       '/faucet',
-      '/settings',
       '/help',
       '/nft',
       '/risk-access',

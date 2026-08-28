@@ -25,7 +25,11 @@ import { usePublicClient, useWalletClient } from 'wagmi';
 import { parseUnits } from 'viem';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
-import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
+import {
+  DIAMOND_ABI_VIEM,
+  useDiamondWrite,
+  useTermsBlockNonExitWrites,
+} from '../../contracts/diamond';
 import {
   useChargeableVpfi,
   useCStarQuote,
@@ -133,6 +137,7 @@ function AmendForm({
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const termsVerdict = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
   const source = useAmendSource(offer.offerId);
   const lendingMeta = useTokenMeta(offer.lendingAsset);
@@ -331,6 +336,20 @@ function AmendForm({
    *  messages). */
   async function runAmendPreflights(): Promise<void> {
     if (!address || !walletChain || !publicClient || !src) return;
+    // #1961 review round 7 P2 — the Terms verdict belongs among the
+    // preflights, for the reason the comment at the approve() call site
+    // already gives: approval gas must never be spent on an amend that
+    // will be rejected. An amend GROWS an order, so it is new exposure
+    // and gated; without this the wallet paid for a larger allowance
+    // and kept it, with the Save that needed it refused.
+    const terms = termsVerdict();
+    if (terms !== 'ok') {
+      throw new Error(
+        terms === 'unknown'
+          ? copy.errors.termsCheckUnavailable
+          : copy.errors.termsNotAccepted,
+      );
+    }
     await assertWalletNotSanctionedLive(
       publicClient,
       walletChain.diamondAddress,

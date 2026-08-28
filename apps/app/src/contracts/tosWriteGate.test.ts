@@ -114,6 +114,35 @@ describe('isExitWrite', () => {
     expect(isExitWrite('setLoanKeeperEnabled', [1n, '0xabc'])).toBe(false);
   });
 
+  it('permits withdrawing fee-deduction consent, and its cache clear', () => {
+    // Review round 7 P1: the consent flag authorises AUTOMATIC
+    // deductions of vaulted VPFI. Refusing its revocation leaves open
+    // positions consuming the user's funds under a permission they are
+    // no longer allowed to withdraw.
+    expect(isExitWrite('setVPFIDiscountConsent', [false])).toBe(true);
+    expect(isExitWrite('pokeMyTier', [])).toBe(true);
+    // Granting it is new authority.
+    expect(isExitWrite('setVPFIDiscountConsent', [true])).toBe(false);
+  });
+
+  it('reads disable-only ARGUMENTS inside a batch, not just selectors', () => {
+    // Review round 7 P2: an allowlisted selector doing the opposite of
+    // what earned it the allowlist. `MulticallFacet` delegatecalls it
+    // either way, so a selector-only check would have permitted a GRANT
+    // that is correctly refused when submitted directly.
+    expect(isExitWrite('multicall', [[call('setKeeperAccess', [false])]])).toBe(true);
+    expect(isExitWrite('multicall', [[call('setKeeperAccess', [true])]])).toBe(false);
+    expect(
+      isExitWrite('multicall', [[call('setVPFIDiscountConsent', [true])]]),
+    ).toBe(false);
+    // ...and one enabling call spoils an otherwise clean batch.
+    expect(
+      isExitWrite('multicall', [
+        [call('claimAsLender', [1n]), call('setKeeperAccess', [true])],
+      ]),
+    ).toBe(false);
+  });
+
   it('keeps acceptTerms on the list', () => {
     // Omitting it would make the gate unpassable — the one defect with
     // no workaround, since the remedy is itself the blocked write.

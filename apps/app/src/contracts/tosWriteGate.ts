@@ -24,7 +24,7 @@
  * without the route exemption a held user cannot reach the repay button;
  * without this list, reaching the page hands them everything else on it.
  */
-import { toFunctionSelector, type AbiFunction } from 'viem';
+import { decodeFunctionData, toFunctionSelector, type AbiFunction } from 'viem';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 
 /**
@@ -72,6 +72,19 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
   'revokeKeeper',
   'setKeeperAccess',
   'setLoanKeeperEnabled',
+  // Withdrawing the fee-deduction authority, and the cache clear it
+  // needs (review round 7 P1). `setVPFIDiscountConsent` authorises
+  // AUTOMATIC deductions of vaulted VPFI for fees; the contract treats
+  // disabling it as security-motivated. Refusing the revocation would
+  // leave open positions consuming the user's funds under a permission
+  // they are no longer allowed to withdraw — the keeper case again,
+  // with the user's own balance in place of a delegate.
+  //
+  // `pokeMyTier` is on the list because the revocation is incomplete
+  // without it: it clears the mirror caches the flag leaves behind. An
+  // exit that only half-completes is not an exit.
+  'setVPFIDiscountConsent',
+  'pokeMyTier',
 ]);
 
 /**
@@ -86,6 +99,7 @@ export const EXIT_WRITES: ReadonlySet<string> = new Set([
 const DISABLE_ONLY: Readonly<Record<string, number>> = {
   setKeeperAccess: 0,
   setLoanKeeperEnabled: 2,
+  setVPFIDiscountConsent: 0,
 };
 
 /** Selectors of the exit writes, for inspecting batched calls. */
@@ -133,6 +147,19 @@ export function isExitWrite(functionName: string, args: readonly unknown[]): boo
   return calls.every((call) => {
     const data = (call as BatchedCall)?.callData;
     if (typeof data !== 'string' || data.length < 10) return false;
-    return EXIT_SELECTORS.has(data.slice(0, 10).toLowerCase());
+    if (!EXIT_SELECTORS.has(data.slice(0, 10).toLowerCase())) return false;
+    // Review round 7 P2: a selector is not an argument. A disable-only
+    // write batched with `enabled: true` carries an ALLOWLISTED
+    // selector while doing the opposite of the thing that earned it a
+    // place on the list, and `MulticallFacet` delegatecalls it either
+    // way. So the inner call is decoded and its flag read, exactly as a
+    // direct submission's would be.
+    try {
+      const inner = decodeFunctionData({ abi: DIAMOND_ABI_VIEM, data });
+      return isExitWrite(inner.functionName, (inner.args ?? []) as readonly unknown[]);
+    } catch {
+      // Undecodable is not harmless — refuse it.
+      return false;
+    }
   });
 }
