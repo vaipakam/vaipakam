@@ -81,11 +81,27 @@ const RELAY_ABI: Abi = [
 /** Pagination size for `getActiveLoansPaginated`. */
 const SCAN_PAGE = 200n;
 
-/** Loan details per `aggregate3`. Matches the other passes' bound (#1946). */
-const DETAIL_CHUNK = 100;
 /** Hard cap on distinct collateral assets re-evaluated per tick — a
  *  busy book shouldn't burn the whole aggregator-quote budget. */
 const MAX_ASSETS_PER_TICK = 24;
+/**
+ * Loan details per `aggregate3`.
+ *
+ * Sized to MAX_ASSETS_PER_TICK rather than the other passes' 100 (Codex #1993
+ * r1). Every loan contributes at most one distinct asset, so a chunk of N can
+ * overshoot the cap by at most N-1 decoded loan structs — and decoding is the
+ * CPU this issue is about, not the round-trip. At 100 a book whose first 24
+ * loans all carry different collateral decoded 76 structs the old sequential
+ * loop never touched, which is a CPU regression in exactly the diverse-book
+ * case the cap exists for.
+ *
+ * Not shrunk further to the exact remaining count: that degenerates toward
+ * one read per request precisely when the walk is nearly done, trading the
+ * whole point of the batching for the last few assets. At this size a 50-loan
+ * chain costs 3 subrequests instead of 50, and never decodes more than 23
+ * structs past the cap.
+ */
+const DETAIL_CHUNK = MAX_ASSETS_PER_TICK;
 /** Hard cap on `setKeeperTier` submissions per tick. */
 const MAX_SUBMITS_PER_TICK = 8;
 
@@ -248,33 +264,43 @@ async function activeCollateralAssets(
 }
 
 /**
- * Per-chain, per-tick memo for the two token-scoped reads this pass repeats.
+ * Per-chain, per-tick memo for `decimals()` — and ONLY `decimals()`.
  *
- * `getAssetPadPrice` and `tokenDecimals` are called once for the collateral
- * asset and then once per PAA quote token — for EVERY asset under evaluation.
- * With A assets and Q quote tokens that is 2·A·Q sequential round-trips per
- * chain per tick, all of them re-reading values that do not change within a
- * tick. The attribution run had this pass re-reading one token's price 26 times
- * and its `decimals()` 26 times in a single tick; `decimals()` is immutable, so
- * those 25 repeats were pure waste.
+ * The repetition this removes: `tokenDecimals` is called once for the
+ * collateral asset and then once per PAA quote token, for EVERY asset under
+ * evaluation, so with A assets and Q quote tokens it is A·Q reads of a value
+ * that is immutable for the life of the contract. The attribution run had one
+ * token's `decimals()` read 26 times in a single tick.
+ *
+ * `getAssetPrice` was memoised here too and is NOT any more (Codex #1993 r1).
+ * It reads Chainlink `latestRoundData()` — live, not a block snapshot — and a
+ * keeper tick is not atomic: evaluating up to MAX_ASSETS_PER_TICK assets means
+ * dozens of sequential aggregator HTTP round-trips, during which a feed round
+ * can advance. Reusing an early asset's quote-token price against a later
+ * asset's live aggregator response computes slippage across two different
+ * market instants. That matters asymmetrically here: a tier PROMOTION needs
+ * `minChecks` consecutive ticks and would absorb a blip, but a DEMOTION is
+ * immediate by design, so one stale price can drop an asset's keeperTier — and
+ * keeperTier governs LTV. The pre-existing code already carries a smaller
+ * version of this window within a single asset's own quote loop; widening it
+ * across every asset in the tick is what made it worth refusing. Roughly 72
+ * requests per tick are given back for it, and that is the right trade.
  *
  * SCOPED PER CHAIN, deliberately. The same address is a different token on a
- * different chain, so a cache shared across `runRelayForChain` calls would
- * answer with another chain's price. It is created inside the per-chain
- * function and dies with it.
+ * different chain. The memo is created inside `runRelayForChain` and dies with
+ * it.
  *
- * ONLY SUCCESSES ARE CACHED. A missing feed or a transient RPC failure stays
- * uncached so the next use retries, exactly as it did before — otherwise one
- * blip would pin `decimals` to its 18 fallback for the rest of the tick, and a
- * wrong decimals silently skews every slippage figure computed from it.
+ * ONLY SUCCESSES ARE CACHED. `tokenDecimals` falls back to 18 when it cannot
+ * read, and a remembered 18 for a 6-decimal token would silently skew every
+ * slippage figure computed from it for the rest of the tick. A failed read
+ * stays uncached and is retried on next use, exactly as before.
  */
 interface TickCache {
-  price: Map<string, { price: bigint; feedDec: number }>;
   decimals: Map<string, number>;
 }
 
 function newTickCache(): TickCache {
-  return { price: new Map(), decimals: new Map() };
+  return { decimals: new Map() };
 }
 
 /** Best-effort `(price, feedDecimals)` from the diamond's `getAssetPrice`
@@ -283,11 +309,7 @@ async function getAssetPadPrice(
   client: PublicClient,
   diamond: Address,
   asset: Address,
-  cache?: TickCache,
 ): Promise<{ price: bigint; feedDec: number } | null> {
-  const key = asset.toLowerCase();
-  const hit = cache?.price.get(key);
-  if (hit) return hit;
   try {
     const r = (await client.readContract({
       address: diamond,
@@ -296,9 +318,7 @@ async function getAssetPadPrice(
       args: [asset],
     })) as readonly [bigint, number];
     if (r[0] === 0n) return null;
-    const out = { price: BigInt(r[0]), feedDec: Number(r[1]) };
-    cache?.price.set(key, out);
-    return out;
+    return { price: BigInt(r[0]), feedDec: Number(r[1]) };
   } catch {
     return null;
   }
@@ -373,7 +393,7 @@ async function aggregatorConfirmedTier(
   sizesPad: readonly [bigint, bigint, bigint, bigint],
   cache: TickCache,
 ): Promise<number | null> {
-  const assetPrice = await getAssetPadPrice(client, diamond, asset, cache);
+  const assetPrice = await getAssetPadPrice(client, diamond, asset);
   if (!assetPrice) return 0; // not Liquid per the oracle ⇒ untierable
 
   // PAA quote tokens (resolved on-chain — falls back to [WETH]).
@@ -395,7 +415,7 @@ async function aggregatorConfirmedTier(
 
   for (const quote of paa) {
     if (quote.toLowerCase() === asset.toLowerCase()) continue;
-    const qPrice = await getAssetPadPrice(client, diamond, quote, cache);
+    const qPrice = await getAssetPadPrice(client, diamond, quote);
     if (!qPrice) continue;
     const qDec = await tokenDecimals(client, quote, cache);
 

@@ -294,22 +294,29 @@ describe('liquidityConfidence read budget (#1896)', () => {
     expect(tally.batches.flatMap((b) => b.inner)).toContain(SEL.details);
     expect(tally.serialDetails).toBe(0);
 
-    // 2. Every token's price is read EXACTLY once for the whole tick. Without
-    //    the cache each of the 2 assets re-reads its own price plus all 3 quote
-    //    prices — 8 reads for 5 tokens.
-    expect(tally.price.length).toBeGreaterThan(0);
-    for (const t of [...ASSETS, ...QUOTES]) {
-      expect(count(tally.price, t), `price re-read for ${t}`).toBeLessThanOrEqual(1);
-    }
-
-    // 3. Same for decimals, which is immutable and was the worst offender.
+    // 2. `decimals()` — immutable, and the worst offender — is read exactly
+    //    once per token for the whole tick.
     for (const t of [...ASSETS, ...QUOTES]) {
       expect(count(tally.decimals, t), `decimals re-read for ${t}`).toBeLessThanOrEqual(1);
     }
 
-    // 4. The pass still did its work — a cache that reduced the count by not
+    // 3. `getAssetPrice` is deliberately NOT memoised, and this asserts the
+    //    absence rather than leaving it to a comment (Codex #1993 r1). It reads
+    //    Chainlink `latestRoundData()` live, and a tick spans dozens of
+    //    sequential aggregator round-trips, so reusing an early asset's
+    //    quote-token price against a later asset's live quote would compute
+    //    slippage across two market instants — and a tier DEMOTION is immediate,
+    //    so one stale price can lower an asset's keeperTier. Each of the 2
+    //    assets re-reads every quote token's price.
+    for (const q of QUOTES) {
+      expect(count(tally.price, q), `price should NOT be cached for ${q}`).toBe(
+        ASSETS.length,
+      );
+    }
+
+    // 4. The pass still did its work — a change that reduced counts by not
     //    running would satisfy everything above.
-    expect(count(tally.price, QUOTES[QUOTES.length - 1])).toBe(1);
+    expect(tally.price.length).toBeGreaterThan(0);
   });
 
   it('does NOT cache a failed decimals read — it retries', async () => {
