@@ -1791,7 +1791,26 @@ function flowScalarEnd(lines, i, content, indent) {
       if (
         k >= lines.length ||
         (lines[k].match(/^\s*/) ?? [''])[0].length <= indent ||
-        /^\s*[-#]/.test(lines[k])
+        /^\s*[-#]/.test(lines[k]) ||
+        // A SIBLING MAPPING KEY ends the scalar. `indent` is measured to the
+        // dash of a list item, so a step's own `working-directory:` sits one
+        // level deeper and was folded INTO the shell text:
+        //
+        //     - run: wrangler deploy --keep-vars
+        //       working-directory: apps/agent
+        //
+        // became `wrangler deploy --keep-vars working-directory: apps/agent`,
+        // where `--keep-vars` reads as having the VALUE `working-directory:` —
+        // not literally true, so the flag scored as DISABLED and a correct
+        // step was reported as a violation. A false red on the ordinary
+        // spelling of a workflow step, and this guard blocks the unfiltered CI
+        // job. Found while fixing the matrix expression beside it, not
+        // reported.
+        //
+        // Shell continuation lines do not start `word:` — the r38 case is
+        // `cd apps/keeper;` followed by an indented `wrangler deploy` — so
+        // this ends scalars that YAML ends and leaves those alone.
+        /^\s*[A-Za-z_][A-Za-z0-9_.-]*:(?:\s|$)/.test(lines[k])
       ) {
         return j;
       }
@@ -1884,7 +1903,10 @@ function offset(block, start, blockId, cwd = '') {
  */
 function workingDirFor(lines, runIdx) {
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
-  const WD = /^\s*working-directory:\s*(?:"([^"]*)"|'([^']*)'|(\S+))/;
+  // The unquoted alternative must admit an EXPRESSION: `${{ matrix.dir }}`
+  // contains spaces, so `\S+` captured only `${{` (#1995 r11).
+  const WD =
+    /^\s*working-directory:\s*(?:"([^"]*)"|'([^']*)'|(\$\{\{[^}]*\}\}|\S+))/;
   // FLOW-style mapping (#1995 r13): `defaults: { run: { working-directory: X } }`
   // is the same Actions configuration as the block form, and only the block
   // form was recognised — so a workflow written this way ran its inline deploy
@@ -1892,7 +1914,35 @@ function workingDirFor(lines, runIdx) {
   // see it because that pattern is anchored at the start of a line.
   const FLOW_DEFAULTS_WD =
     /defaults:\s*\{[^}]*working-directory:\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/;
-  const valueOf = (m) => m[1] ?? m[2] ?? m[3];
+  /**
+   * A matrix expression is not a literal directory (#1995 r11).
+   *
+   * `working-directory: ${{ matrix.dir }}` with `dir: [apps/agent, ...]` runs
+   * one leg of the matrix FROM the protected package, so that leg must be
+   * reported. Resolved against the declared values: if any of them lands in a
+   * scoped package, that value is used; if the list is found and none do, the
+   * step is genuinely out of scope; if the list cannot be found at all, the
+   * expression resolves to nothing rather than being taken literally — which
+   * is what recorded `${{` as a directory name before.
+   */
+  const resolveMatrix = (raw) => {
+    const mm = raw.match(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/);
+    if (!mm) return raw;
+    for (const l of lines) {
+      const km = l.match(new RegExp(`^\\s*${mm[1]}:\\s*\\[([^\\]]*)\\]`));
+      if (!km) continue;
+      const vals = km[1]
+        .split(',')
+        .map((v) => v.trim().replace(/^["']|["']$/g, ''))
+        .filter(Boolean);
+      const hit = vals.find((v) =>
+        SCOPED.some((sc) => v === sc.dir || v.startsWith(`${sc.dir}/`)),
+      );
+      return hit ?? '';
+    }
+    return '';
+  };
+  const valueOf = (m) => resolveMatrix(m[1] ?? m[2] ?? m[3]);
 
   // STEP: walk up to this step's `- ` marker, then scan the step's own body.
   const runIndent = indentOf(lines[runIdx]);

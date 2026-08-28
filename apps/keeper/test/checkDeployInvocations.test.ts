@@ -1527,6 +1527,42 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a matrix working-directory resolves to its declared values (#1995 r11)', () => {
+    // One leg of the matrix really does deploy from the protected package.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n' +
+        '        dir: [apps/agent, apps/indexer]\n    steps:\n' +
+        '      - run: wrangler deploy\n        working-directory: ${{ matrix.dir }}\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a matrix with NO protected leg stays quiet (#1995 r11 control)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n' +
+        '        dir: [apps/indexer, apps/www]\n    steps:\n' +
+        '      - run: wrangler deploy\n        working-directory: ${{ matrix.dir }}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a sibling YAML key is not folded into the run scalar (#1995)', () => {
+    // Pre-existing false red, found while fixing the matrix case above and not
+    // reported by review: the step's own `working-directory:` was folded into
+    // the shell text, so `--keep-vars` read as having the VALUE
+    // `working-directory:` and scored as DISABLED. A correct step reported as
+    // a violation, in a check that blocks the unfiltered CI job.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n' +
+        '      - run: wrangler deploy --keep-vars\n        working-directory: apps/agent\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('a FLOW-style defaults mapping is the same configuration (#1995 r13)', () => {
     // `defaults: { run: { working-directory: X } }` is valid YAML for the same
     // Actions setting; only the block form was recognised.
