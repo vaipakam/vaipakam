@@ -2244,11 +2244,21 @@ two procedures share the offline-key handling discipline.
    genuine late Worker write.
 4. `wrangler secret put BACKUP_ENCRYPTION_KEY` on
    `vaipakam-offchain-data-warm` to flip the Worker to the new key —
-   **and on `vaipakam-offchain-data-archive` too, while it is still
-   scheduled.** A Worker left on the old key keeps writing ciphertext that
+   **and on `vaipakam-offchain-data-archive` too, for as long as that Worker
+   still exists.** A Worker left on the old key keeps writing ciphertext that
    step 6 is about to make undecryptable; naming only the warm Worker here
    is what makes that easy to miss, since every other step reads as
    generic.
+
+   Deliberately NOT "while it is still scheduled" (Codex #1978 r24): step 1
+   disabled BOTH schedules and step 1's own note says to re-enable only after
+   this step. So at this point neither Worker is scheduled, and an operator
+   reading "while it is still scheduled" as a precondition would either skip
+   the archive Worker's secret — the exact omission this sentence exists to
+   prevent — or re-arm it early to satisfy the wording, putting it back to
+   writing old-key ciphertext before its key has changed. Both of my own
+   edits landed in the same commit; the pause instruction and the wording
+   that contradicts it were written minutes apart.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
 6. **Sweep for stragglers before retiring anything — in EVERY bucket you

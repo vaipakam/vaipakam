@@ -1507,7 +1507,12 @@ export function parseInventory(md) {
     // which the mesh-watcher row uses to show the schedule it WOULD register.
     // Codex named it and I implemented the rule without it, breaking that row
     // — the rule and its stated exception arrived together and I took half.
-    const isWouldBe = /^\s*\**\s*\(?\s*would\s+be\b/i.test(scheduleCell);
+    // Codex #1978 r24: the WHOLE cell, not a prefix. I wrote this exception one
+    // round ago as a startsWith test, so `*(would be `…`)* active now` — and
+    // any amount of trailing prose, and multiple spans — sailed through the
+    // very check that had just been added to catch span-plus-prose cells. An
+    // exception matched on a prefix is a hole shaped like whatever follows it.
+    const isWouldBe = /^\s*\*\(\s*would\s+be\s+`[^`]+`\s*\)\*\s*$/i.test(scheduleCell);
     if (spans.length && residue !== '' && !isWouldBe) {
       problems.push(
         `\`${name}\`'s schedule cell carries a cron span AND other text ` +
