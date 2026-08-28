@@ -4173,6 +4173,93 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ── Reachability and file coverage (#1995 r16). Four of these are false REDS.
+  it('an .mdx runbook is opened at all (#1995 r16)', () => {
+    // The markdown branch already tested for `.mdx`; `walk` never yielded the
+    // file, so that handling was unreachable.
+    const r = runWith('docs/r.mdx', 'Steps:\n\n```bash\ncd apps/agent\nwrangler deploy\n```\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('env RUNS a command, so the interpreter is what follows (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: "/usr/bin/env bash -e {0}"\n' +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a YAML ANCHOR before the block indicator (#1995 r16)', () => {
+    // Rejecting `- run: &deploy |` sent the whole block down the flow-scalar
+    // path, where the indicator, the cd and the deploy folded into prose.
+    const r = runWith(
+      '.github/workflows/w2.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - run: &deploy |\n          cd apps/agent\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a STORED argv array is not an invocation (#1995 r16)', () => {
+    // The pattern is the final predicate, not only a prefilter, so this
+    // reported a deployment that never runs.
+    expect(runWith('apps/agent/a.mjs', "const args = ['wrangler', 'deploy'];\nconsole.log(args);\n").ok).toBe(true);
+  });
+
+  it('and `versions list` is not the guarded operation (#1995 r16)', () => {
+    expect(
+      runWith('apps/agent/b.mjs', "import { spawn } from 'node:child_process';\nspawn('wrangler', ['versions', 'list']);\n").ok,
+    ).toBe(true);
+  });
+
+  it('while a real spawned deploy still counts (#1995 r16 control)', () => {
+    expect(
+      runWith('apps/agent/c.mjs', "import { spawnSync } from 'node:child_process';\nspawnSync('wrangler', ['deploy']);\n").ok,
+    ).toBe(false);
+    expect(
+      runWith('apps/agent/d.mjs', "import { spawnSync } from 'node:child_process';\nspawnSync('wrangler', ['versions', 'upload']);\n").ok,
+    ).toBe(false);
+  });
+
+  it('a statically DISABLED step runs nothing (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w3.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        if: ${{ false }}\n' +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('but a condition referencing a CONTEXT is a runtime question (#1995 r16 control)', () => {
+    // Treating an unknown condition as false would silence real deploys, which
+    // is the direction this must not err in.
+    const r = runWith(
+      '.github/workflows/w4.yml',
+      "name: w\njobs:\n  d:\n    steps:\n      - name: go\n        if: ${{ github.event_name == 'push' }}\n" +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('Make runs each recipe line in its OWN shell (#1995 r16)', () => {
+    // Without `.ONESHELL:` the `cd` does not reach the next line, so grouping
+    // the recipe reported a deploy that runs from the repo root.
+    expect(runWith('Makefile', 'deploy:\n\tcd apps/agent\n\twrangler deploy\n').ok).toBe(true);
+  });
+
+  it('unless .ONESHELL, where the @ prefix is not the command (#1995 r16)', () => {
+    const r = runWith('Makefile', '.ONESHELL:\ndeploy:\n\t@cd apps/agent\n\twrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a backslash continuation is one command either way (#1995 r16 control)', () => {
+    const r = runWith('Makefile', 'deploy:\n\tcd apps/agent && \\\n\twrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

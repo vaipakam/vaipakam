@@ -144,7 +144,18 @@ const DEPLOY_RE = String.raw`wrangler2?(?:\.(?:cmd|ps1|bat))?(?:@[^\s]+)?\s+(?:-
  * spread, a variable holding the argument list. Being loose can only bring more
  * files INTO the scan, where the ordinary scoring applies.
  */
-const ARGV_DEPLOY_RE = String.raw`(['"\`])wrangler2?(?:\.(?:cmd|ps1|bat))?\1[\s\S]{0,200}?(['"\`])(?:deploy|versions)\2`;
+// Narrowed twice over (#1995 r16). A stored ARRAY is not an invocation — the
+// pattern is the final predicate, not only a prefilter, so `const args =
+// ['wrangler', 'deploy']` was reported as a deployment that never runs. And
+// `versions` alone is not the guarded operation: `versions list` lists recent
+// versions, while only `versions upload` uploads. Both were false REDS.
+//
+// A CALL is what a child-process spawner names, so the executable has to follow
+// one of those function names. Loose about what sits BETWEEN the executable and
+// the subcommand, because being loose there can only bring more files into the
+// ordinary scoring; strict about what sits BEFORE it, because that is what
+// decides whether anything runs at all.
+const ARGV_DEPLOY_RE = String.raw`\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork)\s*\(\s*(['"\`])wrangler2?(?:\.(?:cmd|ps1|bat))?\1[\s\S]{0,200}?(['"\`])(?:deploy|versions\2\s*,\s*(['"\`])upload)\3?`;
 
 /**
  * The PACKAGE-SCRIPT form is a deploy too, and the guard could not see it
@@ -267,6 +278,10 @@ const SHELL_EXTENSIONS = ['.sh', '.bash', '.zsh', '.ksh'];
 const EXTENSIONS = [
   ...SHELL_EXTENSIONS,
   '.md',
+  // `.mdx` is handled everywhere `.md` is — the markdown branch tests for it —
+  // but `walk` never yielded the file, so that handling was unreachable and an
+  // MDX runbook was not opened at all (#1995 r16).
+  '.mdx',
   '.ts',
   '.mjs',
   '.js',
@@ -2518,6 +2533,55 @@ function indentedBlocks(lines, indentRe, startAt = 0) {
   return out;
 }
 
+/**
+ * Makefile recipes, as the sub-shells Make actually runs.
+ *
+ * Two corrections in one place (#1995 r16), because they are the same question
+ * — WHICH LINES SHARE A SHELL — answered in both directions:
+ *
+ *   - Without `.ONESHELL:`, GNU Make runs EACH recipe line in its own shell, so
+ *     `cd apps/agent` on one line and `wrangler deploy` on the next do NOT share
+ *     a directory. Grouping every tabbed run reported an agent deploy that runs
+ *     from the repo root — a false red. Only backslash-continued lines are one
+ *     command there, and `logicalLines` already folds those.
+ *   - With `.ONESHELL:`, the whole recipe IS one shell, and the ordinary `@`
+ *     prefix on the first line left the directive reading `@cd`, so the move was
+ *     never recorded.
+ *
+ * `@`, `-` and `+` are Make's recipe-control prefixes and are stripped either
+ * way; they are not part of the command.
+ */
+function makefileBlocks(text) {
+  const oneshell = /^\s*\.ONESHELL:/m.test(text);
+  const lines = text
+    .split('\n')
+    .map((l) => (/^\t/.test(l) ? l.replace(/^(\t+)[@+-]+\s*/, '$1') : l));
+  if (oneshell) return indentedBlocks(lines, /^\t/);
+  // One block per PHYSICAL recipe line, so nothing carries between them. A
+  // backslash continuation is still one command and `logicalLines` folds it,
+  // which is why the run is walked rather than each line taken alone.
+  const out = [];
+  let i = 0;
+  let blockId = 0;
+  while (i < lines.length) {
+    if (!/^\t/.test(lines[i])) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < lines.length && /\\\s*$/.test(lines[j])) j += 1;
+    const body = lines.slice(i, j + 1);
+    if (body.some((l) => new RegExp(ANY_DEPLOY_RE).test(l) || new RegExp(ANY_DEPLOY_RE).test(dequote(l)))) {
+      out.push(
+        ...offset(logicalLines(body.map((l) => l.replace(/^\t+/, '')).join('\n')), i, `mk${blockId}`),
+      );
+      blockId += 1;
+    }
+    i = j + 1;
+  }
+  return out;
+}
+
 function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
   const lines = text.split('\n');
   const out = [];
@@ -2547,7 +2611,13 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
     // and the indicator itself decides the folding (Codex #1924 r29).
     // A block scalar may carry an explicit INDENTATION indicator as well as a
     // chomping one, in either order: `|2`, `|2-`, `>+2` (Codex #1924 r30).
-    const run = lines[i].match(/^(\s*)(?:-\s+)?run:\s*([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/);
+    // `&anchor` / `*alias` / `!!tag` may sit between the key and the block
+    // indicator — `- run: &deploy |` is a valid step — and rejecting the line
+    // sent the whole block down the flow-scalar path, where the indicator, the
+    // `cd` and the deploy folded into ordinary text (#1995 r16).
+    const run = lines[i].match(
+      /^(\s*)(?:-\s+)?run:\s*(?:[&*][\w-]+\s*|!!?[\w:.-]*\s*)*([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/,
+    );
     // A `run:` value does not have to be a BLOCK scalar to span lines. A quoted
     // or plain multiline flow scalar folds its newlines to spaces just as `>`
     // does, so `run: "cd apps/keeper;` with `wrangler deploy"` beneath it
@@ -2599,7 +2669,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       // feeding its body to the scanner reported `print("wrangler deploy")` as
       // a live deploy (#1995 r16). Checked at each of the three ingest points
       // rather than inside the scanner, because it is a property of the STEP.
-      if (!isYaml || stepIsShell(lines, i)) {
+      if (!isYaml || (stepIsShell(lines, i) && !stepIsDisabled(lines, i))) {
         const interp = isYaml ? stepShellName(lines, i) : null;
         const folded =
           interp === 'cmd'
@@ -2625,7 +2695,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       // `workingDirFor` (#1995 r8). Emitted as its own block so the cwd applies;
       // the duplicate with the physical line is removed by the dedupe at the
       // reporting site.
-      if (end === i && isYaml && stepIsShell(lines, i)) {
+      if (end === i && isYaml && stepIsShell(lines, i) && !stepIsDisabled(lines, i)) {
         const wd = workingDirFor(lines, i);
         if (wd) {
           out.push(...offset(logicalLines(flow[2]), i, blockId, wd));
@@ -2643,7 +2713,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
             parts[last] = parts[last].slice(0, close) + parts[last].slice(close + 1);
           }
         }
-        if (!isYaml || stepIsShell(lines, i)) {
+        if (!isYaml || (stepIsShell(lines, i) && !stepIsDisabled(lines, i))) {
           out.push(
             ...offset(
               logicalLines(foldFlowScalar(parts, q)),
@@ -2920,7 +2990,29 @@ const SHELL_KEYWORDS = new Set(['bash', 'sh', 'pwsh', 'powershell', 'cmd']);
  * body of a real deploy (#1995 r16).
  */
 function interpreterOf(value) {
-  const first = value.trim().split(/\s+/)[0] ?? '';
+  let words = value.trim().split(/\s+/).filter(Boolean);
+  // `env` RUNS a command: `/usr/bin/env bash -e {0}` is bash. Reading the first
+  // token alone answered `env` and skipped a real deploy's body (#1995 r16).
+  // Its own options and any `NAME=value` assignments are stepped over, which is
+  // what `env --help` documents its command form as accepting.
+  // The counter is an EQUIVALENT MUTANT and is recorded as one rather than
+  // fixtured: `words` strictly shrinks on every iteration, so the loop
+  // terminates on its own. Kept because a reader should not have to prove that
+  // to be sure a guard cannot hang.
+  let guard = 0;
+  while (words.length > 1 && guard < 8) {
+    const head = words[0].slice(words[0].lastIndexOf('/') + 1);
+    if (head !== 'env') break;
+    words = words.slice(1);
+    while (
+      words.length > 1 &&
+      (/^-/.test(words[0]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0]))
+    ) {
+      words = words.slice(1);
+    }
+    guard += 1;
+  }
+  const first = words[0] ?? '';
   return first.slice(first.lastIndexOf('/') + 1);
 }
 
@@ -3034,6 +3126,32 @@ function foldCaretContinuations(body) {
  */
 function windowsSeparators(body) {
   return body.replace(/(?<=[\w.$}])\\(?=[\w.$])/g, '/');
+}
+
+/**
+ * A step (or its job) whose condition is STATICALLY FALSE never runs.
+ *
+ * `if: ${{ false }}` on a step with a bare deploy blocked the unfiltered CI job
+ * over a command Actions will not execute (#1995 r16) — a false red, and the
+ * same shape as a matrix `exclude`, which is already honoured.
+ *
+ * Only the literal spellings. Anything referencing a context is a runtime
+ * question, and treating an unknown condition as false would silence real
+ * deploys — the direction this must not err in.
+ */
+function stepIsDisabled(lines, runIdx) {
+  const FALSE = /^(?:false|\$\{\{\s*false\s*\}\}|'false'|"false")$/;
+  const m = scanStepKeys(lines, runIdx, /^\s*(?:-\s+)?if:\s*(\S.*?)\s*$/);
+  if (m && FALSE.test(m[1].trim())) return true;
+  const job = jobBounds(lines, runIdx);
+  if (!job) return false;
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  for (let i = job.start; i < job.end && i < lines.length; i += 1) {
+    if (indentOf(lines[i]) !== job.indent + 2) continue;
+    const jm = lines[i].match(/^\s*if:\s*(\S.*?)\s*$/);
+    if (jm && FALSE.test(jm[1].trim())) return true;
+  }
+  return false;
 }
 
 function stepIsShell(lines, runIdx) {
@@ -3633,9 +3751,7 @@ for (const file of walk(REPO_ROOT)) {
         // Makefile recipes are tab-indented and are shell, whatever the file
         // extension says. Kept out of `embeddedShellLines` because the trigger
         // is the FILE, not a construct inside it.
-        ...(/(^|\/)([Mm]akefile|.*\.mk)$/.test(rel)
-          ? indentedBlocks(text.split('\n'), /^\t/)
-          : []),
+        ...(/(^|\/)([Mm]akefile|.*\.mk)$/.test(rel) ? makefileBlocks(text) : []),
       ];
   if (
     !folded.some(
