@@ -43,21 +43,25 @@ import { isExitRoute } from '../contracts/tosExitRoutes';
 import { TermsStatusCard } from './TermsStatusCard';
 
 interface GateProps {
-  exempt: boolean;
-  children: ReactNode;
+  /** Optional so this can stand in for `LegalGateActive` as the lazy
+   *  import's rejection fallback, which types it optional. Absent reads
+   *  as GATED — the fail-closed direction, since a missing exemption
+   *  withholds a page rather than opening one. */
+  exempt?: boolean;
+  children?: ReactNode;
 }
 
 /**
  * What renders when the gate's own chunk cannot be fetched — a deploy
  * invalidating a cached asset, or a CDN blip.
  *
- * Same shape as the Suspense fallback: the exit is never withheld, so
- * an exempt route still renders its children; a gated route holds the
- * closed card, because the gate failing to load is not permission to
- * bypass it.
+ * Same shape as the Suspense fallback: on an exempt route the gate has
+ * nothing to render (the children are siblings of this whole subtree —
+ * see `LegalGate`), and a gated route holds the closed card, because
+ * the gate failing to load is not permission to bypass it.
  */
-function LegalGateUnavailable({ exempt, children }: GateProps) {
-  if (exempt) return <>{children}</>;
+function LegalGateUnavailable({ exempt }: GateProps) {
+  if (exempt) return null;
   // Review round 12 P2: with a RETRY, because React caches a resolved
   // lazy payload permanently — and this one resolves successfully, to
   // this component. So a single transient chunk failure would otherwise
@@ -98,8 +102,6 @@ export function LegalGate({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const { address } = useActiveChain();
 
-  if (!address) return <>{children}</>;
-
   // Review round 5 P1: an exit route renders its children, but the read
   // still MOUNTS. Returning early here left `useTosAcceptance`
   // unmounted on `/vpfi` and `/positions/:loanId`, so the write gate —
@@ -109,17 +111,48 @@ export function LegalGate({ children }: { children: ReactNode }) {
   // app finding out whether they are held.
   const exempt = isExitRoute(pathname);
 
-  // The fallback holds the gate closed on a GATED route — rendering
-  // `children` there would open the app for the length of a chunk
-  // fetch, the same fail-open this component exists to prevent,
-  // arriving through the loader. On an exempt route the opposite rule
-  // applies: the exit is never withheld, chunk fetch included. Review
+  // A GATED route keeps children INSIDE the boundary, where they
+  // belong: they must not render at all until the verdict passes, so
+  // the fallback holds the closed card rather than the page. Review
   // round 8 P1: the chunk can FAIL as well as be slow, which Suspense
-  // does not cover — that case is handled at the import above, and
-  // lands on the same two outcomes.
-  return (
+  // does not cover — handled at the import above, landing on the same
+  // outcome.
+  const gate = (
     <Suspense fallback={<LegalGateUnavailable exempt={exempt}>{children}</LegalGateUnavailable>}>
-      <LegalGateActive exempt={exempt}>{children}</LegalGateActive>
+      <LegalGateActive exempt={exempt}>{exempt ? null : children}</LegalGateActive>
     </Suspense>
   );
+
+  // The two PASS-THROUGH cases — no wallet, and an exempt route — share
+  // one shape, and that is load-bearing rather than tidiness.
+  //
+  // Children rendered INSIDE the boundary were rendered twice over: once
+  // in the Suspense fallback, then again under `LegalGateActive` when
+  // the chunk resolved. Those are different positions in the tree, so
+  // React tears the first down and builds the second — the page
+  // REMOUNTS mid-visit, losing focus, scroll, in-flight typing and every
+  // piece of component state on it. On `/desk` that detached an input
+  // from under a fill and failed the gasless-loop scenario; it would do
+  // the same to a user halfway through the same form.
+  //
+  // Connecting a wallet did it too, and that is the likelier trigger in
+  // practice: `!address` used to return a bare fragment and then switch
+  // to the boundary, so the page a visitor was already looking at was
+  // rebuilt the moment they connected.
+  //
+  // Keeping ONE shape across both — children first, gate second, the
+  // gate slot empty when there is nothing to mount — means the page
+  // reconciles in place through the connect and through the chunk
+  // arriving. The gate still mounts beside it so the read runs (round 5
+  // P1's requirement, and the reason an exempt route loads this chunk at
+  // all) and renders nothing while pending, resolved or failed.
+  if (!address || exempt) {
+    return (
+      <>
+        {children}
+        {address ? gate : null}
+      </>
+    );
+  }
+  return gate;
 }

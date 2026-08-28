@@ -71,6 +71,12 @@ const EXIT_PREFIXES = [
   '/help',
   '/activity',
   '/nft',
+  // ...and `/activity`'s own alias (review round 13 P2). An alias
+  // renders its `<Navigate>` INSIDE the gate, so exempting only the
+  // canonical path leaves the alias held and the redirect never runs.
+  // The same trap the alias block below exists for — I exempted three
+  // routes without checking whether any had one.
+  '/history',
   // Aliases that redirect INTO the above.
   '/loans',
   '/dashboard',

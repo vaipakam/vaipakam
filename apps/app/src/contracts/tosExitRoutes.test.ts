@@ -85,7 +85,10 @@ describe('isExitRoute', () => {
     // contradicted the functional spec's rule that only surfaces
     // existing to CREATE exposure become unreachable. A held user
     // asking what the terms mean must be able to open the explainer.
-    for (const path of ['/help', '/activity', '/nft', '/nft/7']) {
+    // `/history` is `/activity`'s alias (review round 13 P2) — an
+    // alias renders its <Navigate> inside the gate, so exempting only
+    // the canonical path leaves the redirect unreachable.
+    for (const path of ['/help', '/activity', '/history', '/nft', '/nft/7']) {
       expect(isExitRoute(path), path).toBe(true);
     }
   });

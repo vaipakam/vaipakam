@@ -28,8 +28,10 @@ export function LegalGateActive({
   exempt = false,
 }: {
   children: ReactNode;
-  /** Render children whatever the verdict — but still run the read, so
-   *  the write gate can tell "accepted" from "never checked". */
+  /** Exempt route: render NOTHING and exist only to run the read, so
+   *  the write gate can tell "accepted" from "never checked". The page
+   *  itself is rendered as this component's SIBLING — see `LegalGate`
+   *  for why that placement matters. */
   exempt?: boolean;
 }) {
   const { address, onSupportedChain } = useActiveChain();
@@ -55,9 +57,11 @@ export function LegalGateActive({
     accepted: hasAccepted,
   });
 
-  // The read above has mounted by now, which is the point of coming
-  // here at all on an exempt route.
-  if (exempt) return <>{children}</>;
+  // The read above has mounted by now, which is the whole point of
+  // coming here at all on an exempt route. Nothing to render: the page
+  // is a sibling, so that it mounts once instead of being torn down and
+  // rebuilt when this chunk resolves.
+  if (exempt) return null;
 
   if (verdict === 'pass-unconnected' || verdict === 'pass') return <>{children}</>;
 
