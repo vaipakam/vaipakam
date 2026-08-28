@@ -1996,7 +1996,12 @@ for (const file of walk(REPO_ROOT)) {
       // The previous line ran to completion, so this line starts from `states`.
       prior = states;
       let pendingDepth = 0;
-      for (const part of splitCommands(line)) {
+      // Indexed, because whether a segment runs in a subshell depends on the
+      // separator that FOLLOWS it, and `sep` records the one that PRECEDES.
+      const segments = splitCommands(line);
+      for (let pi = 0; pi < segments.length; pi += 1) {
+        const part = segments[pi];
+        const nextPart = segments[pi + 1];
         // Close any subshell the PREVIOUS segment ended.
         if (pendingDepth < depth) {
           for (let k = namedPrefix.length - 1; k >= 0; k -= 1) {
@@ -2017,7 +2022,20 @@ for (const file of walk(REPO_ROOT)) {
         // state that preceded it — a failed `cd` moves nothing.
         const input = part.sep === '||' ? prior : states;
         const dir = dirDirective(seg);
-        const after = dir ? input.map((st) => applyDir(st, dir, shellVars)) : input;
+        // A `cd` that runs as a PIPELINE or BACKGROUND element executes in a
+        // SUBSHELL and cannot move the parent (#1995 r9). In
+        // `cd apps/agent; cd ../indexer | cat; wrangler deploy` bash is still
+        // in apps/agent when the deploy runs, but the scanner recorded the
+        // indexer and the protected bare deploy passed.
+        //
+        // Both sides of the segment matter: `sep` is the separator BEFORE this
+        // part, so a downstream pipeline stage carries `|` itself, while an
+        // upstream one is identified by the NEXT part's separator. `&`
+        // backgrounds a subshell the same way.
+        const inSubshell =
+          part.sep === '|' || nextPart?.sep === '|' || nextPart?.sep === '&';
+        const after =
+          dir && !inSubshell ? input.map((st) => applyDir(st, dir, shellVars)) : input;
         // After `A || B` both outcomes remain reachable: A succeeded and B was
         // skipped, or A failed and B ran.
         const next = part.sep === '||' ? dedupeStates([...states, ...after]) : after;

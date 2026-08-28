@@ -1510,6 +1510,36 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a cd in a PIPELINE runs in a subshell and does not move the parent (#1995 r9)', () => {
+    // bash is still in apps/agent when the deploy runs; the scanner had
+    // recorded the indexer and let the protected bare deploy through.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent; cd ../indexer | cat; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a plain cd on the same line DOES move the parent (#1995 r9)', () => {
+    // The control: without the pipeline the move is real, and the indexer is
+    // not a protected package.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent; cd ../indexer; wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a deploy that is itself piped keeps its scope (#1995 r9)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent; wrangler deploy | tee log\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('a positive and its own negation select NOTHING (#1995 r9)', () => {
     // pnpm reports no projects for this pair, so reporting either package is a
     // false red. Previously the negation's complement was added independently
