@@ -1510,6 +1510,25 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a JSON script value is split on its own operators (#1995 r14)', () => {
+    // The enclosing double quotes are JSON, not shell. Treating them as shell
+    // quoting meant the `&&` never split, and the trailing safe flag blessed a
+    // value whose FIRST command erases the dashboard vars.
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n  "scripts": {\n    "deploy": "wrangler deploy && wrangler deploy --keep-vars"\n  }\n}\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a JSON script that is wholly safe still passes (#1995 r14 control)', () => {
+    const r = runWith(
+      'apps/agent/package.json',
+      '{\n  "scripts": {\n    "deploy": "wrangler deploy --keep-vars"\n  }\n}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('a safety flag inside a COMMAND SUBSTITUTION does not bless (#1995 r14)', () => {
     // The substitution writes to stderr and contributes no argument, so this
     // is a bare deploy — but its source text contains --keep-vars.

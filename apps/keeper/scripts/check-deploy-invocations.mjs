@@ -1858,6 +1858,30 @@ function foldYamlScalar(raw) {
 }
 
 /** Physical lines, 1-based, for everything that is not a shell script. */
+/**
+ * Lines of a JSON/JSONC file, with each string VALUE unwrapped (#1995 r14).
+ *
+ * In `"deploy": "wrangler deploy && wrangler deploy --keep-vars"` the shell
+ * command is the value. Handing the quoted form to `splitCommands` made the
+ * enclosing double quotes read as SHELL quoting, so the `&&` never split, and
+ * `commandIsSafe` saw the trailing flag and blessed the whole value — while
+ * `pnpm run deploy` runs the BARE deploy first, erases the dashboard vars, and
+ * only then runs the safe one.
+ *
+ * JSON escapes are resolved, so `\"` inside a script becomes a quote the shell
+ * splitter can reason about rather than a delimiter it cannot.
+ */
+function jsonValueLines(text) {
+  return text.split('\n').map((t, i) => {
+    const m = t.match(/:\s*"((?:[^"\\]|\\.)*)"\s*,?\s*$/);
+    return {
+      text: m ? m[1].replace(/\\(.)/g, '$1') : t,
+      line: i + 1,
+      physical: true,
+    };
+  });
+}
+
 function plainLines(text) {
   // `physical: true` marks a line that is NOT part of a shell script. Such a
   // line cannot establish a working directory for a LATER line — a markdown
@@ -1928,7 +1952,10 @@ for (const file of walk(REPO_ROOT)) {
   // of what a line IS differs (Codex #1924 r27).
   const folded = isShellFile(rel, text)
     ? logicalLines(text)
-    : [...plainLines(text), ...embeddedShellLines(text, /\.ya?ml$/.test(rel))];
+    : [
+        ...(/\.jsonc?$/.test(rel) ? jsonValueLines(text) : plainLines(text)),
+        ...embeddedShellLines(text, /\.ya?ml$/.test(rel)),
+      ];
   if (
     !folded.some(
       (l) =>
