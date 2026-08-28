@@ -1527,6 +1527,36 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('a for LOOP binds its variable like an assignment (#1995 r12)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '#!/usr/bin/env bash\nfor TARGET in apps/agent; do\n  cd "$TARGET"\n  wrangler deploy\ndone\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a loop over several values models the protected one (#1995 r12)', () => {
+    // Each iteration binds a different value; the one that lands in a scoped
+    // package is the iteration that deploys from it.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      '#!/usr/bin/env bash\nfor T in apps/indexer apps/agent; do\n  cd "$T"\n  wrangler deploy\ndone\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a loop with no scoped value binds nothing (#1995 r12 control)', () => {
+    for (const list of ['apps/indexer', '$LIST']) {
+      const r = runWith(
+        'contracts/script/deploy-chain.sh',
+        `#!/usr/bin/env bash\nfor T in ${list}; do\n  cd "$T"\n  wrangler deploy\ndone\n`,
+      );
+      expect(r.ok, list).toBe(true);
+    }
+  });
+
   it('wrangler versions upload erases vars too (#1995 r14)', () => {
     // The installed wrangler documents the same sentence for this subcommand:
     // without --keep-vars it deletes all vars before setting the config's.

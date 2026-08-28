@@ -2453,7 +2453,32 @@ for (const file of walk(REPO_ROOT)) {
         // wrangler deploy` was reported as an agent violation even though the
         // `cd` moves to the explicitly out-of-scope indexer (#1995 r5). That is
         // a false red in a check that blocks the unfiltered CI job.
-        if (new RegExp(`^${DECL_PREFIX}[A-Za-z_][A-Za-z0-9_]*=`).test(seg)) {
+        // A `for` LOOP binds its variable just as an assignment does
+        // (#1995 r12). `for TARGET in apps/agent; do` … `cd "$TARGET"` enters
+        // the protected package, but only standalone `VAR=` was tracked, so
+        // the `cd` cleared scope instead.
+        //
+        // With several values, each ITERATION binds a different one; if any
+        // lands in a scoped package then that iteration deploys from it, so
+        // that value is the one to model — the same rule the matrix
+        // working-directory uses. A list with no scoped value binds nothing,
+        // and an unknown one CLEARS the name rather than leaving a stale
+        // binding, which is the r14 rule applied here.
+        const loop = seg.match(
+          /^for\s+([A-Za-z_][A-Za-z0-9_]*)\s+in\s+(.+?)\s*$/,
+        );
+        if (loop) {
+          const vals = loop[2]
+            .split(/\s+/)
+            .map((v) => dequote(v))
+            .filter((v) => v && !/[$*?]/.test(v));
+          const hit = vals.find((v) =>
+            SCOPED.some((sc) => v === sc.dir || v.startsWith(`${sc.dir}/`)),
+          );
+          if (hit) shellVars.set(loop[1], hit);
+          else shellVars.delete(loop[1]);
+          namedPrefix.push({ text: seg, depth: segDepth });
+        } else if (new RegExp(`^${DECL_PREFIX}[A-Za-z_][A-Za-z0-9_]*=`).test(seg)) {
           // Deliberately NOT the WORD pattern: anchoring its nested quantifiers
           // with `$` backtracks catastrophically on a non-matching line and hung
           // the guard. A literal value needs only simple alternatives, and a
