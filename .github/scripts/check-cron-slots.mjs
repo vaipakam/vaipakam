@@ -502,7 +502,7 @@ const OCCUPANCY = [
     'i',
   ),
   new RegExp(
-    String.raw`\b(?:(?:this|the|our)${WRAP}(?:cloudflare${WRAP})?(?:account|org)|we)${WRAP}(?:${TEMPORAL}${WRAP})*(?:runs?|is${WRAP}running)${WRAP}${N}${WRAP}${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
+    String.raw`\b(?:(?:this|the|our)${WRAP}(?:cloudflare${WRAP})?(?:account|org)|we)${WRAP}(?:${TEMPORAL}${WRAP})*(?:runs?|uses?|is${WRAP}running|is${WRAP}using)${WRAP}${N}${WRAP}${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   new RegExp(
@@ -2381,47 +2381,58 @@ export function wranglerNameFrom(raw, isToml) {
     }
     return null;
   }
+  // Codex #1978 r41: the JSON side was still LINE-based — depth was updated
+  // after each line's check, and `name` had to begin its line — so
+  // `{"name":"vaipakam-agent"}` returned null, as did any line carrying
+  // another property first. Ordinary reformatting therefore switched off both
+  // swapped-source validation and false-`*none*` rejection.
+  //
+  // SEVENTH round on this function, and the fourth in a row whose cause was
+  // "this scan cannot see X": r25 indentation, r27 comment delimiters inside
+  // strings, r39 the wrong language entirely, r40 escaped quotes, now line
+  // layout. Every one of those is a property of the TEXT and none is a
+  // property of JSON — a tokenizer has no concept of a line at all, so the
+  // whole class goes with the rewrite instead of one more member of it.
+  //
+  // Also closes #1990's fourth deferred item, which was this same assumption.
   const text = stripJsonLikeComments(raw);
   let depth = 0;
-  for (const rawLine of text.split('\n')) {
-    const line = rawLine;
-    if (depth === 1) {
-      const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
-      if (m) return m[1] ?? m[2];
+  let inString = false;
+  let escaped = false;
+  let strStart = -1;
+  let lastKey = null;
+  let lastKeyDepth = -1;
+  let awaitingValue = false;
+  for (let k = 0; k < text.length; k += 1) {
+    const ch = text[k];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') {
+        inString = false;
+        const literal = text.slice(strStart, k);
+        if (awaitingValue && lastKey === 'name' && lastKeyDepth === 1) {
+          return literal.replace(/\\(.)/g, '$1');
+        }
+        lastKey = literal;
+        lastKeyDepth = depth;
+        awaitingValue = false;
+      }
+      continue;
     }
-    // Codex #1978 r40: `"[^"]*"` ends a string at an ESCAPED quote, so a
-    // value containing `\"` left the scanner believing it was outside a
-    // string and counting the `{` or `[` that followed as structure. Depth
-    // then never returned to 1, `readWranglerName` returned null, and a
-    // swapped source binding passed both modes.
-    //
-    // Sixth round on this function, and the third caused by a regex standing
-    // in for a tokenizer — r27 was `/\*...\*/` matching inside strings, r39
-    // was TOML through a JSON scanner, this is string literals with escapes.
-    // Each time the regex was correct on the input it was shown. Escapes are
-    // exactly what a regex character class cannot carry, so the scan below
-    // tracks state per character instead.
-    let inString = false;
-    let quote = '';
-    let escaped = false;
-    for (const ch of line) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (ch === '\\') {
-        escaped = true;
-        continue;
-      }
-      if (inString) {
-        if (ch === quote) inString = false;
-        continue;
-      }
-      if (ch === '"' || ch === "'") {
-        inString = true;
-        quote = ch;
-      } else if (ch === '{' || ch === '[') depth += 1;
-      else if (ch === '}' || ch === ']') depth -= 1;
+    if (ch === '"') {
+      inString = true;
+      strStart = k + 1;
+    } else if (ch === '{' || ch === '[') {
+      depth += 1;
+      awaitingValue = false;
+    } else if (ch === '}' || ch === ']') {
+      depth -= 1;
+      awaitingValue = false;
+    } else if (ch === ':') {
+      awaitingValue = true;
+    } else if (ch === ',') {
+      awaitingValue = false;
     }
   }
   return null;
@@ -2636,6 +2647,10 @@ const MUST_FIRE = [
   ['the direct form with a running predicate', 'Four cron triggers are running.'],
   ['the postposed participle', 'There are four cron triggers running.'],
   ['the verbal form', 'The account currently runs four cron triggers.'],
+  // Codex #1978 r41: `uses` — the verb the authority's own summary uses for
+  // this ("Live right now") and the one an author reaches for first.
+  ['the verbal form with uses', 'The account currently uses four cron triggers.'],
+  ['the verbal form, possessive subject', 'Our Cloudflare account uses 4 cron triggers today.'],
   // Codex #1978 r39: a purpose phrase opens exactly like an environment scope
   // and is not one. These are the cases the grammatical test could not tell
   // apart from "for local development", which is why the test is now lexical.
@@ -3286,6 +3301,22 @@ const WRANGLER_NAME_CASES = [
   ['a plain top-level name', '{\n  "name": "vaipakam-agent"\n}\n', false, 'vaipakam-agent'],
   // r25: layout is not structure.
   ['four-space indentation', '{\n    "name": "vaipakam-agent"\n}\n', false, 'vaipakam-agent'],
+  // r41: neither is the LINE. The whole config on one line, and a line whose
+  // `name` is not the first property, both returned null while the scan was
+  // line-based — an ordinary reformat switched off both source checks.
+  ['the whole config on one line', '{"name":"vaipakam-agent"}\n', false, 'vaipakam-agent'],
+  [
+    'a property before name on the same line',
+    '{ "main": "src/index.ts", "name": "vaipakam-keeper" }\n',
+    false,
+    'vaipakam-keeper',
+  ],
+  [
+    'a nested name on the opening line does not win',
+    '{ "vars": { "name": "inner" }, "name": "vaipakam-agent" }\n',
+    false,
+    'vaipakam-agent',
+  ],
   [
     'a nested name does not win',
     '{\n  "ratelimit": {\n    "name": "inner"\n  },\n  "name": "vaipakam-agent"\n}\n',
