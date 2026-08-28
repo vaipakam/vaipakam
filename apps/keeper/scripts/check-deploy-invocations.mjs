@@ -2101,6 +2101,32 @@ function dirDirective(seg) {
     const idx = /^\+0\b/.test(args);
     return args === '' || idx ? { kind: 'popd' } : { kind: 'popd-keep' };
   }
+  // WINDOWS shells. The `shell:` allow-list admits `pwsh` and `cmd`, and their
+  // bodies were then handed to a scanner that understands only `cd`/`pushd` —
+  // so `Set-Location apps/agent` moved nothing in the model and the bare deploy
+  // under it passed (#1995 r16, on the r16 allow-list itself). Admitting the
+  // interpreters without teaching the model their directory commands widened
+  // what is scanned without widening what is understood.
+  //
+  // The names are unambiguous — no POSIX utility is called `Set-Location` — and
+  // the BACKSLASH conversion is scoped to exactly these commands. `\` is an
+  // escape in bash, so `cd apps\agent` really is `appsagent` there; it is a
+  // separator only where the command itself is Windows-specific, which is why
+  // the conversion happens here and not in `dequote`.
+  const winCd = seg.match(
+    new RegExp(`^${LEAD}(?:Set-Location|Push-Location|chdir|sl)\\s+(?:-Path\\s+)?(${WORD})`, 'i'),
+  );
+  if (winCd) {
+    const target = dequote(winCd[1].replace(/\\/g, '/'));
+    return /^~/.test(target)
+      ? { kind: 'cd-home' }
+      : { kind: /Push-Location/i.test(seg) ? 'pushd' : 'cd', target };
+  }
+  if (new RegExp(`^${LEAD}Pop-Location\\b`, 'i').test(seg)) return { kind: 'popd' };
+  // `cd /d <dir>` is cmd's drive-and-directory form; `/d` is an option, not the
+  // destination, and its path uses backslashes.
+  const cmdCd = seg.match(new RegExp(`^${LEAD}cd\\s+/[dD]\\s+(${WORD})`));
+  if (cmdCd) return { kind: 'cd', target: dequote(cmdCd[1].replace(/\\/g, '/')) };
   const cd = seg.match(new RegExp(`^${LEAD}cd\\s+${OPTS}(${WORD})`));
   if (cd) {
     const target = dequote(cd[1]);
@@ -2453,7 +2479,12 @@ function offset(block, start, blockId, cwd = '') {
  * metadata is not Actions metadata — and a second copy of the walk would have
  * been a place for that rule to go missing.
  */
-function scanStepKeys(lines, runIdx, re) {
+/**
+ * The line range of the step containing `runIdx`, and the column its own keys
+ * sit at. One implementation, because three things now need it: the metadata
+ * scan, the shell check, and `env` precedence.
+ */
+function stepBounds(lines, runIdx) {
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
   const runIndent = indentOf(lines[runIdx]);
   let start = runIdx;
@@ -2463,14 +2494,64 @@ function scanStepKeys(lines, runIdx, re) {
   }
   if (!/^\s*-\s/.test(lines[start])) return null;
   const stepIndent = indentOf(lines[start]);
+  const keyIndent =
+    stepIndent + (lines[start].slice(stepIndent).match(/^-\s*/)?.[0].length ?? 2);
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (lines[i].trim() === '') continue;
+    const ind = indentOf(lines[i]);
+    if (ind < stepIndent || (ind === stepIndent && /^\s*-\s/.test(lines[i]))) {
+      end = i;
+      break;
+    }
+  }
+  return { start, end, stepIndent, keyIndent };
+}
+
+/**
+ * The line range of the JOB containing `runIdx`.
+ *
+ * Bounded by the job key and the next key at the same indent, the same rule
+ * `workingDirFor` uses for `defaults:` — a job's `env` must not leak into a
+ * later job any more than its `defaults` may.
+ */
+function jobBounds(lines, runIdx) {
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  const jobsIdx = lines.findIndex((l) => /^\s*jobs:\s*$/.test(l));
+  if (jobsIdx < 0 || runIdx <= jobsIdx) return null;
+  const ji = indentOf(lines[jobsIdx]);
+  let jobStart = -1;
+  let jobIndent = -1;
+  for (let i = jobsIdx + 1; i <= runIdx; i += 1) {
+    if (lines[i].trim() === '') continue;
+    const ind = indentOf(lines[i]);
+    if (ind <= ji) break;
+    if (jobIndent === -1) jobIndent = ind;
+    if (ind === jobIndent && /^\s*(?:"[^"]*"|'[^']*'|[\w.-]+):\s*$/.test(lines[i])) jobStart = i;
+  }
+  if (jobStart < 0) return null;
+  let jobEnd = lines.length;
+  for (let i = jobStart + 1; i < lines.length; i += 1) {
+    if (lines[i].trim() !== '' && indentOf(lines[i]) <= jobIndent) {
+      jobEnd = i;
+      break;
+    }
+  }
+  return { start: jobStart, end: jobEnd, indent: jobIndent };
+}
+
+function scanStepKeys(lines, runIdx, re) {
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  const bounds = stepBounds(lines, runIdx);
+  if (!bounds) return null;
+  const { start, stepIndent } = bounds;
   // A step's own keys sit at the column the dash's first key opens. Scanning
   // every nested line let SHELL PAYLOAD stand in for Actions metadata: a
   // heredoc whose data happens to read `working-directory: apps/indexer`
   // overrode the real cwd and the agent deploy under it passed (#1995 r16).
   // Depth is what distinguishes a sibling key from text inside a value, and
   // the scan had no notion of it.
-  const keyIndent =
-    stepIndent + (lines[start].slice(stepIndent).match(/^-\s*/)?.[0].length ?? 2);
+  const { keyIndent } = bounds;
   for (let i = start; i < lines.length; i += 1) {
     if (i > start && lines[i].trim() !== '') {
       const ind = indentOf(lines[i]);
@@ -2619,11 +2700,25 @@ function workingDirFor(lines, runIdx) {
   const resolveExpression = (raw) => {
     const em = raw.match(/\$\{\{\s*env\.([A-Za-z_][\w-]*)\s*\}\}/);
     if (em) {
-      for (const l of lines) {
-        const kv = l.match(
-          new RegExp(`^\\s*${em[1]}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
-        );
-        if (kv) return kv[1] ?? kv[2] ?? kv[3];
+      // Actions resolves `env` from the STEP, then the JOB, then the workflow,
+      // and the nearer declaration wins. Scanning the whole file and taking the
+      // first match ignored that entirely: a workflow-level value shadowed the
+      // job-level override beneath it, so a step that really runs in the agent
+      // was seeded with the indexer (#1995 r16, on the r16 fix itself).
+      const step = stepBounds(lines, runIdx);
+      const job = jobBounds(lines, runIdx);
+      const ranges = [
+        step && [step.start, step.end],
+        job && [job.start, job.end],
+        [0, lines.length],
+      ].filter(Boolean);
+      for (const [from, to] of ranges) {
+        for (let i = from; i < to; i += 1) {
+          const kv = lines[i].match(
+            new RegExp(`^\\s*${em[1]}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
+          );
+          if (kv) return kv[1] ?? kv[2] ?? kv[3];
+        }
       }
       return '';
     }
@@ -2636,6 +2731,15 @@ function workingDirFor(lines, runIdx) {
     );
   };
   const valueOf = (m) => normalizePath(resolveExpression(m[1] ?? m[2] ?? m[3]));
+  /**
+   * The same resolution for a FLOW-style capture.
+   *
+   * `defaults: { run: { working-directory: X } }` returned its capture raw, so
+   * it reached neither the expression resolver nor the normaliser — the r13
+   * branch was added before either existed and never joined them (#1995 r16).
+   * Two return sites, job-level and workflow-level, and both had it.
+   */
+  const flowValueOf = (m) => normalizePath(resolveExpression(m[1] ?? m[2] ?? m[3]));
 
   // STEP level wins over the job default, which is Actions' own precedence.
   const stepWd = scanStepKeys(lines, runIdx, WD);
@@ -2649,7 +2753,7 @@ function workingDirFor(lines, runIdx) {
   const declaredIn = (from, to) => {
     for (let i = from; i < to && i < lines.length; i += 1) {
       const flowJob = lines[i].match(FLOW_DEFAULTS_WD);
-      if (flowJob) return flowJob[1] ?? flowJob[2] ?? flowJob[3];
+      if (flowJob) return flowValueOf(flowJob);
       if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
       const di = indentOf(lines[i]);
       for (let j = i + 1; j < lines.length; j += 1) {
@@ -2705,7 +2809,7 @@ function workingDirFor(lines, runIdx) {
   for (let i = 0; i < lines.length; i += 1) {
     const flowTop = lines[i].match(FLOW_DEFAULTS_WD);
     if (flowTop && indentOf(lines[i]) === topIndent) {
-      return flowTop[1] ?? flowTop[2] ?? flowTop[3];
+      return flowValueOf(flowTop);
     }
     if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
     if (indentOf(lines[i]) !== topIndent) continue;
@@ -2900,6 +3004,13 @@ for (const file of walk(REPO_ROOT)) {
     for (let i = 0; i < rawLines.length; i += 1) {
       const t = rawLines[i].trim();
       if (t === '') continue;
+      // A FENCE DELIMITER is punctuation, not a command. `From apps/agent:`
+      // followed by the usual ```bash block had the label attached to the
+      // opener and reset before the command inside it ever arrived — so the
+      // one shape a runbook actually uses was the one shape this could not
+      // carry (#1995 r16). Skipped like a blank line: it neither consumes the
+      // label nor clears it.
+      if (/^(?:`{3,}|~{3,})/.test(t)) continue;
       if (pending) labelScope.set(i + 1, pending);
       if (/:\s*$/.test(t)) {
         const named = SCOPED.filter((sc) => scopeOf(t, '') === sc || new RegExp(

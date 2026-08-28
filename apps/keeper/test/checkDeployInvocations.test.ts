@@ -3234,6 +3234,105 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.out).toContain('apps/agent');
   });
 
+  // ── Three of these are seams in the r16 workflow fix itself: the env
+  // resolver, the flow-style branch and the shell allow-list each needed a
+  // sweep the original change did not make.
+  it('env resolves from the NEAREST scope, step then job then workflow (#1995 r16)', () => {
+    // Scanning the whole file and taking the first match let a workflow-level
+    // value shadow the job-level override beneath it.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\nenv:\n  DEPLOY_DIR: apps/indexer\njobs:\n  d:\n    env:\n      DEPLOY_DIR: apps/agent\n' +
+        '    steps:\n      - name: go\n        working-directory: ${{ env.DEPLOY_DIR }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('flow-style defaults get the same normalization (#1995 r16)', () => {
+    // The r13 flow branch returned its capture raw, so it reached neither the
+    // expression resolver nor the normaliser — both added later, neither wired
+    // to it. Two return sites had it, job-level and workflow-level.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\ndefaults: { run: { working-directory: apps/indexer/../agent } }\n' +
+        'jobs:\n  d:\n    steps:\n      - run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('at the JOB level as well as the workflow level (#1995 r16)', () => {
+    // Both return sites had the defect and my first pair of fixtures pinned
+    // only the workflow-level one, so a mutant restoring the job-level raw
+    // return survived. Third time this session that a fix touched two sites
+    // and the tests reached one.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    defaults: { run: { working-directory: apps/indexer/../agent } }\n' +
+        '    steps:\n      - run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the same EXPRESSION resolution (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\nenv:\n  D: apps/agent\ndefaults: { run: { working-directory: "${{ env.D }}" } }\n' +
+        'jobs:\n  d:\n    steps:\n      - run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a pwsh step moves with Set-Location (#1995 r16)', () => {
+    // Admitting `pwsh` and `cmd` to the shell allow-list widened what is
+    // SCANNED without widening what is UNDERSTOOD: their bodies went to a
+    // scanner that knows only `cd`/`pushd`.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: pwsh\n' +
+        '        run: |\n          Set-Location apps/agent\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a cmd step with cd /d and a backslash path (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: cmd\n' +
+        '        run: |\n          cd /d apps\\agent\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while a backslash in BASH is still an escape (#1995 r16 control)', () => {
+    // `cd apps\agent` is `cd appsagent` in bash. The conversion is scoped to
+    // the Windows-specific commands precisely so this stays true.
+    const r = runWith('w.sh', 'cd apps\\agent\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a prose label carries ACROSS the fence it introduces (#1995 r16)', () => {
+    // The label was attached to the ```bash opener and reset before the
+    // command inside arrived — so the one shape a runbook actually uses was
+    // the one shape this could not carry.
+    const r = runWith('docs/r.md', 'From `apps/agent`:\n\n```bash\nwrangler deploy\n```\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but intervening prose still resets it (#1995 r16 control)', () => {
+    const r = runWith(
+      'docs/r2.md',
+      'From `apps/agent`:\n\nSome other note.\n\n```bash\nwrangler deploy\n```\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',
