@@ -1510,6 +1510,57 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it("wrangler stops parsing options at -- (#1995 r10)", () => {
+    // `wrangler deploy -- --dry-run` is a LIVE bare deploy; the flag after the
+    // terminator is inert.
+    for (const tail of ['--dry-run', '--keep-vars']) {
+      const r = runWith(
+        'contracts/script/deploy-chain.sh',
+        `cd apps/agent\nwrangler deploy -- ${tail}\n`,
+      );
+      expect(r.ok, tail).toBe(false);
+    }
+  });
+
+  it('-- BEFORE the command ends the package manager\'s options, not wrangler\'s (#1995 r10)', () => {
+    // `pnpm exec -- wrangler deploy --keep-vars` is a SAFE deploy. Cutting at
+    // the first `--` anywhere reported it as a violation — a CI-blocking false
+    // red, and the case that no fixture covered until the mutation exposed it.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\npnpm exec -- wrangler deploy --keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it("a package manager FORWARDS past -- and still counts (#1995 r10)", () => {
+    // The mirror of the case above: truncating at `--` unconditionally would
+    // have blessed this, which is the destructive one.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pnpm --filter @vaipakam/agent run deploy -- --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a safety flag inside a shell COMMENT does not bless (#1995 r10)', () => {
+    // Copying this line into a terminal performs the bare deploy: the shell
+    // ignores everything after `#`.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'Run apps/agent: `wrangler deploy # TODO: add --keep-vars`\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a # inside a URL is not a comment (#1995 r10)', () => {
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'See https://x/#f — in apps/agent run `wrangler deploy --keep-vars`\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it("pnpm's -F is --filter (#1995 r10)", () => {
     const r = runWith(
       'contracts/script/deploy-chain.sh',

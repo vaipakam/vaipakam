@@ -700,13 +700,78 @@ function executedCommand(cmd) {
     .replace(new RegExp(`^(?:[A-Za-z_][A-Za-z0-9_]*=${CHUNKS}\\s+)*`), '');
 }
 
+/**
+ * Drop a trailing shell COMMENT, quote-aware (#1995 r10).
+ *
+ * Shell files have comments removed upstream by `logicalLines`; prose does not,
+ * so a runbook line reading ``wrangler deploy # TODO: add --keep-vars`` scored
+ * the flag inside the comment and was blessed — while copying that command into
+ * a terminal performs the bare, destructive deploy the guard exists to stop.
+ *
+ * A `#` only opens a comment at a TOKEN BOUNDARY, so `https://host/#frag` and
+ * `--name a#b` are untouched.
+ *
+ * BACKTICKS ARE NOT QUOTES HERE, unlike everywhere else in this file. In prose
+ * the command sits inside a Markdown code span, so treating its delimiters as
+ * shell quoting put the whole command "inside a string" and no comment was ever
+ * found — the first version of this did exactly that and the fixture caught it.
+ * Inside a real backtick substitution a token-boundary `#` still starts a
+ * comment in the subshell, so truncating there is right as well; and where it
+ * is not, the error is an extra violation rather than a missed one.
+ */
+function stripShellComment(text) {
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '\\') {
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (ch === '#' && (i === 0 || /\s/.test(text[i - 1]))) return text.slice(0, i);
+  }
+  return text;
+}
+
 function commandIsSafe(cmd) {
   // `run deploy` gets the same option-value strip the flags do: it was a raw
   // substring test, so `--message="run deploy"` blessed a bare deploy that
   // never invokes the package script (Codex #1924 r22). `flagEnabled` already
   // strips internally; this call is for the `run deploy` test.
   const bare = stripOtherOptionValues(stripRedirections(cmd));
-  if (flagEnabled(cmd, '--keep-vars') || flagEnabled(cmd, '--dry-run')) return true;
+  // Wrangler stops parsing options at `--`, so `wrangler deploy -- --dry-run`
+  // is a LIVE bare deploy and the trailing flag is inert (#1995 r10). A
+  // package manager does the opposite — `pnpm run deploy -- --no-keep-vars`
+  // FORWARDS what follows to the script — so the terminator may only truncate
+  // when a direct wrangler command is present, which is exactly what
+  // `hasWranglerCmd` says. Comments come off first, for the prose case.
+  const forFlags = (() => {
+    const noComment = stripShellComment(cmd);
+    // The terminator must come AFTER the wrangler command to be wrangler's.
+    // Cutting at the first `--` anywhere made `pnpm exec -- wrangler deploy
+    // --keep-vars` — a safe deploy, where `--` ends PNPM's options — report a
+    // violation. That is a CI-blocking false red, and it is what a
+    // `hasWranglerCmd`-only guard still allowed: the mutation that removed the
+    // guard passed every test, which is how the gap surfaced.
+    const m = noComment.match(new RegExp(DEPLOY_RE));
+    if (!m) return noComment;
+    const from = m.index + m[0].length;
+    const rel = noComment.slice(from).search(/(?:^|\s)--(?=\s|$)/);
+    return rel === -1 ? noComment : noComment.slice(0, from + rel);
+  })();
+  if (
+    flagEnabled(forFlags, '--keep-vars') ||
+    flagEnabled(forFlags, '--dry-run')
+  ) {
+    return true;
+  }
 
   // ANCHORED at the segment's executed command. As a free substring test,
   // `NOTE=" pnpm run deploy" wrangler deploy` — a bare deploy carrying an
