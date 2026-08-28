@@ -25,8 +25,10 @@
  * SCOPE, stated plainly because the page repeats it to the user: this
  * covers per-origin browser storage ONLY. On-chain state is public and
  * immutable and cannot be erased by anyone, this protocol included.
- * Data held by the alerts service is deleted through its own unlink
- * control in Settings, not here — a local erase cannot reach it.
+ * The alerts service holds its own data, and unlinking clears only the
+ * Telegram connection — the preferences row survives for a relink, so
+ * the copy points at support for the rest rather than implying one
+ * button covers it (review round 1 P1).
  */
 
 /**
@@ -38,6 +40,8 @@
  * because all three are in use — the retired helper's omission of `-`
  * is exactly the kind of gap that makes an erasure silently partial.
  */
+import { clearLastError } from '../diagnostics/lastError';
+
 export const STORAGE_PREFIXES: readonly string[] = [
   'app.',
   'vaipakam.',
@@ -87,16 +91,50 @@ export const EXPORT_NOTE =
   'device. It does NOT contain on-chain data: your wallet address and any ' +
   'transaction you have signed are public on the blockchain, and no one — ' +
   'Vaipakam included — can export or erase them. It also does not contain ' +
-  'anything held by the alerts service; that is removed by unlinking in ' +
-  'Settings. Data stored by vaipakam.com is a separate store on a separate ' +
-  'origin, with its own controls on that site.';
+  'anything held by the alerts service: unlinking in Settings removes the ' +
+  'Telegram connection, while your alert preferences remain on that service ' +
+  'for a future relink — email support@vaipakam.com to have those removed. ' +
+  'Data stored by vaipakam.com is a separate store on a separate origin, ' +
+  'with its own controls on that site.';
 
-/** Read one storage safely. A blocked or unavailable store yields an
- *  empty object rather than throwing — private-mode browsers and
- *  storage-disabled profiles must still get a page. */
-function collect(storage: Storage | undefined): Record<string, unknown> {
+/**
+ * Obtain a Storage object without throwing (review round 1 P1).
+ *
+ * `window.localStorage` is a GETTER, and under some browser policies
+ * reading the property itself throws `SecurityError`. Passing
+ * `window.localStorage` as an argument evaluates it before the callee's
+ * `try` can help, so the throw escaped every guard below and took the
+ * whole page down during render — in exactly the locked-down browser
+ * this page exists to serve.
+ */
+function safeStorage(kind: 'localStorage' | 'sessionStorage'): Storage | null {
+  try {
+    if (typeof window === 'undefined') return null;
+    return window[kind];
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * What a read of one store found, and whether it was allowed to look.
+ *
+ * `refused` is separate from an empty `data` on purpose (review round 1
+ * P1). Collapsing them told a user with unreadable storage that nothing
+ * was stored, disabled both buttons, and made the refusal message this
+ * module carefully distinguishes unreachable. "I cannot see" and "there
+ * is nothing" are different answers, and on this page the difference is
+ * the whole point.
+ */
+export interface StoreRead {
+  data: Record<string, unknown>;
+  refused: boolean;
+}
+
+/** Read one storage safely, preserving WHY it came back empty. */
+function collect(storage: Storage | null): StoreRead {
   const out: Record<string, unknown> = {};
-  if (!storage) return out;
+  if (!storage) return { data: out, refused: true };
   try {
     // Keys are read up front: removing while iterating by index skips
     // entries, and reading while another tab writes can shift them.
@@ -118,13 +156,14 @@ function collect(storage: Storage | undefined): Record<string, unknown> {
       }
     }
   } catch {
-    // Storage refused entirely. An empty section is honest; the page
-    // reports what it managed to read.
+    // Obtainable but unreadable — a real state under restrictive
+    // privacy settings, and NOT the same as empty.
+    return { data: out, refused: true };
   }
-  return out;
+  return { data: out, refused: false };
 }
 
-function readCookies(): Record<string, string> {
+function readCookies(): { data: Record<string, string>; refused: boolean } {
   const out: Record<string, string> = {};
   try {
     for (const part of document.cookie.split(';')) {
@@ -135,37 +174,66 @@ function readCookies(): Record<string, string> {
       out[name] = decodeURIComponent(part.slice(eq + 1));
     }
   } catch {
-    // Cookies unavailable — same rule as storage.
+    return { data: out, refused: true };
   }
-  return out;
+  return { data: out, refused: false };
+}
+
+/**
+ * Everything this origin holds, plus whether any store refused to be
+ * read.
+ *
+ * One function rather than a `collectMyData` and a separate
+ * `countMyData` that each re-read: the page needs the count, the
+ * refusal state and the payload to describe the SAME moment. Two reads
+ * are two moments, and a page that says "3 items" beside a file
+ * containing 2 is the sort of small dishonesty this one cannot afford.
+ */
+export interface DataRightsSnapshot {
+  payload: DataRightsExport;
+  /** How many items the export actually contains. */
+  count: number;
+  /** True when at least one store could not be read. NOT the same as
+   *  an empty store — see `StoreRead`. */
+  refused: boolean;
+}
+
+export function inspectMyData(): DataRightsSnapshot {
+  const local = collect(safeStorage('localStorage'));
+  const session = collect(safeStorage('sessionStorage'));
+  const cookies = readCookies();
+  const payload: DataRightsExport = {
+    exportedAt: new Date().toISOString(),
+    origin: typeof window === 'undefined' ? 'unknown' : window.location.origin,
+    userAgent: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent,
+    localStorage: local.data,
+    sessionStorage: session.data,
+    cookies: cookies.data,
+    note: EXPORT_NOTE,
+  };
+  return {
+    payload,
+    count:
+      Object.keys(local.data).length +
+      Object.keys(session.data).length +
+      Object.keys(cookies.data).length,
+    refused: local.refused || session.refused || cookies.refused,
+  };
 }
 
 /** Everything this origin holds, as a portable object. */
 export function collectMyData(): DataRightsExport {
-  return {
-    exportedAt: new Date().toISOString(),
-    origin: typeof window === 'undefined' ? 'unknown' : window.location.origin,
-    userAgent: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent,
-    localStorage: collect(typeof window === 'undefined' ? undefined : window.localStorage),
-    sessionStorage: collect(typeof window === 'undefined' ? undefined : window.sessionStorage),
-    cookies: readCookies(),
-    note: EXPORT_NOTE,
-  };
+  return inspectMyData().payload;
 }
 
 /** How many items an erasure would remove — shown BEFORE the user
  *  confirms, so the button is not a leap in the dark, and reported
  *  after so "nothing was stored" is distinguishable from "it failed". */
 export function countMyData(): number {
-  const data = collectMyData();
-  return (
-    Object.keys(data.localStorage).length +
-    Object.keys(data.sessionStorage).length +
-    Object.keys(data.cookies).length
-  );
+  return inspectMyData().count;
 }
 
-function clearStorage(storage: Storage | undefined): number {
+function clearStorage(storage: Storage | null): number {
   if (!storage) return 0;
   let removed = 0;
   try {
@@ -191,7 +259,7 @@ function clearStorage(storage: Storage | undefined): number {
 function clearCookies(): number {
   let removed = 0;
   try {
-    const present = readCookies();
+    const present = readCookies().data;
     for (const name of Object.keys(present)) {
       // Expired on the parent domain AND on this host: the cookie was
       // written with `domain=.vaipakam.com`, but a local or preview
@@ -204,6 +272,13 @@ function clearCookies(): number {
       document.cookie = `${name}=; ${expiry}; domain=${window.location.hostname}`;
       removed += 1;
     }
+    // Counted only if they are actually GONE (review round 1 P1).
+    // Setting an expiry is a request, not a result: a cookie written
+    // with a path or domain none of the three attempts above match
+    // survives, and reporting it as removed is the false success this
+    // module exists to avoid.
+    const left = Object.keys(readCookies().data).length;
+    removed = Math.max(0, removed - left);
   } catch {
     // Cookies unavailable.
   }
@@ -228,10 +303,15 @@ export interface EraseResult {
  */
 export function eraseMyData(): EraseResult {
   const cookies = clearCookies();
-  const local = clearStorage(typeof window === 'undefined' ? undefined : window.localStorage);
-  const session = clearStorage(
-    typeof window === 'undefined' ? undefined : window.sessionStorage,
-  );
+  const local = clearStorage(safeStorage('localStorage'));
+  const session = clearStorage(safeStorage('sessionStorage'));
+  // Review round 1 P1: the last-error record lives in sessionStorage
+  // AND in a module-level slot, so clearing storage alone left
+  // `readLastError()` still returning it — the Diagnostics drawer would
+  // go on displaying an "erased" error and attaching it to a support
+  // report until the page happened to reload. An erasure that leaves a
+  // copy in memory has not erased anything.
+  clearLastError();
   return {
     localStorage: local,
     sessionStorage: session,

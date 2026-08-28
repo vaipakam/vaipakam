@@ -211,9 +211,10 @@
       "holdingTitle": "Was derzeit gespeichert ist",
       "holdingCount": "{{count}} Einträge",
       "holdingNone": "Derzeit ist in diesem Browser nichts gespeichert.",
+      "holdingUnreadable": "Dieser Browser lässt die App ihren eigenen Speicher nicht lesen, daher können wir Ihnen nicht zeigen, was dort liegt. Private Fenster und strenge Datenschutzeinstellungen bewirken das. Das Löschen der Websitedaten über die Einstellungen Ihres Browsers entfernt es dennoch.",
       "scopeTitle": "Was hiervon nicht erfasst wird",
       "scopeChain": "Alles, was auf der Blockchain liegt. Ihre Wallet-Adresse und jede von Ihnen signierte Transaktion sind öffentlich und dauerhaft — niemand, auch Vaipakam nicht, kann sie exportieren oder löschen.",
-      "scopeAlerts": "Benachrichtigungen. Wenn Sie Telegram verknüpft haben, liegt diese Verbindung beim Benachrichtigungsdienst, nicht in Ihrem Browser. Heben Sie die Verknüpfung in den Einstellungen auf, um sie zu entfernen.",
+      "scopeAlerts": "Benachrichtigungen. Wenn Sie Telegram verknüpft haben, liegt diese Verbindung beim Benachrichtigungsdienst, nicht in Ihrem Browser. Das Aufheben der Verknüpfung in den Einstellungen entfernt die Telegram-Verbindung selbst; Ihre Benachrichtigungseinstellungen bleiben für eine erneute Verknüpfung bei diesem Dienst. Schreiben Sie an support@vaipakam.com, um auch diese entfernen zu lassen.",
       "scopeDiagnostics": "Fehlerberichte, die unser Support-Dienst aufbewahrt. Sie liegen getrennt von Ihrem Browser und werden auf Anfrage gelöscht — schreiben Sie an support@vaipakam.com, und wir entfernen die Datensätze zu Ihrer Wallet.",
       "scopeSite": "Die Hauptseite vaipakam.com. Sie führt einen eigenen, getrennten Speicher mit eigenen Bedienelementen auf jener Seite.",
       "scopeCookies": "Sprache und Erscheinungsbild werden über ein Cookie der gemeinsamen Domain mit vaipakam.com geteilt; ein Löschen hier setzt sie also auch dort zurück."

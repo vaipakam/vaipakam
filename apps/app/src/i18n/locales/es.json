@@ -211,9 +211,10 @@
       "holdingTitle": "Qué hay almacenado ahora mismo",
       "holdingCount": "{{count}} elementos",
       "holdingNone": "Ahora mismo no hay nada almacenado en este navegador.",
+      "holdingUnreadable": "Este navegador no permite que la aplicación lea su propio almacenamiento, así que no podemos mostrarte lo que hay. Las ventanas de navegación privada y los ajustes de privacidad estrictos hacen esto. Borrar los datos del sitio desde los ajustes de tu navegador seguirá eliminándolo.",
       "scopeTitle": "Qué no cubre esto",
       "scopeChain": "Nada de lo que está en la cadena de bloques. Tu dirección de billetera y cada transacción que has firmado son públicas y permanentes: nadie, ni siquiera Vaipakam, puede exportarlas ni borrarlas.",
-      "scopeAlerts": "Las alertas. Si vinculaste Telegram, esa conexión la guarda el servicio de alertas, no tu navegador. Desvincúlala en Ajustes para eliminarla.",
+      "scopeAlerts": "Alertas. Si vinculaste Telegram, esa conexión la guarda el servicio de alertas, no tu navegador. Desvincular en Ajustes elimina la conexión de Telegram en sí; tus preferencias de alertas permanecen en ese servicio por si vuelves a vincularlo. Escribe a support@vaipakam.com para que también se eliminen.",
       "scopeDiagnostics": "Los informes de errores que guarda nuestro servicio de soporte. Están separados de tu navegador y se eliminan a petición: escribe a support@vaipakam.com y borraremos los registros de tu billetera.",
       "scopeSite": "El sitio principal vaipakam.com. Mantiene su propio almacén separado, con sus propios controles en ese sitio.",
       "scopeCookies": "Tu idioma y tu tema se comparten con vaipakam.com mediante una cookie del dominio compartido, así que borrarlos aquí también los restablece allí."

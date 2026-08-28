@@ -26,12 +26,7 @@
 import { useState } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
-import {
-  collectMyData,
-  countMyData,
-  eraseMyData,
-  type EraseResult,
-} from '../lib/dataRights';
+import { eraseMyData, inspectMyData, type EraseResult } from '../lib/dataRights';
 
 /** Serialise and hand the file to the browser. Kept here rather than
  *  in `dataRights.ts` so that module stays free of DOM side effects
@@ -56,15 +51,23 @@ export function DataRights() {
   const [downloaded, setDownloaded] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<EraseResult | null>(null);
-  // Counted on render rather than held in state: after an erase the
-  // page must show the new figure, and a stale count on a data-rights
-  // page is the same class of untruth as a false success message.
-  const stored = countMyData();
+  // Read on render rather than held in state: after an erase the page
+  // must show the new figure, and a stale count on a data-rights page
+  // is the same class of untruth as a false success message. One
+  // snapshot, so the count, the refusal state and the downloadable
+  // payload all describe the same moment.
+  const snapshot = inspectMyData();
+  const stored = snapshot.count;
+  // Review round 1 P1: "could not read" is not "nothing is here". With
+  // them collapsed, a browser refusing to be read disabled both buttons
+  // and told the user their storage was empty — the refusal message
+  // below unreachable in the one case it was written for.
+  const refused = snapshot.refused;
 
   function onDownload() {
     downloadJson(
       `vaipakam-app-data-${new Date().toISOString().slice(0, 10)}.json`,
-      collectMyData(),
+      snapshot.payload,
     );
     setDownloaded(true);
     setTimeout(() => setDownloaded(false), 2500);
@@ -94,9 +97,11 @@ export function DataRights() {
           <h2 style={{ margin: 0 }}>{copy.dataRights.holdingTitle}</h2>
         </div>
         <p className="muted" style={{ marginBottom: 0 }}>
-          {stored === 0
-            ? copy.dataRights.holdingNone
-            : copy.dataRights.holdingCount(stored)}
+          {refused
+            ? copy.dataRights.holdingUnreadable
+            : stored === 0
+              ? copy.dataRights.holdingNone
+              : copy.dataRights.holdingCount(stored)}
         </p>
       </section>
 
@@ -131,21 +136,21 @@ export function DataRights() {
         {result ? (
           <div
             className={
-              result.total > 0 && stored === 0 ? 'banner banner-success' : 'banner'
+              stored === 0 && result.total > 0 ? 'banner banner-success' : 'banner'
             }
             role="status"
           >
-            {/* Three outcomes, three messages. Reporting a refusal as a
-                success is the failure this page must not have. */}
-            {result.total > 0
-              ? stored > 0
-                ? // Some went, some stayed — `clearStorage` skips a key
-                  // that throws and continues, so this is reachable and
-                  // must not be reported as a clean success.
-                  copy.dataRights.erasePartial(result.total, stored)
-                : copy.dataRights.eraseDone(result.total)
-              : stored > 0
-                ? copy.dataRights.eraseBlocked
+            {/* Four outcomes, four messages, and anything REMAINING
+                outranks anything removed (review round 1 P1). Choosing
+                the success message off a positive removed-count while
+                items are still there is the false assurance this page
+                must not give. */}
+            {stored > 0
+              ? result.total > 0
+                ? copy.dataRights.erasePartial(result.total, stored)
+                : copy.dataRights.eraseBlocked
+              : result.total > 0
+                ? copy.dataRights.eraseDone(result.total)
                 : copy.dataRights.eraseNothing}
           </div>
         ) : null}

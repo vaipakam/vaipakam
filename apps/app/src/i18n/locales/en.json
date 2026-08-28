@@ -229,9 +229,10 @@
       "holdingTitle": "What is stored right now",
       "holdingCount": "{{count}} items",
       "holdingNone": "Nothing is stored in this browser at the moment.",
+      "holdingUnreadable": "This browser will not let the app read its own storage, so we cannot show you what is there. Private-browsing windows and strict privacy settings do this. Clearing site data through your browser’s own settings will still remove it.",
       "scopeTitle": "What this does not cover",
       "scopeChain": "Anything on the blockchain. Your wallet address and every transaction you have signed are public and permanent — no one, Vaipakam included, can export or erase them.",
-      "scopeAlerts": "Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlink it in Settings to remove it.",
+      "scopeAlerts": "Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlinking in Settings removes the Telegram connection itself; your alert preferences stay on that service so they are there if you link again. Email support@vaipakam.com to have those removed too.",
       "scopeDiagnostics": "Error reports kept by our support service. Those are separate from your browser, and are erased on request — email support@vaipakam.com and we will remove the records for your wallet.",
       "scopeSite": "The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.",
       "scopeCookies": "Your language and theme are shared with vaipakam.com through a cookie on the shared domain, so erasing here resets them there too."

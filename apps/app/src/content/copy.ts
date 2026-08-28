@@ -354,11 +354,22 @@ const copySource = {
     holdingTitle: 'What is stored right now',
     holdingCount: tmpl('{{count}} items', ['count']),
     holdingNone: 'Nothing is stored in this browser at the moment.',
+    /* A refusal to READ, distinct from an empty store — otherwise the
+       page tells somebody their storage is empty when it simply could
+       not look. */
+    holdingUnreadable:
+      'This browser will not let the app read its own storage, so we cannot show you what is there. Private-browsing windows and strict privacy settings do this. Clearing site data through your browser’s own settings will still remove it.',
     scopeTitle: 'What this does not cover',
     scopeChain:
       'Anything on the blockchain. Your wallet address and every transaction you have signed are public and permanent — no one, Vaipakam included, can export or erase them.',
+    /* Review round 1 P1 — this said "unlink to remove it", which was
+       false in the same way the Privacy Policy's erasure sentence is:
+       the agent's unlink only clears the Telegram chat id, keeping the
+       row, thresholds, opt-ins, wallet, chain and locale for a future
+       relink. Claiming a control erases more than it does is the exact
+       defect this page is built to avoid, and I wrote it. */
     scopeAlerts:
-      'Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlink it in Settings to remove it.',
+      'Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlinking in Settings removes the Telegram connection itself; your alert preferences stay on that service so they are there if you link again. Email support@vaipakam.com to have those removed too.',
     /* #2002 — named rather than omitted. The Privacy Policy tells
        users they can erase these records by signing a request in the
        app, and that control does not exist yet. Staying silent here

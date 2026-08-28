@@ -102,7 +102,6 @@ describe('storage-prefix coverage', () => {
     'src/chain/receiptSync.ts': ['vaipakam-receipt-sync-ping-v1'],
     'src/components/PowerSurfaceNote.tsx': ['app.powerSurfaceNoteDismissed'],
     'src/data/alerts.ts': ['app.alerts.'],
-    'src/diagnostics/lastError.ts': ['vaipakam.app.lastError'],
     'src/lib/notifSeen.ts': ['app.notif.lastseen.'],
     'src/lib/pendingMarker.ts': [
       'app.loanSaleOffer.',
@@ -113,6 +112,9 @@ describe('storage-prefix coverage', () => {
     'src/main.tsx': ['app.chunkReloaded'],
     // The data-rights page itself reads and clears; it writes nothing.
     'src/lib/dataRights.ts': [],
+    // Cleared by the erase flow (its module-level slot as well as the
+    // sessionStorage copy), never written by it.
+    'src/diagnostics/lastError.ts': ['vaipakam.app.lastError'],
     // Written OUTSIDE this app, by the shared i18n package's detector,
     // so it never appears in the src/ scan below. Registered anyway —
     // the export and the erasure both have to reach it, and the
