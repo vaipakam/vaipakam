@@ -185,6 +185,22 @@ interpreting it is not.** Each finding had arrived phrased as an interpretation
 problem, and had been answered on those terms for several rounds before anyone
 asked whether interpretation was required at all.
 
+One consequence of all that correcting deserved checking on its own, and had
+not been. Almost every change to the checker made it **stricter about what
+counts as a claim** — each one prompted by it wrongly objecting to an innocent
+sentence, and each one carrying the risk of quietly losing the real thing it
+was built to find. Nothing had confirmed it still finds them.
+
+So the ten original passages that started this were recovered from the
+project's history and run through the checker as it now stands, rather than
+through the examples written to describe it. All ten are still caught. The
+distinction matters more than the result: an example invented to illustrate a
+rule confirms the rule, while a passage lifted from the real history confirms
+the job — and no set of invented examples can notice that a rule quietly
+stopped matching text nobody thought to write down. That check is recorded
+alongside the rules, with a note that anyone proposing to tighten them further
+should repeat it rather than trust a clean run of the examples.
+
 Every one of these was written carefully, by someone actively thinking about
 this exact failure. That is the argument for the gate rather than an
 embarrassment to it: if the defect reproduces this readily under maximum
