@@ -44,6 +44,7 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import { isVerdictStale } from './tosGate';
+import { captureTxError } from '../lib/errors';
 
 const ZERO_HASH = `0x${'0'.repeat(64)}` as const;
 
@@ -189,7 +190,15 @@ export function useTosAcceptance(): TosAcceptanceState {
         void queryClient.invalidateQueries({ queryKey });
       }, 4_000);
     } catch (err) {
-      setWriteError(err instanceof Error ? err.message : String(err));
+      // Codex review round 2 P2: through the SHARED mapper, like every
+      // other Diamond write. Raw viem text skipped the localized
+      // contract-error catalog — which already carries an actionable
+      // `InvalidTosVersion` message for the case where governance
+      // installs a new version while the wallet prompt is open, exactly
+      // the failure this flow is most likely to hit — and skipped the
+      // diagnostics sink, so a support report from a gated user would
+      // have omitted the transaction that blocked them.
+      setWriteError(captureTxError(err));
     } finally {
       setSubmitting(false);
     }
