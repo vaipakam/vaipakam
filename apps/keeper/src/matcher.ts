@@ -56,6 +56,7 @@ import {
   LenderIntentFacetABI,
 } from '@vaipakam/contracts/abis';
 import type { ChainConfig, Env } from './env';
+import { batchedRead } from './batchRead';
 import { getChainConfigs } from './env';
 import {
   buildKeeperContext,
@@ -354,27 +355,32 @@ async function hydrateOffers(
   ctx: KeeperContext,
   ids: readonly bigint[],
 ): Promise<OfferLite[]> {
+  // BATCHED (#1896). This was one `getOffer` per offer id — `Promise.all`
+  // made them concurrent but each is still its own SUBREQUEST, and the ceiling
+  // is 50 per invocation. The matcher was the largest remaining consumer in the
+  // #1945 pass table after the watcher was batched in #1987; hydration is the
+  // bulk of it. One `aggregate3` per chunk instead of one call per offer.
+  //
+  // Per-offer failure isolation is preserved by `allowFailure: true`: a
+  // cancelled-mid-tick offer comes back as a `failure` entry and is skipped,
+  // exactly as the per-id catch did.
   const out: OfferLite[] = [];
   for (let i = 0; i < ids.length; i += HYDRATE_CHUNK) {
     const chunk = ids.slice(i, i + HYDRATE_CHUNK);
-    const results = await Promise.all(
-      chunk.map(async (id) => {
-        try {
-          const raw = (await ctx.client.readContract({
-            address: ctx.diamond,
-            abi: MATCHER_ABI,
-            functionName: 'getOffer',
-            args: [id],
-          })) as Record<string, unknown>;
-          return liftOffer(raw);
-        } catch {
-          // A cancelled-mid-tick offer is expected to occasionally
-          // fail here — skip it, don't kill the loop.
-          return null;
-        }
-      }),
+    // eslint-disable-next-line no-await-in-loop
+    const results = await batchedRead(
+      ctx.client,
+      chunk.map((id) => ({
+        address: ctx.diamond,
+        abi: MATCHER_ABI,
+        functionName: 'getOffer' as const,
+        args: [id] as const,
+      })),
+      `matcher chain=${ctx.chainId} getOffer ${i}/${ids.length}`,
     );
-    for (const o of results) {
+    for (const r of results) {
+      if (r.status !== 'success') continue;
+      const o = liftOffer(r.result as Record<string, unknown>);
       if (o && !o.accepted) out.push(o);
     }
   }
