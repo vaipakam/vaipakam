@@ -272,6 +272,33 @@ const N = String.raw`(?:\d+|zero|one|two|three|four|five)`;
 const FUNCTION_WORD =
   String.raw`(?:in|on|at|for|to|of|by|with|from|right|now|today|tonight|here|there|yet|anymore|and|or|but|so|because|while|since|until|unless|though|although)\b`;
 
+/**
+ * ── THE TEN ORIGINALS ARE RE-VERIFIED, NOT ASSUMED ────────────────────────
+ *
+ * Twenty-five review rounds narrowed these patterns repeatedly — the bare
+ * ratio gained a required noun, `spare` gained a predicative test, the context
+ * radius stopped being sufficient on its own. Every one of those narrowings
+ * was made to stop a FALSE POSITIVE, and each carried the risk of losing the
+ * true positives this gate exists for.
+ *
+ * So the ten restated copies that produced #1977 were re-run against the
+ * patterns as they now stand, read out of git history at the merge-base
+ * (`e4f36f04`) rather than from memory or from the fixtures below:
+ *
+ *   apps/indexer/wrangler.jsonc              1     ops/offchain-data-warm/src/index.ts   2
+ *   apps/keeper/wrangler.jsonc               1     ops/offchain-data-warm/README.md      2
+ *   ops/offchain-data-warm/wrangler.jsonc    2     …/OffChainDataResilience.md           1
+ *   apps/indexer/src/index.ts                1     docs/ops/DeploymentRunbook.md         1
+ *   apps/indexer/src/cronRouting.ts          1
+ *   packages/lib/src/cronCadence.ts          1
+ *
+ * Ten of ten, thirteen findings. The fixtures below quote several of these
+ * verbatim, which is why they are worded so oddly — a fixture invented to
+ * describe a rule tests the rule; a fixture lifted from the tree tests the
+ * job. If a future narrowing is proposed, re-run this check before believing
+ * the selftest: the fixtures cannot notice a pattern that stopped matching
+ * text nobody thought to pin.
+ */
 const OCCUPANCY = [
   // "4/5 cron triggers", "3 of 5 slots". The NOUN is required and must be
   // adjacent. Codex #1978 r20: the bare ratio was validated only by cron
