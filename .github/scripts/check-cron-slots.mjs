@@ -2657,7 +2657,22 @@ export function readStatus(cell) {
   // and only then must whitespace or the end of the cell follow. `reserved*`
   // and `**reserved*` are unbalanced and are rejected with it, which is the
   // same rule and not an extra one.
-  const m = /^\s*([*_]{0,3})([a-z]+)\1(?=\s|$)/iu.exec(cell);
+  // Found in my own r59 fix before Codex saw it: requiring the emphasis to
+  // close AROUND THE WORD rejected `**reserved — held**`, which bolds the
+  // whole status phrase and is an obvious way to write the cell. That is the
+  // false rejection this file has now been punished for six times, introduced
+  // by the fix for the previous one — the r43/r49 shape exactly.
+  //
+  // A wrapper around the whole cell is therefore STRIPPED first, and only
+  // then is the word read. Bounded, because it is a normalisation and not a
+  // Markdown parser: three layers is more emphasis than any real cell has.
+  let text = cell.trim();
+  for (let i = 0; i < 3; i += 1) {
+    const wrapped = /^([*_]{1,3})([\s\S]+)\1$/.exec(text);
+    if (!wrapped) break;
+    text = wrapped[2].trim();
+  }
+  const m = /^([*_]{0,3})([a-z]+)\1(?=\s|$)/iu.exec(text);
   const word = m?.[2]?.toLowerCase();
   return word && STATUSES.has(word) ? word : null;
 }
@@ -4041,13 +4056,38 @@ const INVENTORY_CASES = [
     [],
     1,
   ],
-  // ...and BALANCED emphasis is how several rows are written, so it parses.
+  // ...and BALANCED emphasis is how several rows are written, so it parses —
+  // around the word, and around the whole phrase. The second was rejected by
+  // the first cut of the r59 fix, which is the false rejection this file has
+  // been punished for six times, introduced by the fix for the fifth.
   [
     'a bolded status parses',
     '| `vaipakam-q` | *(none)* | `ops/q` | **reserved** — held |',
     {},
     ['vaipakam-q'],
     0,
+  ],
+  [
+    'a status bolded across the whole phrase parses',
+    '| `vaipakam-q` | *(none)* | `ops/q` | **reserved — held** |',
+    {},
+    ['vaipakam-q'],
+    0,
+  ],
+  [
+    'a status italicised across the whole phrase parses',
+    '| `vaipakam-q` | *(none)* | `ops/q` | _reserved — held_ |',
+    {},
+    ['vaipakam-q'],
+    0,
+  ],
+  // ...and a qualifier INSIDE a whole-phrase wrapper is still a finding.
+  [
+    'a question mark inside a wrapped status is a finding',
+    '| `vaipakam-q` | *(none)* | `ops/q` | **reserved? — maybe** |',
+    {},
+    [],
+    1,
   ],
   // r43: underscores are legal in a Worker name; rejecting them left such a
   // Worker impossible to write down while `--live` called it ACCOUNT ONLY.
