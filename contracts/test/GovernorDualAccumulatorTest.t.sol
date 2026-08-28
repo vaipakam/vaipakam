@@ -355,6 +355,86 @@ contract GovernorDualAccumulatorTest is SetupTest {
         );
     }
 
+    /// #1499 — the loan-side cap makes a claim AFFORDABLE, and the predicate
+    /// allows it: the claim succeeds at a balance the RAW entitlement would
+    /// not have fitted.
+    ///
+    /// #1986 pinned this intersection with an ample balance, so it covers only
+    /// the backed half, and a per-test-body survey found no cell anywhere that
+    /// combines a binding cap with a deliberate shortfall. That is the half
+    /// where this card's failure mode lives: the cap TRIMS the payout, so a
+    /// claim can be unaffordable raw and affordable trimmed. A predicate
+    /// comparing the RAW entitlement against the balance refuses it, the
+    /// horizon stops, and the notice window stalls on a claim that would have
+    /// succeeded.
+    ///
+    /// The assertion is therefore the OPPOSITE shape from #1986's: not that a
+    /// shortfall is refused — a broken predicate refuses too — but that the
+    /// claim SUCCEEDS between post-cap and raw. The window is measured and
+    /// asserted non-empty, so the cell cannot straddle nothing.
+    ///
+    /// A distinct `strandedRecoveryReserved` is seeded, or `bal - unearmarked`
+    /// collapses to exactly `recycleBucket` and the backing arithmetic
+    /// degenerates into an identity of the fixture (Codex #1988 r1).
+    ///
+    /// `deal` sets the balance rather than transferring it out. That is not
+    /// only tidier: reading `balanceOf` inside a transfer's arguments consumes
+    /// the preceding `vm.prank`, so the transfer runs as the test contract and
+    /// reverts on an empty balance — and hoisting that read into a local puts
+    /// this frame one slot over the viaIR budget.
+    function testLoanSideCapMakesAClaimAffordableThatRawWouldNotFit() public {
+        (uint256 floor5, ) = _armAndFinalize(5, 700 ether);
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setStrandedRecoveryRaw(address(0xD1), 1, 7_000 ether, 1, 4);
+        _seedEntry(alice, 57, 5, 6);
+
+        uint256 needUncapped = _mut().userClaimFundingNeedRaw(alice);
+        _stampLoanSideCap(57, floor5 / 8);
+        uint256 needCapped = _mut().userClaimFundingNeedRaw(alice);
+        assertLt(
+            needCapped,
+            needUncapped,
+            "fixture: the cap must TRIM the requirement, or there is no window"
+        );
+
+        // Sit exactly at the post-cap requirement: affordable trimmed, and
+        // NOT affordable at the raw entitlement.
+        deal(address(vpfi), address(diamond), needCapped);
+        assertGt(
+            needUncapped,
+            needCapped,
+            "fixture: the RAW entitlement would NOT have fitted this balance"
+        );
+
+        // The claim must succeed here. A predicate reading raw would have
+        // called this unexecutable and stalled the clock on a live claim.
+        vm.prank(alice);
+        (uint256 paid, , ) =
+            RewardClaimFacet(address(diamond)).claimInteractionRewards();
+        assertEq(
+            paid,
+            floor5 / 8,
+            "the claim pays the capped amount and does not revert"
+        );
+    }
+
+    /// @dev Stamp a binding loan-side reward cap on `loanId`.
+    function _stampLoanSideCap(uint256 loanId, uint256 cap) internal {
+        _mut().setFeeEntitlementRaw(
+            loanId,
+            LibVaipakam.FeeEntitlement({
+                borrowerMode: LibVaipakam.FeeEntitlementMode.None,
+                lenderMode: LibVaipakam.FeeEntitlementMode.None,
+                openDays: 1,
+                rewardHaircutBpsAtOpen: 0,
+                borrowerTariffPaid: 0,
+                lenderTariffPaid: 0,
+                cStarOpen: 0,
+                loanSideRewardCapOpen: uint128(cap)
+            })
+        );
+    }
+
     function _armAndFinalize(uint256 armDay, uint256 creditedPerWindow)
         internal
         returns (uint256 floor_, uint256 recycled)
