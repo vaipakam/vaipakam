@@ -390,15 +390,14 @@ const TEMPORAL = String.raw`(?:currently|now|today|presently|still|right${WRAP}n
 const FUNCTION_WORD =
   String.raw`(?:in|on|at|for|to|of|by|with|from|right|now|today|tonight|here|there|yet|anymore|and|or|but|so|because|while|since|until|unless|though|although|when|that|before|after|during|per|as|than|then|already|still|total|currently|each|both|only)\b`;
 
-/** See the note above `TEMPORAL`; deferred to here for `FUNCTION_WORD`. */
-// The determiner is inside the inner lookahead rather than consumed before it.
-// Consuming it looked equivalent and was not: with `(?:this${WRAP})?` matched
-// greedily, "in THIS Cloudflare account" failed the inner test, backtracked to
-// the zero-width branch, and then passed it at `this` — so the one scope that
-// must NOT suppress suppressed itself by giving up the determiner. JS has no
-// possessive quantifier to forbid that backtrack; keeping the determiner
-// non-consuming removes the second parse instead of forbidding it.
-const NOT_SCOPED_ELSEWHERE = String.raw`(?!${GAP}(?:in|on|under|within|inside)${WRAP}(?!(?:(?:this|the|our|your|any)${WRAP})?(?:cloudflare${WRAP})?(?:account|production|prod)\b|${FUNCTION_WORD})[A-Za-z])`;
+/**
+ * Retired in #1978 r39. The trailing-scope lookahead is gone: leading and
+ * trailing scope are ONE question, and answering it in two places — a regex
+ * lookahead here, a function below — is how r33 came to suppress a sentence
+ * that its own mirror correctly allowed. `scopedElsewhere` now decides both,
+ * over the claim's whole sentence.
+ */
+const NOT_SCOPED_ELSEWHERE = '';
 
 /**
  * ── THE TEN ORIGINALS ARE RE-VERIFIED, NOT ASSUMED ────────────────────────
@@ -1168,59 +1167,52 @@ export function checkStamp(md) {
  * the same code path CI does, rather than a paraphrase of it.
  */
 /**
- * Is the claim already scoped to somewhere that is NOT the inventoried account,
- * by a qualifier that comes BEFORE it?
+ * Is the claim scoped to an execution environment that is NOT the inventoried
+ * Cloudflare account?
  *
- * Codex #1978 r33: `NOT_SCOPED_ELSEWHERE` is a lookahead, so it only ever saw
- * text FOLLOWING the claim. "No cron triggers are live in local development"
- * was correctly quiet while "In local development, no cron triggers are live"
- * fired — the same sentence, reordered. This gate blocks every PR in the
- * repository, so a deployment or testing guide written the second way failed
- * CI for saying nothing about the account at all.
+ * ── WHY THIS IS AN ENUMERATION, WHEN NOTHING ELSE HERE IS ─────────────────
  *
- * Deliberately the SAME predicate as the forward case rather than a list of
- * environments: a scope preposition, then the first noun it governs, and the
- * claim is suppressed unless that noun is the account itself. Enumerating
- * "local development", "CI", "staging", "tests" would be the open-class
- * mistake this file has already made three times (`slot`, `schedule`,
- * `headroom`).
+ * Three previous rounds tried to answer this grammatically — a scope
+ * preposition and the noun it governs — and it oscillated every single round.
+ * r33 added the leading form and suppressed "For now, no cron triggers are
+ * live". r35 fixed that and left "running locally" firing. r38's `running`
+ * predicate made that worse. r39 found BOTH directions at once: purpose
+ * phrases ("For capacity planning, ...", "For clarity, ...") silently
+ * suppressed, and "Four cron triggers are running locally." falsely firing.
+ *
+ * The oscillation is the evidence. "Is this phrase an alternate execution
+ * environment?" is not answerable from grammar, because `for local
+ * development` and `for capacity planning` are the same construction. Only
+ * the vocabulary distinguishes them.
+ *
+ * This file has refused enumerations four times, and was right each time —
+ * but every one of those was an enumeration of what makes the gate FIRE,
+ * where a gap is a silent miss. This one decides what makes the gate STAY
+ * QUIET, so a gap makes the gate fire on a sentence it should have spared.
+ * That failure is visible, lands on the author, and is fixed by rewording or
+ * by one reviewable skip-list line. Inverting the failure direction is what
+ * makes the enumeration admissible here and not elsewhere.
+ *
+ * Scoped to the claim's own sentence, so a mention of `staging` a paragraph
+ * away governs nothing. The residual miss — a real account claim that names
+ * an environment in the same sentence for an unrelated reason — is accepted
+ * and stated rather than papered over.
  */
-// Codex #1978 r35: `during` and `while` are gone, and the governed word is now
-// tested against the same FUNCTION_WORD/TEMPORAL vocabulary the forward case
-// uses. Three real claims were being suppressed — "For now, no cron triggers
-// are live", "During the current outage, ...", "While maintenance continues,
-// ..." — because every clause opening with one of these words was read as a
-// deployment scope.
-//
-// The discriminator is grammatical rather than a list of environments, which is
-// the open-class mistake this file has made three times. `during` and `while`
-// take TEMPORAL complements: "during local development" and "while local
-// development" are not things anyone writes, so neither word can introduce the
-// scope this check exists to spare. `when` stays, because "when running
-// locally" is exactly that scope. And `for now` is separated from `for local
-// development` by the word it governs, which is already a function word.
-const TEMPORAL_HEAD = new RegExp(
-  String.raw`^(?:${TEMPORAL}|current|present|outage|maintenance|incident)$`,
+const ENVIRONMENT = new RegExp(
+  String.raw`\b(?:local|locally|localhost|dev|development|staging|preview|sandbox|emulator|miniflare|fixture|fixtures|test|tests|testing|ci)\b`,
   'i',
 );
-const PRECEDING_SCOPE =
-  /(?:^|[.;!?]\s+|\n\s*)(?:in|on|under|within|inside|for|when)\s+(?:(?:this|the|our|your|any)\s+)?(?:cloudflare\s+)?([A-Za-z][A-Za-z-]*)/i;
 
-function scopedBeforeClaim(text, at) {
-  // Only the clause the claim sits in: a scope two sentences back governs
-  // nothing here.
-  const start = Math.max(
+function scopedElsewhere(text, at, len) {
+  const before = Math.max(
     text.lastIndexOf('.', at - 1),
     text.lastIndexOf(';', at - 1),
     text.lastIndexOf('\n', at - 1),
   );
-  const clause = text.slice(start + 1, at);
-  const m = PRECEDING_SCOPE.exec(clause);
-  if (!m) return false;
-  // A time is not a place. "For now" and "for local development" open
-  // identically and mean opposite things for this check.
-  if (TEMPORAL_HEAD.test(m[1]) || new RegExp(`^${FUNCTION_WORD}`, 'i').test(m[1])) return false;
-  return !/^(?:account|production|prod)$/i.test(m[1]);
+  const rest = text.slice(at + len);
+  const stop = rest.search(/[.;!?\n]/);
+  const sentence = text.slice(before + 1, at + len + (stop === -1 ? rest.length : stop));
+  return ENVIRONMENT.test(sentence);
 }
 
 export function findOccupancyClaims(text) {
@@ -1235,7 +1227,7 @@ export function findOccupancyClaims(text) {
         at + m[0].length + CONTEXT_RADIUS,
       );
       if (!CONTEXT.test(window)) continue;
-      if (scopedBeforeClaim(text, at)) continue;
+      if (scopedElsewhere(text, at, m[0].length)) continue;
       const line = text.slice(0, at).split('\n').length;
       if (seen.has(line)) continue; // one finding per line, whichever shape hit
       seen.add(line);
@@ -2326,30 +2318,34 @@ function readWranglerName(configPath) {
     // this. Each fix was correct about the case it was shown; none asked what
     // the input language actually is.
     const isToml = /\.toml$/i.test(configPath);
-    const text = stripJsonLikeComments(readFileSync(configPath, 'utf8'));
+    const raw = readFileSync(configPath, 'utf8');
+    // Codex #1978 r39: TOML was routed past the extension check and then run
+    // through the JSON brace-depth tracker anyway, with only JSON comments
+    // stripped. So `# template syntax: {{` in a TOML comment raised the depth
+    // to two and `readWranglerName` returned null — and a null here silently
+    // disables BOTH swapped-source detection and false-`*none*` falsification.
+    //
+    // FIFTH round on this function. r38 chose the grammar correctly and then
+    // handed the file to the wrong parser regardless, which is the r32 shape:
+    // the fix was made, was right, and the code it was meant to replace kept
+    // running. TOML has no braces around top-level keys at all, so brace depth
+    // is not merely fragile here — it is meaningless. The top-level table is
+    // everything before the first `[section]` header, and that is the whole
+    // rule.
+    if (isToml) {
+      for (const line of raw.split('\n')) {
+        const bare = line.replace(/#.*$/, '');
+        if (/^\s*\[/.test(bare)) break; // a table header ends the top level
+        const m = /^\s*"?name"?\s*=\s*(?:"([^"]+)"|'([^']+)')/.exec(bare);
+        if (m) return m[1] ?? m[2];
+      }
+      return null;
+    }
+    const text = stripJsonLikeComments(raw);
     let depth = 0;
     for (const rawLine of text.split('\n')) {
       const line = rawLine;
       if (depth === 1) {
-        const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
-        if (m) return m[1] ?? m[2];
-      }
-      // TOML has no braces around top-level keys, so depth stays 0 there.
-      //
-      // Codex #1978 r38: which language this is was decided by whether a `{`
-      // occurs ANYWHERE in the file — so a valid `wrangler.toml` containing an
-      // inline table, or merely a comment with a brace in it, silently turned
-      // off the only branch that can read it, and `readWranglerName` returned
-      // null. A null here is not inert: `checkSources` can no longer reject a
-      // row pointed at another Worker's directory, and `trackedWranglerNames`
-      // can no longer falsify a `*none*` source claim, so a wrong binding
-      // passes BOTH modes.
-      //
-      // Fourth round on this function, and the fourth time the answer is the
-      // one the third round already wrote down: "none asked what the input
-      // language actually is". The file extension says. A content sniff is a
-      // guess about a question that was never open.
-      if (depth === 0 && isToml) {
         const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
         if (m) return m[1] ?? m[2];
       }
@@ -2573,6 +2569,17 @@ const MUST_FIRE = [
   ['the direct form with a running predicate', 'Four cron triggers are running.'],
   ['the postposed participle', 'There are four cron triggers running.'],
   ['the verbal form', 'The account currently runs four cron triggers.'],
+  // Codex #1978 r39: a purpose phrase opens exactly like an environment scope
+  // and is not one. These are the cases the grammatical test could not tell
+  // apart from "for local development", which is why the test is now lexical.
+  [
+    'a leading purpose phrase is not a scope',
+    'For capacity planning, four cron triggers are running.',
+  ],
+  [
+    'a leading discourse phrase is not a scope',
+    'For clarity, the account has four live cron triggers.',
+  ],
   // Codex #1978 r4: the verdict shape — a live conclusion carrying no number.
   [
     'a restated verdict on the capacity step',
@@ -2701,6 +2708,12 @@ const MUST_NOT_FIRE = [
   // The r35 widening of the direct form must not reach a scoped sentence.
   ['the direct form scoped elsewhere', 'Four cron triggers are live in local development.'],
   ['the running form scoped elsewhere', 'Four cron triggers are running in local development.'],
+  // Codex #1978 r39: the ADVERB form. `running locally` says the same thing as
+  // `running in local development` and carried no preposition for the old
+  // test to key on, so one was quiet and the other fired.
+  ['the adverb form', 'Four cron triggers are running locally.'],
+  ['the postposed participle scoped elsewhere', 'There are four cron triggers running locally.'],
+  ['the verbal form scoped elsewhere', 'The account runs four cron triggers locally.'],
   ['a leading temporal scope', 'When running locally, no cron triggers are live.'],
   // The CONDITIONAL is the correct way to write it, and is what
   // `apps/keeper/wrangler.jsonc` says today. If this ever starts firing, the
