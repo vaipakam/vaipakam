@@ -88,6 +88,10 @@
       "activity": {
         "title": "Activité — Vaipakam"
       },
+      "dataRights": {
+        "title": "Vos données — Vaipakam",
+        "description": "Téléchargez ou effacez les données que l’application Vaipakam conserve dans ce navigateur."
+      },
       "settings": {
         "title": "Paramètres — Vaipakam"
       },
@@ -213,7 +217,7 @@
       "holdingNone": "Rien n’est enregistré dans ce navigateur pour le moment.",
       "holdingUnreadable": "Ce navigateur n’autorise pas l’application à lire son propre stockage, nous ne pouvons donc pas vous montrer ce qu’il contient. Les fenêtres de navigation privée et les réglages de confidentialité stricts font cela. Effacer les données du site depuis les réglages de votre navigateur le supprimera quand même.",
       "scopeTitle": "Ce que cela ne couvre pas",
-      "scopeChain": "Tout ce qui se trouve sur la blockchain. Votre adresse de portefeuille et chaque transaction que vous avez signée sont publiques et permanentes : personne, Vaipakam compris, ne peut les exporter ni les effacer.",
+      "scopeChain": "Tout ce qui se trouve sur la blockchain. Ce fichier ne couvre que votre navigateur : votre adresse de portefeuille et les transactions que vous avez signées n’y figurent donc pas — mais elles sont publiques et vous pouvez les consulter vous-même sur n’importe quel explorateur de blocs. Ce que personne ne peut faire, Vaipakam compris, c’est les effacer.",
       "scopeAlerts": "Les alertes. Si vous avez lié Telegram, cette connexion est détenue par le service d’alertes, pas par votre navigateur. La dissocier dans les Réglages supprime la connexion Telegram elle-même ; vos préférences d’alertes restent sur ce service au cas où vous la relieriez. Écrivez à support@vaipakam.com pour les faire supprimer aussi.",
       "scopeDiagnostics": "Les rapports d’erreur conservés par notre service d’assistance. Ils sont distincts de votre navigateur et sont effacés sur demande : écrivez à support@vaipakam.com et nous supprimerons les enregistrements liés à votre portefeuille.",
       "scopeSite": "Le site principal vaipakam.com. Il conserve son propre stockage distinct, avec ses propres commandes sur ce site.",

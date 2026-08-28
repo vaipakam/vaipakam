@@ -88,6 +88,10 @@
       "activity": {
         "title": "Actividad — Vaipakam"
       },
+      "dataRights": {
+        "title": "Tus datos — Vaipakam",
+        "description": "Descarga o borra los datos que la aplicación Vaipakam guarda en este navegador."
+      },
       "settings": {
         "title": "Configuración — Vaipakam"
       },
@@ -213,7 +217,7 @@
       "holdingNone": "Ahora mismo no hay nada almacenado en este navegador.",
       "holdingUnreadable": "Este navegador no permite que la aplicación lea su propio almacenamiento, así que no podemos mostrarte lo que hay. Las ventanas de navegación privada y los ajustes de privacidad estrictos hacen esto. Borrar los datos del sitio desde los ajustes de tu navegador seguirá eliminándolo.",
       "scopeTitle": "Qué no cubre esto",
-      "scopeChain": "Nada de lo que está en la cadena de bloques. Tu dirección de billetera y cada transacción que has firmado son públicas y permanentes: nadie, ni siquiera Vaipakam, puede exportarlas ni borrarlas.",
+      "scopeChain": "Cualquier cosa en la cadena de bloques. Este archivo solo cubre tu navegador, así que tu dirección de billetera y las transacciones que has firmado no están en él, pero son públicas y puedes consultarlas tú mismo en cualquier explorador de bloques. Lo que nadie puede hacer, ni siquiera Vaipakam, es borrarlas.",
       "scopeAlerts": "Alertas. Si vinculaste Telegram, esa conexión la guarda el servicio de alertas, no tu navegador. Desvincular en Ajustes elimina la conexión de Telegram en sí; tus preferencias de alertas permanecen en ese servicio por si vuelves a vincularlo. Escribe a support@vaipakam.com para que también se eliminen.",
       "scopeDiagnostics": "Los informes de errores que guarda nuestro servicio de soporte. Están separados de tu navegador y se eliminan a petición: escribe a support@vaipakam.com y borraremos los registros de tu billetera.",
       "scopeSite": "El sitio principal vaipakam.com. Mantiene su propio almacén separado, con sus propios controles en ese sitio.",

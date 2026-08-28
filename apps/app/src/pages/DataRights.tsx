@@ -27,6 +27,8 @@ import { useState } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import { eraseMyData, inspectMyData, type EraseResult } from '../lib/dataRights';
+import { useTheme } from '../app/ThemeContext';
+import { useMode } from '../app/ModeContext';
 
 /** Serialise and hand the file to the browser. Kept here rather than
  *  in `dataRights.ts` so that module stays free of DOM side effects
@@ -51,6 +53,13 @@ export function DataRights() {
   const [downloaded, setDownloaded] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [result, setResult] = useState<EraseResult | null>(null);
+  // Review round 1 P2: the providers sit ABOVE this route and read
+  // storage only on their own mount, so clearing the keys left the live
+  // theme and mode showing the erased values until a reload — the page
+  // promising in copy that preferences return to their defaults while
+  // the app visibly kept them.
+  const { resetToDefault: resetTheme } = useTheme();
+  const { resetToDefault: resetMode } = useMode();
   // Read on render rather than held in state: after an erase the page
   // must show the new figure, and a stale count on a data-rights page
   // is the same class of untruth as a false success message. One
@@ -76,12 +85,18 @@ export function DataRights() {
   function onErase() {
     setResult(eraseMyData());
     setConfirming(false);
+    // AFTER the erase, and through resets that do not persist: the
+    // ordinary setters write the key back, which would undo the very
+    // erasure they were called to complete.
+    resetTheme();
+    resetMode();
     // Deliberately NO page reload. The retired implementation reloaded
     // so every hook rehydrated from empty storage — but a reload also
     // throws away the result message, so the user is returned to a
     // fresh page with no confirmation that anything happened, which on
-    // this page is the whole point. The contexts read storage on mount
-    // and fall back to defaults, so what is on screen stays coherent.
+    // this page is the whole point. Resetting the two mounted
+    // preference contexts explicitly is what keeps the screen honest
+    // without one.
   }
 
   return (

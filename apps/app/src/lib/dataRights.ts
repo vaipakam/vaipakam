@@ -31,6 +31,8 @@
  * button covers it (review round 1 P1).
  */
 
+import { clearLastError } from '../diagnostics/lastError';
+
 /**
  * Every prefix this app writes browser storage under.
  *
@@ -40,8 +42,6 @@
  * because all three are in use — the retired helper's omission of `-`
  * is exactly the kind of gap that makes an erasure silently partial.
  */
-import { clearLastError } from '../diagnostics/lastError';
-
 export const STORAGE_PREFIXES: readonly string[] = [
   'app.',
   'vaipakam.',
@@ -88,9 +88,10 @@ export interface DataRightsExport {
 
 export const EXPORT_NOTE =
   'This file contains the data the Vaipakam app stores in this browser, on this ' +
-  'device. It does NOT contain on-chain data: your wallet address and any ' +
-  'transaction you have signed are public on the blockchain, and no one — ' +
-  'Vaipakam included — can export or erase them. It also does not contain ' +
+  'device. It does NOT contain on-chain data: your wallet address and the ' +
+  'transactions you have signed are public on the blockchain, so they are not ' +
+  'held here — you can look them up yourself on any block explorer. What no ' +
+  'one, Vaipakam included, can do is erase them. It also does not contain ' +
   'anything held by the alerts service: unlinking in Settings removes the ' +
   'Telegram connection, while your alert preferences remain on that service ' +
   'for a future relink — email support@vaipakam.com to have those removed. ' +

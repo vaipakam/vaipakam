@@ -88,6 +88,10 @@
       "activity": {
         "title": "Aktivität — Vaipakam"
       },
+      "dataRights": {
+        "title": "Ihre Daten — Vaipakam",
+        "description": "Laden Sie die Daten herunter, die die Vaipakam-App in diesem Browser speichert, oder löschen Sie sie."
+      },
       "settings": {
         "title": "Einstellungen — Vaipakam"
       },
@@ -213,7 +217,7 @@
       "holdingNone": "Derzeit ist in diesem Browser nichts gespeichert.",
       "holdingUnreadable": "Dieser Browser lässt die App ihren eigenen Speicher nicht lesen, daher können wir Ihnen nicht zeigen, was dort liegt. Private Fenster und strenge Datenschutzeinstellungen bewirken das. Das Löschen der Websitedaten über die Einstellungen Ihres Browsers entfernt es dennoch.",
       "scopeTitle": "Was hiervon nicht erfasst wird",
-      "scopeChain": "Alles, was auf der Blockchain liegt. Ihre Wallet-Adresse und jede von Ihnen signierte Transaktion sind öffentlich und dauerhaft — niemand, auch Vaipakam nicht, kann sie exportieren oder löschen.",
+      "scopeChain": "Alles, was auf der Blockchain liegt. Diese Datei umfasst nur Ihren Browser, daher stehen Ihre Wallet-Adresse und die von Ihnen signierten Transaktionen nicht darin — sie sind aber öffentlich, und Sie können sie in jedem Block-Explorer selbst nachschlagen. Was niemand kann, auch Vaipakam nicht, ist sie zu löschen.",
       "scopeAlerts": "Benachrichtigungen. Wenn Sie Telegram verknüpft haben, liegt diese Verbindung beim Benachrichtigungsdienst, nicht in Ihrem Browser. Das Aufheben der Verknüpfung in den Einstellungen entfernt die Telegram-Verbindung selbst; Ihre Benachrichtigungseinstellungen bleiben für eine erneute Verknüpfung bei diesem Dienst. Schreiben Sie an support@vaipakam.com, um auch diese entfernen zu lassen.",
       "scopeDiagnostics": "Fehlerberichte, die unser Support-Dienst aufbewahrt. Sie liegen getrennt von Ihrem Browser und werden auf Anfrage gelöscht — schreiben Sie an support@vaipakam.com, und wir entfernen die Datensätze zu Ihrer Wallet.",
       "scopeSite": "Die Hauptseite vaipakam.com. Sie führt einen eigenen, getrennten Speicher mit eigenen Bedienelementen auf jener Seite.",

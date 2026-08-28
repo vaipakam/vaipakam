@@ -161,6 +161,50 @@ describe('storage-prefix coverage', () => {
     }
   });
 
+  it('covers every LITERAL key handed to setItem', () => {
+    // Review round 1 P2 closed the "new file" hole; this closes the
+    // other half. A registered file can still gain a new key, and the
+    // registry check passes because the FILE is already listed. So
+    // every literal first-argument to setItem is checked directly:
+    // `localStorage.setItem('preferences', v)` fails here even in a
+    // file that is otherwise registered.
+    //
+    // Runtime-built keys stay out of static reach — that is what the
+    // file registry is for, and the two together are why neither hole
+    // is open on its own.
+    // grep exits 1 when nothing matches, which `execFileSync` raises —
+    // and "no literal keys anywhere" is a legitimate state, not a
+    // failure. Every key being built at runtime would look exactly like
+    // this, and it must not read as a broken test.
+    let out = '';
+    try {
+      out = execFileSync(
+        'grep',
+        [
+          '-rhoE',
+          String.raw`(localStorage|sessionStorage)\.setItem\(\s*['"][^'"]+['"]`,
+          'src',
+          '--include=*.ts',
+          '--include=*.tsx',
+          // Tests included would match the illustrative call in this
+          // very comment — the check reporting its own example as a
+          // defect, which it did on first run.
+          '--exclude=*.test.ts',
+          '--exclude=*.test.tsx',
+        ],
+        { cwd: process.cwd(), encoding: 'utf8' },
+      );
+    } catch {
+      out = '';
+    }
+    const literals = [...out.matchAll(/['"]([^'"]+)['"]/g)].map((m) => m[1]);
+    const uncovered = literals.filter((literal) => !isAppStorageKey(literal));
+    expect(
+      uncovered,
+      `literal storage keys the data-rights scan cannot reach: ${uncovered.join(', ')}`,
+    ).toEqual([]);
+  });
+
   it('registers a writer for every known key', () => {
     // The two halves check each other: KNOWN_KEYS is what the export
     // must contain, STORAGE_WRITERS is where each comes from. A key in

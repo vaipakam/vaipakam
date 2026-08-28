@@ -132,6 +132,14 @@ const copySource = {
     claims: { title: 'Claims — Vaipakam' },
     vault: { title: 'My vault — Vaipakam' },
     activity: { title: 'Activity — Vaipakam' },
+    // #1960 — noindex like the other per-user surfaces. Without a row
+    // here the route falls through to `notFound`, so a working page
+    // titles itself "Page not found".
+    dataRights: {
+      title: 'Your data — Vaipakam',
+      description:
+        'Download or erase the data the Vaipakam app keeps in this browser.',
+    },
     settings: { title: 'Settings — Vaipakam' },
     riskAccess: { title: 'Risk access — Vaipakam' },
     recover: { title: 'Recover stuck tokens — Vaipakam' },
@@ -360,8 +368,13 @@ const copySource = {
     holdingUnreadable:
       'This browser will not let the app read its own storage, so we cannot show you what is there. Private-browsing windows and strict privacy settings do this. Clearing site data through your browser’s own settings will still remove it.',
     scopeTitle: 'What this does not cover',
+    /* Review round 1 P2 — the earlier wording said nobody can "export
+       or erase" on-chain data. Erasure is genuinely impossible; export
+       is not, since anyone can read the chain through a block
+       explorer. On a file that IS an access request, understating what
+       the user can obtain is its own misstatement. */
     scopeChain:
-      'Anything on the blockchain. Your wallet address and every transaction you have signed are public and permanent — no one, Vaipakam included, can export or erase them.',
+      'Anything on the blockchain. This file only covers your browser, so your wallet address and the transactions you have signed are not in it — but they are public, and you can look them up yourself on any block explorer. What nobody can do, Vaipakam included, is erase them.',
     /* Review round 1 P1 — this said "unlink to remove it", which was
        false in the same way the Privacy Policy's erasure sentence is:
        the agent's unlink only clears the Telegram chat id, keeping the
