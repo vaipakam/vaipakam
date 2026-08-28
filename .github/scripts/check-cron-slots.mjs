@@ -560,75 +560,43 @@ function checkSkipList() {
  * separately, and only one of them had ever been told about fences.
  */
 function* visibleLines(md) {
+  // FENCES ONLY. HTML-comment tracking used to live here and is gone —
+  // `checkNoHtmlComments` forbids `<!--` in the authority outright instead.
+  //
+  // Codex #1978 r17-r19 found five defects in that tracking, and TWO OF THEM
+  // were false positives I shipped: a `<!--` inside a fenced example swallowed
+  // the rest of the document, and an indented code block containing one did
+  // the same. On a gate that blocks CI, a false positive is the expensive
+  // failure — it stops every correct edit, where a false negative lets one bad
+  // edit through. The parser was generating worse bugs than the ones it
+  // caught, and each fix enlarged the surface the next round reviewed.
+  //
+  // Forbidding the construct is decidable in one line and costs nothing: the
+  // authority contains no HTML comments, and there is no reason for a file
+  // whose entire job is to state one number plainly to hide any of itself.
+  // Parsing a language is a bad way to answer a question you can just rule
+  // out. (See the escalation on #1978: two thirds of that PR's findings were
+  // on this file, and the recent ones were CommonMark edge cases.)
   let openedWith = null; // { kind, len } while inside a fence
-  let inComment = false;
-  for (const raw of md.split('\n')) {
-    // INSIDE A FENCE, `<!--` is literal text, not markup. Codex #1978 r18:
-    // treating it as a comment opener let a fenced EXAMPLE containing `<!--`
-    // swallow its own closing fence and everything after it — including the
-    // real stamp — so the gate REJECTED a valid authority. That direction
-    // matters more than the one I was defending against: a false negative
-    // lets one bad edit through, a false positive blocks every correct edit,
-    // and this gate blocks CI. Fences are resolved first, and comment state is
-    // only touched outside them.
-    if (openedWith !== null && !inComment) {
-      const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(raw);
-      if (
-        fence &&
-        fence[1][0] === openedWith.kind &&
-        fence[1].length >= openedWith.len &&
-        fence[2].trim() === ''
-      ) {
-        openedWith = null;
-      }
-      continue; // fenced content is never visible
-    }
-
-    // ONE left-to-right pass, rather than stripping complete `<!-- ... -->`
-    // pairs with a global replace and then looking for a leftover opener.
-    // CodeQL flags that shape as incomplete multi-character sanitization, and
-    // while nothing here is rendered, the objection is sound on its own terms:
-    // the second look runs over text the first rewrote, so `<!<!-- -->--`
-    // produces an opener that was never in the source.
-    let line = '';
-    let i = 0;
-    while (i < raw.length) {
-      if (inComment) {
-        const close = raw.indexOf('-->', i);
-        if (close === -1) {
-          i = raw.length;
-        } else {
-          i = close + 3;
-          inComment = false;
-        }
-      } else {
-        const open = raw.indexOf('<!--', i);
-        if (open === -1) {
-          line += raw.slice(i);
-          i = raw.length;
-        } else {
-          line += raw.slice(i, open);
-          i = open + 4;
-          inComment = true;
-        }
-      }
-    }
-
-    // Codex #1978 r18: at most THREE leading spaces. Four or more makes the
-    // line an indented code block, not a fence — so `^\s*` accepted an
-    // indented line as a CLOSER and released the fence early, marking
-    // still-fenced content visible. CommonMark's rule, and the opener and the
-    // closer are both bound by it.
+  for (const line of md.split('\n')) {
+    // At most three leading spaces: four or more is an indented code block,
+    // not a fence, in BOTH directions.
     const fence = /^ {0,3}(```+|~~~+)(.*)$/.exec(line);
     if (fence) {
       const run = fence[1];
       const kind = run[0];
+      const info = fence[2];
       if (openedWith === null) {
+        // Codex #1978 r19: a BACKTICK fence's info string may not contain a
+        // backtick — CommonMark does not treat ``` bad`info as an opener, so
+        // opening one here hid the real inventory that followed and failed a
+        // valid document. Tilde fences have no such rule.
+        if (kind === '`' && info.includes('`')) continue;
         openedWith = { kind, len: run.length };
       } else if (
         openedWith.kind === kind &&
         run.length >= openedWith.len &&
-        fence[2].trim() === ''
+        info.trim() === ''
       ) {
         openedWith = null;
       }
@@ -636,6 +604,24 @@ function* visibleLines(md) {
     }
     if (openedWith === null) yield line;
   }
+}
+
+/**
+ * The authority may not contain HTML comments.
+ *
+ * A blunt rule replacing a parser, and deliberately so — see {visibleLines}.
+ * The constraint is invisible in practice (the file has never had one) and it
+ * removes an entire class of "the checker and the reader disagree about what
+ * this document says", which is the class this gate exists to close.
+ */
+function checkNoHtmlComments(md) {
+  if (!md.includes('<!--')) return [];
+  return [
+    'the authority contains an HTML comment; this file may not hide any of ' +
+      'itself from a reader, because every check here asks what the RENDERED ' +
+      'document claims. Delete the comment, or move the note into ordinary ' +
+      'prose where it is part of the document rather than concealed in it',
+  ];
 }
 
 function hasVisibleStamp(md) {
@@ -672,7 +658,14 @@ export function checkStamp(md) {
   // second claim — was counted as nothing at all. Three rounds have now found
   // the same thing: whatever makes a stamp malformed must not also make it
   // invisible to the count.
-  const markers = [...md.matchAll(/\*\*Verified:/g)];
+  // Codex #1978 r19: count over the VISIBLE document, as checkSummary does.
+  // Counting raw text meant a fenced EXAMPLE of the stamp — the natural way to
+  // document the format — read as a second stamp and blocked CI on a correct
+  // authority. Third false-positive of the same kind, and the same cause each
+  // time: two questions ("what does the reader see" / "what does the file
+  // contain") answered with whichever text was nearest to hand.
+  const visibleMd = [...visibleLines(md)].join('\n');
+  const markers = [...visibleMd.matchAll(/\*\*Verified:/g)];
   if (markers.length === 0) {
     return [
       'the "**Verified: <ISO-8601>.**" stamp is missing; it is the only ' +
@@ -701,7 +694,7 @@ export function checkStamp(md) {
     ];
   }
 
-  const canonical = /^\*\*Verified:\s*([^*]*?)\.?\*\*/m.exec(md);
+  const canonical = /^\*\*Verified:\s*([^*]*?)\.?\*\*/m.exec(visibleMd);
   if (!canonical) {
     return [
       'the "Verified:" stamp is present but its markup is unterminated; it must ' +
@@ -792,6 +785,7 @@ function runOffline() {
   const authorityMd = readFileSync(AUTHORITY, 'utf8');
   const inv = parseInventory(authorityMd);
   const summaryProblems = [
+    ...checkNoHtmlComments(authorityMd),
     ...checkStamp(authorityMd),
     ...checkSkipList(),
     ...checkInventoryPresent(inv),
@@ -1225,21 +1219,21 @@ export function parseInventory(md) {
         'must be exactly one, or the checks read a different table than the reader',
     );
   }
-  const start = md.search(/^##\s+The inventory\b/m);
-  let region = md;
-  if (start !== -1) {
-    const rest = md.slice(start + 1);
-    const next = rest.search(/^##\s/m);
-    region = next === -1 ? md.slice(start) : md.slice(start, start + 1 + next);
+  // Codex #1978 r19: visibility isdetermined over the WHOLE document and the
+  // section is sliced FROM THE VISIBLE LINES — not the other way round.
+  // Slicing first meant a fence opened immediately BEFORE the heading was
+  // outside `region`, so `visibleLines(region)` started with a clean slate and
+  // parsed every hidden row as visible. A slice cannot inherit state it was
+  // cut away from; deciding visibility first is the only ordering that can be
+  // right, rather than one more special case bolted onto the wrong one.
+  const visible = [...visibleLines(md)];
+  const headIdx = visible.findIndex((l) => /^##\s+The inventory\b/.test(l));
+  let lines = visible;
+  if (headIdx !== -1) {
+    const rest = visible.slice(headIdx + 1);
+    const nextIdx = rest.findIndex((l) => /^##\s/.test(l));
+    lines = nextIdx === -1 ? rest : rest.slice(0, nextIdx);
   }
-  // Codex #1978 r17: the ROWS must be reader-visible too, on the same rule the
-  // stamp uses. Wrapping the whole table in `<!-- ... -->` previously left
-  // parseInventory, checkSummary, checkSources and checkStamp all reporting no
-  // problems, and `--live` comparing the account against rows that render as
-  // nothing — an authority with no inventory in it, and both modes agreeing.
-  // The stamp check learned about fences three rounds before this parser did;
-  // sharing `visibleLines` is what stops them diverging again.
-  const lines = [...visibleLines(region)];
 
   for (const line of lines) {
     // Codex #1978 r8: a leading pipe is OPTIONAL in Markdown — the table still
@@ -1272,7 +1266,26 @@ export function parseInventory(md) {
     }
     const cells = line.trim().replace(/^\||\|$/g, '').split('|');
     // The header and the alignment separator are not data.
-    if (/^\s*Worker\s*$/i.test(cells[0]) || /^[\s:-]+$/.test(cells[0])) continue;
+    if (/^[\s:-]+$/.test(cells[0])) continue; // alignment separator
+    if (/^\s*Worker\s*$/i.test(cells[0])) {
+      // Codex #1978 r19: the header was skipped on its FIRST cell alone, while
+      // the data rows below are parsed by fixed position. Reorder the headings
+      // to `| Worker | Status | Source in this repo | Schedule |` and the
+      // rendered table tells an operator that schedules are statuses — with
+      // both modes green, because the parser never read the headings it was
+      // disagreeing with. Cheap to check and it is the one row that says what
+      // every other row MEANS.
+      const want = ['Worker', 'Schedule', 'Source in this repo', 'Status'];
+      const got = cells.map((c) => c.trim());
+      if (got.length !== want.length || got.some((c, i) => c !== want[i])) {
+        problems.push(
+          `the inventory header reads \`${got.join(' | ')}\` but this parser reads ` +
+            `columns by position as \`${want.join(' | ')}\`; the headings and the ` +
+            `parse would describe different tables`,
+        );
+      }
+      continue;
+    }
     // Codex #1978 r5: a SHORT row used to `continue` before the malformed-row
     // finding below, so dropping the Status column dropped the reservation with
     // it, in silence — and `--live` cannot recover a reservation, because a
@@ -2024,13 +2037,38 @@ const STAMP_CASES = [
   // Codex #1978 r17: the multiline comment form. The single-line form has been
   // handled since r11 — this is its sibling, and the one an editor reaches for
   // when hiding a block.
-  ['hidden in a multiline HTML comment', '<!--\n**Verified: 2026-08-27T16:21:53Z.**\n-->', 1],
+  // Codex #1978 r19: a COMMENTED stamp is now caught by checkNoHtmlComments,
+  // not here — the authority may not contain HTML comments at all, so this
+  // check no longer needs to model them. Kept as a fixture pointing at where
+  // the case moved, because deleting it would look like the case stopped
+  // being covered.
+  // Codex #1978 r19: a COMMENTED stamp is now checkNoHtmlComments' case, not
+  // this one — the authority may not contain HTML comments at all, so this
+  // check no longer models them and reads the stamp as present. Pinned at 0
+  // deliberately, with COMMENT_CASES below covering where the case moved:
+  // deleting the fixture would make it look like the case stopped mattering,
+  // and leaving it at 1 would assert a defence this function no longer has.
+  ['a commented stamp is the comment ban\'s case, not this one', '<!--\n**Verified: 2026-08-27T16:21:53Z.**\n-->', 0],
   // A comment that CLOSES leaves the rest of the document visible.
   [
     'a closed comment does not hide the stamp after it',
     '<!-- unrelated -->\n**Verified: 2026-08-27T16:21:53Z.**',
     0,
   ],
+];
+
+/**
+ * {checkNoHtmlComments} fixtures: `[name, markdown, expectedProblems]`.
+ *
+ * This check replaced ~80 lines of HTML-comment tracking inside
+ * {visibleLines}, which produced three false positives in three rounds. The
+ * fixtures are correspondingly boring, which is the point.
+ */
+const COMMENT_CASES = [
+  ['no comment', '# fine\n\n**Verified: 2026-08-27T16:21:53Z.**', 0],
+  ['a multiline comment', '<!--\nhidden\n-->', 1],
+  ['a single-line comment', '<!-- hidden -->', 1],
+  ['a comment inside a fence is still a comment for this rule', '```\n<!-- x -->\n```', 1],
 ];
 
 /** Source-cell fixtures: `[name, cell, expected readSource value]`. */
@@ -2230,6 +2268,13 @@ function runSelftest() {
       bad++;
     }
   }
+  for (const [name, md, expected] of COMMENT_CASES) {
+    const got = checkNoHtmlComments(md).length;
+    if (got !== expected) {
+      console.error(`selftest: comment case "${name}" reported ${got} problem(s), expected ${expected}`);
+      bad++;
+    }
+  }
   for (const [name, md, liveTriggers, reservedRows, expected] of SUMMARY_CASES) {
     // Fixtures carry a COUNT; the checker takes names. Synthesise keeper-shaped
     // names so the identity check is satisfied by the canonical label and the
@@ -2287,7 +2332,7 @@ function runSelftest() {
   console.log(
     `Cron-slot gate selftest OK (${MUST_FIRE.length} fire, ${MUST_NOT_FIRE.length} quiet, ` +
       `${INVENTORY_CASES.length} inventory rows, ${SUMMARY_CASES.length} summaries, ` +
-      `${STAMP_CASES.length} stamps, ${SOURCE_CASES.length} sources, ` +
+      `${STAMP_CASES.length} stamps, ${COMMENT_CASES.length} comment rules, ${SOURCE_CASES.length} sources, ` +
       `${CHECK_SOURCES_CASES.length} source resolutions).`,
   );
   return 0;
