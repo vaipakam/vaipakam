@@ -8,7 +8,13 @@
  * instead of picking the interesting ones and hoping.
  */
 import { describe, expect, it } from 'vitest';
-import { opensGate, tosGateVerdict, type TosGateInput } from './tosGate';
+import {
+  MAX_VERDICT_AGE_MS,
+  isVerdictStale,
+  opensGate,
+  tosGateVerdict,
+  type TosGateInput,
+} from './tosGate';
 
 const input = (over: Partial<TosGateInput> = {}): TosGateInput => ({
   connected: true,
@@ -74,5 +80,34 @@ describe('tosGateVerdict', () => {
       { connected: true, readOk: true, loading: false, accepted: true },
     ]);
     expect(opened.filter((a) => !a.connected)).toHaveLength(8);
+  });
+});
+
+describe('isVerdictStale', () => {
+  const t0 = 1_700_000_000_000;
+
+  it('treats a never-loaded verdict as stale', () => {
+    // 0 means no successful read has landed. `readOk` covers that too,
+    // but a helper that answered "fresh" here would be one wrong caller
+    // away from opening on nothing.
+    expect(isVerdictStale(0, t0)).toBe(true);
+  });
+
+  it('trusts a verdict inside the bound', () => {
+    expect(isVerdictStale(t0, t0)).toBe(false);
+    expect(isVerdictStale(t0, t0 + MAX_VERDICT_AGE_MS)).toBe(false);
+  });
+
+  it('stops trusting one past it', () => {
+    expect(isVerdictStale(t0, t0 + MAX_VERDICT_AGE_MS + 1)).toBe(true);
+  });
+
+  it('is bounded well above the refresh interval', () => {
+    // The hook polls every 60s. The bound has to exceed that with room
+    // to spare, or an ordinary slow refresh would close the app on a
+    // user who has done nothing wrong; and it has to be finite, or a
+    // poll that has stopped landing would never be noticed.
+    expect(MAX_VERDICT_AGE_MS).toBeGreaterThan(60_000 * 2);
+    expect(Number.isFinite(MAX_VERDICT_AGE_MS)).toBe(true);
   });
 });

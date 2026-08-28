@@ -54,6 +54,49 @@ export function tosGateVerdict({
   return accepted ? 'pass' : 'prompt';
 }
 
+/**
+ * How old a successful verdict may be before the gate stops trusting it.
+ *
+ * Codex review round 1 P1: `isPending` is false while TanStack refetches
+ * a query that already holds data, so a cached `accepted: true` kept the
+ * app open for the whole of every background refresh — including one
+ * that was about to discover a new version.
+ *
+ * The prescribed remedy was to close while fetching. I did not do that,
+ * and the reason is concrete rather than a preference: this gate wraps
+ * the routed `<Outlet />`, so closing UNMOUNTS the page. With the poll
+ * this round also adds, every routed surface would be torn down and
+ * rebuilt on a fixed interval, destroying any half-filled borrow or
+ * lend form along with it. That is a worse defect than the one being
+ * fixed, and it would be hit by every user rather than by the narrow
+ * race.
+ *
+ * What actually creates the risk is AGE, not fetching: a verdict is
+ * dangerous once it is old, whether or not a refresh happens to be in
+ * flight. So the gate bounds the age instead. Below the bound the app
+ * stays mounted through refreshes; past it — which means the poll has
+ * been failing — the gate closes and asks again. The window is
+ * therefore bounded by a stated number rather than by the hope that a
+ * refetch is running.
+ */
+export const MAX_VERDICT_AGE_MS = 180_000;
+
+/**
+ * True when a successful verdict is too old to keep the gate open.
+ *
+ * `dataUpdatedAt` of 0 means no successful read has ever landed, which
+ * `readOk` already covers; treat it as stale so a caller that reaches
+ * here first cannot open on it.
+ */
+export function isVerdictStale(
+  dataUpdatedAt: number,
+  now: number,
+  maxAgeMs: number = MAX_VERDICT_AGE_MS,
+): boolean {
+  if (!dataUpdatedAt) return true;
+  return now - dataUpdatedAt > maxAgeMs;
+}
+
 /** True only for the verdicts that may render the gated app. */
 export function opensGate(verdict: TosGateVerdict): boolean {
   return verdict === 'pass' || verdict === 'pass-unconnected';
