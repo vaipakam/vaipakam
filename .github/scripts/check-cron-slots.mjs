@@ -1107,10 +1107,15 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
   // connectives, and treat every token as a claimed holder — then the
   // comparison with the table is a real set equality in both directions,
   // including for holders the table has never heard of.
-  const holderText = /live plus\s+(.*?)\s*(?:'s)?\s*reserve/.exec(label)?.[1] ?? '';
+  // Both apostrophes. The authority uses ASCII `'` today — verified — but a
+  // typographic `’` is what an editor or autocorrect inserts, and with only
+  // the ASCII form the holder would parse as `keeper’s`, match no Worker, and
+  // be reported as an unknown holder: a blocking gate rejecting a correct
+  // document over a character substitution nobody would look for.
+  const holderText = /live plus\s+(.*?)\s*(?:['’]s)?\s*reserve/.exec(label)?.[1] ?? '';
   const claimed = holderText
     .split(/\s*(?:,|\band\b|\&)\s*/)
-    .map((t) => t.replace(/^the\s+/, '').replace(/'s$/, '').trim())
+    .map((t) => t.replace(/^the\s+/, '').replace(/['’]s$/, '').trim())
     .filter(Boolean);
 
   const namedInLabel = new Set([...allNames].filter(named));
@@ -1496,7 +1501,15 @@ export function checkSources(sources) {
       // comment-laden and this needs one top-level string field. A config that
       // declares no name is not a finding here; `--live` already ties Worker
       // NAMES to the account, so this check exists for the DIRECTORY binding.
-      const declared = /^\s*"name"\s*:\s*"([^"]+)"/m.exec(readFileSync(configPath, 'utf8'));
+      // `^ {0,2}` — TOP-LEVEL only. `apps/agent/wrangler.jsonc` carries ELEVEN
+      // `"name"` fields: one top-level at indent 2, and ten rate-limit /
+      // binding names at indent 8. `^\s*` with /m takes the first in document
+      // ORDER, which is the right one today purely because it appears first —
+      // reorder the file and this compares the row against
+      // `QUOTE_0X_RATELIMIT` and rejects a correct row. Found by counting the
+      // matches in the real configs rather than trusting the one I had in
+      // mind; a false positive on a blocking gate is the expensive direction.
+      const declared = /^ {0,2}"name"\s*:\s*"([^"]+)"/m.exec(readFileSync(configPath, 'utf8'));
       if (declared && declared[1] !== name) {
         problems.push(
           `\`${name}\`'s source \`${path}\` holds a wrangler config for ` +
@@ -2047,6 +2060,11 @@ const CHECK_SOURCES_CASES = [
   // of these resolve and both hold a wrangler config; only one is correct.
   ['a source cell pointing at another Worker is rejected', new Map([['vaipakam-agent', 'apps/indexer']]), 1],
   ['the matching source is accepted', new Map([['vaipakam-indexer', 'apps/indexer']]), 0],
+  // Self-review after r18: `apps/agent/wrangler.jsonc` has ELEVEN "name"
+  // fields — one top-level, ten nested binding names. This pins that the
+  // top-level one is what is read, so reordering the config cannot make the
+  // check compare a rate-limit binding's name against the row.
+  ['a config with many nested name fields reads the top-level one', new Map([['vaipakam-agent', 'apps/agent']]), 0],
 ];
 
 const SOURCE_CASES = [
