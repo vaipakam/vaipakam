@@ -12,9 +12,18 @@ That Worker is `vaipakam-offchain-data-archive`, the pre-rename predecessor of
 the nightly backup Worker. It was supposed to be retired once its replacement
 had completed a run; it never was. **As read from the account on 2026-08-27**
 it was still armed on the same minute as the replacement, with its own storage
-credentials and its own copy of the backup encryption key, having run a full
-second backup every night for at least three weeks. Reading the account rather
+credentials and its own copy of the backup encryption key, and had been
+scheduled that way for at least three weeks. Reading the account rather
 than the prose is what surfaced it.
+
+An earlier draft of that sentence said it had *run a full second backup every
+night*. It had not been established that it had. The account API reports
+trigger configuration and says nothing about whether an object was written —
+which is the distinction this very change had to add to the restore runbook,
+after the same inference was found there. Writing it into the incident record
+as well would have told a future operator that every night has a fallback copy,
+which is the belief the runbook now exists to prevent. **Armed is not
+uploaded**, and only the bucket listing settles it.
 
 Those are dated observations, deliberately. This note lives in the pending
 folder until the day's notes are assembled, and the account can change in the

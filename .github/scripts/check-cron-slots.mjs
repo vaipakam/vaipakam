@@ -1286,10 +1286,14 @@ const PLAN_ENTITLEMENT =
   /\bper\s+(?:cloudflare\s+)?account\b|\b(?:free|paid|each|every|any)\s+(?:cloudflare\s+)?accounts?\b|\baccount\s+plan\b|\bplan\s+limits?\b/i;
 
 function scopedElsewhere(text, at, len) {
+  // Codex #1978 r49: the BACKWARD scan knew `.` `;` and newline while the
+  // forward scan knew `!` and `?` too — so "Local development uses no
+  // schedules! There are four cron triggers." put `local` inside the claim's
+  // sentence and suppressed it. One function, two scans, two different ideas
+  // of where a sentence ends, and I wrote the second one three rounds after
+  // the first without comparing them.
   const before = Math.max(
-    text.lastIndexOf('.', at - 1),
-    text.lastIndexOf(';', at - 1),
-    text.lastIndexOf('\n', at - 1),
+    ...['.', ';', '!', '?', '\n'].map((ch) => text.lastIndexOf(ch, at - 1)),
   );
   const rest = text.slice(at + len);
   const stop = rest.search(/[.;!?\n]/);
@@ -1311,7 +1315,11 @@ function scopedElsewhere(text, at, len) {
   // the SECOND clause's generic vocabulary. Third boundary correction on this
   // one window (r46 sentence-wide, r47 terminal punctuation, now all clause
   // delimiters) — each time I fixed the delimiters I had just been shown.
-  const cut = rawTrailing.search(/[.;:!?,\n]|\s[-\u2013\u2014]\s/);
+  // Codex #1978 r49: an en/em dash needs no surrounding spaces — "four cron
+  // triggers—every account has a dashboard" is the conventional typography,
+  // and requiring spaces was me matching the one spelling I had written in
+  // the r48 fixture. FOURTH correction to this window.
+  const cut = rawTrailing.search(/[.;:!?,\u2013\u2014\n]|\s-\s/);
   const trailing = cut === -1 ? rawTrailing : rawTrailing.slice(0, cut);
   return ENVIRONMENT.test(sentence) || PLAN_ENTITLEMENT.test(trailing);
 }
@@ -1731,7 +1739,14 @@ export function checkSummary(rawMd, liveTriggers, reservedNames, allNames = rese
   // the ASCII form the holder would parse as `keeper’s`, match no Worker, and
   // be reported as an unknown holder: a blocking gate rejecting a correct
   // document over a character substitution nobody would look for.
-  const holderText = /live plus\s+(.*?)\s*(?:['’]s)?\s*reserve/.exec(label)?.[1] ?? '';
+  // Codex #1978 r49: NON-GREEDY took the FIRST `reserve`, so a legal name
+  // like `vaipakam-cold-reserve` truncated its own label to `cold-` and no
+  // spelling could pass — the SEVENTH unrepresentable state, and the exact
+  // sibling of r48's `and`. There I resolved known identifiers before
+  // splitting on conjunctions and left this extraction, which runs first,
+  // still treating a name fragment as syntax. Greedy anchors on the LAST
+  // `reserve`, which is the structural one.
+  const holderText = /live plus\s+(.*)\s*(?:['’]s)?\s*reserve/.exec(label)?.[1] ?? '';
   // Codex #1978 r48: a legal Worker name can CONTAIN a conjunction —
   // `vaipakam-research-and-development` — and splitting first turned every
   // spelling of it into unknown fragments, so no label could pass: the SIXTH
@@ -2031,7 +2046,12 @@ export function parseInventory(md) {
     // formatting-only indent made EVERY data row unparseable in both modes —
     // the fifth unrepresentable state on this PR. The two tests have to agree
     // about what a row looks like.
-    const row = /^ {0,3}\|\s*`([a-z0-9_-]+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
+    // Codex #1978 r49: Wrangler rejects a name starting with a dash, and a
+    // RESERVED row has no account-side witness — so the summary could be
+    // balanced around a Worker that cannot be deployed. Must start
+    // alphanumeric; the underscore alphabet from r43 is retained.
+    const row =
+      /^ {0,3}\|\s*`([a-z0-9][a-z0-9_-]*)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|/i.exec(line);
     // Codex #1978 r4: a row that LOOKS like data and does not parse was silently
     // skipped, and the "bolded name skipped" fixture documented the hole rather
     // than closing it. Bolding the keeper's name would drop its reservation from
@@ -3001,6 +3021,16 @@ const MUST_FIRE = [
     'a claim followed by a comma clause still fires',
     'There are four cron triggers, while every account has a dashboard.',
   ],
+  // r49: an unspaced em dash is the conventional typography, and the leading
+  // scan must know the same sentence enders the trailing one does.
+  [
+    'a claim followed by an unspaced dash clause still fires',
+    'There are four cron triggers\u2014every account has a dashboard.',
+  ],
+  [
+    'an environment sentence ending in ! does not reach the next claim',
+    'Local development uses no schedules! There are four cron triggers.',
+  ],
   ['the verbal form, possessive subject', 'Our Cloudflare account uses 4 cron triggers today.'],
   // Codex #1978 r39: a purpose phrase opens exactly like an environment scope
   // and is not one. These are the cases the grammatical test could not tell
@@ -3475,6 +3505,15 @@ const INVENTORY_CASES = [
   // was the fourth unrepresentable legal state, caused by the r46 fix for the
   // third.
   // r48: `*` and `?` are complete atoms, not range endpoints.
+  // r49: Wrangler rejects a leading dash, and a reserved row has no
+  // account-side witness to contradict it.
+  [
+    'a leading dash in a Worker name is a finding',
+    '| `-future-worker` | *(none)* | `ops/future` | reserved — held |',
+    {},
+    [],
+    1,
+  ],
   [
     'a wildcard range endpoint is a finding',
     '| `vaipakam-agent` | `*-5 * * * *` | `apps/agent` | live |',
