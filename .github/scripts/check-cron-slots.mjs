@@ -4,8 +4,8 @@
  *
  * WHY THIS EXISTS (#1977). The Cloudflare free plan caps the account at 5
  * cron triggers. How many are in use was, until this gate, restated in TEN
- * places — three wrangler configs, three source comments, a README, a design
- * doc and two operator runbooks. All ten agreed with each other, and all ten
+ * places — three wrangler configs, four source comments, a README, a design
+ * doc and one operator runbook. All ten agreed with each other, and all ten
  * were wrong, because one live trigger belonged — as read from the account on
  * 2026-08-27 — to `vaipakam-offchain-data-archive`, a Worker that has no
  * source in this repository and is therefore invisible to anyone counting
@@ -108,6 +108,14 @@ const SKIP_EXACT = new Set([
  */
 const SKIP_PREFIXES = [
   'docs/ReleaseNotes/',
+  // Codex #1978 r38: `docs/OlderDocs/` holds dated snapshots — several are
+  // literally `*_bak20260504.md` — and rewriting one to match today's account
+  // would falsify the record it exists to preserve. Both sibling gates in this
+  // directory already exclude it for that reason. This is the r18 finding
+  // repeated exactly: the same archival tree, the same two siblings agreeing,
+  // the same omission here — and the same consequence, a blocking gate firing
+  // on a document nobody may correct.
+  'docs/OlderDocs/',
   // Codex #1978 r18: this was missing while the comment above NAMED it, and
   // while `check-docs-paths.mjs` and `check-excision-residue.mjs` — the two
   // sibling gates in this directory — both already exclude it. Three places
@@ -479,7 +487,23 @@ const OCCUPANCY = [
   // that finding: a restatement outside the authority is what this gate is
   // for, while a false positive is a nuisance.
   new RegExp(
-    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled)\b${NOT_SCOPED_ELSEWHERE}`,
+    // Codex #1978 r38: `running` was missing from the predicate list, which
+    // is the r35 finding on the SAME list one round later — r35 added the
+    // present-state adjectives and stopped at the ones already in mind. A
+    // trigger that is `running` is the plainest possible way to say it.
+    String.raw`\b${N}${WRAP}${CAP_NOUN}${WRAP}(?:(?:are|were|is|was)${WRAP})?(?:${TEMPORAL}${WRAP})*(?:taken|occupied|in${WRAP}use|live|active|armed|scheduled|running)\b${NOT_SCOPED_ELSEWHERE}`,
+    'i',
+  ),
+  // The postposed participle — "There are four cron triggers running." — and
+  // the verbal form, "The account currently runs four cron triggers." Neither
+  // puts a predicate adjective after a copula, so neither shape above reaches
+  // them.
+  new RegExp(
+    String.raw`\bthere${WRAP}(?:are|is)${WRAP}${N}${WRAP}${CAP_NOUN}${WRAP}(?:${TEMPORAL}${WRAP})*running\b${NOT_SCOPED_ELSEWHERE}`,
+    'i',
+  ),
+  new RegExp(
+    String.raw`\b(?:(?:this|the|our)${WRAP}(?:cloudflare${WRAP})?(?:account|org)|we)${WRAP}(?:${TEMPORAL}${WRAP})*(?:runs?|is${WRAP}running)${WRAP}${N}${WRAP}${CAP_NOUN}\b${NOT_SCOPED_ELSEWHERE}`,
     'i',
   ),
   new RegExp(
@@ -1934,7 +1958,15 @@ export function parseInventory(md) {
     ];
     const fieldOk = (f, [lo, hi]) =>
       f.split(',').every((part) => {
-        const [range, step] = part.split('/');
+        // Codex #1978 r38: destructuring two names out of `split('/')` DROPS
+        // everything after the second, so `*/2/3` validated as `*` step `2`
+        // and was counted as a live trigger. Destructuring is silent about
+        // extra elements by design, which makes it the wrong tool for
+        // validating a grammar: the test belongs on the split's LENGTH, not on
+        // the two names bound out of it.
+        const parts = part.split('/');
+        if (parts.length > 2) return false;
+        const [range, step] = parts;
         // Codex #1978 r37 follow-on: a step of zero never advances, so `*/0`
         // names no times at all. That is the same "shaped like a schedule,
         // cannot run" defect the bounds below close, one atom smaller —
@@ -2293,6 +2325,7 @@ function readWranglerName(configPath) {
     // Three rounds on one small function — layout-keyed, then `//`-only, now
     // this. Each fix was correct about the case it was shown; none asked what
     // the input language actually is.
+    const isToml = /\.toml$/i.test(configPath);
     const text = stripJsonLikeComments(readFileSync(configPath, 'utf8'));
     let depth = 0;
     for (const rawLine of text.split('\n')) {
@@ -2301,9 +2334,22 @@ function readWranglerName(configPath) {
         const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
         if (m) return m[1] ?? m[2];
       }
-      // TOML has no braces around top-level keys: depth stays 0, so accept
-      // depth 0 too when the file never opens one.
-      if (depth === 0 && !text.includes('{')) {
+      // TOML has no braces around top-level keys, so depth stays 0 there.
+      //
+      // Codex #1978 r38: which language this is was decided by whether a `{`
+      // occurs ANYWHERE in the file — so a valid `wrangler.toml` containing an
+      // inline table, or merely a comment with a brace in it, silently turned
+      // off the only branch that can read it, and `readWranglerName` returned
+      // null. A null here is not inert: `checkSources` can no longer reject a
+      // row pointed at another Worker's directory, and `trackedWranglerNames`
+      // can no longer falsify a `*none*` source claim, so a wrong binding
+      // passes BOTH modes.
+      //
+      // Fourth round on this function, and the fourth time the answer is the
+      // one the third round already wrote down: "none asked what the input
+      // language actually is". The file extension says. A content sniff is a
+      // guess about a question that was never open.
+      if (depth === 0 && isToml) {
         const m = /^\s*"?name"?\s*[:=]\s*(?:"([^"]+)"|'([^']+)')/.exec(line);
         if (m) return m[1] ?? m[2];
       }
@@ -2522,6 +2568,11 @@ const MUST_FIRE = [
   // gate — a restatement of the live count, which is the whole subject.
   ['the direct form with a live predicate', 'Four cron triggers are live.'],
   ['the direct form with an armed predicate', '4 cron schedules are armed today.'],
+  // Codex #1978 r38: `running` — the plainest word for it — was the one the
+  // r35 predicate list left out.
+  ['the direct form with a running predicate', 'Four cron triggers are running.'],
+  ['the postposed participle', 'There are four cron triggers running.'],
+  ['the verbal form', 'The account currently runs four cron triggers.'],
   // Codex #1978 r4: the verdict shape — a live conclusion carrying no number.
   [
     'a restated verdict on the capacity step',
@@ -2649,6 +2700,7 @@ const MUST_NOT_FIRE = [
   ['a leading purpose scope', 'For local development, no cron triggers are live.'],
   // The r35 widening of the direct form must not reach a scoped sentence.
   ['the direct form scoped elsewhere', 'Four cron triggers are live in local development.'],
+  ['the running form scoped elsewhere', 'Four cron triggers are running in local development.'],
   ['a leading temporal scope', 'When running locally, no cron triggers are live.'],
   // The CONDITIONAL is the correct way to write it, and is what
   // `apps/keeper/wrangler.jsonc` says today. If this ever starts firing, the
@@ -2869,6 +2921,14 @@ const INVENTORY_CASES = [
     'an inverted range is a finding',
     '| `vaipakam-agent` | `5-2 * * * *` | `apps/agent` | live |',
     { 'vaipakam-agent': ['5-2 * * * *'] },
+    [],
+    1,
+  ],
+  // Codex #1978 r38: destructuring dropped the third component silently.
+  [
+    'a double step is a finding',
+    '| `vaipakam-agent` | `*/2/3 * * * *` | `apps/agent` | live |',
+    { 'vaipakam-agent': ['*/2/3 * * * *'] },
     [],
     1,
   ],

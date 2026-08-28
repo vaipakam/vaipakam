@@ -2,8 +2,8 @@
 
 Cloudflare's free plan caps the account at five cron triggers, and how many
 were spoken for was stated in ten places across the tree — three wrangler
-configs, three source comments, a README, a design doc and two operator
-runbooks. All of them agreed with each other. All of them were wrong, in the
+configs, four source comments, a README, a design doc and one operator
+runbook. All of them agreed with each other. All of them were wrong, in the
 same way and for the same reason: they counted the Workers that have source in
 this repository, and one of the live triggers belongs to a Worker that does
 not.
