@@ -1777,6 +1777,68 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  it('a --filter naming a DIRECTORY pattern (#1995 r7)', () => {
+    // pnpm documents `--filter ./<dir>` and `{<dir>}`; matching only against
+    // package names missed them entirely.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter './apps/*gent' run deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a run option with an ATTACHED value (#1995 r7)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'pnpm --filter @vaipakam/agent run --if-present=true deploy --no-keep-vars\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("cd's -- option terminator (#1995 r7)", () => {
+    const r = runWith('a.sh', 'cd -- apps/agent; wrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('ONE filter selecting BOTH packages reports both (#1995 r7)', () => {
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      "pnpm --filter '@vaipakam/*' run --if-present deploy --no-keep-vars\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('@vaipakam/keeper');
+    expect(r.out).toContain('@vaipakam/agent');
+  });
+
+  it("a workflow step's working-directory scopes its run body (#1995 r7)", () => {
+    // Actions runs the body from `working-directory`, so the run body itself
+    // contains no scope text at all.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'jobs:\n  x:\n    steps:\n      - name: deploy\n        working-directory: apps/agent\n        run: |\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('and the defaults.run form of the same (#1995 r7)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'jobs:\n  x:\n    defaults:\n      run:\n        working-directory: apps/agent\n    steps:\n      - run: |\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but an out-of-scope working-directory is left alone (#1995 r7)', () => {
+    // Step precedence must not leak between steps either: the second step here
+    // is the agent and is safe.
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'jobs:\n  x:\n    steps:\n      - name: a\n        working-directory: apps/indexer\n        run: |\n          wrangler deploy\n' +
+        '      - name: b\n        working-directory: apps/agent\n        run: |\n          wrangler deploy --keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
   it('still does not flag a subdirectory of an OUT-OF-SCOPE package (#1995 r1)', () => {
     // The descendant match must widen scope for scoped packages only; if it
     // widened generally the 13 leak fixtures would pass for the wrong reason.

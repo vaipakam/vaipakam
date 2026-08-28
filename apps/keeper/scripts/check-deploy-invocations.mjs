@@ -129,7 +129,7 @@ const DEPLOY_RE = String.raw`wrangler(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= 
 // `run` itself takes options before the script name — pnpm documents
 // `--if-present` — and requiring `deploy` to be the very next token missed
 // `run --if-present deploy` entirely (#1995 r6).
-const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run(?:-script)?(?:\s+-{1,2}[A-Za-z0-9-]+)*\s+deploy\b`;
+const RUN_DEPLOY_RE = String.raw`(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+run(?:-script)?(?:\s+-{1,2}[A-Za-z0-9-]+(?:=[^\s]*)?)*\s+deploy\b`;
 /** What counts as "this line performs a deploy" for DETECTION purposes. */
 const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE})`;
 
@@ -704,7 +704,7 @@ function commandIsSafe(cmd) {
   const runDeploy = source.match(
     new RegExp(
       `${hasWrangler ? '^' : ''}(pnpm|npm|yarn)(?:\\s+[^\\s]+)*?` +
-        `\\s+run(?:-script)?(?:\\s+-{1,2}[A-Za-z0-9-]+)*\\s+deploy\\b([\\s\\S]*)$`,
+        `\\s+run(?:-script)?(?:\\s+-{1,2}[A-Za-z0-9-]+(?:=[^\\s]*)?)*\\s+deploy\\b([\\s\\S]*)$`,
     ),
   );
   if (!runDeploy) return false;
@@ -839,28 +839,39 @@ const SCOPED = [
  * (#1995 r5). Only `*` is translated; a filter is matched against the package
  * NAME, which is the spelling a wrapper uses.
  */
-function filterScope(line) {
+function filterScopes(line) {
   // EVERY selector, not the first: pnpm runs on packages satisfying "at least
   // one of the selectors", so a protected glob sitting second was ignored
   // (#1995 r6). `--filter-prod` is the same selector with a different name.
+  //
+  // And every selector may select MORE THAN ONE package: `--filter
+  // '@vaipakam/*'` covers both scoped Workers, and returning the first left the
+  // other's remedy out of the same report (#1995 r7).
+  const out = new Set();
   const all = line.matchAll(
     /--filter(?:-prod)?(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"';&|)]+))/g,
   );
   for (const m of all) {
-    const pat = (m[1] ?? m[2] ?? m[3]).replace(/^\.\.\.|\.\.\.$/g, '');
-    if (!/[*]/.test(pat)) continue; // literal names are handled by scopeOf
+    let pat = (m[1] ?? m[2] ?? m[3]).replace(/^\.\.\.|\.\.\.$/g, '');
+    // A filter may name a DIRECTORY rather than a package: pnpm documents
+    // `--filter ./<dir>` and `--filter {<dir>}`, and matching only against
+    // package names missed `--filter './apps/*gent'` entirely (#1995 r7).
+    const isDir = /^[.{]/.test(pat);
+    pat = pat.replace(/^\{|\}$/g, '').replace(/^\.\//, '').replace(/\/+$/, '');
+    if (!/[*]/.test(pat)) continue; // literal names/paths are handled by scopeOf
     const re = new RegExp(
       `^${pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`,
     );
-    const hit = SCOPED.find((s) => re.test(s.filter));
-    if (hit) return hit;
+    for (const sc of SCOPED) {
+      if (re.test(isDir ? sc.dir : sc.filter)) out.add(sc);
+    }
   }
-  return null;
+  return [...out];
 }
 
 function scopeOf(line, filePath) {
-  const byFilter = filterScope(line);
-  if (byFilter) return byFilter;
+  const byFilter = filterScopes(line);
+  if (byFilter.length > 0) return byFilter[0];
   for (const s of SCOPED) {
     const base = s.dir.slice(s.dir.lastIndexOf('/') + 1);
     const parent = s.dir.slice(0, s.dir.lastIndexOf('/'));
@@ -1152,8 +1163,10 @@ function dirDirective(seg) {
   // `cd` and `pushd` take OPTIONS before the destination — bash's `help cd`
   // gives `cd [-L|[-P [-e]] [-@]] [dir]` — and recording the option as the
   // target moved the modelled cwd to `-P` instead of the directory, so
-  // `cd -P apps/agent; wrangler deploy` resolved nowhere (#1995 r6).
-  const OPTS = String.raw`(?:-[LPe@]+\s+)*`;
+  // `cd -P apps/agent; wrangler deploy` resolved nowhere (#1995 r6). The
+  // standard `--` terminator is consumed too, or it becomes the destination
+  // (#1995 r7).
+  const OPTS = String.raw`(?:-[LPe@]+\s+)*(?:--\s+)?`;
   const pushed = seg.match(new RegExp(`^pushd\\s+${OPTS}["']?([^\\s"';&|)]+)`));
   if (pushed) return { kind: 'pushd', target: pushed[1] };
   if (/^popd\b/.test(seg)) return { kind: 'popd' };
@@ -1254,7 +1267,9 @@ function embeddedShellLines(text, isYaml = false) {
       // unfolded source missed it entirely (Codex #1924 r29).
       const raw = lines.slice(start, j);
       const body = run[2] === '>' ? foldYamlScalar(raw) : raw.join('\n');
-      out.push(...offset(logicalLines(body), start, blockId));
+      out.push(
+        ...offset(logicalLines(body), start, blockId, isYaml ? workingDirFor(lines, i) : ''),
+      );
       blockId += 1;
       i = j;
       continue;
@@ -1275,7 +1290,14 @@ function embeddedShellLines(text, isYaml = false) {
             parts[last] = parts[last].slice(0, close) + parts[last].slice(close + 1);
           }
         }
-        out.push(...offset(logicalLines(foldFlowScalar(parts, q)), i, blockId));
+        out.push(
+          ...offset(
+            logicalLines(foldFlowScalar(parts, q)),
+            i,
+            blockId,
+            isYaml ? workingDirFor(lines, i) : '',
+          ),
+        );
         blockId += 1;
         i = end + 1;
         continue;
@@ -1380,8 +1402,62 @@ function closesQuote(s, q) {
 }
 
 /** Shift a block's logical lines back to real file line numbers. */
-function offset(block, start, blockId) {
-  return block.map((l) => ({ text: l.text, line: l.line + start, block: blockId }));
+function offset(block, start, blockId, cwd = '') {
+  return block.map((l) => ({
+    text: l.text,
+    line: l.line + start,
+    block: blockId,
+    cwd,
+  }));
+}
+
+/**
+ * The directory a workflow step actually runs in.
+ *
+ * Actions executes a `run:` body from `working-directory` when one is set, at
+ * the step or through `defaults.run` — both established patterns in this repo's
+ * own workflows. The scanner extracted only the run BODY, so a step that sets
+ * `working-directory: apps/agent` and then runs a bare `wrangler deploy`
+ * contained no scope text anywhere and passed (#1995 r7).
+ *
+ * Step level wins over the job default, which is Actions' own precedence.
+ */
+function workingDirFor(lines, runIdx) {
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  const WD = /^\s*working-directory:\s*(?:"([^"]*)"|'([^']*)'|(\S+))/;
+  const valueOf = (m) => m[1] ?? m[2] ?? m[3];
+
+  // STEP: walk up to this step's `- ` marker, then scan the step's own body.
+  const runIndent = indentOf(lines[runIdx]);
+  let start = runIdx;
+  while (start > 0 && !/^\s*-\s/.test(lines[start])) {
+    if (lines[start].trim() !== '' && indentOf(lines[start]) < runIndent) break;
+    start -= 1;
+  }
+  if (/^\s*-\s/.test(lines[start])) {
+    const stepIndent = indentOf(lines[start]);
+    for (let i = start; i < lines.length; i += 1) {
+      if (i > start && lines[i].trim() !== '') {
+        const ind = indentOf(lines[i]);
+        if (ind < stepIndent || (ind === stepIndent && /^\s*-\s/.test(lines[i]))) break;
+      }
+      const m = lines[i].match(WD);
+      if (m) return valueOf(m);
+    }
+  }
+
+  // DEFAULTS: the nearest preceding `defaults:` block that declares one.
+  for (let i = runIdx; i >= 0; i -= 1) {
+    if (!/^\s*defaults:\s*$/.test(lines[i])) continue;
+    const di = indentOf(lines[i]);
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (lines[j].trim() !== '' && indentOf(lines[j]) <= di) break;
+      const m = lines[j].match(WD);
+      if (m) return valueOf(m);
+    }
+    break;
+  }
+  return '';
 }
 
 /**
@@ -1513,7 +1589,7 @@ for (const file of walk(REPO_ROOT)) {
   let states = INITIAL;
   let prior = INITIAL;
   let currentBlock;
-  folded.forEach(({ text: line, line: lineNo, block, physical }) => {
+  folded.forEach(({ text: line, line: lineNo, block, physical, cwd: blockCwd }) => {
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
     // made one block's `cd apps/keeper` reject the NEXT block's agent deploy
@@ -1521,8 +1597,10 @@ for (const file of walk(REPO_ROOT)) {
     // typecheck, so it would have blocked CI on a correct workflow.
     if (block !== currentBlock) {
       currentBlock = block;
-      states = INITIAL;
-      prior = INITIAL;
+      // A workflow step's `working-directory` is where its commands actually
+      // run, so the block starts THERE rather than at an empty cwd (#1995 r7).
+      states = blockCwd ? [{ cwd: blockCwd.replace(/\/+$/, ''), stack: [] }] : INITIAL;
+      prior = states;
     }
     if (/^\s*$/.test(line) || /^\s*(?:`{3,}|~{3,})/.test(line)) {
       states = INITIAL;
@@ -1554,6 +1632,14 @@ for (const file of walk(REPO_ROOT)) {
         // nothing: prose often establishes the package in an earlier clause,
         // and a file inside a scoped tree scopes every line in it.
         const sel = selectorScope(seg, [{ cwd: '', stack: [] }], false);
+        // A single filter can select BOTH packages, and each needs its own
+        // remedy in the same report (#1995 r7).
+        const many = filterScopes(seg);
+        if (!sel && many.length > 1) {
+          flagged = true;
+          for (const sc of many) hitScopes.add(sc);
+          continue;
+        }
         const scope = sel ? sel.scope : scopeOf(seg, rel) ?? lineScope;
         if (!scope) continue;
         flagged = true;
@@ -1677,7 +1763,9 @@ for (const file of walk(REPO_ROOT)) {
         if (!scope) continue;
         if (commandIsSafe(seg)) continue;
         flagged = true;
-        hitScopes.add(scope);
+        const many = sel ? [] : filterScopes(seg);
+        if (many.length > 1) for (const sc of many) hitScopes.add(sc);
+        else hitScopes.add(scope);
       }
     }
 
