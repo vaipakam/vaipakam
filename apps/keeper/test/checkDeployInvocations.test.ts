@@ -2682,6 +2682,97 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ── The safety flag is a CLAIM about argv, and argv is not the source text.
+  // Five constructs hand wrangler `--no-keep-vars` without spelling it, and
+  // each was reported separately (#1995 r16). Three are decidable and are
+  // decided; two are not, and are answered "cannot prove it survives".
+  it('a QUOTED negation reaches wrangler as the real flag (#1995 r16)', () => {
+    const r = runWith('a.sh', 'cd apps/agent\nwrangler deploy --keep-vars --no-keep-"vars"\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a quoted negation appended to a package script too (#1995 r16)', () => {
+    const r = runWith('b.sh', 'pnpm --filter @vaipakam/agent run deploy --no-"keep-vars"\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it("yargs' CAMEL-CASE spelling is the same option (#1995 r16)", () => {
+    // `--no-keepVars` really does set keepVars:false on the pinned 4.90.0.
+    const r = runWith('c.sh', 'pnpm --filter @vaipakam/agent run deploy --no-keepVars\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('camel-case on a direct command as well (#1995 r16)', () => {
+    const r = runWith('d.sh', 'cd apps/agent\nwrangler deploy --keep-vars --no-keepVars\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a BRACE group expands to two arguments before scoring (#1995 r16)', () => {
+    // `--{,no-}keep-vars` is one written token and two arguments.
+    const r = runWith('e.sh', 'cd apps/agent\npnpm run deploy --{,no-}keep-vars\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('a brace group that PRODUCES the safety flag is honoured (#1995 r16)', () => {
+    // The package-script path expands braces at its own entry; this pins the
+    // scorer's, and it has to pin it in the SAFE direction. The destructive
+    // spelling would be reported either way — expanded, because the negation
+    // wins; unexpanded, because the flag is then missing entirely — so it
+    // cannot tell the two apart. `--{keep-vars,dry-run}` can: without
+    // expansion the token is unreadable and this correct command is a false
+    // red, with it the flag is present and the deploy passes.
+    const r = runWith('e2.sh', 'cd apps/agent\nwrangler deploy --{keep-vars,dry-run}\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and the camel-case POSITIVE spelling really is the safety flag (#1995 r16)', () => {
+    // Not decoration: without it only the NEGATION pattern knew camel-case, so
+    // dropping camel from the positive pattern broke nothing a test could see
+    // — while `--keepVars`, a correct and safe command, read as a bare deploy.
+    const r = runWith('d2.sh', 'cd apps/agent\nwrangler deploy --keepVars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a VARIABLE that carries the negation cannot be proven safe (#1995 r16)', () => {
+    const r = runWith('f.sh', 'FLAG=--no-keep-vars\ncd apps/agent\npnpm run deploy "$FLAG"\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('nor a SUBSTITUTION that emits one after the flag (#1995 r16)', () => {
+    // The mirror of the r14 case: there the substitution DELETED the flag,
+    // here it ADDS a negation, and blanking it hid both.
+    const r = runWith('g.sh', 'cd apps/agent\nwrangler deploy --keep-vars $(printf %s --no-keep-vars)\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('an opaque word after the flag is unknown, and unknown is not safe (#1995 r16)', () => {
+    const r = runWith('h.sh', 'cd apps/agent\nwrangler deploy --keep-vars $EXTRA\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('but an opaque word inside ANOTHER option is inert (#1995 r16 control)', () => {
+    // `--var "SHA:$COMMIT"` cannot introduce an argument. Reading every `$` as
+    // opaque would have made this correct command a false red — which is the
+    // failure mode that gets a guard deleted.
+    const r = runWith('i.sh', 'cd apps/agent\nwrangler deploy --keep-vars --var "SHA:$COMMIT"\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and a SINGLE-quoted dollar expands to itself (#1995 r16 control)', () => {
+    const r = runWith('j.sh', "cd apps/agent\nwrangler deploy --keep-vars --message 'cost $5'\n");
+    expect(r.ok).toBe(true);
+  });
+
+  it('a quoted command name beside an allowlisted quote is caught (#1995 r16)', () => {
+    // The residue test cleared the line because it read RAW text only, while
+    // detection reads the dequoted form — the exemption cancelled a real find.
+    const r = runWith(
+      'docs/ToDo.md',
+      'Prefer the dashboard over `wrangler deploy` for this. cd apps/agent && wrang"ler" deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

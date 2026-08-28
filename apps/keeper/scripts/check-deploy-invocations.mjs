@@ -343,7 +343,15 @@ function allowReason(line) {
   // deploy (#1995 r4), an exemption that leaves `pnpm … run deploy
   // --no-keep-vars` standing must not clear the line (#1995 r5). The residue
   // test only means anything if it looks for everything detection looks for.
-  return new RegExp(ANY_DEPLOY_RE).test(rest) ? null : hits.map((h) => h.why).join(' ');
+  // DEQUOTED as well as raw, for the same reason detection is (#1995 r16).
+  // `wrang"ler" deploy` appended to an allowlisted sentence is a real command
+  // that the dequoted detector flags — and this residue test, reading raw
+  // text only, saw no command left and exempted the whole line, cancelling the
+  // detection. An exemption is only sound if it looks for everything detection
+  // looks for, in every spelling detection accepts.
+  const deploysLeft =
+    new RegExp(ANY_DEPLOY_RE).test(rest) || new RegExp(ANY_DEPLOY_RE).test(dequote(rest));
+  return deploysLeft ? null : hits.map((h) => h.why).join(' ');
 }
 
 /**
@@ -457,8 +465,13 @@ function stripOtherOptionValues(line, keep = []) {
  * inside one. Blanking those would delete the command being judged. Backtick
  * substitution in a shell file is a recorded limit, not a claim.
  *
- * Replaced with the same NUL placeholder `stripOtherOptionValues` uses, so no
- * token boundary is manufactured where the shell saw none.
+ * Replaced with a placeholder DISTINCT from the one
+ * `stripOtherOptionValues` leaves behind, and that distinction is the whole
+ * point (#1995 r16). Both are single characters, so neither manufactures a
+ * token boundary the shell did not see — but one is INERT (another option's
+ * value, which cannot be an option) and the other is OPAQUE (text that can
+ * expand to anything, including a negation of the flag being scored). Sharing
+ * `\u0000` made them indistinguishable and the opaque one was read as inert.
  */
 function stripCommandSubstitutions(text) {
   let out = '';
@@ -490,13 +503,103 @@ function stripCommandSubstitutions(text) {
         else if (c === '(') depth += 1;
         else if (c === ')') depth -= 1;
       }
-      out += '\u0000';
+      out += '\u0001';
       i = j - 1;
       continue;
     }
     out += text[i];
   }
   return out;
+}
+
+/**
+ * Expand a STATIC brace group attached to an option word.
+ *
+ * `--{,no-}keep-vars` is one written token that Bash hands the command as two
+ * arguments, `--keep-vars --no-keep-vars`, so the deploy is destructive — but
+ * the literal text spells neither, and every spelling test read it as
+ * unrelated and blessed the deploy (#1995 r16).
+ *
+ * Narrow on purpose. The word must START with a dash and the alternatives must
+ * be literal, so nothing here touches the JSON, YAML and JavaScript braces that
+ * fill the files this guard walks, nor the `{ builtin cd x; }` group form
+ * (space after the brace, and the word does not begin with a dash).
+ */
+function expandOptionBraces(text) {
+  return text.replace(
+    /(?<![^\s(`'"])(-{1,2}[A-Za-z0-9-]*)\{([A-Za-z0-9_,.=/-]*)\}([A-Za-z0-9_.=/-]*)/g,
+    (_whole, pre, body, post) =>
+      body
+        .split(',')
+        .map((alt) => `${pre}${alt}${post}`)
+        .join(' '),
+  );
+}
+
+/**
+ * Offsets of text that can expand to ANYTHING — including a negation.
+ *
+ * Command substitutions and parameter expansions are not decidable from the
+ * source, and the guard has always said so for the case where they DELETE a
+ * safety flag. The other direction was missed: `--keep-vars $(printf %s
+ * --no-keep-vars)` and `FLAG=--no-keep-vars … deploy "$FLAG"` both leave a
+ * literal `--keep-vars` standing as the last thing the scorer can see, and
+ * both were blessed (#1995 r16).
+ *
+ * Reported as POSITIONS so the caller can order them against the flag events
+ * it already collects: an opaque word before the last literal occurrence is
+ * harmless, because the literal is what the CLI reads last.
+ *
+ * Single-quoted text is skipped — it expands to itself. Double-quoted text is
+ * NOT, because `"$FLAG"` is a live expansion. Backticks are deliberately not
+ * treated as substitutions here, the same recorded limit
+ * `stripCommandSubstitutions` carries: this predicate also runs on prose,
+ * where a backtick opens a Markdown code span around the command being judged.
+ */
+function opaqueOffsets(line) {
+  const out = [];
+  let q = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i];
+    if (c === '\\') {
+      i += 1;
+      continue;
+    }
+    if (q === "'") {
+      if (c === "'") q = null;
+      continue;
+    }
+    if (q === '"') {
+      if (c === '"') {
+        q = null;
+        continue;
+      }
+    } else if (c === '"' || c === "'") {
+      q = c;
+      continue;
+    }
+    if (c === '\u0001') out.push(i);
+    else if (c === '$' && /[A-Za-z_{(]/.test(line[i + 1] ?? '')) out.push(i);
+  }
+  return out;
+}
+
+/**
+ * Every spelling of one option that the CLI answers to.
+ *
+ * yargs — which wrangler uses — accepts the camel-case form of any kebab-case
+ * option, so `--no-keepVars` really does set `keepVars:false` (confirmed
+ * against the pinned 4.90.0). The scorer knew only the kebab spelling, so the
+ * camel one read as unrelated text and left an earlier `--keep-vars` standing
+ * (#1995 r16). The `no-` prefix stays kebab: yargs strips it before
+ * camel-casing what remains.
+ */
+function flagSpellings(name) {
+  const m = /^--(no-)?(.+)$/.exec(name);
+  if (!m) return [name];
+  const [, neg = '', rest] = m;
+  const camel = rest.replace(/-([a-z0-9])/g, (_c, ch) => ch.toUpperCase());
+  return camel === rest ? [name] : [name, `--${neg}${camel}`];
 }
 
 /**
@@ -517,6 +620,16 @@ function quoteTolerant(name) {
     .join(Q);
 }
 
+/** Quote-tolerant pattern matching EVERY spelling the CLI accepts. */
+function flagPattern(name) {
+  return `(?:${flagSpellings(name).map(quoteTolerant).join('|')})`;
+}
+
+/** The `--no-` negation of an option name. */
+function negationOf(flag) {
+  return `--no-${flag.replace(/^--/, '')}`;
+}
+
 function flagEnabled(rawLine, flag) {
   // `executedCommand` FIRST (#1995 r6). A leading environment assignment is
   // passed through the ENVIRONMENT, never as an argument, so
@@ -525,9 +638,14 @@ function flagEnabled(rawLine, flag) {
   // This is the r40 `run deploy` case and the r4 `--name` case in a third
   // spelling. Both of those were fixed at their own call site, which is why
   // this one survived: the SAFETY predicate had never been asked the question.
+  // Brace expansion happens BEFORE the shell looks at anything else, so it
+  // happens before this pipeline too: `--{,no-}keep-vars` has to have become
+  // two arguments by the time any of the strippers or the scorer sees it.
   const line = stripOtherOptionValues(
     executedCommand(
-      stripCommandSubstitutions(stripRedirections(normalizeFlagEquals(rawLine))),
+      stripCommandSubstitutions(
+        stripRedirections(normalizeFlagEquals(expandOptionBraces(rawLine))),
+      ),
     ),
   );
   // Quoted values are values. An earlier pattern excluded quotes from the
@@ -561,10 +679,10 @@ function flagEnabled(rawLine, flag) {
   // is preceded by whitespace and it is the VALUE that follows the `=`.
   // The NAME is quote-tolerant; the value patterns are untouched, because
   // quoting there is load-bearing (#1995 r15).
-  const flagRe = quoteTolerant(flag);
+  const flagRe = flagPattern(flag);
   const re = new RegExp(
-    `(?<![^\\s(\`'"])${flagRe}(?:=((?:"[^"]*"|'[^']*'|[^\\s"'\`)\\u0000]+)+)` +
-      `|\\s+(?:"([^"]*)"|'([^']*)'|((?![-#])[^\\s"'\`)\\u0000]+)))?`,
+    `(?<![^\\s(\`'"])${flagRe}(?:=((?:"[^"]*"|'[^']*'|[^\\s"'\`)\\u0000\\u0001]+)+)` +
+      `|\\s+(?:"([^"]*)"|'([^']*)'|((?![-#])[^\\s"'\`)\\u0000\\u0001]+)))?`,
     'g',
   );
   const events = [];
@@ -608,10 +726,19 @@ function flagEnabled(rawLine, flag) {
   const emptyRe = new RegExp(`(?<![^\\s(\`'"])${flagRe}=(?=\\s|$)`, 'g');
   for (const m of line.matchAll(emptyRe)) events.push({ at: m.index, on: false });
   const negRe = new RegExp(
-    `(?<![^\\s(\`'"])${quoteTolerant(`--no-${flag.replace(/^--/, '')}`)}(?![\\w-])`,
+    `(?<![^\\s(\`'"])${flagPattern(negationOf(flag))}(?![\\w-])`,
     'g',
   );
   for (const m of line.matchAll(negRe)) events.push({ at: m.index, on: false });
+  // Text that can expand to anything is an event too, and it disables — not
+  // because it necessarily negates, but because after it the final state is
+  // UNKNOWN, and a safety predicate cannot report unknown as safe. Ordered
+  // with the literals, so an opaque word BEFORE the last real occurrence
+  // changes nothing: the literal is still what the CLI reads last.
+  for (const at of opaqueOffsets(line)) events.push({ at, on: false, opaque: true });
+  // Every event opaque means the flag was never mentioned at all, which is the
+  // same "not enabled" this returns for an empty line — but going through the
+  // sort would have said so for the wrong reason.
   if (events.length === 0) return false;
   events.sort((a, b) => a.at - b.at);
   return events[events.length - 1].on === true;
@@ -983,8 +1110,40 @@ function commandIsSafe(cmd) {
   // the r8 dequoting removed the accident, and it produced four false reds on
   // the real tree. Ask the narrower question instead: does the appended text
   // actually turn keep-vars off? Text that never mentions it cannot.
-  if (!/--(?:no-)?keep-vars/.test(appended)) return true;
-  return flagEnabled(appended, '--keep-vars');
+  return !appendedTurnsOff(appended, '--keep-vars');
+}
+
+/**
+ * Does what a package script had appended to it turn the safety flag off?
+ *
+ * The script itself passes `--keep-vars`, so anything appended arrives after
+ * it and the CLI takes the last occurrence. The question is therefore narrow,
+ * and it is asked narrowly ON PURPOSE: the older form handed the whole
+ * appended text to `flagEnabled` as if it were the flag's own value, which is
+ * right for argv and wrong for prose, where "`pnpm … run deploy`, whose …"
+ * made `,` the value and produced four false reds on the real tree.
+ *
+ * What replaced it — "does this text spell keep-vars?" — was narrow in the
+ * wrong dimension. A spelling test is only sound over text that is decidable,
+ * and five different shell constructs can hand wrangler `--no-keep-vars`
+ * without spelling it: quotes, a variable, a command substitution, a brace
+ * group, and yargs' camel-case form (#1995 r16, five separate reports of one
+ * defect). Quotes, braces and camel-case are decidable and are now decided;
+ * the two that are not are answered with "cannot prove it survives", which is
+ * the side a safety predicate errs on.
+ */
+function appendedTurnsOff(appended, flag) {
+  const text = expandOptionBraces(appended);
+  // The same neutralisation the scorer runs, so an opaque word inside ANOTHER
+  // option's value — `--var "SHA:$COMMIT"` — is gone before opacity is judged.
+  // It cannot introduce an argument, so it must not be read as if it could.
+  const scored = stripOtherOptionValues(
+    stripCommandSubstitutions(stripRedirections(normalizeFlagEquals(text))),
+  );
+  if (opaqueOffsets(scored).length > 0) return true;
+  const mentions = new RegExp(`${flagPattern(flag)}|${flagPattern(negationOf(flag))}`);
+  if (!mentions.test(scored)) return false;
+  return !flagEnabled(text, flag);
 }
 
 /**
