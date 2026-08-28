@@ -43,7 +43,7 @@ import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
-import { isVerdictStale } from './tosGate';
+import { isVerdictStale, tosQueryKey } from './tosGate';
 import { captureTxError } from '../lib/errors';
 
 const ZERO_HASH = `0x${'0'.repeat(64)}` as const;
@@ -100,7 +100,7 @@ export function useTosAcceptance(): TosAcceptanceState {
   // suppression here is how the cache key and the invalidation key come
   // to disagree.
   const queryKey = useMemo(
-    () => ['tosAcceptance', readChain.chainId, address?.toLowerCase() ?? null] as const,
+    () => tosQueryKey(readChain.chainId, address),
     [readChain.chainId, address],
   );
 

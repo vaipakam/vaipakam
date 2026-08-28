@@ -17,6 +17,8 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { assertSettled } from './ownReceipt';
 import { useActiveChain } from '../chain/useActiveChain';
 import { publishReceiptInvalidation } from '../chain/receiptSync';
+import { isExitWrite } from './tosWriteGate';
+import { tosQueryKey, isVerdictStale, type TosVerdictData } from './tosGate';
 
 export { DIAMOND_ABI_VIEM };
 
@@ -55,6 +57,34 @@ export function useDiamondWrite() {
         throw new Error(copy.errors.walletConnectFirst);
       }
       if (!publicClient) throw new Error(copy.errors.noRpcClient);
+      // #1961 review round 2 P1 — the Terms gate ENFORCES here, not at
+      // the route. Exempting a route exempts every control on it, and
+      // `/vpfi` and `/positions/:loanId` carry deposits and a refinance
+      // that originates a new loan alongside their exit controls.
+      //
+      // The verdict is read out of the query cache rather than through
+      // `useTosAcceptance`, which imports this module — a direct call
+      // would be a cycle. Both sides use `tosQueryKey`, so there is one
+      // spelling of the key.
+      //
+      // Absent or stale cache is treated as NOT accepted, the same
+      // fail-closed rule the gate uses: this must not become a bypass
+      // for whoever loads the page and acts before the read lands.
+      if (!isExitWrite(functionName, args)) {
+        const verdict = queryClient.getQueryData<TosVerdictData>(
+          tosQueryKey(walletChain.chainId, address),
+        );
+        const state = queryClient.getQueryState(
+          tosQueryKey(walletChain.chainId, address),
+        );
+        const fresh =
+          verdict !== undefined &&
+          state !== undefined &&
+          !isVerdictStale(state.dataUpdatedAt, Date.now());
+        if (!fresh || !verdict.accepted) {
+          throw new Error(copy.errors.termsNotAccepted);
+        }
+      }
       const hash = await walletClient.writeContract({
         address: walletChain.diamondAddress,
         abi: DIAMOND_ABI_VIEM,

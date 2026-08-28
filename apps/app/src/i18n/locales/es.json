@@ -1873,7 +1873,8 @@
         "vaultUpgradeRequired": "Una de las partes de esta operación usa una versión antigua del vault y necesita actualizarla antes de poder operar. No se ha enviado nada.",
         "selfTrade": "Esta es tu propia oferta, así que no puedes aceptarla. Cancélala si quieres retirarla del libro.",
         "unknown": "El protocolo no acepta esta oferta en este momento. No se ha enviado nada: actualiza e inténtalo de nuevo, o vuelve dentro de un rato."
-      }
+      },
+      "termsNotAccepted": "Necesitas aceptar las condiciones de Vaipakam antes de hacer esto. Abre cualquier otra página de la aplicación y se te pedirá una sola vez; devolver, reclamar y retirar siguen funcionando igualmente."
     },
     "fees": {
       "borrowerLIF": "Vaipakam cobra una comisión de iniciación de préstamo de {{pct}} sobre el importe prestado.",

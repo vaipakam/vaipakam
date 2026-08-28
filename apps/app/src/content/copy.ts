@@ -3399,6 +3399,12 @@ const copySource = {
   },
 
   errors: {
+    // #1961 review round 2 — refused at the write, not just at the route.
+    // A user can reach a page whose exit controls are exempt and still
+    // press something that is not an exit; this says why, in the terms
+    // the gate itself uses.
+    termsNotAccepted:
+      'You need to accept Vaipakam\u2019s terms before doing this. Open any other page in the app and you\u2019ll be asked once \u2014 repaying, claiming and withdrawing keep working either way.',
     // F-20260703-005 (#988) — say HOW MUCH more whenever the caller can
     // compute the shortfall; the amount-less form is the fallback for
     // sites that can't (e.g. unknown decimals).

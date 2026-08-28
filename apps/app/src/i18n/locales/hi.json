@@ -1873,7 +1873,8 @@
         "vaultUpgradeRequired": "इस trade का एक पक्ष पुराने vault version पर है और trade करने से पहले उसे upgrade करना होगा। कुछ भी send नहीं हुआ।",
         "selfTrade": "यह आपका ही offer है, इसलिए आप इसे नहीं ले सकते। Book से हटाना है तो इसे cancel करें।",
         "unknown": "Protocol अभी यह offer स्वीकार नहीं कर रहा। कुछ भी send नहीं हुआ — refresh करके दोबारा कोशिश करें, या थोड़ी देर बाद देखें।"
-      }
+      },
+      "termsNotAccepted": "यह करने से पहले आपको Vaipakam की शर्तें स्वीकार करनी होंगी। ऐप का कोई भी दूसरा पेज खोलें और आपसे एक बार पूछा जाएगा — चुकौती, दावा और निकासी दोनों ही स्थितियों में चलती रहती हैं।"
     },
     "fees": {
       "borrowerLIF": "Vaipakam borrowed amount पर {{pct}} loan initiation fee charge करता है।",

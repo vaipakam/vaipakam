@@ -101,3 +101,24 @@ export function isVerdictStale(
 export function opensGate(verdict: TosGateVerdict): boolean {
   return verdict === 'pass' || verdict === 'pass-unconnected';
 }
+
+/**
+ * The cache key the Terms verdict lives under.
+ *
+ * Defined here, in the module that imports nothing app-side, so the
+ * write gate can read the verdict out of the query cache without
+ * importing `useTosAcceptance` — which imports `useDiamondWrite`, so a
+ * direct dependency would be a cycle. Two consumers, one key: the
+ * alternative is a second key spelling, which is how a cache write and
+ * a cache read come to miss each other silently.
+ */
+export function tosQueryKey(chainId: number, address: string | undefined) {
+  return ['tosAcceptance', chainId, address?.toLowerCase() ?? null] as const;
+}
+
+/** What the Terms query stores. */
+export interface TosVerdictData {
+  accepted: boolean;
+  version: number;
+  hash: `0x${string}`;
+}

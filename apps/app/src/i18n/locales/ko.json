@@ -1873,7 +1873,8 @@
         "vaultUpgradeRequired": "이 거래의 한쪽이 이전 버전의 Vault를 사용 중이며 거래하려면 먼저 업그레이드해야 합니다. 아무것도 전송되지 않았습니다.",
         "selfTrade": "본인이 올린 오퍼이므로 수락할 수 없습니다. 오퍼북에서 내리려면 취소하세요.",
         "unknown": "프로토콜이 지금은 이 오퍼를 수락하지 않습니다. 아무것도 전송되지 않았습니다 — 새로고침 후 다시 시도하거나 잠시 뒤에 확인하세요."
-      }
+      },
+      "termsNotAccepted": "이 작업을 하려면 먼저 Vaipakam 약관에 동의해야 합니다. 앱의 다른 페이지를 열면 한 번만 요청됩니다. 상환, 청구, 출금은 어느 쪽이든 계속 이용할 수 있습니다."
     },
     "fees": {
       "borrowerLIF": "Vaipakam은 borrowed amount에 대해 {{pct}} loan initiation fee를 부과합니다.",
