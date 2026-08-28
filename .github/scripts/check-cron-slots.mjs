@@ -115,6 +115,24 @@ const SKIP_PREFIXES = [
 ];
 
 /**
+ * Paths INSIDE a skipped tree that are scanned anyway.
+ *
+ * Codex #1978 r36: the `docs/ReleaseNotes/` prefix also exempted
+ * `unreleased/`, and a pending fragment is not dated history. It is a
+ * forward-looking description of the product as it is about to ship, written
+ * by the same PR that changes behaviour — so a fragment saying the account
+ * uses four of five triggers is a live claim, and the blanket prefix let it
+ * pass indefinitely, including the fragment each of THESE PRs adds to describe
+ * its own work.
+ *
+ * The sibling excision gate already draws exactly this line, for exactly this
+ * reason, at `check-excision-residue.mjs`'s `EXCLUSION_CARVEOUTS`. Two gates in
+ * one directory disagreeing about whether a pending fragment is history was the
+ * kind of split this file has been closing all along.
+ */
+const SKIP_CARVEOUTS = ['docs/ReleaseNotes/unreleased/'];
+
+/**
  * Whether a tracked file is text this gate should read.
  *
  * This was an extension ALLOWLIST until Codex #1978 r11, and it leaked twice in
@@ -190,10 +208,25 @@ function binaryTrackedPaths() {
   return binary;
 }
 
+/**
+ * Tracked text files too large to scan, collected so they can be REPORTED.
+ *
+ * Codex #1978 r36: an oversized file was silently removed from the scan, which
+ * is a hole with a size threshold on it — grow a tracked document past 2 MiB,
+ * add an occupancy claim, and the blocking gate still prints OK. A generated
+ * report or a padded document is enough. Skipping quietly is the one behaviour
+ * this gate cannot afford, because "scanned nothing" reads exactly like
+ * "found nothing".
+ */
+const oversized = [];
+
 function isScannableText(path, binary) {
   if (binary?.has(path)) return false;
   try {
-    if (statSync(path).size > MAX_SCAN_BYTES) return false;
+    if (statSync(path).size > MAX_SCAN_BYTES) {
+      oversized.push(path);
+      return false;
+    }
     return true;
   } catch {
     return false; // unreadable is not this gate's business
@@ -720,7 +753,8 @@ function trackedFiles() {
       (p) =>
         p &&
         !SKIP_EXACT.has(p) &&
-        !SKIP_PREFIXES.some((pre) => p.startsWith(pre)) &&
+        (!SKIP_PREFIXES.some((pre) => p.startsWith(pre)) ||
+          SKIP_CARVEOUTS.some((pre) => p.startsWith(pre))) &&
         isScannableText(p, binary),
     );
 }
@@ -1208,6 +1242,7 @@ function runOffline() {
   // its inventory disagree, the file is not an authority yet, and reporting
   // "occupancy stated only here" would be reporting on a contradiction.
   const authorityMd = readFileSync(AUTHORITY, 'utf8');
+  // Populates `oversized` as a side effect; read it after (Codex #1978 r36).
   const inv = parseInventory(authorityMd);
   const summaryProblems = [
     ...checkNoHtmlComments(authorityMd),
@@ -1244,6 +1279,18 @@ function runOffline() {
   }
 
   if (findings.length === 0) {
+    if (oversized.length) {
+      console.error(
+        `Cron-slot gate: ${oversized.length} tracked text file(s) exceed the ` +
+          `${MAX_SCAN_BYTES}-byte scan cap and were NOT read:`,
+      );
+      for (const p of oversized) console.error(`  ${p}`);
+      console.error('');
+      console.error('That is a hole with a size threshold on it: a document');
+      console.error('grown past the cap can restate the count while this gate');
+      console.error('reports OK. Split the file, or raise the cap deliberately.');
+      return 1;
+    }
     console.log(`Cron-slot gate OK — occupancy stated only in ${AUTHORITY}.`);
     return 0;
   }

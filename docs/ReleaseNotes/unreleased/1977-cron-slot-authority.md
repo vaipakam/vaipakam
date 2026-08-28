@@ -24,10 +24,11 @@ describing a state that had already been cleaned up. The one place that
 carries the live figure is the authority, which is checked against the
 account; everything here is history with a date on it.
 
-Three things follow from that, and this change addresses all three. The budget
-was four triggers live on that date, not the three every one of those comments
-assumed — so the slot they reserved for the undeployed mesh watcher was already
-occupied. That does not mean the keeper's re-enable would have stopped at its
+Three things follow from that, and this change addresses all three. Every one of
+those comments was a trigger short of the account's real state — so the slot
+they reserved for the undeployed mesh watcher was already occupied. The figures
+are in the authority; this fragment deliberately does not restate them, for the
+reason the whole change exists. That does not mean the keeper's re-enable would have stopped at its
 first step: four live under a cap of five leaves one real trigger free, so
 whichever of the two deployments went first would have taken it and succeeded.
 What those comments had actually lost was the SECOND one. Deploy mesh-watcher

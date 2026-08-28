@@ -1697,10 +1697,17 @@ caught at the cheapest stage.
         cf() { curl -fsS -H "Authorization: Bearer $CF_API_TOKEN" "$1"; }
         api="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID"
         ok() { jq -e 'if .success then . else error("Cloudflare reported failure") end'; }
+
+        # CAPTURE FIRST. `for x in $(...)` swallows the substitution's status
+        # even under `set -e`, so a failed read would fall through the loop and
+        # print a count of zero.
+        scripts=$(cf "$api/workers/scripts?per_page=100" | ok | jq -r '.result[].id') \
+          || { echo "FAILED to read the account's Workers - do NOT treat this as capacity" >&2; exit 1; }
+
         used=0
-        for s in $(cf "$api/workers/scripts?per_page=100" | ok | jq -r '.result[].id'); do
-          n=$(cf "$api/workers/scripts/$s/schedules" | ok \
-              | jq -r '(.result.schedules // []) | length')
+        for s in $scripts; do
+          n=$(cf "$api/workers/scripts/$s/schedules" | ok | jq -r '(.result.schedules // []) | length') \
+            || { echo "FAILED to read schedules for $s" >&2; exit 1; }
           [ "$n" -gt 0 ] && echo "$s: $n" >&2
           used=$(( used + n ))
         done
@@ -1720,6 +1727,14 @@ caught at the cheapest stage.
       `jq -e` on `.success` catches an API-level failure that still returned
       200, and `set -euo pipefail` makes either abort the subshell instead of
       falling through to a reassuring number.
+
+      **`set -e` alone is not enough, which is why the list is captured into a
+      variable first** (Codex #1978 r36). Bash does not apply `errexit` to a
+      command substitution used as a `for` word list: written as
+      `for s in $(cf ... | jq ...)`, a failed read expands to nothing, the loop
+      body never runs, and the subshell reports `triggers in use: 0 of 5` and
+      exits 0. Verified by reproducing exactly that. Assigning to `scripts`
+      first makes the failure the assignment's, where `||` can catch it.
 
       (If §1's token has already been unset, re-prompt for it the same way —
       `read -rs CF_API_TOKEN`, not via argv.)
@@ -2185,6 +2200,27 @@ caught at the cheapest stage.
 ---
 
 ## 7b. LAST: activate the backup writer
+> **First, finish the cron-slot reconciliation deferred from §6** (Codex #1978
+> r36). §6 makes the authority's keeper edit but explicitly leaves the
+> account-versus-file confirmation until now, because before this point the
+> fresh account is incomplete and `--live` cannot pass. This is the point at
+> which it can, and if it is skipped a successful restore ends with
+> [`CloudflareCronSlots.md`](CloudflareCronSlots.md) still listing a live
+> `vaipakam-offchain-data-archive` that exists only in the abandoned account —
+> the authority then over-states occupancy and misdirects the next deploy,
+> which is #1977 again by a different route.
+>
+> 1. Remove the `vaipakam-offchain-data-archive` row: on the fresh account that
+>    Worker does not exist, and it has no source in this repository to restore
+>    it from.
+> 2. Re-derive "Live right now" and the `Committed` label from the rows that
+>    remain, and refresh the `Verified:` stamp.
+> 3. `CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
+>    node .github/scripts/check-cron-slots.mjs --live` — now that the account is
+>    complete, this is the check that was impossible earlier.
+> 4. **Commit it.** An uncommitted reconciliation leaves the branch carrying the
+>    old-account inventory, which is the staleness the whole exercise removes.
+
 
 Only now — after §§4–5 have restored D1 and R2, and §7's smoke test says
 the stack is real — deploy `ops/offchain-data-warm`:
