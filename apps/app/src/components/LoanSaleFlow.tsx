@@ -47,7 +47,7 @@ import { copy } from '../content/copy';
 import { isPositiveDecimal, captureTxError } from '../lib/errors';
 import { flowDisabled } from '../lib/killSwitch';
 import { useActiveChain } from '../chain/useActiveChain';
-import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../contracts/diamond';
+import { DIAMOND_ABI_VIEM, useDiamondWrite, useTermsBlockNonExitWrites } from '../contracts/diamond';
 import { ensureAllowance, revokeAllowance } from '../contracts/erc20';
 import {
   assertAssetNotPausedLive,
@@ -98,6 +98,7 @@ export function LoanSaleFlow({
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const termsVerdict = useTermsBlockNonExitWrites();
   const queryClient = useQueryClient();
 
   const [error, setError] = useState<string | null>(null);
@@ -290,6 +291,21 @@ export function LoanSaleFlow({
       // null), that allowance belongs to some other live arrangement
       // (a pending refinance, a user-managed grant) and a failed
       // listing step must not zero it out from under that flow.
+      // #1961 — refuse BEFORE the allowance, not after. This flow lives
+      // on `/positions/:loanId`, which the Terms gate exempts so a held
+      // user can repay; its Diamond write is NOT an exit, so
+      // `useDiamondWrite` would reject it — but only once the user had
+      // paid for an approval they cannot use. Same defect Codex found
+      // on `/vpfi`, the desk ticket and the desk amend; swept here
+      // rather than waiting for it to be reported a fourth time.
+      const termsForFlow = termsVerdict();
+      if (termsForFlow !== 'ok') {
+        throw new Error(
+          termsForFlow === 'unknown'
+            ? copy.errors.termsCheckUnavailable
+            : copy.errors.termsNotAccepted,
+        );
+      }
       const approvalTx = await ensureAllowance({
         publicClient,
         walletClient,
