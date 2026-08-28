@@ -1527,6 +1527,30 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  it('wrangler versions upload erases vars too (#1995 r14)', () => {
+    // The installed wrangler documents the same sentence for this subcommand:
+    // without --keep-vars it deletes all vars before setting the config's.
+    for (const cmd of ['wrangler versions upload', 'pnpm exec wrangler versions upload']) {
+      const r = runWith('contracts/script/deploy-chain.sh', `cd apps/agent\n${cmd}\n`);
+      expect(r.ok, cmd).toBe(false);
+    }
+  });
+
+  it('versions upload takes the SAME remedy (#1995 r14 control)', () => {
+    for (const flag of ['--keep-vars', '--dry-run']) {
+      const r = runWith(
+        'contracts/script/deploy-chain.sh',
+        `cd apps/agent\nwrangler versions upload ${flag}\n`,
+      );
+      expect(r.ok, flag).toBe(true);
+    }
+  });
+
+  it('other versions subcommands are not deploys (#1995 r14 control)', () => {
+    const r = runWith('contracts/script/deploy-chain.sh', 'cd apps/agent\nwrangler versions list\n');
+    expect(r.ok).toBe(true);
+  });
+
   it('a matrix working-directory resolves to its declared values (#1995 r11)', () => {
     // One leg of the matrix really does deploy from the protected package.
     const r = runWith(

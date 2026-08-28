@@ -117,7 +117,16 @@ const SKIP_DIRS = new Set([
 // `wrangler2` is the SAME binary: wrangler's package manifest maps both names
 // to `./bin/wrangler.js`, and `wrangler2 deploy --help` describes the same
 // command (#1995 r13).
-const DEPLOY_RE = String.raw`wrangler2?(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*deploy\b`;
+// `versions upload` erases vars exactly as `deploy` does (#1995 r14). Checked
+// against the wrangler in this workspace (4.94.0) rather than taken on trust:
+//
+//   --keep-vars   When not used (or set to false), Wrangler will delete all
+//                 vars before setting those found in the Wrangler configuration.
+//
+// Same sentence the `deploy` flag carries, and neither scoped `wrangler.jsonc`
+// sets `keep_vars`, so an unflagged `versions upload` deletes the dashboard
+// tuning the same way. It takes the same flag, so the remedy is the same one.
+const DEPLOY_RE = String.raw`wrangler2?(?:@[^\s]+)?\s+(?:-{1,2}[A-Za-z0-9-]+(?:[= ][^\s-][^\s]*)?\s+)*(?:deploy|versions\s+upload)\b`;
 
 /**
  * The PACKAGE-SCRIPT form is a deploy too, and the guard could not see it
@@ -252,6 +261,10 @@ const EXTENSIONS = [
  * Match is a substring of the line, so it survives reflow but not a rewrite.
  */
 const ALLOWED = [
+  {
+    match: 'scoped to the `wrangler versions upload` flow',
+    why: "keeper README: names the command while explaining that `wrangler triggers deploy` is NOT the answer; it invokes nothing.",
+  },
   {
     match: 'That reasoning was backwards: a bare `wrangler deploy`',
     why: 'README explains the hazard itself; naming the unsafe command is the subject.',
