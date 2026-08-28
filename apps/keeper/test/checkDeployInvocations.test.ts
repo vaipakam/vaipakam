@@ -1349,6 +1349,63 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.out).not.toContain('HF_SCALE');
   });
 
+  it("the -c alias for --config, wrangler's documented short form (#1995 r2)", () => {
+    // 4.90.0 help: "-c, --config  Path to Wrangler configuration file". Handling
+    // only the long spelling left the identical bypass open in short form.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/indexer\nwrangler deploy -c ../agent/wrangler.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('--config resolved FROM --cwd when both are given (#1995 r2)', () => {
+    // `--cwd` runs wrangler as if started there, so a relative `--config` is
+    // relative to IT. Resolving the two independently let this through; a 4.90.0
+    // dry run confirms the command bundles the agent.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'wrangler deploy --cwd apps/indexer --config ../agent/wrangler.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an explicit --name OVERRIDES incidental segment text (#1995 r2)', () => {
+    // The segment says keeper; the selector says agent; wrangler obeys the
+    // selector. Reporting the keeper's remedy here sends the reader to the wrong
+    // wrangler.jsonc — the same class as r1c, one level deeper.
+    const r = runWith(
+      'docs/ops/DeploymentRunbook.md',
+      'For apps/keeper: wrangler deploy --name vaipakam-agent\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('@vaipakam/agent');
+    expect(r.out).not.toContain('HF_SCALE');
+  });
+
+  it('an explicit selector targeting an UNSCOPED Worker is not flagged (#1995 r2)', () => {
+    // The other direction of the same precedence rule, and the one that makes it
+    // a real rule rather than a one-way ratchet: standing in apps/agent does not
+    // make a deploy of the indexer unsafe.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nwrangler deploy --name vaipakam-indexer\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an UNRESOLVABLE selector does not suppress cwd scope (#1995 r2)', () => {
+    // `--config "$CFG"` says nothing, so it must not override the fact that the
+    // shell is standing in apps/agent. Treating "selector present" as
+    // "authoritative" regardless of whether it resolved would have opened a
+    // bypass that is trivial to write by accident.
+    const r = runWith(
+      'contracts/script/deploy-chain.sh',
+      'cd apps/agent\nwrangler deploy --config "$CFG"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   it('still does not flag a subdirectory of an OUT-OF-SCOPE package (#1995 r1)', () => {
     // The descendant match must widen scope for scoped packages only; if it
     // widened generally the 13 leak fixtures would pass for the wrong reason.

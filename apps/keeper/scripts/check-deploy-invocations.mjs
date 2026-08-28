@@ -860,31 +860,55 @@ function scopeOfCwd(cwd) {
  */
 function selectorScope(seg, states) {
   const VALUE = `(?:"([^"]*)"|'([^']*)'|([^\\s"';&|)]+))`;
-  const valueOf = (flag) => {
-    const m = seg.match(new RegExp(`--${flag}(?:=|\\s+)${VALUE}`));
+  // `--config` before `-c` so the long spelling wins the alternation, and a
+  // lookbehind so `-c` cannot match inside `--config` or at the tail of another
+  // token. `-c` is wrangler's DOCUMENTED alias (4.90.0: "-c, --config  Path to
+  // Wrangler configuration file"), and omitting it left the same destructive
+  // bypass open in short form (#1995 r2). `--cwd` and `--name` have no alias.
+  const valueOf = (spellings) => {
+    const m = seg.match(new RegExp(`(?<![\\w-])(?:${spellings})(?:=|\\s+)${VALUE}`));
     return m ? m[1] ?? m[2] ?? m[3] : null;
   };
 
-  const name = valueOf('name');
-  if (name) {
-    const byName = SCOPED.find((s) => s.workerName === name);
-    if (byName) return byName;
+  const name = valueOf('--name');
+  const cfg = valueOf('--config|-c');
+  const cwdFlag = valueOf('--cwd');
+  // NO selector at all: this segment says nothing about its target, so the
+  // caller falls back to the text and the cwd walk.
+  if (name === null && cfg === null && cwdFlag === null) return null;
+  // A selector whose value is an unresolved variable carries no information
+  // either. Treat it as absent rather than as "targets nothing", so it cannot
+  // SUPPRESS the cwd reasoning that would otherwise flag the deploy.
+  if ([name, cfg, cwdFlag].some((v) => v !== null && /\$/.test(v))) return null;
+
+  if (name !== null) {
+    return { scope: SCOPED.find((s) => s.workerName === name) ?? null };
   }
 
-  // `--config` names a FILE; its directory is what wrangler treats as the
-  // package. `--cwd` names the directory directly.
-  const cfg = valueOf('config');
-  const cwdFlag = valueOf('cwd');
-  const targets = [];
-  if (cfg) targets.push(cfg.slice(0, cfg.lastIndexOf('/') + 1) || '.');
-  if (cwdFlag) targets.push(cwdFlag);
-  for (const t of targets) {
-    for (const st of states) {
-      const hit = scopeOfCwd(resolveDir(st.cwd, t));
-      if (hit) return hit;
+  // ORDER MATTERS: `--cwd` runs wrangler "as if started in the specified
+  // directory", so a relative `--config` is resolved FROM it, not from the
+  // shell's own cwd. Resolving the two independently let
+  // `--cwd apps/indexer --config ../agent/wrangler.jsonc` — verified against
+  // 4.90.0 to bundle the AGENT — pass the guard (#1995 r2).
+  const bases =
+    cwdFlag !== null
+      ? states.map((st) => resolveDir(st.cwd, cwdFlag))
+      : states.map((st) => st.cwd);
+
+  if (cfg !== null) {
+    // `--config` names a FILE; its directory is the package.
+    const dir = cfg.slice(0, cfg.lastIndexOf('/') + 1) || '.';
+    for (const b of bases) {
+      const hit = scopeOfCwd(resolveDir(b, dir));
+      if (hit) return { scope: hit };
     }
+    return { scope: null };
   }
-  return null;
+  for (const b of bases) {
+    const hit = scopeOfCwd(b);
+    if (hit) return { scope: hit };
+  }
+  return { scope: null };
 }
 
 /** Apply one directory directive to one reachable state. */
@@ -1296,8 +1320,8 @@ for (const file of walk(REPO_ROOT)) {
         // Fall back to the whole line only when the segment itself names
         // nothing: prose often establishes the package in an earlier clause,
         // and a file inside a scoped tree scopes every line in it.
-        const scope =
-          scopeOf(seg, rel) ?? selectorScope(seg, [{ cwd: '', stack: [] }]) ?? lineScope;
+        const sel = selectorScope(seg, [{ cwd: '', stack: [] }]);
+        const scope = sel ? sel.scope : scopeOf(seg, rel) ?? lineScope;
         if (!scope) continue;
         flagged = true;
         hitScope = scope;
@@ -1359,11 +1383,18 @@ for (const file of walk(REPO_ROOT)) {
         namedPrefix.push(seg);
         // `\b` so `wrangler deployments list` is not read as a deploy.
         if (!new RegExp(DEPLOY_RE).test(seg)) continue;
-        const scope =
-          scopeOf(namedPrefix.join(' '), rel) ??
-          selectorScope(seg, input) ??
-          input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
-          null;
+        // An explicit selector WINS. wrangler's help makes `--name` the "Name
+        // of the Worker", so `For apps/keeper: wrangler deploy --name
+        // vaipakam-agent` deploys the AGENT however the line reads — and
+        // reporting it under the keeper handed the reader the wrong remedy
+        // (#1995 r2). Textual and cwd scope apply only when no selector
+        // resolved.
+        const sel = selectorScope(seg, input);
+        const scope = sel
+          ? sel.scope
+          : scopeOf(namedPrefix.join(' '), rel) ??
+            input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
+            null;
         if (!scope) continue;
         if (commandIsSafe(seg)) continue;
         flagged = true;
