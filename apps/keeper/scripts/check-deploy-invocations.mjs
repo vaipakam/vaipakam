@@ -1724,7 +1724,7 @@ function scopeOfCwd(cwd) {
  * against every REACHABLE cwd, the same states the `cd` walk maintains, so a
  * relative selector lands where the shell would put it.
  */
-function selectorScope(seg, states, hasCwdState = true) {
+function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // A value is ONE SHELL WORD, and a word can mix adjacent quoted and unquoted
   // chunks: `--name vaipakam"-"agent` is the single argument `vaipakam-agent`.
   // Capturing only the first chunk made the value `vaipakam`, which matched no
@@ -1763,21 +1763,65 @@ function selectorScope(seg, states, hasCwdState = true) {
     // reaches scope by another path. Measured, not assumed — an earlier draft
     // of this comment claimed `-C` was broken.
     ['name', 'config', 'cwd', 'dir', 'C', 'prefix'],
-  );
+  )
+    // Everything after WRANGLER's `--` is inert. Verified against 4.90.0:
+    // `wrangler deploy --dry-run -- --name vaipakam-indexer` still processed
+    // the local configuration, so the trailing `--name` names nothing — yet it
+    // was read as an authoritative selector and suppressed the cwd scope of a
+    // live agent deploy (#1995 r16).
+    //
+    // Anchored AFTER the deploy verb on purpose, because `--` does not mean
+    // the same thing everywhere on the line. pnpm's own `--` FORWARDS to
+    // wrangler, and this function must keep reading past it: r9 established
+    // that `pnpm --dir ../agent run deploy -- --cwd .` chains, the package
+    // manager moving first and wrangler starting where it was left.
+    // Anchored on WRANGLER's own invocation, not on the verb. `deploy` is also
+    // the name of the package SCRIPT, and the two `--`s mean opposite things:
+    // pnpm CONSUMES its own and appends what follows to the script's arguments
+    // (so `pnpm --dir apps/agent run deploy -- --cwd .` leaves `--cwd` LIVE,
+    // which is r9's chaining), while wrangler PASSES its own through and makes
+    // everything after it inert. Keying on the verb alone would cut at the
+    // first of those and silently un-do r9. Both directions are fixtured.
+    .replace(
+      /(\bwrangler2?(?:@\S+)?\b[^\n]*?\b(?:deploy|versions\s+upload)\b[\s\S]*?)\s--(?=\s|$)[\s\S]*$/,
+      '$1',
+    );
   // `--config` before `-c` so the long spelling wins the alternation, and a
   // lookbehind so `-c` cannot match inside `--config` or at the tail of another
   // token. `-c` is wrangler's DOCUMENTED alias (4.90.0: "-c, --config  Path to
   // Wrangler configuration file"); `--cwd` and `--name` have none.
   const valueOf = (spellings) => {
-    const m = clean.match(new RegExp(`(?<![\\w-])(?:${spellings})(?:=|\\s+)${VALUE}`));
+    // LAST occurrence, because that is what the CLIs do — the same rule the
+    // safety flag is scored by. `pnpm --dir apps/indexer --dir apps/agent run
+    // deploy` runs the AGENT script (confirmed against the pinned pnpm), and
+    // taking the first match handed the guard an out-of-scope directory and
+    // blessed a destructive deploy (#1995 r16).
+    const all = [...clean.matchAll(new RegExp(`(?<![\\w-])(?:${spellings})(?:=|\\s+)${VALUE}`, 'g'))];
+    const m = all[all.length - 1];
     if (!m) return null;
     // Quotes are removed and BACKSLASH ESCAPES decoded: the shell hands wrangler
     // `vaipakam-agent` for `vaipakam\\-agent`, and comparing the escaped form
     // made it an authoritative non-match (#1995 r5).
     return m[1].replace(/\\([\s\S])/g, '$1').replace(/["'`]/g, '');
   };
-  /** A value we cannot resolve carries no information — treat it as absent. */
-  const known = (v) => (v !== null && !/\$/.test(v) ? v : null);
+  /**
+   * A value we cannot resolve carries no information — treat it as absent.
+   *
+   * But a variable assigned a LITERAL earlier in the same block IS resolvable,
+   * and `resolveDir` has carried those for directory targets since r8. The
+   * selector readers did not, so `NAME=vaipakam-agent` followed by `wrangler
+   * deploy --name "$NAME"` deployed the protected agent while the guard
+   * treated the selector as unknown and found no other scope (#1995 r16) —
+   * the same incoherent pair r8 named: resolvable one way and not the other.
+   */
+  const known = (v) => {
+    if (v === null) return null;
+    const expanded =
+      vars && /\$/.test(v)
+        ? v.replace(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g, (m, name) => vars.get(name) ?? m)
+        : v;
+    return /\$/.test(expanded) ? null : expanded;
+  };
 
   // EACH SELECTOR IS JUDGED ON ITS OWN. A single early return on "any value is
   // dynamic" discarded a perfectly resolved `--name` whenever some other
@@ -2958,7 +3002,7 @@ for (const file of walk(REPO_ROOT)) {
         // reporting it under the keeper handed the reader the wrong remedy
         // (#1995 r2). Textual and cwd scope apply only when no selector
         // resolved.
-        const sel = selectorScope(seg, input);
+        const sel = selectorScope(seg, input, true, shellVars);
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
         // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
         // package", and it ran before the modelled cwd — so in a script under

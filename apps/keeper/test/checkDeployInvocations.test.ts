@@ -2940,6 +2940,83 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ── Three more selector readers, all fail-open (#1995 r16).
+  it("a selector after WRANGLER's -- is inert (#1995 r16)", () => {
+    // Verified against 4.90.0: `deploy --dry-run -- --name X` still processed
+    // the local configuration. The trailing name selected nothing, yet it was
+    // read as authoritative and suppressed the cwd scope of a live deploy.
+    const r = runWith('a.sh', 'cd apps/agent\nwrangler deploy -- --name vaipakam-indexer\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it("and so is a --cwd after it (#1995 r16)", () => {
+    const r = runWith('a2.sh', 'pnpm --dir apps/agent exec wrangler deploy -- --cwd ../www\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it("but PNPM's -- forwards, so the script's --cwd stays live (#1995 r9 regression guard)", () => {
+    // The two `--`s mean opposite things and the terminator must tell them
+    // apart: pnpm CONSUMES its own and appends what follows to the script's
+    // arguments. Keying the cut on the verb rather than on `wrangler` would
+    // silently un-do r9's chaining, and this case had never been fixtured — a
+    // probe is what found the gap.
+    const r = runWith('a3.sh', 'pnpm --dir apps/agent run deploy -- --cwd . --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and it still redirects when the forwarded --cwd points elsewhere (#1995 r9 control)', () => {
+    const r = runWith('a4.sh', 'pnpm --dir apps/agent run deploy -- --cwd ../www --no-keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a repeated directory selector takes the LAST (#1995 r16)', () => {
+    // Confirmed against the pinned pnpm: this runs the AGENT script. Taking
+    // the first match handed the guard an out-of-scope directory.
+    const r = runWith('b.sh', 'pnpm --dir apps/indexer --dir apps/agent run deploy --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while a single out-of-scope --dir still selects nothing (#1995 r16 control)', () => {
+    const r = runWith('b2.sh', 'pnpm --dir apps/indexer run deploy --no-keep-vars\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a STATIC variable in an explicit selector resolves (#1995 r16)', () => {
+    // resolveDir has carried literal assignments for directory targets since
+    // r8; the selector readers did not, which is the same incoherent pair r8
+    // named — resolvable one way and not the other.
+    const r = runWith('c.sh', 'NAME=vaipakam-agent\nwrangler deploy --name "$NAME"\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a DYNAMIC one DEFERS rather than asserting "targets nothing" (#1995 r16)', () => {
+    // The `cd` is what makes this discriminate, and without it the case was
+    // vacuous: an unresolved `$NAME` returned as a LITERAL matches no worker,
+    // so the reader answers "selects nothing" AUTHORITATIVELY and suppresses
+    // the cwd — the fail-open direction. With no cwd to suppress, both
+    // behaviours pass and a mutant dropping the guard survived. Deferring here
+    // matches what `--config` has always done for the same question.
+    const r = runWith(
+      'c2.sh',
+      'cd apps/agent\nNAME=$(cat n.txt)\nwrangler deploy --name "$NAME"\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a static one naming an UNSCOPED worker still selects nothing (#1995 r16 control)', () => {
+    // Discriminates "resolved" from "gave up and fell back to the cwd": the
+    // shell is in apps/agent, so a reader that ignored the resolved name would
+    // report the agent.
+    const r = runWith('c3.sh', 'cd apps/agent\nNAME=vaipakam-www\nwrangler deploy --name "$NAME"\n');
+    expect(r.ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',
