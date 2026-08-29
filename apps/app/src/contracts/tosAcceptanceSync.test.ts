@@ -250,7 +250,12 @@ describe('applyAcceptancePinFrame', () => {
       version: 3,
       hash: canonicalHash,
     });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
     applyAcceptancePinFrame(client, frame(), frame().at);
+    // Round 7 P2: refused, but still a read hint — the refused frame
+    // may be the canonical one, and only a real read can tell.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+    invalidate.mockRestore();
     const after = client.getQueryData<TosVerdictData>(key);
     expect(after?.accepted).toBe(false);
     expect(after?.hash).toBe(canonicalHash);

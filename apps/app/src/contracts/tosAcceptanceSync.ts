@@ -267,8 +267,22 @@ export function applyAcceptancePinFrame(
     freshCached &&
     (freshCached.version > frame.version ||
       (freshCached.version === frame.version && freshCached.hash !== frame.hash))
-  )
+  ) {
+    // A conflicting frame is still a READ HINT (round 7 P2), exactly
+    // like the expired branch below: in the reorged-governance case
+    // the REFUSED frame may in fact be the canonical one — another tab
+    // accepted hash-B while this tab holds a fresh hash-A refusal —
+    // and this tab cannot tell which from here. Nothing of the frame
+    // is adopted either way; the authoritative reads are what resolve
+    // the disagreement, and skipping them left a stale prompt enabled
+    // until the 60-second poll, whose click submits terms the chain
+    // rejects while still charging gas.
+    void queryClient.invalidateQueries({ queryKey });
+    setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey });
+    }, RECEIVER_SECOND_READ_MS);
     return;
+  }
   // Ordered adoption, not a plain overwrite: a delayed older frame
   // must not evict a newer pin. And when ordering REFUSES the frame,
   // nothing else of it may apply either (round 2 P1): with `false`
