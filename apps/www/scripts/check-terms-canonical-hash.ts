@@ -63,7 +63,7 @@
  * fails any pull request that modifies or deletes a `v<N>.md` that
  * already exists on the base branch.
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { keccak256 } from 'viem';
@@ -122,9 +122,20 @@ if (last.version !== CURRENT_TERMS_VERSION) {
 // the reader-sees ↔ fingerprint bond.
 for (const meta of TERMS_VERSION_METAS) {
   const frozenPath = resolve(frozenDir, `v${meta.version}.md`);
-  let bytes: Buffer;
+  // A frozen archive must be a REGULAR file (#2010 round 3 P2): a
+  // symlink hashes (and renders) its target's bytes, so it would pass
+  // publication-time checks while the CI immutability job later sees
+  // only the unchanged link path — a PR could then edit the TARGET and
+  // silently change the "frozen" route without ever touching v<N>.md.
+  // lstat (not stat) so the link itself is what gets judged.
   try {
-    bytes = readFileSync(frozenPath);
+    if (!lstatSync(frozenPath).isFile()) {
+      fail(
+        `v${meta.version}: ${frozenPath} is not a regular file — a frozen ` +
+          `archive must hold its own bytes, never link to another file`,
+      );
+      continue;
+    }
   } catch {
     fail(
       `v${meta.version} is registered but its frozen source ` +
@@ -133,6 +144,7 @@ for (const meta of TERMS_VERSION_METAS) {
     );
     continue;
   }
+  const bytes = readFileSync(frozenPath);
   // (5) The document's own header must agree with the registry — a
   // byte-perfect copy of the WRONG version's text hashes fine, and a
   // page that says "Version 1" while the gate asks for version 2

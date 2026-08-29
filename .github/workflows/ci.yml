@@ -912,6 +912,51 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
 
+      # ── Terms archives are immutable (#1998 / Codex #2010 r2+r3 P1) ──
+      # Published Terms versions are FROZEN: wallets record on-chain
+      # acceptance against a version's content hash, and `/terms/v<N>`
+      # promises to resolve to that exact text forever. The
+      # typecheck-time guard (`check-terms-canonical-hash.ts`) pins
+      # every frozen file to its registered fingerprint — but both
+      # sides of that comparison live in the same PR-editable tree, so
+      # a PR rewriting a published `v<N>.md` AND its registered hash
+      # together passes it. Immutability needs an anchor OUTSIDE the
+      # PR: diff against the PR's base commit and fail on any change
+      # to a `v<N>.md` that exists there (adding a NEW version is the
+      # one allowed change).
+      #
+      # This step lives INSIDE the required `workspaces` job (r3 P1) —
+      # a standalone informational job failed without blocking merge.
+      # The placement is sound because every path that can touch a
+      # frozen archive is under `apps/`, which sets `workspaces=true`
+      # in the change detector: whenever this job is path-skipped, no
+      # archive changed. PR-only — push/schedule runs have no base.
+      - name: Published Terms archives are unchanged from the base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # The default pull_request checkout is the TEST MERGE commit
+          # (refs/pull/N/merge = PR head merged into the base tip), so a
+          # plain two-dot diff against base.sha shows exactly the PR's
+          # effective changes — a v<N>.md that landed on main after this
+          # PR branched is on BOTH sides and does not read as a
+          # deletion. Do not switch this checkout to head.sha without
+          # also switching to a merge-base diff.
+          git fetch --depth=1 origin "$BASE_SHA"
+          # --diff-filter=a excludes Added: a new version file is the
+          # one legitimate change. M/D/R/C/T of an existing archive all
+          # fail — a published version's bytes are load-bearing for
+          # acceptances already recorded against its hashes.
+          CHANGED=$(git diff --name-only --diff-filter=a "$BASE_SHA" HEAD -- 'apps/www/src/pages/terms/v*.md')
+          if [[ -n "$CHANGED" ]]; then
+            echo "::error::published Terms version files were modified or deleted — they are frozen forever (acceptances are recorded against their hashes). A Terms change is a NEW v<N>.md + registry entry, never an edit:"
+            echo "$CHANGED"
+            exit 1
+          fi
+          echo "OK — no published Terms archive was touched."
+
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile
 
@@ -1111,56 +1156,6 @@ jobs:
 
       - name: Every binding and command names the same shared database
         run: node apps/indexer/scripts/check-d1-name-consistency.mjs
-
-  # ── terms-archive-immutability ─────────────────────────────────────────
-  # Published Terms versions are FROZEN (#1998): wallets record on-chain
-  # acceptance against a version's content hash, and `/terms/v<N>`
-  # promises to resolve to that exact text forever. The typecheck-time
-  # guard (`check-terms-canonical-hash.ts`) pins every frozen file to
-  # its registered fingerprint — but both sides of that comparison live
-  # in the same PR-editable tree, so a PR that rewrites a published
-  # `v<N>.md` AND its registered hash together passes it (Codex #2010
-  # r2 P1). Immutability needs an anchor OUTSIDE the PR: this job diffs
-  # against the PR's base commit and fails when any
-  # `apps/www/src/pages/terms/v<N>.md` that exists on the base was
-  # modified or deleted. Adding a NEW version is the only allowed
-  # change. PR-only — push/schedule runs have no base to compare.
-  terms-archive-immutability:
-    name: Terms archives are immutable
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          fetch-depth: 1
-
-      - name: Published v<N>.md files are unchanged from the base
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          set -euo pipefail
-          # The default pull_request checkout is the TEST MERGE commit
-          # (refs/pull/N/merge = PR head merged into the base tip), so a
-          # plain two-dot diff against base.sha shows exactly the PR's
-          # effective changes — a v<N>.md that landed on main after this
-          # PR branched is on BOTH sides and does not read as a
-          # deletion. Do not switch this checkout to head.sha without
-          # also switching to a merge-base diff.
-          git fetch --depth=1 origin "$BASE_SHA"
-          # --diff-filter=a excludes Added: a new version file is the
-          # one legitimate change. M/D/R/C/T of an existing archive all
-          # fail — a published version's bytes are load-bearing for
-          # acceptances already recorded against its hash.
-          CHANGED=$(git diff --name-only --diff-filter=a "$BASE_SHA" HEAD -- 'apps/www/src/pages/terms/v*.md')
-          if [[ -n "$CHANGED" ]]; then
-            echo "::error::published Terms version files were modified or deleted — they are frozen forever (acceptances are recorded against their hashes). A Terms change is a NEW v<N>.md + registry entry, never an edit:"
-            echo "$CHANGED"
-            exit 1
-          fi
-          echo "OK — no published Terms archive was touched."
 
   offchain-data-warm:
     name: ops/offchain-data-warm (typecheck + tests)
