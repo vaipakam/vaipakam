@@ -15,12 +15,15 @@
  *
  * What crosses the tab boundary is the PIN — wallet, chain, the
  * Diamond the acceptance was mined against, version, the content HASH
- * of the accepted text, and the acting tab's timestamp — not an
- * instruction to invalidate. The last-named two are not incidental:
- * the hash is what stops a same-version reorg asserting acceptance of
- * different text (round 4), and the Diamond is what stops an old
- * deployment's acceptance opening a new one during a rollout
- * (round 3).
+ * of the accepted text, the acting tab's timestamp, and the BLOCK the
+ * acceptance mined in — not an instruction to invalidate. None of
+ * those fields is incidental: the hash is what stops a same-version
+ * reorg asserting acceptance of different text (round 4), the Diamond
+ * is what stops an old deployment's acceptance opening a new one
+ * during a rollout (round 3), and the block is what every ordering
+ * decision runs on (round 14 — wall stamps and version counters both
+ * mis-order acceptances, under clock corrections and rollbacks
+ * respectively).
  * Adding the verdict's root to `RECEIPT_FLOOR_ROOTS` was considered in
  * the issue and rejected there: tab B would refetch against its own
  * possibly-lagging RPC, get `false` back, and have no pin of its own
@@ -110,6 +113,13 @@ export interface AcceptancePinFrame {
   /** The acting tab's pin timestamp — carried so the TTL window is the
    *  same in every tab rather than restarting on delivery. */
   at: number;
+  /** The block the acceptance MINED in, from the acting tab's receipt
+   *  (#2004 round 14). This is what pin ordering and the receiver's
+   *  fresh-read comparison run on: wall stamps cannot survive a clock
+   *  correction and the version counter cannot survive a rollback,
+   *  but chain height orders acceptances under both. See the pin's
+   *  `block` field for the full argument. */
+  block: number;
 }
 
 export function buildAcceptancePinFrame(
@@ -119,8 +129,9 @@ export function buildAcceptancePinFrame(
   version: number,
   hash: `0x${string}`,
   at: number,
+  block: number,
 ): AcceptancePinFrame {
-  return { kind: 'tos-acceptance-pin', chainId, diamond, address, version, hash, at };
+  return { kind: 'tos-acceptance-pin', chainId, diamond, address, version, hash, at, block };
 }
 
 /**
@@ -143,6 +154,11 @@ export function parseAcceptancePinFrame(data: unknown): AcceptancePinFrame | nul
     return null;
   if (typeof f.hash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(f.hash)) return null;
   if (typeof f.at !== 'number' || !Number.isFinite(f.at) || f.at <= 0) return null;
+  // Genesis carries no acceptance, so a positive integer height is the
+  // narrowest shape a real mined block can have. Ordering runs on this
+  // field, so a frame without one has nothing to be ordered by.
+  if (typeof f.block !== 'number' || !Number.isInteger(f.block) || f.block <= 0)
+    return null;
   return {
     kind: 'tos-acceptance-pin',
     chainId: f.chainId,
@@ -151,6 +167,7 @@ export function parseAcceptancePinFrame(data: unknown): AcceptancePinFrame | nul
     version: f.version,
     hash: f.hash as `0x${string}`,
     at: f.at,
+    block: f.block,
   };
 }
 
@@ -285,29 +302,41 @@ export function applyAcceptancePinFrame(
     return;
   }
   const scope = acceptanceScope(frame.chainId, frame.address);
-  // Any FRESH read that disagrees with the frame — on version in
-  // EITHER direction, or on hash — refuses it whole (rounds 5, 6 and
-  // 13, the last completing the rule). The direct cache write was
-  // always guarded; the pin had a second route to the regression:
-  // stored, it waits for an invalidation to hit a node still on the
-  // frame's branch, and `queryFn` turns that node's `false` into a
-  // fresh `accepted: true` over the authoritative refusal. A fresh
+  // A FRESH read that disagrees with the frame — on version in EITHER
+  // direction, or on hash — refuses it whole (rounds 5, 6 and 13),
+  // UNLESS the read is provably BEHIND the frame's acceptance by
+  // chain height (round 14). The direct cache write was always
+  // guarded; the pin had a second route to the regression: stored, it
+  // waits for an invalidation to hit a node still on the frame's
+  // branch, and `queryFn` turns that node's `false` into a fresh
+  // `accepted: true` over the authoritative refusal. A fresh
   // HIGHER-version cache makes the frame history (round 5); the same
   // version under a different hash is the reorged-governance text
-  // swap (round 6); and a fresh LOWER-version cache means a rollback
-  // restored older terms and the frame's branch is gone (round 13
-  // P1). The one legitimate-looking case the last refuses — a normal
-  // bump's frame against a seconds-stale cache — costs only the
-  // pin's lag protection until the reads land, the right price for a
-  // legal gate that must never open under noncanonical terms. A
-  // STALE differing entry does not refuse, deliberately: with the
-  // frame inside its 90s window, restored-and-re-accepted is the
-  // story the timestamps support, and the freshness bar keeps the
-  // verdict itself safe.
+  // swap (round 6); and a fresh LOWER-version cache can mean a
+  // rollback restored older terms and the frame's branch is gone
+  // (round 13 P1).
+  //
+  // "Fresh", though, measures when this tab ASKED, not how far up the
+  // chain the answer reached (round 14): a refetch resolving seconds
+  // after a governance bump can have read a lagging node's EARLIER
+  // block, and refusing the bump's frame on that answer discarded a
+  // perfectly canonical acceptance. So when both sides carry heights,
+  // the heights decide: a differing read whose `observedBlock` is
+  // strictly below the frame's mined block is pre-acceptance evidence
+  // — the frame proceeds to ordered adoption (though never to the
+  // cache write, which still requires an exact version+hash match).
+  // A read at or past the frame's block has genuinely read beyond the
+  // acceptance and refuses it; a read with no height (a verdict from
+  // before the field existed) refuses conservatively, which is
+  // round 13's behaviour. A STALE differing entry does not refuse,
+  // deliberately: with the frame inside its 90s window,
+  // restored-and-re-accepted is the story the timestamps support, and
+  // the freshness bar keeps the verdict itself safe.
   const freshCached = freshVerdict(queryClient, queryKey, now);
   if (
     freshCached &&
-    (freshCached.version !== frame.version || freshCached.hash !== frame.hash)
+    (freshCached.version !== frame.version || freshCached.hash !== frame.hash) &&
+    !(freshCached.observedBlock !== undefined && freshCached.observedBlock < frame.block)
   ) {
     // Round 7 P2: in the reorged-governance case the REFUSED frame may
     // be the canonical one — another tab accepted hash-B while this
@@ -325,7 +354,7 @@ export function applyAcceptancePinFrame(
   // it to `accepted: true` — opening the gates under terms this tab's
   // own pin already knows are obsolete. A refused frame is history;
   // the pin that beat it already ran this function's tail.
-  if (!adoptOrderedPin(scope, frame.version, frame.hash, frame.at, now)) {
+  if (!adoptOrderedPin(scope, frame.version, frame.hash, frame.at, frame.block, now)) {
     // Round 8 P2: ordering's incumbent can itself be from a branch a
     // reorg has since rolled back — an unexpired v4 pin against a
     // canonical v3 the frame is truthfully reporting. The pin data is
@@ -356,6 +385,13 @@ export function applyAcceptancePinFrame(
       // revalidation below ages it out unless a real read confirms it
       // first (round 9 P2).
       pinBacked: true,
+      // The MAX of the two heights, never a plain overwrite (round
+      // 14): the entry being patched matched on version and hash, but
+      // its own read may have observed a LATER block than the frame's
+      // acceptance mined in, and regressing the height would let the
+      // next comparison mistake evidence this tab has already read
+      // past for something newer than it.
+      observedBlock: Math.max(frame.block, freshCached?.observedBlock ?? 0),
     });
   }
   scheduleAuthoritativeReads();

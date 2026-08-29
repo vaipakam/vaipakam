@@ -29,10 +29,13 @@ const ADDRESS = '0xAbCd000000000000000000000000000000000001';
 // drops any frame not mined against the deployment this build reads,
 // so the tests must speak with the configuration's own voice.
 const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
+// The default mined block frames carry. Ordering and the receiver's
+// fresh-read comparison run on chain height (#2004 round 14).
+const B0 = 4_200_000;
 
 function frame(overrides: Partial<AcceptancePinFrame> = {}): AcceptancePinFrame {
   return {
-    ...buildAcceptancePinFrame(84532, DIAMOND, ADDRESS, 3, HASH, 1_700_000_000_000),
+    ...buildAcceptancePinFrame(84532, DIAMOND, ADDRESS, 3, HASH, 1_700_000_000_000, B0),
     ...overrides,
   };
 }
@@ -74,6 +77,11 @@ describe('parseAcceptancePinFrame', () => {
     expect(parseAcceptancePinFrame({ ...frame(), hash: `0x${'zz'.repeat(32)}` })).toBeNull();
     expect(parseAcceptancePinFrame(frame({ at: 0 }))).toBeNull();
     expect(parseAcceptancePinFrame({ ...frame(), at: Number.NaN })).toBeNull();
+    // Ordering runs on the mined block, so a frame without a plausible
+    // one has nothing to be ordered by (#2004 round 14).
+    expect(parseAcceptancePinFrame(frame({ block: 0 }))).toBeNull();
+    expect(parseAcceptancePinFrame(frame({ block: 1.5 }))).toBeNull();
+    expect(parseAcceptancePinFrame({ ...frame(), block: undefined })).toBeNull();
   });
 });
 
@@ -154,7 +162,15 @@ describe('applyAcceptancePinFrame', () => {
     // outranks any frame from before it.
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
-    const newer: TosVerdictData = { accepted: false, version: 4, hash: HASH };
+    // The v4 read observed a block PAST the v3 acceptance's — it has
+    // genuinely read beyond the frame (#2004 round 14 qualified the
+    // refusal by height; this read clears it).
+    const newer: TosVerdictData = {
+      accepted: false,
+      version: 4,
+      hash: HASH,
+      observedBlock: B0 + 5,
+    };
     client.setQueryData(key, newer);
     applyAcceptancePinFrame(client, frame({ version: 3 }), frame().at);
     expect(client.getQueryData(key)).toEqual(newer);
@@ -171,7 +187,14 @@ describe('applyAcceptancePinFrame', () => {
     // now refuses — read hint only.
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
-    const restored: TosVerdictData = { accepted: false, version: 3, hash: HASH };
+    // The restored read observed a block at/past the orphaned
+    // acceptance's — the post-rollback canonical chain (#2004 round 14).
+    const restored: TosVerdictData = {
+      accepted: false,
+      version: 3,
+      hash: HASH,
+      observedBlock: B0 + 5,
+    };
     client.setQueryData(key, restored);
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     applyAcceptancePinFrame(client, frame({ version: 4 }), frame().at);
@@ -181,6 +204,47 @@ describe('applyAcceptancePinFrame', () => {
     );
     expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
     invalidate.mockRestore();
+  });
+
+  it('a fresh differing read BELOW the frame’s block does not refuse it', () => {
+    // Round 14: "fresh" measures when the tab asked, not how far the
+    // answer reached. A refetch resolving after a governance bump can
+    // have read a lagging node's earlier block; refusing the bump's
+    // frame on that answer discarded a canonical acceptance. The pin
+    // adopts — the CACHE stays untouched (the verdict write still
+    // requires an exact version+hash match), and the reads decide.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const lagging: TosVerdictData = {
+      accepted: false,
+      version: 3,
+      hash: HASH,
+      observedBlock: B0 - 5,
+    };
+    client.setQueryData(key, lagging);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    applyAcceptancePinFrame(client, frame({ version: 4 }), frame().at);
+    expect(client.getQueryData(key)).toEqual(lagging);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, HASH, frame().at)).toBe(
+      true,
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+    invalidate.mockRestore();
+  });
+
+  it('a fresh differing read with NO height refuses conservatively', () => {
+    // A verdict from before the field existed cannot be ordered
+    // against the frame, and a legal gate resolves the tie closed —
+    // round 13's behaviour, kept for exactly this entry.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const unordered: TosVerdictData = { accepted: false, version: 4, hash: HASH };
+    client.setQueryData(key, unordered);
+    applyAcceptancePinFrame(client, frame({ version: 3 }), frame().at);
+    expect(client.getQueryData(key)).toEqual(unordered);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, frame().at)).toBe(
+      false,
+    );
   });
 
   it('a STALE newer verdict does not refuse — the restored-version story stands', () => {
@@ -249,7 +313,7 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const scope = acceptanceScope(84532, ADDRESS);
     const t0 = 1_700_000_000_000;
-    applyAcceptancePinFrame(client, frame({ version: 4, at: t0 }), t0);
+    applyAcceptancePinFrame(client, frame({ version: 4, at: t0, block: B0 + 5 }), t0);
     const later = t0 + ACCEPTANCE_PIN_TTL_MS + 60_000;
     applyAcceptancePinFrame(client, frame({ at: later }), later);
     expect(acceptanceIsPinned(scope, 3, HASH, later)).toBe(true);
@@ -402,7 +466,7 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const scope = acceptanceScope(84532, ADDRESS);
     const v4At = 1_700_000_100_000;
-    applyAcceptancePinFrame(client, frame({ version: 4, at: v4At }), v4At);
+    applyAcceptancePinFrame(client, frame({ version: 4, at: v4At, block: B0 + 2 }), v4At);
     applyAcceptancePinFrame(client, frame({ version: 3, at: v4At - 5_000 }), v4At);
     expect(acceptanceIsPinned(scope, 4, HASH, v4At)).toBe(true);
     expect(acceptanceIsPinned(scope, 3, HASH, v4At)).toBe(false);
@@ -416,7 +480,7 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
     const v4At = 1_700_000_100_000;
-    applyAcceptancePinFrame(client, frame({ version: 4, at: v4At }), v4At);
+    applyAcceptancePinFrame(client, frame({ version: 4, at: v4At, block: B0 + 2 }), v4At);
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     applyAcceptancePinFrame(client, frame({ version: 3, at: v4At - 5_000 }), v4At);
     expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, HASH, v4At)).toBe(true);
@@ -528,7 +592,7 @@ describe('applyAcceptancePinFrame', () => {
     // The seeded entry is stamped with the real clock; applying with a
     // far-future `now` makes it stale at apply time.
     const now = Date.now() + MAX_VERDICT_AGE_MS + 60_000;
-    applyAcceptancePinFrame(client, frame({ version: 4, at: now }), now);
+    applyAcceptancePinFrame(client, frame({ version: 4, at: now, block: B0 + 2 }), now);
     applyAcceptancePinFrame(client, frame({ version: 3, at: now - 5_000 }), now);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
     expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, HASH, now)).toBe(true);

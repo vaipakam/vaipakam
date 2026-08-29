@@ -137,4 +137,17 @@ export interface TosVerdictData {
    *  and is never aged. Cleared naturally: the first read a node
    *  answers `true` on its own stores an unflagged verdict. */
   pinBacked?: boolean;
+  /** The chain height this verdict's evidence was observed at: the
+   *  block the queryFn pinned its dual read to, a local receipt's
+   *  mined block, or the block a broadcast frame carried (#2004 round
+   *  14). Wall-clock freshness says how recently a tab ASKED; this
+   *  says how far up the chain the ANSWER reaches — and only the
+   *  latter can order a read against a mined receipt. A background
+   *  refetch that resolves after a receipt but read a lagging node's
+   *  earlier block is fresh by the clock and behind by the chain;
+   *  comparing blocks classifies it correctly as pre-receipt evidence
+   *  rather than a rollback. Optional because a verdict written before
+   *  the field existed cannot be ordered — absent means "unknown", and
+   *  every comparison treats unknown conservatively. */
+  observedBlock?: number;
 }
