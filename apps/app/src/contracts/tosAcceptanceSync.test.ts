@@ -165,7 +165,14 @@ describe('applyAcceptancePinFrame', () => {
   it('overwrites a stale false at the same version', () => {
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
-    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    client.setQueryData<TosVerdictData>(
+      key,
+      { accepted: false, version: 3, hash: HASH },
+      // Stamped on the same clock the frame is applied under — the
+      // isVerdictStale future bound (round 19 P2) reads a stamp from
+      // another era as non-authoritative, which is its job.
+      { updatedAt: frame().at },
+    );
     applyAcceptancePinFrame(client, frame(), frame().at);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(true);
   });
@@ -180,7 +187,7 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
     const newer: TosVerdictData = { accepted: false, version: 4, hash: HASH };
-    client.setQueryData(key, newer);
+    client.setQueryData(key, newer, { updatedAt: frame().at });
     applyAcceptancePinFrame(client, frame({ version: 3 }), frame().at);
     expect(client.getQueryData(key)).toEqual(newer);
     const scope = acceptanceScope(84532, ADDRESS);
@@ -197,7 +204,7 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
     const restored: TosVerdictData = { accepted: false, version: 3, hash: HASH };
-    client.setQueryData(key, restored);
+    client.setQueryData(key, restored, { updatedAt: frame().at });
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     applyAcceptancePinFrame(client, frame({ version: 4 }), frame().at);
     expect(client.getQueryData(key)).toEqual(restored);
@@ -242,6 +249,26 @@ describe('applyAcceptancePinFrame', () => {
     expect(state && Date.now() - state.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(true);
   });
 
+  it('a FUTURE-dated cache entry is not authoritative — the frame still applies its pin', () => {
+    // Round 19 P2: a backward clock correction after a read leaves
+    // `dataUpdatedAt` ahead of the clock; counted as fresh, that
+    // entry would veto valid frames (and receipts) until wall time
+    // caught up plus the whole verdict window.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const now = 1_700_000_000_000;
+    client.setQueryData<TosVerdictData>(
+      key,
+      { accepted: false, version: 4, hash: HASH },
+      { updatedAt: now + 60_000 },
+    );
+    applyAcceptancePinFrame(client, frame({ version: 3, at: now }), now);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, now)).toBe(true);
+    // The verdict itself is untouched — the freshness bar still gates
+    // the cache write, and a non-fresh entry only ever keeps the pin.
+    expect(client.getQueryData<TosVerdictData>(key)?.version).toBe(4);
+  });
+
   it('a fresh differing read refuses even a frame from a HIGHER block', () => {
     // Round 15 P1, withdrawing round 14's height carve-out: height is
     // not ancestry. A rollback can leave the canonical head BELOW an
@@ -252,7 +279,7 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
     const canonical: TosVerdictData = { accepted: false, version: 3, hash: HASH };
-    client.setQueryData(key, canonical);
+    client.setQueryData(key, canonical, { updatedAt: frame().at });
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     applyAcceptancePinFrame(client, frame({ version: 4, block: B0 + 5 }), frame().at);
     expect(client.getQueryData(key)).toEqual(canonical);
@@ -286,7 +313,11 @@ describe('applyAcceptancePinFrame', () => {
     // write and the gate's read would miss each other silently.
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS.toLowerCase());
-    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    client.setQueryData<TosVerdictData>(
+      key,
+      { accepted: false, version: 3, hash: HASH },
+      { updatedAt: frame().at },
+    );
     applyAcceptancePinFrame(client, frame({ address: ADDRESS.toUpperCase().replace('0X', '0x') }), frame().at);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(true);
   });
@@ -345,11 +376,11 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
     const canonicalHash = `0x${'55'.repeat(32)}` as `0x${string}`;
-    client.setQueryData<TosVerdictData>(key, {
-      accepted: false,
-      version: 3,
-      hash: canonicalHash,
-    });
+    client.setQueryData<TosVerdictData>(
+      key,
+      { accepted: false, version: 3, hash: canonicalHash },
+      { updatedAt: frame().at },
+    );
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     applyAcceptancePinFrame(client, frame(), frame().at);
     // Round 7 P2: refused, but still a read hint — the refused frame

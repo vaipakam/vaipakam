@@ -146,12 +146,27 @@ describe('adoptOrderedPin', () => {
     expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + 20_000, B0, 4, T0 + 20_000)).toBe(false);
   });
 
-  it('breaks an identical chain position by the later stamp', () => {
+  it('breaks an identical chain position by the later stamp ONLY for the same acceptance', () => {
     // The same transaction re-broadcast — a duplicate frame. The
     // later stamp anchors the longer window.
     pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
     expect(adoptOrderedPin(SCOPE, 3, HASH, T0, B0, TX0, T0 + 1_000)).toBe(false);
     expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + 5_000, B0, TX0, T0 + 6_000)).toBe(true);
+  });
+
+  it('leaves NEITHER pin standing when fork rivals claim one position', () => {
+    // Round 19 P2: two DIFFERENT transactions at the same (block,
+    // txIndex) can only come from competing branches, and frames
+    // carry no branch identity to order them — a wall-stamp tiebreak
+    // handed the win to whichever clock said so, invertible by a
+    // backward correction. Unordered: the incumbent is retired, the
+    // candidate refused, and only the authoritative reads decide.
+    pinAcceptance(SCOPE, 4, HASH, B0, TX0, T0);
+    expect(adoptOrderedPin(SCOPE, 3, `0x${'ef'.repeat(32)}`, T0 + 5_000, B0, TX0, T0 + 5_000)).toBe(
+      false,
+    );
+    expect(acceptanceIsPinned(SCOPE, 4, HASH, T0 + 6_000)).toBe(false);
+    expect(acceptanceIsPinned(SCOPE, 3, `0x${'ef'.repeat(32)}`, T0 + 6_000)).toBe(false);
   });
 
   it('refuses a candidate already past its own window', () => {

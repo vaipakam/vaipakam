@@ -207,11 +207,28 @@ export function adoptOrderedPin(
     pins.delete(scope);
     existing = undefined;
   }
-  if (
+  if (existing && existing.block === block && existing.txIndex === txIndex) {
+    if (existing.version === version && existing.hash === hash) {
+      // The SAME acceptance re-broadcast — a duplicate frame. The
+      // later stamp anchors the longer window; an earlier one changes
+      // nothing.
+      if (existing.at >= at) return false;
+    } else {
+      // Two DIFFERENT transactions claiming one chain position can
+      // only be fork rivals (round 19 P2), and frames carry no branch
+      // identity to order them — a wall-stamp tiebreak here handed
+      // the win to whichever clock said so, which a backward
+      // correction inverts. Unordered means NEITHER holds authority:
+      // the incumbent is retired, the candidate refused, and the
+      // caller's refusal path schedules the authoritative reads that
+      // alone can say which fork won. No pin corrects either
+      // version's reads until a real acceptance re-establishes one.
+      pins.delete(scope);
+      return false;
+    }
+  } else if (
     existing &&
-    (existing.block > block ||
-      (existing.block === block && existing.txIndex > txIndex) ||
-      (existing.block === block && existing.txIndex === txIndex && existing.at >= at))
+    (existing.block > block || (existing.block === block && existing.txIndex > txIndex))
   ) {
     return false;
   }

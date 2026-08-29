@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_VERDICT_AGE_MS,
   isVerdictStale,
+  MAX_VERDICT_FUTURE_MS,
   opensGate,
   tosGateVerdict,
   type TosGateInput,
@@ -100,6 +101,18 @@ describe('isVerdictStale', () => {
 
   it('stops trusting one past it', () => {
     expect(isVerdictStale(t0, t0 + MAX_VERDICT_AGE_MS + 1)).toBe(true);
+  });
+
+  it('stops trusting one stamped too far in the FUTURE', () => {
+    // #2004 round 19 P2: a backward clock correction after a read
+    // leaves the stamp ahead of the clock, and a plain age check read
+    // the entry as fresh until wall time caught up plus the whole
+    // window — long enough to veto a settling receipt or a cross-tab
+    // frame. Within the tolerance it stays fresh, because the gate's
+    // own comparison clock lags the real one by up to a tick and a
+    // verdict written mid-tick sits legitimately "ahead" of it.
+    expect(isVerdictStale(t0 + MAX_VERDICT_FUTURE_MS + 1, t0)).toBe(true);
+    expect(isVerdictStale(t0 + MAX_VERDICT_FUTURE_MS - 1, t0)).toBe(false);
   });
 
   it('is bounded well above the refresh interval', () => {

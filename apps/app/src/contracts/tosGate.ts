@@ -89,7 +89,26 @@ export const MAX_VERDICT_AGE_MS = 180_000;
 export const VERDICT_CLOCK_TICK_MS = 15_000;
 
 /**
- * True when a successful verdict is too old to keep the gate open.
+ * How far in the FUTURE a verdict's `dataUpdatedAt` may sit before it
+ * stops counting as fresh (#2004 round 19 P2). A backward clock
+ * correction after a successful read leaves the stamp ahead of the
+ * clock, and a plain age check then reads the entry as fresh until
+ * wall time catches up PLUS the whole verdict window — during which
+ * it can veto a settling receipt or a cross-tab frame as
+ * "authoritative" knowledge. The tolerance is one gate clock tick
+ * plus the pin module's skew allowance, because `useTosAcceptance`
+ * compares against a `nowMs` that lags the real clock by up to a
+ * tick — a verdict written mid-tick legitimately sits "in the
+ * future" of that clock, and must not read as stale. The 5s term is
+ * the same coarse-correction allowance as the pin module's
+ * `MAX_FUTURE_SKEW_MS`, restated here because this module stays
+ * import-free on purpose (see `tosQueryKey`).
+ */
+export const MAX_VERDICT_FUTURE_MS = VERDICT_CLOCK_TICK_MS + 5_000;
+
+/**
+ * True when a successful verdict is too old — or too far in the
+ * future (round 19 P2) — to keep the gate open.
  *
  * `dataUpdatedAt` of 0 means no successful read has ever landed, which
  * `readOk` already covers; treat it as stale so a caller that reaches
@@ -101,6 +120,7 @@ export function isVerdictStale(
   maxAgeMs: number = MAX_VERDICT_AGE_MS,
 ): boolean {
   if (!dataUpdatedAt) return true;
+  if (dataUpdatedAt > now + MAX_VERDICT_FUTURE_MS) return true;
   return now - dataUpdatedAt > maxAgeMs;
 }
 
