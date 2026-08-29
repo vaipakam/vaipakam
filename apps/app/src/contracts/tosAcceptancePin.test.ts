@@ -16,6 +16,7 @@ import {
   adoptOrderedPin,
   adoptReceiptPin,
   pinAcceptance,
+  retireSupersededPin,
 } from './tosAcceptancePin';
 
 const SCOPE = acceptanceScope(84532, '0xAbC0000000000000000000000000000000000001');
@@ -224,5 +225,42 @@ describe('adoptReceiptPin', () => {
       false,
     );
     expect(acceptanceIsPinned(SCOPE, 3, H2, T0)).toBe(false);
+  });
+});
+
+describe('retireSupersededPin', () => {
+  // #2004 round 17 P1: the adoption guards stop a stale pin ARRIVING;
+  // this stops one SURVIVING a node-confirmed read that supersedes it.
+  const H2 = `0x${'ef'.repeat(32)}`;
+
+  it('retires a pin once a read reports a HIGHER version', () => {
+    // With the v3 pin left in place, a later refetch through an RPC
+    // still serving v3 would convert its truthful `false` into a
+    // fresh `accepted: true` under terms a v4 read just proved are no
+    // longer in force.
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
+    retireSupersededPin(SCOPE, 4, H2);
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 1_000)).toBe(false);
+  });
+
+  it('retires a pin whose hash a same-version read contradicts', () => {
+    // The reorged-text case: the fresh read is the better witness to
+    // which text stands at the shared number.
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
+    retireSupersededPin(SCOPE, 3, H2);
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 1_000)).toBe(false);
+  });
+
+  it('does NOT retire on a LOWER-version read — that is the lag the pin corrects', () => {
+    pinAcceptance(SCOPE, 4, HASH, B0, TX0, T0);
+    retireSupersededPin(SCOPE, 3, H2);
+    expect(acceptanceIsPinned(SCOPE, 4, HASH, T0 + 1_000)).toBe(true);
+  });
+
+  it('does not retire on a matching read, and tolerates no pin at all', () => {
+    retireSupersededPin(SCOPE, 3, HASH);
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
+    retireSupersededPin(SCOPE, 3, HASH);
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 1_000)).toBe(true);
   });
 });

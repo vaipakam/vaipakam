@@ -45,15 +45,18 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import {
   isVerdictStale,
+  MAX_VERDICT_AGE_MS,
   tosQueryKey,
   VERDICT_CLOCK_TICK_MS,
   type TosVerdictData,
 } from './tosGate';
 import {
   ACCEPTANCE_PIN_TTL_MS,
+  MAX_FUTURE_SKEW_MS,
   acceptanceIsPinned,
   acceptanceScope,
   adoptReceiptPin,
+  retireSupersededPin,
 } from './tosAcceptancePin';
 import {
   buildAcceptancePinFrame,
@@ -189,6 +192,15 @@ export function useTosAcceptance(): TosAcceptanceState {
         }) as Promise<readonly [number, `0x${string}`]>,
       ]);
       const version = Number(current[0]);
+      // A node-confirmed read at a HIGHER version — or a different
+      // hash at the same version — retires a live pin it supersedes
+      // (#2004 round 17 P1): left in the map, that pin waits for a
+      // LATER refetch through a still-lagging RPC and converts its
+      // truthful `false` back into `accepted: true` under terms this
+      // read just proved are no longer in force. A lower-version
+      // read retires nothing — that is the lagging node the pin
+      // exists to correct.
+      retireSupersededPin(scope, version, current[1]);
       // A read that says "not accepted" at the SAME version this
       // session already mined an acceptance for is known to be behind
       // the chain, not informative about it — a public RPC serving the
@@ -291,37 +303,42 @@ export function useTosAcceptance(): TosAcceptanceState {
       // refused local receipt is real but superseded, and the
       // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
-      // The anchor is CLAMPED to this clock (round 16 P1): a backward
-      // clock correction between submission and here leaves
-      // `submittedAt` in the future, whose negative age would pass
-      // every expiry check until wall time caught up — an unbounded
-      // override from one bad timestamp. Clamped, the window is at
-      // most the TTL from now, and the adoption paths' own future
-      // guard becomes the backstop rather than the common refusal.
-      let pinnedAt = Math.min(submittedAt, Date.now());
-      if (Date.now() - pinnedAt > ACCEPTANCE_PIN_TTL_MS && publicClient) {
-        // A transaction can sit PENDING longer than the pin's window —
-        // congestion, a late speed-up — and the submission anchor is
-        // then already expired at settlement, so the just-mined
-        // acceptance would be refused as stale: neither patched, nor
-        // pinned, nor broadcast (round 16 P2). The mined block's own
-        // timestamp is the trustworthy mining age that tells this
-        // apart from round 12's suspended-continuation case: mined
-        // moments ago after a long pend, it re-anchors the window at
-        // mining time; mined long ago and merely RESUMED now, it is
-        // old, adoption still refuses, and the reads carry the case.
-        // Fetched only on this exceptional path — the common case
-        // stays free of the extra read — and clamped to this clock
-        // like the stamp above (a consensus timestamp can sit ahead
-        // of the local clock). On failure the expired anchor stands
-        // and the refusal path below handles it.
+      // The submission stamp anchors the pin in the COMMON case. When
+      // it is not trustworthy — expired (a transaction pending past
+      // the window: congestion, a late speed-up — round 16 P2) or
+      // future-dated beyond the skew (a backward clock correction —
+      // round 16 P1) — the anchor is rebuilt from CHAIN-DERIVED age:
+      // latest block timestamp minus the receipt block's, expressed
+      // against this clock. Chain time is the one measure of "how
+      // long ago did this mine" that survives local corrections
+      // (round 17 P1): round 16's `min(stamp, now)` clamp restarted
+      // the window whenever the clock moved backward DURING a
+      // suspension, handing a possibly-orphaned acceptance a fresh
+      // 90 seconds — while chain age keeps counting through both the
+      // sleep and the correction, so a genuinely old acceptance is
+      // refused and a congested-but-just-mined one is preserved.
+      // Fetched only on the exceptional paths; on failure the RAW
+      // stamp stands, adoption refuses it (expired or future), and
+      // the always-scheduled reads carry the case — fail closed,
+      // never a guessed window.
+      let pinnedAt = submittedAt;
+      const stampAge = Date.now() - submittedAt;
+      if (
+        (stampAge > ACCEPTANCE_PIN_TTL_MS || stampAge < -MAX_FUTURE_SKEW_MS) &&
+        publicClient
+      ) {
         try {
-          const minedBlock = await publicClient.getBlock({
-            blockNumber: receipt.blockNumber,
-          });
-          pinnedAt = Math.min(Number(minedBlock.timestamp) * 1_000, Date.now());
+          const [latestBlock, minedBlock] = await Promise.all([
+            publicClient.getBlock(),
+            publicClient.getBlock({ blockNumber: receipt.blockNumber }),
+          ]);
+          const chainAgeMs = Math.max(
+            0,
+            (Number(latestBlock.timestamp) - Number(minedBlock.timestamp)) * 1_000,
+          );
+          pinnedAt = Date.now() - chainAgeMs;
         } catch {
-          // Keep the expired anchor: adoption refuses, reads decide.
+          // Keep the raw stamp: adoption refuses, reads decide.
         }
       }
       // A fresh read is used here to REJECT a conflicting receipt,
@@ -345,21 +362,23 @@ export function useTosAcceptance(): TosAcceptanceState {
       // cannot see that — and a conflicted receipt applies nothing,
       // with the invalidations below re-reading the newer truth.
       const fresh = freshVerdict(queryClient, queryKey, Date.now());
-      // ANY fresh read that disagrees conflicts (#2004 round 12 P1) —
-      // not only a numerically greater version, and with no height
-      // carve-out. Round 14 excused a differing read whose observed
-      // block sat below the receipt's as pre-acceptance lag; round
-      // 15's P1 withdrew the same reasoning on the receiver, and it
-      // fails here identically: height is not ancestry, so a fresh
-      // post-rollback read at a lower height is indistinguishable
-      // from a lagging pre-acceptance one, and a legal gate resolves
-      // that tie by believing the read and re-reading — the receipt
-      // is real but unprovable against it, and the invalidations
-      // below re-read the truth either way. Equal version and hash is
-      // the one non-conflict: a fresh refusal there is the lag this
-      // whole module corrects.
+      // A fresh NODE-CONFIRMED read that disagrees conflicts (#2004
+      // round 12 P1, narrowed in round 17 P2) — on version in either
+      // direction, with no height carve-out (round 15 P1: height is
+      // not ancestry, and a legal gate resolves the unprovable tie by
+      // believing the read and re-reading). A PIN-BACKED differing
+      // entry does not conflict: it is the sync rail's own product —
+      // another tab's frame that landed while this acceptance sat
+      // pending — and hearsay must not veto the one piece of evidence
+      // that is not hearsay, a receipt this tab watched settle.
+      // Mirrors the receiver's round-16 rule; the beaten pin-backed
+      // verdict is aged below once the receipt adopts, so the gates
+      // stop honouring it while the reads settle which acceptance
+      // stands. Equal version and hash is the one non-conflict: a
+      // fresh refusal there is the lag this whole module corrects.
       const conflicted =
         fresh !== undefined &&
+        !fresh.pinBacked &&
         (fresh.version !== acceptedVersion || fresh.hash !== query.data.hash);
       // Trusted adoption for the tab's own receipt (#2004 round 15
       // P2, restoring round 13's path minus its comparison): a
@@ -381,6 +400,21 @@ export function useTosAcceptance(): TosAcceptanceState {
           receiptTxIndex,
           Date.now(),
         );
+      // The DIFFERING pin-backed verdict the receipt just superseded
+      // is aged immediately (round 17 P2, mirroring the receiver's
+      // round-16 rule): its backing pin has been replaced, so nothing
+      // would correct or revalidate it any more, and left fresh it
+      // would keep both gates open under the other acceptance's
+      // version while this tab broadcasts a different one.
+      if (
+        adopted &&
+        fresh?.pinBacked &&
+        (fresh.version !== acceptedVersion || fresh.hash !== query.data.hash)
+      ) {
+        queryClient.setQueryData<TosVerdictData>(queryKey, fresh, {
+          updatedAt: Date.now() - MAX_VERDICT_AGE_MS - VERDICT_CLOCK_TICK_MS - 1_000,
+        });
+      }
       // No freshness bar on the cache write for the receipt — it IS
       // the outcome, anchored; a stale or empty entry is simply
       // seeded (round 1's acting-tab prerogative) — EXCEPT a fresh

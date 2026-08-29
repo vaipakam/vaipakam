@@ -291,6 +291,35 @@ export function acceptanceIsPinned(
 }
 
 /**
+ * Retire a live pin that an authoritative read has SUPERSEDED (#2004
+ * round 17 P1). The adoption guards stop a stale pin ARRIVING; this
+ * stops one SURVIVING: with a v3 pin live when governance installs
+ * v4, a node-confirmed v4 read correctly re-prompts but used to leave
+ * the v3 pin in the map — and a later refetch through an RPC still
+ * serving v3 then matched it, converting that node's truthful `false`
+ * into a fresh `accepted: true` under terms no longer in force.
+ *
+ * Retirement is deliberately ONE-DIRECTIONAL: only a read at a HIGHER
+ * version (governance strictly increases within a branch, so the
+ * pin's version is provably behind) or at the SAME version under a
+ * different hash (the reorged-text case — the fresh read is the
+ * better witness to which text stands) retires the pin. A read at a
+ * LOWER version than the pin is a lagging node — retiring on it
+ * would destroy the exact correction the pin exists to make. The
+ * rollback residual that leaves (an orphaned higher-version pin
+ * surviving lower-version canonical reads) only ever corrects reads
+ * AT the orphaned version, and stays bounded by the TTL and the
+ * scheduled reads, as everywhere else in this module.
+ */
+export function retireSupersededPin(scope: string, version: number, hash: string): void {
+  const pin = pins.get(scope);
+  if (!pin) return;
+  if (version > pin.version || (version === pin.version && hash !== pin.hash)) {
+    pins.delete(scope);
+  }
+}
+
+/**
  * Wall-clock milliseconds this exact pin (scope, version AND hash) has
  * left, or null when no matching live pin exists. Read-only — deletion
  * of expired pins stays with `acceptanceIsPinned`. Exists for the
