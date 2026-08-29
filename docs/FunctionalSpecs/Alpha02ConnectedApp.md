@@ -708,6 +708,11 @@ Thin-market honesty rules apply.
 - The page states its limits as prominently as its controls, and each is
   stated at its true extent. It does not reach on-chain data — which is public,
   so the user can look it up themselves, and permanent, so nobody can erase it.
+  **The wallet address is named as the one exception**: where the user saved
+  per-wallet settings, the address is part of the locally stored data and
+  therefore part of the download, and the file itself says so — being public
+  on the chain and being absent from this browser are different facts, and a
+  user deciding whether the file is safe to share is owed the second one.
   It does not reach the alerts service: **unlinking removes the messaging
   connection only, and the alert preferences are deliberately retained there
   for a future relink**, so removing those is a support request. It does not
@@ -728,6 +733,17 @@ Thin-market honesty rules apply.
 - **If any part of the browser's storage could not be read, the result is
   reported as incomplete rather than successful.** The app cannot claim to have
   emptied a store it was never allowed to look inside.
+- **A partial download warns inside the file itself**, naming the stores whose
+  contents are missing. The file travels away from the page, so the page's
+  on-screen warning must travel with it — a partial export that reads as
+  complete is the same false assurance in portable form.
+- **The controls act on what is stored at the moment they are used, not at the
+  moment the page was drawn.** Browser storage can change without the page
+  noticing — from another tab, or from the app's own surfaces in the same one —
+  so neither control is withheld on the strength of a possibly stale count. A
+  store that really is empty yields an honestly empty download or a "nothing
+  was stored" erasure report, which are truthful answers; a control that
+  denies data it would in fact find is not.
 - **The page promises no prompt it does not produce.** Erasing returns display
   preferences to their defaults; it does not re-ask for cookie consent, which
   belongs to the marketing site and is stored on that site's own origin, and it

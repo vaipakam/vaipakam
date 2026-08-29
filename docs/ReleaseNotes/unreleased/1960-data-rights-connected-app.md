@@ -25,15 +25,22 @@ than it sounds: some browsers, particularly private windows and
 locked-down privacy settings, refuse to let a site clear its own
 storage. Reporting that as success would be a false assurance about a
 legal right, so a refusal says so plainly and points at the browser's
-own settings, which do work.
+own settings, which do work. A download taken while part of the storage
+refuses to be read carries the warning inside the file itself, naming
+what is missing — the file travels away from the page, so the page's
+warning travels with it.
 
 Just as important is what the page says it **cannot** do, stated as
 prominently as what it can:
 
-- **Anything on the blockchain.** Your wallet address and every
-  transaction you have signed are public and permanent. Nobody can erase
-  them, this protocol included, and a page implying otherwise would be
-  misleading about the one thing people most want to hear.
+- **Anything on the blockchain.** Every transaction you have signed is
+  public and permanent. Nobody can erase them, this protocol included,
+  and a page implying otherwise would be misleading about the one thing
+  people most want to hear. Your wallet address is the one exception the
+  page names: where you saved per-wallet settings it is part of what
+  this browser stores — and so part of the download, which says so
+  itself, so the file can be judged before it is shared. Erasing removes
+  those local copies; nothing on the chain changes.
 - **Alerts.** If you linked Telegram, that link is held by the alerts
   service, not your browser. Unlinking in Settings is what removes it.
 - **The main site's own data**, which has its own controls there.
