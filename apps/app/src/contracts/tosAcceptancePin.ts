@@ -600,6 +600,41 @@ export function retireSupersededPin(scope: string, version: number, hash: string
   }
 }
 
+/**
+ * Retire whatever pin the scope holds when it DIFFERS from a
+ * just-settled LOCAL receipt's terms (#2004 round 36 P1). The
+ * receipt-supersedes doctrine (`adoptReceiptPin`) normally replaces a
+ * differing incumbent as a side effect of storing the receipt's own
+ * pin — but an UNANCHORABLE receipt (anchor expired, future-dated, or
+ * inconsistent across a clock discontinuity) stores nothing, and the
+ * incumbent hearsay then survived a settlement this tab watched
+ * disprove it: in a rollback where the local receipt settles for the
+ * restored terms, the orphaned terms' pin kept correcting reads until
+ * its own TTL. The receipt's authority to supersede does not depend
+ * on its anchor — only the pin it may INSTALL does — so the caller
+ * retires the differing incumbent explicitly and installs nothing.
+ *
+ * DIRECTIONLESS on purpose, unlike `retireSupersededPin`: that
+ * function is driven by an ordinary READ, which a lagging node makes
+ * untrustworthy in the lower-version direction; this one is driven by
+ * a receipt this tab watched settle, which supersedes without
+ * comparison (round 15 — every marker tried for ordering the two fell
+ * to a case it could not see). A SAME-terms incumbent is kept: it
+ * corroborates the receipt and carries its own valid anchor and
+ * expiry machinery, which deleting would orphan.
+ *
+ * The caller must age any pin-backed verdict resting on the retired
+ * pin in the same breath: deletion reads as `superseded` to that
+ * verdict's expiry timer — silence — so nothing else will.
+ */
+export function retireDifferingPin(scope: string, version: number, hash: string): void {
+  const pin = pins.get(scope);
+  if (!pin) return;
+  if (pin.version !== version || pin.hash !== hash) {
+    pins.delete(scope);
+  }
+}
+
 /** What the expiry timer sees when it looks at its own pin. */
 export type PinExpiryObservation =
   | { state: 'live'; remainingMs: number }

@@ -57,6 +57,7 @@ import {
   acceptanceScope,
   adoptReceiptPin,
   monotonicNow,
+  retireDifferingPin,
   retireSupersededPin,
 } from './tosAcceptancePin';
 import {
@@ -271,29 +272,34 @@ export function useTosAcceptance(): TosAcceptanceState {
       // text the modal displayed, not to whatever is in force by the
       // time it mines. A version installed mid-flow makes this call
       // revert rather than silently record consent to unseen terms.
-      // The pin's anchor is stamped at SUBMISSION — the moment the
-      // signed transaction has a hash — not when this continuation
-      // resumes (#2004 round 12 P2). The two differ by however long
-      // the tab was suspended after mining: anchored at resume, an
-      // acceptance orphaned during the pause would be rebroadcast
-      // with a brand-new 90-second window. Anchored at submission the
-      // window can only START EARLY (mining follows submission by
-      // seconds), which shortens the pin's life — the safe direction.
-      // A suspension long enough to expire the anchor leaves the
-      // verdict write and the reads to carry the case, exactly like
-      // an expired frame.
-      let submittedAt = Date.now();
-      let submittedAtMono = monotonicNow();
-      const { receipt } = await write(
-        'acceptTerms',
-        [query.data.version, query.data.hash],
-        {
-          onSubmitted: () => {
-            submittedAt = Date.now();
-            submittedAtMono = monotonicNow();
-          },
-        },
-      );
+      // The pin's anchor is stamped BEFORE the write is awaited — not
+      // at submission's `onSubmitted` callback, and not when this
+      // continuation resumes (#2004 rounds 12 P2 and 36 P1). Round 12
+      // established why not at resume: anchored there, an acceptance
+      // orphaned during a post-mine suspension would be rebroadcast
+      // with a brand-new 90-second window. Round 36 moved it off the
+      // `onSubmitted` callback for the same failure one layer down:
+      // that callback runs in `writeContract`'s promise CONTINUATION,
+      // and a mobile or external wallet backgrounding the page while
+      // it handles the request delays the continuation until resume —
+      // potentially after the transaction has already MINED. Stamped
+      // there, submission and settlement collapse to near-zero
+      // interval: `anchorConsistent` is vacuously true and the anchor
+      // looks fresh, handing an old — possibly already orphaned —
+      // receipt a full pin window plus an adoptable broadcast frame.
+      // The pre-await stamp is the one moment guaranteed to precede
+      // real submission without depending on the page executing any
+      // continuation. It can only make the window START EARLY, by the
+      // wallet-prompt dwell — the safe direction: a dwell long enough
+      // to expire the anchor makes `adoptReceiptPin` refuse it, and
+      // the read-hint broadcast plus the always-scheduled reads carry
+      // the case, exactly like an expired frame.
+      const submittedAt = Date.now();
+      const submittedAtMono = monotonicNow();
+      const { receipt } = await write('acceptTerms', [
+        query.data.version,
+        query.data.hash,
+      ]);
       // The receipt's chain position — (mined block, transaction
       // index) — travels with the pin and the broadcast frame (#2004
       // rounds 14–15): it is what remote receivers order frames by,
@@ -323,8 +329,8 @@ export function useTosAcceptance(): TosAcceptanceState {
       // refused local receipt is real but superseded, and the
       // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
-      // Anchored at SUBMISSION, and deliberately ONLY there. When the
-      // stamp is untrustworthy — expired (a transaction pending past
+      // Anchored at the PRE-WRITE stamp, and deliberately ONLY there.
+      // When the stamp is untrustworthy — expired (a transaction pending past
       // the pin window: congestion, a late speed-up) or future-dated
       // beyond the skew allowance (a backward clock correction) — the
       // adoption guards refuse it outright and the always-scheduled
@@ -343,8 +349,9 @@ export function useTosAcceptance(): TosAcceptanceState {
       // costs nothing the immediate and delayed reads don't recover.
       const pinnedAt = submittedAt;
       // The anchor must not have CROSSED a clock discontinuity
-      // between submission and settlement (round 34 P1): stamped on
-      // both clocks at submission, its two elapsed measures agree
+      // between the pre-write stamp and settlement (round 34 P1;
+      // stamped pre-await since round 36 — see above): stamped on
+      // both clocks at once, its two elapsed measures agree
       // whenever the interval was ordinary — awake, or a plain sleep
       // (both clocks advance, or the wall bound catches the nap
       // through the TTL check) — and disagree exactly when a
@@ -418,6 +425,37 @@ export function useTosAcceptance(): TosAcceptanceState {
           receiptTxIndex,
           Date.now(),
         );
+      // A BELIEVED receipt that could not be pinned still supersedes
+      // differing hearsay (round 36 P1). When the anchor is outside
+      // its bounds or inconsistent, the branches above install no pin
+      // and write no verdict — but a differing incumbent pin (another
+      // tab's frame that landed while this transaction sat pending)
+      // and the fresh pinBacked verdict resting on it then SURVIVE a
+      // settlement this tab watched disprove them: in a rollback
+      // where this receipt settled for the restored terms, the
+      // orphaned terms' pin kept correcting reads and its verdict
+      // kept both gates open until the incumbent TTL if the
+      // authoritative reads hung. The receipt's authority to
+      // supersede does not depend on its anchor — only what it may
+      // INSTALL does — so the differing hearsay is retired and its
+      // verdict aged, with nothing installed in their place; the
+      // always-scheduled reads decide what is true. Same-terms
+      // hearsay is kept: it corroborates the receipt and carries its
+      // own valid machinery.
+      if (!conflicted && !adopted) {
+        retireDifferingPin(scope, acceptedVersion, query.data.hash);
+        if (
+          fresh?.pinBacked &&
+          (fresh.version !== acceptedVersion || fresh.hash !== query.data.hash)
+        ) {
+          // Aged, not deleted, mirroring the receiver's round-16/20
+          // rule — and past the render-clock slack, so the gate's
+          // lagging `nowMs` cannot read it as fresh for a tick.
+          queryClient.setQueryData<TosVerdictData>(queryKey, fresh, {
+            updatedAt: Date.now() - MAX_VERDICT_AGE_MS - VERDICT_CLOCK_TICK_MS - 1_000,
+          });
+        }
+      }
 
       // No freshness bar on the cache write for the receipt — it IS
       // the outcome, anchored; a stale or empty entry is simply

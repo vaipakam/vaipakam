@@ -18,6 +18,7 @@ import {
   adoptReceiptPin,
   observePinExpiry,
   pinAcceptance,
+  retireDifferingPin,
   retireSupersededPin,
 } from './tosAcceptancePin';
 
@@ -406,6 +407,45 @@ describe('retireSupersededPin', () => {
     retireSupersededPin(SCOPE, 3, HASH);
     pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
     retireSupersededPin(SCOPE, 3, HASH);
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 1_000)).toBe(true);
+  });
+});
+
+describe('retireDifferingPin', () => {
+  // #2004 round 36 P1: a believed receipt that could not be PINNED
+  // (anchor expired, future-dated, or inconsistent across a clock
+  // discontinuity) still supersedes differing hearsay — the receipt's
+  // authority does not depend on its anchor, only what it may install
+  // does. Directionless, unlike retireSupersededPin: it is driven by
+  // a receipt this tab watched settle, not by a read a lagging node
+  // could have answered.
+  const H2 = `0x${'ef'.repeat(32)}`;
+
+  it('retires a HIGHER-version incumbent — the direction a read may not', () => {
+    // The rollback case: another tab's v4 frame landed mid-pend, then
+    // this tab's v3 receipt settled on the restored branch. A read
+    // may not retire downward (lagging nodes); a settled receipt may.
+    pinAcceptance(SCOPE, 4, H2, B0 + 2, TX0, T0);
+    retireDifferingPin(SCOPE, 3, HASH);
+    expect(acceptanceIsPinned(SCOPE, 4, H2, T0 + 1_000)).toBe(false);
+  });
+
+  it('retires a lower-version and a same-version-different-hash incumbent', () => {
+    pinAcceptance(SCOPE, 2, HASH, B0, TX0, T0);
+    retireDifferingPin(SCOPE, 3, HASH);
+    expect(acceptanceIsPinned(SCOPE, 2, HASH, T0 + 1_000)).toBe(false);
+    pinAcceptance(SCOPE, 3, H2, B0, TX0, T0);
+    retireDifferingPin(SCOPE, 3, HASH);
+    expect(acceptanceIsPinned(SCOPE, 3, H2, T0 + 1_000)).toBe(false);
+  });
+
+  it('keeps a SAME-terms incumbent, and tolerates no pin at all', () => {
+    // Same terms corroborate the receipt; the incumbent's own anchor
+    // and expiry machinery stay valid, and deleting it would orphan
+    // any verdict resting on it (its timer would observe superseded).
+    retireDifferingPin(SCOPE, 3, HASH);
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
+    retireDifferingPin(SCOPE, 3, HASH);
     expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 1_000)).toBe(true);
   });
 });
