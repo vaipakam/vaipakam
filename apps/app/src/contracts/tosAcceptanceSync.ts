@@ -32,7 +32,8 @@
  * must return to believing the chain together.
  */
 import type { QueryClient } from '@tanstack/react-query';
-import { tosQueryKey, type TosVerdictData } from './tosGate';
+import { getDeployment } from '@vaipakam/contracts/deployments';
+import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
 import {
   ACCEPTANCE_PIN_TTL_MS,
   acceptanceScope,
@@ -57,6 +58,15 @@ const RECEIVER_SECOND_READ_MS = 4_000;
 export interface AcceptancePinFrame {
   kind: 'tos-acceptance-pin';
   chainId: number;
+  /** The Diamond the acceptance was mined against (#2004 round 3 P1).
+   *  A chain ID does not identify a deployment: during a rollout that
+   *  points `deployments.json` at a fresh Diamond, an old tab and a
+   *  new tab share this origin's channel while reading DIFFERENT
+   *  contracts — and Terms state is per-Diamond, so an acceptance
+   *  recorded on the retired one says nothing about the new one. The
+   *  receiver drops any frame whose Diamond is not the one its own
+   *  configuration reads. */
+  diamond: string;
   address: string;
   version: number;
   hash: `0x${string}`;
@@ -67,12 +77,13 @@ export interface AcceptancePinFrame {
 
 export function buildAcceptancePinFrame(
   chainId: number,
+  diamond: string,
   address: string,
   version: number,
   hash: `0x${string}`,
   at: number,
 ): AcceptancePinFrame {
-  return { kind: 'tos-acceptance-pin', chainId, address, version, hash, at };
+  return { kind: 'tos-acceptance-pin', chainId, diamond, address, version, hash, at };
 }
 
 /**
@@ -87,6 +98,7 @@ export function parseAcceptancePinFrame(data: unknown): AcceptancePinFrame | nul
   if (f.kind !== 'tos-acceptance-pin') return null;
   if (typeof f.chainId !== 'number' || !Number.isInteger(f.chainId) || f.chainId <= 0)
     return null;
+  if (typeof f.diamond !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(f.diamond)) return null;
   if (typeof f.address !== 'string' || f.address.length === 0) return null;
   // Version 0 means "no ToS in force" — nothing to accept, so a frame
   // claiming an acceptance of it is malformed by construction.
@@ -97,6 +109,7 @@ export function parseAcceptancePinFrame(data: unknown): AcceptancePinFrame | nul
   return {
     kind: 'tos-acceptance-pin',
     chainId: f.chainId,
+    diamond: f.diamond,
     address: f.address,
     version: f.version,
     hash: f.hash as `0x${string}`,
@@ -139,20 +152,30 @@ export function shouldAdoptPinnedVerdict(
 }
 
 /**
- * Receiver side: apply an acceptance mined in another tab, in the same
- * order the acting tab applied it — verdict into the cache (guarded),
- * pin, then a re-read.
- *
- * No delayed second re-read here, unlike the receipt floor: the pin
- * outlives any RPC lag by construction (90s against seconds), and the
- * `queryFn` consults it on every read, so a lagging refetch corrects
- * itself without a second scheduled pass.
+ * Receiver side: apply an acceptance mined in another tab — verdict
+ * into the cache (doubly guarded: version match AND a fresh successful
+ * entry), pin through ordered adoption, then a re-read now and once
+ * more after `RECEIVER_SECOND_READ_MS` (the immediate refetch can hit
+ * a lagging node still reporting the previous version, which a newer
+ * pin cannot correct — round 2 P2; an earlier version of this comment
+ * claimed no second read was needed, which round 3's P3 rightly called
+ * the opposite of the code below it).
  */
 export function applyAcceptancePinFrame(
   queryClient: QueryClient,
   frame: AcceptancePinFrame,
   now: number = Date.now(),
 ): void {
+  // Round 3 P1: the frame must have been mined against the SAME
+  // Diamond this tab reads. Chain ID and wallet do not identify a
+  // deployment — during a rollout an old tab and a new tab share this
+  // channel while configured for different Diamonds, and Terms state
+  // is per-Diamond. An unknown chain refuses too: a frame this tab
+  // cannot even resolve a deployment for proves nothing about any
+  // contract it reads.
+  const deployment = getDeployment(frame.chainId);
+  if (!deployment || deployment.diamond.toLowerCase() !== frame.diamond.toLowerCase())
+    return;
   // Round 2 P1: a frame can arrive AFTER its own safety window — a
   // suspended tab resuming is enough — and past the bound the chain's
   // answer must win in every tab at once. Applied to the whole frame,
@@ -169,10 +192,23 @@ export function applyAcceptancePinFrame(
   // it to `accepted: true` — opening the gates under terms this tab's
   // own pin already knows are obsolete. A refused frame is history;
   // the pin that beat it already ran this function's tail.
-  if (!adoptOrderedPin(scope, frame.version, frame.at)) return;
+  if (!adoptOrderedPin(scope, frame.version, frame.at, now)) return;
   const queryKey = tosQueryKey(frame.chainId, frame.address);
-  const cached = queryClient.getQueryData<TosVerdictData>(queryKey);
-  if (shouldAdoptPinnedVerdict(cached, frame.version)) {
+  // Round 3 P1: the verdict is written only over a FRESH, SUCCESSFUL
+  // entry at the matching version. `setQueryData` stamps a new
+  // `dataUpdatedAt` and turns an error state back into success — it
+  // manufactures freshness — so matching against a stale or
+  // error-retained verdict would let a delayed frame reopen the gates
+  // under terms that have since been superseded, with no refetch to
+  // correct an INACTIVE query at all. A cache that fails the
+  // freshness bar keeps only the pin; the next real read adopts it
+  // exactly when the chain agrees.
+  const state = queryClient.getQueryState<TosVerdictData>(queryKey);
+  const freshCached =
+    state?.status === 'success' && !isVerdictStale(state.dataUpdatedAt, now)
+      ? state.data
+      : undefined;
+  if (shouldAdoptPinnedVerdict(freshCached, frame.version)) {
     queryClient.setQueryData<TosVerdictData>(queryKey, {
       accepted: true,
       version: frame.version,

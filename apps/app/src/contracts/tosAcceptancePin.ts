@@ -100,9 +100,27 @@ export function pinAcceptance(scope: string, version: number, now: number): void
  * Returns whether the pin was adopted, so callers can gate everything
  * that must not outrun ordering — the cache write, the broadcast — on
  * the same decision.
+ *
+ * An EXPIRED incumbent is discarded before the comparison (#2004 round
+ * 3 P2). Without that, ordering rejects on the corpse of a pin: after
+ * a reorg rolls the canonical version back, a dead higher-version pin
+ * would refuse every newly mined acceptance of the restored version —
+ * for ever, since nothing else deletes a pin whose version no longer
+ * matches reads — leaving the fresh receipt unpinned and unbroadcast
+ * while lagging reads keep offering another paid acceptance. Past the
+ * bound a pin has no authority left to reject with.
  */
-export function adoptOrderedPin(scope: string, version: number, at: number): boolean {
-  const existing = pins.get(scope);
+export function adoptOrderedPin(
+  scope: string,
+  version: number,
+  at: number,
+  now: number,
+): boolean {
+  let existing = pins.get(scope);
+  if (existing && now - existing.at > ACCEPTANCE_PIN_TTL_MS) {
+    pins.delete(scope);
+    existing = undefined;
+  }
   if (
     existing &&
     (existing.version > version || (existing.version === version && existing.at >= at))
@@ -126,12 +144,16 @@ export function acceptanceIsPinned(
   now: number,
 ): boolean {
   const pin = pins.get(scope);
-  if (!pin || pin.version !== version) return false;
+  if (!pin) return false;
+  // Expiry is checked BEFORE the version match (#2004 round 3 P2):
+  // checked after, a dead pin at a version reads no longer report was
+  // never deleted, and its corpse outranked fresh acceptances in
+  // `adoptOrderedPin`'s ordering.
   if (now - pin.at > ACCEPTANCE_PIN_TTL_MS) {
     pins.delete(scope);
     return false;
   }
-  return true;
+  return pin.version === version;
 }
 
 /** Test seam only — the app never forgets a pin, it lets it expire. */

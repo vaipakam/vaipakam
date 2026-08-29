@@ -25,9 +25,16 @@ import {
 
 const HASH = `0x${'ab'.repeat(32)}` as `0x${string}`;
 const ADDRESS = '0xAbCd000000000000000000000000000000000001';
+// The REAL Base Sepolia Diamond from deployments.json — the receiver
+// drops any frame not mined against the deployment this build reads,
+// so the tests must speak with the configuration's own voice.
+const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
 
 function frame(overrides: Partial<AcceptancePinFrame> = {}): AcceptancePinFrame {
-  return { ...buildAcceptancePinFrame(84532, ADDRESS, 3, HASH, 1_700_000_000_000), ...overrides };
+  return {
+    ...buildAcceptancePinFrame(84532, DIAMOND, ADDRESS, 3, HASH, 1_700_000_000_000),
+    ...overrides,
+  };
 }
 
 afterEach(() => {
@@ -57,6 +64,8 @@ describe('parseAcceptancePinFrame', () => {
     expect(parseAcceptancePinFrame({ ...frame(), chainId: '84532' })).toBeNull();
     expect(parseAcceptancePinFrame(frame({ chainId: 0 }))).toBeNull();
     expect(parseAcceptancePinFrame(frame({ address: '' }))).toBeNull();
+    expect(parseAcceptancePinFrame({ ...frame(), diamond: '0x1234' })).toBeNull();
+    expect(parseAcceptancePinFrame({ ...frame(), diamond: undefined })).toBeNull();
     // Version 0 means "no ToS in force" — an acceptance of it cannot
     // exist, so a frame claiming one is malformed, not merely odd.
     expect(parseAcceptancePinFrame(frame({ version: 0 }))).toBeNull();

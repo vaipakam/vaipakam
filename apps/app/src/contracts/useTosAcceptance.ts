@@ -241,19 +241,20 @@ export function useTosAcceptance(): TosAcceptanceState {
       // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
       const pinnedAt = Date.now();
-      const adopted = adoptOrderedPin(scope, acceptedVersion, pinnedAt);
+      const adopted = adoptOrderedPin(scope, acceptedVersion, pinnedAt, pinnedAt);
       // The cache write carries its own guard, like the receiver's: a
       // newer VERDICT can be cached here without any pin (this tab's
       // own refetch may have discovered v4 while our v3 receipt was
-      // settling), and writing v3 over it would be the same reopening
-      // by another door.
-      if (
+      // settling — an ordinary read installs no pin, so ordering alone
+      // cannot see it), and writing v3 over it would be the same
+      // reopening by another door.
+      const cacheAdopted =
         adopted &&
         shouldAdoptPinnedVerdict(
           queryClient.getQueryData<TosVerdictData>(queryKey),
           acceptedVersion,
-        )
-      ) {
+        );
+      if (cacheAdopted) {
         // Not optimism about an unknown outcome — it is the outcome,
         // anchored to a receipt this call waited for. Writing it here
         // rather than holding it in component state matters because
@@ -276,13 +277,21 @@ export function useTosAcceptance(): TosAcceptanceState {
       // acting tab's `pinnedAt` travels with it: the 90s bound must
       // expire at the same moment everywhere, or a reorged acceptance
       // stays papered over in whichever tab heard about it last.
-      // Gated on `adopted` with everything else — a receipt that lost
-      // ordering here would lose it in every receiving tab too, so
-      // broadcasting it would be noise at best.
-      if (adopted && address) {
+      // Gated on the CACHE decision, not on pin adoption alone (#2004
+      // round 3 P1): an ordinary refetch installs no pin, so a local
+      // v3 receipt settling after this tab's own read discovered v4
+      // can win ordering while the cache guard rightly refuses it —
+      // and a receiving tab still cached at v3 would have written
+      // `accepted: true` from the broadcast. What this tab refuses to
+      // believe about a receipt, it must not ask other tabs to
+      // believe either. The frame carries the Diamond the acceptance
+      // was mined against (round 3 P1), so a tab configured for a
+      // different deployment of the same chain drops it.
+      if (cacheAdopted && address) {
         publishAcceptancePin(
           buildAcceptancePinFrame(
             readChain.chainId,
+            readChain.diamondAddress,
             address,
             acceptedVersion,
             query.data.hash,
@@ -316,7 +325,16 @@ export function useTosAcceptance(): TosAcceptanceState {
     } finally {
       setSubmitting(false);
     }
-  }, [query.data, write, queryClient, queryKey, scope, address, readChain.chainId]);
+  }, [
+    query.data,
+    write,
+    queryClient,
+    queryKey,
+    scope,
+    address,
+    readChain.chainId,
+    readChain.diamondAddress,
+  ]);
 
   // Self-review before review round 1: a DISABLED query is `isPending`
   // in TanStack v5 — status 'pending', fetchStatus 'idle' — so a wallet
