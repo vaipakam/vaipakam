@@ -44,6 +44,10 @@
     "./prepayOrderShape": {
       "types": "./src/prepayOrderShape.ts",
       "default": "./src/prepayOrderShape.ts"
+    },
+    "./erasureMessage": {
+      "types": "./src/erasureMessage.ts",
+      "default": "./src/erasureMessage.ts"
     }
   },
   "scripts": {

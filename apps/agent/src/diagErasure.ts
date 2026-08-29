@@ -60,6 +60,7 @@
  */
 
 import { recoverMessageAddress, type Hex } from 'viem';
+import { buildErasureMessage } from '@vaipakam/lib/erasureMessage';
 import type { Env } from './env';
 import { isHexAddress, walletHash } from './diagHash';
 import { isProtocolAdmin, type AdminVerifier } from './diagAdminAuth';
@@ -98,35 +99,14 @@ const DEFAULT_DISCLOSURE_NOTE =
 // ─── Canonical signed message ──────────────────────────────────────
 
 /**
- * Build the exact message a user signs to authorise erasure /
- * status. This string MUST be byte-identical between the wallet
- * prompt the frontend shows and the reconstruction here, or
- * signature recovery yields a different address and the request is
- * rejected. The wallet is lower-cased so a checksummed and an
- * all-lowercase spelling of the same address produce the same
- * message.
- *
- * NOTE: when the frontend erasure UI is built (follow-up), this
- * builder should move to `packages/lib` so both sides import one
- * source of truth — the same single-source discipline the repo
- * applies to ABIs. Until then the format is frozen here and
- * mirrored in the PIA doc.
- *
- * @param wallet   Full EVM address (validated by the caller).
- * @param issuedAt Unix seconds the request was signed at.
+ * The signed message builder now lives in `@vaipakam/lib` (#2002):
+ * the day the frontend erasure UI was built, the note this file
+ * carried since T-075 came due — the wallet prompt the connected app
+ * shows and the reconstruction here MUST be byte-identical, and one
+ * imported source of truth is how that stays true. Re-exported so
+ * this module's public surface (and its tests) are unchanged.
  */
-export function buildErasureMessage(wallet: string, issuedAt: number): string {
-  return [
-    'Vaipakam — Erase my error-diagnostics records',
-    '',
-    'I request erasure of the server-side error-capture records',
-    'associated with the wallet below. Signing this message proves',
-    'ownership of the wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
+export { buildErasureMessage };
 
 // ─── Request parsing + signature verification ──────────────────────
 

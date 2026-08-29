@@ -725,6 +725,19 @@ Thin-market honesty rules apply.
   **Overstating reach is the primary way a page of this kind misleads** — and
   understating what a user can obtain is the same failure pointed the other
   way — so each exclusion is named at its real size.
+- The same page carries the **signed erasure of the error reports support
+  keeps** — the server-side counterpart the Privacy Policy promises. The
+  request is authorised by a free wallet signature (no transaction, no gas)
+  proving ownership of the wallet whose records it names. The service's
+  answers are deliberately uniform, and the page must not out-inform them:
+  a processed request never says whether any records existed — records can be
+  under a retention order the service is forbidden to mention, and one
+  wallet's confirmation must not read differently from another's — and the
+  page states exactly that, identically to everyone. A companion check
+  reports retained records only where the law allows saying so; its quiet
+  answer is phrased as "none are reported", never "none exist", because only
+  the first is knowable. A build with no support-service connection says the
+  control cannot be used from there and names the e-mail route instead.
 - **Every live preference the erasure covers is visibly reset**, not merely
   cleared from storage: the theme, the interface mode, the display language,
   and the record of which notifications have been seen. A page that reports
