@@ -254,6 +254,13 @@ describe('applyAcceptancePinFrame', () => {
     const after = client.getQueryData<TosVerdictData>(key);
     expect(after?.accepted).toBe(false);
     expect(after?.hash).toBe(canonicalHash);
+    // Round 6 P1 hardened this from a verdict guard into a whole-frame
+    // refusal: the hash-A pin must not exist either, or a lagging
+    // hash-A node plus queryFn would rewrite the canonical refusal on
+    // the very next read.
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, frame().at)).toBe(
+      false,
+    );
   });
 
   it('rejects a frame timestamped in the future', () => {

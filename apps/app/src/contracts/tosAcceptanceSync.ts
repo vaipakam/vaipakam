@@ -256,7 +256,19 @@ export function applyAcceptancePinFrame(
   // "the version rolled back and was re-accepted" (the restored-
   // version reorg case) is the story the timestamps support.
   const freshCached = freshVerdict(queryClient, queryKey, now);
-  if (freshCached && freshCached.version > frame.version) return;
+  // ...and a fresh SAME-version verdict with a DIFFERENT hash refuses
+  // too (round 6 P1): after a reorg replaces v3/hash-A with canonical
+  // v3/hash-B, a delayed hash-A frame passing a version-only guard
+  // would install a hash-A pin — and a lagging hash-A node plus
+  // `queryFn` would then replace the known canonical refusal with a
+  // fresh `accepted: true` under text the wallet never canonically
+  // accepted. Fresh conflicting evidence, either axis, kills the frame.
+  if (
+    freshCached &&
+    (freshCached.version > frame.version ||
+      (freshCached.version === frame.version && freshCached.hash !== frame.hash))
+  )
+    return;
   // Ordered adoption, not a plain overwrite: a delayed older frame
   // must not evict a newer pin. And when ordering REFUSES the frame,
   // nothing else of it may apply either (round 2 P1): with `false`

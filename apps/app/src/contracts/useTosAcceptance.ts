@@ -45,11 +45,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
 import { acceptanceIsPinned, acceptanceScope, adoptOrderedPin } from './tosAcceptancePin';
-import {
-  buildAcceptancePinFrame,
-  freshVerdict,
-  shouldAdoptPinnedVerdict,
-} from './tosAcceptanceSync';
+import { buildAcceptancePinFrame, freshVerdict } from './tosAcceptanceSync';
 import { publishAcceptancePin } from '../chain/receiptSync';
 import { captureTxError } from '../lib/errors';
 
@@ -250,27 +246,39 @@ export function useTosAcceptance(): TosAcceptanceState {
       // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
       const pinnedAt = Date.now();
-      // A FRESH read that has already discovered a newer version
-      // outranks this receipt entirely (#2004 round 5 P1, applied to
-      // the local path too): an ordinary read installs no pin, so
-      // ordering alone cannot see it — and a superseded pin, though
-      // it writes nothing itself, waits for a lagging node to report
-      // the old version and has `queryFn` turn that answer into a
-      // fresh `accepted: true` over the known newer refusal. When the
-      // tab's own reads have moved past the accepted version, nothing
-      // of the receipt applies; the invalidations below re-read the
-      // newer truth.
+      // A fresh read is used here to REJECT a conflicting receipt,
+      // never to REQUIRE a matching one (#2004 round 5 P1 shaped by
+      // round 6 P2). The asymmetry with the receiver is deliberate and
+      // is the round-1 asymmetry again: a frame is untrusted evidence
+      // and must clear the freshness bar, while a mined receipt for
+      // this exact version and hash is self-authenticating — the
+      // transaction reverts on stale terms, so it proves they were in
+      // force at mine time. Requiring a fresh matching entry here
+      // (round 5's first cut) silently re-opened the bug this PR
+      // exists to fix: a wallet prompt held open past the 180s bound,
+      // or an errored refetch, made `fresh` undefined, and the valid
+      // receipt was neither patched nor broadcast — the other tab's
+      // enabled Accept button stood until its own poll.
+      //
+      // What a fresh read CAN do is conflict: a newer version, or the
+      // same version under a different hash (the reorged-governance
+      // case, round 6 P1), each mean this tab has READ past the
+      // receipt — an ordinary read installs no pin, so ordering alone
+      // cannot see that — and a conflicted receipt applies nothing,
+      // with the invalidations below re-reading the newer truth.
       const fresh = freshVerdict(queryClient, queryKey, pinnedAt);
-      const supersededByRead = fresh !== undefined && fresh.version > acceptedVersion;
+      const conflicted =
+        fresh !== undefined &&
+        (fresh.version > acceptedVersion ||
+          (fresh.version === acceptedVersion && fresh.hash !== query.data.hash));
       const adopted =
-        !supersededByRead &&
+        !conflicted &&
         adoptOrderedPin(scope, acceptedVersion, query.data.hash, pinnedAt, pinnedAt);
-      // The cache write carries its own guard, like the receiver's,
-      // and measures the cache with the same FRESHNESS ruler: a stale
-      // same-version entry is not promoted either — the pin plus the
-      // re-reads carry that case.
-      const cacheAdopted =
-        adopted && shouldAdoptPinnedVerdict(fresh, acceptedVersion, query.data.hash);
+      // No freshness bar on the cache write for the receipt — it IS
+      // the outcome, anchored; a stale or empty entry is simply
+      // seeded, which round 1 already argued is the acting tab's
+      // prerogative.
+      const cacheAdopted = adopted;
       if (cacheAdopted) {
         // Not optimism about an unknown outcome — it is the outcome,
         // anchored to a receipt this call waited for. Writing it here
