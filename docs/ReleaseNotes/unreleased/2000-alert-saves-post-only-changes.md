@@ -23,5 +23,13 @@ closes the known residual noted in the Terms-gate work: a held user's
 first opt-out no longer ships the untouched lane's bands to a channel
 the wallet linked elsewhere.
 
+Deployment order: the alerts service should deploy BEFORE the
+connected app, since the old service refuses the new app's slimmer
+saves. The app also carries a rollout shim for the out-of-order
+window: a slimmed save the old service refuses is retried once in the
+previous full-record shape — no worse than every save before this
+change — so nothing breaks either way; the shim never fires once both
+sides are current.
+
 Closes #2000. The sibling question — whether the alerts service should
 verify Terms acceptance itself — remains tracked as #1999.

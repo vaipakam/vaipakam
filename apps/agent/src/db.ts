@@ -89,45 +89,58 @@ type ThresholdsUpsert = Omit<
   notify_maturity_approaching?: boolean;
 };
 
-/** What a BANDLESS upsert writes when no row exists to preserve —
+/** What a BANDLESS upsert's INSERT arm writes when no row exists —
  *  the same sensible defaults `apps/app` shows as the risky lane's
  *  starting state (`DEFAULT_BANDS` there; keep the two in step). A
  *  first-ever write that omitted bands intends no lane change, and
- *  for a wallet with no record the lane's state IS the default. */
+ *  for a wallet with no record the lane's state IS the default. The
+ *  values reach ONLY a genuine insert: on conflict the bandless
+ *  statement's update arm does not assign the band columns at all. */
 const DEFAULT_BANDS = { warn_hf: 1.5, alert_hf: 1.2, critical_hf: 1.05 };
 
-type ResolvedThresholdsUpsert = ThresholdsUpsert & {
-  warn_hf: number;
-  alert_hf: number;
-  critical_hf: number;
-};
-
-/** Resolve a bandless upsert to concrete bands: the stored row's when
- *  one exists (preserve — the caller intends no lane change), else
- *  the defaults. A read-then-write rather than SQL COALESCE because
- *  `excluded.` in a conflict arm sees post-default values and cannot
- *  express "keep yours" for NOT NULL columns — the same reason the
- *  pre-notify flag runs two statement shapes. Last-write-wins races
- *  are unchanged from the existing upsert. */
-async function resolveBands(
-  db: D1Database,
+function hasBands(
   t: ThresholdsUpsert,
-): Promise<ResolvedThresholdsUpsert> {
-  if (
-    t.warn_hf !== undefined &&
-    t.alert_hf !== undefined &&
-    t.critical_hf !== undefined
-  ) {
-    return t as ResolvedThresholdsUpsert;
-  }
-  const stored = await db
-    .prepare(
-      `SELECT warn_hf, alert_hf, critical_hf FROM user_thresholds
-       WHERE wallet = ? AND chain_id = ?`,
-    )
-    .bind(t.wallet.toLowerCase(), t.chain_id)
-    .first<{ warn_hf: number; alert_hf: number; critical_hf: number }>();
-  return { ...t, ...(stored ?? DEFAULT_BANDS) };
+): t is ThresholdsUpsert & { warn_hf: number; alert_hf: number; critical_hf: number } {
+  return (
+    t.warn_hf !== undefined && t.alert_hf !== undefined && t.critical_hf !== undefined
+  );
+}
+
+/**
+ * Compose the upsert for the four statement shapes: with/without the
+ * pre-notify column (the 0027 rollout split), with/without band
+ * assignments in the conflict arm (#2000). Preservation of omitted
+ * bands lives in the STATEMENT — the conflict arm simply does not
+ * assign the band columns — which is what makes it ATOMIC (PR #2005
+ * round 1 P1: an earlier read-then-write preserve could read stored
+ * bands, lose the race to a concurrent band update from another
+ * device, and write the stale read back over it — reintroducing the
+ * exact cross-device overwrite #2000 removes). The VALUES always
+ * carry concrete bands because the columns are NOT NULL and a
+ * genuine insert needs them; on conflict those values are simply
+ * never consulted for a bandless write.
+ */
+function thresholdsUpsertSql(withFlag: boolean, withBands: boolean): string {
+  const flagCol = withFlag ? ', notify_maturity_approaching' : '';
+  const flagPlaceholder = withFlag ? ', ?' : '';
+  const bandArm = withBands
+    ? `warn_hf = excluded.warn_hf,
+         alert_hf = excluded.alert_hf,
+         critical_hf = excluded.critical_hf,
+         `
+    : '';
+  const flagArm = withFlag
+    ? `notify_maturity_approaching = excluded.notify_maturity_approaching,
+         `
+    : '';
+  return `INSERT INTO user_thresholds
+         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale${flagCol}, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?${flagPlaceholder}, ?, ?)
+       ON CONFLICT(wallet, chain_id) DO UPDATE SET
+         ${bandArm}tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
+         push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
+         locale = COALESCE(excluded.locale, user_thresholds.locale),
+         ${flagArm}updated_at = excluded.updated_at`;
 }
 
 /** The pre-0027 column set. Used when the flag is absent (no change
@@ -135,29 +148,17 @@ async function resolveBands(
  *  (true equals the column default, so nothing is lost). */
 async function upsertThresholdsLegacy(
   db: D1Database,
-  t: ResolvedThresholdsUpsert,
+  t: ThresholdsUpsert,
   now: number,
 ): Promise<void> {
   await db
-    .prepare(
-      `INSERT INTO user_thresholds
-         (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(wallet, chain_id) DO UPDATE SET
-         warn_hf = excluded.warn_hf,
-         alert_hf = excluded.alert_hf,
-         critical_hf = excluded.critical_hf,
-         tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
-         push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
-         locale = COALESCE(excluded.locale, user_thresholds.locale),
-         updated_at = excluded.updated_at`,
-    )
+    .prepare(thresholdsUpsertSql(false, hasBands(t)))
     .bind(
       t.wallet.toLowerCase(),
       t.chain_id,
-      t.warn_hf,
-      t.alert_hf,
-      t.critical_hf,
+      t.warn_hf ?? DEFAULT_BANDS.warn_hf,
+      t.alert_hf ?? DEFAULT_BANDS.alert_hf,
+      t.critical_hf ?? DEFAULT_BANDS.critical_hf,
       t.tg_chat_id ?? null,
       t.push_channel ?? null,
       t.locale ?? 'en',
@@ -174,46 +175,29 @@ export async function upsertThresholds(
   t: ThresholdsUpsert,
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
-  // #2000 — absent bands resolve to the stored row's (preserve) or,
-  // for a first-ever write, the defaults, BEFORE choosing statement
-  // shapes: every write below binds concrete band values.
-  const resolved = await resolveBands(db, t);
   // The pre-notify opt-out updates ONLY when the caller sent it —
   // absence must preserve a stored opt-out (an older client updating
   // its bands must not re-enable reminders), while new rows take the
   // column default (opted in). Two statements because `excluded.` in
   // the conflict arm sees post-default values, which can't express
   // "no change".
-  if (resolved.notify_maturity_approaching === undefined) {
-    await upsertThresholdsLegacy(db, resolved, now);
+  if (t.notify_maturity_approaching === undefined) {
+    await upsertThresholdsLegacy(db, t, now);
     return;
   }
   try {
     await db
-      .prepare(
-        `INSERT INTO user_thresholds
-           (wallet, chain_id, warn_hf, alert_hf, critical_hf, tg_chat_id, push_channel, locale, notify_maturity_approaching, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(wallet, chain_id) DO UPDATE SET
-           warn_hf = excluded.warn_hf,
-           alert_hf = excluded.alert_hf,
-           critical_hf = excluded.critical_hf,
-           tg_chat_id = COALESCE(excluded.tg_chat_id, user_thresholds.tg_chat_id),
-           push_channel = COALESCE(excluded.push_channel, user_thresholds.push_channel),
-           locale = COALESCE(excluded.locale, user_thresholds.locale),
-           notify_maturity_approaching = excluded.notify_maturity_approaching,
-           updated_at = excluded.updated_at`,
-      )
+      .prepare(thresholdsUpsertSql(true, hasBands(t)))
       .bind(
-        resolved.wallet.toLowerCase(),
-        resolved.chain_id,
-        resolved.warn_hf,
-        resolved.alert_hf,
-        resolved.critical_hf,
-        resolved.tg_chat_id ?? null,
-        resolved.push_channel ?? null,
-        resolved.locale ?? 'en',
-        resolved.notify_maturity_approaching ? 1 : 0,
+        t.wallet.toLowerCase(),
+        t.chain_id,
+        t.warn_hf ?? DEFAULT_BANDS.warn_hf,
+        t.alert_hf ?? DEFAULT_BANDS.alert_hf,
+        t.critical_hf ?? DEFAULT_BANDS.critical_hf,
+        t.tg_chat_id ?? null,
+        t.push_channel ?? null,
+        t.locale ?? 'en',
+        t.notify_maturity_approaching ? 1 : 0,
         now,
         now,
       )
@@ -227,10 +211,10 @@ export async function upsertThresholds(
     // no column named X" for an INSERT column list — this INSERT
     // path hits the latter (verified live on the staging D1).
     if (!/no such column|has no column named/i.test(String(err))) throw err;
-    if (resolved.notify_maturity_approaching) {
+    if (t.notify_maturity_approaching) {
       // Opted-in equals the column default — the legacy write loses
       // nothing.
-      await upsertThresholdsLegacy(db, resolved, now);
+      await upsertThresholdsLegacy(db, t, now);
       return;
     }
     // An opt-out CANNOT be stored without the column; surface it

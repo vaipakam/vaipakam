@@ -142,42 +142,54 @@ describe('upsertThresholds bandless writes (#2000)', () => {
   // The bands carry the risky lane's state, so a save that did not
   // touch that lane omits them — and the agent must preserve what is
   // stored rather than requiring the client to echo values it cannot
-  // vouch for (a fresh device only holds the defaults).
+  // vouch for (a fresh device only holds the defaults). Preservation
+  // lives in the STATEMENT (PR #2005 round 1 P1): the conflict arm
+  // of a bandless write assigns no band column, so a concurrent band
+  // update from another device can never be overwritten by a stale
+  // read — there is no read.
   const BANDLESS = { wallet: BASE.wallet, chain_id: BASE.chain_id };
 
-  it('preserves the STORED bands when a row exists', async () => {
+  it('a bandless write is ONE statement whose conflict arm omits the bands', async () => {
     const db = new FakeD1();
-    db.firstResult = { warn_hf: 2.0, alert_hf: 1.4, critical_hf: 1.1 };
     await upsertThresholds(db as unknown as D1Database, {
       ...BANDLESS,
       notify_maturity_approaching: false,
     });
-    // One SELECT to read the stored bands, then the write binding
-    // exactly those values — the opt-out changes nothing about the
-    // lane the user did not touch.
-    expect(db.executed).toHaveLength(2);
-    expect(db.executed[0]!.sql).toContain('SELECT warn_hf');
-    const write = db.executed[1]!;
+    expect(db.executed).toHaveLength(1);
+    const write = db.executed[0]!;
     expect(write.sql).toContain('INSERT INTO user_thresholds');
-    expect(write.args.slice(2, 5)).toEqual([2.0, 1.4, 1.1]);
+    // No band assignment on conflict — an existing row's lane state
+    // stands, atomically, whatever races this write.
+    expect(write.sql).not.toContain('warn_hf = excluded.warn_hf');
+    // The other preserved-on-absence fields keep their COALESCE arms.
+    expect(write.sql).toContain('push_channel = COALESCE');
+    // The INSERT values carry the defaults, reached only when no row
+    // exists — for a wallet with no record the lane's state IS the
+    // default, the same values apps/app shows as the starting state.
+    expect(write.args.slice(2, 5)).toEqual([1.5, 1.2, 1.05]);
   });
 
-  it('writes the defaults when no row exists to preserve', async () => {
-    // A first-ever write that omitted bands intends no lane change,
-    // and for a wallet with no record the lane's state IS the
-    // default — the same values apps/app shows as the starting state.
-    const db = new FakeD1();
-    db.firstResult = null;
-    await upsertThresholds(db as unknown as D1Database, { ...BANDLESS });
-    expect(db.executed).toHaveLength(2);
-    expect(db.executed[1]!.args.slice(2, 5)).toEqual([1.5, 1.2, 1.05]);
-  });
-
-  it('performs no read when the bands are present — the historical path is untouched', async () => {
+  it('a full-band write still assigns the bands on conflict', async () => {
     const db = new FakeD1();
     await upsertThresholds(db as unknown as D1Database, { ...BASE });
     expect(db.executed).toHaveLength(1);
-    expect(db.executed[0]!.sql).toContain('INSERT INTO user_thresholds');
+    expect(db.executed[0]!.sql).toContain('warn_hf = excluded.warn_hf');
+    expect(db.executed[0]!.args.slice(2, 5)).toEqual([1.5, 1.2, 1.05]);
+  });
+
+  it('the bandless shape composes with the pre-notify rollout fallback', async () => {
+    // Pre-migration, an opted-IN bandless write falls back to the
+    // column-omitting statement — which must ALSO omit the band
+    // assignments.
+    const db = new FakeD1();
+    db.migrated = false;
+    await upsertThresholds(db as unknown as D1Database, {
+      ...BANDLESS,
+      notify_maturity_approaching: true,
+    });
+    expect(db.executed).toHaveLength(1);
+    expect(db.executed[0]!.sql).not.toContain('notify_maturity_approaching');
+    expect(db.executed[0]!.sql).not.toContain('warn_hf = excluded.warn_hf');
   });
 });
 

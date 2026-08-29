@@ -153,4 +153,39 @@ describe('saveAlertPrefs wire shape (#2000)', () => {
     expect(bodies[0]!.alert_hf).toBe(FLOOR_BANDS.alertHf);
     expect(bodies[0]!.critical_hf).toBe(FLOOR_BANDS.criticalHf);
   });
+
+  it('retries ONCE with bands when an old agent refuses the bandless body', async () => {
+    // Rollout shim (#2005 round 1 P2): the app and agent deploy
+    // independently, and an app deployed first would send bandless
+    // saves to a parser that requires all three — every due-date and
+    // push save 400ing, a held user unable to mute a reminder being
+    // the worst of it. A bandless save refused as `invalid-payload`
+    // is retried with the lane's current bands (the pre-#2000 wire,
+    // no worse than before); any other failure is not.
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    const bodies: Array<Record<string, unknown>> = [];
+    let first = true;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        if (first) {
+          first = false;
+          return new Response(JSON.stringify({ error: 'invalid-payload' }), {
+            status: 400,
+          });
+        }
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+    await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS }, {
+      dueDateChanged: true,
+    });
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]!.warn_hf).toBeUndefined();
+    expect(bodies[1]!.warn_hf).toBe(DEFAULT_PREFS.warnHf);
+    // The retry keeps the rest of the body intact — the opt-in flag
+    // still travels.
+    expect(bodies[1]!.notify_maturity_approaching).toBe(true);
+  });
 });

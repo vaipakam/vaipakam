@@ -274,11 +274,7 @@ export async function saveAlertPrefs(
   // a floor-band opt-out made on another device; the client cannot
   // tell defaults from state, but it can tell exactly which saves
   // touched the lane, which is the narrower and sufficient signal.
-  const bands: AlertBands | null = opts.bandsChanged
-    ? prefs.risky
-      ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
-      : FLOOR_BANDS
-    : null;
+  const sendBands = Boolean(opts.bandsChanged);
   let optOutProof: { issuedAt: number; signature: string } | null = null;
   if (opts.dueDateChanged && !prefs.repayDue) {
     if (!opts.signMessage) {
@@ -292,14 +288,19 @@ export async function saveAlertPrefs(
       ),
     };
   }
-  const res = await post('/thresholds', {
+  // The lane's CURRENT wire expression — used when this save changed
+  // the lane, and by the rollout shim below.
+  const laneBands: AlertBands = prefs.risky
+    ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
+    : FLOOR_BANDS;
+  const body = (withBands: boolean) => ({
     wallet,
     chain_id: chainId,
-    ...(bands
+    ...(withBands
       ? {
-          warn_hf: bands.warnHf,
-          alert_hf: bands.alertHf,
-          critical_hf: bands.criticalHf,
+          warn_hf: laneBands.warnHf,
+          alert_hf: laneBands.alertHf,
+          critical_hf: laneBands.criticalHf,
         }
       : {}),
     ...(opts.dueDateChanged
@@ -309,6 +310,25 @@ export async function saveAlertPrefs(
     // One-way by backend design (COALESCE): only sent when enabling.
     ...(prefs.pushEnabled ? { push_channel: 'subscribed' } : {}),
   });
+  let res = await post('/thresholds', body(sendBands));
+  // Rollout shim (#2005 round 1 P2): the app and the agent deploy
+  // independently, and an app deployed FIRST sends bandless saves to
+  // a parser that still requires all three — every due-date or push
+  // save would 400, a held user unable to mute a reminder being the
+  // worst of it. A bandless save refused as `invalid-payload` is
+  // retried ONCE with the lane's current bands — the pre-#2000 wire,
+  // no worse than every save before this change — so an out-of-order
+  // window degrades to the old behaviour instead of breaking. The
+  // shim never fires against the new agent (which accepts bandless
+  // bodies), costs nothing once both sides are current, and the
+  // deployment order that avoids it entirely (agent first) is stated
+  // in the release note.
+  if (!res.ok && res.status === 400 && !sendBands) {
+    const data = (await res.json().catch(() => null)) as { error?: string } | null;
+    if (data?.error === 'invalid-payload') {
+      res = await post('/thresholds', body(true));
+    }
+  }
   if (!res.ok) {
     if (res.status === 503) {
       const data = (await res.json().catch(() => null)) as {
