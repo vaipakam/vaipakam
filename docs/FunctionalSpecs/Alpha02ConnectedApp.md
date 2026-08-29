@@ -822,6 +822,18 @@ Thin-market honesty rules apply.
   switched off on its own**: turning one off is never read as signing up for
   whichever others happen to be on, which would leave a user unable to
   silence any of them.
+- **Where that requirement is enforced for notification settings is a
+  deliberate, recorded choice, not an oversight.** The check lives in the app
+  the user runs; the notification service that stores the preferences does
+  not verify acceptance itself, even though for these settings the app's
+  check is the only one. That is accepted because notification preferences
+  create no exposure: nothing there moves funds, creates an obligation, or
+  touches the protocol, so circumventing the app's check gains only reminders
+  about one's own positions — while every action that does create exposure
+  has its own check in front of it. The boundary this records for the future:
+  should the notification service ever gain a capability that creates a
+  commitment or moves value, that capability must carry its own service-side
+  acceptance check rather than inheriting this posture.
 - A refusal never costs the user anything. Where an action needs a separate
   approval transaction first, the requirement is checked before that approval,
   not after it.
