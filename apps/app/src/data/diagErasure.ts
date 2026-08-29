@@ -37,6 +37,13 @@ import {
 
 const TIMEOUT_MS = 10_000;
 
+/** Validity reserved for the request to actually REACH the Worker
+ *  (#2008 round 4 P2): the service checks its own clock only after
+ *  receipt, so a signature sent in the window's final seconds can
+ *  pass the pre-send check here and still be rejected as stale over
+ *  there. Comfortably covers the fetch timeout plus transit. */
+const TRANSPORT_MARGIN_SECONDS = 30;
+
 function agentOrigin(): string | null {
   const url = import.meta.env.VITE_AGENT_ORIGIN as string | undefined;
   if (!url) return null;
@@ -109,8 +116,15 @@ async function postSigned(
   // after the service's replay window has passed can only be
   // rejected as stale. It is not sent — the caller reports expiry,
   // an outcome the user can act on, instead of a generic failure
-  // for an approval they actually gave.
-  if (Math.floor(Date.now() / 1000) - issuedAt > ERASURE_SIGNATURE_MAX_AGE_SECONDS) {
+  // for an approval they actually gave. The margin reserves enough
+  // of the window for the request to reach the Worker's clock
+  // (round 4 P2) — and the caller ALSO maps the Worker's own stale
+  // rejection to expiry, because no client-side margin can cover a
+  // skewed local clock.
+  if (
+    Math.floor(Date.now() / 1000) - issuedAt >
+    ERASURE_SIGNATURE_MAX_AGE_SECONDS - TRANSPORT_MARGIN_SECONDS
+  ) {
     return { ok: false, httpStatus: 0, data: null, expired: true };
   }
   const ctrl = new AbortController();
@@ -133,6 +147,20 @@ async function postSigned(
   } finally {
     clearTimeout(t);
   }
+}
+
+/** The Worker's own stale-timestamp rejection (#2008 round 4 P2) —
+ *  the exact 400 body `verifySignedRequest` emits. Reaching it means
+ *  the signature aged out in transit, or the local clock that
+ *  stamped `issuedAt` is skewed from the Worker's; either way the
+ *  honest outcome is "expired, try again", not a generic failure
+ *  for an approval the user actually gave. */
+function staleRejected(res: SignedPostResult): boolean {
+  return (
+    res.httpStatus === 400 &&
+    res.data?.error === 'verification_failed' &&
+    res.data?.reason === 'request timestamp is stale'
+  );
 }
 
 /**
@@ -159,6 +187,7 @@ export async function requestDiagErasure(
   if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
     return 'unavailable';
   }
+  if (staleRejected(res)) return 'expired';
   return 'error';
 }
 
@@ -196,5 +225,6 @@ export async function requestDiagErasureStatus(
   if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
     return { status: 'unavailable' };
   }
+  if (staleRejected(res)) return { status: 'expired' };
   return { status: 'error' };
 }

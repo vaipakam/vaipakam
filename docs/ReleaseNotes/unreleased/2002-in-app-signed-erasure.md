@@ -31,6 +31,13 @@ The two operations sign different messages, each saying what it
 authorises: the words a user signs to look at their records can never
 be replayed as authority to delete them.
 
+A signed request is only valid for ten minutes, and the wallet's
+approval prompt has no such clock — so an approval given too late to
+reach the service in time, or stamped by a computer whose clock
+disagrees with the service's, is reported as "expired, try again"
+rather than as a failure the user can't interpret. Nothing is sent
+when it could only be rejected.
+
 One honest limit, stated where it applies: a smart-contract wallet's
 signatures cannot be verified by the support service yet, so a
 deployed one is shown the working email route instead of a prompt

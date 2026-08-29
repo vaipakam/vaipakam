@@ -110,6 +110,63 @@ describe('requestDiagErasure', () => {
       vi.useRealTimers();
     }
   });
+
+  it('holds back a signature with no transport margin left (#2008 round 4 P2)', async () => {
+    // Approved INSIDE the ten-minute window, but so close to its end
+    // that the request cannot reach the Worker's clock before the
+    // window closes there. Sending it can only produce a stale
+    // rejection — so it is not sent.
+    vi.useFakeTimers();
+    try {
+      const calls = stubAgent(
+        () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
+      );
+      const outcome = await requestDiagErasure(WALLET, async () => {
+        // 9m45s: 15 seconds of nominal validity left — less than the
+        // reserved margin.
+        vi.setSystemTime(Date.now() + (9 * 60 + 45) * 1000);
+        return SIG;
+      });
+      expect(outcome).toBe('expired');
+      expect(calls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('maps the WORKER’s stale rejection to expired — skew no margin can cover', async () => {
+    // A skewed local clock stamps an `issuedAt` the Worker's clock
+    // already considers stale; the pre-send check here sees nothing
+    // wrong. The service's own rejection body is the honest signal,
+    // and it means "try again", not "something failed".
+    stubAgent(
+      () =>
+        new Response(
+          JSON.stringify({
+            error: 'verification_failed',
+            reason: 'request timestamp is stale',
+          }),
+          { status: 400 },
+        ),
+    );
+    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('expired');
+    expect(await requestDiagErasureStatus(WALLET, async () => SIG)).toEqual({
+      status: 'expired',
+    });
+    // Any OTHER verification failure stays the generic error — a bad
+    // signature is not a retryable expiry.
+    stubAgent(
+      () =>
+        new Response(
+          JSON.stringify({
+            error: 'verification_failed',
+            reason: 'signature does not match wallet',
+          }),
+          { status: 400 },
+        ),
+    );
+    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('error');
+  });
 });
 
 describe('requestDiagErasureStatus', () => {

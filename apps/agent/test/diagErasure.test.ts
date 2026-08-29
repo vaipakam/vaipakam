@@ -390,7 +390,12 @@ describe('handleDiagErasure', () => {
       CORS,
     );
     expect(res.status).toBe(400);
-    expect((await res.json() as { error: string }).error).toBe('verification_failed');
+    const staleBody = await res.json() as { error: string; reason: string };
+    expect(staleBody.error).toBe('verification_failed');
+    // The app's client maps THIS exact body to its "expired" outcome
+    // (#2008 round 4 P2) — rewording the reason silently downgrades
+    // that mapping to the generic failure.
+    expect(staleBody.reason).toBe('request timestamp is stale');
   });
 
   it('rejects a signature that recovers to a different wallet with 400', async () => {
