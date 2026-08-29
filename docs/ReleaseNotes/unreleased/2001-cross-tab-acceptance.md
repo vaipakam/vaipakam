@@ -10,11 +10,15 @@ and the moments right after accepting in one tab are exactly when
 someone is most likely to click in the other.
 
 Now the tab that accepts tells every other open tab, the instant the
-transaction is confirmed. The others close their prompt and allow the
-wallet's next action without asking again — and they take on the same
-safeguards the accepting tab has, for the same bounded time, expiring
-at the same moment everywhere: an acceptance undone by a chain
-reorganisation is not believed anywhere for longer than in the tab
-that made it. A tab that has meanwhile learned of a newer terms
+transaction is confirmed. In the ordinary case the others close their
+prompt and allow the wallet's next action without asking again — and
+they take on the same safeguards the accepting tab has, for the same
+bounded time, expiring at the same moment everywhere: an acceptance
+undone by a chain reorganisation is not believed anywhere for longer
+than in the tab that made it. An acceptance that took unusually long
+to confirm — congestion can hold a transaction pending past that
+bounded window — is announced as a signal to re-check instead: the
+other tabs verify against the chain at once and close their prompt on
+what they read, rather than taking the late news on trust. A tab that has meanwhile learned of a newer terms
 version is deliberately left prompting: an acceptance of older text
 never opens the gate on newer text.
