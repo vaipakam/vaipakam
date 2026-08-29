@@ -37,7 +37,7 @@
  *    structural: a superseded query's data is never the active query's
  *    data, so there is no window to get wrong.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
@@ -71,7 +71,9 @@ import {
   scheduleExpiryRevalidation,
 } from './tosAcceptanceSync';
 import { publishAcceptancePin } from '../chain/receiptSync';
-import { captureTxError } from '../lib/errors';
+import { friendlyContractError } from '@vaipakam/lib';
+import { captureTxError, translateContractError } from '../lib/errors';
+import { copy } from '../content/copy';
 
 const ZERO_HASH = `0x${'0'.repeat(64)}` as const;
 
@@ -192,6 +194,22 @@ export function useTosAcceptance(): TosAcceptanceState {
       clearTimeout(seed);
       clearTimeout(releaseTimer);
       unsubscribe();
+    };
+  }, [scope]);
+
+  // A held click must not outlive its wallet context (round 39 P2):
+  // the hold-wait below spans seconds, and a user who switches
+  // accounts, switches networks, or disconnects during it leaves the
+  // continuation holding the OLD scope, query key and write closure —
+  // which would then open a wallet request for an account and
+  // deployment the rendered UI no longer represents. Each scope
+  // change (and unmount — the cleanup runs for both) bumps the epoch;
+  // the continuation samples it at entry and abandons itself silently
+  // after every await once it no longer matches.
+  const acceptEpoch = useRef(0);
+  useEffect(() => {
+    return () => {
+      acceptEpoch.current += 1;
     };
   }, [scope]);
 
@@ -336,6 +354,7 @@ export function useTosAcceptance(): TosAcceptanceState {
       // proceeds; the contract still anchors it to the displayed
       // version and reverts on stale terms.
       const heldAtEntry = acceptanceReconciling(scope);
+      const epoch = acceptEpoch.current;
       for (;;) {
         const remaining = acceptanceReconciliationRemainingMs(scope);
         if (remaining <= 0) break;
@@ -343,11 +362,55 @@ export function useTosAcceptance(): TosAcceptanceState {
         await new Promise((resolve) => {
           setTimeout(resolve, Math.min(remaining + 50, 1_000));
         });
+        // The wallet context may have moved during the sleep (round
+        // 39 P2) — a continuation for a scope this hook no longer
+        // renders applies nothing and asks the wallet for nothing.
+        if (acceptEpoch.current !== epoch) return;
       }
       if (heldAtEntry) {
+        const before =
+          queryClient.getQueryState<TosVerdictData>(queryKey)?.dataUpdatedAt ?? 0;
         await queryClient.invalidateQueries({ queryKey });
-        const settled = queryClient.getQueryData<TosVerdictData>(queryKey);
-        if (settled?.accepted) return;
+        if (acceptEpoch.current !== epoch) return;
+        const settled = queryClient.getQueryState<TosVerdictData>(queryKey);
+        // The final recheck must have actually SUCCEEDED (round 39
+        // P1): `invalidateQueries` swallows refetch errors — the
+        // promise resolves, `getQueryData` keeps serving the retained
+        // refusal, and treating that as "settled" submits the payment
+        // without ever obtaining the promised final chain answer. A
+        // real answer moves `dataUpdatedAt` and leaves no error;
+        // anything else aborts into the error banner, where the user
+        // can retry — honest about not knowing, like every other
+        // failed read in this gate.
+        if (
+          !settled ||
+          settled.error !== null ||
+          settled.data === undefined ||
+          settled.dataUpdatedAt <= before
+        ) {
+          throw settled?.error ?? new Error(copy.legalGate.readErrorBody);
+        }
+        if (settled.data.accepted) return;
+        // Governance can move DURING the hold (round 39 P2): the
+        // recheck may have replaced `false` v3 with `false` v4, and
+        // the closure's captured `query.data` still holds v3.
+        // Submitting v3 would revert (the contract anchors to the
+        // current version) — and silently submitting v4 instead is
+        // worse, recording consent to terms the user never saw. So a
+        // drifted verdict ABORTS with the same localized message the
+        // reverted transaction would have produced, minus the wallet
+        // round-trip; the re-rendered prompt already shows the new
+        // version for a fresh, informed click.
+        if (
+          settled.data.version !== query.data.version ||
+          settled.data.hash !== query.data.hash
+        ) {
+          setWriteError(
+            friendlyContractError({ name: 'InvalidTosVersion' }, translateContractError) ??
+              copy.errors.txFailed,
+          );
+          return;
+        }
       }
       // The version and hash come from the SAME read that told us the
       // wallet has not accepted — so the transaction is anchored to the
