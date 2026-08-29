@@ -161,15 +161,28 @@ describe('adoptOrderedPin', () => {
     // and the newer chain position from whichever frame carried each.
     // A duplicate with an earlier anchor changes the window not at
     // all; one with a later anchor extends it.
-    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0 + 30_000);
-    expect(adoptOrderedPin(SCOPE, 3, HASH, T0, B0 + 5, 0, T0 + 31_000)).toBe(true);
-    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 30_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(
+    //
+    // This test probes expiry bounds OUT OF ORDER (a far-future probe
+    // between two adoptions), which the round-41 clock witness would
+    // read as a backward wall step — so the mono seam keeps the two
+    // clocks in lockstep, which is what the probes simulate anyway.
+    let mono = 0;
+    const at = (wall: number) => {
+      mono = wall - T0;
+      return wall;
+    };
+    __setMonoNowForTests(() => mono);
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, at(T0 + 30_000));
+    expect(adoptOrderedPin(SCOPE, 3, HASH, T0, B0 + 5, 0, at(T0 + 31_000))).toBe(true);
+    expect(
+      acceptanceIsPinned(SCOPE, 3, HASH, at(T0 + 30_000 + ACCEPTANCE_PIN_TTL_MS)),
+    ).toBe(true);
+    expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + 40_000, B0 - 5, 0, at(T0 + 41_000))).toBe(
       true,
     );
-    expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + 40_000, B0 - 5, 0, T0 + 41_000)).toBe(true);
-    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 40_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(
-      true,
-    );
+    expect(
+      acceptanceIsPinned(SCOPE, 3, HASH, at(T0 + 40_000 + ACCEPTANCE_PIN_TTL_MS)),
+    ).toBe(true);
   });
 
   it('same-terms evidence is kept WHOLE — never a synthesized pairing', () => {
@@ -417,6 +430,55 @@ describe('retireSupersededPin', () => {
   });
 });
 
+describe('clock-witness fault detection', () => {
+  // #2004 round 41 P1: a remote frame's anchor is the sender's claim
+  // about the past, and a delivery delayed across a BACKWARD wall
+  // correction arrives claiming a young age — adopted after the
+  // fault, so the adoptedSeq sparing exempts it from the heartbeat,
+  // and on a first pin the heartbeat was not even running. Adoption
+  // therefore validates the CLAIMED interval against an event-driven
+  // wall-vs-mono witness: a claimed age reaching back across the
+  // latest recorded backward discontinuity is refused (read-hint
+  // path). Forward steps record nothing — they make frames look
+  // OLDER, which the expiry checks already fail closed on.
+  it('refuses a frame whose claimed age spans a backward wall discontinuity', () => {
+    let mono = 0;
+    __setMonoNowForTests(() => mono);
+    acceptanceIsPinned(SCOPE, 1, HASH, T0); // witness at (T0, 0)
+    mono = 30_000; // 30s of real time…
+    const wallNow = T0 - 30_000; // …while the wall stepped BACK 60s
+    // A frame claiming 20s of age reaches back across the fault this
+    // very call's observation records: its true age is unknowable.
+    expect(adoptOrderedPin(SCOPE, 3, HASH, wallNow - 20_000, B0, TX0, wallNow)).toBe(false);
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, wallNow)).toBe(false);
+  });
+
+  it('adopts again once the fault is older than the claimed age', () => {
+    let mono = 0;
+    __setMonoNowForTests(() => mono);
+    acceptanceIsPinned(SCOPE, 1, HASH, T0);
+    mono = 30_000;
+    const wallNow = T0 - 30_000;
+    adoptOrderedPin(SCOPE, 3, HASH, wallNow - 20_000, B0, TX0, wallNow); // fault recorded
+    // 25 real seconds later, a 20s claimed age no longer reaches the
+    // fault — its whole window postdates the discontinuity.
+    mono = 55_000;
+    const wall2 = wallNow + 25_000;
+    expect(adoptOrderedPin(SCOPE, 3, HASH, wall2 - 20_000, B0 + 1, TX0, wall2)).toBe(true);
+  });
+
+  it('a forward wall step (or a sleep) records no fault', () => {
+    // Frames only look OLDER across those intervals, and the expiry
+    // checks fail closed on age already.
+    let mono = 0;
+    __setMonoNowForTests(() => mono);
+    acceptanceIsPinned(SCOPE, 1, HASH, T0);
+    mono = 1_000;
+    const wallNow = T0 + 120_000;
+    expect(adoptOrderedPin(SCOPE, 3, HASH, wallNow - 10_000, B0, TX0, wallNow)).toBe(true);
+  });
+});
+
 describe('retireDifferingPin', () => {
   // #2004 round 36 P1: a believed receipt that could not be PINNED
   // (anchor expired, future-dated, or inconsistent across a clock
@@ -493,37 +555,64 @@ describe('acceptance reconciliation hold', () => {
     expect(acceptanceReconciling(other)).toBe(false);
   });
 
-  it('continuous re-arming cannot deny acceptance past the sequence cap', () => {
-    // Round 40 P2: every arm used to replace the deadline outright, so
-    // a peer tab publishing frames faster than the window kept the
-    // Accept action disabled for ever — an untrusted hint as a
-    // persistent denial of the only recovery action. The cap anchors
-    // at the sequence's FIRST arm; and an arm after the cap does not
-    // start a fresh sequence while the chatter continues, or
-    // lapse-and-restart would walk around the cap.
+  it('chatter guarantees a FULL enabled window between hold sequences', () => {
+    // Rounds 40 and 41 (both P2): every arm used to replace the
+    // deadline outright — permanent denial — and the first cap keyed
+    // "quiet" on the last ARM, which the sender controls, so a peer
+    // arming on exactly the window's period got a fresh cap every arm
+    // with the button never observably enabled. Quiet is now measured
+    // from `until` — the moment the button actually re-enabled, the
+    // one stamp a capped sequence's arms cannot move — so whatever
+    // the arrival pattern, a new cap is granted only after one full
+    // window of enabled button.
     let mono = 0;
     __setMonoNowForTests(() => mono);
     holdAcceptanceForReconciliation(SCOPE);
-    // Re-arm every 5 seconds, well past the cap.
-    for (mono = 5_000; mono <= ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS + 60_000; mono += 5_000) {
+    // Re-arm every 5 seconds through the cap and the free window.
+    for (mono = 5_000; mono < ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS + ACCEPTANCE_RECONCILIATION_HOLD_MS; mono += 5_000) {
       holdAcceptanceForReconciliation(SCOPE);
+      // Held until the cap; then FREE for a full window despite the
+      // ongoing arms.
       expect(acceptanceReconciling(SCOPE)).toBe(
         mono < ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS,
       );
     }
+    // Only after that full enabled window may a new sequence hold.
+    mono = ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS + ACCEPTANCE_RECONCILIATION_HOLD_MS;
+    holdAcceptanceForReconciliation(SCOPE);
+    expect(acceptanceReconciling(SCOPE)).toBe(true);
+  });
+
+  it('an exact window-period arm cadence cannot mint fresh caps', () => {
+    // Round 41 P2's boundary: arms at exactly every window length.
+    let mono = 0;
+    __setMonoNowForTests(() => mono);
+    holdAcceptanceForReconciliation(SCOPE);
+    for (
+      mono = ACCEPTANCE_RECONCILIATION_HOLD_MS;
+      mono < ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS + ACCEPTANCE_RECONCILIATION_HOLD_MS;
+      mono += ACCEPTANCE_RECONCILIATION_HOLD_MS
+    ) {
+      holdAcceptanceForReconciliation(SCOPE);
+    }
+    // The sequence capped at 45s; the boundary arms at 45s and 60s
+    // joined it rather than minting fresh caps, so the scope has been
+    // free since the cap.
+    mono = ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS + 1_000;
+    expect(acceptanceReconciling(SCOPE)).toBe(false);
   });
 
   it('a sequence that has gone QUIET for a full window can hold again', () => {
-    // The cap bounds a sequence, not the feature: once the chatter
-    // stops for a whole window, the next genuine evidence gets its
-    // ordinary hold.
+    // The cap bounds a sequence, not the feature: once the scope has
+    // been hold-free for a whole window, the next genuine evidence
+    // gets its ordinary hold.
     let mono = 0;
     __setMonoNowForTests(() => mono);
     holdAcceptanceForReconciliation(SCOPE);
     mono = ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS + 10_000;
     holdAcceptanceForReconciliation(SCOPE);
-    // Quiet since the first sequence lapsed at 15s, far longer than a
-    // window: this is a fresh sequence with a fresh hold.
+    // The lone hold lapsed at 15s; free far longer than a window:
+    // this is a fresh sequence with a fresh hold.
     expect(acceptanceReconciling(SCOPE)).toBe(true);
   });
 

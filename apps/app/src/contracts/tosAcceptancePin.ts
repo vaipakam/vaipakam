@@ -162,6 +162,56 @@ interface AcceptancePin {
 const pins = new Map<string, AcceptancePin>();
 let adoptionCounter = 0;
 
+/**
+ * Event-driven clock witness (#2004 round 41 P1). The round-34 check
+ * proves the LOCAL receipt's anchor crossed no discontinuity — it
+ * holds both of the acting tab's stamps. A REMOTE frame's anchor is
+ * the sender's claim about the past, and the receiver's heartbeat
+ * cannot vet it: a frame whose delivery was delayed across a
+ * backward wall correction arrives claiming a young age (the
+ * correction subtracted from it), is adopted AFTER the fault — so
+ * the round-33 `adoptedSeq` sparing exempts it from delta poisoning
+ * — and when it is the receiver's first pin, the heartbeat was not
+ * even running when the fault happened. So the receiver validates
+ * the CLAIMED INTERVAL at adoption instead: every observation point
+ * (each `adoptOrderedPin`, each `acceptanceIsPinned` — the Terms
+ * poll calls it — and each heartbeat beat) compares the wall clock's
+ * step since the previous observation against the monotonic step,
+ * and a wall step more than the skew allowance BEHIND the monotonic
+ * one records a fault. A frame whose claimed age reaches back past
+ * the latest fault is refused — its window spans an interval the
+ * receiver knows its wall clock misrepresents — and the refusal
+ * lands on the ordinary read-hint path. Only BACKWARD discontinuities
+ * are recorded, deliberately: a forward jump (and a resume from
+ * sleep, where the wall ran while the monotonic clock stalled) makes
+ * frames look OLDER, which the expiry checks already fail closed on.
+ * The latest fault alone suffices: a claimed interval reaching any
+ * older fault necessarily reaches the newer one first. Residual,
+ * stated plainly: a tab whose very first clock observation postdates
+ * the fault has no witness spanning it and cannot detect it — the
+ * TTL, the verdict-write guards and the expiry aging bound that
+ * exposure exactly as they bound every other unmeasurable interval.
+ */
+let witnessWall = 0;
+let witnessMono = 0;
+let lastFaultMono: number | null = null;
+
+function observeClockWitness(now: number): void {
+  const mono = monoNow();
+  if (witnessWall !== 0 && now - witnessWall - (mono - witnessMono) < -MAX_FUTURE_SKEW_MS) {
+    lastFaultMono = mono;
+  }
+  witnessWall = now;
+  witnessMono = mono;
+}
+
+/** True when a claimed age reaches back across the latest recorded
+ *  backward wall discontinuity — the interval is unmeasurable and a
+ *  pin must not be built on it. */
+function claimedAgeSpansFault(claimedMs: number): boolean {
+  return lastFaultMono !== null && claimedMs > monoNow() - lastFaultMono;
+}
+
 const defaultMonoNow = () =>
   typeof performance !== 'undefined' ? performance.now() : Date.now();
 let monoNow: () => number = defaultMonoNow;
@@ -247,6 +297,10 @@ function ensureClockWatch(): void {
   beatTimer = setInterval(() => {
     const wall = Date.now();
     const mono = monoNow();
+    // Beats are clock observations too (round 41 P1) — they keep the
+    // witness fresh while pins live, so a fault the delta check
+    // below detects is also on record for later adoptions.
+    observeClockWitness(wall);
     // The AWAKE-TIME budget (round 29 P1): each beat represents about
     // one check interval of awake time, and real elapsed time is
     // never less than awake time — so a pin that has been observed
@@ -449,7 +503,15 @@ export function adoptOrderedPin(
   txIndex: number,
   now: number,
 ): boolean {
+  observeClockWitness(now);
   if (now - at > ACCEPTANCE_PIN_TTL_MS || at > now + MAX_FUTURE_SKEW_MS) return false;
+  // Round 41 P1: a claimed age reaching back across a backward wall
+  // discontinuity is unmeasurable — the correction was subtracted
+  // from it, so the anchor can be arbitrarily older than it appears
+  // and the pin would outlive its real window. Refused like any
+  // other untrustworthy anchor; the caller's read-hint path carries
+  // the case. See `observeClockWitness`.
+  if (claimedAgeSpansFault(now - at)) return false;
   let existing = pins.get(scope);
   if (existing && pinExpired(existing, now)) {
     pins.delete(scope);
@@ -555,6 +617,11 @@ export function acceptanceIsPinned(
   hash: string,
   now: number,
 ): boolean {
+  // Every consult is a clock observation (round 41 P1): the Terms
+  // poll calls this each cycle, so the witness stays fresh from boot
+  // even while no pin exists — which is what lets an adoption after
+  // a discontinuity know the fault happened at all.
+  observeClockWitness(now);
   const pin = pins.get(scope);
   if (!pin) return false;
   // Expiry is checked BEFORE the match (#2004 round 3 P2): checked
@@ -640,18 +707,21 @@ export const ACCEPTANCE_RECONCILIATION_HOLD_MS = 15_000;
  * indefinitely: an untrusted cross-tab hint turned into a persistent
  * denial of the only recovery action. A sequence's cap is anchored at
  * its FIRST arm; arms within the sequence extend the hold only up to
- * that cap, and — the part that makes the cap real — an arm arriving
- * after the cap does NOT start a fresh sequence while the chatter
- * continues: a new sequence requires the scope to have gone QUIET
- * (no arm for a full window) first. So a lone burst behaves exactly
- * as before, a genuine flurry (an acceptance plus its re-broadcasts)
- * gets at most three windows, and continuous chatter denies the
- * button once, for the cap, and never again until it actually stops.
- * The reads have had three windows by then; a `false` still standing
- * is the chain's answer the user may act on — and the redundant-
- * payment protection this hold provides is, like the rest of this
- * module, a guard against accidents, not against an operator of the
- * same origin, who could bypass it in devtools.
+ * that cap, and — the part that makes the cap real — a NEW sequence
+ * is granted only after the scope has been HOLD-FREE for a full
+ * window, measured from `until` (round 41 P2 — measuring quiet from
+ * the last ARM handed sequence identity to the sender's timing, and
+ * a peer arming on exactly the window's period got a fresh cap every
+ * arm with the button never observably enabled). So a lone burst
+ * behaves exactly as before, a genuine flurry (an acceptance plus
+ * its re-broadcasts) gets at most three windows, and whatever the
+ * arrival pattern, between any two hold sequences the user gets one
+ * full window of enabled button — chatter can degrade availability,
+ * never abolish it. The reads have had three windows per sequence;
+ * a `false` still standing is the chain's answer the user may act on
+ * — and the redundant-payment protection this hold provides is, like
+ * the rest of this module, a guard against accidents, not against an
+ * operator of the same origin, who could bypass it in devtools.
  */
 export const ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS = 45_000;
 
@@ -660,9 +730,6 @@ interface ReconciliationHold {
   until: number;
   /** The sequence's hard ceiling — first arm plus the cap. */
   cap: number;
-  /** Monotonic time of the latest arm, live or capped: what decides
-   *  whether the NEXT arm continues this sequence or starts fresh. */
-  lastArm: number;
 }
 
 const reconciliationHolds = new Map<string, ReconciliationHold>();
@@ -691,18 +758,27 @@ export function onAcceptanceHoldsChanged(listener: () => void): () => void {
 export function holdAcceptanceForReconciliation(scope: string): void {
   const now = monoNow();
   const existing = reconciliationHolds.get(scope);
-  // The same unresolved sequence continues while the previous hold is
-  // live OR the chatter has not yet gone quiet for a full window; a
-  // fresh cap anchor requires genuine silence first, or continuous
-  // arming would lapse-and-restart its way around the cap.
+  // The same unresolved sequence continues until the scope has been
+  // HOLD-FREE for a full window — quiet measured from `until`, the
+  // moment the button actually re-enabled, and from nothing else
+  // (round 41 P2). The previous rule measured quiet from the last
+  // ARM, which the sender controls: a peer arming on exactly the
+  // window's period (or a hair over) made every arm a "fresh"
+  // sequence with a fresh cap, while the hook's release timer wakes
+  // just after each deadline — so the button was never observably
+  // enabled at all. `until` is the one stamp a capped sequence's
+  // arms cannot move, so whatever the arrival pattern, a new cap is
+  // only ever granted after the user has had one full window of
+  // enabled button. Under continuous chatter the worst case is now a
+  // 45-second hold, a guaranteed 15-second enabled window, repeat —
+  // never an unbroken denial — and a click during any hold still
+  // resolves through the accept path's bounded wait-out.
   const sameSequence =
-    existing !== undefined &&
-    now < Math.max(existing.until, existing.lastArm + ACCEPTANCE_RECONCILIATION_HOLD_MS);
+    existing !== undefined && now < existing.until + ACCEPTANCE_RECONCILIATION_HOLD_MS;
   const cap = sameSequence ? existing.cap : now + ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS;
   reconciliationHolds.set(scope, {
     until: Math.min(now + ACCEPTANCE_RECONCILIATION_HOLD_MS, cap),
     cap,
-    lastArm: now,
   });
   for (const listener of [...holdListeners]) listener();
 }
@@ -819,6 +895,9 @@ export function __clearAcceptancePins(): void {
   pins.clear();
   reconciliationHolds.clear();
   holdListeners.clear();
+  witnessWall = 0;
+  witnessMono = 0;
+  lastFaultMono = null;
   stopClockWatch();
   lastBeatWall = 0;
   lastBeatMono = 0;

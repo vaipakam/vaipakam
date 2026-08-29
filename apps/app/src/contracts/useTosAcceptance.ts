@@ -363,21 +363,31 @@ export function useTosAcceptance(): TosAcceptanceState {
       // standing after the hold is the chain's answer, and the write
       // proceeds; the contract still anchors it to the displayed
       // version and reverts on stale terms.
-      const heldAtEntry = acceptanceReconciling(scope);
+      // The whole held passage LOOPS (round 41 P1): a fresh hint can
+      // arrive and re-arm the hold WHILE the final read below is in
+      // flight — a read that may have started before the newly
+      // announced acceptance mined, or hit a still-lagging RPC — and
+      // a continuation that never looked back would write on that
+      // read's `false` while the UI is visibly reconciling newer
+      // evidence. So after each final read, the loop re-tests the
+      // hold and, if re-armed, returns to the wait. Bounded by the
+      // same sequence cap that bounds the hold itself: chatter stops
+      // extending at the cap, the hold reads as released, and the
+      // loop exits to the write on its final read's answer.
       const epoch = acceptEpoch.current;
-      for (;;) {
-        const remaining = acceptanceReconciliationRemainingMs(scope);
-        if (remaining <= 0) break;
-        if (queryClient.getQueryData<TosVerdictData>(queryKey)?.accepted) return;
-        await new Promise((resolve) => {
-          setTimeout(resolve, Math.min(remaining + 50, 1_000));
-        });
-        // The wallet context may have moved during the sleep (round
-        // 39 P2) — a continuation for a scope this hook no longer
-        // renders applies nothing and asks the wallet for nothing.
-        if (acceptEpoch.current !== epoch) return;
-      }
-      if (heldAtEntry) {
+      while (acceptanceReconciling(scope)) {
+        for (;;) {
+          const remaining = acceptanceReconciliationRemainingMs(scope);
+          if (remaining <= 0) break;
+          if (queryClient.getQueryData<TosVerdictData>(queryKey)?.accepted) return;
+          await new Promise((resolve) => {
+            setTimeout(resolve, Math.min(remaining + 50, 1_000));
+          });
+          // The wallet context may have moved during the sleep (round
+          // 39 P2) — a continuation for a scope this hook no longer
+          // renders applies nothing and asks the wallet for nothing.
+          if (acceptEpoch.current !== epoch) return;
+        }
         const before =
           queryClient.getQueryState<TosVerdictData>(queryKey)?.dataUpdatedAt ?? 0;
         await queryClient.invalidateQueries({ queryKey });
@@ -421,6 +431,9 @@ export function useTosAcceptance(): TosAcceptanceState {
           );
           return;
         }
+        // Loop back if a hint re-armed the hold mid-read (round 41
+        // P1); otherwise the while condition falls through to the
+        // write on this read's answer.
       }
       // The version and hash come from the SAME read that told us the
       // wallet has not accepted — so the transaction is anchored to the
