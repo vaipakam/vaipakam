@@ -33,8 +33,19 @@
  *    document and the published page cannot diverge while a version
  *    is current. (Older versions' canonical files are superseded in
  *    `docs/` by design; their frozen copies are the record.)
- * 4. Registry versions are unique and strictly ascending, so the
- *    "current = last entry" rule the pages rely on is sound.
+ * 4. Registry versions are positive integers in the on-chain route
+ *    domain (`setCurrentTos` takes a uint32, and
+ *    `parseTermsVersionSlug` addresses only `v<positive integer>` —
+ *    a fractional or out-of-range entry would publish a version the
+ *    acceptance gate could never name; #2010 round 2 P2), unique and
+ *    strictly ascending, so the "current = last entry" rule the
+ *    pages rely on is sound.
+ * 5. Each frozen source's OWN header (`**Version:** N` /
+ *    `**Effective:** date`) matches its registry entry (#2010 round
+ *    2 P1): hashing alone would pass a v2 file whose embedded header
+ *    still says "Version 1" — a pinned page identifying itself as a
+ *    different version than the one the gate asks the user to
+ *    accept.
  *
  * So a Terms edit that forgets the registry, a registry bump that
  * forgets the frozen file, or an edit to a published frozen file all
@@ -42,6 +53,15 @@
  * `docs/Terms/` changes too (the workspaces change detector names
  * that path; #2010 round 1 P1) — instead of shipping a page whose
  * published fingerprint no longer covers its own text.
+ *
+ * What this script deliberately does NOT do: prove a published
+ * `v<N>.md` never changes across commits. Both sides of every
+ * comparison here live in the same PR-editable tree, so a rewrite
+ * that updates the file AND its registered hash together passes all
+ * of the above. That immutability is enforced against the PR's BASE
+ * by CI's `terms-archive-immutability` job (#2010 round 2 P1), which
+ * fails any pull request that modifies or deletes a `v<N>.md` that
+ * already exists on the base branch.
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -62,7 +82,24 @@ const fail = (msg: string) => {
   failed = true;
 };
 
-// (4) Registry shape: unique, strictly ascending, last = current.
+// (4) Registry shape: every version a positive integer within the
+// uint32 domain `setCurrentTos` accepts and the `v<N>` route can
+// address; unique, strictly ascending, last = current.
+const UINT32_MAX = 0xffffffff;
+for (const meta of TERMS_VERSION_METAS) {
+  if (
+    !Number.isInteger(meta.version) ||
+    meta.version < 1 ||
+    meta.version > UINT32_MAX
+  ) {
+    fail(
+      `registry version ${meta.version} is outside the addressable domain — ` +
+        `must be an integer in [1, 2^32-1]: LegalFacet.setCurrentTos takes a ` +
+        `uint32 and parseTermsVersionSlug addresses only v<positive integer>, ` +
+        `so this entry could never be named by the acceptance gate`,
+    );
+  }
+}
 for (let i = 1; i < TERMS_VERSION_METAS.length; i++) {
   if (TERMS_VERSION_METAS[i]!.version <= TERMS_VERSION_METAS[i - 1]!.version) {
     fail(
@@ -95,6 +132,28 @@ for (const meta of TERMS_VERSION_METAS) {
         `the not-published fallback for a version the registry claims`,
     );
     continue;
+  }
+  // (5) The document's own header must agree with the registry — a
+  // byte-perfect copy of the WRONG version's text hashes fine, and a
+  // page that says "Version 1" while the gate asks for version 2
+  // defeats the whole point of the pinned route.
+  const text = bytes.toString('utf8');
+  const headerVersion = /^\*\*Version:\*\*\s+(\d+)\s*$/m.exec(text);
+  const headerEffective = /^\*\*Effective:\*\*\s+(\S+)\s*$/m.exec(text);
+  if (!headerVersion || Number(headerVersion[1]) !== meta.version) {
+    fail(
+      `v${meta.version}: the frozen source's own "**Version:**" header is ` +
+        `${headerVersion ? headerVersion[1] : 'missing'} — it must state ` +
+        `${meta.version}, the version its pinned route and registry entry ` +
+        `identify it as`,
+    );
+  }
+  if (!headerEffective || headerEffective[1] !== meta.effective) {
+    fail(
+      `v${meta.version}: the frozen source's own "**Effective:**" header is ` +
+        `${headerEffective ? headerEffective[1] : 'missing'} — it must state ` +
+        `${meta.effective}, the date its registry entry advertises`,
+    );
   }
   const computed = keccak256(bytes);
   if (computed !== meta.canonicalMdKeccak256) {
