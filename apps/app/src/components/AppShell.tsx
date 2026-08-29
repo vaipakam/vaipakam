@@ -206,6 +206,9 @@ export function AppShell() {
     '/nft',
     '/settings',
     '/help',
+    // Reached from Settings rather than the sheet, but the rule is the
+    // same: no tab of its own, so More carries it (Codex #2003 r6 P3).
+    '/data-rights',
   ].some((prefix) => pathname.startsWith(prefix));
 
   return (

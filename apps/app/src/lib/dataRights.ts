@@ -411,7 +411,29 @@ export function erasePerTabData(): number {
 export function eraseMyData(): EraseResult {
   const cookies = clearCookies();
   const local = clearStorage(safeStorage('localStorage'));
-  const session = clearStorage(safeStorage('sessionStorage'));
+  // Whether the in-memory last-error slot is a holding of its OWN,
+  // decided before anything session-scoped is cleared and by the same
+  // rule the export applies (review round 6 P2). Round 5 taught the
+  // export to count a live record that differs from the stored one as
+  // a second item; an erase that still counted only removed keys then
+  // under-reported itself — "2 items held" before the confirm, "erased
+  // 1" after, over the same two records, when `clearLastError` below
+  // demonstrably removes both. The two paths must agree in every
+  // state: key absent + memory held → the export filled the key with
+  // it (one item), removal count is 0, the slot is the 1; different →
+  // export showed two, removal count is 1, the slot is the second;
+  // identical → the slot is a copy, counted by neither.
+  const sessionStore = safeStorage('sessionStorage');
+  let storedLastError: unknown;
+  try {
+    const raw = sessionStore?.getItem(LAST_ERROR_KEY);
+    if (raw != null) storedLastError = decodeStored(raw);
+  } catch {
+    // Unreadable reads as absent — the same answer `collect` gives the
+    // export in this state, which is what keeps the two counts equal.
+  }
+  const liveHolding = liveLastErrorEntry(storedLastError, readLastError());
+  const session = clearStorage(sessionStore) + (liveHolding ? 1 : 0);
   // Review round 1 P1: the last-error record lives in sessionStorage
   // AND in a module-level slot, so clearing storage alone left
   // `readLastError()` still returning it — the Diagnostics drawer would
