@@ -45,7 +45,11 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
 import { acceptanceIsPinned, acceptanceScope, adoptOrderedPin } from './tosAcceptancePin';
-import { buildAcceptancePinFrame, shouldAdoptPinnedVerdict } from './tosAcceptanceSync';
+import {
+  buildAcceptancePinFrame,
+  freshVerdict,
+  shouldAdoptPinnedVerdict,
+} from './tosAcceptanceSync';
 import { publishAcceptancePin } from '../chain/receiptSync';
 import { captureTxError } from '../lib/errors';
 
@@ -246,20 +250,27 @@ export function useTosAcceptance(): TosAcceptanceState {
       // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
       const pinnedAt = Date.now();
-      const adopted = adoptOrderedPin(scope, acceptedVersion, query.data.hash, pinnedAt, pinnedAt);
-      // The cache write carries its own guard, like the receiver's: a
-      // newer VERDICT can be cached here without any pin (this tab's
-      // own refetch may have discovered v4 while our v3 receipt was
-      // settling — an ordinary read installs no pin, so ordering alone
-      // cannot see it), and writing v3 over it would be the same
-      // reopening by another door.
+      // A FRESH read that has already discovered a newer version
+      // outranks this receipt entirely (#2004 round 5 P1, applied to
+      // the local path too): an ordinary read installs no pin, so
+      // ordering alone cannot see it — and a superseded pin, though
+      // it writes nothing itself, waits for a lagging node to report
+      // the old version and has `queryFn` turn that answer into a
+      // fresh `accepted: true` over the known newer refusal. When the
+      // tab's own reads have moved past the accepted version, nothing
+      // of the receipt applies; the invalidations below re-read the
+      // newer truth.
+      const fresh = freshVerdict(queryClient, queryKey, pinnedAt);
+      const supersededByRead = fresh !== undefined && fresh.version > acceptedVersion;
+      const adopted =
+        !supersededByRead &&
+        adoptOrderedPin(scope, acceptedVersion, query.data.hash, pinnedAt, pinnedAt);
+      // The cache write carries its own guard, like the receiver's,
+      // and measures the cache with the same FRESHNESS ruler: a stale
+      // same-version entry is not promoted either — the pin plus the
+      // re-reads carry that case.
       const cacheAdopted =
-        adopted &&
-        shouldAdoptPinnedVerdict(
-          queryClient.getQueryData<TosVerdictData>(queryKey),
-          acceptedVersion,
-          query.data.hash,
-        );
+        adopted && shouldAdoptPinnedVerdict(fresh, acceptedVersion, query.data.hash);
       if (cacheAdopted) {
         // Not optimism about an unknown outcome — it is the outcome,
         // anchored to a receipt this call waited for. Writing it here

@@ -172,6 +172,27 @@ export function shouldAdoptPinnedVerdict(
 }
 
 /**
+ * The cached Terms verdict, but only when it is a FRESH successful
+ * read — `getQueryState` filtered through the gate's own staleness
+ * bound. A fresh read is a tab's authoritative knowledge of WHICH
+ * terms are current; a stale or error-retained entry is not, and
+ * `setQueryData` would manufacture freshness onto whatever it writes
+ * (round 3 P1). Shared by the receiver below and the acting tab's
+ * settle path, so both sides measure "what this tab knows" with the
+ * same ruler.
+ */
+export function freshVerdict(
+  queryClient: QueryClient,
+  queryKey: ReturnType<typeof tosQueryKey>,
+  now: number,
+): TosVerdictData | undefined {
+  const state = queryClient.getQueryState<TosVerdictData>(queryKey);
+  return state?.status === 'success' && !isVerdictStale(state.dataUpdatedAt, now)
+    ? state.data
+    : undefined;
+}
+
+/**
  * Receiver side: apply an acceptance mined in another tab — verdict
  * into the cache (doubly guarded: version match AND a fresh successful
  * entry), pin through ordered adoption, then a re-read now and once
@@ -223,6 +244,19 @@ export function applyAcceptancePinFrame(
     return;
   }
   const scope = acceptanceScope(frame.chainId, frame.address);
+  // Round 5 P1: a frame OLDER in version than a fresh read is refused
+  // before its pin can exist. The direct cache write was already
+  // guarded, but the pin had a second route to the same regression:
+  // stored, it waits for the immediate invalidation to hit a lagging
+  // node that still reports the old version, and `queryFn` then uses
+  // it to turn that answer into a fresh `accepted: true` — replacing
+  // a KNOWN newer refusal until the delayed read catches up. A fresh
+  // read outranks any frame from before it; a STALE newer entry does
+  // not refuse, deliberately — with the frame inside its 90s window,
+  // "the version rolled back and was re-accepted" (the restored-
+  // version reorg case) is the story the timestamps support.
+  const freshCached = freshVerdict(queryClient, queryKey, now);
+  if (freshCached && freshCached.version > frame.version) return;
   // Ordered adoption, not a plain overwrite: a delayed older frame
   // must not evict a newer pin. And when ordering REFUSES the frame,
   // nothing else of it may apply either (round 2 P1): with `false`
@@ -233,19 +267,10 @@ export function applyAcceptancePinFrame(
   // the pin that beat it already ran this function's tail.
   if (!adoptOrderedPin(scope, frame.version, frame.hash, frame.at, now)) return;
   // Round 3 P1: the verdict is written only over a FRESH, SUCCESSFUL
-  // entry at the matching version. `setQueryData` stamps a new
-  // `dataUpdatedAt` and turns an error state back into success — it
-  // manufactures freshness — so matching against a stale or
-  // error-retained verdict would let a delayed frame reopen the gates
-  // under terms that have since been superseded, with no refetch to
-  // correct an INACTIVE query at all. A cache that fails the
-  // freshness bar keeps only the pin; the next real read adopts it
-  // exactly when the chain agrees.
-  const state = queryClient.getQueryState<TosVerdictData>(queryKey);
-  const freshCached =
-    state?.status === 'success' && !isVerdictStale(state.dataUpdatedAt, now)
-      ? state.data
-      : undefined;
+  // entry at the matching version — see `freshVerdict` for why a
+  // stale or error-retained entry cannot be promoted by a frame. A
+  // cache that fails the freshness bar keeps only the pin; the next
+  // real read adopts it exactly when the chain agrees.
   if (shouldAdoptPinnedVerdict(freshCached, frame.version, frame.hash)) {
     queryClient.setQueryData<TosVerdictData>(queryKey, {
       accepted: true,

@@ -145,19 +145,39 @@ describe('applyAcceptancePinFrame', () => {
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(true);
   });
 
-  it('leaves a newer version’s verdict alone but still stores the pin', () => {
+  it('a FRESH newer verdict refuses the whole frame — pin included', () => {
+    // Round 5 P1 (superseding this test's round-1 shape, which stored
+    // the pin). The cache guard alone was not enough: a stored v3 pin
+    // waits for the invalidation to hit a lagging node still
+    // reporting v3, and `queryFn` then turns that answer into a fresh
+    // `accepted: true` over the KNOWN v4 refusal. A fresh read
+    // outranks any frame from before it.
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
     const newer: TosVerdictData = { accepted: false, version: 4, hash: HASH };
     client.setQueryData(key, newer);
     applyAcceptancePinFrame(client, frame({ version: 3 }), frame().at);
-    // The cache keeps the newer version's answer...
     expect(client.getQueryData(key)).toEqual(newer);
-    // ...and the pin exists but can never match it, by the same
-    // narrowing-by-matching rule the per-tab pin uses.
     const scope = acceptanceScope(84532, ADDRESS);
-    expect(acceptanceIsPinned(scope, 3, HASH, frame().at)).toBe(true);
+    expect(acceptanceIsPinned(scope, 3, HASH, frame().at)).toBe(false);
     expect(acceptanceIsPinned(scope, 4, HASH, frame().at)).toBe(false);
+  });
+
+  it('a STALE newer verdict does not refuse — the restored-version story stands', () => {
+    // Round 5 P1's deliberate boundary: a >180s-old v4 read is not
+    // authoritative about the present, and a v3 frame inside its 90s
+    // window is consistent with the version having rolled back and
+    // been re-accepted (the reorg case round 3 P2 protects). The pin
+    // adopts; the verdict is still NOT promoted, because the stale
+    // entry fails the freshness bar the verdict write requires.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 4, hash: HASH });
+    const now = Date.now() + MAX_VERDICT_AGE_MS + 60_000;
+    applyAcceptancePinFrame(client, frame({ version: 3, at: now - 1_000 }), now);
+    expect(client.getQueryData<TosVerdictData>(key)?.version).toBe(4);
+    const scope = acceptanceScope(84532, ADDRESS);
+    expect(acceptanceIsPinned(scope, 3, HASH, now)).toBe(true);
   });
 
   it('keys the cache write the way the reading tab does', () => {
