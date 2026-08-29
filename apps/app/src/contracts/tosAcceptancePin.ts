@@ -171,6 +171,16 @@ export function __setMonoNowForTests(fn: (() => number) | null): void {
   monoNow = fn ?? defaultMonoNow;
 }
 
+/** The module's monotonic clock, exported for the ONE caller that
+ *  needs to measure an interval against it (round 34 P1): the accept
+ *  path stamps its submission on this clock as well as the wall, so
+ *  that at settlement it can tell whether the anchor CROSSED a
+ *  discontinuity — the two elapsed measures disagreeing — before any
+ *  pin is adopted on it. Same seam as everything else here. */
+export function monotonicNow(): number {
+  return monoNow();
+}
+
 /** Dead by EITHER clock — see `monoDeadline` for why both. */
 function pinExpired(pin: AcceptancePin, now: number): boolean {
   return now - pin.at > ACCEPTANCE_PIN_TTL_MS || monoNow() > pin.monoDeadline;

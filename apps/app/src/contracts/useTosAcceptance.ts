@@ -52,9 +52,11 @@ import {
   type TosVerdictData,
 } from './tosGate';
 import {
+  MAX_FUTURE_SKEW_MS,
   acceptanceIsPinned,
   acceptanceScope,
   adoptReceiptPin,
+  monotonicNow,
   retireSupersededPin,
 } from './tosAcceptancePin';
 import {
@@ -280,12 +282,14 @@ export function useTosAcceptance(): TosAcceptanceState {
       // verdict write and the reads to carry the case, exactly like
       // an expired frame.
       let submittedAt = Date.now();
+      let submittedAtMono = monotonicNow();
       const { receipt } = await write(
         'acceptTerms',
         [query.data.version, query.data.hash],
         {
           onSubmitted: () => {
             submittedAt = Date.now();
+            submittedAtMono = monotonicNow();
           },
         },
       );
@@ -337,6 +341,22 @@ export function useTosAcceptance(): TosAcceptanceState {
       // is no lag left for a pin to correct, so a refused anchor
       // costs nothing the immediate and delayed reads don't recover.
       const pinnedAt = submittedAt;
+      // The anchor must not have CROSSED a clock discontinuity
+      // between submission and settlement (round 34 P1): stamped on
+      // both clocks at submission, its two elapsed measures agree
+      // whenever the interval was ordinary — awake, or a plain sleep
+      // (both clocks advance, or the wall bound catches the nap
+      // through the TTL check) — and disagree exactly when a
+      // correction landed mid-flight, where the wall-apparent age
+      // understates or overstates the real one by an unknowable
+      // amount. An inconsistent anchor supports no pin: adoption is
+      // refused and the always-scheduled reads carry the case, the
+      // same posture as every other unmeasurable interval. (This is
+      // what closes the sparing gap: a pin never stored cannot be
+      // wrongly spared by its adoption order.)
+      const anchorConsistent =
+        Math.abs(monotonicNow() - submittedAtMono - (Date.now() - submittedAt)) <=
+        MAX_FUTURE_SKEW_MS;
       // A fresh read is used here to REJECT a conflicting receipt,
       // never to REQUIRE a matching one (#2004 round 5 P1 shaped by
       // round 6 P2). The asymmetry with the receiver is deliberate and
@@ -387,6 +407,7 @@ export function useTosAcceptance(): TosAcceptanceState {
       // nothing, and the reads below carry the case.
       const adopted =
         !conflicted &&
+        anchorConsistent &&
         adoptReceiptPin(
           scope,
           acceptedVersion,
