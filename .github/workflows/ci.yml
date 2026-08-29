@@ -771,7 +771,18 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          version: stable
+          # PINNED to the last mdbook-era release, NOT `stable` (#2010):
+          # Foundry v1.8.0 (2026-08-27) migrated `forge doc` from
+          # Solang+mdbook to Solar+Vocs — the `--build` flag is gone and
+          # the output is a vocs/MDX scaffold, not the `docs/book` mdbook
+          # tree every downstream step here (breadcrumb, PR-preview
+          # artifact) and the contracts-docs.yml Pages deploy consume.
+          # Under `stable` this job went red the day v1.8.0 shipped, on
+          # PRs that touched no contracts at all. Migrating the docs
+          # pipeline to the vocs output is tracked in #2011; unpin when
+          # that lands. The pin is doc-job-local — contracts-fast and
+          # slither stay on `stable`, which they pass on.
+          version: v1.7.1
 
       # The #1221 warm-artifact download + in-job warm compile that used
       # to sit here were REMOVED in #1493 (with their cache-key
