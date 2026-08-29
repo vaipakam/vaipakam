@@ -63,10 +63,13 @@ export const STORAGE_PREFIXES: readonly string[] = [
  * genuinely shared — the i18n package mirrors every language change to
  * it and both sites read it — while `vaipakam_theme` belongs to the
  * marketing site alone; this app never consults it and keeps its own
- * theme under `app.theme`. Both still belong HERE because this browser
- * holds them: the export must disclose them and the erasure must clear
- * them, and clearing the theme cookie resets the marketing site's
- * theme — which the page copy says rather than leaves as a surprise.
+ * theme under `app.theme`. Both belong HERE because this browser holds
+ * them: the export must disclose them and the erasure must clear them.
+ * What clearing them does NOT do is reset the marketing site (review
+ * round 10 P2): that site keeps origin-local copies of both
+ * preferences and recreates the cookies from them on its next visit,
+ * so the page copy promises only the cookie removal and points at the
+ * main site's own controls for the rest.
  */
 /** Where `diagnostics/lastError.ts` stores its record. Named here so
  *  the export can tell "already included" from "held only in memory". */

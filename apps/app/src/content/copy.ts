@@ -421,15 +421,18 @@ const copySource = {
       'Other tabs, when it comes to the download. A small amount of data belongs to each tab on its own, so a download covers the tab you are on — erasing still clears the others. Download from each tab if you want the full picture.',
     scopeSite:
       'The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.',
-    /* Review round 9 P2 — this said language AND theme are shared.
-       Only the language is: every language change is mirrored to the
-       parent-domain cookie both sites read. The theme is per-surface —
-       this app never reads or writes the marketing site's theme
-       cookie — but that cookie lives where this browser holds it, so
-       the download includes it and an erase clears it. Two different
-       relationships, now stated as two. */
+    /* Review round 9 P2 narrowed "both are shared" to the true split;
+       round 10 P2 removed the promise that survived it. "Erasing here
+       resets the main site" is false for BOTH preferences: vaipakam.com
+       keeps origin-local copies (its theme falls back to its own
+       localStorage when the cookie is absent, and the i18n detector is
+       localStorage-first per origin, the cookie being only a seed) and
+       recreates the cookies from them on the next visit. What erasing
+       here truly does is remove the cookies this browser holds; the
+       main site's own copies belong to its own data controls, which
+       `scopeSite` above already points at. */
     scopeCookies:
-      'Your language choice is shared with vaipakam.com through a cookie on the shared domain, so erasing here resets it there too. Your theme is not shared — each site keeps its own — but vaipakam.com stores its theme choice in a cookie this browser holds, so erasing here clears that cookie and the main site’s theme returns to its default as well.',
+      'Your language and theme also live in cookies on the shared domain — that is how a choice made on one site can follow you to the other. Those cookies are in this browser, so the download includes them and erasing removes them. That fully resets this app, but not vaipakam.com: the main site keeps its own copy of both preferences in its own storage and will restore them, cookies included, on your next visit there. Removing the main site’s copies is what its own data controls are for.',
   },
   killSwitch: {
     disabled:

@@ -47,12 +47,13 @@ prominently as what it can:
 - **Error reports held by support**, which are removed on request by
   email.
 
-Your language choice is shared with the main site through a preference
-both sites read, so erasing here resets it there too. Your theme is not
-shared — each site keeps its own — but the main site stores its theme
-choice where this browser holds it, so erasing clears that as well and
-the main site's theme returns to its default. Both effects are said on
-the page rather than left as a surprise.
+Your language and theme also travel between the two sites through
+shared preferences this browser holds, so the download includes them
+and erasing removes them — and the page promises no more than that:
+the main site keeps its own copy of both and restores them on your
+next visit there, so resetting that site is what its own data controls
+are for. Erasing here fully resets this app's own language and theme.
+All of it is said on the page rather than left as a surprise.
 
 One deliberate choice worth naming: the page does not reload after
 erasing. The old version did, which meant the confirmation vanished
