@@ -336,13 +336,25 @@ export function useTosAcceptance(): TosAcceptanceState {
           // that number — after a reorg, the replacement, whose
           // recent timestamp would hand the ORPHANED receipt a fresh
           // anchor (round 18 P1). Only the block that actually
-          // carries this receipt may re-anchor it; otherwise the raw
-          // refused stamp stands and the reads decide.
-          if (minedBlock.hash === receipt.blockHash) {
-            const chainAgeMs = Math.max(
-              0,
-              (Number(latestBlock.timestamp) - Number(minedBlock.timestamp)) * 1_000,
-            );
+          // carries this receipt may re-anchor it. And the two
+          // samples must be CONSISTENT with each other (round 21 P1):
+          // the transport fallback can serve these concurrent
+          // requests from different endpoints during a partial
+          // failure, and a "latest" answered by a node still BEHIND
+          // the receipt's height yields a negative delta — which the
+          // earlier clamp-to-zero read as "mined just now", handing
+          // an old, possibly orphaned receipt a fresh window on the
+          // strength of an incoherent sample. A sample is used only
+          // when the latest block sits at or past the receipt's, by
+          // number and by timestamp; anything else keeps the raw
+          // refused stamp, and the reads decide.
+          if (
+            minedBlock.hash === receipt.blockHash &&
+            latestBlock.number >= minedBlock.number &&
+            latestBlock.timestamp >= minedBlock.timestamp
+          ) {
+            const chainAgeMs =
+              (Number(latestBlock.timestamp) - Number(minedBlock.timestamp)) * 1_000;
             pinnedAt = Date.now() - chainAgeMs;
           }
         } catch {
