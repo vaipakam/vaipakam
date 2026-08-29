@@ -6,7 +6,7 @@
  * the adopt decision are pure; the apply path runs against a real
  * QueryClient, which needs no DOM.
  */
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 import {
   applyAcceptancePinFrame,
@@ -15,7 +15,7 @@ import {
   shouldAdoptPinnedVerdict,
   type AcceptancePinFrame,
 } from './tosAcceptanceSync';
-import { tosQueryKey, type TosVerdictData } from './tosGate';
+import { MAX_VERDICT_AGE_MS, tosQueryKey, type TosVerdictData } from './tosGate';
 import {
   __clearAcceptancePins,
   acceptanceIsPinned,
@@ -87,8 +87,8 @@ describe('shouldAdoptPinnedVerdict', () => {
   it('adopts only at a matching version', () => {
     // Acceptance is write-only on-chain, so at a matching version the
     // mined `true` can only be AHEAD of a cached `false`.
-    expect(shouldAdoptPinnedVerdict(cachedAt(3), 3)).toBe(true);
-    expect(shouldAdoptPinnedVerdict(cachedAt(3, true), 3)).toBe(true);
+    expect(shouldAdoptPinnedVerdict(cachedAt(3), 3, HASH)).toBe(true);
+    expect(shouldAdoptPinnedVerdict(cachedAt(3, true), 3, HASH)).toBe(true);
   });
 
   it('refuses an EMPTY cache — a frame does not establish version currency', () => {
@@ -99,15 +99,15 @@ describe('shouldAdoptPinnedVerdict', () => {
     // be a fresh successful entry TanStack serves while the first real
     // read is in flight — the gate open under a version the wallet
     // never accepted, from a tab that never read the chain at all.
-    expect(shouldAdoptPinnedVerdict(undefined, 3)).toBe(false);
+    expect(shouldAdoptPinnedVerdict(undefined, 3, HASH)).toBe(false);
   });
 
   it('refuses when the receiving tab has seen a different version', () => {
     // This tab knows a version the acting tab did not when it accepted
     // — governance installed a new one in between. Overwriting would
     // open the gate on terms the wallet never accepted.
-    expect(shouldAdoptPinnedVerdict(cachedAt(4), 3)).toBe(false);
-    expect(shouldAdoptPinnedVerdict(cachedAt(2), 3)).toBe(false);
+    expect(shouldAdoptPinnedVerdict(cachedAt(4), 3, HASH)).toBe(false);
+    expect(shouldAdoptPinnedVerdict(cachedAt(2), 3, HASH)).toBe(false);
   });
 });
 
@@ -119,11 +119,11 @@ describe('applyAcceptancePinFrame', () => {
 
     const scope = acceptanceScope(84532, ADDRESS);
     // Just inside the acting tab's window: pinned.
-    expect(acceptanceIsPinned(scope, 3, at + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
+    expect(acceptanceIsPinned(scope, 3, HASH, at + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
     // Just past it: expired — even though THIS tab only just received
     // it. A reorged acceptance must stop being papered over at the
     // same moment in every tab.
-    expect(acceptanceIsPinned(scope, 3, at + ACCEPTANCE_PIN_TTL_MS + 1)).toBe(false);
+    expect(acceptanceIsPinned(scope, 3, HASH, at + ACCEPTANCE_PIN_TTL_MS + 1)).toBe(false);
   });
 
   it('stores only the pin into an empty cache — never a verdict', () => {
@@ -134,7 +134,7 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     applyAcceptancePinFrame(client, frame(), frame().at);
     expect(client.getQueryData(tosQueryKey(84532, ADDRESS))).toBeUndefined();
-    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, frame().at)).toBe(true);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, frame().at)).toBe(true);
   });
 
   it('overwrites a stale false at the same version', () => {
@@ -156,8 +156,8 @@ describe('applyAcceptancePinFrame', () => {
     // ...and the pin exists but can never match it, by the same
     // narrowing-by-matching rule the per-tab pin uses.
     const scope = acceptanceScope(84532, ADDRESS);
-    expect(acceptanceIsPinned(scope, 3, frame().at)).toBe(true);
-    expect(acceptanceIsPinned(scope, 4, frame().at)).toBe(false);
+    expect(acceptanceIsPinned(scope, 3, HASH, frame().at)).toBe(true);
+    expect(acceptanceIsPinned(scope, 4, HASH, frame().at)).toBe(false);
   });
 
   it('keys the cache write the way the reading tab does', () => {
@@ -169,6 +169,103 @@ describe('applyAcceptancePinFrame', () => {
     client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
     applyAcceptancePinFrame(client, frame({ address: ADDRESS.toUpperCase().replace('0X', '0x') }), frame().at);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(true);
+  });
+
+  it('drops a frame mined against a different Diamond, or an unknown chain', () => {
+    // Round 3 P1: chain ID and wallet do not identify a deployment.
+    // During a rollout, an old tab and a new tab share this origin's
+    // channel while reading DIFFERENT Diamonds, and Terms state is
+    // per-Diamond — an acceptance on the retired one proves nothing
+    // about the one this build reads.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    applyAcceptancePinFrame(client, frame({ diamond: `0x${'11'.repeat(20)}` }), frame().at);
+    applyAcceptancePinFrame(client, frame({ chainId: 999_983 }), frame().at);
+    expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, frame().at)).toBe(false);
+  });
+
+  it('keeps only the pin when the matching cache is not fresh', () => {
+    // Round 3 P1: `setQueryData` manufactures freshness — it stamps a
+    // new `dataUpdatedAt` and turns error into success — so a stale
+    // matching entry must not be promoted by a frame. The pin alone is
+    // stored; the next real read adopts it iff the chain agrees.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    // Advance the clock past the verdict-age bound: the entry, stamped
+    // "now" by the line above, has aged out at apply time.
+    const now = Date.now() + MAX_VERDICT_AGE_MS + 60_000;
+    applyAcceptancePinFrame(client, frame({ at: now - 1_000 }), now);
+    expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, now)).toBe(true);
+  });
+
+  it('an EXPIRED newer pin cannot block a fresh acceptance of a restored version', () => {
+    // Round 3 P2: after a reorg rolls the canonical version back, the
+    // dead v4 pin must not outrank a newly mined v3 acceptance for
+    // ever. Past its bound a pin has no authority left to reject with.
+    const client = new QueryClient();
+    const scope = acceptanceScope(84532, ADDRESS);
+    const t0 = 1_700_000_000_000;
+    applyAcceptancePinFrame(client, frame({ version: 4, at: t0 }), t0);
+    const later = t0 + ACCEPTANCE_PIN_TTL_MS + 60_000;
+    applyAcceptancePinFrame(client, frame({ at: later }), later);
+    expect(acceptanceIsPinned(scope, 3, HASH, later)).toBe(true);
+    expect(acceptanceIsPinned(scope, 4, HASH, later)).toBe(false);
+  });
+
+  it('refuses a frame whose HASH differs from the cached one at the same version', () => {
+    // Round 4 P1: version monotonicity holds only within one branch. A
+    // reorg can replace a governance update with different text at the
+    // same number, and a frame from the orphaned branch must not
+    // overwrite the canonical hash and claim acceptance of text the
+    // wallet never saw — the contract compares both fields, so must we.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const canonicalHash = `0x${'55'.repeat(32)}` as `0x${string}`;
+    client.setQueryData<TosVerdictData>(key, {
+      accepted: false,
+      version: 3,
+      hash: canonicalHash,
+    });
+    applyAcceptancePinFrame(client, frame(), frame().at);
+    const after = client.getQueryData<TosVerdictData>(key);
+    expect(after?.accepted).toBe(false);
+    expect(after?.hash).toBe(canonicalHash);
+  });
+
+  it('rejects a frame timestamped in the future', () => {
+    // Round 4 P1: accepted, a future `at` passes the age check on a
+    // negative duration, and its pin never expires while outranking
+    // every legitimate one — an unbounded gate bypass from one bad
+    // timestamp.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    const now = 1_700_000_000_000;
+    applyAcceptancePinFrame(client, frame({ at: now + 60_000 }), now);
+    expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, now)).toBe(false);
+  });
+
+  it('an EXPIRED frame changes nothing but still triggers the authoritative reads', () => {
+    // Round 4 P2: a tab frozen through the whole 90s window resumes
+    // holding a cached refusal that can still be fresh under the 180s
+    // verdict bound — dropping the late frame entirely left its
+    // enabled Accept button standing until the next poll. The stale
+    // frame is a read hint and nothing more.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    const at = 1_700_000_000_000;
+    applyAcceptancePinFrame(client, frame({ at }), at + ACCEPTANCE_PIN_TTL_MS + 1);
+    expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, at)).toBe(false);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+    invalidate.mockRestore();
   });
 
   it('a delayed OLDER frame cannot evict a newer pin', () => {
@@ -183,8 +280,8 @@ describe('applyAcceptancePinFrame', () => {
     const v4At = 1_700_000_100_000;
     applyAcceptancePinFrame(client, frame({ version: 4, at: v4At }), v4At);
     applyAcceptancePinFrame(client, frame({ version: 3, at: v4At - 5_000 }), v4At);
-    expect(acceptanceIsPinned(scope, 4, v4At)).toBe(true);
-    expect(acceptanceIsPinned(scope, 3, v4At)).toBe(false);
+    expect(acceptanceIsPinned(scope, 4, HASH, v4At)).toBe(true);
+    expect(acceptanceIsPinned(scope, 3, HASH, v4At)).toBe(false);
   });
 
   it('a duplicate frame at the same version cannot rewind the window', () => {
@@ -196,9 +293,9 @@ describe('applyAcceptancePinFrame', () => {
     const at = 1_700_000_000_000;
     applyAcceptancePinFrame(client, frame({ at }), at);
     applyAcceptancePinFrame(client, frame({ at: at - 60_000 }), at);
-    expect(acceptanceIsPinned(scope, 3, at + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
+    expect(acceptanceIsPinned(scope, 3, HASH, at + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
     applyAcceptancePinFrame(client, frame({ at: at + 30_000 }), at + 30_000);
-    expect(acceptanceIsPinned(scope, 3, at + 30_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
+    expect(acceptanceIsPinned(scope, 3, HASH, at + 30_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
   });
 
   it('drops a frame delivered after its own safety window, whole', () => {
@@ -215,7 +312,7 @@ describe('applyAcceptancePinFrame', () => {
     applyAcceptancePinFrame(client, frame({ at }), at + ACCEPTANCE_PIN_TTL_MS + 1);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
     expect(
-      acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, at + ACCEPTANCE_PIN_TTL_MS),
+      acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, at + ACCEPTANCE_PIN_TTL_MS),
     ).toBe(false);
   });
 
@@ -233,6 +330,6 @@ describe('applyAcceptancePinFrame', () => {
     applyAcceptancePinFrame(client, frame({ version: 4, at }), at);
     applyAcceptancePinFrame(client, frame({ version: 3, at: at - 5_000 }), at);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
-    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, at)).toBe(true);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, HASH, at)).toBe(true);
   });
 });

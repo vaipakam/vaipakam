@@ -193,7 +193,12 @@ export function useTosAcceptance(): TosAcceptanceState {
       // `setCurrentTos` refuses any version that does not strictly
       // increase. So at a matching version, `false` from a node can
       // only mean that node is behind.
-      const correctLag = !accepted && acceptanceIsPinned(scope, version, Date.now());
+      // Version AND hash (#2004 round 4 P1) — matching the number
+      // alone would let a pin from a reorged-out branch correct a
+      // `false` that is truthfully about different text at the same
+      // version, which is why the contract compares both fields too.
+      const correctLag =
+        !accepted && acceptanceIsPinned(scope, version, current[1], Date.now());
       return {
         accepted: accepted || correctLag,
         version,
@@ -241,7 +246,7 @@ export function useTosAcceptance(): TosAcceptanceState {
       // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
       const pinnedAt = Date.now();
-      const adopted = adoptOrderedPin(scope, acceptedVersion, pinnedAt, pinnedAt);
+      const adopted = adoptOrderedPin(scope, acceptedVersion, query.data.hash, pinnedAt, pinnedAt);
       // The cache write carries its own guard, like the receiver's: a
       // newer VERDICT can be cached here without any pin (this tab's
       // own refetch may have discovered v4 while our v3 receipt was
@@ -253,6 +258,7 @@ export function useTosAcceptance(): TosAcceptanceState {
         shouldAdoptPinnedVerdict(
           queryClient.getQueryData<TosVerdictData>(queryKey),
           acceptedVersion,
+          query.data.hash,
         );
       if (cacheAdopted) {
         // Not optimism about an unknown outcome — it is the outcome,

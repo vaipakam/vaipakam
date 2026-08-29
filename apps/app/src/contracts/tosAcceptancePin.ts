@@ -59,6 +59,14 @@ export const ACCEPTANCE_PIN_TTL_MS = 90_000;
 
 interface AcceptancePin {
   version: number;
+  /** Content hash of the accepted text (#2004 round 4 P1). The version
+   *  counter is monotonic only WITHIN one branch: a reorg can replace a
+   *  governance update with another at the same number but different
+   *  text, and `LegalFacet.hasAcceptedCurrentTerms` compares version
+   *  AND hash for exactly that reason. A pin that matched on the
+   *  number alone would correct a `false` that is telling the truth
+   *  about different terms. */
+  hash: string;
   at: number;
 }
 
@@ -78,8 +86,13 @@ export function acceptanceScope(chainId: number, address: string | undefined): s
  *  necessarily the newest fact this tab holds (#2004 round 2 P1: a
  *  slow RPC can deliver the local v3 receipt AFTER another tab's v4
  *  broadcast has been applied here). */
-export function pinAcceptance(scope: string, version: number, now: number): void {
-  pins.set(scope, { version, at: now });
+export function pinAcceptance(
+  scope: string,
+  version: number,
+  hash: string,
+  now: number,
+): void {
+  pins.set(scope, { version, hash, at: now });
 }
 
 /**
@@ -113,6 +126,7 @@ export function pinAcceptance(scope: string, version: number, now: number): void
 export function adoptOrderedPin(
   scope: string,
   version: number,
+  hash: string,
   at: number,
   now: number,
 ): boolean {
@@ -127,7 +141,7 @@ export function adoptOrderedPin(
   ) {
     return false;
   }
-  pins.set(scope, { version, at });
+  pins.set(scope, { version, hash, at });
   return true;
 }
 
@@ -141,19 +155,23 @@ export function adoptOrderedPin(
 export function acceptanceIsPinned(
   scope: string,
   version: number,
+  hash: string,
   now: number,
 ): boolean {
   const pin = pins.get(scope);
   if (!pin) return false;
-  // Expiry is checked BEFORE the version match (#2004 round 3 P2):
-  // checked after, a dead pin at a version reads no longer report was
-  // never deleted, and its corpse outranked fresh acceptances in
+  // Expiry is checked BEFORE the match (#2004 round 3 P2): checked
+  // after, a dead pin at a version reads no longer report was never
+  // deleted, and its corpse outranked fresh acceptances in
   // `adoptOrderedPin`'s ordering.
   if (now - pin.at > ACCEPTANCE_PIN_TTL_MS) {
     pins.delete(scope);
     return false;
   }
-  return pin.version === version;
+  // Version AND hash, mirroring the contract's own acceptance
+  // comparison — see the pin's `hash` field for the reorg case this
+  // closes (#2004 round 4 P1).
+  return pin.version === version && pin.hash === hash;
 }
 
 /** Test seam only — the app never forgets a pin, it lets it expire. */

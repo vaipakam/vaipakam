@@ -52,6 +52,18 @@ import {
  */
 const RECEIVER_SECOND_READ_MS = 4_000;
 
+/**
+ * How far in the future a frame's `at` may sit before it is rejected
+ * (#2004 round 4 P1). Tabs on one machine share a clock, so real skew
+ * is milliseconds; the allowance exists for coarse clock corrections
+ * mid-write, not for trust. Beyond it a future-dated `at` would make
+ * the age check see a negative duration — accepting the frame — and
+ * would then never expire under `acceptanceIsPinned` while outranking
+ * every legitimate same-version pin in ordering: a gate bypass with no
+ * bound at all, from one bad timestamp.
+ */
+const MAX_FUTURE_SKEW_MS = 5_000;
+
 /** What the acting tab broadcasts after `acceptTerms` is mined and its
  *  receipt waited for. `kind` is the discriminator on the shared
  *  receipt-sync rail, whose other frame carries invalidation roots. */
@@ -147,8 +159,16 @@ export function parseAcceptancePinFrame(data: unknown): AcceptancePinFrame | nul
 export function shouldAdoptPinnedVerdict(
   cached: TosVerdictData | undefined,
   version: number,
+  hash: string,
 ): boolean {
-  return cached !== undefined && cached.version === version;
+  // Version AND hash (#2004 round 4 P1): the version counter is
+  // monotonic only within one branch, so a reorg can replace a
+  // governance update with another at the same number and different
+  // text. The contract compares both fields in
+  // `hasAcceptedCurrentTerms`; a guard matching the number alone would
+  // let a frame from the orphaned branch overwrite the canonical hash
+  // and claim acceptance of text the wallet never saw.
+  return cached !== undefined && cached.version === version && cached.hash === hash;
 }
 
 /**
@@ -176,13 +196,32 @@ export function applyAcceptancePinFrame(
   const deployment = getDeployment(frame.chainId);
   if (!deployment || deployment.diamond.toLowerCase() !== frame.diamond.toLowerCase())
     return;
+  const queryKey = tosQueryKey(frame.chainId, frame.address);
+  // Round 4 P1: a frame dated in the FUTURE is rejected outright — a
+  // sender's clock corrected backward after acceptance, or a bad
+  // same-origin writer. Accepted, its negative age would pass the
+  // expiry check below, and its pin would never expire while
+  // outranking every legitimate one. See `MAX_FUTURE_SKEW_MS`.
+  if (frame.at > now + MAX_FUTURE_SKEW_MS) return;
   // Round 2 P1: a frame can arrive AFTER its own safety window — a
   // suspended tab resuming is enough — and past the bound the chain's
-  // answer must win in every tab at once. Applied to the whole frame,
-  // not just the pin: `acceptanceIsPinned` would already reject an
-  // expired pin, but the cache write would still have manufactured a
-  // fresh `accepted: true` the gates serve while the refetch runs.
-  if (now - frame.at > ACCEPTANCE_PIN_TTL_MS) return;
+  // answer must win in every tab at once. Applied to pin and verdict
+  // alike: `acceptanceIsPinned` would already reject an expired pin,
+  // but the cache write would still have manufactured a fresh
+  // `accepted: true` the gates serve while the refetch runs. The
+  // frame is still used as a READ HINT (round 4 P2): a tab frozen
+  // through the whole window resumes holding a cached refusal that
+  // can be fresh under the 180s verdict bound while months out of
+  // date about the acceptance — dropping the signal entirely left its
+  // enabled Accept button standing until the next poll. Authoritative
+  // reads are the one thing a stale frame is still good for.
+  if (now - frame.at > ACCEPTANCE_PIN_TTL_MS) {
+    void queryClient.invalidateQueries({ queryKey });
+    setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey });
+    }, RECEIVER_SECOND_READ_MS);
+    return;
+  }
   const scope = acceptanceScope(frame.chainId, frame.address);
   // Ordered adoption, not a plain overwrite: a delayed older frame
   // must not evict a newer pin. And when ordering REFUSES the frame,
@@ -192,8 +231,7 @@ export function applyAcceptancePinFrame(
   // it to `accepted: true` — opening the gates under terms this tab's
   // own pin already knows are obsolete. A refused frame is history;
   // the pin that beat it already ran this function's tail.
-  if (!adoptOrderedPin(scope, frame.version, frame.at, now)) return;
-  const queryKey = tosQueryKey(frame.chainId, frame.address);
+  if (!adoptOrderedPin(scope, frame.version, frame.hash, frame.at, now)) return;
   // Round 3 P1: the verdict is written only over a FRESH, SUCCESSFUL
   // entry at the matching version. `setQueryData` stamps a new
   // `dataUpdatedAt` and turns an error state back into success — it
@@ -208,7 +246,7 @@ export function applyAcceptancePinFrame(
     state?.status === 'success' && !isVerdictStale(state.dataUpdatedAt, now)
       ? state.data
       : undefined;
-  if (shouldAdoptPinnedVerdict(freshCached, frame.version)) {
+  if (shouldAdoptPinnedVerdict(freshCached, frame.version, frame.hash)) {
     queryClient.setQueryData<TosVerdictData>(queryKey, {
       accepted: true,
       version: frame.version,
