@@ -263,24 +263,29 @@ export function applyAcceptancePinFrame(
   // `queryFn` would then replace the known canonical refusal with a
   // fresh `accepted: true` under text the wallet never canonically
   // accepted. Fresh conflicting evidence, either axis, kills the frame.
+  // Every refusal below still reads (rounds 4, 7 and 8 each added a
+  // branch until the rule was general): a frame this tab will not
+  // TRUST is still evidence that an acceptance happened somewhere, and
+  // in every reorg permutation the refused frame may be the canonical
+  // side — only an authoritative read can tell. One immediate, one
+  // delayed, never a poll.
+  const scheduleAuthoritativeReads = () => {
+    void queryClient.invalidateQueries({ queryKey });
+    setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey });
+    }, RECEIVER_SECOND_READ_MS);
+  };
   if (
     freshCached &&
     (freshCached.version > frame.version ||
       (freshCached.version === frame.version && freshCached.hash !== frame.hash))
   ) {
-    // A conflicting frame is still a READ HINT (round 7 P2), exactly
-    // like the expired branch below: in the reorged-governance case
-    // the REFUSED frame may in fact be the canonical one — another tab
-    // accepted hash-B while this tab holds a fresh hash-A refusal —
-    // and this tab cannot tell which from here. Nothing of the frame
-    // is adopted either way; the authoritative reads are what resolve
-    // the disagreement, and skipping them left a stale prompt enabled
-    // until the 60-second poll, whose click submits terms the chain
-    // rejects while still charging gas.
-    void queryClient.invalidateQueries({ queryKey });
-    setTimeout(() => {
-      void queryClient.invalidateQueries({ queryKey });
-    }, RECEIVER_SECOND_READ_MS);
+    // Round 7 P2: in the reorged-governance case the REFUSED frame may
+    // be the canonical one — another tab accepted hash-B while this
+    // tab holds a fresh hash-A refusal — and skipping the reads left a
+    // stale prompt whose click submits terms the chain rejects while
+    // still charging gas.
+    scheduleAuthoritativeReads();
     return;
   }
   // Ordered adoption, not a plain overwrite: a delayed older frame
@@ -291,7 +296,15 @@ export function applyAcceptancePinFrame(
   // it to `accepted: true` — opening the gates under terms this tab's
   // own pin already knows are obsolete. A refused frame is history;
   // the pin that beat it already ran this function's tail.
-  if (!adoptOrderedPin(scope, frame.version, frame.hash, frame.at, now)) return;
+  if (!adoptOrderedPin(scope, frame.version, frame.hash, frame.at, now)) {
+    // Round 8 P2: ordering's incumbent can itself be from a branch a
+    // reorg has since rolled back — an unexpired v4 pin against a
+    // canonical v3 the frame is truthfully reporting. The pin data is
+    // refused (ordering is right on the information it has), but the
+    // reads run, because only they can decide which branch won.
+    scheduleAuthoritativeReads();
+    return;
+  }
   // Round 3 P1: the verdict is written only over a FRESH, SUCCESSFUL
   // entry at the matching version — see `freshVerdict` for why a
   // stale or error-retained entry cannot be promoted by a frame. A
@@ -304,9 +317,20 @@ export function applyAcceptancePinFrame(
       hash: frame.hash,
     });
   }
-  void queryClient.invalidateQueries({ queryKey });
-  // See `RECEIVER_SECOND_READ_MS` — one delayed re-read, never a poll.
-  setTimeout(() => {
-    void queryClient.invalidateQueries({ queryKey });
-  }, RECEIVER_SECOND_READ_MS);
+  scheduleAuthoritativeReads();
+  // Round 8 P2: one more read at the PIN'S EXPIRY. If this acceptance
+  // is orphaned by a reorg, every read inside the 90s window has its
+  // canonical `false` corrected to `true` by the live pin — which is
+  // the pin working as designed — but the last such corrected verdict
+  // would then sit in the cache for up to the 60-second poll AFTER the
+  // pin died, extending the advertised bound by up to a minute. A
+  // one-shot read just past expiry re-asks with no pin left to
+  // correct it, so the bound the module promises is the bound the
+  // gates experience.
+  setTimeout(
+    () => {
+      void queryClient.invalidateQueries({ queryKey });
+    },
+    frame.at + ACCEPTANCE_PIN_TTL_MS - now + 1_000,
+  );
 }

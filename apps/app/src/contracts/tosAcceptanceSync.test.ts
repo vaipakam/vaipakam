@@ -316,6 +316,43 @@ describe('applyAcceptancePinFrame', () => {
     expect(acceptanceIsPinned(scope, 3, HASH, v4At)).toBe(false);
   });
 
+  it('a frame refused by ORDERING still triggers the authoritative reads', () => {
+    // Round 8 P2: the incumbent pin can itself be from a branch a
+    // reorg rolled back — an unexpired v4 pin against a canonical v3
+    // the frame truthfully reports. The pin data is refused; the reads
+    // run, because only they can decide which branch won.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const v4At = 1_700_000_100_000;
+    applyAcceptancePinFrame(client, frame({ version: 4, at: v4At }), v4At);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    applyAcceptancePinFrame(client, frame({ version: 3, at: v4At - 5_000 }), v4At);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, HASH, v4At)).toBe(true);
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+    invalidate.mockRestore();
+  });
+
+  it('schedules a read just past the pin’s expiry', () => {
+    // Round 8 P2: an orphaned acceptance has every in-window read
+    // corrected to `true` by the live pin; without this read the last
+    // corrected verdict coasts for up to the 60s poll after the pin
+    // dies — a minute beyond the advertised bound.
+    vi.useFakeTimers();
+    try {
+      const client = new QueryClient();
+      const invalidate = vi.spyOn(client, 'invalidateQueries');
+      const at = Date.now();
+      applyAcceptancePinFrame(client, frame({ at }), at);
+      const before = invalidate.mock.calls.length;
+      vi.advanceTimersByTime(ACCEPTANCE_PIN_TTL_MS + 1_100);
+      // The 4s second read AND the expiry read both fired.
+      expect(invalidate.mock.calls.length).toBe(before + 2);
+      invalidate.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a duplicate frame at the same version cannot rewind the window', () => {
     // Same version, older timestamp: the existing pin's window stands.
     // A LATER same-version acceptance (the chain permits one) extends
