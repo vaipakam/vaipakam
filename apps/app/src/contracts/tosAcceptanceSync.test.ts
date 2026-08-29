@@ -493,11 +493,15 @@ describe('applyAcceptancePinFrame', () => {
     expect(client.getQueryData<TosVerdictData>(key)?.pinBacked).toBeUndefined();
   });
 
-  it('re-arms instead of skipping when a backward clock keeps the pin live', () => {
-    // Round 11 P2: the timeout is monotonic, the pin's life is
-    // wall-clock. Fired early relative to the wall clock, a
-    // skip-once check would leave an orphaned acceptance correcting
-    // polls until wall time caught up.
+  it('a backward clock correction cannot extend the pin past its elapsed life', () => {
+    // Round 26 P1, superseding round 11's wall-clock premise: the pin
+    // carries a monotonic deadline stamped at adoption, and expiry is
+    // EITHER bound. With the wall clock corrected 50s backward after
+    // adoption, the wall window claims 50 extra seconds — but real
+    // elapsed time keeps counting, and the timer ages the pin-backed
+    // verdict on the elapsed schedule. (Vitest's fake timers advance
+    // `performance.now` with the timer queue, which is exactly the
+    // elapsed clock in question.)
     vi.useFakeTimers();
     try {
       const client = new QueryClient();
@@ -508,14 +512,13 @@ describe('applyAcceptancePinFrame', () => {
       // The wall clock is corrected 50s backward after scheduling.
       vi.setSystemTime(t0 - 50_000);
       vi.advanceTimersByTime(ACCEPTANCE_PIN_TTL_MS + 1_100);
-      // Timer fired, pin still wall-clock live → re-armed, not aged.
-      const mid = client.getQueryState<TosVerdictData>(key);
-      expect(mid && Date.now() - mid.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(false);
-      // Once wall time reaches the pin's true expiry, the re-armed
-      // check ages the still-pin-backed verdict.
-      vi.advanceTimersByTime(60_000);
+      // Real elapsed time is past the TTL: the pin is dead by the
+      // monotonic bound and the verdict aged, however the wall reads.
       const aged = client.getQueryState<TosVerdictData>(key);
       expect(aged && Date.now() - aged.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(true);
+      expect(
+        acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, Date.now()),
+      ).toBe(false);
     } finally {
       vi.useRealTimers();
     }

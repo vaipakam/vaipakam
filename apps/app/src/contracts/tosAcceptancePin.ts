@@ -105,9 +105,59 @@ interface AcceptancePin {
    *  clock correction. `at` remains only as the final tiebreak for a
    *  re-broadcast of the SAME transaction. */
   txIndex: number;
+  /** This tab's MONOTONIC deadline for the pin, stamped at adoption
+   *  (round 26 P1): the monotonic clock reading past which the pin is
+   *  dead, however the wall clock reads. Expiry is EITHER bound —
+   *  wall-expired OR elapsed-expired — because each clock lies in a
+   *  case the other does not: the wall clock rolls backward under a
+   *  correction (extending a wall-only window by the whole
+   *  correction, papering over an orphaned acceptance far past the
+   *  stated bound), while the monotonic clock stalls through a system
+   *  sleep (extending an elapsed-only window by the whole nap, which
+   *  the wall bound catches). Per-tab by nature — frames carry `at`,
+   *  and each receiver stamps its own deadline from the REMAINING
+   *  window at delivery, so the cross-tab simultaneous-expiry
+   *  property is preserved up to delivery skew. */
+  monoDeadline: number;
 }
 
 const pins = new Map<string, AcceptancePin>();
+
+const defaultMonoNow = () =>
+  typeof performance !== 'undefined' ? performance.now() : Date.now();
+let monoNow: () => number = defaultMonoNow;
+
+/** Test seam for the monotonic clock — production never touches it. */
+export function __setMonoNowForTests(fn: (() => number) | null): void {
+  monoNow = fn ?? defaultMonoNow;
+}
+
+/** Dead by EITHER clock — see `monoDeadline` for why both. */
+function pinExpired(pin: AcceptancePin, now: number): boolean {
+  return now - pin.at > ACCEPTANCE_PIN_TTL_MS || monoNow() > pin.monoDeadline;
+}
+
+function storePin(
+  scope: string,
+  version: number,
+  hash: string,
+  at: number,
+  block: number,
+  txIndex: number,
+  now: number,
+): void {
+  pins.set(scope, {
+    version,
+    hash,
+    at,
+    block,
+    txIndex,
+    // The monotonic deadline mirrors the WALL window remaining at
+    // adoption, so the two bounds start aligned and only ever diverge
+    // when one of the clocks misbehaves.
+    monoDeadline: monoNow() + Math.max(0, at + ACCEPTANCE_PIN_TTL_MS - now),
+  });
+}
 
 /** Identifies one wallet on one chain. Acceptance is recorded per
  *  wallet and per network, so both belong in the key. */
@@ -131,7 +181,7 @@ export function pinAcceptance(
   txIndex: number,
   now: number,
 ): void {
-  pins.set(scope, { version, hash, at: now, block, txIndex });
+  storePin(scope, version, hash, now, block, txIndex, now);
 }
 
 /**
@@ -203,7 +253,7 @@ export function adoptOrderedPin(
 ): boolean {
   if (now - at > ACCEPTANCE_PIN_TTL_MS || at > now + MAX_FUTURE_SKEW_MS) return false;
   let existing = pins.get(scope);
-  if (existing && now - existing.at > ACCEPTANCE_PIN_TTL_MS) {
+  if (existing && pinExpired(existing, now)) {
     pins.delete(scope);
     existing = undefined;
   }
@@ -235,7 +285,7 @@ export function adoptOrderedPin(
   ) {
     return false;
   }
-  pins.set(scope, { version, hash, at, block, txIndex });
+  storePin(scope, version, hash, at, block, txIndex, now);
   return true;
 }
 
@@ -294,11 +344,11 @@ export function adoptReceiptPin(
     existing.version === version &&
     existing.hash === hash &&
     existing.at > at &&
-    now - existing.at <= ACCEPTANCE_PIN_TTL_MS
+    !pinExpired(existing, now)
   ) {
     return true;
   }
-  pins.set(scope, { version, hash, at, block, txIndex });
+  storePin(scope, version, hash, at, block, txIndex, now);
   return true;
 }
 
@@ -320,8 +370,8 @@ export function acceptanceIsPinned(
   // Expiry is checked BEFORE the match (#2004 round 3 P2): checked
   // after, a dead pin at a version reads no longer report was never
   // deleted, and its corpse outranked fresh acceptances in
-  // `adoptOrderedPin`'s ordering.
-  if (now - pin.at > ACCEPTANCE_PIN_TTL_MS) {
+  // `adoptOrderedPin`'s ordering. Dead by EITHER clock (round 26 P1).
+  if (pinExpired(pin, now)) {
     pins.delete(scope);
     return false;
   }
@@ -371,11 +421,13 @@ export type PinExpiryObservation =
  * version AND hash), in three states the timer treats differently
  * (#2004 rounds 11, 17 and 18):
  *
- *   - `live` — the pin still has wall-clock life, with how much: a
- *     MONOTONIC timeout can fire while a backward-shifted wall clock
- *     still considers the pin live, and the timer re-arms for the
- *     remainder rather than skipping once and never returning (round
- *     11 P2).
+ *   - `live` — the pin has life left on BOTH clocks, with the
+ *     tighter remainder: the timer re-arms rather than skipping once
+ *     and never returning (round 11 P2), and since round 26 P1 a
+ *     backward wall correction no longer extends the window — the
+ *     monotonic deadline stamped at adoption keeps counting real
+ *     elapsed time, so an orphaned acceptance dies on schedule
+ *     however the wall clock reads.
  *   - `expired` — this exact pin was observed past its TTL and is
  *     RETIRED here, not merely reported (round 18 P1): returned
  *     un-deleted, a later backward clock correction made
@@ -400,10 +452,18 @@ export function observePinExpiry(
 ): PinExpiryObservation {
   const pin = pins.get(scope);
   if (!pin || pin.version !== version || pin.hash !== hash) return { state: 'superseded' };
-  const remaining = ACCEPTANCE_PIN_TTL_MS - (now - pin.at);
-  if (remaining > 0) return { state: 'live', remainingMs: remaining };
-  pins.delete(scope);
-  return { state: 'expired' };
+  if (pinExpired(pin, now)) {
+    pins.delete(scope);
+    return { state: 'expired' };
+  }
+  // Remaining life is the TIGHTER of the two bounds (round 26 P1): a
+  // rolled-back wall clock reports a large wall remainder, but the
+  // monotonic deadline keeps counting real elapsed time, so the
+  // re-arm sleeps toward whichever bound lands first rather than
+  // extending the window by the size of the correction.
+  const wallRemaining = ACCEPTANCE_PIN_TTL_MS - (now - pin.at);
+  const monoRemaining = pin.monoDeadline - monoNow();
+  return { state: 'live', remainingMs: Math.max(0, Math.min(wallRemaining, monoRemaining)) };
 }
 
 /** Test seam only — the app never forgets a pin, it lets it expire. */

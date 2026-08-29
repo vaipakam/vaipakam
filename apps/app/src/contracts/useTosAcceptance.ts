@@ -45,7 +45,6 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import {
   isVerdictStale,
-  MAX_VERDICT_AGE_MS,
   tosQueryKey,
   VERDICT_CLOCK_TICK_MS,
   type TosVerdictData,
@@ -379,31 +378,31 @@ export function useTosAcceptance(): TosAcceptanceState {
           receiptTxIndex,
           Date.now(),
         );
-      // The DIFFERING pin-backed verdict the receipt just superseded
-      // is aged immediately (round 17 P2, mirroring the receiver's
-      // round-16 rule): its backing pin has been replaced, so nothing
-      // would correct or revalidate it any more, and left fresh it
-      // would keep both gates open under the other acceptance's
-      // version while this tab broadcasts a different one.
-      if (
-        adopted &&
-        fresh?.pinBacked &&
-        (fresh.version !== acceptedVersion || fresh.hash !== query.data.hash)
-      ) {
-        queryClient.setQueryData<TosVerdictData>(queryKey, fresh, {
-          updatedAt: Date.now() - MAX_VERDICT_AGE_MS - VERDICT_CLOCK_TICK_MS - 1_000,
-        });
-      }
+
       // No freshness bar on the cache write for the receipt — it IS
       // the outcome, anchored; a stale or empty entry is simply
       // seeded (round 1's acting-tab prerogative) — EXCEPT a fresh
-      // verdict a node already CONFIRMED, which is preserved (round
-      // 12 P2, mirroring the receiver's round-11 rule): rewriting it
+      // MATCHING acceptance, which is preserved (round 12 P2,
+      // mirroring the receiver's round-11 rule): rewriting it
       // pinBacked would volunteer node-given truth for expiry aging.
-      // When unconflicted, `fresh` either matches exactly or is
-      // undefined, so `fresh.accepted` is precisely "a node already
-      // said yes to this same version and text".
-      const cacheAdopted = adopted && fresh?.accepted !== true;
+      // MATCHING is load-bearing (round 26 P2): since round 17 the
+      // conflict guard lets a DIFFERING pin-backed `accepted: true`
+      // through — another tab's acceptance that landed mid-pend — and
+      // skipping the write on its `accepted` flag left this tab
+      // holding hearsay for the wrong version with both gates closed
+      // until a read landed. The receipt's own verdict is the
+      // supersession: writing it replaces the beaten hearsay outright,
+      // which is why no separate aging step exists on this path (the
+      // receiver ages instead, because its cache write is gated on an
+      // exact match and cannot replace).
+      const cacheAdopted =
+        adopted &&
+        !(
+          fresh !== undefined &&
+          fresh.accepted &&
+          fresh.version === acceptedVersion &&
+          fresh.hash === query.data.hash
+        );
       if (cacheAdopted) {
         // Not optimism about an unknown outcome — it is the outcome,
         // anchored to a receipt this call waited for. Writing it here

@@ -11,6 +11,7 @@ import {
   ACCEPTANCE_PIN_TTL_MS,
   MAX_FUTURE_SKEW_MS,
   __clearAcceptancePins,
+  __setMonoNowForTests,
   acceptanceIsPinned,
   acceptanceScope,
   adoptOrderedPin,
@@ -31,6 +32,7 @@ const TX0 = 7;
 
 beforeEach(() => {
   __clearAcceptancePins();
+  __setMonoNowForTests(null);
 });
 
 describe('acceptanceIsPinned', () => {
@@ -267,6 +269,35 @@ describe('adoptReceiptPin', () => {
       false,
     );
     expect(acceptanceIsPinned(SCOPE, 3, H2, T0)).toBe(false);
+  });
+});
+
+describe('monotonic expiry (round 26 P1)', () => {
+  // Expiry is EITHER bound: the wall clock catches a sleeping
+  // monotonic clock, and the monotonic deadline catches a
+  // rolled-back wall clock. A correction must never extend the
+  // window.
+  it('a backward wall correction cannot revive a pin past its elapsed life', () => {
+    let mono = 100_000;
+    __setMonoNowForTests(() => mono);
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
+    // Real elapsed time passes the whole TTL while the wall clock is
+    // corrected back INSIDE the window.
+    mono += ACCEPTANCE_PIN_TTL_MS + 1_000;
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 10_000)).toBe(false);
+  });
+
+  it('the expiry timer observes elapsed death and retires the pin', () => {
+    let mono = 100_000;
+    __setMonoNowForTests(() => mono);
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
+    mono += 30_000;
+    const mid = observePinExpiry(SCOPE, 3, HASH, T0 + 10_000);
+    // Live, with the TIGHTER (monotonic) remainder governing.
+    expect(mid).toEqual({ state: 'live', remainingMs: ACCEPTANCE_PIN_TTL_MS - 30_000 });
+    mono += ACCEPTANCE_PIN_TTL_MS;
+    expect(observePinExpiry(SCOPE, 3, HASH, T0 + 20_000)).toEqual({ state: 'expired' });
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 20_000)).toBe(false);
   });
 });
 
