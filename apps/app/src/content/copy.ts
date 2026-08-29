@@ -388,9 +388,15 @@ const copySource = {
        or erase" on-chain data. Erasure is genuinely impossible; export
        is not, since anyone can read the chain through a block
        explorer. On a file that IS an access request, understating what
-       the user can obtain is its own misstatement. */
+       the user can obtain is its own misstatement.
+       Review round 5 P2 — and the round-1 rewrite over-corrected the
+       other half: it claimed the wallet ADDRESS is not in the file,
+       when per-wallet settings put the full address in the stored key
+       names. Public on the chain and absent from this browser are
+       different facts; the transactions are both, the address is only
+       the first. */
     scopeChain:
-      'Anything on the blockchain. This file only covers your browser, so your wallet address and the transactions you have signed are not in it — but they are public, and you can look them up yourself on any block explorer. What nobody can do, Vaipakam included, is erase them.',
+      'Anything on the blockchain. The transactions you have signed live there, not in your browser, so they are not in this download — but they are public, and you can look them up yourself on any block explorer. What nobody can do, Vaipakam included, is erase them. Your wallet address is the one exception: where you have saved per-wallet settings it appears in the stored key names, so it is in your browser’s data and in the download — erasing here removes those local copies, never anything on the chain.',
     /* Review round 1 P1 — this said "unlink to remove it", which was
        false in the same way the Privacy Policy's erasure sentence is:
        the agent's unlink only clears the Telegram chat id, keeping the

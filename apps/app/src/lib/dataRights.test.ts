@@ -11,7 +11,12 @@
  */
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { isAppStorageKey, STORAGE_PREFIXES, PREFERENCE_COOKIES } from './dataRights';
+import {
+  isAppStorageKey,
+  liveLastErrorEntry,
+  STORAGE_PREFIXES,
+  PREFERENCE_COOKIES,
+} from './dataRights';
 
 /**
  * Every storage key literal the app writes, as of #1960.
@@ -292,6 +297,58 @@ describe('decodeStored (via the export payload shape)', () => {
     expect(structured('light')).toBe(false);
     expect(structured('"quoted"')).toBe(false);
     expect(structured('true')).toBe(false);
+  });
+});
+
+describe('liveLastErrorEntry', () => {
+  // Review round 5 P2. `recordLastError` writes its module slot FIRST
+  // and the `sessionStorage.setItem` after it can fail — a larger
+  // replacement over quota is enough — so the slot can hold a NEWER
+  // record than the key. The old presence check exported the stale one
+  // and suppressed exactly the record the Diagnostics drawer was
+  // displaying.
+  const record = { message: 'boom', path: '/lend', at: 1_700_000_000_000 };
+
+  it('fills the key when storage holds nothing', () => {
+    expect(liveLastErrorEntry(undefined, record)).toEqual({
+      key: 'vaipakam.app.lastError',
+      value: record,
+    });
+  });
+
+  it('exports BOTH when the live record differs from the stored one', () => {
+    const stale = { message: 'earlier crash', path: '/borrow', at: 1 };
+    // The stored copy stays under its real key (the caller already has
+    // it there); the live one arrives under a parenthesised label so
+    // the export never claims sessionStorage contains something it
+    // does not.
+    expect(liveLastErrorEntry(stale, record)).toEqual({
+      key: 'vaipakam.app.lastError (live)',
+      value: record,
+    });
+  });
+
+  it('adds nothing when they agree — a normal browser sees no duplicate', () => {
+    // The stored value reaches the caller through JSON.parse of what
+    // recordLastError stringified, so agreement is content equality of
+    // that round-trip, not object identity.
+    expect(liveLastErrorEntry(JSON.parse(JSON.stringify(record)), record)).toBeNull();
+  });
+
+  it('adds nothing when no record is held in memory', () => {
+    expect(liveLastErrorEntry(undefined, null)).toBeNull();
+    const stored = { message: 'stored only', path: '/', at: 2 };
+    expect(liveLastErrorEntry(stored, null)).toBeNull();
+  });
+
+  it('treats an unparseable stored copy as different', () => {
+    // `decodeStored` falls back to raw text when the value does not
+    // parse — a corrupt slot and a live record are then genuinely two
+    // different holdings, and both belong in the export.
+    expect(liveLastErrorEntry('{not json', record)).toEqual({
+      key: 'vaipakam.app.lastError (live)',
+      value: record,
+    });
   });
 });
 

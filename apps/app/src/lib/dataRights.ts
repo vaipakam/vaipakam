@@ -96,19 +96,32 @@ export interface DataRightsExport {
   note: string;
 }
 
+/* Review round 5 P2 — this used to say the wallet address is "not held
+   here" alongside the transactions. The transactions genuinely are not;
+   the ADDRESS is in the stored key names wherever the user saved
+   per-wallet settings (`app.alerts.<chain>.<wallet>`,
+   `app.notif.lastseen.<chain>.<wallet>`), and therefore in this very
+   file. Someone sharing the export on the strength of that sentence
+   would be handing over an address-to-preferences linkage they were
+   told was absent — public-on-the-chain and present-in-this-file are
+   different facts, and the note now states each on its own. */
 export const EXPORT_NOTE =
   'This file contains the data the Vaipakam app stores in this browser, on this ' +
-  'device. It does NOT contain on-chain data: your wallet address and the ' +
-  'transactions you have signed are public on the blockchain, so they are not ' +
-  'held here — you can look them up yourself on any block explorer. What no ' +
-  'one, Vaipakam included, can do is erase them. It also does not contain ' +
-  'anything held by the alerts service: unlinking in Settings removes the ' +
-  'Telegram connection, while your alert preferences remain on that service ' +
-  'for a future relink — email support@vaipakam.com to have those removed. ' +
-  'A small amount of data belongs to each browser tab on its own, so this ' +
-  'file covers the tab it was downloaded from — erasing reaches the others. ' +
-  'Data stored by vaipakam.com is a separate store on a separate origin, ' +
-  'with its own controls on that site.';
+  'device. Where you have saved per-wallet settings — alert preferences, or ' +
+  'which notifications you have seen — your wallet address appears in the ' +
+  'stored key names, so this file does link that address to those settings; ' +
+  'treat it as personal before sharing it. It does NOT contain on-chain data: ' +
+  'the transactions you have signed are public on the blockchain, not stored ' +
+  'here, and you can look them up yourself on any block explorer. What no one, ' +
+  'Vaipakam included, can do is erase them — erasing this browser removes ' +
+  'only its local copies, never anything on the chain. It also does not ' +
+  'contain anything held by the alerts service: unlinking in Settings ' +
+  'removes the Telegram connection, while your alert preferences remain on ' +
+  'that service for a future relink — email support@vaipakam.com to have ' +
+  'those removed. A small amount of data belongs to each browser tab on its ' +
+  'own, so this file covers the tab it was downloaded from — erasing reaches ' +
+  'the others. Data stored by vaipakam.com is a separate store on a separate ' +
+  'origin, with its own controls on that site.';
 
 /**
  * Obtain a Storage object without throwing (review round 1 P1).
@@ -244,22 +257,43 @@ export interface DataRightsSnapshot {
   refused: boolean;
 }
 
+/**
+ * How the in-memory last-error record enters the export, given what the
+ * sessionStorage scan already found under its key.
+ *
+ * Review round 3 P2 established that the record must be exported at all
+ * — when `sessionStorage.setItem` fails, `recordLastError` keeps the
+ * record only in a module-level slot, and the drawer displays it while
+ * the erasure clears it, so the app demonstrably HOLDS it. Review round
+ * 5 P2 found the presence check alone was not enough: the memory slot
+ * is written FIRST and the `setItem` after it can fail — a larger
+ * replacement over quota is all it takes — leaving an OLDER record in
+ * storage. "Key present, so nothing to add" then exported the stale
+ * diagnostic while the drawer showed the newer one. So: absent → the
+ * memory record fills the key; present but different → BOTH are
+ * exported, the live one under a parenthesised label (the registry's
+ * convention for a non-storage location) rather than overwriting the
+ * evidence of what storage actually contains; identical → nothing, so
+ * a normal browser sees no duplicate.
+ */
+export function liveLastErrorEntry(
+  stored: unknown,
+  inMemory: unknown,
+): { key: string; value: unknown } | null {
+  if (!inMemory) return null;
+  if (stored === undefined) return { key: LAST_ERROR_KEY, value: inMemory };
+  if (JSON.stringify(stored) !== JSON.stringify(inMemory)) {
+    return { key: `${LAST_ERROR_KEY} (live)`, value: inMemory };
+  }
+  return null;
+}
+
 export function inspectMyData(): DataRightsSnapshot {
   const local = collect(safeStorage('localStorage'));
   const session = collect(safeStorage('sessionStorage'));
   const cookies = readCookies();
-  // Review round 3 P2: when `sessionStorage.setItem` fails — quota, or
-  // a locked-down profile — `recordLastError` keeps the record in a
-  // module-level slot instead. The Diagnostics drawer reads it and the
-  // erasure clears it, so the app demonstrably HOLDS it; leaving it out
-  // of the export made this file claim completeness it did not have,
-  // and left the one asymmetry that matters: erased but never
-  // disclosed. Added only when the stored copy is absent, so a normal
-  // browser sees no duplicate.
-  if (!(LAST_ERROR_KEY in session.data)) {
-    const inMemory = readLastError();
-    if (inMemory) session.data[LAST_ERROR_KEY] = inMemory;
-  }
+  const live = liveLastErrorEntry(session.data[LAST_ERROR_KEY], readLastError());
+  if (live) session.data[live.key] = live.value;
   const payload: DataRightsExport = {
     exportedAt: new Date().toISOString(),
     origin: typeof window === 'undefined' ? 'unknown' : window.location.origin,
