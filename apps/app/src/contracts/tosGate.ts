@@ -121,4 +121,13 @@ export interface TosVerdictData {
   accepted: boolean;
   version: number;
   hash: `0x${string}`;
+  /** True when this verdict's `accepted` rests on the acceptance PIN
+   *  rather than on a node's own answer — a pin-corrected read, or the
+   *  verdict a receipt/broadcast wrote directly (#2004 round 9 P2). A
+   *  reorg can orphan the acceptance behind such a verdict, so at the
+   *  pin's expiry it is aged past the verdict bound rather than left
+   *  to coast; a verdict a node genuinely confirmed carries no flag
+   *  and is never aged. Cleared naturally: the first read a node
+   *  answers `true` on its own stores an unflagged verdict. */
+  pinBacked?: boolean;
 }

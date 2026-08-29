@@ -44,13 +44,12 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
+import { acceptanceIsPinned, acceptanceScope, adoptOrderedPin } from './tosAcceptancePin';
 import {
-  ACCEPTANCE_PIN_TTL_MS,
-  acceptanceIsPinned,
-  acceptanceScope,
-  adoptOrderedPin,
-} from './tosAcceptancePin';
-import { buildAcceptancePinFrame, freshVerdict } from './tosAcceptanceSync';
+  buildAcceptancePinFrame,
+  freshVerdict,
+  scheduleExpiryRevalidation,
+} from './tosAcceptanceSync';
 import { publishAcceptancePin } from '../chain/receiptSync';
 import { captureTxError } from '../lib/errors';
 
@@ -208,6 +207,11 @@ export function useTosAcceptance(): TosAcceptanceState {
         accepted: accepted || correctLag,
         version,
         hash: current[1],
+        // A corrected verdict rests on the pin, not on this node's
+        // answer, and is aged out at the pin's expiry unless a later
+        // read confirms it (#2004 round 9 P2). A genuinely confirmed
+        // `true` carries no flag.
+        ...(correctLag ? { pinBacked: true } : {}),
       };
     },
   });
@@ -295,6 +299,10 @@ export function useTosAcceptance(): TosAcceptanceState {
           accepted: true,
           version: acceptedVersion,
           hash: query.data.hash,
+          // Receipt-anchored, but a reorg can orphan the receipt too —
+          // aged out at the pin's expiry unless a node confirms it
+          // first (#2004 round 9 P2).
+          pinBacked: true,
         });
       }
       // #2001: the pin and the cache write above are per-TAB, so a
@@ -342,18 +350,18 @@ export function useTosAcceptance(): TosAcceptanceState {
       setTimeout(() => {
         void queryClient.invalidateQueries({ queryKey });
       }, 4_000);
-      // #2004 round 8 P2: one more read just past the pin's expiry.
-      // If this acceptance is orphaned by a reorg, every read inside
-      // the 90s window is corrected to `true` by the live pin — as
-      // designed — but the last corrected verdict would then coast in
-      // the cache for up to the 60s poll after the pin died. Re-asking
-      // once with no pin left to correct keeps the module's advertised
-      // bound the bound the gates actually experience. Scheduled only
+      // #2004 rounds 8+9 (both P2): at the pin's expiry, a verdict
+      // still resting on the pin is aged past the verdict bound and
+      // re-read — see `scheduleExpiryRevalidation`. Scheduled only
       // when a pin was adopted; a superseded receipt installed none.
       if (adopted) {
-        setTimeout(() => {
-          void queryClient.invalidateQueries({ queryKey });
-        }, ACCEPTANCE_PIN_TTL_MS + 1_000);
+        scheduleExpiryRevalidation(
+          queryClient,
+          queryKey,
+          acceptedVersion,
+          pinnedAt,
+          pinnedAt,
+        );
       }
     } catch (err) {
       // Codex review round 2 P2: through the SHARED mapper, like every

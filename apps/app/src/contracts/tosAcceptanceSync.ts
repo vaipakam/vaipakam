@@ -33,7 +33,12 @@
  */
 import type { QueryClient } from '@tanstack/react-query';
 import { getDeployment } from '@vaipakam/contracts/deployments';
-import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
+import {
+  isVerdictStale,
+  MAX_VERDICT_AGE_MS,
+  tosQueryKey,
+  type TosVerdictData,
+} from './tosGate';
 import {
   ACCEPTANCE_PIN_TTL_MS,
   acceptanceScope,
@@ -218,12 +223,28 @@ export function applyAcceptancePinFrame(
   if (!deployment || deployment.diamond.toLowerCase() !== frame.diamond.toLowerCase())
     return;
   const queryKey = tosQueryKey(frame.chainId, frame.address);
-  // Round 4 P1: a frame dated in the FUTURE is rejected outright — a
-  // sender's clock corrected backward after acceptance, or a bad
-  // same-origin writer. Accepted, its negative age would pass the
-  // expiry check below, and its pin would never expire while
-  // outranking every legitimate one. See `MAX_FUTURE_SKEW_MS`.
-  if (frame.at > now + MAX_FUTURE_SKEW_MS) return;
+  // Every refusal below still reads (rounds 4, 7, 8 and 9 each added
+  // a branch until the rule was general): a frame this tab will not
+  // TRUST is still evidence that an acceptance happened somewhere,
+  // and only an authoritative read can tell what is true now. One
+  // immediate, one delayed, never a poll.
+  const scheduleAuthoritativeReads = () => {
+    void queryClient.invalidateQueries({ queryKey });
+    setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey });
+    }, RECEIVER_SECOND_READ_MS);
+  };
+  // Round 4 P1: a frame dated in the FUTURE adopts nothing — its
+  // negative age would pass the expiry check below, and its pin would
+  // never expire while outranking every legitimate one. See
+  // `MAX_FUTURE_SKEW_MS`. It still reads (round 9 P2): a clock
+  // corrected backward between the sender stamping and this tab
+  // handling makes a LEGITIMATE acceptance future-dated, and dropping
+  // its signal left a stale refusal offering a paid re-acceptance.
+  if (frame.at > now + MAX_FUTURE_SKEW_MS) {
+    scheduleAuthoritativeReads();
+    return;
+  }
   // Round 2 P1: a frame can arrive AFTER its own safety window — a
   // suspended tab resuming is enough — and past the bound the chain's
   // answer must win in every tab at once. Applied to pin and verdict
@@ -263,18 +284,6 @@ export function applyAcceptancePinFrame(
   // `queryFn` would then replace the known canonical refusal with a
   // fresh `accepted: true` under text the wallet never canonically
   // accepted. Fresh conflicting evidence, either axis, kills the frame.
-  // Every refusal below still reads (rounds 4, 7 and 8 each added a
-  // branch until the rule was general): a frame this tab will not
-  // TRUST is still evidence that an acceptance happened somewhere, and
-  // in every reorg permutation the refused frame may be the canonical
-  // side — only an authoritative read can tell. One immediate, one
-  // delayed, never a poll.
-  const scheduleAuthoritativeReads = () => {
-    void queryClient.invalidateQueries({ queryKey });
-    setTimeout(() => {
-      void queryClient.invalidateQueries({ queryKey });
-    }, RECEIVER_SECOND_READ_MS);
-  };
   if (
     freshCached &&
     (freshCached.version > frame.version ||
@@ -315,22 +324,50 @@ export function applyAcceptancePinFrame(
       accepted: true,
       version: frame.version,
       hash: frame.hash,
+      // Rests on the pin, not on a node's answer — the expiry
+      // revalidation below ages it out unless a real read confirms it
+      // first (round 9 P2).
+      pinBacked: true,
     });
   }
   scheduleAuthoritativeReads();
-  // Round 8 P2: one more read at the PIN'S EXPIRY. If this acceptance
-  // is orphaned by a reorg, every read inside the 90s window has its
-  // canonical `false` corrected to `true` by the live pin — which is
-  // the pin working as designed — but the last such corrected verdict
-  // would then sit in the cache for up to the 60-second poll AFTER the
-  // pin died, extending the advertised bound by up to a minute. A
-  // one-shot read just past expiry re-asks with no pin left to
-  // correct it, so the bound the module promises is the bound the
-  // gates experience.
+  scheduleExpiryRevalidation(queryClient, queryKey, frame.version, frame.at, now);
+}
+
+/**
+ * One more read at the PIN'S EXPIRY — with the gate actually closing
+ * on a still-unconfirmed verdict (rounds 8 and 9, both P2). If the
+ * acceptance is orphaned by a reorg, every read inside the 90s window
+ * has its canonical `false` corrected to `true` by the live pin — the
+ * pin working as designed — and round 8's bare invalidation was not
+ * enough: TanStack retains the successful `accepted: true` and its
+ * `dataUpdatedAt` while the refetch is pending, and at ~91s the entry
+ * is far inside the 180s verdict bound, so a slow or hung expiry read
+ * left both gates open for up to another 89 seconds. So a verdict
+ * still marked `pinBacked` at expiry is AGED past the verdict bound
+ * first — both gates stop honouring it immediately — and then
+ * re-read. A verdict some node confirmed on its own carries no flag
+ * and is never aged: in the healthy case the first post-acceptance
+ * read replaces the flagged entry within seconds, and this timer
+ * finds nothing to age.
+ */
+export function scheduleExpiryRevalidation(
+  queryClient: QueryClient,
+  queryKey: ReturnType<typeof tosQueryKey>,
+  version: number,
+  at: number,
+  now: number,
+): void {
   setTimeout(
     () => {
+      const cur = queryClient.getQueryData<TosVerdictData>(queryKey);
+      if (cur?.pinBacked && cur.version === version) {
+        queryClient.setQueryData<TosVerdictData>(queryKey, cur, {
+          updatedAt: Date.now() - MAX_VERDICT_AGE_MS - 1_000,
+        });
+      }
       void queryClient.invalidateQueries({ queryKey });
     },
-    frame.at + ACCEPTANCE_PIN_TTL_MS - now + 1_000,
+    at + ACCEPTANCE_PIN_TTL_MS - now + 1_000,
   );
 }

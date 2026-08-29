@@ -277,9 +277,15 @@ describe('applyAcceptancePinFrame', () => {
     const key = tosQueryKey(84532, ADDRESS);
     client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
     const now = 1_700_000_000_000;
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
     applyAcceptancePinFrame(client, frame({ at: now + 60_000 }), now);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
     expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, now)).toBe(false);
+    // Round 9 P2: a clock corrected backward can future-date a
+    // LEGITIMATE acceptance, so the rejected frame is still a read
+    // hint.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+    invalidate.mockRestore();
   });
 
   it('an EXPIRED frame changes nothing but still triggers the authoritative reads', () => {
@@ -348,6 +354,40 @@ describe('applyAcceptancePinFrame', () => {
       // The 4s second read AND the expiry read both fired.
       expect(invalidate.mock.calls.length).toBe(before + 2);
       invalidate.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('AGES a pin-backed verdict at expiry, and spares a node-confirmed one', () => {
+    // Round 9 P2: a bare invalidation retains the successful
+    // `accepted: true` and its freshness while the refetch is pending
+    // — at ~91s the entry is far inside the 180s bound, so a hung
+    // expiry read left both gates open toward another 89 seconds. A
+    // verdict still resting on the pin is aged past the bound before
+    // the re-read; one a node confirmed on its own is never touched.
+    vi.useFakeTimers();
+    try {
+      const client = new QueryClient();
+      const key = tosQueryKey(84532, ADDRESS);
+      const at = Date.now();
+      // Same-version cache → the receiver overwrites it pinBacked.
+      client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+      applyAcceptancePinFrame(client, frame({ at }), at);
+      expect(client.getQueryData<TosVerdictData>(key)?.pinBacked).toBe(true);
+      vi.advanceTimersByTime(ACCEPTANCE_PIN_TTL_MS + 1_100);
+      const aged = client.getQueryState<TosVerdictData>(key);
+      expect(aged && Date.now() - aged.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(true);
+
+      // A node-confirmed verdict (no flag) written after the frame is
+      // spared: re-run with the flagless entry replacing the flagged
+      // one before expiry.
+      const client2 = new QueryClient();
+      applyAcceptancePinFrame(client2, frame({ at: Date.now() }), Date.now());
+      client2.setQueryData<TosVerdictData>(key, { accepted: true, version: 3, hash: HASH });
+      const confirmedAt = client2.getQueryState<TosVerdictData>(key)?.dataUpdatedAt;
+      vi.advanceTimersByTime(ACCEPTANCE_PIN_TTL_MS + 1_100);
+      expect(client2.getQueryState<TosVerdictData>(key)?.dataUpdatedAt).toBe(confirmedAt);
     } finally {
       vi.useRealTimers();
     }
