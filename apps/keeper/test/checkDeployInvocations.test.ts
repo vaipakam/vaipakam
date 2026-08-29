@@ -4839,3 +4839,238 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe('check-deploy-invocations — #1995 r17', () => {
+  const AGENT = '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deploy --keep-vars","release":"pnpm run deploy"}}\n';
+
+  it('a manifest ALIAS of the deploy script is the deploy script (r17)', () => {
+    seed('apps/agent/package.json', AGENT);
+    const r = runWith('x.sh', 'pnpm --filter @vaipakam/agent run release -- --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but the alias WITHOUT forwarded arguments is the safe script (r17 control)', () => {
+    seed('apps/agent/package.json', AGENT);
+    expect(runWith('x.sh', 'pnpm --filter @vaipakam/agent run release\n').ok).toBe(true);
+  });
+
+  it('an alias that runs wrangler BARE cannot launder itself (r17)', () => {
+    seed(
+      'apps/agent/package.json',
+      '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deploy --keep-vars","bad":"wrangler deploy"}}\n',
+    );
+    // Two reports are correct here: the manifest line itself, and the wrapper.
+    const r = runWith('x.sh', 'pnpm --filter @vaipakam/agent run bad\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('x.sh');
+  });
+
+  it('a sourced helper deploys where ITS OWN cd put it (r17)', () => {
+    seed('deploy.sh', 'cd ../agent\nwrangler deploy\n');
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/indexer/package.json', '{"name":"@vaipakam/indexer"}\n');
+    const r = runWith('w.sh', 'cd apps/indexer\nsource ../../deploy.sh\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('matrix shell and directory correlate BY LEG (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/m.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        include:\n' +
+        '          - dir: apps/agent\n            interp: python\n' +
+        '          - dir: apps/indexer\n            interp: bash\n' +
+        '    steps:\n      - shell: ${{ matrix.interp }} {0}\n' +
+        '        working-directory: ${{ matrix.dir }}\n        run: print("wrangler deploy")\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('but a SHELL leg pairing with the scoped directory is reported (r17 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/m.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        include:\n' +
+        '          - dir: apps/agent\n            interp: bash\n' +
+        '          - dir: apps/www\n            interp: python\n' +
+        '    steps:\n      - shell: ${{ matrix.interp }} {0}\n' +
+        '        working-directory: ${{ matrix.dir }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a LITERALLY false branch cannot block CI (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    expect(runWith('x.sh', 'if false; then cd apps/agent; wrangler deploy; fi\n').ok).toBe(true);
+  });
+
+  it('and the else arm after `if true` is the same shape mirrored (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    expect(
+      runWith('x.sh', 'if true; then echo hi; else cd apps/agent; wrangler deploy; fi\n').ok,
+    ).toBe(true);
+  });
+
+  it('but a LIVE else arm still deploys (r17 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'x.sh',
+      'if false; then echo skip; else cd apps/agent; wrangler deploy; fi\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('and a compound condition keeps both arms (r17 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    expect(
+      runWith('x.sh', 'if false || true; then cd apps/agent; wrangler deploy; fi\n').ok,
+    ).toBe(false);
+  });
+
+  it('a shell-STRING process launch is a launch (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/p.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - shell: python\n' +
+        '        working-directory: apps/agent\n        run: |\n' +
+        '          import subprocess\n          subprocess.run("wrangler deploy", shell=True)\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a static Make variable expands into its recipe (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith('Makefile', 'WORKER := apps/agent\n\ndeploy:\n\tcd $(WORKER) && wrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('yarn workspace with the script as a POSITIONAL is detected (r17)', () => {
+    seed('apps/agent/package.json', AGENT);
+    const r = runWith('x.sh', 'yarn workspace @vaipakam/agent deploy --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but the bare workspace invocation is the safe script (r17 control)', () => {
+    seed('apps/agent/package.json', AGENT);
+    expect(runWith('x.sh', 'yarn workspace @vaipakam/agent deploy\n').ok).toBe(true);
+  });
+
+  it('and a workspace naming an UNSCOPED package is out of scope (r17 control)', () => {
+    seed('apps/agent/package.json', AGENT);
+    seed('apps/www/package.json', '{"name":"@vaipakam/www"}\n');
+    expect(runWith('x.sh', 'yarn workspace @vaipakam/www deploy --no-keep-vars\n').ok).toBe(true);
+  });
+
+  it('versions upload reads the EXPLICITLY selected config (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
+    seed('apps/agent/unsafe.jsonc', '{"name":"x"}\n');
+    const r = runWith('x.sh', 'cd apps/agent\nwrangler versions upload --config unsafe.jsonc\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('and a selected config DECLARING keep_vars blesses the upload (r17 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name":"x"}\n');
+    seed('apps/agent/safe.jsonc', '{"keep_vars": true}\n');
+    expect(
+      runWith('x.sh', 'cd apps/agent\nwrangler versions upload --config safe.jsonc\n').ok,
+    ).toBe(true);
+  });
+
+  it('a Windows helper script is walked and read as its interpreter (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith('apps/agent/deploy.ps1', 'wrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a run body that IS an env expression expands to its declared value (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/e.yml',
+      'name: w\nenv:\n  DEPLOY_CMD: wrangler deploy\njobs:\n  d:\n    steps:\n' +
+        '      - working-directory: apps/agent\n        run: ${{ env.DEPLOY_CMD }}\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a declared value CARRYING the flag stays safe (r17 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/e.yml',
+      'name: w\nenv:\n  DEPLOY_CMD: wrangler deploy --keep-vars\njobs:\n  d:\n    steps:\n' +
+        '      - working-directory: apps/agent\n        run: ${{ env.DEPLOY_CMD }}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a declared input DEFAULT resolves the working directory (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/i.yml',
+      'name: w\non:\n  workflow_dispatch:\n    inputs:\n      dir:\n        default: apps/agent\n' +
+        'jobs:\n  d:\n    steps:\n      - working-directory: ${{ inputs.dir }}\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a function body OPEN across lines is the call, not the definition (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'x.sh',
+      'deploy_worker() {\n  wrangler deploy\n}\ncd apps/agent\ndeploy_worker\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('wrangler-action deploys with no run body at all (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/a.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - uses: cloudflare/wrangler-action@v3\n' +
+        '        with:\n          workingDirectory: apps/agent\n          command: deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but wrangler-action carrying the flag is blessed (r17 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/a.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - uses: cloudflare/wrangler-action@v3\n' +
+        '        with:\n          workingDirectory: apps/agent\n          command: deploy --keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a FLOW-style step mapping runs from the job default directory (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/f.yml',
+      'name: w\njobs:\n  d:\n    defaults:\n      run:\n        working-directory: apps/agent\n' +
+        '    steps:\n      - { name: deploy, run: wrangler deploy }\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('an if condition ending in a YAML COMMENT is still false (r17)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/c.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - if: false # temporarily disabled\n' +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+});
