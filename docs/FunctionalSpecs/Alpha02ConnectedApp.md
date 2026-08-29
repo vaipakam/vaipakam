@@ -690,6 +690,85 @@ Thin-market honesty rules apply.
 - Wallet and analytics integrations should avoid unnecessary telemetry where
   the app can control it.
 
+### Data rights over locally-held data
+
+- The app offers a page where a user can **download everything the app keeps in
+  their browser** as a single readable file, and **erase it from that device**.
+  Both are reachable without connecting a wallet and without accepting any
+  terms.
+- The page states the number of stored items before an erasure is confirmed,
+  and what was actually removed afterwards. **A browser that refuses to let the
+  app clear its storage is reported as a refusal, not a success** — private
+  windows and restrictive privacy settings do this, and reporting it as done
+  would be a false assurance about a legal right. The user is pointed at the
+  browser's own controls, which work.
+- Erasure covers what this app stored and nothing else. State belonging to a
+  wallet connector or another tool is left untouched: removing it would
+  disconnect the user as a side effect of exercising a data right.
+- The page states its limits as prominently as its controls, and each is
+  stated at its true extent. It does not reach on-chain data — which is public,
+  so the user can look it up themselves, and permanent, so nobody can erase it.
+  **The wallet address is named as the one exception**: where the user saved
+  per-wallet settings, the address is part of the locally stored data and
+  therefore part of the download, and the file itself says so — being public
+  on the chain and being absent from this browser are different facts, and a
+  user deciding whether the file is safe to share is owed the second one.
+  It does not reach the alerts service: **unlinking removes the messaging
+  connection only, and the alert preferences are deliberately retained there
+  for a future relink**, so removing those is a support request. It does not
+  reach the marketing site's separate store, or error reports held by support.
+  **Overstating reach is the primary way a page of this kind misleads** — and
+  understating what a user can obtain is the same failure pointed the other
+  way — so each exclusion is named at its real size.
+- **Every live preference the erasure covers is visibly reset**, not merely
+  cleared from storage: the theme, the interface mode, the display language,
+  and the record of which notifications have been seen. A page that reports
+  preferences returned to their defaults while the app keeps showing them is
+  making a claim the user can see is untrue.
+- Two shared-domain preference cookies are part of what this browser holds,
+  so the download includes them and an erasure removes them — and they differ
+  in kind, which the page states rather than blurs. The language is genuinely
+  shared: both surfaces read it, so a choice on one follows to the other. The
+  theme cookie is the marketing site's own preference, which this app never
+  consults — this app's theme is stored separately and is not shared. **The
+  page promises no cross-site reset**: the marketing site keeps origin-local
+  copies of its preferences and restores them, shared copies included, on the
+  next visit, so resetting that site belongs to its own data controls and the
+  page says so. Erasing here fully resets this app's own language and theme.
+- Erasing does not reload the page, so the confirmation of what happened
+  survives long enough to be read.
+- **If any part of the browser's storage could not be read, the result is
+  reported as incomplete rather than successful.** The app cannot claim to have
+  emptied a store it was never allowed to look inside.
+- **A partial download warns inside the file itself**, naming the stores whose
+  contents are missing. The file travels away from the page, so the page's
+  on-screen warning must travel with it — a partial export that reads as
+  complete is the same false assurance in portable form.
+- **The controls act on what is stored at the moment they are used, not at the
+  moment the page was drawn.** Browser storage can change without the page
+  noticing — from another tab, or from the app's own surfaces in the same one —
+  so neither control is withheld on the strength of a possibly stale count. A
+  store that really is empty yields an honestly empty download or a "nothing
+  was stored" erasure report, which are truthful answers; a control that
+  denies data it would in fact find is not.
+- **The page promises no prompt it does not produce.** Erasing returns display
+  preferences to their defaults; it does not re-ask for cookie consent, which
+  belongs to the marketing site and is stored on that site's own origin, and it
+  does not re-ask for a language. Promising a prompt that never arrives is the
+  same failure as promising an erasure that does not reach — a user expecting
+  to revisit a choice would keep it while believing they had not.
+- **An erasure reaches the app's other open tabs.** A small amount of data
+  belongs to each tab individually, and a page that says "this browser" may not
+  mean "this tab". The download is the exception and says so: it covers the tab
+  it was taken from, because collecting the others would mean waiting on tabs
+  that may never answer. The reported COUNT is likewise what the acting tab
+  removed, and the wording says so rather than presenting it as a
+  browser-wide total.
+- **The marketing site's equivalent page does not cover the connected app, and
+  cannot.** Browser origin isolation means neither site can read or clear the
+  other's stored data. Each surface needs its own controls; neither may claim
+  to cover the other's.
+
 ### Terms of Service acceptance
 
 - The protocol can have a version of the Terms of Service in force, or none.

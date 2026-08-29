@@ -88,6 +88,10 @@
       "activity": {
         "title": "Aktivität — Vaipakam"
       },
+      "dataRights": {
+        "title": "Ihre Daten — Vaipakam",
+        "description": "Laden Sie die Daten herunter, die die Vaipakam-App in diesem Browser speichert, oder löschen Sie sie."
+      },
       "settings": {
         "title": "Einstellungen — Vaipakam"
       },
@@ -190,6 +194,35 @@
       "phaseApprove": "Genehmigung… ({{c}} von {{t}})",
       "phasePermit": "Berechtigung signieren… ({{c}} von {{t}}) — kostenlos, kein Gas",
       "phaseSend": "Einreichen… ({{c}} von {{t}})"
+    },
+    "dataRights": {
+      "title": "Ihre Daten",
+      "subtitle": "Was diese App in Ihrem Browser speichert und wie Sie eine Kopie erhalten oder sie löschen.",
+      "downloadTitle": "Eine Kopie herunterladen",
+      "downloadBody": "Speichert alles, was diese App in diesem Browser abgelegt hat, in einer einzigen Datei zum Aufbewahren oder Nachlesen: Ihre Anzeigeeinstellungen, Ihre Alarmeinstellungen, welche Benachrichtigungen Sie gesehen haben, und Markierungen für Begonnenes, das Sie nicht abgeschlossen haben.",
+      "downloadButton": "Meine Daten herunterladen",
+      "downloadDone": "Gespeichert",
+      "eraseTitle": "Aus diesem Browser löschen",
+      "eraseBody": "Entfernt alles von diesem Gerät. Ihre Anzeigeeinstellungen kehren zu den Standardwerten zurück, und alles Halbfertige verliert seine lokale Markierung.",
+      "eraseButton": "Meine Daten löschen",
+      "eraseConfirm": "Ja, löschen",
+      "eraseCancel": "Abbrechen",
+      "eraseConfirmPrompt": "Das lässt sich nicht rückgängig machen. Laden Sie vorher eine Kopie herunter, wenn Sie eine behalten möchten.",
+      "eraseDone": "{{count}} gespeicherte Einträge wurden gelöscht. Ihre übrigen geöffneten Tabs wurden ebenfalls aufgefordert, ihre eigenen zu löschen.",
+      "eraseNothing": "In diesem Browser war nichts gespeichert, das gelöscht werden könnte.",
+      "erasePartial": "{{removed}} Einträge wurden gelöscht, {{left}} konnten jedoch nicht entfernt werden. Das Löschen der Websitedaten über die Einstellungen Ihres Browsers entfernt den Rest.",
+      "eraseBlocked": "Dieser Browser hat der App nicht erlaubt, ihren Speicher zu leeren, daher wurde nichts entfernt. Private Fenster und strenge Datenschutzeinstellungen können das bewirken — das Löschen der Websitedaten über die Einstellungen Ihres Browsers funktioniert.",
+      "holdingTitle": "Was derzeit gespeichert ist",
+      "holdingCount": "{{count}} Einträge",
+      "holdingNone": "Derzeit ist in diesem Browser nichts gespeichert.",
+      "holdingUnreadable": "Dieser Browser lässt die App ihren eigenen Speicher nicht lesen, daher können wir Ihnen nicht zeigen, was dort liegt. Private Fenster und strenge Datenschutzeinstellungen bewirken das. Das Löschen der Websitedaten über die Einstellungen Ihres Browsers entfernt es dennoch.",
+      "scopeTitle": "Was hiervon nicht erfasst wird",
+      "scopeChain": "Alles auf der Blockchain. Die von Ihnen signierten Transaktionen liegen dort, nicht in Ihrem Browser, und sind daher nicht in diesem Download enthalten — sie sind jedoch öffentlich, und Sie können sie selbst in jedem Block-Explorer nachschlagen. Was niemand kann, Vaipakam eingeschlossen, ist sie zu löschen. Ihre Wallet-Adresse ist die eine Ausnahme: Wo Sie Einstellungen pro Wallet gespeichert haben, erscheint sie in den gespeicherten Schlüsselnamen und ist damit in den Daten Ihres Browsers und im Download enthalten — das Löschen hier entfernt nur diese lokalen Kopien, niemals etwas auf der Chain.",
+      "scopeAlerts": "Benachrichtigungen. Wenn Sie Telegram verknüpft haben, liegt diese Verbindung beim Benachrichtigungsdienst, nicht in Ihrem Browser. Das Aufheben der Verknüpfung in den Einstellungen entfernt die Telegram-Verbindung selbst; Ihre Benachrichtigungseinstellungen bleiben für eine erneute Verknüpfung bei diesem Dienst. Schreiben Sie an support@vaipakam.com, um auch diese entfernen zu lassen.",
+      "scopeDiagnostics": "Fehlerberichte, die unser Support-Dienst aufbewahrt. Sie liegen getrennt von Ihrem Browser und werden auf Anfrage gelöscht — schreiben Sie an support@vaipakam.com, und wir entfernen die Datensätze zu Ihrer Wallet.",
+      "scopeTabs": "Andere Tabs, was den Download betrifft. Ein kleiner Teil der Daten gehört jedem Tab für sich, daher deckt ein Download den Tab ab, in dem Sie sich befinden — das Löschen erreicht die anderen trotzdem. Laden Sie aus jedem Tab herunter, wenn Sie das vollständige Bild möchten.",
+      "scopeSite": "Die Hauptseite vaipakam.com. Sie führt einen eigenen, getrennten Speicher mit eigenen Bedienelementen auf jener Seite.",
+      "scopeCookies": "Zwei Einstellungs-Cookies auf der gemeinsamen Domain liegen in diesem Browser, daher enthält der Download sie und ein Löschen entfernt sie. Eines ist Ihre Sprache, die beide Seiten lesen — so folgt Ihnen eine auf einer Seite gewählte Sprache zur anderen. Das andere ist das eigene Theme der Hauptseite; diese App verwendet es nie, und Ihr Theme hier wird separat gespeichert, nicht geteilt. Löschen setzt diese App vollständig zurück, aber nicht vaipakam.com: Die Hauptseite behält eigene Kopien ihrer Einstellungen und stellt sie beim nächsten Besuch wieder her, Cookies eingeschlossen — deren Entfernung ist Sache ihrer eigenen Datenkontrollen."
     },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."
@@ -2244,7 +2277,8 @@
         "vpfiSub": "Optional — Protokollgebühren durch Halten von VPFI reduzieren",
         "activitySub": "Alles, was Ihre Wallet auf Vaipakam getan hat",
         "riskAccessSub": "Lege fest, wie riskant die Assets in deinen Geschäften sein dürfen",
-        "helpSub": "Antworten in einfacher Sprache und Build-Infos"
+        "helpSub": "Antworten in einfacher Sprache und Build-Infos",
+        "dataRightsSub": "Herunterladen oder Löschen dessen, was diese App in Ihrem Browser speichert"
       }
     },
     "common": {

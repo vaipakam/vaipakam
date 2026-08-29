@@ -88,6 +88,10 @@
       "activity": {
         "title": "Actividad — Vaipakam"
       },
+      "dataRights": {
+        "title": "Tus datos — Vaipakam",
+        "description": "Descarga o borra los datos que la aplicación Vaipakam guarda en este navegador."
+      },
       "settings": {
         "title": "Configuración — Vaipakam"
       },
@@ -190,6 +194,35 @@
       "phaseApprove": "Aprobando… ({{c}} de {{t}})",
       "phasePermit": "Firmando el permiso… ({{c}} de {{t}}) — gratis, sin gas",
       "phaseSend": "Enviando… ({{c}} de {{t}})"
+    },
+    "dataRights": {
+      "title": "Tus datos",
+      "subtitle": "Lo que esta aplicación guarda en tu navegador, y cómo obtener una copia o eliminarlo.",
+      "downloadTitle": "Descargar una copia",
+      "downloadBody": "Guarda en un solo archivo todo lo que esta aplicación ha almacenado en este navegador, para que lo conserves o lo leas: tus preferencias de visualización, tus ajustes de alertas, qué notificaciones has visto y marcadores de lo que hayas empezado y no terminado.",
+      "downloadButton": "Descargar mis datos",
+      "downloadDone": "Guardado",
+      "eraseTitle": "Borrarlo de este navegador",
+      "eraseBody": "Lo elimina todo de este dispositivo. Tus preferencias de visualización vuelven a sus valores por defecto y lo que tuvieras a medias perderá su marcador local.",
+      "eraseButton": "Borrar mis datos",
+      "eraseConfirm": "Sí, bórralo",
+      "eraseCancel": "Cancelar",
+      "eraseConfirmPrompt": "Esto no se puede deshacer. Descarga una copia antes si quieres conservarla.",
+      "eraseDone": "Se borraron {{count}} elementos almacenados. También se ha pedido a las demás pestañas que tengas abiertas que borren los suyos.",
+      "eraseNothing": "No había nada almacenado en este navegador para borrar.",
+      "erasePartial": "Se borraron {{removed}} elementos, pero {{left}} no se pudieron eliminar. Borrar los datos del sitio desde los ajustes de tu navegador eliminará el resto.",
+      "eraseBlocked": "Este navegador no ha permitido que la aplicación borre su almacenamiento, así que no se eliminó nada. Las ventanas de navegación privada y los ajustes de privacidad restrictivos pueden provocarlo; borrar los datos del sitio desde los ajustes de tu navegador sí funcionará.",
+      "holdingTitle": "Qué hay almacenado ahora mismo",
+      "holdingCount": "{{count}} elementos",
+      "holdingNone": "Ahora mismo no hay nada almacenado en este navegador.",
+      "holdingUnreadable": "Este navegador no permite que la aplicación lea su propio almacenamiento, así que no podemos mostrarte lo que hay. Las ventanas de navegación privada y los ajustes de privacidad estrictos hacen esto. Borrar los datos del sitio desde los ajustes de tu navegador seguirá eliminándolo.",
+      "scopeTitle": "Qué no cubre esto",
+      "scopeChain": "Cualquier cosa en la cadena de bloques. Las transacciones que has firmado viven allí, no en tu navegador, así que no están en esta descarga — pero son públicas y puedes consultarlas tú mismo en cualquier explorador de bloques. Lo que nadie puede hacer, Vaipakam incluido, es borrarlas. Tu dirección de billetera es la única excepción: donde has guardado ajustes por billetera, aparece en los nombres de las claves almacenadas, así que sí está en los datos de tu navegador y en la descarga — borrar aquí elimina esas copias locales, nunca nada en la cadena.",
+      "scopeAlerts": "Alertas. Si vinculaste Telegram, esa conexión la guarda el servicio de alertas, no tu navegador. Desvincular en Ajustes elimina la conexión de Telegram en sí; tus preferencias de alertas permanecen en ese servicio por si vuelves a vincularlo. Escribe a support@vaipakam.com para que también se eliminen.",
+      "scopeDiagnostics": "Los informes de errores que guarda nuestro servicio de soporte. Están separados de tu navegador y se eliminan a petición: escribe a support@vaipakam.com y borraremos los registros de tu billetera.",
+      "scopeTabs": "Otras pestañas, en lo que respecta a la descarga. Una pequeña parte de los datos pertenece a cada pestaña por separado, así que la descarga cubre la pestaña en la que estás; el borrado sí limpia las demás. Descarga desde cada pestaña si quieres el panorama completo.",
+      "scopeSite": "El sitio principal vaipakam.com. Mantiene su propio almacén separado, con sus propios controles en ese sitio.",
+      "scopeCookies": "Dos cookies de preferencias en el dominio compartido están en este navegador, así que la descarga las incluye y borrar las elimina. Una es tu idioma, que ambos sitios leen — así es como un idioma elegido en un sitio te sigue al otro. La otra es el tema propio del sitio principal; esta aplicación nunca la usa, y tu tema aquí se guarda por separado, sin compartirse. Borrar restablece por completo esta aplicación pero no vaipakam.com: el sitio principal conserva sus propias copias de sus preferencias y las restaurará, cookies incluidas, en tu próxima visita — eliminarlas es tarea de sus propios controles de datos."
     },
     "killSwitch": {
       "disabled": "Esta acción está desactivada ahora mismo — los operadores la pausaron por precaución mientras revisan algo. Lo que ya es tuyo no se ve afectado: pagos, reclamos y retiros siguen abiertos."
@@ -2244,7 +2277,8 @@
         "vpfiSub": "Opcional — reducir comisiones del protocolo manteniendo VPFI",
         "activitySub": "Todo lo que tu billetera ha hecho en Vaipakam",
         "riskAccessSub": "Elige qué tan arriesgados pueden ser los activos de tus operaciones",
-        "helpSub": "Respuestas en lenguaje claro e info de build"
+        "helpSub": "Respuestas en lenguaje claro e info de build",
+        "dataRightsSub": "Descarga o borra lo que esta aplicación guarda en tu navegador"
       }
     },
     "common": {

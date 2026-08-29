@@ -88,7 +88,18 @@ describe('isExitRoute', () => {
     // `/history` is `/activity`'s alias (review round 13 P2) — an
     // alias renders its <Navigate> inside the gate, so exempting only
     // the canonical path leaves the redirect unreachable.
-    for (const path of ['/help', '/activity', '/history', '/nft', '/nft/7']) {
+    // `/data-rights` (#1960) is here for a stronger reason than the
+    // others: withholding somebody's export and erasure controls until
+    // they accept new terms would make a legal right conditional on
+    // accepting a legal document.
+    for (const path of [
+      '/help',
+      '/activity',
+      '/history',
+      '/nft',
+      '/nft/7',
+      '/data-rights',
+    ]) {
       expect(isExitRoute(path), path).toBe(true);
     }
   });

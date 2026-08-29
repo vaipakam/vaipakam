@@ -71,6 +71,13 @@ const EXIT_PREFIXES = [
   '/help',
   '/activity',
   '/nft',
+  // #1960 — the data-rights page. Read-only in the Diamond sense (it
+  // touches browser storage, never the chain), and gating it would be
+  // the sharpest version of the trap this list exists to prevent: a
+  // Terms prompt standing between somebody and the controls for
+  // exporting or erasing their own data. A right that can be withheld
+  // pending acceptance of new terms is not one.
+  '/data-rights',
   // ...and `/activity`'s own alias (review round 13 P2). An alias
   // renders its `<Navigate>` INSIDE the gate, so exempting only the
   // canonical path leaves the alias held and the redirect never runs.

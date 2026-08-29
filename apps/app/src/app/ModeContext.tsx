@@ -28,6 +28,10 @@ interface ModeContextValue {
   mode: AppMode;
   isAdvanced: boolean;
   setMode: (m: AppMode) => void;
+  /** Return to the default WITHOUT writing storage (#1960 review round
+   *  1 P2) — see `ThemeContext` for why a plain setter cannot be used
+   *  by the data-rights erasure. */
+  resetToDefault: () => void;
 }
 
 const ModeContext = createContext<ModeContextValue | null>(null);
@@ -54,9 +58,12 @@ export function ModeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // State only — deliberately no write. See `resetToDefault` above.
+  const resetToDefault = useCallback(() => setModeState('basic'), []);
+
   const value = useMemo(
-    () => ({ mode, isAdvanced: mode === 'advanced', setMode }),
-    [mode, setMode],
+    () => ({ mode, isAdvanced: mode === 'advanced', setMode, resetToDefault }),
+    [mode, setMode, resetToDefault],
   );
 
   return <ModeContext.Provider value={value}>{children}</ModeContext.Provider>;

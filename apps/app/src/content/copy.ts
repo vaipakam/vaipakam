@@ -132,6 +132,14 @@ const copySource = {
     claims: { title: 'Claims — Vaipakam' },
     vault: { title: 'My vault — Vaipakam' },
     activity: { title: 'Activity — Vaipakam' },
+    // #1960 — noindex like the other per-user surfaces. Without a row
+    // here the route falls through to `notFound`, so a working page
+    // titles itself "Page not found".
+    dataRights: {
+      title: 'Your data — Vaipakam',
+      description:
+        'Download or erase the data the Vaipakam app keeps in this browser.',
+    },
     settings: { title: 'Settings — Vaipakam' },
     riskAccess: { title: 'Risk access — Vaipakam' },
     recover: { title: 'Recover stuck tokens — Vaipakam' },
@@ -307,6 +315,128 @@ const copySource = {
     signing: 'Waiting for your wallet\u2026',
     footnote:
       'Your acceptance is recorded on-chain against the exact version and fingerprint shown above, so what you agreed to stays checkable later. Repaying, claiming and withdrawing are never blocked by this.',
+  },
+  /**
+   * Data Rights (#1960) — the connected app's own export and local
+   * erasure controls.
+   *
+   * Deliberately explicit about SCOPE. The single most likely way this
+   * page misleads someone is by letting them believe an erase reaches
+   * further than it does: it clears this browser, on this device. It
+   * cannot touch the blockchain, the alerts service, or the store
+   * belonging to vaipakam.com. Saying so on the page is not caution
+   * for its own sake — a data-rights control that overstates itself is
+   * a false assurance about a legal right.
+   */
+  dataRights: {
+    title: 'Your data',
+    subtitle:
+      'What this app keeps in your browser, and how to take a copy of it or remove it.',
+    downloadTitle: 'Download a copy',
+    downloadBody:
+      'Saves everything this app has stored in this browser as a single file you can keep or read: your display preferences, your alert settings, which notifications you have seen, and markers for anything you have started but not finished.',
+    downloadButton: 'Download my data',
+    downloadDone: 'Saved',
+    eraseTitle: 'Erase it from this browser',
+    /* Review round 3 P2 — this used to promise you would "be asked
+       about cookies and language again". Neither happens: the cookie
+       banner belongs to vaipakam.com and its choice lives on that
+       origin, which this app cannot reach, and the language is reset
+       directly rather than re-asked. Promising a prompt that never
+       arrives is the same defect as promising an erasure that does not
+       reach, and a user expecting to revisit consent here would have
+       kept their old choice believing otherwise. */
+    eraseBody:
+      'Removes all of it from this device. Your display preferences go back to their defaults, and anything you had part-way through will lose its local marker.',
+    eraseButton: 'Erase my data',
+    eraseConfirm: 'Yes, erase it',
+    eraseCancel: 'Cancel',
+    eraseConfirmPrompt:
+      'This cannot be undone. Download a copy first if you want to keep one.',
+    /** Counts are shown rather than a bare "done" — see `eraseMyData`
+     *  for why the three outcomes must stay distinguishable. */
+    /* Review round 3 P2 — "from this browser" under-reported whenever
+       another tab cleared its own session data on the broadcast, since
+       the count is only what THIS tab removed. The reach is browser-
+       wide; the number is not, so the sentence says both rather than
+       letting one stand for the other. */
+    eraseDone: tmpl(
+      'Erased {{count}} stored items. Any other tabs you have open have been told to clear theirs as well.',
+      ['count'],
+    ),
+    eraseNothing: 'There was nothing stored in this browser to erase.',
+    /* A PARTIAL clear is possible: the erase skips a key that throws
+       and keeps going, so some can go while others stay. Reporting
+       that as a plain success would overstate it on the one page that
+       must not. */
+    erasePartial: tmpl(
+      'Erased {{removed}} items, but {{left}} could not be removed. Clearing site data through your browser’s own settings will remove the rest.',
+      ['removed', 'left'],
+    ),
+    eraseBlocked:
+      'This browser would not let the app clear its storage, so nothing was removed. Private-browsing windows and locked-down privacy settings can both do this — clearing site data through your browser’s own settings will work.',
+    holdingTitle: 'What is stored right now',
+    holdingCount: tmpl('{{count}} items', ['count']),
+    holdingNone: 'Nothing is stored in this browser at the moment.',
+    /* A refusal to READ, distinct from an empty store — otherwise the
+       page tells somebody their storage is empty when it simply could
+       not look. */
+    holdingUnreadable:
+      'This browser will not let the app read its own storage, so we cannot show you what is there. Private-browsing windows and strict privacy settings do this. Clearing site data through your browser’s own settings will still remove it.',
+    scopeTitle: 'What this does not cover',
+    /* Review round 1 P2 — the earlier wording said nobody can "export
+       or erase" on-chain data. Erasure is genuinely impossible; export
+       is not, since anyone can read the chain through a block
+       explorer. On a file that IS an access request, understating what
+       the user can obtain is its own misstatement.
+       Review round 5 P2 — and the round-1 rewrite over-corrected the
+       other half: it claimed the wallet ADDRESS is not in the file,
+       when per-wallet settings put the full address in the stored key
+       names. Public on the chain and absent from this browser are
+       different facts; the transactions are both, the address is only
+       the first. */
+    scopeChain:
+      'Anything on the blockchain. The transactions you have signed live there, not in your browser, so they are not in this download — but they are public, and you can look them up yourself on any block explorer. What nobody can do, Vaipakam included, is erase them. Your wallet address is the one exception: where you have saved per-wallet settings it appears in the stored key names, so it is in your browser’s data and in the download — erasing here removes those local copies, never anything on the chain.',
+    /* Review round 1 P1 — this said "unlink to remove it", which was
+       false in the same way the Privacy Policy's erasure sentence is:
+       the agent's unlink only clears the Telegram chat id, keeping the
+       row, thresholds, opt-ins, wallet, chain and locale for a future
+       relink. Claiming a control erases more than it does is the exact
+       defect this page is built to avoid, and I wrote it. */
+    scopeAlerts:
+      'Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlinking in Settings removes the Telegram connection itself; your alert preferences stay on that service so they are there if you link again. Email support@vaipakam.com to have those removed too.',
+    /* #2002 — named rather than omitted. The Privacy Policy tells
+       users they can erase these records by signing a request in the
+       app, and that control does not exist yet. Staying silent here
+       would leave somebody hunting for a button that is not there;
+       pointing at the working route is the honest interim. */
+    scopeDiagnostics:
+      'Error reports kept by our support service. Those are separate from your browser, and are erased on request — email support@vaipakam.com and we will remove the records for your wallet.',
+    /* Review round 2 P2 — the export reads only THIS tab's session
+       data, because `sessionStorage` belongs to one browsing context.
+       The erasure now reaches other tabs by broadcast; the export
+       cannot without waiting on tabs that may never answer, so the
+       limit is stated rather than glossed. */
+    scopeTabs:
+      'Other tabs, when it comes to the download. A small amount of data belongs to each tab on its own, so a download covers the tab you are on — erasing still clears the others. Download from each tab if you want the full picture.',
+    scopeSite:
+      'The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.',
+    /* Three rounds of review each removed one false claim from this
+       sentence, and the survivors all have to hold at once. Round 9
+       P2: only the LANGUAGE is shared — the theme cookie is the main
+       site's own preference, never read or written by this app, whose
+       theme lives separately under its own key. Round 10 P2: removing
+       the cookies resets NEITHER preference on the main site — it
+       keeps origin-local copies (theme falls back to its own
+       localStorage; the i18n detector is localStorage-first, the
+       cookie only a seed) and recreates the cookies on the next
+       visit. Round 11 P2: the round-10 rewrite regrouped the two as
+       "choices that follow you between sites", silently re-making the
+       round-9 error. So: two cookies, two different relationships,
+       one promise — disclosure and removal here, nothing about the
+       main site, whose own controls `scopeSite` above points at. */
+    scopeCookies:
+      'Two preference cookies on the shared domain are in this browser, so the download includes them and erasing removes them. One is your language, which both sites read — that is how a language chosen on one site follows you to the other. The other is the main site’s own theme; this app never uses it, and your theme here is stored separately, not shared. Erasing fully resets this app but not vaipakam.com: the main site keeps its own copies of its preferences and will restore them, cookies included, on your next visit — removing those is what its own data controls are for.',
   },
   killSwitch: {
     disabled:
@@ -4137,6 +4267,7 @@ const copySource = {
       activitySub: 'Everything your wallet has done on Vaipakam',
       riskAccessSub: 'Choose how risky the assets in your deals may be',
       helpSub: 'Plain-language answers and build info',
+      dataRightsSub: 'Download or erase what this app stores in your browser',
     },
   },
   common: {

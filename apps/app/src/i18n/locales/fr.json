@@ -88,6 +88,10 @@
       "activity": {
         "title": "Activité — Vaipakam"
       },
+      "dataRights": {
+        "title": "Vos données — Vaipakam",
+        "description": "Téléchargez ou effacez les données que l’application Vaipakam conserve dans ce navigateur."
+      },
       "settings": {
         "title": "Paramètres — Vaipakam"
       },
@@ -190,6 +194,35 @@
       "phaseApprove": "Approbation… ({{c}} sur {{t}})",
       "phasePermit": "Signature de la permission… ({{c}} sur {{t}}) — gratuit, sans gas",
       "phaseSend": "Soumission… ({{c}} sur {{t}})"
+    },
+    "dataRights": {
+      "title": "Vos données",
+      "subtitle": "Ce que cette application conserve dans votre navigateur, et comment en obtenir une copie ou l’effacer.",
+      "downloadTitle": "Télécharger une copie",
+      "downloadBody": "Enregistre dans un seul fichier tout ce que cette application a stocké dans ce navigateur, à conserver ou à consulter : vos préférences d’affichage, vos réglages d’alertes, les notifications déjà vues et les repères de ce que vous avez commencé sans le terminer.",
+      "downloadButton": "Télécharger mes données",
+      "downloadDone": "Enregistré",
+      "eraseTitle": "L’effacer de ce navigateur",
+      "eraseBody": "Supprime le tout de cet appareil. Vos préférences d’affichage reviennent à leurs valeurs par défaut et ce qui était en cours perdra son repère local.",
+      "eraseButton": "Effacer mes données",
+      "eraseConfirm": "Oui, effacer",
+      "eraseCancel": "Annuler",
+      "eraseConfirmPrompt": "Cette action est irréversible. Téléchargez une copie d’abord si vous souhaitez en garder une.",
+      "eraseDone": "{{count}} éléments enregistrés ont été effacés. Il a également été demandé aux autres onglets que vous avez ouverts d’effacer les leurs.",
+      "eraseNothing": "Il n’y avait rien d’enregistré à effacer dans ce navigateur.",
+      "erasePartial": "{{removed}} éléments ont été effacés, mais {{left}} n’ont pas pu être supprimés. Effacer les données du site depuis les réglages de votre navigateur supprimera le reste.",
+      "eraseBlocked": "Ce navigateur n’a pas autorisé l’application à vider son stockage, donc rien n’a été supprimé. Les fenêtres de navigation privée et les réglages de confidentialité stricts peuvent produire cet effet — effacer les données du site depuis les réglages de votre navigateur fonctionnera.",
+      "holdingTitle": "Ce qui est enregistré actuellement",
+      "holdingCount": "{{count}} éléments",
+      "holdingNone": "Rien n’est enregistré dans ce navigateur pour le moment.",
+      "holdingUnreadable": "Ce navigateur n’autorise pas l’application à lire son propre stockage, nous ne pouvons donc pas vous montrer ce qu’il contient. Les fenêtres de navigation privée et les réglages de confidentialité stricts font cela. Effacer les données du site depuis les réglages de votre navigateur le supprimera quand même.",
+      "scopeTitle": "Ce que cela ne couvre pas",
+      "scopeChain": "Tout ce qui se trouve sur la blockchain. Les transactions que vous avez signées y résident, pas dans votre navigateur, elles ne figurent donc pas dans ce téléchargement — mais elles sont publiques et vous pouvez les consulter vous-même sur n’importe quel explorateur de blocs. Ce que personne ne peut faire, Vaipakam compris, c’est les effacer. Votre adresse de portefeuille est la seule exception : là où vous avez enregistré des réglages par portefeuille, elle apparaît dans les noms des clés stockées, elle figure donc bien dans les données de votre navigateur et dans le téléchargement — effacer ici supprime ces copies locales, jamais rien sur la chaîne.",
+      "scopeAlerts": "Les alertes. Si vous avez lié Telegram, cette connexion est détenue par le service d’alertes, pas par votre navigateur. La dissocier dans les Réglages supprime la connexion Telegram elle-même ; vos préférences d’alertes restent sur ce service au cas où vous la relieriez. Écrivez à support@vaipakam.com pour les faire supprimer aussi.",
+      "scopeDiagnostics": "Les rapports d’erreur conservés par notre service d’assistance. Ils sont distincts de votre navigateur et sont effacés sur demande : écrivez à support@vaipakam.com et nous supprimerons les enregistrements liés à votre portefeuille.",
+      "scopeTabs": "Les autres onglets, s’agissant du téléchargement. Une petite partie des données appartient à chaque onglet séparément : le téléchargement couvre donc l’onglet où vous êtes — l’effacement, lui, atteint les autres. Téléchargez depuis chaque onglet si vous voulez l’ensemble.",
+      "scopeSite": "Le site principal vaipakam.com. Il conserve son propre stockage distinct, avec ses propres commandes sur ce site.",
+      "scopeCookies": "Deux cookies de préférences sur le domaine partagé se trouvent dans ce navigateur : le téléchargement les inclut et l’effacement les supprime. L’un est votre langue, que les deux sites lisent — c’est ainsi qu’une langue choisie sur un site vous suit sur l’autre. L’autre est le thème propre au site principal ; cette application ne l’utilise jamais, et votre thème ici est enregistré séparément, sans être partagé. Effacer réinitialise entièrement cette application mais pas vaipakam.com : le site principal garde ses propres copies de ses préférences et les restaurera, cookies compris, lors de votre prochaine visite — les supprimer relève de ses propres contrôles de données."
     },
     "killSwitch": {
       "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."
@@ -2244,7 +2277,8 @@
         "vpfiSub": "Optionnel — réduire les frais du protocole en détenant VPFI",
         "activitySub": "Tout ce que votre wallet a fait sur Vaipakam",
         "riskAccessSub": "Choisissez le niveau de risque des actifs de vos opérations",
-        "helpSub": "Réponses en langage clair et infos de build"
+        "helpSub": "Réponses en langage clair et infos de build",
+        "dataRightsSub": "Téléchargez ou effacez ce que cette application conserve dans votre navigateur"
       }
     },
     "common": {
