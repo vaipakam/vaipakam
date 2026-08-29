@@ -90,21 +90,30 @@ export const VERDICT_CLOCK_TICK_MS = 15_000;
 
 /**
  * How far in the FUTURE a verdict's `dataUpdatedAt` may sit before it
- * stops counting as fresh (#2004 round 19 P2). A backward clock
+ * stops counting as fresh (#2004 round 19 P2): a backward clock
  * correction after a successful read leaves the stamp ahead of the
  * clock, and a plain age check then reads the entry as fresh until
- * wall time catches up PLUS the whole verdict window — during which
- * it can veto a settling receipt or a cross-tab frame as
- * "authoritative" knowledge. The tolerance is one gate clock tick
- * plus the pin module's skew allowance, because `useTosAcceptance`
- * compares against a `nowMs` that lags the real clock by up to a
- * tick — a verdict written mid-tick legitimately sits "in the
- * future" of that clock, and must not read as stale. The 5s term is
- * the same coarse-correction allowance as the pin module's
- * `MAX_FUTURE_SKEW_MS`, restated here because this module stays
- * import-free on purpose (see `tosQueryKey`).
+ * wall time catches up PLUS the whole verdict window. Two tolerances,
+ * chosen by which clock the CALLER compares against (round 29 P1 —
+ * the write gate reads real time, and handing it the render-clock
+ * slack let a 6-to-20-second correction keep permitting writes the
+ * conflict guards were already refusing):
+ *
+ *   - `VERDICT_FUTURE_SKEW_MS`, the DEFAULT — the bare
+ *     coarse-correction allowance (the same 5s as the pin module's
+ *     `MAX_FUTURE_SKEW_MS`, restated because this module stays
+ *     import-free on purpose; see `tosQueryKey`). Right for every
+ *     caller that passes `Date.now()`: the write gate, the conflict
+ *     guards via `freshVerdict`.
+ *   - `MAX_VERDICT_FUTURE_MS` — the render-clock tolerance, one gate
+ *     clock tick on top, for the ONE caller whose comparison clock
+ *     lags the real one by up to a tick (`useTosAcceptance`'s
+ *     `nowMs`): a verdict written mid-tick legitimately sits "in the
+ *     future" of that clock and must not read as stale, or the gate
+ *     would flap after every ordinary write.
  */
-export const MAX_VERDICT_FUTURE_MS = VERDICT_CLOCK_TICK_MS + 5_000;
+export const VERDICT_FUTURE_SKEW_MS = 5_000;
+export const MAX_VERDICT_FUTURE_MS = VERDICT_CLOCK_TICK_MS + VERDICT_FUTURE_SKEW_MS;
 
 /**
  * True when a successful verdict is too old — or too far in the
@@ -118,16 +127,13 @@ export function isVerdictStale(
   dataUpdatedAt: number,
   now: number,
   maxAgeMs: number = MAX_VERDICT_AGE_MS,
-  // The future tolerance is a PARAMETER (round 25 P2) because its
-  // default carries a term that exists only for one caller: the
-  // gate's render clock lags the real one by up to a tick, so the
-  // default must not read a mid-tick write as future-dated. Callers
-  // that compare against REAL time (the conflict guards, via
-  // `freshVerdict`) pass the bare clock-skew allowance instead — with
-  // the render-tick slack, a 6-to-20-second backward correction left
-  // a pre-correction entry "authoritative" enough to veto a current
-  // frame or receipt.
-  maxFutureMs: number = MAX_VERDICT_FUTURE_MS,
+  // The future tolerance is a PARAMETER (rounds 25 and 29, both P2
+  // then P1): the DEFAULT is the bare real-clock skew, because most
+  // callers — the write gate included — pass `Date.now()`, and a
+  // default carrying the render-tick slack silently handed them a
+  // 20-second blind spot. The one render-clock caller passes
+  // `MAX_VERDICT_FUTURE_MS` explicitly.
+  maxFutureMs: number = VERDICT_FUTURE_SKEW_MS,
 ): boolean {
   if (!dataUpdatedAt) return true;
   if (dataUpdatedAt > now + maxFutureMs) return true;

@@ -119,6 +119,15 @@ interface AcceptancePin {
    *  window at delivery, so the cross-tab simultaneous-expiry
    *  property is preserved up to delivery skew. */
   monoDeadline: number;
+  /** Heartbeats observed while this pin has been alive (round 29 P1).
+   *  Beats fire only while the page is AWAKE, so the count is a
+   *  clock-free lower bound on real elapsed time — the one measure
+   *  that survives even an equal sleep-plus-correction, where the
+   *  wall and monotonic deltas agree at zero and both expiry bounds
+   *  plus the disagreement check are blinded together. A pin whose
+   *  beat budget exceeds the TTL has provably outlived its window in
+   *  awake time alone, whatever the clocks claim. */
+  beats: number;
 }
 
 const pins = new Map<string, AcceptancePin>();
@@ -196,6 +205,23 @@ function ensureClockWatch(): void {
   beatTimer = setInterval(() => {
     const wall = Date.now();
     const mono = monoNow();
+    // The AWAKE-TIME budget (round 29 P1): each beat represents about
+    // one check interval of awake time, and real elapsed time is
+    // never less than awake time — so a pin that has been observed
+    // by more beats than fit in its TTL is dead however the clocks
+    // read. This is the bound that survives an equal
+    // sleep-plus-correction, which blinds the wall bound, the
+    // monotonic bound, AND the delta check below all at once. It can
+    // only ever SHORTEN a window (late beats under-count awake time,
+    // never over-count), which is the safe direction.
+    let poisoned = false;
+    for (const pin of pins.values()) {
+      pin.beats += 1;
+      if (pin.beats * CLOCK_REGRESSION_CHECK_MS > ACCEPTANCE_PIN_TTL_MS) {
+        pin.monoDeadline = Number.NEGATIVE_INFINITY;
+        poisoned = true;
+      }
+    }
     // The signature of a compromised interval is the two clocks
     // DISAGREEING about how long it lasted (round 28 P1 — a plain
     // regression check missed a correction applied during a sleep,
@@ -210,6 +236,9 @@ function ensureClockWatch(): void {
       for (const pin of pins.values()) {
         pin.monoDeadline = Number.NEGATIVE_INFINITY;
       }
+      poisoned = pins.size > 0;
+    }
+    if (poisoned) {
       // Wake every scheduled expiry check NOW (round 29 P1) — the
       // verdicts resting on the poisoned pins must stop being served
       // at the moment of the ruling, not at the next cadence.
@@ -240,6 +269,7 @@ function storePin(
     // adoption, so the two bounds start aligned and only ever diverge
     // when one of the clocks misbehaves.
     monoDeadline: monoNow() + Math.max(0, at + ACCEPTANCE_PIN_TTL_MS - now),
+    beats: 0,
   });
   ensureClockWatch();
 }

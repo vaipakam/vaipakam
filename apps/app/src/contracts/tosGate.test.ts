@@ -12,6 +12,7 @@ import {
   MAX_VERDICT_AGE_MS,
   isVerdictStale,
   MAX_VERDICT_FUTURE_MS,
+  VERDICT_FUTURE_SKEW_MS,
   opensGate,
   tosGateVerdict,
   type TosGateInput,
@@ -104,15 +105,24 @@ describe('isVerdictStale', () => {
   });
 
   it('stops trusting one stamped too far in the FUTURE', () => {
-    // #2004 round 19 P2: a backward clock correction after a read
-    // leaves the stamp ahead of the clock, and a plain age check read
-    // the entry as fresh until wall time caught up plus the whole
-    // window — long enough to veto a settling receipt or a cross-tab
-    // frame. Within the tolerance it stays fresh, because the gate's
-    // own comparison clock lags the real one by up to a tick and a
-    // verdict written mid-tick sits legitimately "ahead" of it.
-    expect(isVerdictStale(t0 + MAX_VERDICT_FUTURE_MS + 1, t0)).toBe(true);
-    expect(isVerdictStale(t0 + MAX_VERDICT_FUTURE_MS - 1, t0)).toBe(false);
+    // #2004 rounds 19 and 29: a backward clock correction after a
+    // read leaves the stamp ahead of the clock, and a plain age check
+    // read the entry as fresh until wall time caught up plus the
+    // whole window — long enough to veto a settling receipt, refuse a
+    // canonical frame, or (round 29 P1) keep the write gate
+    // permitting. The DEFAULT tolerance is the bare real-clock skew,
+    // because most callers — the write gate included — pass
+    // `Date.now()`; the render-clock caller passes the tick-augmented
+    // tolerance explicitly, since its comparison clock lags by up to
+    // a tick and a mid-tick write sits legitimately "ahead" of it.
+    expect(isVerdictStale(t0 + VERDICT_FUTURE_SKEW_MS + 1, t0)).toBe(true);
+    expect(isVerdictStale(t0 + VERDICT_FUTURE_SKEW_MS - 1, t0)).toBe(false);
+    expect(
+      isVerdictStale(t0 + MAX_VERDICT_FUTURE_MS + 1, t0, MAX_VERDICT_AGE_MS, MAX_VERDICT_FUTURE_MS),
+    ).toBe(true);
+    expect(
+      isVerdictStale(t0 + MAX_VERDICT_FUTURE_MS - 1, t0, MAX_VERDICT_AGE_MS, MAX_VERDICT_FUTURE_MS),
+    ).toBe(false);
   });
 
   it('is bounded well above the refresh interval', () => {

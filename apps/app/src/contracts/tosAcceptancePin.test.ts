@@ -334,6 +334,31 @@ describe('monotonic expiry (round 26 P1)', () => {
     }
   });
 
+  it('the awake-beat budget kills a pin even when both clocks are blinded', () => {
+    // Round 29 P1: an equal sleep-plus-correction leaves the wall and
+    // monotonic deltas agreeing at zero — the wall bound, the
+    // monotonic bound, and the disagreement check all blinded
+    // together. Beats fire only while awake, so their count is a
+    // clock-free lower bound on elapsed time: once more beats have
+    // passed than fit in the TTL, the pin dies whatever the clocks
+    // claim. Simulated by pinning the wall clock back to its start
+    // after each beat while the monotonic seam tracks it exactly —
+    // every beat sees both deltas at zero.
+    vi.useFakeTimers();
+    try {
+      const t0 = Date.now();
+      __setMonoNowForTests(() => Date.now() - t0 + 100_000);
+      pinAcceptance(SCOPE, 3, HASH, B0, TX0, t0);
+      for (let i = 0; i < 11; i += 1) {
+        vi.advanceTimersByTime(10_000);
+        vi.setSystemTime(t0);
+      }
+      expect(acceptanceIsPinned(SCOPE, 3, HASH, Date.now())).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('the expiry timer observes elapsed death and retires the pin', () => {
     let mono = 100_000;
     __setMonoNowForTests(() => mono);

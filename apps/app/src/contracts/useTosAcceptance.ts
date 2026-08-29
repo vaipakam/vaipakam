@@ -45,6 +45,8 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import {
   isVerdictStale,
+  MAX_VERDICT_AGE_MS,
+  MAX_VERDICT_FUTURE_MS,
   tosQueryKey,
   VERDICT_CLOCK_TICK_MS,
   type TosVerdictData,
@@ -226,8 +228,18 @@ export function useTosAcceptance(): TosAcceptanceState {
       // alone would let a pin from a reorged-out branch correct a
       // `false` that is truthfully about different text at the same
       // version, which is why the contract compares both fields too.
+      // The consult is gated on the signal too (round 29 P1, beyond
+      // the retirement gate): `acceptanceIsPinned` DELETES an expired
+      // pin it observes, and a cancelled read's continuation doing
+      // that deletion hands the expiry timer a `superseded`
+      // observation — silence — while the still-fresh pinBacked
+      // verdict the timer would have aged coasts on. A cancelled
+      // read's verdict is discarded anyway, so it has no business
+      // touching pin state at all.
       const correctLag =
-        !accepted && acceptanceIsPinned(scope, version, current[1], Date.now());
+        !signal.aborted &&
+        !accepted &&
+        acceptanceIsPinned(scope, version, current[1], Date.now());
       return {
         accepted: accepted || correctLag,
         version,
@@ -543,8 +555,14 @@ export function useTosAcceptance(): TosAcceptanceState {
   // `MAX_VERDICT_AGE_MS`. Past the bound the gate holds closed and asks
   // again rather than keeping the app open on an answer old enough for
   // the terms to have changed underneath it.
+  // The RENDER-clock tolerance is passed explicitly (round 29 P1):
+  // `nowMs` lags the real clock by up to a tick, and the predicate's
+  // default is now the bare skew for real-clock callers like the
+  // write gate.
   const stale =
-    query.isSuccess && nowMs > 0 && isVerdictStale(query.dataUpdatedAt, nowMs);
+    query.isSuccess &&
+    nowMs > 0 &&
+    isVerdictStale(query.dataUpdatedAt, nowMs, MAX_VERDICT_AGE_MS, MAX_VERDICT_FUTURE_MS);
   const readOk = query.isSuccess && !stale;
   return {
     // Still gated on `readOk`: the lag correction lives in `queryFn`,
