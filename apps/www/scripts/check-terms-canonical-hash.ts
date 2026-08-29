@@ -46,6 +46,11 @@
  *    still says "Version 1" — a pinned page identifying itself as a
  *    different version than the one the gate asks the user to
  *    accept.
+ * 6. Each frozen archive is a REGULAR file whose working-tree bytes
+ *    equal its git-index blob (#2010 rounds 3+5 P2): a symlink, or a
+ *    `.gitattributes` filter transforming the checkout, would let
+ *    the rendered/hashed/deployed bytes drift from the blob the
+ *    base-diff immutability step actually compares.
  *
  * So a Terms edit that forgets the registry, a registry bump that
  * forgets the frozen file, or an edit to a published frozen file all
@@ -64,8 +69,9 @@
  * fails any pull request that modifies or deletes a `v<N>.md` that
  * already exists on the base branch.
  */
+import { execFileSync } from 'node:child_process';
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { keccak256 } from 'viem';
 import {
@@ -146,6 +152,43 @@ for (const meta of TERMS_VERSION_METAS) {
     continue;
   }
   const bytes = readFileSync(frozenPath);
+  // The WORKING-TREE bytes must equal the GIT-INDEX blob (#2010
+  // round 5 P2): a later `.gitattributes` change (e.g. `eol=crlf` on
+  // these paths) transforms the checkout — which is what the page
+  // renders, this guard hashes, and the deploy ships — while the
+  // blob and pathname the base-diff immutability step compares stay
+  // untouched, so a registry-hash update alongside it would pass
+  // every check while the deployed route publishes bytes different
+  // from what existing acceptances recorded. Anchoring tree bytes to
+  // the blob makes any checkout transform of a frozen archive loud.
+  // A file git does not know yet (a NEW version being authored,
+  // before `git add`) has no blob to compare — that state cannot
+  // reach CI, whose checkout only contains committed files.
+  const repoRelative = relative(resolve(here, '../../..'), frozenPath).replaceAll(
+    '\\',
+    '/',
+  );
+  try {
+    const blob = execFileSync('git', ['show', `:${repoRelative}`], {
+      cwd: resolve(here, '../../..'),
+      maxBuffer: 16 * 1024 * 1024,
+    });
+    if (!blob.equals(bytes)) {
+      fail(
+        `v${meta.version}: the checked-out bytes of ${repoRelative} differ ` +
+          `from its git blob — something (a .gitattributes filter such as ` +
+          `eol, or an uncommitted edit) is transforming a frozen archive ` +
+          `between the repository and the tree that gets rendered, hashed ` +
+          `and deployed`,
+      );
+    }
+  } catch {
+    console.log(
+      `[check-terms-canonical-hash] note: v${meta.version} is not in the ` +
+        `git index yet (new version being authored) — blob anchoring is ` +
+        `checked once it is added`,
+    );
+  }
   // (5) The document's own header must agree with the registry — a
   // byte-perfect copy of the WRONG version's text hashes fine, and a
   // page that says "Version 1" while the gate asks for version 2

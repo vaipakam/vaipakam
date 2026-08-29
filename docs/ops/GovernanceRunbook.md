@@ -557,11 +557,19 @@ before the frontend re-opens.
    `apps/www/src/pages/terms/versions.ts`. **Never edit a published
    `v<M>.md` or its registry entry** — old versions stay frozen at
    their pinned routes because acceptances were recorded against
-   them. The page picks the new file up automatically; the
+   them. The page picks the new file up automatically. Two separate
+   guards enforce this, and they catch DIFFERENT things: the
    `check-terms-canonical-hash` guard (in `apps/www`'s typecheck,
-   which CI runs for `docs/Terms/` changes too) fails the build if
+   which CI runs for `docs/Terms/` changes too) fails the build when
    the frozen copy, the registry hash, and the canonical document do
-   not all agree, or if a published entry was edited.
+   not all agree *within one tree* — but an edit that rewrites a
+   published archive AND its registered hash together still agrees
+   with itself, so cross-commit immutability is enforced by the
+   "Published Terms archives are unchanged from the base" step
+   inside CI's REQUIRED `workspaces` job, which diffs the PR against
+   its base and rejects any change to a `v<M>.md` that exists there.
+   A local typecheck alone therefore CANNOT confirm an archive edit
+   is legal; only the base diff can, and it will refuse it.
 2. The content hash for `setCurrentTos` is the same value the site
    publishes: each `/terms/v<N>` page displays its "canonical source
    fingerprint" — keccak256 over the exact bytes of the version's

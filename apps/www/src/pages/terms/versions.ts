@@ -57,7 +57,7 @@ export const TERMS_VERSION_METAS: readonly TermsVersionMeta[] = [
     version: 1,
     effective: '2026-04-24',
     canonicalMdKeccak256:
-      '0x61d9f54cd3ace1109e784dcd9e761478d10327205467925e51b8e9fa0e68904e',
+      '0x536d38b08f2f0aef33256f8b9b298bf5d066e541c396bb3f18414a4baac881a7',
   },
 ];
 
