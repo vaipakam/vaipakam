@@ -721,10 +721,12 @@ Thin-market honesty rules apply.
   It does not reach the alerts service: **unlinking removes the messaging
   connection only, and the alert preferences are deliberately retained there
   for a future relink**, so removing those is a support request. It does not
-  reach the marketing site's separate store, or error reports held by support.
-  **Overstating reach is the primary way a page of this kind misleads** — and
-  understating what a user can obtain is the same failure pointed the other
-  way — so each exclusion is named at its real size.
+  reach the marketing site's separate store; and the LOCAL download-and-erase
+  controls do not reach the error reports held by support — those have their
+  own signed control on the same page, described below. **Overstating reach is
+  the primary way a page of this kind misleads** — and understating what a
+  user can obtain is the same failure pointed the other way — so each
+  exclusion is named at its real size.
 - The same page carries the **signed erasure of the error reports support
   keeps** — the server-side counterpart the Privacy Policy promises. The
   request is authorised by a free wallet signature (no transaction, no gas)

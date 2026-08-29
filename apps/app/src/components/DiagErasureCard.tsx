@@ -31,52 +31,71 @@ import {
 } from '../data/diagErasure';
 import { isUserRejection } from '../lib/errors';
 
-type CardResult =
+type CardResult = { forWallet: string } & (
   | { kind: 'erased' }
   | { kind: 'status'; status: DiagErasureStatus }
   | { kind: 'unavailable' }
-  | { kind: 'error' };
+  | { kind: 'error' }
+);
 
 export function DiagErasureCard() {
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<CardResult | null>(null);
+  // A result belongs to the wallet that asked (#2008 round 1 P1):
+  // wallet A's disclosed retention note — or its reassuring clear
+  // answer — must never render as wallet B's. Two guards, because
+  // the failure has two routes: this render-time reset clears the
+  // card the moment the connected wallet changes (the AlertsCard
+  // scope pattern — state init runs once), and every stored result
+  // carries the wallet it answered FOR, with rendering gated on the
+  // match, so an in-flight request that completes AFTER the switch
+  // is stored but never shown to the wrong wallet.
+  const [walletScope, setWalletScope] = useState(address ?? '');
+  if (walletScope !== (address ?? '')) {
+    setWalletScope(address ?? '');
+    setResult(null);
+  }
 
   const configured = diagErasureConfigured();
+  const shown = result && result.forWallet === address ? result : null;
 
   async function run(kind: 'erase' | 'status') {
     if (!address) return;
+    // Captured at the moment of the click — the completion below may
+    // run after a wallet switch, and it must record who it answers.
+    const forWallet = address;
     setBusy(true);
     setResult(null);
     try {
       if (kind === 'erase') {
-        const outcome = await requestDiagErasure(address, (message) =>
+        const outcome = await requestDiagErasure(forWallet, (message) =>
           signMessageAsync({ message }),
         );
         setResult(
           outcome === 'processed'
-            ? { kind: 'erased' }
+            ? { forWallet, kind: 'erased' }
             : outcome === 'unavailable'
-              ? { kind: 'unavailable' }
-              : { kind: 'error' },
+              ? { forWallet, kind: 'unavailable' }
+              : { forWallet, kind: 'error' },
         );
       } else {
-        const status = await requestDiagErasureStatus(address, (message) =>
+        const status = await requestDiagErasureStatus(forWallet, (message) =>
           signMessageAsync({ message }),
         );
         setResult(
           status.status === 'unavailable'
-            ? { kind: 'unavailable' }
+            ? { forWallet, kind: 'unavailable' }
             : status.status === 'error'
-              ? { kind: 'error' }
-              : { kind: 'status', status },
+              ? { forWallet, kind: 'error' }
+              : { forWallet, kind: 'status', status },
         );
       }
     } catch (e) {
       // A dismissed wallet prompt is a cancel, not a failure — the
       // card simply returns to rest. Anything else is reported.
-      if (!isUserRejection(e)) setResult({ kind: 'error' });
+      if (!isUserRejection(e)) setResult({ forWallet, kind: 'error' });
     } finally {
       setBusy(false);
     }
@@ -96,39 +115,39 @@ export function DiagErasureCard() {
         <p className="muted">{copy.dataRights.diagConnect}</p>
       ) : (
         <>
-          {result?.kind === 'erased' ? (
+          {shown?.kind === 'erased' ? (
             <div className="banner banner-success" role="status">
               {copy.dataRights.diagProcessed}
             </div>
           ) : null}
-          {result?.kind === 'status' ? (
+          {shown?.kind === 'status' ? (
             <div
               className={
-                result.status.status === 'retained_by_law'
+                shown.status.status === 'retained_by_law'
                   ? 'banner'
                   : 'banner banner-success'
               }
               role="status"
             >
-              {result.status.status === 'retained_by_law' ? (
+              {shown.status.status === 'retained_by_law' ? (
                 <>
                   {copy.dataRights.diagRetainedLabel}
                   <br />
                   {/* The operator-authored disclosure note, verbatim —
                       the one message the service chose to surface. */}
-                  {result.status.note}
+                  {shown.status.note}
                 </>
               ) : (
                 copy.dataRights.diagStatusClear
               )}
             </div>
           ) : null}
-          {result?.kind === 'unavailable' ? (
+          {shown?.kind === 'unavailable' ? (
             <div className="banner banner-danger" role="alert">
               {copy.dataRights.diagUnavailable}
             </div>
           ) : null}
-          {result?.kind === 'error' ? (
+          {shown?.kind === 'error' ? (
             <div className="banner banner-danger" role="alert">
               {copy.dataRights.diagError}
             </div>

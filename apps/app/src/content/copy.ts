@@ -410,7 +410,7 @@ const copySource = {
        email route stays named: it works, and it is the only route in
        a build with no support-service connection. */
     scopeDiagnostics:
-      'Error reports kept by our support service. Those are separate from your browser, so the local erase above does not reach them — the "error reports" section on this page erases them by signed request, and emailing support@vaipakam.com works as well.',
+      'Error reports kept by our support service. Those are separate from your browser, so the local erase above does not reach them — the "error reports" section on this page sends a signed erasure request for them, and emailing support@vaipakam.com works as well.',
     /* #2002 — the signed server-side erasure card. The service's
        responses are DELIBERATELY uniform (a legal hold — possibly one
        the service is forbidden to mention — must be indistinguishable
@@ -423,8 +423,12 @@ const copySource = {
       'When something goes wrong in the app, an error report can be captured and kept by our support service to help fix it. Those records live on that service, not in your browser, and you can have the ones associated with your wallet erased from here.',
     diagConnect:
       'Connect the wallet whose records you want erased. The request is signed by that wallet — that signature is how the service knows the request really comes from you.',
+    /* #2008 round 1 P2 — the email fallback must not promise more
+       than the signed flow can: a legal hold retains records however
+       the request arrives, so both routes say a request is PROCESSED,
+       never that removal is guaranteed. */
     diagNotConfigured:
-      'This build is not connected to the support service, so the signed request cannot be sent from here. Email support@vaipakam.com and we will remove the records for your wallet.',
+      'This build is not connected to the support service, so the signed request cannot be sent from here. Email support@vaipakam.com and we will process an erasure request for your wallet.',
     diagEraseButton: 'Erase my error reports',
     diagStatusButton: 'Check for retained records',
     diagBusy: 'Waiting for your wallet…',
@@ -436,7 +440,7 @@ const copySource = {
     diagStatusClear: 'No retained records are reported for this wallet.',
     diagRetainedLabel: 'The service reports that some records were retained:',
     diagUnavailable:
-      'The support service cannot process erasure requests right now. Try again later, or email support@vaipakam.com and we will remove the records for your wallet.',
+      'The support service cannot process erasure requests right now. Try again later, or email support@vaipakam.com and we will process an erasure request for your wallet.',
     diagError:
       'The request could not be completed, and nothing may have been erased. Try again in a moment.',
     /* Review round 2 P2 — the export reads only THIS tab's session

@@ -100,7 +100,15 @@ export async function requestDiagErasure(
   signMessage: (message: string) => Promise<string>,
 ): Promise<DiagErasureOutcome> {
   const res = await postSigned('/diag/erasure', wallet, signMessage);
-  if (res.ok) return 'processed';
+  if (res.ok) {
+    // A 2xx alone is not the service's acknowledgement (#2008 round
+    // 1 P1): a misconfigured origin or an intermediary can return a
+    // 204 or a fallback page, and reporting THAT as processed would
+    // falsely confirm a legal-right request the erasure handler
+    // never saw. Only the service's own uniform payload counts.
+    const data = (await res.json().catch(() => null)) as { status?: string } | null;
+    return data?.status === 'processed' ? 'processed' : 'error';
+  }
   if (res.status === 503) {
     const data = (await res.json().catch(() => null)) as { error?: string } | null;
     if (data?.error === 'erasure_not_configured') return 'unavailable';
@@ -127,7 +135,12 @@ export async function requestDiagErasureStatus(
     if (data?.status === 'retained_by_law' && typeof data.note === 'string') {
       return { status: 'retained_by_law', note: data.note };
     }
-    return { status: 'processed' };
+    // Same rule as the erasure call (#2008 round 1 P1): only the
+    // service's own uniform payload may render as the reassuring
+    // answer — an unparseable or unknown 2xx body is a failure, not
+    // a green light.
+    if (data?.status === 'processed') return { status: 'processed' };
+    return { status: 'error' };
   }
   if (res.status === 503) {
     const data = (await res.json().catch(() => null)) as { error?: string } | null;

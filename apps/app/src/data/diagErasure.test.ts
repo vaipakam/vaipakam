@@ -60,6 +60,17 @@ describe('requestDiagErasure', () => {
     expect(body.signature).toBe(SIG);
   });
 
+  it('rejects a malformed 2xx — only the service’s own payload confirms', async () => {
+    // #2008 round 1 P1: a 204, or a fallback page from an
+    // intermediary, is not the erasure handler's acknowledgement —
+    // reporting it as processed would falsely confirm a legal-right
+    // request the service never saw.
+    stubAgent(() => new Response(null, { status: 204 }));
+    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('error');
+    stubAgent(() => new Response('<html>gateway</html>', { status: 200 }));
+    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('error');
+  });
+
   it('maps the unconfigured-service 503 to its own honest outcome', async () => {
     stubAgent(
       () =>
@@ -99,6 +110,13 @@ describe('requestDiagErasureStatus', () => {
     );
     expect(await requestDiagErasureStatus(WALLET, async () => SIG)).toEqual({
       status: 'processed',
+    });
+  });
+
+  it('an unknown 2xx body is a failure, not a green light', async () => {
+    stubAgent(() => new Response('{}', { status: 200 }));
+    expect(await requestDiagErasureStatus(WALLET, async () => SIG)).toEqual({
+      status: 'error',
     });
   });
 
