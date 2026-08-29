@@ -304,7 +304,14 @@ jobs:
           # and workspaces=false, so without this the guard would be
           # path-skipped on exactly the change it exists to catch, and the
           # published documentation would go stale silently (Codex #1623 r1).
-          WORKSPACES_RE='^(apps/|packages/|ops/offchain-data-warm/src/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          #
+          # docs/Terms/ is in here for the same shape of reason (#1998 /
+          # Codex #2010 r1): apps/www's typecheck runs the guard comparing
+          # the canonical Terms document against the frozen version-pinned
+          # copy the site renders and fingerprints. A PR editing only the
+          # canonical document is exactly the one-sided drift the guard
+          # rejects — without this it would be path-skipped on it.
+          WORKSPACES_RE='^(apps/|packages/|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else

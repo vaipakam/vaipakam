@@ -15,12 +15,21 @@ the exact version it is asking the wallet to accept, so the text read
 and the text recorded are the same document even mid-rollout — and an
 acceptance recorded years ago stays one click from the text it bound.
 
-A superseded version announces itself as superseded and points at the
-current one. Each version's page also publishes a fingerprint of its
-canonical source, checked automatically against that source on every
-build, so what the page claims to be can be compared with what the
-acceptance prompt displays. And a pinned address for a version the site
+The page now renders the canonical Terms document itself — the exact
+bytes its published fingerprint covers — rather than a hand-maintained
+copy of it; review of the first draft found the old copy had already
+drifted from the document it claimed to mirror, which is precisely the
+class of silent divergence this whole change exists to end. An older
+version announces that a newer one has been published and points at it,
+worded carefully: during a rollout the version being accepted can lag
+the newest published text, and the old page may be exactly the document
+a pending acceptance records. Each version's page publishes a
+fingerprint of its canonical source, checked automatically against that
+source on every build — including builds triggered by edits to the
+canonical document alone. And a pinned address for a version the site
 has not published yet says so honestly — telling the reader not to
 accept text they cannot see — instead of failing as a bare error page.
+Archived versions are kept out of search indexes so the unversioned
+address remains the one search results carry.
 
 Closes #1998.

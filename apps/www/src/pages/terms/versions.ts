@@ -17,18 +17,22 @@
  *   reachable at its pinned route forever, so an acceptance recorded
  *   years ago still resolves to the exact text that was accepted.
  *
- * `canonicalMdKeccak256` is the keccak256 over the exact committed
- * bytes of the canonical Markdown source
- * (`docs/Terms/TermsOfService.md` at the commit that published the
- * version) — the derivation the governance runbook proposes for the
- * on-chain `setCurrentTos` hash. It is pinned by
- * `scripts/check-terms-canonical-hash.ts` (wired into `typecheck`),
- * which recomputes it from the tree for the CURRENT version, so this
- * constant cannot silently drift from the text it claims to cover.
+ * `canonicalMdKeccak256` is the keccak256 over the exact bytes of the
+ * version's FROZEN Markdown source (`v<N>.md` beside this file — a
+ * byte-copy of `docs/Terms/TermsOfService.md` at the commit that
+ * published the version), which is also the text the page RENDERS —
+ * the derivation the governance runbook proposes for the on-chain
+ * `setCurrentTos` hash. `scripts/check-terms-canonical-hash.ts`
+ * (wired into `typecheck`) recomputes every entry's hash from its
+ * frozen file, cross-checks the registry and the file set in both
+ * directions, and requires the current entry's frozen file to be
+ * byte-identical to the canonical document — so neither this
+ * constant, the rendered text, nor the canonical doc can silently
+ * drift from one another.
  *
  * This module is deliberately pure data (no JSX, no React) so the
  * check script can import it without dragging component modules in;
- * the version → body mapping lives in `TermsPage.tsx`.
+ * the version → source mapping is a glob in `TermsPage.tsx`.
  */
 
 export interface TermsVersionMeta {
@@ -37,12 +41,13 @@ export interface TermsVersionMeta {
   /** Effective date shown in the page header, ISO `YYYY-MM-DD`. */
   effective: string;
   /**
-   * keccak256 over the exact committed bytes of the canonical
-   * `docs/Terms/TermsOfService.md` for this version. FROZEN once the
-   * entry is published — the guard script checks only the current
-   * (last) entry against the working tree, because older versions'
-   * canonical files are superseded in `docs/` while their hashes
-   * remain the record of what was published.
+   * keccak256 over the exact bytes of this version's frozen source
+   * `v<N>.md` (a byte-copy of the canonical
+   * `docs/Terms/TermsOfService.md` when the version was published).
+   * FROZEN once published — the guard script recomputes EVERY
+   * entry's hash from its frozen file, and additionally requires
+   * the current entry's file to equal the canonical document, whose
+   * `docs/` copy is superseded in place when the next version lands.
    */
   canonicalMdKeccak256: `0x${string}`;
 }
