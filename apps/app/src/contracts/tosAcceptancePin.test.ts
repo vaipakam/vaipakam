@@ -15,11 +15,13 @@ import {
   __setMonoNowForTests,
   acceptanceIsPinned,
   acceptanceScope,
+  acceptanceReconciliationRemainingMs,
   acceptanceReconciling,
   adoptOrderedPin,
   adoptReceiptPin,
   holdAcceptanceForReconciliation,
   observePinExpiry,
+  onAcceptanceHoldsChanged,
   pinAcceptance,
   retireDifferingPin,
   retireSupersededPin,
@@ -461,23 +463,49 @@ describe('acceptance reconciliation hold', () => {
   // Accept button enabled for a redundant paid re-acceptance the pin
   // can no longer prevent. Non-trusting (opens nothing) and bounded
   // (held forever, a stray broadcast could disable acceptance).
-  it('holds for the bounded window, then releases', () => {
-    holdAcceptanceForReconciliation(SCOPE, T0);
-    expect(acceptanceReconciling(SCOPE, T0)).toBe(true);
-    expect(acceptanceReconciling(SCOPE, T0 + ACCEPTANCE_RECONCILIATION_HOLD_MS - 1)).toBe(
-      true,
-    );
-    expect(acceptanceReconciling(SCOPE, T0 + ACCEPTANCE_RECONCILIATION_HOLD_MS)).toBe(false);
+  it('holds for the bounded ELAPSED window, then releases — the wall clock is never consulted', () => {
+    // Round 38 P2: a wall deadline is moved by exactly the clock
+    // corrections this module defends against — backward strands the
+    // disabled button, forward releases before the delayed read. The
+    // deadline is monotonic, so only elapsed time moves it.
+    let mono = 5_000;
+    __setMonoNowForTests(() => mono);
+    holdAcceptanceForReconciliation(SCOPE);
+    expect(acceptanceReconciling(SCOPE)).toBe(true);
+    mono = 5_000 + ACCEPTANCE_RECONCILIATION_HOLD_MS - 1;
+    expect(acceptanceReconciling(SCOPE)).toBe(true);
+    expect(acceptanceReconciliationRemainingMs(SCOPE)).toBe(1);
+    mono = 5_000 + ACCEPTANCE_RECONCILIATION_HOLD_MS;
+    expect(acceptanceReconciling(SCOPE)).toBe(false);
+    expect(acceptanceReconciliationRemainingMs(SCOPE)).toBe(0);
   });
 
   it('re-arming extends the window; other scopes are never held', () => {
-    holdAcceptanceForReconciliation(SCOPE, T0);
-    holdAcceptanceForReconciliation(SCOPE, T0 + 10_000);
-    expect(acceptanceReconciling(SCOPE, T0 + ACCEPTANCE_RECONCILIATION_HOLD_MS + 5_000)).toBe(
-      true,
-    );
+    let mono = 5_000;
+    __setMonoNowForTests(() => mono);
+    holdAcceptanceForReconciliation(SCOPE);
+    mono = 15_000;
+    holdAcceptanceForReconciliation(SCOPE);
+    mono = 5_000 + ACCEPTANCE_RECONCILIATION_HOLD_MS + 5_000;
+    expect(acceptanceReconciling(SCOPE)).toBe(true);
     const other = acceptanceScope(84532, '0xAbC0000000000000000000000000000000000002');
-    expect(acceptanceReconciling(other, T0)).toBe(false);
+    expect(acceptanceReconciling(other)).toBe(false);
+  });
+
+  it('arming a hold notifies subscribers; unsubscribing stops it', () => {
+    // Round 38 P2: the map write alone is invisible to React — the
+    // mounted hook subscribes and turns the event into state, so the
+    // Accept button disables the moment evidence arrives rather than
+    // whenever the next tracked query property happens to change.
+    let notified = 0;
+    const unsubscribe = onAcceptanceHoldsChanged(() => {
+      notified += 1;
+    });
+    holdAcceptanceForReconciliation(SCOPE);
+    expect(notified).toBe(1);
+    unsubscribe();
+    holdAcceptanceForReconciliation(SCOPE);
+    expect(notified).toBe(1);
   });
 });
 

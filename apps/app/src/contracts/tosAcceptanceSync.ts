@@ -222,10 +222,7 @@ function scheduleAuthoritativeReadsFor(
   queryClient: QueryClient,
   queryKey: ReturnType<typeof tosQueryKey>,
 ): void {
-  holdAcceptanceForReconciliation(
-    acceptanceScope(queryKey[1], queryKey[2] ?? undefined),
-    Date.now(),
-  );
+  holdAcceptanceForReconciliation(acceptanceScope(queryKey[1], queryKey[2] ?? undefined));
   const dataless = queryClient
     .getQueryCache()
     .findAll({ queryKey })

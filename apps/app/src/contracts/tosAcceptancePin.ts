@@ -619,26 +619,60 @@ export function retireSupersededPin(scope: string, version: number, hash: string
  * still standing is the chain's answer to act on. Covers the
  * immediate read, the 4-second delayed read, and ordinary RPC
  * latency on both.
+ *
+ * The deadline is MONOTONIC, not wall-clock (round 38 P2): a wall
+ * deadline is moved by exactly the clock corrections this module
+ * spends half its code defending against — a backward correction
+ * strands the disabled button until wall time catches up, and a
+ * forward one releases the hold before the delayed read has fired,
+ * reopening the redundant-payment window the hold exists to close.
+ * The monotonic clock measures the elapsed 15 seconds regardless; it
+ * stalls only through a system sleep, during which nobody is
+ * clicking, and on resume at most the remainder of one hold is left.
  */
 export const ACCEPTANCE_RECONCILIATION_HOLD_MS = 15_000;
 
 const reconciliationHolds = new Map<string, number>();
 
+/** Listeners notified when a hold is ARMED (round 38 P2). The map
+ *  write alone is invisible to React — with a cached `false` verdict
+ *  already in place, the invalidation that accompanies a hold changes
+ *  only query properties the hook does not track, so nothing
+ *  re-renders and the button stays enabled for the very window the
+ *  hold is meant to cover. The mounted hook subscribes here and turns
+ *  the event into state; release needs no event, because the
+ *  subscriber arms its own timer for the hold's remaining life. */
+const holdListeners = new Set<() => void>();
+
+export function onAcceptanceHoldsChanged(listener: () => void): () => void {
+  holdListeners.add(listener);
+  return () => {
+    holdListeners.delete(listener);
+  };
+}
+
 /** Arm (or re-arm) the scope's reconciliation hold. Called by every
  *  read-hint path — the paths that know an acceptance happened but
  *  cannot pin it. */
-export function holdAcceptanceForReconciliation(scope: string, now: number): void {
-  reconciliationHolds.set(scope, now + ACCEPTANCE_RECONCILIATION_HOLD_MS);
+export function holdAcceptanceForReconciliation(scope: string): void {
+  reconciliationHolds.set(scope, monoNow() + ACCEPTANCE_RECONCILIATION_HOLD_MS);
+  for (const listener of [...holdListeners]) listener();
 }
 
 /** True while the scope's acceptance offer should be withheld.
- *  Deliberately NON-MUTATING — it is read during render, where
- *  pruning would be a side effect; entries are overwritten on
- *  re-arm and the map holds at most one entry per wallet/chain
- *  actually used. */
-export function acceptanceReconciling(scope: string, now: number): boolean {
+ *  Deliberately NON-MUTATING: entries are overwritten on re-arm and
+ *  the map holds at most one entry per wallet/chain actually used. */
+export function acceptanceReconciling(scope: string): boolean {
+  return acceptanceReconciliationRemainingMs(scope) > 0;
+}
+
+/** The hold's remaining life in elapsed milliseconds — 0 when none.
+ *  What the hook's release timer and the accept path's wait-out loop
+ *  sleep against, so both track the SAME monotonic deadline the
+ *  predicate reads. */
+export function acceptanceReconciliationRemainingMs(scope: string): number {
   const until = reconciliationHolds.get(scope);
-  return until !== undefined && now < until;
+  return until === undefined ? 0 : Math.max(0, until - monoNow());
 }
 
 /**
@@ -736,6 +770,7 @@ export function observePinExpiry(
 export function __clearAcceptancePins(): void {
   pins.clear();
   reconciliationHolds.clear();
+  holdListeners.clear();
   stopClockWatch();
   lastBeatWall = 0;
   lastBeatMono = 0;

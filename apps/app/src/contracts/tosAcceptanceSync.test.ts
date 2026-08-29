@@ -147,7 +147,7 @@ describe('acceptance read-hint frame', () => {
     // OFFER is held — a lagging RPC's cached `false` must not keep an
     // enabled Accept button offering a redundant paid re-acceptance
     // that a pinless acceptance can no longer prevent.
-    expect(acceptanceReconciling(acceptanceScope(84532, ADDRESS), Date.now())).toBe(true);
+    expect(acceptanceReconciling(acceptanceScope(84532, ADDRESS))).toBe(true);
   });
 
   it('drops a hint about a different Diamond, or an unknown chain', () => {
@@ -542,7 +542,7 @@ describe('applyAcceptancePinFrame', () => {
     // Round 37 P1: an out-of-window frame is exactly the evidence
     // that holds the acceptance offer while the reads reconcile —
     // the long-pending mine whose pin window has already passed.
-    expect(acceptanceReconciling(acceptanceScope(84532, ADDRESS), Date.now())).toBe(true);
+    expect(acceptanceReconciling(acceptanceScope(84532, ADDRESS))).toBe(true);
   });
 
   it('never demotes a node-CONFIRMED verdict to pin-backed', () => {

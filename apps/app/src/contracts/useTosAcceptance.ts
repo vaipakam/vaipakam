@@ -54,11 +54,13 @@ import {
 import {
   MAX_FUTURE_SKEW_MS,
   acceptanceIsPinned,
+  acceptanceReconciliationRemainingMs,
   acceptanceReconciling,
   acceptanceScope,
   adoptReceiptPin,
   holdAcceptanceForReconciliation,
   monotonicNow,
+  onAcceptanceHoldsChanged,
   retireDifferingPin,
   retireSupersededPin,
 } from './tosAcceptancePin';
@@ -157,6 +159,41 @@ export function useTosAcceptance(): TosAcceptanceState {
   // the same wallet on another chain — inherit an acceptance it never
   // made, which is the one thing this whole module exists to prevent.
   const scope = acceptanceScope(readChain.chainId, address);
+
+  // The reconciliation hold as OBSERVABLE state (round 38 P2). The
+  // hold lives in module state, which React cannot see — and with a
+  // cached `false` verdict already in place, the invalidation that
+  // accompanies a hold changes only query properties this hook does
+  // not track, so nothing re-rendered and the Accept button stayed
+  // enabled through the very window the hold exists to cover. Armed
+  // holds therefore NOTIFY: the subscription below re-renders this
+  // hook the moment one is armed, and — release having no event — a
+  // timer re-samples at the hold's remaining life, so the button
+  // re-enables within moments of expiry. Monotonic throughout, like
+  // the hold itself (round 38's other P2): a wall-clock deadline
+  // would be moved by exactly the corrections this module defends
+  // against.
+  const [reconciling, setReconciling] = useState(false);
+  useEffect(() => {
+    let releaseTimer: ReturnType<typeof setTimeout> | undefined;
+    const sync = () => {
+      const remaining = acceptanceReconciliationRemainingMs(scope);
+      setReconciling(remaining > 0);
+      clearTimeout(releaseTimer);
+      if (remaining > 0) releaseTimer = setTimeout(sync, remaining + 50);
+    };
+    // Seeded via a timeout, not the effect body — the same
+    // `set-state-in-effect` rule as the gate clock above; a hold
+    // armed before this mount (a broadcast during boot) is picked up
+    // here.
+    const seed = setTimeout(sync, 0);
+    const unsubscribe = onAcceptanceHoldsChanged(sync);
+    return () => {
+      clearTimeout(seed);
+      clearTimeout(releaseTimer);
+      unsubscribe();
+    };
+  }, [scope]);
 
   const query = useQuery({
     queryKey,
@@ -279,21 +316,35 @@ export function useTosAcceptance(): TosAcceptanceState {
     setSubmitting(true);
     setWriteError(null);
     try {
-      // The non-trusting submission lock (round 37 P1). A live
-      // reconciliation hold means unverifiable evidence arrived that
-      // an acceptance ALREADY happened — an out-of-window frame, a
-      // read hint, this tab's own unanchorable receipt — and the
-      // authoritative reads it scheduled may not have landed yet. The
-      // UI disables the button on the same hold; this guard is the
-      // backstop for a click that races it: force one awaited read
-      // and submit only if the settled answer still says the wallet
-      // has not accepted. Nothing is trusted — no gate opens, no
-      // verdict is written — the wallet is just not charged for an
-      // acceptance the chain may already hold. A read that resolves
-      // `false` past this point is the chain's answer, and the write
+      // The non-trusting submission lock (rounds 37 and 38, both
+      // P1). A live reconciliation hold means unverifiable evidence
+      // arrived that an acceptance ALREADY happened — an
+      // out-of-window frame, a read hint, this tab's own unanchorable
+      // receipt — and the authoritative reads it scheduled may not
+      // have landed yet. The UI disables the button on the same hold;
+      // this backstop covers the click that races the disable — and
+      // it waits out the WHOLE hold rather than trusting the first
+      // refusal (round 38 P1): the immediate read can hit the same
+      // lagging RPC the DELAYED read exists to outwait, so one
+      // `false` inside the hold is not "settled". The wait re-checks
+      // the cache each second, bailing the moment any landed read
+      // says accepted; only once the hold has fully elapsed does one
+      // final awaited read decide. Nothing is trusted — no gate
+      // opens, no verdict is written — the wallet is just not charged
+      // while the evidence is still being reconciled. A `false` still
+      // standing after the hold is the chain's answer, and the write
       // proceeds; the contract still anchors it to the displayed
       // version and reverts on stale terms.
-      if (acceptanceReconciling(scope, Date.now())) {
+      const heldAtEntry = acceptanceReconciling(scope);
+      for (;;) {
+        const remaining = acceptanceReconciliationRemainingMs(scope);
+        if (remaining <= 0) break;
+        if (queryClient.getQueryData<TosVerdictData>(queryKey)?.accepted) return;
+        await new Promise((resolve) => {
+          setTimeout(resolve, Math.min(remaining + 50, 1_000));
+        });
+      }
+      if (heldAtEntry) {
         await queryClient.invalidateQueries({ queryKey });
         const settled = queryClient.getQueryData<TosVerdictData>(queryKey);
         if (settled?.accepted) return;
@@ -503,7 +554,7 @@ export function useTosAcceptance(): TosAcceptanceState {
         // re-arm its prompt too (round 37 P1) — hold the acceptance
         // offer for the reconciliation window, exactly as the
         // receivers of the read-hint broadcast below hold theirs.
-        holdAcceptanceForReconciliation(scope, Date.now());
+        holdAcceptanceForReconciliation(scope);
       }
 
       // No freshness bar on the cache write for the receipt — it IS
@@ -687,12 +738,6 @@ export function useTosAcceptance(): TosAcceptanceState {
     nowMs > 0 &&
     isVerdictStale(query.dataUpdatedAt, nowMs, MAX_VERDICT_AGE_MS, MAX_VERDICT_FUTURE_MS);
   const readOk = query.isSuccess && !stale;
-  // Computed against the render clock like `stale` — the hold is
-  // armed from event paths whose invalidations re-render this hook,
-  // and released within one clock tick of expiry. Both edges err
-  // toward HOLDING slightly longer, the fail-closed direction for a
-  // control whose only power is withholding a payment offer.
-  const reconciling = nowMs > 0 && acceptanceReconciling(scope, nowMs);
   return {
     // Still gated on `readOk`: the lag correction lives in `queryFn`,
     // so a failed or stale read closes the gate exactly as it always
