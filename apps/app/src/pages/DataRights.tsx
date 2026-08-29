@@ -57,7 +57,17 @@ function downloadJson(filename: string, payload: unknown): void {
 export function DataRights() {
   const [downloaded, setDownloaded] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [result, setResult] = useState<EraseResult | null>(null);
+  // The erase outcome, FROZEN at the moment it happened (review round 3
+  // P2). It used to be recomputed against the live `stored` count on
+  // every render, so writing any new key afterwards — toggling
+  // Basic/Advanced in the still-mounted sidebar is enough — turned a
+  // finished "Erased 7 items" into "Erased 7 items, but 1 could not be
+  // removed", describing something created AFTER the erasure as a
+  // failed removal. A report about a past event must not be rewritten
+  // by later events.
+  const [result, setResult] = useState<
+    (EraseResult & { remaining: number; refusedAfter: boolean }) | null
+  >(null);
   // Review round 1 P2: the providers sit ABOVE this route and read
   // storage only on their own mount, so clearing the keys left the live
   // theme and mode showing the erased values until a reload — the page
@@ -84,9 +94,16 @@ export function DataRights() {
   const refused = snapshot.refused;
 
   function onDownload() {
+    // Read FRESH rather than using the render-time snapshot (review
+    // round 3 P2). Browser storage does not re-render this page when it
+    // changes, so another tab — or a mounted component in this one —
+    // could have written since the last paint, and the file would claim
+    // to contain everything while missing it. The counts on screen can
+    // be a moment stale without lying; a file that says it is complete
+    // cannot.
     downloadJson(
       `vaipakam-app-data-${new Date().toISOString().slice(0, 10)}.json`,
-      snapshot.payload,
+      inspectMyData().payload,
     );
     setDownloaded(true);
     setTimeout(() => setDownloaded(false), 2500);
@@ -100,7 +117,11 @@ export function DataRights() {
     // write, and the order is the whole mechanism rather than an
     // accident of statement order.
     void i18n.changeLanguage('en');
-    setResult(eraseMyData());
+    const erased = eraseMyData();
+    // Measured immediately, once, and kept with the result — see the
+    // state declaration for why this is not recomputed later.
+    const after = inspectMyData();
+    setResult({ ...erased, remaining: after.count, refusedAfter: after.refused });
     setConfirming(false);
     // The other two reset AFTER, through setters that do not persist:
     // their ordinary setters would write the key back, undoing the very
@@ -173,7 +194,7 @@ export function DataRights() {
         {result ? (
           <div
             className={
-              stored === 0 && !refused && result.total > 0
+              result.remaining === 0 && !result.refusedAfter && result.total > 0
                 ? 'banner banner-success'
                 : 'banner'
             }
@@ -184,16 +205,18 @@ export function DataRights() {
                 the success message off a positive removed-count while
                 items are still there is the false assurance this page
                 must not give. */}
-            {stored > 0
+            {/* Read from the FROZEN result, never the live counts. */}
+            {result.remaining > 0
               ? result.total > 0
-                ? copy.dataRights.erasePartial(result.total, stored)
+                ? copy.dataRights.erasePartial(result.total, result.remaining)
                 : copy.dataRights.eraseBlocked
-              : refused
+              : result.refusedAfter
                 ? // Review round 2 P1: a store that REFUSED to be read
-                  // contributes nothing to `stored`, so a successful
-                  // cookie removal could land here with `stored === 0`
-                  // and report a clean success while an unreadable
-                  // store still held data. Not knowing is not done.
+                  // contributes nothing to the remainder, so a
+                  // successful cookie removal could land here with a
+                  // zero remainder and report a clean success while an
+                  // unreadable store still held data. Not knowing is
+                  // not done.
                   copy.dataRights.eraseBlocked
                 : result.total > 0
                   ? copy.dataRights.eraseDone(result.total)

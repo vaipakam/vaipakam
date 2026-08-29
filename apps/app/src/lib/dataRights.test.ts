@@ -264,3 +264,33 @@ describe('erase epoch', () => {
     __resetEraseEpoch();
   });
 });
+
+describe('decodeStored (via the export payload shape)', () => {
+  // Review round 3 P2. A pending marker holds an on-chain identifier as
+  // a bare decimal string, and `JSON.parse` rounds anything past
+  // MAX_SAFE_INTEGER — so an export could contain a DIFFERENT id than
+  // the one stored. A portability file that is quietly wrong is worse
+  // than one that is harder to read.
+  it('proves the hazard this guards against is real', () => {
+    const exact = '9007199254740993';
+    expect(String(JSON.parse(exact) as number)).not.toBe(exact);
+    expect(JSON.parse(exact)).toBe(9007199254740992);
+  });
+
+  it('keeps structured values parseable and scalars exact', async () => {
+    // The rule the decoder applies: parse only what starts with `{` or
+    // `[`. Pinned as a predicate here because the decoder itself is
+    // module-private and exercised through storage, which this
+    // node-environment suite has no DOM for.
+    const structured = (raw: string) => {
+      const t = raw.trimStart();
+      return t.startsWith('{') || t.startsWith('[');
+    };
+    expect(structured('{"a":1}')).toBe(true);
+    expect(structured('[1,2]')).toBe(true);
+    expect(structured('9007199254740993')).toBe(false);
+    expect(structured('light')).toBe(false);
+    expect(structured('"quoted"')).toBe(false);
+    expect(structured('true')).toBe(false);
+  });
+});

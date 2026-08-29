@@ -36,7 +36,7 @@
  * "this browser" and deliver "this tab".
  */
 
-import { clearLastError } from '../diagnostics/lastError';
+import { clearLastError, readLastError } from '../diagnostics/lastError';
 import { announceErase } from './eraseBroadcast';
 
 /**
@@ -64,6 +64,10 @@ export const STORAGE_PREFIXES: readonly string[] = [
  * ask for their data to be removed — and is said in the page copy
  * rather than left as a surprise.
  */
+/** Where `diagnostics/lastError.ts` stores its record. Named here so
+ *  the export can tell "already included" from "held only in memory". */
+const LAST_ERROR_KEY = 'vaipakam.app.lastError';
+
 export const PREFERENCE_COOKIES: readonly string[] = [
   'vaipakam_lang',
   'vaipakam_theme',
@@ -140,6 +144,31 @@ export interface StoreRead {
   refused: boolean;
 }
 
+/**
+ * Turn a stored string into something readable WITHOUT changing it.
+ *
+ * Only structured values — objects and arrays — are parsed. A bare
+ * scalar is kept as the exact string that was written (review round 3
+ * P2): `JSON.parse` on a long decimal silently rounds it, so a pending
+ * marker holding an on-chain identifier of `9007199254740993` would be
+ * exported as `9007199254740992`. A portability file that quietly
+ * contains a DIFFERENT identifier is worse than one that is harder to
+ * read, and those markers are stored as bare decimal strings.
+ *
+ * Objects and arrays are still parsed, because that is what makes the
+ * file readable by the person it is about, and a structured value that
+ * fails to parse falls back to its raw text rather than being dropped.
+ */
+function decodeStored(raw: string): unknown {
+  const trimmed = raw.trimStart();
+  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) return raw;
+  try {
+    return JSON.parse(raw) as unknown;
+  } catch {
+    return raw;
+  }
+}
+
 /** Read one storage safely, preserving WHY it came back empty. */
 function collect(storage: Storage | null): StoreRead {
   const out: Record<string, unknown> = {};
@@ -155,14 +184,7 @@ function collect(storage: Storage | null): StoreRead {
     for (const key of keys) {
       const raw = storage.getItem(key);
       if (raw === null) continue;
-      try {
-        // Most values are JSON. Parsing makes the export readable by
-        // the person it is about; a non-JSON value is kept verbatim
-        // rather than dropped.
-        out[key] = JSON.parse(raw) as unknown;
-      } catch {
-        out[key] = raw;
-      }
+      out[key] = decodeStored(raw);
     }
   } catch {
     // Obtainable but unreadable — a real state under restrictive
@@ -211,6 +233,18 @@ export function inspectMyData(): DataRightsSnapshot {
   const local = collect(safeStorage('localStorage'));
   const session = collect(safeStorage('sessionStorage'));
   const cookies = readCookies();
+  // Review round 3 P2: when `sessionStorage.setItem` fails — quota, or
+  // a locked-down profile — `recordLastError` keeps the record in a
+  // module-level slot instead. The Diagnostics drawer reads it and the
+  // erasure clears it, so the app demonstrably HOLDS it; leaving it out
+  // of the export made this file claim completeness it did not have,
+  // and left the one asymmetry that matters: erased but never
+  // disclosed. Added only when the stored copy is absent, so a normal
+  // browser sees no duplicate.
+  if (!(LAST_ERROR_KEY in session.data)) {
+    const inMemory = readLastError();
+    if (inMemory) session.data[LAST_ERROR_KEY] = inMemory;
+  }
   const payload: DataRightsExport = {
     exportedAt: new Date().toISOString(),
     origin: typeof window === 'undefined' ? 'unknown' : window.location.origin,
