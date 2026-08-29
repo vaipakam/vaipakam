@@ -39,6 +39,7 @@ import { useTheme } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
 import { useTranslation } from 'react-i18next';
 import { bumpEraseEpoch } from '../lib/eraseEpoch';
+import { DiagErasureCard } from '../components/DiagErasureCard';
 
 /** Serialise and hand the file to the browser. Kept here rather than
  *  in `dataRights.ts` so that module stays free of DOM side effects
@@ -327,6 +328,13 @@ export function DataRights() {
           </button>
         )}
       </section>
+
+      {/* #2002 — the server-side counterpart: the error reports the
+          support service keeps, erased by signed request. Lives on
+          this page because it is the Data Rights control the Privacy
+          Policy promises "in the app", and this is the page whose
+          scope list used to name it as unreachable. */}
+      <DiagErasureCard />
 
       <section className="card">
         <div className="card-title">

@@ -405,13 +405,64 @@ const copySource = {
        defect this page is built to avoid, and I wrote it. */
     scopeAlerts:
       'Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlinking in Settings removes the Telegram connection itself; your alert preferences stay on that service so they are there if you link again. Email support@vaipakam.com to have those removed too.',
-    /* #2002 — named rather than omitted. The Privacy Policy tells
-       users they can erase these records by signing a request in the
-       app, and that control does not exist yet. Staying silent here
-       would leave somebody hunting for a button that is not there;
-       pointing at the working route is the honest interim. */
+    /* #2002 — the promised in-app signed erasure now exists (the card
+       above), so this line points UP at it rather than at email. The
+       email route stays named: it works, and it is the only route in
+       a build with no support-service connection. */
     scopeDiagnostics:
-      'Error reports kept by our support service. Those are separate from your browser, and are erased on request — email support@vaipakam.com and we will remove the records for your wallet.',
+      'Error reports kept by our support service. Those are separate from your browser, so the local erase above does not reach them — the "error reports" section on this page sends a signed erasure request for them, and emailing support@vaipakam.com works as well.',
+    /* #2002 — the signed server-side erasure card. The service's
+       responses are DELIBERATELY uniform (a legal hold — possibly one
+       the service is forbidden to mention — must be indistinguishable
+       from ordinary success), so this copy must never promise the
+       user knowledge the service refuses to emit: "processed" is not
+       "deleted", and "no retained records are REPORTED" is not
+       "nothing is retained". */
+    diagTitle: 'Erase the error reports support keeps',
+    diagBody:
+      'When something goes wrong in the app, an error report can be captured and kept by our support service to help fix it. Those records live on that service, not in your browser, and you can have the ones associated with your wallet erased from here.',
+    diagConnect:
+      'Connect the wallet whose records you want erased. The request is signed by that wallet — that signature is how the service knows the request really comes from you.',
+    /* #2008 round 1 P2 — the email fallback must not promise more
+       than the signed flow can: a legal hold retains records however
+       the request arrives, so both routes say a request is PROCESSED,
+       never that removal is guaranteed. */
+    diagNotConfigured:
+      'This build is not connected to the support service, so the signed request cannot be sent from here. Email support@vaipakam.com and we will process an erasure request for your wallet.',
+    /* #2008 round 2 P2 — a smart-contract account (a Safe, a
+       deployed smart wallet) signs via ERC-1271, which the service
+       cannot verify yet; prompting would collect a signature that can
+       only fail. The working route is offered instead. */
+    diagContractWallet:
+      'This wallet is a smart-contract account, and the support service cannot verify its signatures yet. Email support@vaipakam.com and we will process an erasure request for your wallet.',
+    /* #2008 round 3 P2 — the wallet's own chain may be one this app
+       has no client for; a wallet we cannot vouch for gets the
+       working route, not a prompt that may only fail. */
+    diagUninspectable:
+      'This wallet is connected to a network this app cannot inspect from here, so we cannot tell whether the support service can verify its signatures. Email support@vaipakam.com and we will process an erasure request for your wallet — or switch to a supported network and try again.',
+    /* #2008 rounds 3–5 — the signature stays valid for ten minutes
+       from the moment the prompt opens. This one message covers BOTH
+       expiry routes honestly: a late approval held back before
+       sending, and a sent request the service itself rejected as
+       stale (a skewed device clock) — so it claims neither "nothing
+       was sent" nor "you were slow", only what both routes share:
+       the request expired unaccepted and no records were touched. */
+    diagExpired:
+      'The signed request expired before the service accepted it, so no records were checked or erased. Try again, approving the wallet prompt promptly — if this keeps happening, this device’s clock may be set wrong.',
+    diagEraseButton: 'Erase my error reports',
+    diagStatusButton: 'Check for retained records',
+    diagBusy: 'Waiting for your wallet…',
+    diagSignNote:
+      'Proving the wallet is yours is a free signature — not a transaction, and it costs no gas.',
+    diagProcessed: 'Your erasure request was processed.',
+    diagUniformNote:
+      'The confirmation is deliberately the same for every wallet: it does not say whether any records existed, so nothing about your records can be read from it. Where the law requires some records to be kept, the check below reports that only when the law allows saying so.',
+    diagStatusClear: 'No retained records are reported for this wallet.',
+    diagRetainedLabel: 'The service reports that some records were retained:',
+    diagUnavailable:
+      'The support service cannot process erasure requests right now. Try again later, or email support@vaipakam.com and we will process an erasure request for your wallet.',
+    diagError:
+      'The request could not be completed, and nothing may have been erased. Try again in a moment.',
     /* Review round 2 P2 — the export reads only THIS tab's session
        data, because `sessionStorage` belongs to one browsing context.
        The erasure now reaches other tabs by broadcast; the export
