@@ -793,6 +793,23 @@ Thin-market honesty rules apply.
   so refusing them would leave the slow route open and the instant one shut.
   Publishing a standing offer of one's own is a different thing and is not
   covered, even when the intent behind it is to leave.
+- **An acceptance is honoured in every open tab, not only the one that paid.**
+  The chain permits a second acceptance and would charge for it while changing
+  nothing but a timestamp — so the moment one tab's acceptance is confirmed,
+  every other tab holding the same wallet on the same network is told. For an
+  acceptance confirmed within its short safety window — the ordinary case —
+  every tab applies the same correction at once: its prompt closes and its
+  writes proceed without asking again. An acceptance that took unusually long
+  to confirm — network congestion can hold a transaction pending beyond that
+  window — is instead announced to every tab as a signal to re-check the
+  chain immediately: prompts close as soon as that re-check reads the
+  recorded acceptance, which by then any current node reports, rather than
+  in the same instant. The correction, where applied, is bounded by the same
+  short window in every tab, expiring simultaneously, so an acceptance undone
+  by a chain reorganisation is not papered over anywhere for longer than in
+  the tab that made it. A tab that has meanwhile seen a newer terms version
+  keeps prompting for the newer version — an acceptance of older text never
+  opens the gate on newer text.
 - The requirement applies to notification settings on the same terms, even
   though nothing there touches the protocol. Signing up — linking a messaging
   channel, or switching a reminder on — waits for acceptance. Switching a

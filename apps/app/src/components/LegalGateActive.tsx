@@ -45,6 +45,7 @@ export function LegalGateActive({
     accept,
     reload,
     submitting,
+    reconciling,
   } = useTosAcceptance();
 
   // One decision, taken in `tosGate.ts` and exhaustively tested there —
@@ -154,13 +155,20 @@ export function LegalGateActive({
             it) and carries the switch action; leaving the button live
             would send that user into `useDiamondWrite`'s "connect a
             wallet" error, which names the wrong problem. The remedy is
-            one banner up, not in a second copy here. */}
+            one banner up, not in a second copy here.
+            Also disabled while `reconciling` (#2004 round 37 P1):
+            evidence arrived that an acceptance already happened — from
+            another tab, or this tab's own long-pending transaction —
+            and until the re-reads it triggered land, offering the
+            button risks charging the wallet for a redundant second
+            acceptance. The hold is bounded to seconds; `accept()`
+            itself carries the racing-click backstop. */}
         <div className="legal-gate-actions">
           <button
             type="button"
             className="btn btn-primary"
             onClick={() => void accept()}
-            disabled={submitting || !onSupportedChain}
+            disabled={submitting || reconciling || !onSupportedChain}
           >
             {submitting ? copy.legalGate.signing : copy.legalGate.signAccept}
           </button>

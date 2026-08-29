@@ -81,8 +81,43 @@ export function tosGateVerdict({
  */
 export const MAX_VERDICT_AGE_MS = 180_000;
 
+/** How often `useTosAcceptance` refreshes the clock it compares
+ *  `dataUpdatedAt` against. Exported because anything that BACKDATES a
+ *  verdict to force staleness must clear this lag too (#2004 round 10
+ *  P2): a timestamp exactly at the bound reads as fresh for up to one
+ *  tick to a gate whose `nowMs` has not ticked yet. */
+export const VERDICT_CLOCK_TICK_MS = 15_000;
+
 /**
- * True when a successful verdict is too old to keep the gate open.
+ * How far in the FUTURE a verdict's `dataUpdatedAt` may sit before it
+ * stops counting as fresh (#2004 round 19 P2): a backward clock
+ * correction after a successful read leaves the stamp ahead of the
+ * clock, and a plain age check then reads the entry as fresh until
+ * wall time catches up PLUS the whole verdict window. Two tolerances,
+ * chosen by which clock the CALLER compares against (round 29 P1 —
+ * the write gate reads real time, and handing it the render-clock
+ * slack let a 6-to-20-second correction keep permitting writes the
+ * conflict guards were already refusing):
+ *
+ *   - `VERDICT_FUTURE_SKEW_MS`, the DEFAULT — the bare
+ *     coarse-correction allowance (the same 5s as the pin module's
+ *     `MAX_FUTURE_SKEW_MS`, restated because this module stays
+ *     import-free on purpose; see `tosQueryKey`). Right for every
+ *     caller that passes `Date.now()`: the write gate, the conflict
+ *     guards via `freshVerdict`.
+ *   - `MAX_VERDICT_FUTURE_MS` — the render-clock tolerance, one gate
+ *     clock tick on top, for the ONE caller whose comparison clock
+ *     lags the real one by up to a tick (`useTosAcceptance`'s
+ *     `nowMs`): a verdict written mid-tick legitimately sits "in the
+ *     future" of that clock and must not read as stale, or the gate
+ *     would flap after every ordinary write.
+ */
+export const VERDICT_FUTURE_SKEW_MS = 5_000;
+export const MAX_VERDICT_FUTURE_MS = VERDICT_CLOCK_TICK_MS + VERDICT_FUTURE_SKEW_MS;
+
+/**
+ * True when a successful verdict is too old — or too far in the
+ * future (round 19 P2) — to keep the gate open.
  *
  * `dataUpdatedAt` of 0 means no successful read has ever landed, which
  * `readOk` already covers; treat it as stale so a caller that reaches
@@ -92,8 +127,16 @@ export function isVerdictStale(
   dataUpdatedAt: number,
   now: number,
   maxAgeMs: number = MAX_VERDICT_AGE_MS,
+  // The future tolerance is a PARAMETER (rounds 25 and 29, both P2
+  // then P1): the DEFAULT is the bare real-clock skew, because most
+  // callers — the write gate included — pass `Date.now()`, and a
+  // default carrying the render-tick slack silently handed them a
+  // 20-second blind spot. The one render-clock caller passes
+  // `MAX_VERDICT_FUTURE_MS` explicitly.
+  maxFutureMs: number = VERDICT_FUTURE_SKEW_MS,
 ): boolean {
   if (!dataUpdatedAt) return true;
+  if (dataUpdatedAt > now + maxFutureMs) return true;
   return now - dataUpdatedAt > maxAgeMs;
 }
 
@@ -112,8 +155,13 @@ export function opensGate(verdict: TosGateVerdict): boolean {
  * alternative is a second key spelling, which is how a cache write and
  * a cache read come to miss each other silently.
  */
+/** The Terms query's root — the first element of `tosQueryKey`.
+ *  Exported for the cross-tab rail's legacy read-hint frame (#2004
+ *  round 25 P2), whose receivers match invalidations on this string. */
+export const TOS_QUERY_ROOT = 'tosAcceptance';
+
 export function tosQueryKey(chainId: number, address: string | undefined) {
-  return ['tosAcceptance', chainId, address?.toLowerCase() ?? null] as const;
+  return [TOS_QUERY_ROOT, chainId, address?.toLowerCase() ?? null] as const;
 }
 
 /** What the Terms query stores. */
@@ -121,4 +169,13 @@ export interface TosVerdictData {
   accepted: boolean;
   version: number;
   hash: `0x${string}`;
+  /** True when this verdict's `accepted` rests on the acceptance PIN
+   *  rather than on a node's own answer — a pin-corrected read, or the
+   *  verdict a receipt/broadcast wrote directly (#2004 round 9 P2). A
+   *  reorg can orphan the acceptance behind such a verdict, so at the
+   *  pin's expiry it is aged past the verdict bound rather than left
+   *  to coast; a verdict a node genuinely confirmed carries no flag
+   *  and is never aged. Cleared naturally: the first read a node
+   *  answers `true` on its own stores an unflagged verdict. */
+  pinBacked?: boolean;
 }
