@@ -86,16 +86,18 @@ export function DataRights() {
   // copy promised the user would be asked again.
   const { i18n } = useTranslation();
   // Review round 7 P2: reading on render only helps when a render
-  // happens, and browser storage does not cause one. A page opened
-  // with nothing stored sat with both controls disabled while another
-  // tab wrote per-wallet settings — data appearing that the user could
-  // neither download nor erase from the page built for exactly that.
-  // The cross-tab `storage` event is the one signal the browser gives
-  // for this; it never fires for the writing tab itself, but on THIS
-  // page the user's own same-tab writes come from navigating away and
-  // back, which is a fresh render anyway. Filtered to keys the scan
-  // would actually reach, so unrelated tools' writes (a wallet
-  // connector's session churn) do not re-render a data-rights page.
+  // happens, and browser storage does not cause one — so the figures
+  // sat stale while another tab wrote per-wallet settings. The
+  // cross-tab `storage` event is the browser's one signal for that,
+  // filtered to keys the scan would actually reach so unrelated
+  // tools' writes (a wallet connector's session churn) do not
+  // re-render a data-rights page. It never fires for the writing
+  // document itself — round 8 corrected this comment's earlier claim
+  // that same-tab writes imply a navigation (the still-mounted
+  // notification bell writes without one), which is why the controls
+  // below are no longer gated on the render-time count at all: this
+  // subscription keeps the FIGURES fresh across tabs, and the
+  // handlers' own fresh reads keep the CONTROLS truthful everywhere.
   const [, setStorageTick] = useState(0);
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -115,9 +117,10 @@ export function DataRights() {
   const snapshot = inspectMyData();
   const stored = snapshot.count;
   // Review round 1 P1: "could not read" is not "nothing is here". With
-  // them collapsed, a browser refusing to be read disabled both buttons
-  // and told the user their storage was empty — the refusal message
-  // below unreachable in the one case it was written for.
+  // them collapsed, a browser refusing to be read told the user their
+  // storage was empty — the refusal message below unreachable in the
+  // one case it was written for. (The buttons that gating disabled
+  // then are un-gated entirely as of round 8.)
   const refused = snapshot.refused;
 
   function onDownload() {
@@ -196,12 +199,19 @@ export function DataRights() {
           <h2 style={{ margin: 0 }}>{copy.dataRights.downloadTitle}</h2>
         </div>
         <p>{copy.dataRights.downloadBody}</p>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={onDownload}
-          disabled={stored === 0}
-        >
+        {/* NOT gated on the render-time count (review round 8 P2).
+            A disabled button is a live claim — "there is nothing to
+            act on" — resting on a snapshot this document's OWN
+            components can silently outdate: the still-mounted
+            notification bell writes `app.notif.lastseen.*` on open,
+            and same-document writes fire no `storage` event, so the
+            round-7 subscription never sees them. The handlers read
+            fresh at click time, so an always-enabled button always
+            acts on the truth; the on-screen count may run a moment
+            behind, but a stale figure beside a working control is a
+            smaller untruth than a control that denies data it would
+            in fact find. */}
+        <button type="button" className="btn btn-secondary" onClick={onDownload}>
           {downloaded ? (
             <CheckCircle size={14} aria-hidden="true" />
           ) : (
@@ -275,8 +285,13 @@ export function DataRights() {
               setResult(null);
               setConfirming(true);
             }}
-            disabled={stored === 0}
           >
+            {/* Un-gated for the same round-8 reason as Download: the
+                erase reads storage itself and reports what it actually
+                removed, so on a truly empty store the outcome is the
+                honest "nothing was stored" banner — while a disabled
+                button would deny data a same-document write just
+                created. */}
             <Trash2 size={14} aria-hidden="true" />
             {copy.dataRights.eraseButton}
           </button>
