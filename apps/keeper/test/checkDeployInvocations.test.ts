@@ -5074,3 +5074,170 @@ describe('check-deploy-invocations — #1995 r17', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe('check-deploy-invocations — #1995 r17', () => {
+  // A Bash helper written across lines is the ordinary spelling. Each logical
+  // line was processed separately, so the definition recorded an EMPTY body,
+  // the call after `cd apps/agent` looked up nothing, and the deploy inside
+  // the body was scored where it is written — where no scope exists.
+  it('a multiline function body whose call runs in a protected package', () => {
+    const r = runWith(
+      'contracts/script/redeploy.sh',
+      'deploy_worker() {\n  wrangler deploy\n}\ncd apps/agent\ndeploy_worker\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('the same definition with its brace on the next line', () => {
+    const r = runWith(
+      'contracts/script/redeploy.sh',
+      'deploy_worker()\n{\n  wrangler deploy\n}\ncd apps/agent\ndeploy_worker\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but the same helper called from an UNPROTECTED directory passes', () => {
+    // The caller's state decides which Worker the helper deploys — the same
+    // rule the single-line definition already follows.
+    const r = runWith(
+      'contracts/script/redeploy.sh',
+      'deploy_worker() {\n  wrangler deploy\n}\ncd apps/indexer\ndeploy_worker\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // `cloudflare/wrangler-action` executes `wrangler <command>` (deploy when no
+  // `command` input is given) from `workingDirectory` — a real deploy with no
+  // line for the prefilter to match, so the workflow was discarded unread.
+  it('wrangler-action with a scoped workingDirectory and the default command', () => {
+    const r = runWith(
+      '.github/workflows/deploy-agent.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - uses: actions/checkout@v4',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          apiToken: ${{ secrets.CF_API_TOKEN }}',
+        '          workingDirectory: apps/agent',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('wrangler-action with an explicit `command: deploy`', () => {
+    const r = runWith(
+      '.github/workflows/deploy-keeper.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: apps/keeper',
+        '          command: deploy',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but wrangler-action carrying --keep-vars passes', () => {
+    const r = runWith(
+      '.github/workflows/deploy-agent.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: apps/agent',
+        '          command: deploy --keep-vars',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('and wrangler-action deploying an UNPROTECTED package passes', () => {
+    const r = runWith(
+      '.github/workflows/deploy-indexer.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: apps/indexer',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // A step spelled as a flow mapping is the same step, and Actions runs its
+  // `run:` from the job's `defaults.run.working-directory` all the same — but
+  // the line-anchored `run:` matchers never extracted the mid-mapping key.
+  it('a flow-style step under a job-default working-directory', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    defaults:',
+        '      run:',
+        '        working-directory: apps/agent',
+        '    steps:',
+        '      - { name: deploy, run: wrangler deploy }',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a flow-style step with its own working-directory key', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        "      - { name: deploy, working-directory: apps/keeper, run: 'wrangler deploy' }",
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // `if: false # temporarily disabled` parses as the boolean false — the step
+  // can never run — but the capture kept the comment and the anchored test
+  // failed, so a dead step blocked the build. A false red.
+  it('a disabled step whose `if: false` carries a trailing comment passes', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - name: deploy',
+        '        if: false # temporarily disabled',
+        '        working-directory: apps/agent',
+        '        run: wrangler deploy',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(true);
+  });
+});

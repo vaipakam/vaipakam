@@ -5022,6 +5022,28 @@ for (const file of walk(REPO_ROOT)) {
         // execute — bash runs them at the CALL, not here — and the closer
         // finalises the recorded body (#1995 r17).
         if (pendingFn) {
+          // `name()` with its brace on the NEXT line is the same definition —
+          // bash accepts the newline before `{` — so the opener may arrive as
+          // its own segment. Anything else in that position means the
+          // parenthesised line was not a definition after all, and it is
+          // released to ordinary processing.
+          if (pendingFn.awaitingBrace) {
+            if (/^\{/.test(seg)) {
+              const rest = seg.replace(/^\{\s*/, '');
+              pendingFn.awaitingBrace = false;
+              pendingFn.depth = 1 + braceDelta(rest);
+              if (rest.trim()) pendingFn.segs.push(rest.trim());
+              if (pendingFn.depth <= 0) {
+                const entries = unsafeWithDirs(pendingFn.segs.map((t) => t.replace(/\}\s*$/, '').trim()).filter(Boolean));
+                if (entries.length > 0) deployFns.set(pendingFn.name, entries);
+                pendingFn = null;
+              }
+              continue;
+            }
+            pendingFn = null;
+          }
+        }
+        if (pendingFn) {
           const delta = braceDelta(seg);
           if (pendingFn.depth + delta <= 0) {
             const tail = seg.replace(/\}\s*$/, '').trim();
@@ -5406,6 +5428,11 @@ for (const file of walk(REPO_ROOT)) {
           } else {
             pendingFn = { name: fnDef[1], depth: open, segs: body ? [body] : [] };
           }
+          continue;
+        }
+        const fnOpen = seg.match(/^(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)\s*$/);
+        if (fnOpen) {
+          pendingFn = { name: fnOpen[1], depth: 0, segs: [], awaitingBrace: true };
           continue;
         }
         // `\b` so `wrangler deployments list` is not read as a deploy.
