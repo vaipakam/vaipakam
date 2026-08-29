@@ -49,7 +49,7 @@ import {
   VERDICT_CLOCK_TICK_MS,
   type TosVerdictData,
 } from './tosGate';
-import { acceptanceIsPinned, acceptanceScope, adoptOrderedPin } from './tosAcceptancePin';
+import { acceptanceIsPinned, acceptanceScope, adoptReceiptPin } from './tosAcceptancePin';
 import {
   buildAcceptancePinFrame,
   freshVerdict,
@@ -309,9 +309,16 @@ export function useTosAcceptance(): TosAcceptanceState {
       const conflicted =
         fresh !== undefined &&
         (fresh.version !== acceptedVersion || fresh.hash !== query.data.hash);
+      // Trusted-LOCAL adoption (#2004 round 13 P2): the receipt
+      // supersedes any EARLIER-stamped pin regardless of version — an
+      // unexpired higher pin from a reorged-out branch must not block
+      // the canonical restored-version acceptance this wallet just
+      // paid for. A later-stamped incumbent still wins (round 2's
+      // slow-RPC case), and the fresh-read conflict check above still
+      // runs first.
       const adopted =
         !conflicted &&
-        adoptOrderedPin(scope, acceptedVersion, query.data.hash, pinnedAt, Date.now());
+        adoptReceiptPin(scope, acceptedVersion, query.data.hash, pinnedAt, Date.now());
       // No freshness bar on the cache write for the receipt — it IS
       // the outcome, anchored; a stale or empty entry is simply
       // seeded (round 1's acting-tab prerogative) — EXCEPT a fresh

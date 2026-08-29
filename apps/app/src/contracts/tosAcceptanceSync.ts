@@ -285,29 +285,29 @@ export function applyAcceptancePinFrame(
     return;
   }
   const scope = acceptanceScope(frame.chainId, frame.address);
-  // Round 5 P1: a frame OLDER in version than a fresh read is refused
-  // before its pin can exist. The direct cache write was already
-  // guarded, but the pin had a second route to the same regression:
-  // stored, it waits for the immediate invalidation to hit a lagging
-  // node that still reports the old version, and `queryFn` then uses
-  // it to turn that answer into a fresh `accepted: true` — replacing
-  // a KNOWN newer refusal until the delayed read catches up. A fresh
-  // read outranks any frame from before it; a STALE newer entry does
-  // not refuse, deliberately — with the frame inside its 90s window,
-  // "the version rolled back and was re-accepted" (the restored-
-  // version reorg case) is the story the timestamps support.
+  // Any FRESH read that disagrees with the frame — on version in
+  // EITHER direction, or on hash — refuses it whole (rounds 5, 6 and
+  // 13, the last completing the rule). The direct cache write was
+  // always guarded; the pin had a second route to the regression:
+  // stored, it waits for an invalidation to hit a node still on the
+  // frame's branch, and `queryFn` turns that node's `false` into a
+  // fresh `accepted: true` over the authoritative refusal. A fresh
+  // HIGHER-version cache makes the frame history (round 5); the same
+  // version under a different hash is the reorged-governance text
+  // swap (round 6); and a fresh LOWER-version cache means a rollback
+  // restored older terms and the frame's branch is gone (round 13
+  // P1). The one legitimate-looking case the last refuses — a normal
+  // bump's frame against a seconds-stale cache — costs only the
+  // pin's lag protection until the reads land, the right price for a
+  // legal gate that must never open under noncanonical terms. A
+  // STALE differing entry does not refuse, deliberately: with the
+  // frame inside its 90s window, restored-and-re-accepted is the
+  // story the timestamps support, and the freshness bar keeps the
+  // verdict itself safe.
   const freshCached = freshVerdict(queryClient, queryKey, now);
-  // ...and a fresh SAME-version verdict with a DIFFERENT hash refuses
-  // too (round 6 P1): after a reorg replaces v3/hash-A with canonical
-  // v3/hash-B, a delayed hash-A frame passing a version-only guard
-  // would install a hash-A pin — and a lagging hash-A node plus
-  // `queryFn` would then replace the known canonical refusal with a
-  // fresh `accepted: true` under text the wallet never canonically
-  // accepted. Fresh conflicting evidence, either axis, kills the frame.
   if (
     freshCached &&
-    (freshCached.version > frame.version ||
-      (freshCached.version === frame.version && freshCached.hash !== frame.hash))
+    (freshCached.version !== frame.version || freshCached.hash !== frame.hash)
   ) {
     // Round 7 P2: in the reorged-governance case the REFUSED frame may
     // be the canonical one — another tab accepted hash-B while this

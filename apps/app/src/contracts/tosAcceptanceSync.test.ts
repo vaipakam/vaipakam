@@ -163,6 +163,26 @@ describe('applyAcceptancePinFrame', () => {
     expect(acceptanceIsPinned(scope, 4, HASH, frame().at)).toBe(false);
   });
 
+  it('a FRESH LOWER verdict also refuses the whole frame', () => {
+    // Round 13 P1: a rollback can restore older terms; a fresh
+    // authoritative v3 read plus a delayed orphaned v4 frame would
+    // otherwise install a v4 pin that a node still on the orphaned
+    // branch launders into accepted:true. Any fresh differing version
+    // now refuses — read hint only.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const restored: TosVerdictData = { accepted: false, version: 3, hash: HASH };
+    client.setQueryData(key, restored);
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    applyAcceptancePinFrame(client, frame({ version: 4 }), frame().at);
+    expect(client.getQueryData(key)).toEqual(restored);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, HASH, frame().at)).toBe(
+      false,
+    );
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+    invalidate.mockRestore();
+  });
+
   it('a STALE newer verdict does not refuse — the restored-version story stands', () => {
     // Round 5 P1's deliberate boundary: a >180s-old v4 read is not
     // authoritative about the present, and a v3 frame inside its 90s
@@ -492,19 +512,25 @@ describe('applyAcceptancePinFrame', () => {
   });
 
   it('a frame refused by ordering applies NOTHING — not even to a matching cache', () => {
-    // Review round 2 P1: cached `false` at v3, a v4 frame adopted (pin
-    // v4, cache untouched — different version), then a straggling v3
-    // frame. Ordering rejects its pin; without the whole-frame refusal
-    // the version guard would still match the v3 CACHE and rewrite it
-    // to `accepted: true` — the gates open under terms this tab's own
-    // pin already knows are obsolete.
+    // Review round 2 P1, re-staged after round 13: with a FRESH v3
+    // refusal the v4 frame is now refused outright by the conflict
+    // guard, so the ordering-refusal path is reachable only through a
+    // STALE cache — the entry aged past the verdict bound, which the
+    // conflict guard deliberately does not trust. A v4 frame then
+    // installs its pin (verdict untouched, freshness bar), and the
+    // straggling v3 frame is rejected by ordering; without the
+    // whole-frame refusal the version guard would still match the v3
+    // CACHE and rewrite it to `accepted: true` — the gates open under
+    // terms this tab's own pin already knows are obsolete.
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
-    const at = 1_700_000_000_000;
     client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
-    applyAcceptancePinFrame(client, frame({ version: 4, at }), at);
-    applyAcceptancePinFrame(client, frame({ version: 3, at: at - 5_000 }), at);
+    // The seeded entry is stamped with the real clock; applying with a
+    // far-future `now` makes it stale at apply time.
+    const now = Date.now() + MAX_VERDICT_AGE_MS + 60_000;
+    applyAcceptancePinFrame(client, frame({ version: 4, at: now }), now);
+    applyAcceptancePinFrame(client, frame({ version: 3, at: now - 5_000 }), now);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
-    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, HASH, at)).toBe(true);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, HASH, now)).toBe(true);
   });
 });

@@ -177,6 +177,37 @@ export function acceptanceIsPinned(
 }
 
 /**
+ * Trusted-LOCAL adoption for a mined receipt (#2004 round 13 P2).
+ *
+ * A receipt anchored at `at` proves its version and hash were canonical
+ * when it mined — `acceptTerms` reverts otherwise — so it supersedes
+ * any pin stamped EARLIER, including a higher-version pin from a branch
+ * a reorg has since discarded, which `adoptOrderedPin`'s version
+ * ordering would wrongly let stand (the tab then neither pinned, nor
+ * patched, nor broadcast a perfectly valid acceptance). Later-stamped
+ * incumbents still win: they are newer facts than this receipt, which
+ * is round 2's slow-RPC case. Ordinary remote frames must NOT use
+ * this — they prove history, not currency, and stay on version
+ * ordering.
+ */
+export function adoptReceiptPin(
+  scope: string,
+  version: number,
+  hash: string,
+  at: number,
+  now: number,
+): boolean {
+  let existing = pins.get(scope);
+  if (existing && now - existing.at > ACCEPTANCE_PIN_TTL_MS) {
+    pins.delete(scope);
+    existing = undefined;
+  }
+  if (existing && existing.at >= at) return false;
+  pins.set(scope, { version, hash, at });
+  return true;
+}
+
+/**
  * Wall-clock milliseconds this exact pin (scope, version AND hash) has
  * left, or null when no matching live pin exists. Read-only — deletion
  * of expired pins stays with `acceptanceIsPinned`. Exists for the
