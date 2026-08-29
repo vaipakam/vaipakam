@@ -113,9 +113,9 @@ export function DataRights() {
     // so every hook rehydrated from empty storage — but a reload also
     // throws away the result message, so the user is returned to a
     // fresh page with no confirmation that anything happened, which on
-    // this page is the whole point. Resetting the two mounted
-    // preference contexts explicitly is what keeps the screen honest
-    // without one.
+    // this page is the whole point. Resetting the live state explicitly
+    // — theme, mode, language, and everything on the erase epoch — is
+    // what keeps the screen honest without one.
   }
 
   return (
@@ -239,6 +239,7 @@ export function DataRights() {
           <li>{copy.dataRights.scopeChain}</li>
           <li>{copy.dataRights.scopeAlerts}</li>
           <li>{copy.dataRights.scopeDiagnostics}</li>
+          <li>{copy.dataRights.scopeTabs}</li>
           <li>{copy.dataRights.scopeSite}</li>
           <li>{copy.dataRights.scopeCookies}</li>
         </ul>

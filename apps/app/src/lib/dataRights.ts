@@ -32,6 +32,7 @@
  */
 
 import { clearLastError } from '../diagnostics/lastError';
+import { announceErase } from './eraseBroadcast';
 
 /**
  * Every prefix this app writes browser storage under.
@@ -95,6 +96,8 @@ export const EXPORT_NOTE =
   'anything held by the alerts service: unlinking in Settings removes the ' +
   'Telegram connection, while your alert preferences remain on that service ' +
   'for a future relink — email support@vaipakam.com to have those removed. ' +
+  'A small amount of data belongs to each browser tab on its own, so this ' +
+  'file covers the tab it was downloaded from — erasing reaches the others. ' +
   'Data stored by vaipakam.com is a separate store on a separate origin, ' +
   'with its own controls on that site.';
 
@@ -302,6 +305,21 @@ export interface EraseResult {
  * blanket "done" would collapse all three, and on this page the third
  * one is a false assurance.
  */
+/**
+ * Clear only what belongs to THIS browsing context.
+ *
+ * Split out so a tab receiving another tab's erasure can run exactly
+ * this much: session storage and the in-memory error slot. The shared
+ * stores were already cleared by the originating tab, and re-clearing
+ * them from every listener would be pointless work on a signal that
+ * can arrive many times.
+ */
+export function erasePerTabData(): number {
+  const removed = clearStorage(safeStorage('sessionStorage'));
+  clearLastError();
+  return removed;
+}
+
 export function eraseMyData(): EraseResult {
   const cookies = clearCookies();
   const local = clearStorage(safeStorage('localStorage'));
@@ -313,6 +331,11 @@ export function eraseMyData(): EraseResult {
   // report until the page happened to reload. An erasure that leaves a
   // copy in memory has not erased anything.
   clearLastError();
+  // `sessionStorage` and the memory slot are per browsing context, so
+  // the tabs this one cannot touch are told to clear their own (review
+  // round 2 P2). Announced AFTER the local erase so a listener never
+  // races ahead of the tab that started it.
+  announceErase();
   return {
     localStorage: local,
     sessionStorage: session,

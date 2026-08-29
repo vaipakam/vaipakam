@@ -728,6 +728,11 @@ Thin-market honesty rules apply.
 - **If any part of the browser's storage could not be read, the result is
   reported as incomplete rather than successful.** The app cannot claim to have
   emptied a store it was never allowed to look inside.
+- **An erasure reaches the app's other open tabs.** A small amount of data
+  belongs to each tab individually, and a page that says "this browser" may not
+  mean "this tab". The download is the exception and says so: it covers the tab
+  it was taken from, because collecting the others would mean waiting on tabs
+  that may never answer.
 - **The marketing site's equivalent page does not cover the connected app, and
   cannot.** Browser origin isolation means neither site can read or clear the
   other's stored data. Each surface needs its own controls; neither may claim

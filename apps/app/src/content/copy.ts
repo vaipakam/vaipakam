@@ -390,6 +390,13 @@ const copySource = {
        pointing at the working route is the honest interim. */
     scopeDiagnostics:
       'Error reports kept by our support service. Those are separate from your browser, and are erased on request — email support@vaipakam.com and we will remove the records for your wallet.',
+    /* Review round 2 P2 — the export reads only THIS tab's session
+       data, because `sessionStorage` belongs to one browsing context.
+       The erasure now reaches other tabs by broadcast; the export
+       cannot without waiting on tabs that may never answer, so the
+       limit is stated rather than glossed. */
+    scopeTabs:
+      'Other tabs, when it comes to the download. A small amount of data belongs to each tab on its own, so a download covers the tab you are on — erasing still clears the others. Download from each tab if you want the full picture.',
     scopeSite:
       'The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.',
     scopeCookies:

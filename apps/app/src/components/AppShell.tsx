@@ -38,6 +38,7 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { LiveChainSync } from '../chain/LiveChainSync';
 import { IndexerPushSync } from '../chain/IndexerPushSync';
 import { ReceiptSyncListener } from '../chain/ReceiptSyncListener';
+import { EraseSyncListener } from './EraseSyncListener';
 import { ConnectButton } from './ConnectButton';
 import { NotificationBell } from './NotificationBell';
 import { EmptyState } from './EmptyState';
@@ -223,6 +224,9 @@ export function AppShell() {
       <LiveChainSync />
       <IndexerPushSync />
       <ReceiptSyncListener />
+      {/* #1960 — another tab's erasure has to reach this one's
+          per-context data; see EraseSyncListener. */}
+      <EraseSyncListener />
       <header className="shell-topbar">
         <NavLink to="/" className="shell-brand" style={{ textDecoration: 'none' }}>
           <span className="brand-mark" aria-hidden>
