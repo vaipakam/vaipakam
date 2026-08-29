@@ -3121,17 +3121,14 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       ) {
         const interp = isYaml ? stepShellName(lines, i) : null;
         const env = isYaml ? stepEnvVars(lines, i) : null;
-        const folded = forInterpreter(expandActionsEnv(body, env), interp);
-        out.push(
-          ...offset(
-            logicalLines(folded),
-            start,
-            blockId,
-            isYaml ? workingDirFor(lines, i, !launchesDeploy) : '',
-            env,
-          ),
-        );
-        blockId += 1;
+        const base = expandActionsEnv(body, env);
+        const wd0 = isYaml ? workingDirFor(lines, i, !launchesDeploy) : '';
+        // One block per matrix expansion of the body (#1995 r19); a body
+        // carrying no resolvable matrix expression is its own single variant.
+        for (const b of (isYaml ? expandMatrixVariants(lines, i, base) : null) ?? [base]) {
+          out.push(...offset(logicalLines(forInterpreter(b, interp)), start, blockId, wd0, env));
+          blockId += 1;
+        }
       }
       i = j;
       continue;
@@ -3160,16 +3157,19 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
         const wd = workingDirFor(lines, i, !flowLaunches);
         if (wd) {
           const env = stepEnvVars(lines, i);
-          out.push(
-            ...offset(
-              logicalLines(forInterpreter(expandActionsEnv(flow[2], env), stepShellName(lines, i))),
-              i,
-              blockId,
-              wd,
-              env,
-            ),
-          );
-          blockId += 1;
+          const base = expandActionsEnv(flow[2], env);
+          for (const b of expandMatrixVariants(lines, i, base) ?? [base]) {
+            out.push(
+              ...offset(
+                logicalLines(forInterpreter(b, stepShellName(lines, i))),
+                i,
+                blockId,
+                wd,
+                env,
+              ),
+            );
+            blockId += 1;
+          }
         }
       }
       if (end > i) {
@@ -3189,21 +3189,20 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           ((stepIsShell(lines, i) || multiLaunches) && !stepIsDisabled(lines, i))
         ) {
           const env = isYaml ? stepEnvVars(lines, i) : null;
-          out.push(
-            ...offset(
-              logicalLines(
-                forInterpreter(
-                  expandActionsEnv(foldFlowScalar(parts, q), env),
-                  isYaml ? stepShellName(lines, i) : null,
-                ),
+          const base = expandActionsEnv(foldFlowScalar(parts, q), env);
+          const wd0 = isYaml ? workingDirFor(lines, i, !multiLaunches) : '';
+          for (const b of (isYaml ? expandMatrixVariants(lines, i, base) : null) ?? [base]) {
+            out.push(
+              ...offset(
+                logicalLines(forInterpreter(b, isYaml ? stepShellName(lines, i) : null)),
+                i,
+                blockId,
+                wd0,
+                env,
               ),
-              i,
-              blockId,
-              isYaml ? workingDirFor(lines, i, !multiLaunches) : '',
-              env,
-            ),
-          );
-          blockId += 1;
+            );
+            blockId += 1;
+          }
         }
         i = end + 1;
         continue;
@@ -3327,9 +3326,28 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       if (step) {
         for (let k = step.start; k < step.end && k < lines.length; k += 1) {
           const cm = lines[k].match(
-            /^\s*["']?command["']?:\s*(?:"([^"]*)"|'([^']*)'|(.+?))\s*$/,
+            /^(\s*)["']?command["']?:\s*(?:"([^"]*)"|'([^']*)'|(.+?))\s*$/,
           );
-          if (cm && cmd === null) cmd = (cm[1] ?? cm[2] ?? cm[3]).replace(/\s+#.*$/, '').trim();
+          if (cm && cmd === null) {
+            const rawCmd = (cm[2] ?? cm[3] ?? cm[4]).replace(/\s+#.*$/, '').trim();
+            // A BLOCK-SCALAR command: `command: |` runs each following line as
+            // its own wrangler invocation, and the one-line capture took the
+            // scalar MARKER as the command — so the synthesised text carried
+            // no deploy and the guard passed a bare scoped one (#1995 r19). A
+            // folded scalar (`>`) is one command, joined the way YAML folds it.
+            const bs = rawCmd.match(/^([|>])(?:[-+]?\d?|\d?[-+]?)$/);
+            if (bs) {
+              const bodyLines = [];
+              for (let b = k + 1; b < step.end && b < lines.length; b += 1) {
+                if (lines[b].trim() === '') continue;
+                if (((lines[b].match(/^\s*/) ?? [''])[0]).length <= cm[1].length) break;
+                bodyLines.push(lines[b].trim());
+              }
+              cmd = bs[1] === '>' ? bodyLines.join(' ') : bodyLines.join('\n');
+            } else {
+              cmd = rawCmd;
+            }
+          }
           // Rest-of-line, not `\S+`: an expression value contains spaces, and
           // the one-token capture kept only `${{` — the r11 working-directory
           // defect, repeated in the reader written after it (#1995 r18).
@@ -3354,7 +3372,16 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       // an expression or an anchor — both resolve exactly as the step key
       // would (#1995 r18).
       const cwd = wd === null ? '' : workingDirFor(lines, i, false, wd);
-      out.push(...offset(logicalLines(`wrangler ${cleanCmd}`), i, blockId, cwd ?? '', null));
+      // EACH line of a multiline command is its own `wrangler <line>` — that
+      // is how the action executes a block-scalar input — so each gets the
+      // prefix, not just the first (#1995 r19).
+      const synth = cleanCmd
+        .split('\n')
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .map((c) => `wrangler ${c}`)
+        .join('\n');
+      out.push(...offset(logicalLines(synth || 'wrangler deploy'), i, blockId, cwd ?? '', null));
       blockId += 1;
       i += 1;
       continue;
@@ -3997,6 +4024,302 @@ function stepIsShell(lines, runIdx) {
   return SHELL_KEYWORDS.has(interpreterOf(value));
 }
 
+/**
+ * The declared values of ONE matrix key, in any of the shapes Actions
+ * accepts: inline array, block sequence, flow mappings, and `include:`
+ * entries (kept paired for the shell-axis filter), minus `exclude:`d values.
+ *
+ * Hoisted out of `workingDirFor` so the run-body matrix expansion (#1995
+ * r19) consults the SAME lists the working-directory resolver does — a
+ * second reader of the matrix would drift exactly the way the three run
+ * ingest points used to.
+ */
+function matrixValuesFor(lines, runIdx, key, shellAxisKey) {
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  const vals = [];
+  const includeLegs = [];
+  // BOUNDED TO THE CONTAINING JOB. Scanning the whole workflow let an axis of
+  // the same name in an UNRELATED job scope this one — a deploy job whose
+  // `dir` is only the indexer was reported as the agent because another job
+  // declared an agent leg (#1995 r16). A false red, and the wrong package.
+  const jb = jobBounds(lines, runIdx);
+  const from = jb ? jb.start : 0;
+  const to = jb ? jb.end : lines.length;
+  for (let i = from; i < to; i += 1) {
+    const inline = lines[i].match(new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`));
+    if (inline) {
+      vals.push(...inline[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
+      continue;
+    }
+    // Block sequence: `dir:` on its own line, values as `- x` beneath it.
+    if (new RegExp(`^\\s*${key}:\\s*$`).test(lines[i])) {
+      const di = (lines[i].match(/^\s*/) ?? [''])[0].length;
+      for (let j = i + 1; j < lines.length; j += 1) {
+        if (lines[j].trim() === '') continue;
+        const ind = (lines[j].match(/^\s*/) ?? [''])[0].length;
+        if (ind <= di) break;
+        const item = lines[j].match(/^\s*-\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/);
+        if (item) vals.push(item[1] ?? item[2] ?? item[3]);
+      }
+      continue;
+    }
+    // `include:` entries are read STRUCTURALLY after this loop, so a leg's
+    // values stay together — the per-line matcher that stood here could not
+    // tell which entry a member belonged to (#1995 r17).
+    // A flow mapping may also carry an ARRAY-valued axis:
+    // `strategy: { matrix: { dir: [apps/agent] } }`. The start-anchored
+    // inline matcher above never sees it, and the scalar flow matcher below
+    // reads mapping members, not arrays — so an ordinary matrix written in
+    // flow style resolved to nothing (#1995 r16).
+    for (const fa of lines[i].matchAll(
+      new RegExp(`[{,]\\s*${key}:\\s*\\[([^\\]]*)\\]`, 'g'),
+    )) {
+      vals.push(...fa[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
+    }
+    // FLOW-style mappings put the key mid-line: `include: [{ dir: apps/agent }]`
+    // has no line beginning with `dir:`, so an anchored matcher recorded
+    // nothing. The block form was added first and the flow form is the same
+    // configuration written the other way — the identical omission the
+    // `defaults:` reader had at r13 (#1995 r16).
+    // Flow-style INCLUDE entries belong to the structured reader below,
+    // where their members stay paired; matching them here too would put the
+    // value back without its leg.
+    if (!/\binclude:\s*\[/.test(lines[i])) {
+      for (const fm of lines[i].matchAll(
+        new RegExp(`[{,]\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^\\s,}\\]]+))`, 'g'),
+      )) {
+        vals.push(fm[1] ?? fm[2] ?? fm[3]);
+      }
+    }
+  }
+  // `include:` ENTRIES, one Map per leg. An entry contributes its value for
+  // this key only when the leg can actually run the step: with the shell
+  // axis matrix-driven, an entry pairing this key with a NON-shell
+  // interpreter runs no shell there. Entries without the shell axis, and
+  // every value from a plain axis list, stay — a cross product pairs those
+  // with every interpreter.
+  for (let i = from; i < to && i < lines.length; i += 1) {
+    const flowInc = lines[i].match(/\binclude:\s*\[(.*)\]/);
+    if (flowInc) {
+      for (const em of flowInc[1].matchAll(/\{([^}]*)\}/g)) {
+        const entry = new Map();
+        for (const kv of em[1].matchAll(
+          /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
+        )) {
+          entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
+        }
+        if (entry.size > 0) includeLegs.push(entry);
+      }
+      continue;
+    }
+    if (!/^\s*include:\s*$/.test(lines[i])) continue;
+    const ii = indentOf(lines[i]);
+    let cur = null;
+    for (let j = i + 1; j < lines.length && j < to; j += 1) {
+      if (lines[j].trim() === '') continue;
+      if (indentOf(lines[j]) <= ii) break;
+      const flowEntry = lines[j].match(/^\s*-\s*\{([^}]*)\}\s*$/);
+      if (flowEntry) {
+        const entry = new Map();
+        for (const kv of flowEntry[1].matchAll(
+          /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
+        )) {
+          entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
+        }
+        if (entry.size > 0) includeLegs.push(entry);
+        cur = null;
+        continue;
+      }
+      const dash = lines[j].match(
+        /^\s*-\s+([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
+      );
+      const member = lines[j].match(
+        /^\s*([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
+      );
+      if (dash) {
+        cur = new Map();
+        includeLegs.push(cur);
+        cur.set(dash[1], dash[2] ?? dash[3] ?? dash[4]);
+      } else if (member && cur) {
+        cur.set(member[1], member[2] ?? member[3] ?? member[4]);
+      }
+    }
+  }
+  for (const entry of includeLegs) {
+    if (!entry.has(key)) continue;
+    if (
+      shellAxisKey &&
+      entry.has(shellAxisKey) &&
+      !SHELL_KEYWORDS.has(interpreterOf(entry.get(shellAxisKey)))
+    ) {
+      continue;
+    }
+    vals.push(entry.get(key));
+  }
+  // `exclude:` removes LEGS. A matrix declaring the agent and the indexer and
+  // then excluding the agent runs no agent leg at all, but the collector kept
+  // the declared value and reported a violation for a leg that does not exist
+  // (#1995 r16). Another false red.
+  //
+  // Single-axis reading, which is what this resolver models: a value named
+  // under `exclude` is dropped. A multi-axis exclusion removes a COMBINATION
+  // rather than a value, and dropping the value there would be too eager, so
+  // an exclude entry carrying more than one key is left alone — which keeps
+  // the leg and errs toward reporting.
+  const excluded = new Set();
+  for (let i = from; i < to; i += 1) {
+    if (/^\s*exclude:\s*$/.test(lines[i])) {
+      const ei = indentOf(lines[i]);
+      for (let j = i + 1; j < lines.length && j < to; j += 1) {
+        if (lines[j].trim() === '') continue;
+        if (indentOf(lines[j]) <= ei) break;
+        const only = lines[j].match(
+          new RegExp(`^\\s*-\\s+${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
+        );
+        if (only) excluded.add(only[1] ?? only[2] ?? only[3]);
+      }
+    }
+    for (const fm of lines[i].matchAll(
+      new RegExp(
+        `exclude:\\s*\\[\\s*\\{\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^\\s,}]+))\\s*\\}`,
+        'g',
+      ),
+    )) {
+      excluded.add(fm[1] ?? fm[2] ?? fm[3]);
+    }
+  }
+  return vals.filter(Boolean).filter((v) => !excluded.has(v));
+}
+
+/**
+ * Every body a matrix-templated `run:` can execute as.
+ *
+ * `run: ${{ matrix.cmd }}` with `cmd: ['wrangler deploy']` executes the deploy
+ * from that leg's directory, but run-body expansion handled only `env`
+ * expressions — so the seeded block kept the unresolved text while the matrix
+ * declaration held the deploy with no step scope beside it (#1995 r19).
+ *
+ * Substituted from the SAME flat per-key lists the working-directory resolver
+ * consults, include-leg values included — which is that resolver's own
+ * approximation: values combine by cross product rather than being held to
+ * their include pairing, erring toward reporting. A key with no declared
+ * values keeps its expression (it carries no command text either way), and
+ * the product is capped the way `resolveExpression`'s is.
+ */
+function expandMatrixVariants(lines, runIdx, body) {
+  if (!/\$\{\{\s*matrix\./.test(body)) return null;
+  const keys = [
+    ...new Set(
+      [...body.matchAll(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/g)].map((m) => m[1]),
+    ),
+  ];
+  let variants = [body];
+  let expanded = false;
+  for (const k of keys) {
+    const vals = matrixValuesFor(lines, runIdx, k, null);
+    if (vals.length === 0) continue;
+    expanded = true;
+    const next = [];
+    for (const b of variants) {
+      for (const v of vals) {
+        next.push(b.replace(new RegExp(String.raw`\$\{\{\s*matrix\.${k}\s*\}\}`, 'g'), v));
+        if (next.length >= 32) break;
+      }
+      if (next.length >= 32) break;
+    }
+    variants = next;
+  }
+  return expanded ? variants : null;
+}
+
+/**
+ * Values a reusable workflow's input is CALLED with, from checked-in callers.
+ *
+ * A required input has no default, so the callee's own text resolves it to
+ * nothing — but `jobs.<id>.uses: ./.github/workflows/<this-file>` with
+ * `with: dir: apps/agent` in a sibling workflow is statically known, and
+ * Actions runs the callee's bare deploy with exactly that value (#1995 r19).
+ * Callers are read from the same workflows directory. The current file is
+ * MODULE STATE set once per file in the main loop rather than threaded
+ * through every resolver signature — this scanner is single-threaded, and
+ * the alternative touches five signatures for one consumer.
+ *
+ * Block-form `with:` only. The flow spelling cannot be tied to its `uses:`
+ * line from a text match, and an untied match would let an unrelated step's
+ * input scope this one — the false-red direction.
+ */
+let CURRENT_REL = '';
+function callerSuppliedInputs(key) {
+  if (!/^\.github\/workflows\/[^/]+$/.test(CURRENT_REL)) return [];
+  const base = CURRENT_REL.slice('.github/workflows/'.length);
+  const vals = [];
+  let entries = [];
+  try {
+    entries = readdirSync(join(REPO_ROOT, '.github/workflows'));
+  } catch {
+    return [];
+  }
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  for (const f of entries) {
+    if (!/\.ya?ml$/.test(f) || f === base) continue;
+    let text;
+    try {
+      text = readFileSync(join(REPO_ROOT, '.github/workflows', f), 'utf8');
+    } catch {
+      continue;
+    }
+    if (!text.includes(base)) continue;
+    const ls = text.split('\n');
+    for (let i = 0; i < ls.length; i += 1) {
+      if (
+        !new RegExp(
+          String.raw`^\s*uses:\s*["']?\./\.github/workflows/${base.replace(/\./g, '\\.')}["']?(?:@|\s|$)`,
+        ).test(ls[i])
+      ) {
+        continue;
+      }
+      const ui = indentOf(ls[i]);
+      for (let j = i + 1; j < ls.length; j += 1) {
+        if (ls[j].trim() === '') continue;
+        if (indentOf(ls[j]) < ui) break;
+        if (indentOf(ls[j]) !== ui) continue;
+        if (!/^\s*with:\s*$/.test(ls[j])) continue;
+        for (let k = j + 1; k < ls.length; k += 1) {
+          if (ls[k].trim() === '') continue;
+          if (indentOf(ls[k]) <= ui) break;
+          const kv = ls[k].match(
+            new RegExp(`^\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
+          );
+          if (kv) vals.push(kv[1] ?? kv[2] ?? kv[3]);
+        }
+        break;
+      }
+    }
+  }
+  return vals.filter(Boolean);
+}
+
+/**
+ * An ALIAS-ONLY scalar resolves to its anchor's value.
+ *
+ * `working-directory: *agent-dir`, with `&agent-dir apps/agent` declared
+ * anywhere in the file, is the protected directory to YAML — but the property
+ * strip removes an alias only when a scalar FOLLOWS it on the same node, so an
+ * alias that IS the node stayed as `*agent-dir`, which scopes nothing (#1995
+ * r19). Resolved against the first `&name <scalar>` in the file; an anchor
+ * that cannot be found resolves to nothing rather than to the alias text —
+ * `*agent-dir` is not a directory name, the r11 rule again.
+ */
+function resolveYamlAliasOnly(lines, value) {
+  const m = /^\*([\w-]+)$/.exec(value ?? '');
+  if (!m) return value;
+  for (const l of lines) {
+    const am = l.match(new RegExp(`&${m[1]}\\s+(?:"([^"]*)"|'([^']*)'|([^\\s#]+))`));
+    if (am) return am[1] ?? am[2] ?? am[3];
+  }
+  return '';
+}
+
 function workingDirFor(lines, runIdx, legShellFilter = true, rawValue = null) {
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
   // When the step's SHELL is itself matrix-driven, a directory and an
@@ -4098,161 +4421,7 @@ function workingDirFor(lines, runIdx, legShellFilter = true, rawValue = null) {
    * standard object form — resolved to nothing and its bare agent deploy
    * passed (#1995 r16).
    */
-  const matrixValues = (key) => {
-    const vals = [];
-    const includeLegs = [];
-    // BOUNDED TO THE CONTAINING JOB. Scanning the whole workflow let an axis of
-    // the same name in an UNRELATED job scope this one — a deploy job whose
-    // `dir` is only the indexer was reported as the agent because another job
-    // declared an agent leg (#1995 r16). A false red, and the wrong package.
-    const jb = jobBounds(lines, runIdx);
-    const from = jb ? jb.start : 0;
-    const to = jb ? jb.end : lines.length;
-    for (let i = from; i < to; i += 1) {
-      const inline = lines[i].match(new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`));
-      if (inline) {
-        vals.push(...inline[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
-        continue;
-      }
-      // Block sequence: `dir:` on its own line, values as `- x` beneath it.
-      if (new RegExp(`^\\s*${key}:\\s*$`).test(lines[i])) {
-        const di = (lines[i].match(/^\s*/) ?? [''])[0].length;
-        for (let j = i + 1; j < lines.length; j += 1) {
-          if (lines[j].trim() === '') continue;
-          const ind = (lines[j].match(/^\s*/) ?? [''])[0].length;
-          if (ind <= di) break;
-          const item = lines[j].match(/^\s*-\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/);
-          if (item) vals.push(item[1] ?? item[2] ?? item[3]);
-        }
-        continue;
-      }
-      // `include:` entries are read STRUCTURALLY after this loop, so a leg's
-      // values stay together — the per-line matcher that stood here could not
-      // tell which entry a member belonged to (#1995 r17).
-      // A flow mapping may also carry an ARRAY-valued axis:
-      // `strategy: { matrix: { dir: [apps/agent] } }`. The start-anchored
-      // inline matcher above never sees it, and the scalar flow matcher below
-      // reads mapping members, not arrays — so an ordinary matrix written in
-      // flow style resolved to nothing (#1995 r16).
-      for (const fa of lines[i].matchAll(
-        new RegExp(`[{,]\\s*${key}:\\s*\\[([^\\]]*)\\]`, 'g'),
-      )) {
-        vals.push(...fa[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
-      }
-      // FLOW-style mappings put the key mid-line: `include: [{ dir: apps/agent }]`
-      // has no line beginning with `dir:`, so an anchored matcher recorded
-      // nothing. The block form was added first and the flow form is the same
-      // configuration written the other way — the identical omission the
-      // `defaults:` reader had at r13 (#1995 r16).
-      // Flow-style INCLUDE entries belong to the structured reader below,
-      // where their members stay paired; matching them here too would put the
-      // value back without its leg.
-      if (!/\binclude:\s*\[/.test(lines[i])) {
-        for (const fm of lines[i].matchAll(
-          new RegExp(`[{,]\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^\\s,}\\]]+))`, 'g'),
-        )) {
-          vals.push(fm[1] ?? fm[2] ?? fm[3]);
-        }
-      }
-    }
-    // `include:` ENTRIES, one Map per leg. An entry contributes its value for
-    // this key only when the leg can actually run the step: with the shell
-    // axis matrix-driven, an entry pairing this key with a NON-shell
-    // interpreter runs no shell there. Entries without the shell axis, and
-    // every value from a plain axis list, stay — a cross product pairs those
-    // with every interpreter.
-    for (let i = from; i < to && i < lines.length; i += 1) {
-      const flowInc = lines[i].match(/\binclude:\s*\[(.*)\]/);
-      if (flowInc) {
-        for (const em of flowInc[1].matchAll(/\{([^}]*)\}/g)) {
-          const entry = new Map();
-          for (const kv of em[1].matchAll(
-            /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
-          )) {
-            entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
-          }
-          if (entry.size > 0) includeLegs.push(entry);
-        }
-        continue;
-      }
-      if (!/^\s*include:\s*$/.test(lines[i])) continue;
-      const ii = indentOf(lines[i]);
-      let cur = null;
-      for (let j = i + 1; j < lines.length && j < to; j += 1) {
-        if (lines[j].trim() === '') continue;
-        if (indentOf(lines[j]) <= ii) break;
-        const flowEntry = lines[j].match(/^\s*-\s*\{([^}]*)\}\s*$/);
-        if (flowEntry) {
-          const entry = new Map();
-          for (const kv of flowEntry[1].matchAll(
-            /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
-          )) {
-            entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
-          }
-          if (entry.size > 0) includeLegs.push(entry);
-          cur = null;
-          continue;
-        }
-        const dash = lines[j].match(
-          /^\s*-\s+([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
-        );
-        const member = lines[j].match(
-          /^\s*([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
-        );
-        if (dash) {
-          cur = new Map();
-          includeLegs.push(cur);
-          cur.set(dash[1], dash[2] ?? dash[3] ?? dash[4]);
-        } else if (member && cur) {
-          cur.set(member[1], member[2] ?? member[3] ?? member[4]);
-        }
-      }
-    }
-    for (const entry of includeLegs) {
-      if (!entry.has(key)) continue;
-      if (
-        shellAxisKey &&
-        entry.has(shellAxisKey) &&
-        !SHELL_KEYWORDS.has(interpreterOf(entry.get(shellAxisKey)))
-      ) {
-        continue;
-      }
-      vals.push(entry.get(key));
-    }
-    // `exclude:` removes LEGS. A matrix declaring the agent and the indexer and
-    // then excluding the agent runs no agent leg at all, but the collector kept
-    // the declared value and reported a violation for a leg that does not exist
-    // (#1995 r16). Another false red.
-    //
-    // Single-axis reading, which is what this resolver models: a value named
-    // under `exclude` is dropped. A multi-axis exclusion removes a COMBINATION
-    // rather than a value, and dropping the value there would be too eager, so
-    // an exclude entry carrying more than one key is left alone — which keeps
-    // the leg and errs toward reporting.
-    const excluded = new Set();
-    for (let i = from; i < to; i += 1) {
-      if (/^\s*exclude:\s*$/.test(lines[i])) {
-        const ei = indentOf(lines[i]);
-        for (let j = i + 1; j < lines.length && j < to; j += 1) {
-          if (lines[j].trim() === '') continue;
-          if (indentOf(lines[j]) <= ei) break;
-          const only = lines[j].match(
-            new RegExp(`^\\s*-\\s+${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
-          );
-          if (only) excluded.add(only[1] ?? only[2] ?? only[3]);
-        }
-      }
-      for (const fm of lines[i].matchAll(
-        new RegExp(
-          `exclude:\\s*\\[\\s*\\{\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|([^\\s,}]+))\\s*\\}`,
-          'g',
-        ),
-      )) {
-        excluded.add(fm[1] ?? fm[2] ?? fm[3]);
-      }
-    }
-    return vals.filter(Boolean).filter((v) => !excluded.has(v));
-  };
+  const matrixValues = (key) => matrixValuesFor(lines, runIdx, key, shellAxisKey);
 
   /**
    * The values a workflow `env` key can hold at one precedence level.
@@ -4374,7 +4543,7 @@ function workingDirFor(lines, runIdx, legShellFilter = true, rawValue = null) {
         m[1] === 'env'
           ? envValues(m[2])
           : m[1] === 'inputs'
-            ? inputDefaultValues(m[2])
+            ? [...inputDefaultValues(m[2]), ...callerSuppliedInputs(m[2])]
             : matrixValues(m[2]),
     }));
     const known = axes.filter((a) => a.values.length > 0);
@@ -4427,7 +4596,8 @@ function workingDirFor(lines, runIdx, legShellFilter = true, rawValue = null) {
       ) ?? ''
     );
   };
-  const valueOf = (m) => normalizePath(resolveExpression(m[1] ?? m[2] ?? m[3]));
+  const valueOf = (m) =>
+    normalizePath(resolveExpression(resolveYamlAliasOnly(lines, m[1] ?? m[2] ?? m[3])));
   /**
    * The same resolution for a FLOW-style capture.
    *
@@ -4436,13 +4606,18 @@ function workingDirFor(lines, runIdx, legShellFilter = true, rawValue = null) {
    * branch was added before either existed and never joined them (#1995 r16).
    * Two return sites, job-level and workflow-level, and both had it.
    */
-  const flowValueOf = (m) => normalizePath(resolveExpression(m[1] ?? m[2] ?? m[3]));
+  const flowValueOf = (m) =>
+    normalizePath(resolveExpression(resolveYamlAliasOnly(lines, m[1] ?? m[2] ?? m[3])));
 
   // A RAW VALUE from elsewhere — a wrangler-action `workingDirectory:` input —
   // takes the same resolution the step key gets: property strip, expression
   // resolution, normalisation. Taking it literally left `${{ matrix.dir }}`
   // as a directory name, which scopes nothing (#1995 r18).
-  if (rawValue !== null) return normalizePath(resolveExpression(stripYamlProps(rawValue)));
+  if (rawValue !== null) {
+    return normalizePath(
+      resolveExpression(resolveYamlAliasOnly(lines, stripYamlProps(rawValue))),
+    );
+  }
 
   // STEP level wins over the job default, which is Actions' own precedence.
   const stepWd = scanStepKeys(lines, runIdx, WD);
@@ -4689,6 +4864,8 @@ function* walk(dir) {
 const violations = [];
 for (const file of walk(REPO_ROOT)) {
   const rel = relative(REPO_ROOT, file);
+  // For `callerSuppliedInputs` — see its doc for why this is module state.
+  CURRENT_REL = rel;
   // This guard's own documentation quotes the unsafe form on purpose, and its
   // test file is ENTIRELY unsafe fixtures — that is what it tests. Skipping
   // both by name rather than by content, so no real file can hide here.
@@ -4775,7 +4952,15 @@ for (const file of walk(REPO_ROOT)) {
         // This is the one thing the prefilter cannot decide from the line
         // alone, so it defers: sourcing is a reason to LOOK, and the walk then
         // reads the helper and scores its deploys against the caller's state.
-        /(?:^|[\s;&|(])(?:source|\.)\s+\S/.test(l.text),
+        /(?:^|[\s;&|(])(?:source|\.)\s+\S/.test(l.text) ||
+        // …and a helper EXECUTED as its own process: `cd apps/agent` then
+        // `../../deploy.sh` (or `bash ../../deploy.sh`) carries no deploy
+        // text either, and deferring only `source` skipped exactly this
+        // caller (#1995 r19). Admits the file; the walk decides what the
+        // helper actually contains.
+        /(?:^|[\s;&|(])(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*)?(?:[\w.@-]+\/)*[\w.@-]+\.sh(?:\s|$)/.test(
+          l.text,
+        ),
     )
   ) {
     continue;
@@ -5316,6 +5501,25 @@ for (const file of walk(REPO_ROOT)) {
         if (dir?.kind === 'source') {
           deferred.push(...sourcedDeploys(resolveDir(input[0]?.cwd ?? '', dir.target, shellVars)));
         }
+        // A helper EXECUTED as its own process inherits this shell's cwd just
+        // as a sourced one does — `cd apps/agent; ../../deploy.sh` (or
+        // `bash ../../deploy.sh`) runs the helper's bare deploy FROM the agent
+        // — but only `source` deferred, so the caller was skipped and the
+        // helper's own scan had no scope (#1995 r19). Unlike source, the
+        // child's directory changes never return to this shell; that falls
+        // out of the detection being read-only — nothing here touches the
+        // walk's states, and `sourcedDeploys` applies the helper's moves only
+        // to the deferred entries themselves.
+        const execHelper =
+          !dir &&
+          seg.match(
+            /^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*)?((?:[\w.@-]+\/)*[\w.@-]+\.sh)(?:\s|$)/,
+          );
+        if (execHelper) {
+          deferred.push(
+            ...sourcedDeploys(resolveDir(input[0]?.cwd ?? '', execHelper[1], shellVars)),
+          );
+        }
         if (/^shopt\s+-s\b[^;]*\bexpand_aliases\b/.test(seg)) aliasesOn = true;
         const aliasDef = seg.match(
           /^alias\s+([A-Za-z_][\w-]*)=("[^"]*"|'[^']*'|[^\s]+)\s*$/,
@@ -5327,7 +5531,12 @@ for (const file of walk(REPO_ROOT)) {
           if (entries.length > 0) deployAliases.set(aliasDef[1], entries);
           continue;
         }
-        const callName = seg.match(/^([A-Za-z_][\w-]*)\s*$/)?.[1];
+        // The COMMAND WORD, arguments allowed: `deploy_worker production`
+        // still invokes the recorded helper, and requiring the name to be the
+        // whole segment missed every call that passes one (#1995 r19). Only
+        // names actually recorded in `deployFns`/`deployAliases` resolve, so
+        // ordinary commands' first words look up nothing.
+        const callName = seg.match(/^([A-Za-z_][\w-]*)(?:\s+\S.*)?$/)?.[1];
         if (callName && deployFns.has(callName)) deferred.push(...deployFns.get(callName));
         if (callName && aliasesOn && deployAliases.has(callName)) {
           deferred.push(...deployAliases.get(callName));

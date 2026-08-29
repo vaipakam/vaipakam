@@ -5351,3 +5351,207 @@ describe('check-deploy-invocations — #1995 r18', () => {
     ).toBe(true);
   });
 });
+
+describe('check-deploy-invocations — #1995 r19', () => {
+  // A helper EXECUTED as its own process inherits the caller's cwd exactly as
+  // a sourced one does, but only `source` was deferred — so the caller was
+  // skipped at the prefilter and the helper's own scan had no scope.
+  it('a root-level helper executed after cd into a protected package', () => {
+    seed('deploy.sh', 'wrangler deploy\n');
+    const r = runWith('w.sh', 'cd apps/agent\n../../deploy.sh\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('the same helper launched through an interpreter word', () => {
+    seed('deploy.sh', 'wrangler deploy\n');
+    const r = runWith('w.sh', 'cd apps/agent\nbash ../../deploy.sh\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('but the helper executed from an unprotected directory passes', () => {
+    seed('deploy.sh', 'wrangler deploy\n');
+    const r = runWith('w.sh', 'cd apps/indexer\n../../deploy.sh\n');
+    expect(r.ok).toBe(true);
+  });
+
+  // `deploy_worker production` still invokes the recorded helper; the call
+  // matcher required the name to be the whole segment.
+  it('a recorded helper called with arguments', () => {
+    const r = runWith(
+      'contracts/script/redeploy.sh',
+      'deploy_worker() {\n  wrangler deploy\n}\ncd apps/agent\ndeploy_worker production\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // A reusable workflow's required input has no default; its checked-in
+  // caller supplies `dir: apps/agent`, which is statically known.
+  it('a reusable workflow whose caller supplies the protected directory', () => {
+    seed(
+      '.github/workflows/caller.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    uses: ./.github/workflows/reusable.yml',
+        '    with:',
+        '      dir: apps/agent',
+        '',
+      ].join('\n'),
+    );
+    const r = runWith(
+      '.github/workflows/reusable.yml',
+      [
+        'on:',
+        '  workflow_call:',
+        '    inputs:',
+        '      dir:',
+        '        required: true',
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - run: wrangler deploy',
+        '        working-directory: ${{ inputs.dir }}',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a caller supplying an unprotected directory passes', () => {
+    seed(
+      '.github/workflows/caller.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    uses: ./.github/workflows/reusable.yml',
+        '    with:',
+        '      dir: apps/indexer',
+        '',
+      ].join('\n'),
+    );
+    const r = runWith(
+      '.github/workflows/reusable.yml',
+      [
+        'on:',
+        '  workflow_call:',
+        '    inputs:',
+        '      dir:',
+        '        required: true',
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - run: wrangler deploy',
+        '        working-directory: ${{ inputs.dir }}',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // The command itself lives in a matrix axis: the declaration holds the
+  // deploy text with no step scope, and the run body held the unresolved
+  // expression.
+  it('a matrix-supplied run command paired with a matrix directory', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    strategy:',
+        '      matrix:',
+        '        dir: [apps/agent]',
+        "        cmd: ['wrangler deploy']",
+        '    steps:',
+        '      - run: ${{ matrix.cmd }}',
+        '        working-directory: ${{ matrix.dir }}',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  // An alias-only scalar IS the anchored value to YAML; the property strip
+  // only handled an alias with a scalar following it on the same node.
+  it('an alias-only working-directory resolving to a protected anchor', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    env:',
+        '      AGENT_DIR: &agent-dir apps/agent',
+        '    steps:',
+        '      - run: wrangler deploy',
+        '        working-directory: *agent-dir',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // wrangler-action's `command:` as a block scalar: the one-line capture took
+  // the marker `|` as the command, so the synthesised text held no deploy.
+  it('wrangler-action with a literal block-scalar command', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: apps/agent',
+        '          command: |',
+        '            deploy',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('wrangler-action with a folded block-scalar command', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: apps/keeper',
+        '          command: >',
+        '            deploy',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but a block-scalar command carrying --keep-vars passes', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: apps/agent',
+        '          command: |',
+        '            deploy --keep-vars',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(true);
+  });
+});
