@@ -257,10 +257,12 @@ export function adoptOrderedPin(
  * correction can carry an anchor in the FUTURE, whose negative age
  * would never expire until wall time caught up. Either way nothing
  * is applied — the caller's authoritative reads take the case,
- * exactly like an expired frame. (The caller narrows both windows
- * first: it clamps a future submission stamp to its own clock and
- * re-anchors a long-pending receipt at its mined block's timestamp,
- * so these guards are the backstop, not the common path.) The
+ * exactly like an expired frame. These refusals are deliberate, not
+ * a gap: review rounds 16–22 tried to rebuild a trustworthy anchor
+ * for the long-pending case from RPC block samples, and retired the
+ * idea — ancestry is not provable from unpinned samples, and a
+ * receipt older than the TTL needs no lag correction anyway (every
+ * node lagging by less than the TTL already serves it). The
  * caller's fresh-read conflict guard still runs FIRST, so a receipt
  * this tab has already read past never reaches here.
  */

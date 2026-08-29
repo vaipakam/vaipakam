@@ -51,8 +51,6 @@ import {
   type TosVerdictData,
 } from './tosGate';
 import {
-  ACCEPTANCE_PIN_TTL_MS,
-  MAX_FUTURE_SKEW_MS,
   acceptanceIsPinned,
   acceptanceScope,
   adoptReceiptPin,
@@ -303,64 +301,25 @@ export function useTosAcceptance(): TosAcceptanceState {
       // refused local receipt is real but superseded, and the
       // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
-      // The submission stamp anchors the pin in the COMMON case. When
-      // it is not trustworthy — expired (a transaction pending past
-      // the window: congestion, a late speed-up — round 16 P2) or
-      // future-dated beyond the skew (a backward clock correction —
-      // round 16 P1) — the anchor is rebuilt from CHAIN-DERIVED age:
-      // latest block timestamp minus the receipt block's, expressed
-      // against this clock. Chain time is the one measure of "how
-      // long ago did this mine" that survives local corrections
-      // (round 17 P1): round 16's `min(stamp, now)` clamp restarted
-      // the window whenever the clock moved backward DURING a
-      // suspension, handing a possibly-orphaned acceptance a fresh
-      // 90 seconds — while chain age keeps counting through both the
-      // sleep and the correction, so a genuinely old acceptance is
-      // refused and a congested-but-just-mined one is preserved.
-      // Fetched only on the exceptional paths; on failure the RAW
-      // stamp stands, adoption refuses it (expired or future), and
-      // the always-scheduled reads carry the case — fail closed,
-      // never a guessed window.
-      let pinnedAt = submittedAt;
-      const stampAge = Date.now() - submittedAt;
-      if (
-        (stampAge > ACCEPTANCE_PIN_TTL_MS || stampAge < -MAX_FUTURE_SKEW_MS) &&
-        publicClient
-      ) {
-        try {
-          const [latestBlock, minedBlock] = await Promise.all([
-            publicClient.getBlock(),
-            publicClient.getBlock({ blockNumber: receipt.blockNumber }),
-          ]);
-          // The height lookup returns whatever block CURRENTLY holds
-          // that number — after a reorg, the replacement, whose
-          // recent timestamp would hand the ORPHANED receipt a fresh
-          // anchor (round 18 P1). Only the block that actually
-          // carries this receipt may re-anchor it. And the two
-          // samples must be CONSISTENT with each other (round 21 P1):
-          // the transport fallback can serve these concurrent
-          // requests from different endpoints during a partial
-          // failure, and a "latest" answered by a node still BEHIND
-          // the receipt's height yields a negative delta — which the
-          // earlier clamp-to-zero read as "mined just now", handing
-          // an old, possibly orphaned receipt a fresh window on the
-          // strength of an incoherent sample. A sample is used only
-          // when the latest block sits at or past the receipt's, by
-          // number and by timestamp; anything else keeps the raw
-          // refused stamp, and the reads decide.
-          if (
-            minedBlock.hash === receipt.blockHash &&
-            latestBlock.number >= minedBlock.number &&
-            latestBlock.timestamp >= minedBlock.timestamp
-          ) {
-            const chainAgeMs =
-              (Number(latestBlock.timestamp) - Number(minedBlock.timestamp)) * 1_000;
-            pinnedAt = Date.now() - chainAgeMs;
-          }
-        } catch {
-          // Keep the raw stamp: adoption refuses, reads decide.
-        }
-      }
+      // Anchored at SUBMISSION, and deliberately ONLY there. When the
+      // stamp is untrustworthy — expired (a transaction pending past
+      // the pin window: congestion, a late speed-up) or future-dated
+      // beyond the skew allowance (a backward clock correction) — the
+      // adoption guards refuse it outright and the always-scheduled
+      // reads carry the case. Rounds 16–22 of review tried to rebuild
+      // a trustworthy anchor from RPC block samples for the
+      // long-pending case, and every construction fell to the same
+      // wall: a replaced block at the receipt's height (round 18), a
+      // regressive latest sample (round 21), a cross-fork pair from a
+      // split transport fallback (round 22) — ancestry is simply not
+      // provable from unpinned samples. What retired the idea rather
+      // than patched it again is that the window it defended is
+      // empty: the pin exists to correct nodes LAGGING by seconds,
+      // and a receipt already older than the whole TTL is visible to
+      // every such node — by the time a re-anchor could matter, there
+      // is no lag left for a pin to correct, so a refused anchor
+      // costs nothing the immediate and delayed reads don't recover.
+      const pinnedAt = submittedAt;
       // A fresh read is used here to REJECT a conflicting receipt,
       // never to REQUIRE a matching one (#2004 round 5 P1 shaped by
       // round 6 P2). The asymmetry with the receiver is deliberate and
@@ -556,7 +515,6 @@ export function useTosAcceptance(): TosAcceptanceState {
     address,
     readChain.chainId,
     readChain.diamondAddress,
-    publicClient,
   ]);
 
   // Self-review before review round 1: a DISABLED query is `isPending`
