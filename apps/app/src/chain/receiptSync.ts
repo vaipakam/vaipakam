@@ -335,8 +335,29 @@ export function listenForReceiptInvalidations(
   // layer serves the acceptance the missed frame was announcing.
   // Active-only, once per tab boot — a frame is an optimization, the
   // read is the truth.
+  //
+  // TWO invalidations, the second chained on the first settling
+  // (round 28 P2): with the INITIAL fetch still in flight and no
+  // cached data, an invalidation coalesces into that same request —
+  // TanStack returns the in-flight promise — so a slow first read
+  // issued BEFORE the acceptance would have satisfied the "re-read"
+  // with pre-acceptance data. Awaiting the first invalidation
+  // guarantees whatever was in flight has settled; the second then
+  // starts a DISTINCT read. When nothing was in flight the cost is
+  // one extra active-only refetch at boot, which the query's own
+  // staleTime absorbs.
   const bootRecheck = setTimeout(() => {
-    invalidateRoots(queryClient, [TOS_QUERY_ROOT]);
+    const termsOnly = {
+      refetchType: 'active' as const,
+      predicate: (q: { queryKey: readonly unknown[] }) =>
+        q.queryKey[0] === TOS_QUERY_ROOT,
+    };
+    void queryClient
+      .invalidateQueries(termsOnly)
+      .then(() => queryClient.invalidateQueries(termsOnly))
+      .catch(() => {
+        /* refetch failures surface through the queries themselves */
+      });
   }, SECOND_READ_DELAY_MS);
 
   return () => {

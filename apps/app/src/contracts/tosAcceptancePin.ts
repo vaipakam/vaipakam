@@ -158,6 +158,7 @@ function pinExpired(pin: AcceptancePin, now: number): boolean {
  */
 const CLOCK_REGRESSION_CHECK_MS = 10_000;
 let lastBeatWall = 0;
+let lastBeatMono = 0;
 let beatTimer: ReturnType<typeof setInterval> | null = null;
 
 function stopClockWatch(): void {
@@ -170,14 +171,27 @@ function stopClockWatch(): void {
 function ensureClockWatch(): void {
   if (beatTimer !== null) return;
   lastBeatWall = Date.now();
+  lastBeatMono = monoNow();
   beatTimer = setInterval(() => {
     const wall = Date.now();
-    if (wall < lastBeatWall - MAX_FUTURE_SKEW_MS) {
+    const mono = monoNow();
+    // The signature of a compromised interval is the two clocks
+    // DISAGREEING about how long it lasted (round 28 P1 — a plain
+    // regression check missed a correction applied during a sleep,
+    // where the wall clock can still show NET FORWARD movement while
+    // real elapsed time exceeded it). Awake, both clocks advance in
+    // lockstep — a late-firing beat inflates both deltas equally, so
+    // their difference is jitter-immune — while a sleep stalls the
+    // monotonic side and a correction moves only the wall side, each
+    // pulling the deltas apart. Past the skew allowance the true
+    // elapsed time is unknowable, and unknowable means fail closed.
+    if (Math.abs(wall - lastBeatWall - (mono - lastBeatMono)) > MAX_FUTURE_SKEW_MS) {
       for (const pin of pins.values()) {
         pin.monoDeadline = Number.NEGATIVE_INFINITY;
       }
     }
     lastBeatWall = wall;
+    lastBeatMono = mono;
     if (pins.size === 0) stopClockWatch();
   }, CLOCK_REGRESSION_CHECK_MS);
 }
@@ -206,18 +220,24 @@ function storePin(
 }
 
 /**
- * Merge a SAME-TERMS candidate into a live incumbent (round 27 P1,
- * refining round 25's later-anchor rule). Identical version and hash
- * protect identically, so the merged pin keeps the BEST of each
- * independent piece of evidence: the LATER anchor (the longer
- * window, with its deadline) and the NEWER chain position (the
- * stronger ordering stand — round 25's early return kept the
- * incumbent's older block too, and a fork-rival frame from a height
- * between the two positions then beat a pin whose true acceptance
- * had mined above it). Both fields came from real receipts of the
- * same text; neither may be regressed by the other's arrival.
+ * Resolve a SAME-TERMS candidate against a live incumbent by keeping
+ * ONE evidence WHOLE — the later-anchored one (round 28 P1, replacing
+ * round 27's field-wise merge). Identical terms protect identically,
+ * so the window (round 25) picks the survivor; what round 28 forbade
+ * is stitching FIELDS from different receipts together, because with
+ * same-terms acceptances possible on COMPETING FORKS, a pairing of
+ * one fork's height with the other's renewed window is evidence no
+ * receipt supplied — and it then outranks a canonical differing frame
+ * from between the heights, holding both gates open under possibly
+ * obsolete terms for the synthesized window. The asymmetry decides
+ * which flaw to keep: selecting whole evidence can LOSE an ordering
+ * stand the discarded receipt genuinely had (round 27's mid-height
+ * rival then beats the pin), but that failure is fail-closed — the
+ * rival's adoption retires the pin, ages its verdict, and reads
+ * decide — while the synthesized pairing fails OPEN. A legal gate
+ * takes the closed failure.
  */
-function mergeSameTermsPin(
+function keepLaterSameTermsEvidence(
   scope: string,
   existing: AcceptancePin,
   at: number,
@@ -225,20 +245,11 @@ function mergeSameTermsPin(
   txIndex: number,
   now: number,
 ): void {
-  const laterAnchor = existing.at >= at;
-  const newerPosition =
-    existing.block > block || (existing.block === block && existing.txIndex >= txIndex);
-  pins.set(scope, {
-    version: existing.version,
-    hash: existing.hash,
-    at: laterAnchor ? existing.at : at,
-    block: newerPosition ? existing.block : block,
-    txIndex: newerPosition ? existing.txIndex : txIndex,
-    monoDeadline: laterAnchor
-      ? existing.monoDeadline
-      : monoNow() + Math.max(0, at + ACCEPTANCE_PIN_TTL_MS - now),
-  });
-  ensureClockWatch();
+  if (existing.at >= at) {
+    ensureClockWatch();
+    return;
+  }
+  storePin(scope, existing.version, existing.hash, at, block, txIndex, now);
 }
 
 /** Identifies one wallet on one chain. Acceptance is recorded per
@@ -341,11 +352,10 @@ export function adoptOrderedPin(
   }
   if (existing && existing.version === version && existing.hash === hash) {
     // SAME terms — a duplicate re-broadcast, or a genuine second
-    // acceptance of identical text. Neither the window nor the chain
-    // position may be regressed (rounds 25 and 27): the pins MERGE,
-    // keeping the later anchor and the newer position, whichever
-    // frame carried each.
-    mergeSameTermsPin(scope, existing, at, block, txIndex, now);
+    // acceptance of identical text. The later-anchored EVIDENCE is
+    // kept whole (rounds 25, 27 and 28 — see
+    // `keepLaterSameTermsEvidence` for why whole, not merged).
+    keepLaterSameTermsEvidence(scope, existing, at, block, txIndex, now);
     return true;
   } else if (existing && existing.block === block && existing.txIndex === txIndex) {
     // Two DIFFERENT transactions claiming one chain position can
@@ -410,23 +420,17 @@ export function adoptReceiptPin(
 ): boolean {
   if (now - at > ACCEPTANCE_PIN_TTL_MS || at > now + MAX_FUTURE_SKEW_MS) return false;
   const existing = pins.get(scope);
-  // A LIVE incumbent for the SAME terms MERGES with the receipt
-  // (round 25 P2, refined by round 27 P1): this receipt sat pending
-  // while another tab's acceptance of identical text was adopted
-  // here. Superseding outright would regress the shared window to
-  // this receipt's nearly-spent anchor; keeping the incumbent
-  // untouched — round 25's first cut — discarded the receipt's NEWER
-  // chain position, and a fork-rival frame from a height between the
-  // two positions then beat a pin whose true acceptance had mined
-  // above it. The merge keeps the later anchor AND the newer
-  // position; the receipt is fully believed either way.
+  // A LIVE incumbent for the SAME terms resolves by whole-evidence
+  // selection, exactly as on the frame path (rounds 25/27/28 — see
+  // `keepLaterSameTermsEvidence`): the later-anchored evidence
+  // stands whole, and the receipt is fully believed either way.
   if (
     existing &&
     existing.version === version &&
     existing.hash === hash &&
     !pinExpired(existing, now)
   ) {
-    mergeSameTermsPin(scope, existing, at, block, txIndex, now);
+    keepLaterSameTermsEvidence(scope, existing, at, block, txIndex, now);
     return true;
   }
   storePin(scope, version, hash, at, block, txIndex, now);

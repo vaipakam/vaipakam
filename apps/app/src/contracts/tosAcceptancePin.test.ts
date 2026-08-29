@@ -6,7 +6,7 @@
  * where the chain has genuinely un-accepted the wallet), and failing to
  * correct one that is.
  */
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACCEPTANCE_PIN_TTL_MS,
   MAX_FUTURE_SKEW_MS,
@@ -165,17 +165,26 @@ describe('adoptOrderedPin', () => {
     );
   });
 
-  it('the merge keeps the newer chain position, so a fork rival cannot slip between', () => {
-    // Round 27 P1: with the incumbent's LATER anchor but OLDER block
-    // kept whole, a differing frame from a height between the two
-    // positions would have beaten the pin whose true acceptance mined
-    // above it. After the merge the recorded position is the higher
-    // one, and the mid-height rival loses on ordering.
+  it('same-terms evidence is kept WHOLE — never a synthesized pairing', () => {
+    // Round 28 P1 (replacing round 27's field-wise merge): same terms
+    // can be accepted on COMPETING forks, so pairing one fork's
+    // height with the other's renewed window is evidence no receipt
+    // supplied — and it would REFUSE a canonical differing frame from
+    // between the heights while an orphaned verdict coasted, the
+    // fail-open direction. The later-anchored evidence stands whole:
+    // its position governs ordering, and a differing frame above that
+    // position wins (retiring the pin toward the reads — the
+    // fail-closed direction).
     pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0 + 30_000);
+    // A same-terms frame with an earlier anchor and a HIGHER position
+    // changes nothing — the incumbent evidence stands whole.
     expect(adoptOrderedPin(SCOPE, 3, HASH, T0, B0 + 10, 0, T0 + 31_000)).toBe(true);
     const H4 = `0x${'44'.repeat(32)}`;
-    expect(adoptOrderedPin(SCOPE, 4, H4, T0 + 32_000, B0 + 5, 0, T0 + 32_000)).toBe(false);
-    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 33_000)).toBe(true);
+    // A differing frame above the KEPT evidence's position wins —
+    // the discarded higher position must not shield the pin.
+    expect(adoptOrderedPin(SCOPE, 4, H4, T0 + 32_000, B0 + 5, 0, T0 + 32_000)).toBe(true);
+    expect(acceptanceIsPinned(SCOPE, 4, H4, T0 + 33_000)).toBe(true);
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 33_000)).toBe(false);
   });
 
   it('leaves NEITHER pin standing when fork rivals claim one position', () => {
@@ -254,21 +263,24 @@ describe('adoptReceiptPin', () => {
     expect(acceptanceIsPinned(SCOPE, 3, H2, late)).toBe(false);
   });
 
-  it('merges with a live same-terms incumbent: later anchor AND newer position both kept', () => {
-    // Round 25 P2 refined by round 27 P1: this receipt sat pending
-    // while another tab's acceptance of identical text was adopted
-    // here with a longer window. The merge keeps that window (no
-    // regression to the nearly-spent anchor) AND the receipt's newer
-    // chain position — round 25's untouched-incumbent cut let a
-    // fork-rival frame from between the two heights beat the pin.
+  it('resolves a live same-terms incumbent by whole-evidence selection', () => {
+    // Rounds 25/27/28: the later-anchored evidence stands whole — the
+    // window never regresses to the pending receipt's nearly-spent
+    // anchor, and no pairing is synthesized from the two receipts'
+    // fields. The receipt is believed (true) either way.
     pinAcceptance(SCOPE, 3, H2, B0, TX0, T0 + 60_000);
     expect(adoptReceiptPin(SCOPE, 3, H2, T0, B0 + 10, 0, T0 + 61_000)).toBe(true);
     expect(acceptanceIsPinned(SCOPE, 3, H2, T0 + 60_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(
       true,
     );
-    const H4 = `0x${'44'.repeat(32)}`;
-    expect(adoptOrderedPin(SCOPE, 4, H4, T0 + 62_000, B0 + 5, 0, T0 + 62_000)).toBe(false);
-    expect(acceptanceIsPinned(SCOPE, 3, H2, T0 + 63_000)).toBe(true);
+    // And when the RECEIPT carries the later anchor, its whole
+    // evidence replaces the incumbent's.
+    __clearAcceptancePins();
+    pinAcceptance(SCOPE, 3, H2, B0 + 10, 0, T0);
+    expect(adoptReceiptPin(SCOPE, 3, H2, T0 + 30_000, B0, TX0, T0 + 30_000)).toBe(true);
+    expect(acceptanceIsPinned(SCOPE, 3, H2, T0 + 30_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(
+      true,
+    );
   });
 
   it('refuses a receipt anchored in the future beyond the skew allowance', () => {
@@ -298,6 +310,28 @@ describe('monotonic expiry (round 26 P1)', () => {
     // corrected back INSIDE the window.
     mono += ACCEPTANCE_PIN_TTL_MS + 1_000;
     expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 10_000)).toBe(false);
+  });
+
+  it('poisons pins when the clocks DISAGREE about an interval — even net-forward', () => {
+    // Round 28 P1: a correction during a sleep can leave the wall
+    // clock net-FORWARD between heartbeats while the monotonic clock
+    // stalled — a plain regression check saw nothing. The beat now
+    // compares both clocks' deltas; disagreement beyond the skew
+    // allowance poisons the pins.
+    vi.useFakeTimers();
+    try {
+      let mono = 100_000;
+      __setMonoNowForTests(() => mono);
+      const t0 = Date.now();
+      pinAcceptance(SCOPE, 3, HASH, B0, TX0, t0);
+      // One heartbeat interval passes: wall advances 60s (a 120s
+      // sleep minus a 60s backward correction), mono stalls.
+      vi.setSystemTime(t0 + 60_000);
+      vi.advanceTimersByTime(10_000);
+      expect(acceptanceIsPinned(SCOPE, 3, HASH, Date.now())).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('the expiry timer observes elapsed death and retires the pin', () => {

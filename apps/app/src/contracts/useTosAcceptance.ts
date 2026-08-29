@@ -163,7 +163,7 @@ export function useTosAcceptance(): TosAcceptanceState {
     // closed gate with a retry button the user drives, which is
     // honest about not knowing. `retry: false` keeps that immediate.
     retry: false,
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       // Codex review round 1 P2: both calls are PINNED to one block.
       // Unpinned, `setCurrentTos` landing between them returns
       // `hasAcceptedCurrentTerms: true` for the old version alongside
@@ -196,8 +196,14 @@ export function useTosAcceptance(): TosAcceptanceState {
       // truthful `false` back into `accepted: true` under terms this
       // read just proved are no longer in force. A lower-version
       // read retires nothing — that is the lagging node the pin
-      // exists to correct.
-      retireSupersededPin(scope, version, current[1]);
+      // exists to correct. Only a read TanStack will actually COMMIT
+      // may retire (round 28 P1): an invalidation cancels this query
+      // for cache purposes while the RPC promises run on, and a
+      // cancelled read's result — discarded from the cache — must not
+      // leave its side effect behind, retiring a live pin whose
+      // pin-backed verdict then coasts with a superseded, silent
+      // expiry timer.
+      if (!signal.aborted) retireSupersededPin(scope, version, current[1]);
       // A read that says "not accepted" at the SAME version this
       // session already mined an acceptance for is known to be behind
       // the chain, not informative about it — a public RPC serving the
