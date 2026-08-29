@@ -1265,6 +1265,33 @@ function commandIsSafe(cmd, scopeHint = null) {
         : /^\/|\$|^\.\./.test(cfgName)
           ? []
           : [cfgName];
+    // Parsed STRUCTURALLY, top level only — wrangler reads
+    // `rawConfig.keep_vars`, and the text regex that stood here matched the
+    // words inside a string VALUE, so `"vars": {"NOTE": "keep_vars: true"}`
+    // blessed an upload the CLI runs destructively (#1995 r18). For TOML the
+    // top level ends at the first table header. A config that does not parse
+    // blesses nothing.
+    const keepVarsEnabled = (path) => {
+      let text;
+      try {
+        text = readFileSync(path, 'utf8');
+      } catch {
+        return false;
+      }
+      if (/\.toml$/.test(path)) {
+        for (const line of text.split('\n')) {
+          if (/^\s*\[/.test(line)) break;
+          if (/^\s*keep_vars\s*=\s*true\s*(?:#.*)?$/.test(line)) return true;
+        }
+        return false;
+      }
+      try {
+        const cfg = JSON.parse(withoutComments(text).replace(/,\s*([}\]])/g, '$1'));
+        return cfg !== null && typeof cfg === 'object' && cfg.keep_vars === true;
+      } catch {
+        return false;
+      }
+    };
     for (const sc of target ? [target] : SCOPED) {
       for (const name of cfgNames) {
         // A selection already spelled from the repo root reads as written;
@@ -1272,12 +1299,7 @@ function commandIsSafe(cmd, scopeHint = null) {
         const path = name.startsWith(`${sc.dir}/`)
           ? `${REPO_ROOT}/${name}`
           : `${REPO_ROOT}/${sc.dir}/${name}`;
-        try {
-          const cfg = withoutComments(readFileSync(path, 'utf8'));
-          if (/["']?keep_vars["']?\s*[:=]\s*true/.test(cfg)) return true;
-        } catch {
-          /* no such config */
-        }
+        if (keepVarsEnabled(path)) return true;
       }
     }
   }
@@ -2964,6 +2986,11 @@ function makefileBlocks(text) {
  * expression this cannot resolve carries no command text either way, and
  * blanking it would only move the miss.
  */
+/** Drop a leading YAML anchor/alias/tag property — YAML hands the node on. */
+function stripYamlProps(v) {
+  return v.replace(/^(?:[&*][\w-]+\s+|!!?[\w:.-]*\s+)+/, '');
+}
+
 function expandActionsEnv(body, envMap) {
   if (!envMap || envMap.size === 0 || !/\$\{\{/.test(body)) return body;
   return body.replace(
@@ -3190,27 +3217,74 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
     // in the braces wins over the step-level readers, which cannot see it.
     const flowStep = isYaml && !run && !flow ? lines[i].match(/^\s*-\s*\{(.*)\}\s*$/) : null;
     if (flowStep) {
-      const inBrace = (key, stopAtComma) =>
-        flowStep[1].match(
-          new RegExp(
-            `["']?${key}["']?:\\s*(?:"([^"]*)"|'([^']*)'|(${stopAtComma ? '[^,}]+' : '[^,}\\s]+'}))`,
-          ),
-        );
-      const runM = inBrace('run', true);
-      if (runM) {
-        const body = (runM[1] ?? runM[2] ?? runM[3] ?? '').trim();
-        const wdM = inBrace('working-directory', false);
-        const shM = inBrace('shell', true);
-        const ifM = inBrace('if', true);
-        const shellName = shM ? (shM[1] ?? shM[2] ?? shM[3]).trim() : null;
+      // Keys are located on a SCRUBBED copy — quoted spans blanked, except a
+      // quoted KEY (a span a colon follows) — and values are then read from
+      // the original at that position. Searching the raw text let mapping-like
+      // text INSIDE a quoted value create a field: `name: "note, run: wrangler
+      // deploy"` runs nothing, but a synthetic `run` was extracted from it and
+      // the guard blocked a workflow with no command at all (#1995 r18).
+      const scrub = flowStep[1].replace(/"[^"]*"(?!\s*:)|'[^']*'(?!\s*:)/g, (m) =>
+        ' '.repeat(m.length),
+      );
+      const flowValue = (key) => {
+        const km = new RegExp(`(?:^|[,{\\s])["']?${key}["']?:`).exec(scrub);
+        if (!km) return null;
+        let at = km.index + km[0].length;
+        while (flowStep[1][at] === ' ') at += 1;
+        const q = flowStep[1][at] === '"' || flowStep[1][at] === "'" ? flowStep[1][at] : null;
+        if (q) {
+          const close = flowStep[1].indexOf(q, at + 1);
+          return close === -1 ? null : flowStep[1].slice(at + 1, close);
+        }
+        let end = at;
+        while (end < flowStep[1].length && !/[,}]/.test(scrub[end])) end += 1;
+        return flowStep[1].slice(at, end).trim() || null;
+      };
+      // A flow-mapped ACTION step deploys with no `run:` key at all —
+      // `- { uses: cloudflare/wrangler-action@v3, with: { … } }` — and the
+      // block-form `uses:` matcher below is line-anchored, so the whole step
+      // was invisible (#1995 r18). Same synthesis as the block form.
+      const flowUses = flowValue('uses');
+      if (flowUses && /^cloudflare\/wrangler-action(?:@|$)/.test(flowUses.trim())) {
+        const disabledF = flowValue('if');
+        const isOff = disabledF
+          ? /^(?:false|\$\{\{\s*false\s*\}\})$/.test(disabledF.replace(/\s+#.*$/, '').trim())
+          : stepIsDisabled(lines, i);
+        if (!isOff) {
+          const withM = flowStep[1].match(/["']?with["']?:\s*\{([^}]*)\}/);
+          const inWith = (key) =>
+            withM
+              ? (withM[1]
+                  .match(new RegExp(`["']?${key}["']?:\\s*(?:"([^"]*)"|'([^']*)'|([^,}]+))`))
+                  ?.slice(1) ?? [])
+              : [];
+          const wm = inWith('workingDirectory');
+          const cm = inWith('command');
+          const cmdF = cm[0] ?? cm[1] ?? cm[2] ?? null;
+          const wdF = wm[0] ?? wm[1] ?? wm[2] ?? null;
+          const cleanCmdF = cmdF === null ? 'deploy' : stripYamlProps(cmdF.trim());
+          const cwdF = wdF === null ? '' : workingDirFor(lines, i, false, wdF.trim());
+          out.push(
+            ...offset(logicalLines(`wrangler ${cleanCmdF}`), i, blockId, cwdF ?? '', null),
+          );
+          blockId += 1;
+        }
+        i += 1;
+        continue;
+      }
+      const runV = flowValue('run');
+      if (runV) {
+        const body = runV.trim();
+        const shellName = flowValue('shell')?.trim() ?? null;
+        const ifV = flowValue('if');
         const isShell = shellName
           ? SHELL_KEYWORDS.has(interpreterOf(shellName))
           : stepIsShell(lines, i);
-        const disabled = ifM
-          ? /^(?:false|\$\{\{\s*false\s*\}\})$/.test((ifM[1] ?? ifM[2] ?? ifM[3]).trim())
+        const disabled = ifV
+          ? /^(?:false|\$\{\{\s*false\s*\}\})$/.test(ifV.replace(/\s+#.*$/, '').trim())
           : stepIsDisabled(lines, i);
         const launches = launchesDeployText(body);
-        const wd = wdM ? (wdM[1] ?? wdM[2] ?? wdM[3]).trim() : workingDirFor(lines, i, !launches);
+        const wd = flowValue('working-directory')?.trim() ?? workingDirFor(lines, i, !launches);
         if ((isShell || launches) && !disabled && wd) {
           const env = stepEnvVars(lines, i);
           out.push(
@@ -3256,10 +3330,15 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
             /^\s*["']?command["']?:\s*(?:"([^"]*)"|'([^']*)'|(.+?))\s*$/,
           );
           if (cm && cmd === null) cmd = (cm[1] ?? cm[2] ?? cm[3]).replace(/\s+#.*$/, '').trim();
+          // Rest-of-line, not `\S+`: an expression value contains spaces, and
+          // the one-token capture kept only `${{` — the r11 working-directory
+          // defect, repeated in the reader written after it (#1995 r18).
           const wm = lines[k].match(
-            /^\s*["']?workingDirectory["']?:\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
+            /^\s*["']?workingDirectory["']?:\s*(?:"([^"]*)"|'([^']*)'|(\S.*))$/,
           );
-          if (wm && wd === null) wd = wm[1] ?? wm[2] ?? wm[3];
+          if (wm && wd === null) {
+            wd = (wm[1] ?? wm[2] ?? wm[3]).replace(/\s+#.*$/, '').trim();
+          }
           const fcm = lines[k].match(
             /with:\s*\{[^}]*["']?command["']?:\s*(?:"([^"]*)"|'([^']*)'|([^,}]+))/,
           );
@@ -3270,7 +3349,12 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           if (fwm && wd === null) wd = fwm[1] ?? fwm[2] ?? fwm[3];
         }
       }
-      out.push(...offset(logicalLines(`wrangler ${cmd ?? 'deploy'}`), i, blockId, wd ?? '', null));
+      const cleanCmd = cmd === null ? 'deploy' : stripYamlProps(cmd);
+      // No shell legs to correlate on an action step, and the input may carry
+      // an expression or an anchor — both resolve exactly as the step key
+      // would (#1995 r18).
+      const cwd = wd === null ? '' : workingDirFor(lines, i, false, wd);
+      out.push(...offset(logicalLines(`wrangler ${cleanCmd}`), i, blockId, cwd ?? '', null));
       blockId += 1;
       i += 1;
       continue;
@@ -3913,7 +3997,7 @@ function stepIsShell(lines, runIdx) {
   return SHELL_KEYWORDS.has(interpreterOf(value));
 }
 
-function workingDirFor(lines, runIdx, legShellFilter = true) {
+function workingDirFor(lines, runIdx, legShellFilter = true, rawValue = null) {
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
   // When the step's SHELL is itself matrix-driven, a directory and an
   // interpreter drawn from the same `include:` entry travel together: the
@@ -4354,6 +4438,12 @@ function workingDirFor(lines, runIdx, legShellFilter = true) {
    */
   const flowValueOf = (m) => normalizePath(resolveExpression(m[1] ?? m[2] ?? m[3]));
 
+  // A RAW VALUE from elsewhere — a wrangler-action `workingDirectory:` input —
+  // takes the same resolution the step key gets: property strip, expression
+  // resolution, normalisation. Taking it literally left `${{ matrix.dir }}`
+  // as a directory name, which scopes nothing (#1995 r18).
+  if (rawValue !== null) return normalizePath(resolveExpression(stripYamlProps(rawValue)));
+
   // STEP level wins over the job default, which is Actions' own precedence.
   const stepWd = scanStepKeys(lines, runIdx, WD);
   if (stepWd) return valueOf(stepWd);
@@ -4774,6 +4864,12 @@ for (const file of walk(REPO_ROOT)) {
   // Brace-counted, crudely — braces in strings are rare in these helpers and
   // the cost of a miscount is falling back to today's per-line reading.
   let pendingFn = null;
+  /** Aliases whose body deploys unsafely — consulted only under expand_aliases. */
+  const deployAliases = new Map();
+  // Bash expands aliases in a NON-interactive shell only when
+  // `shopt -s expand_aliases` has run, and expansion happens when the CALL is
+  // parsed — so the gate is read at the call site, not at the definition.
+  let aliasesOn = false;
   folded.forEach(({ text: line, line: lineNo, block, physical, cwd: blockCwd, env: blockEnv }) => {
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
@@ -4786,6 +4882,8 @@ for (const file of walk(REPO_ROOT)) {
       deployFns.clear();
       condStack.length = 0;
       pendingFn = null;
+      deployAliases.clear();
+      aliasesOn = false;
       // A new shell starts outside every subshell the previous one opened.
       depth = 0;
       stateStack.length = 0;
@@ -5218,8 +5316,22 @@ for (const file of walk(REPO_ROOT)) {
         if (dir?.kind === 'source') {
           deferred.push(...sourcedDeploys(resolveDir(input[0]?.cwd ?? '', dir.target, shellVars)));
         }
+        if (/^shopt\s+-s\b[^;]*\bexpand_aliases\b/.test(seg)) aliasesOn = true;
+        const aliasDef = seg.match(
+          /^alias\s+([A-Za-z_][\w-]*)=("[^"]*"|'[^']*'|[^\s]+)\s*$/,
+        );
+        if (aliasDef) {
+          const entries = unsafeWithDirs(
+            splitCommands(dequote(aliasDef[2])).map((c) => c.text.trim()),
+          );
+          if (entries.length > 0) deployAliases.set(aliasDef[1], entries);
+          continue;
+        }
         const callName = seg.match(/^([A-Za-z_][\w-]*)\s*$/)?.[1];
         if (callName && deployFns.has(callName)) deferred.push(...deployFns.get(callName));
+        if (callName && aliasesOn && deployAliases.has(callName)) {
+          deferred.push(...deployAliases.get(callName));
+        }
         // Each deferred deploy is scored where the helper's OWN directory
         // moves put it, starting from the caller's reachable states — a
         // helper that runs `cd ../agent` before its deploy lands somewhere
@@ -5416,9 +5528,13 @@ for (const file of walk(REPO_ROOT)) {
         // Scope comes from the CALLER's reachable states, because the same
         // helper or function invoked from two directories deploys two different
         // Workers and only the state says which.
-        const fnDef = seg.match(
-          /^(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)\s*\{([\s\S]*)$/,
-        );
+        // Both spellings bash accepts: `name() {` (keyword optional) and the
+        // keyword form WITHOUT parentheses, `function name {` — the second
+        // requires the keyword, or any brace-group after a word would read as
+        // a definition (#1995 r18).
+        const fnDef =
+          seg.match(/^(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)\s*\{([\s\S]*)$/) ??
+          seg.match(/^function\s+([A-Za-z_][\w-]*)\s*\{([\s\S]*)$/);
         if (fnDef) {
           const open = 1 + braceDelta(fnDef[2]);
           const body = fnDef[2].replace(/\}\s*$/, '').trim();
@@ -5430,7 +5546,9 @@ for (const file of walk(REPO_ROOT)) {
           }
           continue;
         }
-        const fnOpen = seg.match(/^(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)\s*$/);
+        const fnOpen =
+          seg.match(/^(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)\s*$/) ??
+          seg.match(/^function\s+([A-Za-z_][\w-]*)\s*$/);
         if (fnOpen) {
           pendingFn = { name: fnOpen[1], depth: 0, segs: [], awaitingBrace: true };
           continue;

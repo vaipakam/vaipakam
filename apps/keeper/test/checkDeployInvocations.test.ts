@@ -5241,3 +5241,113 @@ describe('check-deploy-invocations — #1995 r17', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe('check-deploy-invocations — #1995 r18', () => {
+  it('a wrangler-action workingDirectory EXPRESSION resolves like the step key (r18)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/a.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        include:\n          - dir: apps/agent\n' +
+        '    steps:\n      - uses: cloudflare/wrangler-action@v3\n        with:\n' +
+        '          workingDirectory: ${{ matrix.dir }}\n          command: deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and an env expression resolves the same way (r18)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/a2.yml',
+      'name: w\nenv:\n  DEPLOY_DIR: apps/agent\njobs:\n  d:\n    steps:\n' +
+        '      - uses: cloudflare/wrangler-action@v3\n        with:\n' +
+        '          workingDirectory: ${{ env.DEPLOY_DIR }}\n          command: deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a FLOW-mapped wrangler-action step is the same step (r18)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/a3.yml',
+      'name: w\njobs:\n  d:\n    steps:\n' +
+        '      - { uses: cloudflare/wrangler-action@v3, with: { workingDirectory: apps/agent, command: deploy } }\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a YAML anchor on an action input is a property, not the value (r18)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/a4.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - uses: cloudflare/wrangler-action@v3\n        with:\n' +
+        '          workingDirectory: &agent-dir apps/agent\n          command: &cmd deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('the keyword function form without parentheses is a definition (r18)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'x.sh',
+      'function deploy_worker {\n  wrangler deploy\n}\ncd apps/agent\ndeploy_worker\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('mapping-like text inside a QUOTED flow value creates no field (r18)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/q.yml',
+      'name: w\njobs:\n  d:\n    defaults:\n      run:\n        working-directory: apps/agent\n' +
+        '    steps:\n      - { name: "note, run: wrangler deploy" }\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('but a QUOTED KEY still names its field (r18 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      '.github/workflows/q2.yml',
+      'name: w\njobs:\n  d:\n    defaults:\n      run:\n        working-directory: apps/agent\n' +
+        '    steps:\n      - { "run": wrangler deploy }\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('keep_vars inside a string VALUE enables nothing (r18)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"vars": {"NOTE": "keep_vars: true"}}\n');
+    const r = runWith('x.sh', 'cd apps/agent\nwrangler versions upload\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('while the real top-level boolean still blesses (r18 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{\n  // comment survives the parse\n  "keep_vars": true,\n}\n');
+    expect(runWith('x.sh', 'cd apps/agent\nwrangler versions upload\n').ok).toBe(true);
+  });
+
+  it('an alias body deploys where the CALL stands, under expand_aliases (r18)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'x.sh',
+      "shopt -s expand_aliases\nalias deploy_worker='wrangler deploy'\ncd apps/agent\ndeploy_worker\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but without expand_aliases a script alias never expands (r18 control)', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    expect(
+      runWith(
+        'x.sh',
+        "alias deploy_worker='wrangler deploy'\ncd apps/agent\ndeploy_worker\n",
+      ).ok,
+    ).toBe(true);
+  });
+});
