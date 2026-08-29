@@ -139,6 +139,23 @@
 /terms/v*
   X-Robots-Tag: noindex
 
+# The same archive routes are also mounted beneath the `:locale`
+
+# prefix (App.tsx renders one route tree twice), so /es/terms/v1 etc.
+
+# are equally valid archive URLs and need the same directive — the
+
+# unprefixed rule above does not match them (#2010 r4, verified with
+
+# wrangler dev). `:locale` is a single-segment placeholder; matching
+
+# a non-locale first segment too is harmless, since any
+
+# /<segment>/terms/v* path serves the same shell.
+
+/:locale/terms/v*
+  X-Robots-Tag: noindex
+
 # Immutable static assets (Vite emits content-hashed filenames in /assets/*).
 
 /assets/*

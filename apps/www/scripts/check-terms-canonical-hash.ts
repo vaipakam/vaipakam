@@ -59,7 +59,8 @@
  * comparison here live in the same PR-editable tree, so a rewrite
  * that updates the file AND its registered hash together passes all
  * of the above. That immutability is enforced against the PR's BASE
- * by CI's `terms-archive-immutability` job (#2010 round 2 P1), which
+ * by the "Published Terms archives are unchanged from the base" step
+ * inside CI's REQUIRED `workspaces` job (#2010 rounds 2–3 P1), which
  * fails any pull request that modifies or deletes a `v<N>.md` that
  * already exists on the base branch.
  */
