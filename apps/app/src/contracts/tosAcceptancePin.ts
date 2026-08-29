@@ -212,6 +212,22 @@ function claimedAgeSpansFault(claimedMs: number): boolean {
   return lastFaultMono !== null && claimedMs > monoNow() - lastFaultMono;
 }
 
+/**
+ * Record a clock observation from OUTSIDE the pin machinery (#2004
+ * round 42 P1). The Terms poll was assumed to feed the witness
+ * through `acceptanceIsPinned` — but the queryFn consults the pin
+ * only behind `!accepted`, so a wallet whose polls keep answering
+ * `accepted: true` never touched it, and the witness sat completely
+ * uninitialized through any discontinuity. A delayed frame then made
+ * `adoptOrderedPin` the FIRST observation, with no earlier witness
+ * to convict its claimed age against. The poll now records an
+ * observation on every COMPLETED snapshot, whatever it answered —
+ * a clock sample is about the clocks, not the verdict.
+ */
+export function observeAcceptanceClock(now: number): void {
+  observeClockWitness(now);
+}
+
 const defaultMonoNow = () =>
   typeof performance !== 'undefined' ? performance.now() : Date.now();
 let monoNow: () => number = defaultMonoNow;

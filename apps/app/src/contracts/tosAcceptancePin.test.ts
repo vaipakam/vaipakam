@@ -21,6 +21,7 @@ import {
   adoptOrderedPin,
   adoptReceiptPin,
   holdAcceptanceForReconciliation,
+  observeAcceptanceClock,
   observePinExpiry,
   onAcceptanceHoldsChanged,
   pinAcceptance,
@@ -465,6 +466,22 @@ describe('clock-witness fault detection', () => {
     mono = 55_000;
     const wall2 = wallNow + 25_000;
     expect(adoptOrderedPin(SCOPE, 3, HASH, wall2 - 20_000, B0 + 1, TX0, wall2)).toBe(true);
+  });
+
+  it('a poll-fed observation alone convicts a delayed frame — no pin consult needed', () => {
+    // Round 42 P1: the queryFn consults the pin only behind
+    // `!accepted`, so an accepted wallet's polls never reached
+    // `acceptanceIsPinned` and the witness sat uninitialized through
+    // any discontinuity — a delayed frame then met adoption as the
+    // FIRST observation. Every completed snapshot now records an
+    // observation via `observeAcceptanceClock`, whatever it
+    // answered.
+    let mono = 0;
+    __setMonoNowForTests(() => mono);
+    observeAcceptanceClock(T0); // an accepted wallet's poll
+    mono = 30_000;
+    const wallNow = T0 - 30_000; // wall stepped back 60s since
+    expect(adoptOrderedPin(SCOPE, 3, HASH, wallNow - 20_000, B0, TX0, wallNow)).toBe(false);
   });
 
   it('a forward wall step (or a sleep) records no fault', () => {

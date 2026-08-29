@@ -60,6 +60,7 @@ import {
   adoptReceiptPin,
   holdAcceptanceForReconciliation,
   monotonicNow,
+  observeAcceptanceClock,
   onAcceptanceHoldsChanged,
   retireDifferingPin,
   retireSupersededPin,
@@ -272,6 +273,17 @@ export function useTosAcceptance(): TosAcceptanceState {
         }) as Promise<readonly [number, `0x${string}`]>,
       ]);
       const version = Number(current[0]);
+      // EVERY completed snapshot is a clock observation (round 42
+      // P1) — not only the `!accepted` path that consults the pin
+      // below. An accepted wallet's polls otherwise never fed the
+      // clock witness, leaving it uninitialized through any wall
+      // discontinuity, and a delayed acceptance frame then met
+      // `adoptOrderedPin` as the FIRST observation with nothing to
+      // convict its claimed age against. Deliberately not gated on
+      // the abort signal: a cancelled read's VERDICT is discarded,
+      // but its clock sample is about the clocks, not the verdict,
+      // and recording it mutates no pin state.
+      observeAcceptanceClock(Date.now());
       // A node-confirmed read at a HIGHER version — or a different
       // hash at the same version — retires a live pin it supersedes
       // (#2004 round 17 P1): left in the map, that pin waits for a
