@@ -440,11 +440,15 @@ const copySource = {
        working route, not a prompt that may only fail. */
     diagUninspectable:
       'This wallet is connected to a network this app cannot inspect from here, so we cannot tell whether the support service can verify its signatures. Email support@vaipakam.com and we will process an erasure request for your wallet — or switch to a supported network and try again.',
-    /* #2008 round 3 P2 — the signature stays valid for ten minutes
-       from the moment the prompt opens; approved later, it can only
-       be rejected, so it is not sent and the user is told why. */
+    /* #2008 rounds 3–5 — the signature stays valid for ten minutes
+       from the moment the prompt opens. This one message covers BOTH
+       expiry routes honestly: a late approval held back before
+       sending, and a sent request the service itself rejected as
+       stale (a skewed device clock) — so it claims neither "nothing
+       was sent" nor "you were slow", only what both routes share:
+       the request expired unaccepted and no records were touched. */
     diagExpired:
-      'Approving the signature took longer than the request stays valid, so nothing was sent. Try again, approving the wallet prompt within ten minutes.',
+      'The signed request expired before the service accepted it, so no records were checked or erased. Try again, approving the wallet prompt promptly — if this keeps happening, this device’s clock may be set wrong.',
     diagEraseButton: 'Erase my error reports',
     diagStatusButton: 'Check for retained records',
     diagBusy: 'Waiting for your wallet…',

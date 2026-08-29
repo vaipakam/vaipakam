@@ -239,7 +239,7 @@
       "diagError": "Die Anfrage konnte nicht abgeschlossen werden, und möglicherweise wurde nichts gelöscht. Versuchen Sie es gleich noch einmal.",
       "diagContractWallet": "Diese Wallet ist ein Smart-Contract-Konto, und der Support-Dienst kann ihre Signaturen noch nicht verifizieren. Schreiben Sie an support@vaipakam.com, und wir bearbeiten eine Löschanfrage für Ihre Wallet.",
       "diagUninspectable": "Diese Wallet ist mit einem Netzwerk verbunden, das diese App von hier aus nicht prüfen kann, daher können wir nicht sagen, ob der Support-Dienst ihre Signaturen verifizieren kann. Schreiben Sie an support@vaipakam.com, und wir bearbeiten eine Löschanfrage für Ihre Wallet — oder wechseln Sie zu einem unterstützten Netzwerk und versuchen Sie es erneut.",
-      "diagExpired": "Die Freigabe der Signatur dauerte länger, als die Anfrage gültig bleibt, daher wurde nichts gesendet. Versuchen Sie es erneut und bestätigen Sie die Wallet-Abfrage innerhalb von zehn Minuten."
+      "diagExpired": "Die signierte Anfrage ist abgelaufen, bevor der Dienst sie angenommen hat – es wurden also keine Einträge geprüft oder gelöscht. Versuchen Sie es erneut und bestätigen Sie die Wallet-Abfrage zügig; tritt dies wiederholt auf, geht möglicherweise die Uhr dieses Geräts falsch."
     },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."

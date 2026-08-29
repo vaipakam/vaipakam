@@ -32,13 +32,12 @@ import {
 } from '../data/diagErasure';
 import { isUserRejection } from '../lib/errors';
 
-type CardResult = { forWallet: string } & (
+type CardResult =
   | { kind: 'erased' }
   | { kind: 'status'; status: DiagErasureStatus }
   | { kind: 'unavailable' }
   | { kind: 'expired' }
-  | { kind: 'error' }
-);
+  | { kind: 'error' };
 
 export function DiagErasureCard() {
   // The wallet's ACTUAL chain, not the app's read chain (#2008 round
@@ -49,44 +48,40 @@ export function DiagErasureCard() {
   const { address, chainId: walletChainId } = useAccount();
   const publicClient = usePublicClient({ chainId: walletChainId });
   const { signMessageAsync } = useSignMessage();
-  // Busy is scoped to the wallet that started the operation (#2008
-  // round 2 P2): a signature prompt has no timeout — the deadline
-  // arms only after signing — so wallet A's pending prompt must not
-  // pin wallet B's controls shut for however long A's wallet takes.
-  // Rendering disables only when the pending operation belongs to
-  // the CONNECTED wallet, and the completion clears the flag only if
-  // it still owns it, so A's late settle cannot clear a pending
-  // operation B started meanwhile.
-  const [pendingRun, setPendingRun] = useState<{ id: number; forWallet: string } | null>(
-    null,
+  // ALL per-operation state is keyed BY WALLET (#2008 rounds 1–3
+  // converged here in round 5). A signature prompt has no timeout —
+  // the deadline arms only after signing — so wallet A's pending
+  // prompt must survive a switch to wallet B AND B starting its own
+  // operation: a single pending slot let B's run overwrite A's, so
+  // switching back to A re-enabled controls with A's prompt still
+  // open (a duplicate request), and a global run counter then
+  // suppressed A's original completion. With a map per wallet, each
+  // wallet's controls disable exactly while ITS OWN run pends, and
+  // one wallet's runs can never disturb another's.
+  const [pendingRuns, setPendingRuns] = useState<ReadonlyMap<string, number>>(
+    () => new Map(),
   );
-  // Monotonic per-invocation identity (#2008 round 3 P2): busyFor
-  // alone still raced an A→B→A switch — A's controls re-enabled
-  // while its first request pended, and that request's completion
-  // could then clear a NEWER run's pending state or overwrite its
-  // result. Every run takes a fresh id; a completion publishes its
-  // result and clears the pending flag ONLY while it is still the
-  // latest run.
-  const latestRunRef = useRef(0);
-  const [result, setResult] = useState<CardResult | null>(null);
   // A result belongs to the wallet that asked (#2008 round 1 P1):
   // wallet A's disclosed retention note — or its reassuring clear
-  // answer — must never render as wallet B's. Two guards, because
-  // the failure has two routes: this render-time reset clears the
-  // card the moment the connected wallet changes (the AlertsCard
-  // scope pattern — state init runs once), and every stored result
-  // carries the wallet it answered FOR, with rendering gated on the
-  // match, so an in-flight request that completes AFTER the switch
-  // is stored but never shown to the wrong wallet.
-  const [walletScope, setWalletScope] = useState(address ?? '');
-  if (walletScope !== (address ?? '')) {
-    setWalletScope(address ?? '');
-    setResult(null);
-  }
+  // answer — must never render as wallet B's. Keying the stored
+  // results by wallet makes that structural: rendering reads ONLY
+  // the connected wallet's entry, so an in-flight request that
+  // completes after a switch is stored under its own wallet and
+  // never shown to another's.
+  const [results, setResults] = useState<ReadonlyMap<string, CardResult>>(
+    () => new Map(),
+  );
+  // Monotonic run identity, PER WALLET (#2008 rounds 3 + 5): a
+  // completion publishes its result and clears its pending flag only
+  // while it is still that wallet's latest run, so a stale settle
+  // cannot overwrite a newer run's state — and one wallet's newer
+  // run does not silence another wallet's only completion.
+  const runSeqRef = useRef(0);
+  const latestRunRef = useRef(new Map<string, number>());
 
   const configured = diagErasureConfigured();
-  const shown = result && result.forWallet === address ? result : null;
-  const busy = pendingRun !== null && pendingRun.forWallet === address;
+  const shown = (address && results.get(address)) || null;
+  const busy = address !== undefined && pendingRuns.has(address);
 
   // Smart-contract accounts (a Safe, a deployed smart wallet) sign
   // via ERC-1271/6492, which the service cannot verify yet — it
@@ -120,17 +115,27 @@ export function DiagErasureCard() {
   async function run(kind: 'erase' | 'status') {
     if (!address) return;
     // Captured at the moment of the click — the completion below may
-    // run after a wallet switch, and it must record who it answers.
+    // run after a wallet switch, and everything it touches is keyed
+    // to the wallet it answers FOR.
     const forWallet = address;
-    const runId = ++latestRunRef.current;
-    // Publish and clear ONLY while this run is still the latest —
-    // an older completion must neither overwrite a newer result nor
-    // clear a newer run's pending state.
+    const runId = ++runSeqRef.current;
+    latestRunRef.current.set(forWallet, runId);
+    // Publish and clear ONLY while this run is still THIS WALLET's
+    // latest — an older completion must neither overwrite a newer
+    // result nor clear a newer run's pending state, and (round 5) a
+    // different wallet's runs are not in this race at all.
     const publish = (r: CardResult) => {
-      if (latestRunRef.current === runId) setResult(r);
+      if (latestRunRef.current.get(forWallet) === runId) {
+        setResults((prev) => new Map(prev).set(forWallet, r));
+      }
     };
-    setPendingRun({ id: runId, forWallet });
-    setResult(null);
+    setPendingRuns((prev) => new Map(prev).set(forWallet, runId));
+    setResults((prev) => {
+      if (!prev.has(forWallet)) return prev;
+      const next = new Map(prev);
+      next.delete(forWallet);
+      return next;
+    });
     try {
       if (kind === 'erase') {
         const outcome = await requestDiagErasure(forWallet, (message) =>
@@ -138,12 +143,12 @@ export function DiagErasureCard() {
         );
         publish(
           outcome === 'processed'
-            ? { forWallet, kind: 'erased' }
+            ? { kind: 'erased' }
             : outcome === 'unavailable'
-              ? { forWallet, kind: 'unavailable' }
+              ? { kind: 'unavailable' }
               : outcome === 'expired'
-                ? { forWallet, kind: 'expired' }
-                : { forWallet, kind: 'error' },
+                ? { kind: 'expired' }
+                : { kind: 'error' },
         );
       } else {
         const status = await requestDiagErasureStatus(forWallet, (message) =>
@@ -151,20 +156,25 @@ export function DiagErasureCard() {
         );
         publish(
           status.status === 'unavailable'
-            ? { forWallet, kind: 'unavailable' }
+            ? { kind: 'unavailable' }
             : status.status === 'expired'
-              ? { forWallet, kind: 'expired' }
+              ? { kind: 'expired' }
               : status.status === 'error'
-                ? { forWallet, kind: 'error' }
-                : { forWallet, kind: 'status', status },
+                ? { kind: 'error' }
+                : { kind: 'status', status },
         );
       }
     } catch (e) {
       // A dismissed wallet prompt is a cancel, not a failure — the
       // card simply returns to rest. Anything else is reported.
-      if (!isUserRejection(e)) publish({ forWallet, kind: 'error' });
+      if (!isUserRejection(e)) publish({ kind: 'error' });
     } finally {
-      setPendingRun((prev) => (prev?.id === runId ? null : prev));
+      setPendingRuns((prev) => {
+        if (prev.get(forWallet) !== runId) return prev;
+        const next = new Map(prev);
+        next.delete(forWallet);
+        return next;
+      });
     }
   }
 
