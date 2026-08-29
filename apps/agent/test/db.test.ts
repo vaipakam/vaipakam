@@ -138,6 +138,61 @@ describe('upsertThresholds rollout-window fallback (#1056 round 8)', () => {
   });
 });
 
+describe('upsertThresholds bandless writes (#2000)', () => {
+  // The bands carry the risky lane's state, so a save that did not
+  // touch that lane omits them — and the agent must preserve what is
+  // stored rather than requiring the client to echo values it cannot
+  // vouch for (a fresh device only holds the defaults). Preservation
+  // lives in the STATEMENT (PR #2005 round 1 P1): the conflict arm
+  // of a bandless write assigns no band column, so a concurrent band
+  // update from another device can never be overwritten by a stale
+  // read — there is no read.
+  const BANDLESS = { wallet: BASE.wallet, chain_id: BASE.chain_id };
+
+  it('a bandless write is ONE statement whose conflict arm omits the bands', async () => {
+    const db = new FakeD1();
+    await upsertThresholds(db as unknown as D1Database, {
+      ...BANDLESS,
+      notify_maturity_approaching: false,
+    });
+    expect(db.executed).toHaveLength(1);
+    const write = db.executed[0]!;
+    expect(write.sql).toContain('INSERT INTO user_thresholds');
+    // No band assignment on conflict — an existing row's lane state
+    // stands, atomically, whatever races this write.
+    expect(write.sql).not.toContain('warn_hf = excluded.warn_hf');
+    // The other preserved-on-absence fields keep their COALESCE arms.
+    expect(write.sql).toContain('push_channel = COALESCE');
+    // The INSERT values carry the defaults, reached only when no row
+    // exists — for a wallet with no record the lane's state IS the
+    // default, the same values apps/app shows as the starting state.
+    expect(write.args.slice(2, 5)).toEqual([1.5, 1.2, 1.05]);
+  });
+
+  it('a full-band write still assigns the bands on conflict', async () => {
+    const db = new FakeD1();
+    await upsertThresholds(db as unknown as D1Database, { ...BASE });
+    expect(db.executed).toHaveLength(1);
+    expect(db.executed[0]!.sql).toContain('warn_hf = excluded.warn_hf');
+    expect(db.executed[0]!.args.slice(2, 5)).toEqual([1.5, 1.2, 1.05]);
+  });
+
+  it('the bandless shape composes with the pre-notify rollout fallback', async () => {
+    // Pre-migration, an opted-IN bandless write falls back to the
+    // column-omitting statement — which must ALSO omit the band
+    // assignments.
+    const db = new FakeD1();
+    db.migrated = false;
+    await upsertThresholds(db as unknown as D1Database, {
+      ...BANDLESS,
+      notify_maturity_approaching: true,
+    });
+    expect(db.executed).toHaveLength(1);
+    expect(db.executed[0]!.sql).not.toContain('notify_maturity_approaching');
+    expect(db.executed[0]!.sql).not.toContain('warn_hf = excluded.warn_hf');
+  });
+});
+
 describe('getTelegramChatId (UX-012 test-alert lookup)', () => {
   it('returns the chat id + locale when a link exists (wallet lower-cased)', async () => {
     const db = new FakeD1();

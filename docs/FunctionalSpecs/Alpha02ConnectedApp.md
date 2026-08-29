@@ -468,6 +468,11 @@ Thin-market honesty rules apply.
 - Stored alert data is described plainly before linking.
 - Turning off important reminders is explicit and cannot happen merely because
   the user opens the card from another device.
+- A saved preference change carries ONLY the settings the user changed in that
+  save. Settings the user did not touch are preserved as stored — a device
+  that has never seen the wallet's preferences cannot silently overwrite a
+  choice made elsewhere by saving its own starting assumptions alongside an
+  unrelated change.
 - If no alert backend is configured, the app states that alerts are unavailable
   and sends nothing.
 

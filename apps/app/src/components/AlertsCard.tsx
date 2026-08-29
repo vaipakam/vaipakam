@@ -93,7 +93,10 @@ export function AlertsCard() {
       : copy.errors.termsNotAccepted;
   }
 
-  async function persist(next: AlertPrefs, opts?: { dueDateChanged?: boolean }) {
+  async function persist(
+    next: AlertPrefs,
+    opts?: { dueDateChanged?: boolean; bandsChanged?: boolean },
+  ) {
     // `prefs` is the direction baseline and is required, not optional —
     // every caller below is inside the branch that renders only once it
     // is loaded, and the guard makes that reachability explicit rather
@@ -121,8 +124,13 @@ export function AlertsCard() {
       // device's defaults must not undo an opt-out made elsewhere).
       // Switching the reminder OFF additionally signs an ownership
       // proof; the agent refuses unsigned opt-outs.
+      // bandsChanged mirrors it for the risky lane (#2000): the bands
+      // carry that lane's state, so they are sent only when this save
+      // is the user touching the toggle or the advanced numbers — any
+      // other save omits them and the agent preserves what is stored.
       await saveAlertPrefs(address, chainId, next, {
         dueDateChanged: opts?.dueDateChanged,
+        bandsChanged: opts?.bandsChanged,
         signMessage: (message) => signMessageAsync({ message }),
       });
       storeAlertPrefs(chainId, address, next);
@@ -359,7 +367,12 @@ export function AlertsCard() {
               type="checkbox"
               checked={prefs.risky}
               disabled={busy}
-              onChange={(e) => void persist({ ...prefs, risky: e.target.checked })}
+              onChange={(e) =>
+                void persist(
+                  { ...prefs, risky: e.target.checked },
+                  { bandsChanged: true },
+                )
+              }
               style={{ marginTop: 3 }}
             />
             <span style={{ flex: 1 }}>
@@ -381,7 +394,7 @@ export function AlertsCard() {
               key={scope}
               prefs={prefs}
               busy={busy}
-              onSave={(b) => void persist({ ...prefs, ...b })}
+              onSave={(b) => void persist({ ...prefs, ...b }, { bandsChanged: true })}
             />
           ) : null}
 
