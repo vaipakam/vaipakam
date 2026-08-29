@@ -112,6 +112,8 @@ describe('storage-prefix coverage', () => {
     'src/main.tsx': ['app.chunkReloaded'],
     // The data-rights page itself reads and clears; it writes nothing.
     'src/lib/dataRights.ts': [],
+    // Signal only — no storage of its own.
+    'src/lib/eraseEpoch.ts': [],
     // Cleared by the erase flow (its module-level slot as well as the
     // sessionStorage copy), never written by it.
     'src/diagnostics/lastError.ts': ['vaipakam.app.lastError'],
@@ -230,5 +232,35 @@ describe('storage-prefix coverage', () => {
     for (const prefix of STORAGE_PREFIXES) {
       expect(/[.:\-]$/.test(prefix), prefix).toBe(true);
     }
+  });
+});
+
+describe('erase epoch', () => {
+  // Review round 2 P2 found the same defect in two components: state
+  // read from storage once and kept, so an erasure changed nothing on
+  // screen. The epoch is the shared signal that lets each re-read
+  // through the path it already has, rather than a third bespoke fix.
+  it('increments so mounted readers can re-read', async () => {
+    const { __resetEraseEpoch, bumpEraseEpoch, getEraseEpoch, subscribeEraseEpoch } =
+      await import('./eraseEpoch');
+    __resetEraseEpoch();
+    expect(getEraseEpoch()).toBe(0);
+
+    let notified = 0;
+    const unsubscribe = subscribeEraseEpoch(() => {
+      notified += 1;
+    });
+    bumpEraseEpoch();
+    expect(getEraseEpoch()).toBe(1);
+    expect(notified).toBe(1);
+
+    // A reader that has unmounted must not be notified — a stale
+    // listener firing setState after unmount is how this kind of store
+    // becomes a warning generator.
+    unsubscribe();
+    bumpEraseEpoch();
+    expect(getEraseEpoch()).toBe(2);
+    expect(notified).toBe(1);
+    __resetEraseEpoch();
   });
 });

@@ -705,16 +705,29 @@ Thin-market honesty rules apply.
 - Erasure covers what this app stored and nothing else. State belonging to a
   wallet connector or another tool is left untouched: removing it would
   disconnect the user as a side effect of exercising a data right.
-- The page states its limits as prominently as its controls. It does not reach
-  on-chain data (public and permanent, erasable by nobody), the alerts service
-  (removed by unlinking), the marketing site's separate store, or error reports
-  held by support (removed on request). **Overstating reach is the primary way
-  a page of this kind misleads**, so each exclusion is named.
+- The page states its limits as prominently as its controls, and each is
+  stated at its true extent. It does not reach on-chain data — which is public,
+  so the user can look it up themselves, and permanent, so nobody can erase it.
+  It does not reach the alerts service: **unlinking removes the messaging
+  connection only, and the alert preferences are deliberately retained there
+  for a future relink**, so removing those is a support request. It does not
+  reach the marketing site's separate store, or error reports held by support.
+  **Overstating reach is the primary way a page of this kind misleads** — and
+  understating what a user can obtain is the same failure pointed the other
+  way — so each exclusion is named at its real size.
+- **Every live preference the erasure covers is visibly reset**, not merely
+  cleared from storage: the theme, the interface mode, the display language,
+  and the record of which notifications have been seen. A page that reports
+  preferences returned to their defaults while the app keeps showing them is
+  making a claim the user can see is untrue.
 - The language and theme preference is shared with the marketing site, so
   erasing resets it there too. This is stated on the page rather than
   discovered afterwards.
 - Erasing does not reload the page, so the confirmation of what happened
   survives long enough to be read.
+- **If any part of the browser's storage could not be read, the result is
+  reported as incomplete rather than successful.** The app cannot claim to have
+  emptied a store it was never allowed to look inside.
 - **The marketing site's equivalent page does not cover the connected app, and
   cannot.** Browser origin isolation means neither site can read or clear the
   other's stored data. Each surface needs its own controls; neither may claim

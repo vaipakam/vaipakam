@@ -29,6 +29,8 @@ import { copy } from '../content/copy';
 import { eraseMyData, inspectMyData, type EraseResult } from '../lib/dataRights';
 import { useTheme } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
+import { useTranslation } from 'react-i18next';
+import { bumpEraseEpoch } from '../lib/eraseEpoch';
 
 /** Serialise and hand the file to the browser. Kept here rather than
  *  in `dataRights.ts` so that module stays free of DOM side effects
@@ -60,6 +62,11 @@ export function DataRights() {
   // the app visibly kept them.
   const { resetToDefault: resetTheme } = useTheme();
   const { resetToDefault: resetMode } = useMode();
+  // Language is the third live preference (review round 2 P2). i18next
+  // is a singleton held above this route, so clearing its key left the
+  // erased language active and the picker still showing it — while the
+  // copy promised the user would be asked again.
+  const { i18n } = useTranslation();
   // Read on render rather than held in state: after an erase the page
   // must show the new figure, and a stale count on a data-rights page
   // is the same class of untruth as a false success message. One
@@ -83,13 +90,25 @@ export function DataRights() {
   }
 
   function onErase() {
+    // Language goes back to the default BEFORE the erase, deliberately.
+    // `changeLanguage` persists — to the key and the shared-domain
+    // cookie — so running it afterwards would rewrite what the erase
+    // had just removed. Doing it first means the erase clears its
+    // write, and the order is the whole mechanism rather than an
+    // accident of statement order.
+    void i18n.changeLanguage('en');
     setResult(eraseMyData());
     setConfirming(false);
-    // AFTER the erase, and through resets that do not persist: the
-    // ordinary setters write the key back, which would undo the very
-    // erasure they were called to complete.
+    // The other two reset AFTER, through setters that do not persist:
+    // their ordinary setters would write the key back, undoing the very
+    // erasure they were called to complete. Two different orderings for
+    // two different persistence behaviours, which is why each is
+    // spelled out.
     resetTheme();
     resetMode();
+    // Everything else that read storage once and kept the value — the
+    // notification cursor today — re-reads off this.
+    bumpEraseEpoch();
     // Deliberately NO page reload. The retired implementation reloaded
     // so every hook rehydrated from empty storage — but a reload also
     // throws away the result message, so the user is returned to a
@@ -151,7 +170,9 @@ export function DataRights() {
         {result ? (
           <div
             className={
-              stored === 0 && result.total > 0 ? 'banner banner-success' : 'banner'
+              stored === 0 && !refused && result.total > 0
+                ? 'banner banner-success'
+                : 'banner'
             }
             role="status"
           >
@@ -164,9 +185,16 @@ export function DataRights() {
               ? result.total > 0
                 ? copy.dataRights.erasePartial(result.total, stored)
                 : copy.dataRights.eraseBlocked
-              : result.total > 0
-                ? copy.dataRights.eraseDone(result.total)
-                : copy.dataRights.eraseNothing}
+              : refused
+                ? // Review round 2 P1: a store that REFUSED to be read
+                  // contributes nothing to `stored`, so a successful
+                  // cookie removal could land here with `stored === 0`
+                  // and report a clean success while an unreadable
+                  // store still held data. Not knowing is not done.
+                  copy.dataRights.eraseBlocked
+                : result.total > 0
+                  ? copy.dataRights.eraseDone(result.total)
+                  : copy.dataRights.eraseNothing}
           </div>
         ) : null}
 
