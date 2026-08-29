@@ -106,7 +106,7 @@ describe('applyAcceptancePinFrame', () => {
   it('pins with the ACTING tab’s timestamp, so the TTL does not restart', () => {
     const at = 1_700_000_000_000;
     const client = new QueryClient();
-    applyAcceptancePinFrame(client, frame({ at }));
+    applyAcceptancePinFrame(client, frame({ at }), at);
 
     const scope = acceptanceScope(84532, ADDRESS);
     // Just inside the acting tab's window: pinned.
@@ -123,7 +123,7 @@ describe('applyAcceptancePinFrame', () => {
     // when the chain still reports this version, through the same
     // queryFn correction every other read uses.
     const client = new QueryClient();
-    applyAcceptancePinFrame(client, frame());
+    applyAcceptancePinFrame(client, frame(), frame().at);
     expect(client.getQueryData(tosQueryKey(84532, ADDRESS))).toBeUndefined();
     expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, frame().at)).toBe(true);
   });
@@ -132,7 +132,7 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
     client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
-    applyAcceptancePinFrame(client, frame());
+    applyAcceptancePinFrame(client, frame(), frame().at);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(true);
   });
 
@@ -141,7 +141,7 @@ describe('applyAcceptancePinFrame', () => {
     const key = tosQueryKey(84532, ADDRESS);
     const newer: TosVerdictData = { accepted: false, version: 4, hash: HASH };
     client.setQueryData(key, newer);
-    applyAcceptancePinFrame(client, frame({ version: 3 }));
+    applyAcceptancePinFrame(client, frame({ version: 3 }), frame().at);
     // The cache keeps the newer version's answer...
     expect(client.getQueryData(key)).toEqual(newer);
     // ...and the pin exists but can never match it, by the same
@@ -158,7 +158,7 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS.toLowerCase());
     client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
-    applyAcceptancePinFrame(client, frame({ address: ADDRESS.toUpperCase().replace('0X', '0x') }));
+    applyAcceptancePinFrame(client, frame({ address: ADDRESS.toUpperCase().replace('0X', '0x') }), frame().at);
     expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(true);
   });
 
@@ -172,8 +172,8 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const scope = acceptanceScope(84532, ADDRESS);
     const v4At = 1_700_000_100_000;
-    applyAcceptancePinFrame(client, frame({ version: 4, at: v4At }));
-    applyAcceptancePinFrame(client, frame({ version: 3, at: v4At - 5_000 }));
+    applyAcceptancePinFrame(client, frame({ version: 4, at: v4At }), v4At);
+    applyAcceptancePinFrame(client, frame({ version: 3, at: v4At - 5_000 }), v4At);
     expect(acceptanceIsPinned(scope, 4, v4At)).toBe(true);
     expect(acceptanceIsPinned(scope, 3, v4At)).toBe(false);
   });
@@ -185,10 +185,45 @@ describe('applyAcceptancePinFrame', () => {
     const client = new QueryClient();
     const scope = acceptanceScope(84532, ADDRESS);
     const at = 1_700_000_000_000;
-    applyAcceptancePinFrame(client, frame({ at }));
-    applyAcceptancePinFrame(client, frame({ at: at - 60_000 }));
+    applyAcceptancePinFrame(client, frame({ at }), at);
+    applyAcceptancePinFrame(client, frame({ at: at - 60_000 }), at);
     expect(acceptanceIsPinned(scope, 3, at + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
-    applyAcceptancePinFrame(client, frame({ at: at + 30_000 }));
+    applyAcceptancePinFrame(client, frame({ at: at + 30_000 }), at + 30_000);
     expect(acceptanceIsPinned(scope, 3, at + 30_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
+  });
+
+  it('drops a frame delivered after its own safety window, whole', () => {
+    // Review round 2 P1: a suspended tab can resume into a frame whose
+    // 90 seconds have already passed. The pin would be rejected on its
+    // first consultation anyway — the danger is the CACHE write, which
+    // would manufacture a fresh `accepted: true` the gates serve while
+    // the refetch runs. Past the bound the chain's answer must win in
+    // every tab at once, so nothing of the frame applies.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const at = 1_700_000_000_000;
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    applyAcceptancePinFrame(client, frame({ at }), at + ACCEPTANCE_PIN_TTL_MS + 1);
+    expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
+    expect(
+      acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, at + ACCEPTANCE_PIN_TTL_MS),
+    ).toBe(false);
+  });
+
+  it('a frame refused by ordering applies NOTHING — not even to a matching cache', () => {
+    // Review round 2 P1: cached `false` at v3, a v4 frame adopted (pin
+    // v4, cache untouched — different version), then a straggling v3
+    // frame. Ordering rejects its pin; without the whole-frame refusal
+    // the version guard would still match the v3 CACHE and rewrite it
+    // to `accepted: true` — the gates open under terms this tab's own
+    // pin already knows are obsolete.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const at = 1_700_000_000_000;
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    applyAcceptancePinFrame(client, frame({ version: 4, at }), at);
+    applyAcceptancePinFrame(client, frame({ version: 3, at: at - 5_000 }), at);
+    expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, at)).toBe(true);
   });
 });

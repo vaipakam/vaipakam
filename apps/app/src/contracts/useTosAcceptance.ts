@@ -44,8 +44,8 @@ import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
-import { acceptanceIsPinned, acceptanceScope, pinAcceptance } from './tosAcceptancePin';
-import { buildAcceptancePinFrame } from './tosAcceptanceSync';
+import { acceptanceIsPinned, acceptanceScope, adoptOrderedPin } from './tosAcceptancePin';
+import { buildAcceptancePinFrame, shouldAdoptPinnedVerdict } from './tosAcceptanceSync';
 import { publishAcceptancePin } from '../chain/receiptSync';
 import { captureTxError } from '../lib/errors';
 
@@ -228,27 +228,44 @@ export function useTosAcceptance(): TosAcceptanceState {
       // too. Paying twice for `acceptTerms` buys nothing but a second
       // timestamp.
       //
-      // So the mined result is written into the cache directly. This is
-      // not optimism about an unknown outcome — it is the outcome,
-      // anchored to a receipt this call waited for, and a later read
-      // that genuinely disagrees (governance installing a new version
-      // in between) still overwrites it. Writing it here rather than
-      // holding it in component state matters because the write gate
-      // reads this same cache entry: without it, the wallet that just
-      // accepted would be refused its next non-exit write.
+      // So the mined result is pinned and written into the cache —
+      // but through the same ORDERED adoption every pin takes since
+      // #2001 (#2004 round 2 P1). "My own receipt is the newest fact I
+      // hold" stopped being true the moment acceptances started
+      // arriving from other tabs: a slow RPC can resolve this `write`
+      // AFTER governance installed a newer version and another tab's
+      // acceptance of it was already applied here, and an
+      // unconditional pin + cache write would then reopen both gates
+      // under obsolete terms. Ordering refuses exactly that case; a
+      // refused local receipt is real but superseded, and the
+      // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
-      queryClient.setQueryData<TosVerdictData>(queryKey, {
-        accepted: true,
-        version: acceptedVersion,
-        hash: query.data.hash,
-      });
-      // ...and pinned, because the invalidations below can land a
-      // lagging `false` on top of the line above. `queryFn` applies the
-      // pin to every later read, so this survives any number of them —
-      // and, being module-scoped, survives this component unmounting
-      // and remounting on a brief disconnect.
       const pinnedAt = Date.now();
-      pinAcceptance(scope, acceptedVersion, pinnedAt);
+      const adopted = adoptOrderedPin(scope, acceptedVersion, pinnedAt);
+      // The cache write carries its own guard, like the receiver's: a
+      // newer VERDICT can be cached here without any pin (this tab's
+      // own refetch may have discovered v4 while our v3 receipt was
+      // settling), and writing v3 over it would be the same reopening
+      // by another door.
+      if (
+        adopted &&
+        shouldAdoptPinnedVerdict(
+          queryClient.getQueryData<TosVerdictData>(queryKey),
+          acceptedVersion,
+        )
+      ) {
+        // Not optimism about an unknown outcome — it is the outcome,
+        // anchored to a receipt this call waited for. Writing it here
+        // rather than holding it in component state matters because
+        // the write gate reads this same cache entry: without it, the
+        // wallet that just accepted would be refused its next
+        // non-exit write.
+        queryClient.setQueryData<TosVerdictData>(queryKey, {
+          accepted: true,
+          version: acceptedVersion,
+          hash: query.data.hash,
+        });
+      }
       // #2001: the pin and the cache write above are per-TAB, so a
       // second tab holding this wallet still shows its own prompt with
       // an enabled Accept button — and `acceptTerms` happily mines a
@@ -259,7 +276,10 @@ export function useTosAcceptance(): TosAcceptanceState {
       // acting tab's `pinnedAt` travels with it: the 90s bound must
       // expire at the same moment everywhere, or a reorged acceptance
       // stays papered over in whichever tab heard about it last.
-      if (address) {
+      // Gated on `adopted` with everything else — a receipt that lost
+      // ordering here would lose it in every receiving tab too, so
+      // broadcasting it would be noise at best.
+      if (adopted && address) {
         publishAcceptancePin(
           buildAcceptancePinFrame(
             readChain.chainId,

@@ -70,37 +70,47 @@ export function acceptanceScope(chainId: number, address: string | undefined): s
   return `${chainId}:${address?.toLowerCase() ?? ''}`;
 }
 
-/** Record that this scope's acceptance of `version` has been mined and
- *  its receipt waited for. For the ACTING tab only — its own fresh
- *  acceptance is by construction the newest fact it holds. A pin
- *  arriving over the broadcast goes through `adoptBroadcastPin`. */
+/** Record this scope's acceptance of `version` unconditionally. Kept
+ *  as the pin's primitive and for its own unit surface; every
+ *  PRODUCTION path — the acting tab's own receipt included — adopts
+ *  through `adoptOrderedPin` instead, because once acceptances can
+ *  arrive from other tabs, even a locally mined receipt is not
+ *  necessarily the newest fact this tab holds (#2004 round 2 P1: a
+ *  slow RPC can deliver the local v3 receipt AFTER another tab's v4
+ *  broadcast has been applied here). */
 export function pinAcceptance(scope: string, version: number, now: number): void {
   pins.set(scope, { version, at: now });
 }
 
 /**
- * Adopt a pin delivered from another tab — WITHOUT letting a straggler
- * regress a newer one (#2004 review round 1 P2). BroadcastChannel
- * delivery is not globally ordered across senders, so when successive
- * versions are accepted from different tabs, a delayed v3 frame can
- * arrive after the v4 frame. One pin per scope means an unconditional
- * `set` would REPLACE the v4 pin with v3; the cache guard keeps the v4
- * verdict, but the next lagging `false` read at v4 would find only a
- * v3 pin — uncorrectable, prompt re-armed, second payment back on the
- * table. So an incoming pin is adopted only when it is strictly newer:
- * a higher version, or the same version with a later timestamp (a
- * genuine later acceptance of the same version — the chain permits it
- * — whose longer window is anchored to a real receipt).
+ * Adopt a pin — from the broadcast OR from a locally settled receipt —
+ * WITHOUT letting a stale one regress a newer one (#2004 review round
+ * 1 P2, extended to the local path in round 2 P1). Delivery is not
+ * globally ordered across senders, and a local `write` promise can
+ * resolve after a newer remote acceptance was applied here. One pin
+ * per scope means an unconditional `set` would REPLACE the v4 pin
+ * with v3; the cache guard keeps the v4 verdict, but the next lagging
+ * `false` read at v4 would find only a v3 pin — uncorrectable, prompt
+ * re-armed, second payment back on the table. So a pin is adopted
+ * only when it is strictly newer: a higher version, or the same
+ * version with a later timestamp (a genuine later acceptance of the
+ * same version — the chain permits one — whose longer window is
+ * anchored to a real receipt).
+ *
+ * Returns whether the pin was adopted, so callers can gate everything
+ * that must not outrun ordering — the cache write, the broadcast — on
+ * the same decision.
  */
-export function adoptBroadcastPin(scope: string, version: number, at: number): void {
+export function adoptOrderedPin(scope: string, version: number, at: number): boolean {
   const existing = pins.get(scope);
   if (
     existing &&
     (existing.version > version || (existing.version === version && existing.at >= at))
   ) {
-    return;
+    return false;
   }
   pins.set(scope, { version, at });
+  return true;
 }
 
 /**

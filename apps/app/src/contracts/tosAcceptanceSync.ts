@@ -33,7 +33,23 @@
  */
 import type { QueryClient } from '@tanstack/react-query';
 import { tosQueryKey, type TosVerdictData } from './tosGate';
-import { acceptanceScope, adoptBroadcastPin } from './tosAcceptancePin';
+import {
+  ACCEPTANCE_PIN_TTL_MS,
+  acceptanceScope,
+  adoptOrderedPin,
+} from './tosAcceptancePin';
+
+/**
+ * How long after the invalidation below a receiving tab re-reads.
+ * Mirrors the acting tab's own delayed second read (#2004 round 2 P2):
+ * the invalidation's refetch can hit a lagging RPC and come back with
+ * the PREVIOUS version still in force — which the newer pin cannot
+ * correct, since pins apply only at the version the node reports — and
+ * without a second read the stale prompt would sit enabled until the
+ * 60-second poll, offering exactly the obsolete acceptance this
+ * feature exists to prevent.
+ */
+const RECEIVER_SECOND_READ_MS = 4_000;
 
 /** What the acting tab broadcasts after `acceptTerms` is mined and its
  *  receipt waited for. `kind` is the discriminator on the shared
@@ -135,11 +151,25 @@ export function shouldAdoptPinnedVerdict(
 export function applyAcceptancePinFrame(
   queryClient: QueryClient,
   frame: AcceptancePinFrame,
+  now: number = Date.now(),
 ): void {
+  // Round 2 P1: a frame can arrive AFTER its own safety window — a
+  // suspended tab resuming is enough — and past the bound the chain's
+  // answer must win in every tab at once. Applied to the whole frame,
+  // not just the pin: `acceptanceIsPinned` would already reject an
+  // expired pin, but the cache write would still have manufactured a
+  // fresh `accepted: true` the gates serve while the refetch runs.
+  if (now - frame.at > ACCEPTANCE_PIN_TTL_MS) return;
   const scope = acceptanceScope(frame.chainId, frame.address);
   // Ordered adoption, not a plain overwrite: a delayed older frame
-  // must not evict a newer pin — see `adoptBroadcastPin`.
-  adoptBroadcastPin(scope, frame.version, frame.at);
+  // must not evict a newer pin. And when ordering REFUSES the frame,
+  // nothing else of it may apply either (round 2 P1): with `false`
+  // cached at v3, a v4 frame adopted, and a straggling v3 frame, the
+  // version guard below would happily match the v3 cache and rewrite
+  // it to `accepted: true` — opening the gates under terms this tab's
+  // own pin already knows are obsolete. A refused frame is history;
+  // the pin that beat it already ran this function's tail.
+  if (!adoptOrderedPin(scope, frame.version, frame.at)) return;
   const queryKey = tosQueryKey(frame.chainId, frame.address);
   const cached = queryClient.getQueryData<TosVerdictData>(queryKey);
   if (shouldAdoptPinnedVerdict(cached, frame.version)) {
@@ -150,4 +180,8 @@ export function applyAcceptancePinFrame(
     });
   }
   void queryClient.invalidateQueries({ queryKey });
+  // See `RECEIVER_SECOND_READ_MS` — one delayed re-read, never a poll.
+  setTimeout(() => {
+    void queryClient.invalidateQueries({ queryKey });
+  }, RECEIVER_SECOND_READ_MS);
 }
