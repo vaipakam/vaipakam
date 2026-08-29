@@ -154,6 +154,19 @@ describe('adoptOrderedPin', () => {
     expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + 5_000, B0, TX0, T0 + 6_000)).toBe(true);
   });
 
+  it('a same-terms frame never regresses the window, whatever its chain position', () => {
+    // Round 25 P2: identical version and hash means identical
+    // protection — the only meaningful difference is the window, so
+    // the later anchor wins even from an earlier block, and an
+    // earlier anchor changes nothing even from a later one.
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0 + 30_000);
+    expect(adoptOrderedPin(SCOPE, 3, HASH, T0, B0 + 5, 0, T0 + 31_000)).toBe(false);
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 30_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(
+      true,
+    );
+    expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + 40_000, B0 - 5, 0, T0 + 41_000)).toBe(true);
+  });
+
   it('leaves NEITHER pin standing when fork rivals claim one position', () => {
     // Round 19 P2: two DIFFERENT transactions at the same (block,
     // txIndex) can only come from competing branches, and frames
@@ -228,6 +241,19 @@ describe('adoptReceiptPin', () => {
     const late = T0 + ACCEPTANCE_PIN_TTL_MS + 1;
     expect(adoptReceiptPin(SCOPE, 3, H2, T0, B0, 0, late)).toBe(false);
     expect(acceptanceIsPinned(SCOPE, 3, H2, late)).toBe(false);
+  });
+
+  it('keeps a live same-terms incumbent whose anchor is LATER', () => {
+    // Round 25 P2: this receipt sat pending while another tab's
+    // acceptance of identical text was adopted here with a longer
+    // window. Superseding would shrink every tab's protection to a
+    // nearly-spent anchor; the receipt is still believed (true), but
+    // the longer same-semantics anchor stands.
+    pinAcceptance(SCOPE, 3, H2, B0, TX0, T0 + 60_000);
+    expect(adoptReceiptPin(SCOPE, 3, H2, T0, B0 + 5, 0, T0 + 61_000)).toBe(true);
+    expect(acceptanceIsPinned(SCOPE, 3, H2, T0 + 60_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(
+      true,
+    );
   });
 
   it('refuses a receipt anchored in the future beyond the skew allowance', () => {

@@ -249,6 +249,24 @@ describe('applyAcceptancePinFrame', () => {
     expect(state && Date.now() - state.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(true);
   });
 
+  it('the conflict guard uses the bare clock skew, not the render-tick slack', () => {
+    // Round 25 P2: freshVerdict compares against REAL time, so the
+    // 15-second render-tick allowance in the staleness default does
+    // not apply — an entry stamped 6–20 seconds ahead (a backward
+    // clock correction) must not stay authoritative against a
+    // current frame.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const now = 1_700_000_000_000;
+    client.setQueryData<TosVerdictData>(
+      key,
+      { accepted: false, version: 4, hash: HASH },
+      { updatedAt: now + 10_000 },
+    );
+    applyAcceptancePinFrame(client, frame({ version: 3, at: now }), now);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, now)).toBe(true);
+  });
+
   it('a FUTURE-dated cache entry is not authoritative — the frame still applies its pin', () => {
     // Round 19 P2: a backward clock correction after a read leaves
     // `dataUpdatedAt` ahead of the clock; counted as fresh, that

@@ -34,6 +34,7 @@ import {
   parseAcceptancePinFrame,
   type AcceptancePinFrame,
 } from '../contracts/tosAcceptanceSync';
+import { TOS_QUERY_ROOT } from '../contracts/tosGate';
 
 /** Every root a confirmed own-write may have moved. Kept coarse on
  *  purpose: these refetch `refetchType: 'active'` only, so the cost is
@@ -212,10 +213,23 @@ export function publishReceiptInvalidation(
  * transports self-exclude the sender.
  */
 export function publishAcceptancePin(frame: AcceptancePinFrame): void {
+  // The pin frame FIRST, then a legacy roots frame naming the Terms
+  // query root (#2004 round 25 P2). A tab still running the PREVIOUS
+  // build ignores the pin frame by design (no `roots` array), and the
+  // receipt floor deliberately omits this root — so during a rolling
+  // deployment an old tab heard nothing and held its enabled Accept
+  // prompt until its own poll. The roots frame is a plain
+  // invalidation every build understands. The ORDER carries the
+  // safety: the rail delivers in order, so a new-build tab applies
+  // the pin before the invalidation's refetch can land — never the
+  // bare-invalidation race the issue rejected — while an old tab
+  // simply re-reads the chain, the best a build without pins can do.
+  const legacyHint: ReceiptFrame = { roots: [TOS_QUERY_ROOT] };
   const ch = getChannel();
   if (ch) {
     try {
       ch.postMessage(frame);
+      ch.postMessage(legacyHint);
       return; // delivered — the storage ping would double-deliver
     } catch {
       /* channel closed — fall through to the storage ping */
@@ -233,6 +247,14 @@ export function publishAcceptancePin(frame: AcceptancePinFrame): void {
     // is ignored by every receiver) — and clearing the key also means
     // the next write always differs, so repeat pings are never
     // swallowed by the value-must-change rule.
+    localStorage.removeItem(STORAGE_PING_KEY);
+    // The legacy hint takes the same mutation-per-message path; it
+    // carries no wallet address, but clearing keeps the
+    // value-must-change rule satisfied for whatever writes next.
+    localStorage.setItem(
+      STORAGE_PING_KEY,
+      JSON.stringify({ ...legacyHint, at: Date.now() }),
+    );
     localStorage.removeItem(STORAGE_PING_KEY);
   } catch {
     /* storage unavailable (private mode) — nothing else to try */

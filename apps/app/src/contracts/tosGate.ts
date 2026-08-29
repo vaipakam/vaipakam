@@ -118,9 +118,19 @@ export function isVerdictStale(
   dataUpdatedAt: number,
   now: number,
   maxAgeMs: number = MAX_VERDICT_AGE_MS,
+  // The future tolerance is a PARAMETER (round 25 P2) because its
+  // default carries a term that exists only for one caller: the
+  // gate's render clock lags the real one by up to a tick, so the
+  // default must not read a mid-tick write as future-dated. Callers
+  // that compare against REAL time (the conflict guards, via
+  // `freshVerdict`) pass the bare clock-skew allowance instead — with
+  // the render-tick slack, a 6-to-20-second backward correction left
+  // a pre-correction entry "authoritative" enough to veto a current
+  // frame or receipt.
+  maxFutureMs: number = MAX_VERDICT_FUTURE_MS,
 ): boolean {
   if (!dataUpdatedAt) return true;
-  if (dataUpdatedAt > now + MAX_VERDICT_FUTURE_MS) return true;
+  if (dataUpdatedAt > now + maxFutureMs) return true;
   return now - dataUpdatedAt > maxAgeMs;
 }
 
@@ -139,8 +149,13 @@ export function opensGate(verdict: TosGateVerdict): boolean {
  * alternative is a second key spelling, which is how a cache write and
  * a cache read come to miss each other silently.
  */
+/** The Terms query's root — the first element of `tosQueryKey`.
+ *  Exported for the cross-tab rail's legacy read-hint frame (#2004
+ *  round 25 P2), whose receivers match invalidations on this string. */
+export const TOS_QUERY_ROOT = 'tosAcceptance';
+
 export function tosQueryKey(chainId: number, address: string | undefined) {
-  return ['tosAcceptance', chainId, address?.toLowerCase() ?? null] as const;
+  return [TOS_QUERY_ROOT, chainId, address?.toLowerCase() ?? null] as const;
 }
 
 /** What the Terms query stores. */

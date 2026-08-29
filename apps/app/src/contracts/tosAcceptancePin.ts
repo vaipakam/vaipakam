@@ -207,25 +207,28 @@ export function adoptOrderedPin(
     pins.delete(scope);
     existing = undefined;
   }
-  if (existing && existing.block === block && existing.txIndex === txIndex) {
-    if (existing.version === version && existing.hash === hash) {
-      // The SAME acceptance re-broadcast — a duplicate frame. The
-      // later stamp anchors the longer window; an earlier one changes
-      // nothing.
-      if (existing.at >= at) return false;
-    } else {
-      // Two DIFFERENT transactions claiming one chain position can
-      // only be fork rivals (round 19 P2), and frames carry no branch
-      // identity to order them — a wall-stamp tiebreak here handed
-      // the win to whichever clock said so, which a backward
-      // correction inverts. Unordered means NEITHER holds authority:
-      // the incumbent is retired, the candidate refused, and the
-      // caller's refusal path schedules the authoritative reads that
-      // alone can say which fork won. No pin corrects either
-      // version's reads until a real acceptance re-establishes one.
-      pins.delete(scope);
-      return false;
-    }
+  if (existing && existing.version === version && existing.hash === hash) {
+    // SAME terms — a duplicate re-broadcast, or a genuine second
+    // acceptance of identical text. Chain position is irrelevant to
+    // what the pin protects here (the terms are the terms); the only
+    // meaningful difference is the WINDOW, so the later anchor wins
+    // and an earlier one changes nothing (round 25 P2 generalized
+    // this from same-position duplicates: a re-acceptance mined in a
+    // later block must also not REGRESS the window an earlier-mined,
+    // later-anchored acceptance already carries).
+    if (existing.at >= at) return false;
+  } else if (existing && existing.block === block && existing.txIndex === txIndex) {
+    // Two DIFFERENT transactions claiming one chain position can
+    // only be fork rivals (round 19 P2), and frames carry no branch
+    // identity to order them — a wall-stamp tiebreak here handed
+    // the win to whichever clock said so, which a backward
+    // correction inverts. Unordered means NEITHER holds authority:
+    // the incumbent is retired, the candidate refused, and the
+    // caller's refusal path schedules the authoritative reads that
+    // alone can say which fork won. No pin corrects either
+    // version's reads until a real acceptance re-establishes one.
+    pins.delete(scope);
+    return false;
   } else if (
     existing &&
     (existing.block > block || (existing.block === block && existing.txIndex > txIndex))
@@ -276,6 +279,25 @@ export function adoptReceiptPin(
   now: number,
 ): boolean {
   if (now - at > ACCEPTANCE_PIN_TTL_MS || at > now + MAX_FUTURE_SKEW_MS) return false;
+  const existing = pins.get(scope);
+  // A LIVE incumbent for the SAME terms with a LATER anchor stands
+  // (round 25 P2): this receipt sat pending while another tab's
+  // acceptance of identical text was adopted here, and superseding
+  // that pin would only REGRESS the shared window — the expiry timers
+  // key on version and hash, so every tab's protection would shrink
+  // to this receipt's nearly-spent anchor. The receipt is still fully
+  // believed (the return is true and the caller proceeds); the pin
+  // simply keeps the longer of two anchors for one and the same
+  // acceptance semantics.
+  if (
+    existing &&
+    existing.version === version &&
+    existing.hash === hash &&
+    existing.at > at &&
+    now - existing.at <= ACCEPTANCE_PIN_TTL_MS
+  ) {
+    return true;
+  }
   pins.set(scope, { version, hash, at, block, txIndex });
   return true;
 }

@@ -241,7 +241,13 @@ export function freshVerdict(
   now: number,
 ): TosVerdictData | undefined {
   const state = queryClient.getQueryState<TosVerdictData>(queryKey);
-  return state?.status === 'success' && !isVerdictStale(state.dataUpdatedAt, now)
+  // The future tolerance here is the bare clock-skew allowance, not
+  // the predicate's default (round 25 P2): every caller passes REAL
+  // time, so the render-tick slack the default carries for the gate's
+  // lagging clock would let an entry stamped up to 20 seconds ahead —
+  // a backward correction — keep vetoing current frames and receipts.
+  return state?.status === 'success' &&
+    !isVerdictStale(state.dataUpdatedAt, now, MAX_VERDICT_AGE_MS, MAX_FUTURE_SKEW_MS)
     ? state.data
     : undefined;
 }
