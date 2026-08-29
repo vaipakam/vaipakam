@@ -155,7 +155,10 @@ const DEPLOY_RE = String.raw`wrangler2?(?:\.(?:cmd|ps1|bat))?(?:@[^\s]+)?\s+(?:-
 // the subcommand, because being loose there can only bring more files into the
 // ordinary scoring; strict about what sits BEFORE it, because that is what
 // decides whether anything runs at all.
-const ARGV_DEPLOY_RE = String.raw`\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(\s*\[?\s*(['"\`])wrangler2?(?:\.(?:cmd|ps1|bat))?\1[\s\S]{0,200}?(['"\`])(?:deploy|versions\2\s*,\s*(['"\`])upload)\3?`;
+// `[^'"\`\s]*[/\\]` before the name: `spawnSync('./node_modules/.bin/wrangler',
+// …)` runs the same local executable, and requiring the quote to be followed
+// immediately by `wrangler` missed every path-qualified spelling (#1995 r16).
+const ARGV_DEPLOY_RE = String.raw`\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(\s*\[?\s*(['"\`])(?:[^'"\`\s]*[/\\])?wrangler2?(?:\.(?:cmd|ps1|bat))?\1[\s\S]{0,200}?(['"\`])(?:deploy|versions\2\s*,\s*(['"\`])upload)\3?`;
 
 /**
  * The PACKAGE-SCRIPT form is a deploy too, and the guard could not see it
@@ -283,7 +286,10 @@ const EXTENSIONS = [
   // MDX runbook was not opened at all (#1995 r16).
   '.mdx',
   '.ts',
+  '.mts',
+  '.cts',
   '.mjs',
+  '.cjs',
   '.js',
   '.json',
   '.jsonc',
@@ -1754,12 +1760,12 @@ function scopeOf(line, filePath) {
  * WORTH SCANNING and which lines carry a deploy; it never decides scope or
  * safety, which stay with the ordered `shellVars` walk.
  *
- * A value must be a SINGLE WORD, because a command word is one. Admitting text
- * with spaces made `MSG="wrangler deploy"` then `echo "$MSG"` expand into a
- * deploy and reported echoing a string as a destructive deployment — the r19
- * defect (a message value read as a command) reappearing through the
- * expansion. My own probe caught it, not a review round, and there is a control
- * fixture for it.
+ * Values may hold SPACES, because an alias can: `WRANGLER="pnpm exec wrangler"`
+ * word-splits to a real command. What keeps that from resurrecting the r19
+ * defect — `MSG="wrangler deploy"` then `echo "$MSG"` reported as a deploy — is
+ * WHERE the expansion is allowed, not what the value contains: a multiword
+ * value is substituted only in COMMAND POSITION, which `echo "$MSG"` is not.
+ * Single-word values expand anywhere, since a command word is one.
  *
  * The leading boundary admits a QUOTE or BACKTICK as well as whitespace, so a
  * runbook's `` `CMD=wrangler; "$CMD" deploy` `` code span reaches this at all.
@@ -1767,7 +1773,7 @@ function scopeOf(line, filePath) {
 function staticCommandVars(text) {
   const vars = new Map();
   for (const m of text.matchAll(
-    /(?:^|[\s;&|(`'"])([A-Za-z_][A-Za-z0-9_]*)=(?:"([A-Za-z0-9_.\/-]*)"|'([A-Za-z0-9_.\/-]*)'|([A-Za-z0-9_.\/-]+))(?=[\s;&|)`'"]|$)/gm,
+    /(?:^|[\s;&|(`'"])([A-Za-z_][A-Za-z0-9_]*)=(?:"([A-Za-z0-9_.\/ -]*)"|'([A-Za-z0-9_.\/ -]*)'|([A-Za-z0-9_.\/-]+))(?=[\s;&|)`'"]|$)/gm,
   )) {
     const value = m[2] ?? m[3] ?? m[4];
     if (value) vars.set(m[1], value);
@@ -1775,16 +1781,52 @@ function staticCommandVars(text) {
   return vars;
 }
 
+/**
+ * Fold adjacent STRING LITERALS, for DETECTION only.
+ *
+ * `spawnSync('wrangler', ['de' + 'ploy'])` runs the destructive argument —
+ * JavaScript evaluates the concatenation — but the pattern required the
+ * subcommand to occupy one literal and the file was skipped at the prefilter
+ * (#1995 r16).
+ *
+ * Same-quote pairs only, and repeated so a chain of three or more collapses.
+ * Bounded: this runs over whole files, and an unbounded loop over adversarial
+ * input is not something a CI guard should own.
+ */
+function foldStringConcat(text) {
+  let out = text;
+  for (let i = 0; i < 8; i += 1) {
+    const next = out.replace(/(['"`])([^'"`\n]*)\1\s*\+\s*\1([^'"`\n]*)\1/g, '$1$2$3$1');
+    if (next === out) break;
+    out = next;
+  }
+  return out;
+}
+
 /** Substitute those assignments into a line, for DETECTION only. */
 function expandCommandVars(text, vars) {
   if (!vars || vars.size === 0 || !/\$/.test(text)) return text;
+  // A MULTIWORD value only substitutes at the head of the text, which is the
+  // command position for a segment. Anywhere else it is an argument or a
+  // message, and expanding it there is what reported `echo "$MSG"` as a deploy.
+  const head = text.match(/^\s*"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?/);
+  if (head && vars.has(head[1]) && /\s/.test(vars.get(head[1]))) {
+    return text.replace(head[0], vars.get(head[1]));
+  }
   return text.replace(
       // `${TARGET:?missing}` and its siblings (`:-`, `:+`, `:=`, `#`, `%`) are
       // the SAME variable with an operator. Matching only `${TARGET` left the
       // operator text attached, so the modelled path became
       // `apps/agent:?missing` and matched no package (#1995 r16).
     /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)(?:[:#%][^}]*|[-+=?][^}]*)?\}|([A-Za-z_][A-Za-z0-9_]*))/g,
-    (m, braced, bare) => vars.get(braced ?? bare) ?? m,
+    (m, braced, bare) => {
+      const v = vars.get(braced ?? bare);
+      // Away from the head, a MULTIWORD value is an argument or a message and
+      // is left alone. Substituting it there is exactly what reported
+      // `echo "$MSG"` as a deploy — my own control caught the regression the
+      // moment the value rule was widened to admit spaces.
+      return v === undefined || /\s/.test(v) ? m : v;
+    },
   );
 }
 
@@ -4011,6 +4053,11 @@ for (const file of walk(REPO_ROOT)) {
   // positives on a clean tree. Every file still gets scanned; only the model
   // of what a line IS differs (Codex #1924 r27).
   const fileVars = staticCommandVars(text);
+  // Folded ONCE per file, for the prefilter and for the per-line detection
+  // tests that follow. Not for scoring: the concatenation is a JavaScript fact,
+  // and rewriting a line before `commandIsSafe` reads it would put text in
+  // front of the safety predicate that the file does not contain.
+  const foldedText = foldStringConcat(text);
   const folded = isShellFile(rel, text)
     ? logicalLines(text)
     : [
@@ -4033,6 +4080,8 @@ for (const file of walk(REPO_ROOT)) {
         new RegExp(ANY_DEPLOY_RE).test(dequote(l.text)) ||
         // …and on the form with statically assigned command words substituted.
         new RegExp(ANY_DEPLOY_RE).test(expandCommandVars(dequote(l.text), fileVars)) ||
+        // …and on the form with adjacent string literals folded.
+        new RegExp(ANY_DEPLOY_RE).test(foldStringConcat(l.text)) ||
         // A file that SOURCES another may hold the scope for a deploy written
         // somewhere else. `cd apps/agent` then `source ../../deploy.sh` carries
         // no deploy TEXT, so the prefilter skipped the caller and the helper's
@@ -4214,12 +4263,30 @@ for (const file of walk(REPO_ROOT)) {
         // by which file it sits in, and prose is what an operator copies.
         if (
           !new RegExp(ANY_DEPLOY_RE).test(expandCommandVars(dequote(seg), fileVars)) &&
+          // Folded literals reach the per-line test as well as the prefilter.
+          // Wiring one and not the other admits the FILE and then sees nothing
+          // in it, which is the shape the shell/safety split keeps producing.
+          //
+          // PROSE side only. `'de' + 'ploy'` is JavaScript, and a JS helper is
+          // read on this path; the shell walk cannot encounter a `+`
+          // concatenation as command syntax. A copy there survived every
+          // mutation because nothing could reach it, so it is gone rather than
+          // kept as untested code.
+          !new RegExp(ANY_DEPLOY_RE).test(foldStringConcat(seg)) &&
           !new RegExp(ANY_DEPLOY_RE).test(seg) &&
           !new RegExp(ANY_DEPLOY_RE).test(dequote(seg))
         ) {
           continue;
         }
-        if (commandIsSafe(seg)) continue;
+        // Statically-known SINGLE-WORD values are expanded before the safety
+        // question too. `FLAGS=--keep-vars` then `wrangler deploy "$FLAGS"` is a
+        // safe deploy that bash really does make safe, and scoring the raw
+        // segment reported it — a false red on a correct command (#1995 r16).
+        //
+        // `expandCommandVars` leaves multiword values alone away from the head,
+        // so this cannot resurrect the `echo "$MSG"` case: what it admits here
+        // is a lone flag word, which is what the reported wrapper writes.
+        if (commandIsSafe(seg) || commandIsSafe(expandCommandVars(seg, fileVars))) continue;
         // Fall back to the whole line only when the segment itself names
         // nothing: prose often establishes the package in an earlier clause,
         // and a file inside a scoped tree scopes every line in it.
@@ -4675,7 +4742,15 @@ for (const file of walk(REPO_ROOT)) {
             input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
             null;
         if (!scope) continue;
-        if (commandIsSafe(seg)) continue;
+        // Statically-known SINGLE-WORD values are expanded before the safety
+        // question too. `FLAGS=--keep-vars` then `wrangler deploy "$FLAGS"` is a
+        // safe deploy that bash really does make safe, and scoring the raw
+        // segment reported it — a false red on a correct command (#1995 r16).
+        //
+        // `expandCommandVars` leaves multiword values alone away from the head,
+        // so this cannot resurrect the `echo "$MSG"` case: what it admits here
+        // is a lone flag word, which is what the reported wrapper writes.
+        if (commandIsSafe(seg) || commandIsSafe(expandCommandVars(seg, fileVars))) continue;
         flagged = true;
         const many = sel ? [] : filterScopes(seg) ?? [];
         if (many.length > 1) for (const sc of many) hitScopes.add(sc);

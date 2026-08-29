@@ -4547,6 +4547,75 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(true);
   });
 
+  // ── How a command and its arguments are RECOGNISED (#1995 r16).
+  it('a CommonJS helper is opened (#1995 r16)', () => {
+    // `.cjs` was absent from the traversal set and `looksExecutable` rejects
+    // any filename with a dot, so the argv detection could never see it.
+    const r = runWith(
+      'apps/agent/deploy.cjs',
+      "const { spawnSync } = require('node:child_process');\nspawnSync('wrangler', ['deploy']);\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a PATH-QUALIFIED executable in argv is the same binary (#1995 r16)', () => {
+    const r = runWith(
+      'apps/agent/d.mjs',
+      "import { spawnSync } from 'node:child_process';\nspawnSync('./node_modules/.bin/wrangler', ['deploy']);\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('adjacent string LITERALS fold before matching (#1995 r16)', () => {
+    // JavaScript evaluates `'de' + 'ploy'`; requiring one literal skipped the
+    // file at the prefilter. The fold has to reach the per-line test as well,
+    // or the file is admitted and then nothing is seen in it.
+    const r = runWith(
+      'apps/agent/d2.mjs',
+      "import { spawnSync } from 'node:child_process';\nspawnSync('wrangler', ['de' + 'ploy']);\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a MULTIWORD alias expands in command position (#1995 r16)', () => {
+    // `WRANGLER="pnpm exec wrangler"` word-splits to a real command.
+    const r = runWith('m.sh', 'WRANGLER="pnpm exec wrangler"\ncd apps/agent\n$WRANGLER deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but NOT as an argument or a message (#1995 r16 control)', () => {
+    // What keeps the widened value rule from resurrecting the r19 defect is
+    // WHERE the expansion is allowed, not what the value contains. Both
+    // spellings of the message case are pinned, because my first cut restricted
+    // only the head and left the general replace substituting everywhere.
+    expect(runWith('m2.sh', 'MSG="wrangler deploy"\ncd apps/agent\necho "$MSG"\n').ok).toBe(true);
+    expect(runWith('m3.sh', 'MSG="wrangler deploy"\ncd apps/agent\necho $MSG\n').ok).toBe(true);
+  });
+
+  it('a static FLAG variable makes the deploy safe (#1995 r16)', () => {
+    // `FLAGS=--keep-vars` then `wrangler deploy "$FLAGS"` is a safe deploy that
+    // bash really does make safe; scoring the raw segment reported it.
+    const r = runWith('fl.sh', 'FLAGS=--keep-vars\ncd apps/agent\nwrangler deploy "$FLAGS"\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and the same expansion applies on the PROSE path (#1995 r16)', () => {
+    // Two call sites score safety — the shell walk and the prose walk — and a
+    // mutant removing the prose one survived, because the shell fixture above
+    // does not reach it. A runbook line is the shape that does.
+    const r = runWith(
+      'docs/r.md',
+      'Run `FLAGS=--keep-vars; cd apps/agent; wrangler deploy "$FLAGS"` to redeploy.\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('while a bare deploy beside it is still reported (#1995 r16 control)', () => {
+    const r = runWith('fl2.sh', 'FLAGS=--keep-vars\ncd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',
