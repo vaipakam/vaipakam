@@ -318,7 +318,17 @@ Privacy and consent requirements:
 Legal and data-rights requirements:
 
 - `/terms` and `/privacy` must be public routes that do not require wallet connection
-- the Terms page should mirror the source-of-truth text from `docs/TermsOfService.md`
+- the Terms page should mirror the source-of-truth text from the canonical
+  Terms document in the repository
+- every published Terms version must stay readable, unchanged forever, at its
+  own permanent version-pinned address, with the current version also served
+  at the unversioned Terms address; a superseded version identifies itself as
+  superseded and points at the current one, and each version publishes a
+  fingerprint of its canonical source so the text can be checked against the
+  version-and-fingerprint pair the connected app's acceptance prompt shows
+- a version-pinned Terms address for a version the site has not published
+  must explain that honestly (naming the versions that are available) rather
+  than showing an error page or, worse, a different version's text
 - Terms, Privacy, Risk Disclosures, and User Guide pages should use locale-aware content where available and show a clear English-only notice when the legally binding or guide content is still available only in English for the active locale
 - Risk Disclosures may show a translated helper panel beside the English source text, but the UI must identify the English text as the controlling version
 - Risk Disclosures should stay compact and legally focused; detailed liquidation mechanics belong in the Advanced User Guide and FAQ, with a prominent "Learn how liquidation actually works" link from the disclosure surface

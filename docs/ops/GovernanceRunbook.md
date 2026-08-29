@@ -564,7 +564,13 @@ re-opens.
    governance must pick and record the derivation — e.g. keccak256
    over the exact committed bytes of `docs/Terms/TermsOfService.md` —
    and note it in the proposal so the hash can be independently
-   re-derived from the text it covers.
+   re-derived from the text it covers. Since #1998 the marketing site
+   already publishes exactly that derivation: each version's page at
+   `/terms/v<N>` displays a "canonical source fingerprint" — the
+   keccak256 of the committed canonical Markdown, pinned against the
+   tree by `apps/www/scripts/check-terms-canonical-hash.ts` on every
+   typecheck — so adopting it for `setCurrentTos` gives users a
+   published value to compare against the hash the gate shows.
 3. **Deploy the updated terms FIRST**: ship `TermsPage.tsx` (and the
    canonical `docs/Terms/TermsOfService.md`) and verify the rendered
    text is the text the new hash covers. Order matters because
@@ -574,14 +580,21 @@ re-opens.
    acceptance of terms the public site does not yet show, and no
    gate exists that would catch it.
 
-   **This ordering now has a second cost, and it is unavoidable
-   today.** The #1961 gate links users to `/terms`, which is a single
-   MUTABLE page with no version-pinned route. So between this deploy and
-   step 5's execution, the gate correctly asks a wallet to accept the
-   OLD version while the site already serves the NEW text — the user
-   reads one and records the other. Keep the interval short, and treat
-   acceptances recorded inside it as anchored to text the user did not
-   see. Versioned hosting is the fix and is tracked in #1998.
+   **The ordering's old second cost is gone (#1998, versioned
+   hosting).** The gate now links users to the VERSION-PINNED route
+   `/terms/v<N>` for the version it read from chain, and `apps/www`
+   keeps every published version frozen at its pinned address —
+   `/terms` alone remains the mutable "current" pointer. So between
+   this deploy and step 5's execution, `/terms` already shows the new
+   text but the gate's own link still resolves to the exact old text
+   its hash pins; the user reads what they record. Two rules keep it
+   so: publish the new version as a NEW frozen body + registry entry
+   in `apps/www` (never an edit to a published one — the
+   `check-terms-canonical-hash` guard and the registry's header
+   enforce the shape), and deploy `apps/www` before step 5 executes —
+   a gate linking a version the site does not serve yet renders an
+   honest "not published here" explainer rather than the text, which
+   fails safe but still blocks users from reading before accepting.
 4. Governance Safe schedules
    `timelock.schedule(target=diamond, data=setCurrentTos(newVersion,
    newHash), delay=48h)`. `newVersion` MUST strictly exceed

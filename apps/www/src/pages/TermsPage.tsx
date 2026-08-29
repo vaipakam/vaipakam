@@ -1,219 +1,184 @@
+import type { ComponentType } from "react";
+import { Link, useParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
 import { EnglishOnlyNotice } from "../components/EnglishOnlyNotice";
 import { usePageMeta } from "../lib/usePageMeta";
+import {
+  CURRENT_TERMS_VERSION,
+  TERMS_VERSION_METAS,
+  parseTermsVersionSlug,
+  termsVersionMeta,
+} from "./terms/versions";
+import { TermsV1Body } from "./terms/TermsV1Body";
 import "./LegalPage.css";
 
 /**
- * Public Terms of Service page — rendered as plain JSX that mirrors
- * `docs/TermsOfService.md`. The `.md` file is the canonical source
- * that governance hashes and pins on-chain via
- * `LegalFacet.setCurrentTos(version, hash)`; the JSX here reproduces
- * the same text verbatim so the user sees what they're signing. Any
- * edit to this text MUST be accompanied by the matching edit in the
- * `.md` file AND a governance-initiated version bump (otherwise the
- * on-chain acceptance hash will not match what the UI is rendering).
+ * Public Terms of Service page — VERSIONED hosting (#1998).
+ *
+ * The connected app's acceptance gate records a wallet's acceptance
+ * against a specific on-chain (version, content-hash) pair, and links
+ * the user to `/terms/v<version>` — the version its hash actually
+ * pins. This page serves:
+ *
+ * - `/terms` — the CURRENT version (the last `versions.ts` entry);
+ * - `/terms/v<N>` — version N, frozen forever, so an acceptance
+ *   recorded years ago still resolves to the text that was accepted,
+ *   and the rollout window (new page published before
+ *   `setCurrentTos` executes) can no longer show one text while the
+ *   gate records another;
+ * - `/terms/<anything else>` — an honest "not published here"
+ *   explainer instead of a silent 404, covering a gate that links a
+ *   version this deploy does not serve yet (the wrong-order rollout
+ *   case) as well as mistyped links.
+ *
+ * Each version's body is a frozen component (`terms/TermsV<N>Body`);
+ * the text rendered here mirrors the canonical
+ * `docs/Terms/TermsOfService.md` at the commit that published the
+ * version — the source governance hashes and pins on-chain via
+ * `LegalFacet.setCurrentTos(version, hash)`. Publishing a NEW version
+ * means: new body file + new `versions.ts` entry (this page maps it
+ * below) + the canonical `.md` update + a governance version bump —
+ * never an edit to a published body.
  */
+
+/** version → frozen body component. Must stay exhaustive over
+ *  `versions.ts` (the hash guard script cross-checks the two lists);
+ *  if an entry ever lacked a mapping, the fallback below renders the
+ *  not-published explainer rather than crashing. */
+const TERMS_BODIES: Record<number, ComponentType> = {
+  1: TermsV1Body,
+};
+
+/** The version metadata line + canonical-source fingerprint shown
+ *  under every version's title. The fingerprint is the keccak256 of
+ *  the version's canonical Markdown source — published so a user (or
+ *  a script) can compare what this page claims against the content
+ *  hash the acceptance gate displays from chain, once governance
+ *  records that derivation for `setCurrentTos`. */
+function VersionMeta({ version }: { version: number }) {
+  const meta = termsVersionMeta(version);
+  if (!meta) return null;
+  return (
+    <>
+      <div className="legal-meta">
+        <span>Version {meta.version}</span>
+        <span>·</span>
+        <span>Effective {meta.effective}</span>
+        {version === CURRENT_TERMS_VERSION ? (
+          <>
+            <span>·</span>
+            <span>Current</span>
+          </>
+        ) : null}
+      </div>
+      <p className="legal-meta legal-meta-hash">
+        Canonical source fingerprint (keccak256 of this version's
+        Markdown source):{" "}
+        <code>{meta.canonicalMdKeccak256}</code>
+      </p>
+    </>
+  );
+}
+
+/** Links to every published version, shown at the foot of the page
+ *  so old acceptances stay one click from their text. `relative`
+ *  path links keep the active locale prefix. */
+function VersionIndex({ fromPinned }: { fromPinned: boolean }) {
+  return (
+    <section>
+      <h2>All published versions</h2>
+      <ul>
+        {TERMS_VERSION_METAS.map((m) => (
+          <li key={m.version}>
+            <Link
+              to={fromPinned ? `../v${m.version}` : `v${m.version}`}
+              relative="path"
+            >
+              Version {m.version}
+            </Link>{" "}
+            — effective {m.effective}
+            {m.version === CURRENT_TERMS_VERSION ? " (current)" : ""}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 export default function TermsPage() {
   usePageMeta({
-    titleKey: 'pageMeta.terms.title',
-    descriptionKey: 'pageMeta.terms.description',
+    titleKey: "pageMeta.terms.title",
+    descriptionKey: "pageMeta.terms.description",
   });
+  const { versionSlug } = useParams<{ versionSlug?: string }>();
+
+  const requested =
+    versionSlug === undefined ? CURRENT_TERMS_VERSION : parseTermsVersionSlug(versionSlug);
+  const meta = requested === null ? null : termsVersionMeta(requested);
+  const Body = meta ? TERMS_BODIES[meta.version] : undefined;
+
+  if (!meta || !Body) {
+    // Unknown slug, or a version the chain may already name but this
+    // deploy does not serve yet. An honest page beats a silent 404:
+    // the reader learns exactly which versions exist here and where
+    // the current one is.
+    return (
+      <>
+        <Navbar />
+        <main className="container legal-page">
+          <EnglishOnlyNotice />
+          <header>
+            <h1>Vaipakam Terms of Service</h1>
+          </header>
+          <section>
+            <h2>This version is not published here</h2>
+            <p>
+              {versionSlug !== undefined && parseTermsVersionSlug(versionSlug) !== null
+                ? "This site does not (yet) serve the Terms version this link names. " +
+                  "If the app's acceptance prompt sent you here, the text for that " +
+                  "version has not been published at its pinned address yet — " +
+                  "please do not accept until you can read the exact version the " +
+                  "prompt names."
+                : "This address does not name a published Terms version."}{" "}
+              The versions this site serves are listed below.
+            </p>
+          </section>
+          <VersionIndex fromPinned />
+        </main>
+        <Footer />
+      </>
+    );
+  }
+
+  const superseded = meta.version !== CURRENT_TERMS_VERSION;
+
   return (
     <>
       <Navbar />
       <main className="container legal-page">
         <EnglishOnlyNotice />
+        {superseded ? (
+          <div className="legal-superseded-banner" role="note">
+            You are reading Terms version {meta.version}, which has been
+            superseded. It is kept unchanged at this address because
+            acceptances were recorded against it.{" "}
+            <Link to=".." relative="path">
+              Read the current version
+            </Link>
+            .
+          </div>
+        ) : null}
         <header>
           <h1>Vaipakam Terms of Service</h1>
-          <div className="legal-meta">
-            <span>Version 1</span>
-            <span>·</span>
-            <span>Effective 2026-04-24</span>
-          </div>
+          <VersionMeta version={meta.version} />
         </header>
 
-        <section>
-          <h2>What this document is</h2>
-          <p>
-            These Terms govern your use of the Vaipakam protocol. Vaipakam is a
-            non-custodial, on-chain peer-to-peer lending and NFT-rental
-            protocol. When you connect your wallet and interact with the app at
-            vaipakam.com (or any other Vaipakam-branded frontend), you are doing
-            so under these Terms.
-          </p>
-        </section>
+        <Body />
 
-        <section>
-          <h2>Not a service provider</h2>
-          <p>
-            Vaipakam is not a custodian, broker, bank, exchange, or financial
-            adviser. The smart contracts run on public blockchains. You interact
-            with them directly via your own wallet. The frontend at vaipakam.com
-            is a convenience layer — the same smart contracts are reachable from
-            any wallet and any other UI.
-          </p>
-        </section>
-
-        <section>
-          <h2>No advice</h2>
-          <p>
-            Nothing on the site or in this document is financial, legal, tax, or
-            investment advice. You are responsible for evaluating the risks of
-            every position you take and for your own regulatory compliance in
-            whatever jurisdiction you reside in.
-          </p>
-        </section>
-
-        <section>
-          <h2>Risk of total loss</h2>
-          <p>
-            You can lose every asset you commit to a loan position, a rental
-            position, or a VPFI balance. Smart contract bugs, oracle
-            manipulation, liquidation cascades, bridge failures, chain
-            reorganisations, and wallet compromises are all scenarios in which
-            the value of an on-chain position can go to zero. Participation in
-            Vaipakam implies you accept these risks.
-          </p>
-        </section>
-
-        <section>
-          <h2>Prohibited use</h2>
-          <p>You may not use Vaipakam:</p>
-          <ul>
-            <li>
-              from a jurisdiction where accessing a non-custodial DeFi protocol
-              requires registration you haven't completed, or where
-              participation is prohibited outright;
-            </li>
-            <li>
-              if your wallet address is listed under any sanctions programme in
-              force in the United States, European Union, or United Kingdom;
-            </li>
-            <li>
-              to launder funds, finance terrorism, or otherwise violate any
-              applicable law;
-            </li>
-            <li>
-              to attack, exploit, or probe the protocol or its infrastructure.
-            </li>
-          </ul>
-        </section>
-
-        <section>
-          <h2>Protocol changes</h2>
-          <p>
-            The protocol's parameters — fees, liquidation thresholds, reward
-            rates, supported assets — can be changed by governance. Changes that
-            could affect an active position give users a public notice window
-            through the Timelock mechanism. Your active positions continue to
-            follow the parameters in force when you opened them, unless
-            explicitly stated otherwise for a specific change.
-          </p>
-        </section>
-
-        <section>
-          <h2>Keeper delegation</h2>
-          <p>
-            Vaipakam supports delegating "keeper" actions on your behalf to
-            whitelisted addresses. A keeper you authorize can execute non-claim,
-            role-scoped actions on your loans (refinance, repay, add-collateral,
-            preclose). Keepers CANNOT claim funds or transfer your position NFT.
-            You can enable or disable keeper access per-loan or per-offer at any
-            time while the position is active. You remain responsible for any
-            action a keeper you authorized takes.
-          </p>
-        </section>
-
-        <section>
-          <h2>Stuck-token recovery</h2>
-          <p>
-            Vaipakam offers a recovery flow for tokens accidentally transferred
-            into your isolated vault that the protocol does not track. To use
-            it, you sign an EIP-712 attestation declaring the source of the
-            stuck tokens. That attestation is your representation that you
-            know where the funds came from. The protocol does not independently
-            verify the truthfulness of your declaration. You are responsible
-            for the contents of every recovery signature you produce.
-          </p>
-          <p>
-            If the source you declare is flagged on the on-chain sanctions
-            oracle, the recovery transaction will not move the funds and your
-            nonce will burn. Your wallet will be treated as sanctioned by the
-            protocol for as long as the source remains flagged on the oracle —
-            new positions, recovery, and claims are blocked, while you can
-            still repay your existing loans so the counterparty can be made
-            whole. The block lifts automatically when the source is de-listed,
-            and any claims that accrued in the meantime can then be processed
-            normally. This is distinct from <em>lost-wallet</em> recovery:
-            stuck-token recovery returns funds you can prove the source of to
-            your wallet; it cannot restore access to a wallet you no longer
-            control.
-          </p>
-        </section>
-
-        <section>
-          <h2>Your wallet is your signature</h2>
-          <p>
-            The wallet address you connect IS your identity on the protocol.
-            Your acceptance of these Terms is a cryptographic record anchored to
-            that wallet, time-stamped by the on-chain block number. If you lose
-            access to the wallet, you lose access to every position it holds —
-            the Vaipakam team cannot recover any asset on your behalf.
-          </p>
-        </section>
-
-        <section>
-          <h2>Changes to these Terms</h2>
-          <p>
-            Governance can publish a new version of these Terms. When it does,
-            the on-chain current-version and content-hash pair increments, and
-            users must sign a new acceptance from their wallet before the
-            frontend re-opens the app to them. Failure to re-sign does not
-            affect your on-chain positions — the Terms gate is only a frontend
-            gate, not a protocol gate.
-          </p>
-        </section>
-
-        <section>
-          <h2>No warranty</h2>
-          <p>
-            The protocol and the frontend are provided "as is" without any
-            warranty of fitness, merchantability, or absence of bugs. Every
-            participant — including the protocol's own developers and governance
-            signers — uses Vaipakam at their own risk.
-          </p>
-        </section>
-
-        <section>
-          <h2>Limitation of liability</h2>
-          <p>
-            To the maximum extent permitted by applicable law, Vaipakam and its
-            contributors are not liable for any loss arising from your use of
-            the protocol or frontend.
-          </p>
-        </section>
-
-        <section>
-          <h2>Governing convention</h2>
-          <p>
-            These Terms are deliberately short and written in plain English.
-            They do not substitute for professional legal advice. If your
-            jurisdiction imposes specific disclosures on DeFi usage, you are
-            responsible for obtaining them.
-          </p>
-        </section>
-
-        <section>
-          <h2>Contact</h2>
-          <p>
-            Security reports: via the bug bounty link in the footer.
-            Non-security questions: via the public Discord link.
-          </p>
-        </section>
+        <VersionIndex fromPinned={versionSlug !== undefined} />
       </main>
       <Footer />
-      
     </>
   );
 }

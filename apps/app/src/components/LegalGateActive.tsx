@@ -19,7 +19,7 @@ import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useTosAcceptance } from '../contracts/useTosAcceptance';
 import { tosGateVerdict } from '../contracts/tosGate';
-import { LEGAL_URLS } from '../lib/legalUrls';
+import { LEGAL_URLS, termsUrlForVersion } from '../lib/legalUrls';
 import { TermsStatusCard } from './TermsStatusCard';
 import { LanguagePicker } from './LanguagePicker';
 
@@ -120,10 +120,15 @@ export function LegalGateActive({
         {/* The terms live on the marketing site, which is a separate
             origin — so these are external links, not routes. A gated
             user must be able to READ what they are accepting without
-            first getting past the gate. */}
+            first getting past the gate. The Terms link is PINNED to
+            the version read from chain (#1998): during a rollout the
+            mutable /terms already serves the next text while this
+            gate still asks for the current version — only the
+            version-pinned route shows the exact text the acceptance
+            will record. */}
         <div className="legal-gate-links">
           <a
-            href={LEGAL_URLS.terms}
+            href={termsUrlForVersion(currentVersion)}
             target="_blank"
             rel="noreferrer"
             className="legal-gate-link"
