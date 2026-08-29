@@ -29,6 +29,11 @@
  */
 import type { QueryClient } from '@tanstack/react-query';
 import { bumpClaimVerdictEpoch } from '../data/claimVerdictCache';
+import {
+  applyAcceptancePinFrame,
+  parseAcceptancePinFrame,
+  type AcceptancePinFrame,
+} from '../contracts/tosAcceptanceSync';
 
 /** Every root a confirmed own-write may have moved. Kept coarse on
  *  purpose: these refetch `refetchType: 'active'` only, so the cost is
@@ -195,6 +200,37 @@ export function publishReceiptInvalidation(
   }
 }
 
+/**
+ * Publish a mined Terms acceptance to every other tab (#2001). Same
+ * rail, same transport fallback as the invalidation frames, but a
+ * different KIND of message: it carries the acceptance pin itself, not
+ * roots to refetch — a receiving tab refetching against its own
+ * lagging RPC would read `false` with no pin to correct it, which is
+ * why this is not simply a root in `RECEIPT_FLOOR_ROOTS` (the issue
+ * records that rejection). The acting tab has already applied its own
+ * pin and cache write; this frame is for everyone else, and both
+ * transports self-exclude the sender.
+ */
+export function publishAcceptancePin(frame: AcceptancePinFrame): void {
+  const ch = getChannel();
+  if (ch) {
+    try {
+      ch.postMessage(frame);
+      return; // delivered — the storage ping would double-deliver
+    } catch {
+      /* channel closed — fall through to the storage ping */
+    }
+  }
+  try {
+    // The value must differ per write or repeat events are swallowed;
+    // `at` is stamped per acceptance, and two acceptances cannot share
+    // a millisecond — a receipt wait sits between them.
+    localStorage.setItem(STORAGE_PING_KEY, JSON.stringify(frame));
+  } catch {
+    /* storage unavailable (private mode) — nothing else to try */
+  }
+}
+
 /** The shared QueryClient, registered by the app-shell listener so
  *  plain async helpers with no hook context (the ERC-20 approval
  *  helpers) can publish through the same rail. */
@@ -222,7 +258,19 @@ export function listenForReceiptInvalidations(
   queryClient: QueryClient,
 ): () => void {
   sharedClient = queryClient;
-  const apply = (frame: ReceiptFrame | null) => {
+  const apply = (data: unknown) => {
+    // The rail carries two frame kinds. The acceptance pin is checked
+    // first because it is the one with a discriminator; the legacy
+    // invalidation frame is shaped only by its `roots` array, and a
+    // pin frame has none — so an OLD tab receiving a pin frame falls
+    // through its own array check and ignores it, which is what keeps
+    // mixed-version tabs safe during a deploy.
+    const pin = parseAcceptancePinFrame(data);
+    if (pin) {
+      applyAcceptancePinFrame(queryClient, pin);
+      return;
+    }
+    const frame = data as ReceiptFrame | null;
     if (!frame || !Array.isArray(frame.roots)) return;
     const roots = frame.roots.filter((r): r is string => typeof r === 'string');
     if (roots.length === 0) return;
@@ -234,13 +282,13 @@ export function listenForReceiptInvalidations(
   };
 
   const ch = getChannel();
-  const onMessage = (ev: MessageEvent) => apply(ev.data as ReceiptFrame | null);
+  const onMessage = (ev: MessageEvent) => apply(ev.data);
   ch?.addEventListener('message', onMessage);
 
   const onStorage = (ev: StorageEvent) => {
     if (ev.key !== STORAGE_PING_KEY || !ev.newValue) return;
     try {
-      apply(JSON.parse(ev.newValue) as ReceiptFrame);
+      apply(JSON.parse(ev.newValue));
     } catch {
       /* malformed ping — ignore */
     }

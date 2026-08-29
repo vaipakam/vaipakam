@@ -45,6 +45,8 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
 import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
 import { acceptanceIsPinned, acceptanceScope, pinAcceptance } from './tosAcceptancePin';
+import { buildAcceptancePinFrame } from './tosAcceptanceSync';
+import { publishAcceptancePin } from '../chain/receiptSync';
 import { captureTxError } from '../lib/errors';
 
 const ZERO_HASH = `0x${'0'.repeat(64)}` as const;
@@ -245,7 +247,29 @@ export function useTosAcceptance(): TosAcceptanceState {
       // pin to every later read, so this survives any number of them —
       // and, being module-scoped, survives this component unmounting
       // and remounting on a brief disconnect.
-      pinAcceptance(scope, acceptedVersion, Date.now());
+      const pinnedAt = Date.now();
+      pinAcceptance(scope, acceptedVersion, pinnedAt);
+      // #2001: the pin and the cache write above are per-TAB, so a
+      // second tab holding this wallet still shows its own prompt with
+      // an enabled Accept button — and `acceptTerms` happily mines a
+      // second time, charging gas for a newer timestamp. Broadcast the
+      // pin itself (never a bare invalidation, which would refetch
+      // against a lagging RPC with nothing to correct it) so every
+      // open tab applies the same correction this one just did. The
+      // acting tab's `pinnedAt` travels with it: the 90s bound must
+      // expire at the same moment everywhere, or a reorged acceptance
+      // stays papered over in whichever tab heard about it last.
+      if (address) {
+        publishAcceptancePin(
+          buildAcceptancePinFrame(
+            readChain.chainId,
+            address,
+            acceptedVersion,
+            query.data.hash,
+            pinnedAt,
+          ),
+        );
+      }
       await queryClient.invalidateQueries({ queryKey });
       // Codex review round 1 P2: one immediate re-read is not enough.
       // A public RPC can still serve the parent block for seconds after
@@ -272,7 +296,7 @@ export function useTosAcceptance(): TosAcceptanceState {
     } finally {
       setSubmitting(false);
     }
-  }, [query.data, write, queryClient, queryKey, scope]);
+  }, [query.data, write, queryClient, queryKey, scope, address, readChain.chainId]);
 
   // Self-review before review round 1: a DISABLED query is `isPending`
   // in TanStack v5 — status 'pending', fetchStatus 'idle' — so a wallet

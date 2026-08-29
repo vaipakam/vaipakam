@@ -41,8 +41,11 @@
  * version, `false` can only mean the node answering is behind — or
  * that the receipt was orphaned, which is what the bound is for.
  *
- * Per-TAB. A second tab holding the same wallet keeps its own pin and
- * its own cache; sharing the acceptance across tabs is #2001.
+ * Per-TAB by itself; shared across tabs by broadcast (#2001). The
+ * acting tab publishes `{chainId, address, version, at}` on the
+ * receipt-sync rail after pinning locally, and every receiving tab
+ * stores the SAME `at` — see `tosAcceptanceSync.ts` for why the TTL
+ * must not restart on delivery.
  */
 
 /**
