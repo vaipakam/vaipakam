@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   ACCEPTANCE_PIN_TTL_MS,
+  MAX_FUTURE_SKEW_MS,
   __clearAcceptancePins,
   acceptanceIsPinned,
   acceptanceScope,
@@ -160,6 +161,20 @@ describe('adoptOrderedPin', () => {
     expect(acceptanceIsPinned(SCOPE, 3, HASH, late)).toBe(false);
   });
 
+  it('refuses a candidate dated in the future beyond the skew allowance', () => {
+    // Round 16 P1: a future anchor's negative age passes every expiry
+    // check until wall time catches up — an unbounded override from
+    // one bad timestamp. Within the allowance (a coarse correction
+    // mid-write) it still adopts.
+    expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + MAX_FUTURE_SKEW_MS + 1_000, B0, TX0, T0)).toBe(
+      false,
+    );
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0)).toBe(false);
+    expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + MAX_FUTURE_SKEW_MS - 1_000, B0, TX0, T0)).toBe(
+      true,
+    );
+  });
+
   it('discards an expired incumbent before comparing', () => {
     // Round 3 P2: past the bound a pin has no authority left to
     // reject with — even from a higher block.
@@ -196,5 +211,18 @@ describe('adoptReceiptPin', () => {
     const late = T0 + ACCEPTANCE_PIN_TTL_MS + 1;
     expect(adoptReceiptPin(SCOPE, 3, H2, T0, B0, 0, late)).toBe(false);
     expect(acceptanceIsPinned(SCOPE, 3, H2, late)).toBe(false);
+  });
+
+  it('refuses a receipt anchored in the future beyond the skew allowance', () => {
+    // Round 16 P1: the trusted path bypassed the receiver's
+    // future-skew guard, so a backward clock correction between
+    // submission and settlement produced a pin that could not expire
+    // until wall time caught up — correcting canonical reads far past
+    // the stated bound if the acceptance was orphaned. The caller
+    // clamps its anchor first; this is the module's own backstop.
+    expect(adoptReceiptPin(SCOPE, 3, H2, T0 + MAX_FUTURE_SKEW_MS + 1_000, B0, 0, T0)).toBe(
+      false,
+    );
+    expect(acceptanceIsPinned(SCOPE, 3, H2, T0)).toBe(false);
   });
 });

@@ -53,6 +53,7 @@ import {
 } from './tosGate';
 import {
   ACCEPTANCE_PIN_TTL_MS,
+  MAX_FUTURE_SKEW_MS,
   acceptanceScope,
   adoptOrderedPin,
   pinRemainingMs,
@@ -69,18 +70,6 @@ import {
  * feature exists to prevent.
  */
 const RECEIVER_SECOND_READ_MS = 4_000;
-
-/**
- * How far in the future a frame's `at` may sit before it is rejected
- * (#2004 round 4 P1). Tabs on one machine share a clock, so real skew
- * is milliseconds; the allowance exists for coarse clock corrections
- * mid-write, not for trust. Beyond it a future-dated `at` would make
- * the age check see a negative duration — accepting the frame — and
- * would then never expire under `acceptanceIsPinned` while outranking
- * every legitimate same-version pin in ordering: a gate bypass with no
- * bound at all, from one bad timestamp.
- */
-const MAX_FUTURE_SKEW_MS = 5_000;
 
 /**
  * Upper bound between expiry-check wake-ups (#2004 round 12 P2). The
@@ -353,9 +342,21 @@ export function applyAcceptancePinFrame(
   // entry does not refuse, deliberately: with the frame inside its
   // 90s window, restored-and-re-accepted is the story the timestamps
   // support, and the freshness bar keeps the verdict itself safe.
+  //
+  // Only a NODE-CONFIRMED entry may refuse (round 16 P1). A
+  // `pinBacked` verdict is this rail's own earlier product — a
+  // previous frame or receipt, not a node's answer — and letting it
+  // outrank the next frame double-counts hearsay: the pin behind it
+  // already sits in the ordering below, which is the designed arbiter
+  // for hearsay against hearsay. Concretely, a tab whose v3 verdict
+  // came from a frame would otherwise refuse the canonical v4 frame
+  // that follows a governance bump, and sit with its gate open under
+  // v3 until its own poll — hearsay beating newer evidence by virtue
+  // of having arrived first.
   const freshCached = freshVerdict(queryClient, queryKey, now);
   if (
     freshCached &&
+    !freshCached.pinBacked &&
     (freshCached.version !== frame.version || freshCached.hash !== frame.hash)
   ) {
     // Round 7 P2: in the reorged-governance case the REFUSED frame may
@@ -392,6 +393,21 @@ export function applyAcceptancePinFrame(
     // reads run, because only they can decide which branch won.
     scheduleAuthoritativeReads();
     return;
+  }
+  // A DIFFERING pin-backed verdict the adopted frame just beat is
+  // aged out immediately (round 16 P1): its own pin was replaced by
+  // the adoption above, so nothing will correct or revalidate it any
+  // more, and left fresh it would keep both gates open under the
+  // superseded version until its scheduled expiry check noticed the
+  // pin was gone. Aging it past the verdict bound makes the gates
+  // stop honouring it now, and the reads below settle what is true.
+  if (
+    freshCached?.pinBacked &&
+    (freshCached.version !== frame.version || freshCached.hash !== frame.hash)
+  ) {
+    queryClient.setQueryData<TosVerdictData>(queryKey, freshCached, {
+      updatedAt: Date.now() - MAX_VERDICT_AGE_MS - VERDICT_CLOCK_TICK_MS - 1_000,
+    });
   }
   // Round 3 P1: the verdict is written only over a FRESH, SUCCESSFUL
   // entry at the matching version — see `freshVerdict` for why a

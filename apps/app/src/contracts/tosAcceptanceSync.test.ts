@@ -208,6 +208,40 @@ describe('applyAcceptancePinFrame', () => {
     invalidate.mockRestore();
   });
 
+  it('a differing PIN-BACKED verdict does not refuse the frame — ordering decides, and the beaten verdict is aged', () => {
+    // Round 16 P1: a pinBacked entry is this rail's own earlier
+    // product, not a node's answer, and letting it outrank the next
+    // frame double-counts hearsay — a tab whose v3 verdict came from
+    // a frame would refuse the canonical v4 frame after a governance
+    // bump and sit open under v3 until its own poll. The v3 pin
+    // already sits in the ordering, which is the arbiter for hearsay
+    // against hearsay; when the v4 frame wins there, the v3 verdict
+    // it beat is aged immediately so the gates stop honouring it.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const at = Date.now();
+    // Seed a pin-backed v3 verdict the way production creates one: a
+    // v3 frame promoting a matching fresh refusal.
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    applyAcceptancePinFrame(client, frame({ at }), at);
+    expect(client.getQueryData<TosVerdictData>(key)?.pinBacked).toBe(true);
+    // A canonical v4 frame from a later chain position arrives.
+    const h4 = `0x${'44'.repeat(32)}` as `0x${string}`;
+    applyAcceptancePinFrame(
+      client,
+      frame({ version: 4, hash: h4, at: at + 5_000, block: B0 + 2 }),
+      at + 5_000,
+    );
+    const scope = acceptanceScope(84532, ADDRESS);
+    expect(acceptanceIsPinned(scope, 4, h4, at + 6_000)).toBe(true);
+    expect(acceptanceIsPinned(scope, 3, HASH, at + 6_000)).toBe(false);
+    // The beaten v3 verdict is aged past the verdict bound — not
+    // rewritten to v4 (the cache write still requires an exact match).
+    const state = client.getQueryState<TosVerdictData>(key);
+    expect(state?.data?.version).toBe(3);
+    expect(state && Date.now() - state.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(true);
+  });
+
   it('a fresh differing read refuses even a frame from a HIGHER block', () => {
     // Round 15 P1, withdrawing round 14's height carve-out: height is
     // not ancestry. A rollback can leave the canonical head BELOW an

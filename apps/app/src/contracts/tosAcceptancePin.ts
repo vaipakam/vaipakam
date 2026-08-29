@@ -59,6 +59,19 @@
  */
 export const ACCEPTANCE_PIN_TTL_MS = 90_000;
 
+/**
+ * How far in the future an anchor may sit before it is rejected
+ * (#2004 round 4 P1 for frames; round 16 P1 extended it to the pin
+ * module itself, because the trusted receipt path bypassed the
+ * receiver's check). Tabs on one machine share a clock, so real skew
+ * is milliseconds; the allowance exists for coarse clock corrections
+ * mid-write, not for trust. Beyond it a future-dated `at` gives the
+ * age checks a negative duration — the pin never expires until wall
+ * time catches up plus the whole TTL, correcting canonical `false`
+ * reads far past the stated bound if the acceptance was orphaned.
+ */
+export const MAX_FUTURE_SKEW_MS = 5_000;
+
 interface AcceptancePin {
   version: number;
   /** Content hash of the accepted text (#2004 round 4 P1). The version
@@ -173,7 +186,11 @@ export function pinAcceptance(
  * continuation — arriving past that window must apply nothing, the
  * same rule the receiver applies to expired frames. Adopting it would
  * store a pin already dead on arrival while telling the caller to
- * write and broadcast on its authority.
+ * write and broadcast on its authority. A candidate dated in the
+ * FUTURE beyond the skew allowance is refused for the mirrored
+ * reason (round 16 P1): its negative age passes every expiry check
+ * until wall time catches up, an unbounded override from one bad
+ * timestamp.
  */
 export function adoptOrderedPin(
   scope: string,
@@ -184,7 +201,7 @@ export function adoptOrderedPin(
   txIndex: number,
   now: number,
 ): boolean {
-  if (now - at > ACCEPTANCE_PIN_TTL_MS) return false;
+  if (now - at > ACCEPTANCE_PIN_TTL_MS || at > now + MAX_FUTURE_SKEW_MS) return false;
   let existing = pins.get(scope);
   if (existing && now - existing.at > ACCEPTANCE_PIN_TTL_MS) {
     pins.delete(scope);
@@ -216,13 +233,19 @@ export function adoptOrderedPin(
  * rollback (round 13), wall stamps to a clock correction (round 14),
  * height to a shorter replacement chain (round 15) — because no
  * client-side marker proves ancestry. So the receipt does not order;
- * it supersedes. The one refusal left is the candidate's own expiry
- * (round 15 P2): a continuation resuming from a suspension longer
- * than the TTL carries an anchor already outside the safety window,
- * and must apply nothing — the caller's authoritative reads take the
- * case, exactly like an expired frame. The caller's fresh-read
- * conflict guard still runs FIRST, so a receipt this tab has already
- * read past never reaches here.
+ * it supersedes. The refusals left are the anchor's own bounds
+ * (rounds 15 P2 and 16 P1): a continuation resuming from a
+ * suspension longer than the TTL carries an anchor already outside
+ * the safety window, and one resuming across a backward clock
+ * correction can carry an anchor in the FUTURE, whose negative age
+ * would never expire until wall time caught up. Either way nothing
+ * is applied — the caller's authoritative reads take the case,
+ * exactly like an expired frame. (The caller narrows both windows
+ * first: it clamps a future submission stamp to its own clock and
+ * re-anchors a long-pending receipt at its mined block's timestamp,
+ * so these guards are the backstop, not the common path.) The
+ * caller's fresh-read conflict guard still runs FIRST, so a receipt
+ * this tab has already read past never reaches here.
  */
 export function adoptReceiptPin(
   scope: string,
@@ -233,7 +256,7 @@ export function adoptReceiptPin(
   txIndex: number,
   now: number,
 ): boolean {
-  if (now - at > ACCEPTANCE_PIN_TTL_MS) return false;
+  if (now - at > ACCEPTANCE_PIN_TTL_MS || at > now + MAX_FUTURE_SKEW_MS) return false;
   pins.set(scope, { version, hash, at, block, txIndex });
   return true;
 }

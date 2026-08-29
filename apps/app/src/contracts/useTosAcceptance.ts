@@ -49,7 +49,12 @@ import {
   VERDICT_CLOCK_TICK_MS,
   type TosVerdictData,
 } from './tosGate';
-import { acceptanceIsPinned, acceptanceScope, adoptReceiptPin } from './tosAcceptancePin';
+import {
+  ACCEPTANCE_PIN_TTL_MS,
+  acceptanceIsPinned,
+  acceptanceScope,
+  adoptReceiptPin,
+} from './tosAcceptancePin';
 import {
   buildAcceptancePinFrame,
   freshVerdict,
@@ -286,7 +291,39 @@ export function useTosAcceptance(): TosAcceptanceState {
       // refused local receipt is real but superseded, and the
       // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
-      const pinnedAt = submittedAt;
+      // The anchor is CLAMPED to this clock (round 16 P1): a backward
+      // clock correction between submission and here leaves
+      // `submittedAt` in the future, whose negative age would pass
+      // every expiry check until wall time caught up — an unbounded
+      // override from one bad timestamp. Clamped, the window is at
+      // most the TTL from now, and the adoption paths' own future
+      // guard becomes the backstop rather than the common refusal.
+      let pinnedAt = Math.min(submittedAt, Date.now());
+      if (Date.now() - pinnedAt > ACCEPTANCE_PIN_TTL_MS && publicClient) {
+        // A transaction can sit PENDING longer than the pin's window —
+        // congestion, a late speed-up — and the submission anchor is
+        // then already expired at settlement, so the just-mined
+        // acceptance would be refused as stale: neither patched, nor
+        // pinned, nor broadcast (round 16 P2). The mined block's own
+        // timestamp is the trustworthy mining age that tells this
+        // apart from round 12's suspended-continuation case: mined
+        // moments ago after a long pend, it re-anchors the window at
+        // mining time; mined long ago and merely RESUMED now, it is
+        // old, adoption still refuses, and the reads carry the case.
+        // Fetched only on this exceptional path — the common case
+        // stays free of the extra read — and clamped to this clock
+        // like the stamp above (a consensus timestamp can sit ahead
+        // of the local clock). On failure the expired anchor stands
+        // and the refusal path below handles it.
+        try {
+          const minedBlock = await publicClient.getBlock({
+            blockNumber: receipt.blockNumber,
+          });
+          pinnedAt = Math.min(Number(minedBlock.timestamp) * 1_000, Date.now());
+        } catch {
+          // Keep the expired anchor: adoption refuses, reads decide.
+        }
+      }
       // A fresh read is used here to REJECT a conflicting receipt,
       // never to REQUIRE a matching one (#2004 round 5 P1 shaped by
       // round 6 P2). The asymmetry with the receiver is deliberate and
@@ -461,6 +498,7 @@ export function useTosAcceptance(): TosAcceptanceState {
     address,
     readChain.chainId,
     readChain.diamondAddress,
+    publicClient,
   ]);
 
   // Self-review before review round 1: a DISABLED query is `isPending`
