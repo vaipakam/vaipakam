@@ -23,12 +23,17 @@
  * writes, and pinned by a test that fails when a new one appears.
  *
  * SCOPE, stated plainly because the page repeats it to the user: this
- * covers per-origin browser storage ONLY. On-chain state is public and
- * immutable and cannot be erased by anyone, this protocol included.
- * The alerts service holds its own data, and unlinking clears only the
- * Telegram connection — the preferences row survives for a relink, so
- * the copy points at support for the rest rather than implying one
- * button covers it (review round 1 P1).
+ * covers per-origin browser storage ONLY. On-chain state is public —
+ * the user can read it from any explorer — and immutable, so nobody can
+ * erase it, this protocol included. The alerts service holds its own
+ * data, and unlinking clears only the Telegram connection: the
+ * preferences row survives for a relink, so the copy points at support
+ * for the rest rather than implying one button covers it (round 1 P1).
+ *
+ * `sessionStorage` and the in-memory error slot are per TAB rather than
+ * per origin. The erasure crosses that boundary by broadcast; the
+ * export does not, and says so (round 2 P2). The page may not claim
+ * "this browser" and deliver "this tab".
  */
 
 import { clearLastError } from '../diagnostics/lastError';

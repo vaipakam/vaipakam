@@ -9,19 +9,22 @@
  * stores. The retired `apps/defi` carried its own page; the #1854
  * cutover removed the capability without replacing it.
  *
- * The page's job beyond the two buttons is to be HONEST ABOUT SCOPE.
- * The likeliest way a page like this misleads somebody is by letting
- * them believe an erase reaches further than it does — so what it
- * cannot touch (the chain, the alerts service, the marketing site's
- * own store) is stated as prominently as what it can, and the shared
+ * The page's job beyond the two buttons is to be HONEST ABOUT SCOPE,
+ * in BOTH directions. Overstating reach is the likelier failure — so
+ * what an erase cannot touch (the chain, the alerts service, the
+ * marketing site's own store, the diagnostics records support keeps)
+ * is stated as prominently as what it can, and the shared
  * language/theme cookie is called out because clearing it here also
- * clears it there.
+ * clears it there. Understating is the same failure pointed the other
+ * way, which is why the chain line says the user CAN look their own
+ * transactions up even though nobody can erase them.
  *
  * The count of stored items is shown BEFORE the confirm, so the
  * destructive button is not a leap in the dark, and the result is
- * reported afterwards as a count rather than a blanket "done" — see
- * `eraseMyData` for why "erased", "nothing was stored" and "storage
- * refused" have to stay three different answers.
+ * reported afterwards as a count rather than a blanket "done". Four
+ * outcomes stay four answers — erased, nothing was stored, storage
+ * refused, and partly erased — with anything REMAINING or UNREADABLE
+ * outranking anything removed. See `eraseMyData`.
  */
 import { useState } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
