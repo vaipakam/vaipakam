@@ -421,18 +421,22 @@ const copySource = {
       'Other tabs, when it comes to the download. A small amount of data belongs to each tab on its own, so a download covers the tab you are on — erasing still clears the others. Download from each tab if you want the full picture.',
     scopeSite:
       'The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.',
-    /* Review round 9 P2 narrowed "both are shared" to the true split;
-       round 10 P2 removed the promise that survived it. "Erasing here
-       resets the main site" is false for BOTH preferences: vaipakam.com
-       keeps origin-local copies (its theme falls back to its own
-       localStorage when the cookie is absent, and the i18n detector is
-       localStorage-first per origin, the cookie being only a seed) and
-       recreates the cookies from them on the next visit. What erasing
-       here truly does is remove the cookies this browser holds; the
-       main site's own copies belong to its own data controls, which
-       `scopeSite` above already points at. */
+    /* Three rounds of review each removed one false claim from this
+       sentence, and the survivors all have to hold at once. Round 9
+       P2: only the LANGUAGE is shared — the theme cookie is the main
+       site's own preference, never read or written by this app, whose
+       theme lives separately under its own key. Round 10 P2: removing
+       the cookies resets NEITHER preference on the main site — it
+       keeps origin-local copies (theme falls back to its own
+       localStorage; the i18n detector is localStorage-first, the
+       cookie only a seed) and recreates the cookies on the next
+       visit. Round 11 P2: the round-10 rewrite regrouped the two as
+       "choices that follow you between sites", silently re-making the
+       round-9 error. So: two cookies, two different relationships,
+       one promise — disclosure and removal here, nothing about the
+       main site, whose own controls `scopeSite` above points at. */
     scopeCookies:
-      'Your language and theme also live in cookies on the shared domain — that is how a choice made on one site can follow you to the other. Those cookies are in this browser, so the download includes them and erasing removes them. That fully resets this app, but not vaipakam.com: the main site keeps its own copy of both preferences in its own storage and will restore them, cookies included, on your next visit there. Removing the main site’s copies is what its own data controls are for.',
+      'Two preference cookies on the shared domain are in this browser, so the download includes them and erasing removes them. One is your language, which both sites read — that is how a language chosen on one site follows you to the other. The other is the main site’s own theme; this app never uses it, and your theme here is stored separately, not shared. Erasing fully resets this app but not vaipakam.com: the main site keeps its own copies of its preferences and will restore them, cookies included, on your next visit — removing those is what its own data controls are for.',
   },
   killSwitch: {
     disabled:
