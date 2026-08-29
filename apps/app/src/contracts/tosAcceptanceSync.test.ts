@@ -306,6 +306,46 @@ describe('applyAcceptancePinFrame', () => {
     invalidate.mockRestore();
   });
 
+  it('never demotes a node-CONFIRMED verdict to pin-backed', () => {
+    // Round 11 P2: a fresh accepted:true a node gave on its own has
+    // earned its full freshness window; rewriting it pinBacked would
+    // make it ageable at the frame pin's expiry — a gate flicker on a
+    // slow refetch the confirmed entry should sit out.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    client.setQueryData<TosVerdictData>(key, { accepted: true, version: 3, hash: HASH });
+    applyAcceptancePinFrame(client, frame(), frame().at);
+    expect(client.getQueryData<TosVerdictData>(key)?.pinBacked).toBeUndefined();
+  });
+
+  it('re-arms instead of skipping when a backward clock keeps the pin live', () => {
+    // Round 11 P2: the timeout is monotonic, the pin's life is
+    // wall-clock. Fired early relative to the wall clock, a
+    // skip-once check would leave an orphaned acceptance correcting
+    // polls until wall time caught up.
+    vi.useFakeTimers();
+    try {
+      const client = new QueryClient();
+      const key = tosQueryKey(84532, ADDRESS);
+      const t0 = Date.now();
+      client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+      applyAcceptancePinFrame(client, frame({ at: t0 }), t0);
+      // The wall clock is corrected 50s backward after scheduling.
+      vi.setSystemTime(t0 - 50_000);
+      vi.advanceTimersByTime(ACCEPTANCE_PIN_TTL_MS + 1_100);
+      // Timer fired, pin still wall-clock live → re-armed, not aged.
+      const mid = client.getQueryState<TosVerdictData>(key);
+      expect(mid && Date.now() - mid.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(false);
+      // Once wall time reaches the pin's true expiry, the re-armed
+      // check ages the still-pin-backed verdict.
+      vi.advanceTimersByTime(60_000);
+      const aged = client.getQueryState<TosVerdictData>(key);
+      expect(aged && Date.now() - aged.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a dead timer cannot age its replacement’s verdict', () => {
     // Round 10 P2: a later acceptance at the same version installs a
     // replacement pin and verdict; the FIRST acceptance's expiry timer

@@ -48,9 +48,9 @@ import {
 } from './tosGate';
 import {
   ACCEPTANCE_PIN_TTL_MS,
-  acceptanceIsPinned,
   acceptanceScope,
   adoptOrderedPin,
+  pinRemainingMs,
 } from './tosAcceptancePin';
 
 /**
@@ -327,7 +327,15 @@ export function applyAcceptancePinFrame(
   // stale or error-retained entry cannot be promoted by a frame. A
   // cache that fails the freshness bar keeps only the pin; the next
   // real read adopts it exactly when the chain agrees.
-  if (shouldAdoptPinnedVerdict(freshCached, frame.version, frame.hash)) {
+  // A verdict a node already CONFIRMED is left untouched (round 11
+  // P2): rewriting it would demote node-given truth to pin-backed,
+  // making it ageable at the frame pin's expiry — a gate flicker on a
+  // slow refetch that the confirmed entry had honestly earned the
+  // right to sit out, for its normal freshness window.
+  if (
+    shouldAdoptPinnedVerdict(freshCached, frame.version, frame.hash) &&
+    !freshCached!.accepted
+  ) {
     queryClient.setQueryData<TosVerdictData>(queryKey, {
       accepted: true,
       version: frame.version,
@@ -376,34 +384,38 @@ export function scheduleExpiryRevalidation(
   at: number,
   now: number,
 ): void {
-  setTimeout(
-    () => {
-      const cur = queryClient.getQueryData<TosVerdictData>(queryKey);
-      if (
-        cur?.pinBacked &&
-        cur.version === version &&
-        // The timer ages only the verdict of ITS OWN pin (round 10
-        // P2): a later acceptance at the same version — a permitted
-        // re-acceptance, or different text after a reorg — installs a
-        // replacement pin and verdict, and this dead timer must not
-        // expire them while the replacement is still inside its
-        // window. Hash ties the timer to its text; the live-pin check
-        // catches a same-version-same-hash re-acceptance, whose own
-        // timer fires later.
-        cur.hash === hash &&
-        !acceptanceIsPinned(scope, version, hash, Date.now())
-      ) {
-        queryClient.setQueryData<TosVerdictData>(queryKey, cur, {
-          // Backdated past the verdict bound PLUS the gate's clock
-          // tick (round 10 P2): the hook compares against a `nowMs`
-          // that can lag `Date.now()` by a full tick, and a timestamp
-          // exactly at the bound read as fresh to it for up to ~14
-          // more seconds.
-          updatedAt: Date.now() - MAX_VERDICT_AGE_MS - VERDICT_CLOCK_TICK_MS - 1_000,
-        });
-      }
-      void queryClient.invalidateQueries({ queryKey });
-    },
-    at + ACCEPTANCE_PIN_TTL_MS - now + 1_000,
-  );
+  const check = () => {
+    // The timeout is MONOTONIC; the pin's life is WALL-CLOCK. A clock
+    // corrected backward after scheduling can fire this while the pin
+    // is still live (round 11 P2) — and a same-version re-acceptance
+    // extends the matching pin's window past ours too. Either way the
+    // pin has authority left, and a check that skipped once and never
+    // returned would let an orphaned acceptance keep correcting polls
+    // until wall time caught up. Re-arm for the pin's remaining life
+    // instead; each re-arm is bounded by the TTL and stops the first
+    // time the pin is genuinely dead.
+    const remaining = pinRemainingMs(scope, version, hash, Date.now());
+    if (remaining !== null) {
+      setTimeout(check, remaining + 1_000);
+      return;
+    }
+    const cur = queryClient.getQueryData<TosVerdictData>(queryKey);
+    // The timer ages only the verdict of ITS OWN pin (round 10 P2): a
+    // later acceptance at the same version with DIFFERENT text
+    // installs a replacement verdict under its own hash, and this
+    // dead timer must not expire it. Hash ties the timer to its text;
+    // the live-pin re-arm above covers the same-version-same-hash
+    // re-acceptance.
+    if (cur?.pinBacked && cur.version === version && cur.hash === hash) {
+      queryClient.setQueryData<TosVerdictData>(queryKey, cur, {
+        // Backdated past the verdict bound PLUS the gate's clock tick
+        // (round 10 P2): the hook compares against a `nowMs` that can
+        // lag `Date.now()` by a full tick, and a timestamp exactly at
+        // the bound read as fresh to it for up to ~14 more seconds.
+        updatedAt: Date.now() - MAX_VERDICT_AGE_MS - VERDICT_CLOCK_TICK_MS - 1_000,
+      });
+    }
+    void queryClient.invalidateQueries({ queryKey });
+  };
+  setTimeout(check, at + ACCEPTANCE_PIN_TTL_MS - now + 1_000);
 }

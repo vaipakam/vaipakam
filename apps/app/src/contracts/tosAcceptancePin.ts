@@ -176,6 +176,27 @@ export function acceptanceIsPinned(
   return pin.version === version && pin.hash === hash;
 }
 
+/**
+ * Wall-clock milliseconds this exact pin (scope, version AND hash) has
+ * left, or null when no matching live pin exists. Read-only — deletion
+ * of expired pins stays with `acceptanceIsPinned`. Exists for the
+ * expiry revalidation timer (#2004 round 11 P2): a MONOTONIC timeout
+ * can fire while a backward-shifted wall clock still considers the pin
+ * live, and the timer must know how long to re-arm for rather than
+ * skipping once and never returning.
+ */
+export function pinRemainingMs(
+  scope: string,
+  version: number,
+  hash: string,
+  now: number,
+): number | null {
+  const pin = pins.get(scope);
+  if (!pin || pin.version !== version || pin.hash !== hash) return null;
+  const remaining = ACCEPTANCE_PIN_TTL_MS - (now - pin.at);
+  return remaining > 0 ? remaining : null;
+}
+
 /** Test seam only — the app never forgets a pin, it lets it expire. */
 export function __clearAcceptancePins(): void {
   pins.clear();
