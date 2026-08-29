@@ -2394,6 +2394,10 @@ function applyDir(state, dir, vars = null) {
   // Recorded limit: the stack is left as-is rather than having the indexed
   // entry removed. The index is what decides scope only through a LATER popd,
   // and modelling a wrong removal is not better than modelling none.
+  // The wrapped command runs elsewhere; the SHELL does not move. Modelled as a
+  // no-op transition so the segment's own scope resolution can use the target
+  // without the rest of the line inheriting it.
+  if (dir.kind === 'env-chdir') return state;
   if (dir.kind === 'popd-keep') return state;
   // The stack gains the directory; the shell does not move. In bash's own
   // ordering the new entry sits directly below the current directory, which is
@@ -2491,7 +2495,26 @@ function dirDirective(seg) {
   // the model stayed at the root (#1995 r16). The same shape as the r14
   // `builtin`/`command` fix and the r12 brace-group fix: a word in front of
   // `cd` that does not stop `cd` from running.
-  const LEAD = String.raw`(?:(?:then|do|else)\s+)*(?:\{\s+)?(?:(?:builtin|command)\s+)?`;
+  // `env -C DIR cmd` / `env --chdir=DIR cmd` runs the WRAPPED command in DIR
+  // and leaves the shell where it was, which is why it is answered here as a
+  // per-segment fact rather than as a directive that moves the state (#1995
+  // r16). GNU env documents the option; the selector logic modelled pnpm's and
+  // wrangler's cwd options and not this wrapper's.
+  const envChdir = seg.match(
+    /(?:^|\s)env\s+(?:-[A-Za-z]+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:-C|--chdir)[= ]\s*(\S+)/,
+  );
+  if (envChdir) return { kind: 'env-chdir', target: dequote(envChdir[1]) };
+  // A `case` ARM LABEL sits in front of the command the same way `then` does —
+  // `splitCommands` hands this function `agent) cd ../agent`, and a prefix
+  // grammar that knew only the control words left the move unrecorded (#1995
+  // r16).
+  //
+  // A `(` is deliberately NOT here. An opener whose group closes in the same
+  // segment nets zero depth, so the restore never fires and the move would leak
+  // into the parent — the r6/r12/r13 fixtures say exactly that. The caller
+  // strips the opener only when the group STAYS OPEN, which is the case where
+  // the depth machinery will put the parent state back.
+  const LEAD = String.raw`(?:(?:then|do|else)\s+)*(?:[A-Za-z0-9_*?.\[\]-]+\)\s+)?(?:\{\s+)?(?:(?:builtin|command)\s+)?`;
   // `pushd +N` / `-N` ROTATES the stack so that entry becomes current; it is
   // not a destination, and it must be tested BEFORE the destination match or
   // that match claims `+1` as a directory name — which is what it did, so my
@@ -2535,7 +2558,10 @@ function dirDirective(seg) {
   const sourced = seg.match(new RegExp(`^${LEAD}(?:source|\\.)\\s+(${WORD})`));
   if (sourced) return { kind: 'source', target: dequote(sourced[1]) };
   const winCd = seg.match(
-    new RegExp(`^${LEAD}(?:Set-Location|Push-Location|chdir|sl)\\s+(?:-Path\\s+)?(${WORD})`, 'i'),
+    new RegExp(
+      `^${LEAD}(?:Set-Location|Push-Location|chdir|sl)\\s+(?:-(?:Literal)?Path\\s+)?(${WORD})`,
+      'i',
+    ),
   );
   if (winCd) {
     const target = dequote(winCd[1].replace(/\\/g, '/'));
@@ -4061,7 +4087,21 @@ function plainLines(text) {
   return text.split('\n').map((t, i) => ({ text: t, line: i + 1, physical: true }));
 }
 
+const walkedDirs = new Set();
 function* walk(dir) {
+  // A canonical directory is walked ONCE. Containment stops the walk leaving
+  // the repository, but two internal links back to an ancestor (`a -> .`,
+  // `b -> .`) still branch: each alias is inside the tree, so each is followed,
+  // and the traversal multiplies. A minimal fixture exceeded two seconds and the
+  // shape scales into the workflow timeout (#1995 r16) — the containment fix
+  // bounded WHERE the walk goes and not HOW OFTEN it goes there.
+  try {
+    const real = realpathSync(dir);
+    if (walkedDirs.has(real)) return;
+    walkedDirs.add(real);
+  } catch {
+    return;
+  }
   let entries;
   try {
     entries = readdirSync(dir);
@@ -4509,7 +4549,25 @@ for (const file of walk(REPO_ROOT)) {
         if (segDepth > depth) {
           for (let k = depth; k < segDepth; k += 1) stateStack.push(input);
         }
-        const dir = dirDirective(seg);
+        // `(cd ../agent && wrangler deploy)` moves the shell for the REST OF
+        // THE GROUP, and the group's own restore undoes it afterwards — but the
+        // opener kept the directive matcher from seeing the `cd` at all, so the
+        // deploy beside it was scored against the outer directory (#1995 r16).
+        // Stripped only when the segment leaves the group OPEN: one that closes
+        // its own paren nets zero depth, nothing would restore it, and applying
+        // the move there is the r6 defect.
+        const dir = dirDirective(segDepth > depth ? seg.replace(/^\(\s*/, '') : seg);
+        // `env --chdir DIR wrangler deploy` runs THIS command in DIR, so the
+        // segment is scoped there even though the shell never moved. Declared
+        // beside `dir` because BOTH the scope resolution and the safety hint
+        // read it, and they are far apart — my first placement put it after the
+        // first reader and the guard threw on every file.
+        const envDir =
+          dir?.kind === 'env-chdir'
+            ? input
+                .map((st) => scopeOfCwd(resolveDir(st.cwd, dir.target, shellVars)))
+                .find(Boolean) ?? null
+            : null;
         // A `cd` that runs as a PIPELINE or BACKGROUND element executes in a
         // SUBSHELL and cannot move the parent (#1995 r9). In
         // `cd apps/agent; cd ../indexer | cat; wrangler deploy` bash is still
@@ -4606,7 +4664,11 @@ for (const file of walk(REPO_ROOT)) {
             hitScopes.add(at);
           }
         }
-        if (dir) continue;
+        // `env-chdir` is not a move, it is a WRAPPER around the command in this
+        // same segment — so the segment must go on to be scored. Skipping it
+        // here is the third time the directive short-circuit has swallowed a
+        // segment that still had a deploy in it (`source` was the second).
+        if (dir && dir.kind !== 'env-chdir') continue;
         // Only constructs that can actually ESTABLISH a target carry forward:
         // a `VAR=…` assignment, or a directory expression the dir-walk could
         // not claim (the subshell form `( cd "$AGENT_DIR" && …`, which is not
@@ -4835,7 +4897,9 @@ for (const file of walk(REPO_ROOT)) {
               [...namedPrefix.map((e) => e.text), seg].join(' '),
               movedCwd ? '' : rel,
             ) ??
-            input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
+            (dir?.kind === 'env-chdir'
+              ? envDir
+              : input.map((st) => scopeOfCwd(st.cwd)).find(Boolean)) ??
             null;
         if (!scope) continue;
         // Statically-known SINGLE-WORD values are expanded before the safety
@@ -4851,10 +4915,21 @@ for (const file of walk(REPO_ROOT)) {
         // through to "any scoped config" let the KEEPER's `keep_vars` bless an
         // AGENT upload (#1995 r16) — the caller does know which worker, just
         // not from the directory walk.
-        const safeHint =
-          input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
-          SCOPED.find((sc) => rel.startsWith(`${sc.dir}/`)) ??
-          null;
+        // When `env --chdir` moves the command, its target is the ONLY scope:
+        // the shell's own directory is not where this command runs, and falling
+        // back to it reported the agent for a deploy that runs in `apps/www`.
+        //
+        // On THIS read — the safety hint — the restriction is an EQUIVALENT
+        // MUTANT, recorded rather than fixtured. It differs from the fallback
+        // only when `envDir` is null, and in that case the SCOPE resolution
+        // below is null too, so the segment is not reported whatever the safety
+        // answer is. It is written the same way as the scope read so the two
+        // agree by construction, not because a verdict depends on it.
+        const safeHint = dir?.kind === 'env-chdir'
+          ? envDir
+          : input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
+            SCOPED.find((sc) => rel.startsWith(`${sc.dir}/`)) ??
+            null;
         if (
           commandIsSafe(seg, safeHint) ||
           commandIsSafe(expandCommandVars(seg, fileVars), safeHint)

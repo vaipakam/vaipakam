@@ -4701,6 +4701,93 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(runWith('cs.sh', 'cd apps/agent\nWrangler deploy\n').ok).toBe(true);
   });
 
+  // ── Directory state: prefixes, wrappers and traversal (#1995 r16).
+  it("PowerShell's -LiteralPath names the destination (#1995 r16)", () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: pwsh\n        run: |\n' +
+        '          Set-Location -LiteralPath apps/agent\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a CASE arm label is a prefix like then (#1995 r16)', () => {
+    // `splitCommands` hands the parser `agent) cd ../agent`, and a grammar that
+    // knew only the control words left the move unrecorded.
+    const r = runWith(
+      'c.sh',
+      'cd apps/indexer\ncase "$T" in\nagent) cd ../agent ;;\nesac\nwrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a relative cd INSIDE a subshell group applies to the group (#1995 r16)', () => {
+    // The opener kept the directive matcher from seeing the `cd`, so the deploy
+    // beside it was scored against the outer directory.
+    const r = runWith('sg.sh', 'cd apps/indexer\n(cd ../agent && wrangler deploy)\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a SELF-CLOSING group still moves nothing (#1995 r6 control)', () => {
+    // Load-bearing: the opener is stripped only when the group stays OPEN. One
+    // that closes in its own segment nets zero depth, nothing would restore it,
+    // and applying the move there is the r6 defect. Putting `(` in the prefix
+    // grammar broke three standing fixtures at once.
+    const r = runWith('sg2.sh', 'cd apps/keeper\n(cd ../agent)\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/keeper');
+  });
+
+  it('env --chdir runs the WRAPPED command elsewhere (#1995 r16)', () => {
+    const r = runWith('e.sh', 'cd apps/indexer\nenv --chdir ../agent wrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and its target is the ONLY scope for that command (#1995 r16 control)', () => {
+    // The shell's own directory is not where this command runs; falling back to
+    // it reported the agent for a deploy that runs in apps/www.
+    expect(runWith('e2.sh', 'cd apps/agent\nenv --chdir ../www wrangler deploy\n').ok).toBe(true);
+  });
+
+  it("and the SAFETY question follows it too (#1995 r16)", () => {
+    // `env --chdir` decides which worker's config a `versions upload` is judged
+    // against. The scope resolution and the safety hint are two separate reads,
+    // and a mutant reverting only the hint survived until this case existed —
+    // this is the one shape where the hint alone changes the answer.
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
+    expect(
+      runWith('ec.sh', 'cd apps/keeper\nenv --chdir ../agent wrangler versions upload\n').ok,
+    ).toBe(true);
+  });
+
+  it('and the wrong worker\u2019s config does not answer it (#1995 r16 control)', () => {
+    seed('apps/keeper/wrangler.jsonc', '{"keep_vars": true}\n');
+    const r = runWith('ec2.sh', 'cd apps/keeper\nenv --chdir ../agent wrangler versions upload\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('while the shell itself does not move (#1995 r16 control)', () => {
+    const r = runWith('e3.sh', 'cd apps/www\nenv --chdir ../agent wrangler deploy --keep-vars\nwrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('a canonical directory is walked once (#1995 r16)', () => {
+    // Containment bounded WHERE the walk goes; two internal links back to an
+    // ancestor still branched, and the traversal multiplied. This completes
+    // rather than timing out, which is the whole assertion.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    link('a', '.');
+    link('b', '.');
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',
