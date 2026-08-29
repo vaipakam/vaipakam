@@ -1,4 +1,14 @@
 /**
+ * How long a signed erasure / status request stays valid — the
+ * service rejects a signature older (or further in the future) than
+ * this. Shared so the CLIENT can refuse to send a request it already
+ * knows is stale (#2008 round 3 P2): the wallet prompt is unbounded,
+ * and a signature approved after the window has passed would only
+ * come back as a generic failure the user cannot interpret.
+ */
+export const ERASURE_SIGNATURE_MAX_AGE_SECONDS = 10 * 60;
+
+/**
  * The canonical EIP-191 message a user signs to authorise erasure of
  * (or a status check on) their server-side error-diagnostics records
  * (T-075, surfaced in-app by #2002).

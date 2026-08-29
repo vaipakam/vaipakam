@@ -61,6 +61,7 @@
 
 import { recoverMessageAddress, type Hex } from 'viem';
 import {
+  ERASURE_SIGNATURE_MAX_AGE_SECONDS,
   buildErasureMessage,
   buildErasureStatusMessage,
 } from '@vaipakam/lib/erasureMessage';
@@ -80,9 +81,11 @@ import {
  * older (or further in the future) than this is rejected. Erasure
  * is idempotent so replay is not dangerous, but bounding the window
  * limits how long a leaked signature stays usable against the
- * status endpoint.
+ * status endpoint. The value lives in `@vaipakam/lib` (#2008 round 3
+ * P2) so the client can refuse to send a request it already knows
+ * is stale instead of collecting a signature that can only fail.
  */
-const SIGNATURE_MAX_AGE_SECONDS = 10 * 60;
+const SIGNATURE_MAX_AGE_SECONDS = ERASURE_SIGNATURE_MAX_AGE_SECONDS;
 
 /** EIP-191 `personal_sign` signature: `0x` + 65 bytes = 132 chars. */
 const SIGNATURE_RE = /^0x[0-9a-fA-F]{130}$/;

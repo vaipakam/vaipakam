@@ -30,6 +30,7 @@
  * request is ever fired.
  */
 import {
+  ERASURE_SIGNATURE_MAX_AGE_SECONDS,
   buildErasureMessage,
   buildErasureStatusMessage,
 } from '@vaipakam/lib/erasureMessage';
@@ -55,6 +56,12 @@ export type DiagErasureOutcome =
    *  (the operator has not set the deletion key) — a config state,
    *  not a retention signal, and worth its own honest message. */
   | 'unavailable'
+  /** The wallet prompt was approved AFTER the request's validity
+   *  window had already passed (#2008 round 3 P2) — the signature
+   *  is stale by the service's own rule, so nothing was sent: the
+   *  user is told to try again rather than shown a generic failure
+   *  for an approval they gave. */
+  | 'expired'
   /** Transport or service failure — the request may not have been
    *  processed; the user should try again. */
   | 'error';
@@ -66,11 +73,15 @@ export type DiagErasureStatus =
   | { status: 'processed' }
   | { status: 'retained_by_law'; note: string }
   | { status: 'unavailable' }
+  | { status: 'expired' }
   | { status: 'error' };
 
 interface SignedPostResult {
   ok: boolean;
   httpStatus: number;
+  /** True when the signature outlived the replay window before it
+   *  could be sent — see the check in `postSigned`. */
+  expired?: boolean;
   /** The parsed JSON body, or null when it was absent/malformed —
    *  parsed HERE, under the same abort deadline as the request
    *  itself (#2008 round 2 P2): headers can arrive within the
@@ -93,6 +104,15 @@ async function postSigned(
   if (!origin) throw new Error('diagnostics erasure backend not configured');
   const issuedAt = Math.floor(Date.now() / 1000);
   const signature = await signMessage(buildMessage(wallet, issuedAt));
+  // The wallet prompt is UNBOUNDED, and `issuedAt` started aging the
+  // moment it was stamped (#2008 round 3 P2): a signature approved
+  // after the service's replay window has passed can only be
+  // rejected as stale. It is not sent — the caller reports expiry,
+  // an outcome the user can act on, instead of a generic failure
+  // for an approval they actually gave.
+  if (Math.floor(Date.now() / 1000) - issuedAt > ERASURE_SIGNATURE_MAX_AGE_SECONDS) {
+    return { ok: false, httpStatus: 0, data: null, expired: true };
+  }
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
@@ -127,6 +147,7 @@ export async function requestDiagErasure(
   signMessage: (message: string) => Promise<string>,
 ): Promise<DiagErasureOutcome> {
   const res = await postSigned('/diag/erasure', wallet, signMessage, buildErasureMessage);
+  if (res.expired) return 'expired';
   if (res.ok) {
     // A 2xx alone is not the service's acknowledgement (#2008 round
     // 1 P1): a misconfigured origin or an intermediary can return a
@@ -157,6 +178,7 @@ export async function requestDiagErasureStatus(
     signMessage,
     buildErasureStatusMessage,
   );
+  if (res.expired) return { status: 'expired' };
   if (res.ok) {
     if (
       res.data?.status === 'retained_by_law' &&

@@ -19,12 +19,11 @@
  * are REPORTED", never "nothing is retained", because the two are
  * different claims and only the first is knowable.
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { FileX2, ShieldCheck } from 'lucide-react';
 import { useAccount, usePublicClient, useSignMessage } from 'wagmi';
 import { useQuery } from '@tanstack/react-query';
 import { copy } from '../content/copy';
-import { useActiveChain } from '../chain/useActiveChain';
 import {
   diagErasureConfigured,
   requestDiagErasure,
@@ -37,13 +36,18 @@ type CardResult = { forWallet: string } & (
   | { kind: 'erased' }
   | { kind: 'status'; status: DiagErasureStatus }
   | { kind: 'unavailable' }
+  | { kind: 'expired' }
   | { kind: 'error' }
 );
 
 export function DiagErasureCard() {
-  const { address } = useAccount();
-  const { readChain } = useActiveChain();
-  const publicClient = usePublicClient({ chainId: readChain.chainId });
+  // The wallet's ACTUAL chain, not the app's read chain (#2008 round
+  // 3 P2): `useActiveChain` substitutes the default chain on an
+  // unsupported network, and a Safe deployed only elsewhere would
+  // then read code-less here — signature controls offered to an
+  // account the service must reject.
+  const { address, chainId: walletChainId } = useAccount();
+  const publicClient = usePublicClient({ chainId: walletChainId });
   const { signMessageAsync } = useSignMessage();
   // Busy is scoped to the wallet that started the operation (#2008
   // round 2 P2): a signature prompt has no timeout — the deadline
@@ -53,7 +57,17 @@ export function DiagErasureCard() {
   // the CONNECTED wallet, and the completion clears the flag only if
   // it still owns it, so A's late settle cannot clear a pending
   // operation B started meanwhile.
-  const [busyFor, setBusyFor] = useState<string | null>(null);
+  const [pendingRun, setPendingRun] = useState<{ id: number; forWallet: string } | null>(
+    null,
+  );
+  // Monotonic per-invocation identity (#2008 round 3 P2): busyFor
+  // alone still raced an A→B→A switch — A's controls re-enabled
+  // while its first request pended, and that request's completion
+  // could then clear a NEWER run's pending state or overwrite its
+  // result. Every run takes a fresh id; a completion publishes its
+  // result and clears the pending flag ONLY while it is still the
+  // latest run.
+  const latestRunRef = useRef(0);
   const [result, setResult] = useState<CardResult | null>(null);
   // A result belongs to the wallet that asked (#2008 round 1 P1):
   // wallet A's disclosed retention note — or its reassuring clear
@@ -72,29 +86,34 @@ export function DiagErasureCard() {
 
   const configured = diagErasureConfigured();
   const shown = result && result.forWallet === address ? result : null;
-  const busy = busyFor !== null && busyFor === address;
+  const busy = pendingRun !== null && pendingRun.forWallet === address;
 
   // Smart-contract accounts (a Safe, a deployed smart wallet) sign
   // via ERC-1271/6492, which the service cannot verify yet — it
   // recovers a plain ECDSA signer and requires it to equal the
   // wallet — so their requests always end in the generic failure
-  // (#2008 round 2 P2). Detect the DEPLOYED case by bytecode and
-  // present the working email route instead of a prompt that cannot
-  // succeed. Fail-open on a failed or pending read: blocking an EOA
-  // on a hiccup would withhold a working control, while letting a
-  // contract wallet through merely reproduces the honest generic
-  // failure. An UNDEPLOYED counterfactual smart wallet has no
-  // bytecode to detect and still lands in that generic failure —
-  // that residual, and real ERC-1271 verification across every
-  // signed endpoint, is tracked as a follow-up issue.
-  const contractWallet = useQuery({
-    queryKey: ['diagErasure', 'isContract', readChain.chainId, address ?? null],
-    enabled: Boolean(configured && publicClient && address),
+  // (#2008 round 2 P2). Detect the DEPLOYED case by bytecode ON THE
+  // WALLET'S OWN CHAIN, and be conservative where that chain cannot
+  // be inspected (round 3 P2): a wallet on a network this app has no
+  // client for gets the working email route rather than a prompt we
+  // cannot vouch for. Only a CONFIRMED ordinary account is offered
+  // the signature controls. An UNDEPLOYED counterfactual smart
+  // wallet has no bytecode to detect and still lands in the generic
+  // failure — that residual, and real ERC-1271 verification across
+  // every signed endpoint, is tracked as #2009.
+  const accountKind = useQuery({
+    queryKey: ['diagErasure', 'accountKind', walletChainId ?? null, address ?? null],
+    enabled: Boolean(configured && address),
     staleTime: Infinity,
     retry: false,
-    queryFn: async () => {
-      const code = await publicClient!.getCode({ address: address! });
-      return Boolean(code && code !== '0x');
+    queryFn: async (): Promise<'eoa' | 'contract' | 'uninspectable'> => {
+      if (!publicClient) return 'uninspectable';
+      try {
+        const code = await publicClient.getCode({ address: address! });
+        return code && code !== '0x' ? 'contract' : 'eoa';
+      } catch {
+        return 'uninspectable';
+      }
     },
   });
 
@@ -103,38 +122,49 @@ export function DiagErasureCard() {
     // Captured at the moment of the click — the completion below may
     // run after a wallet switch, and it must record who it answers.
     const forWallet = address;
-    setBusyFor(forWallet);
+    const runId = ++latestRunRef.current;
+    // Publish and clear ONLY while this run is still the latest —
+    // an older completion must neither overwrite a newer result nor
+    // clear a newer run's pending state.
+    const publish = (r: CardResult) => {
+      if (latestRunRef.current === runId) setResult(r);
+    };
+    setPendingRun({ id: runId, forWallet });
     setResult(null);
     try {
       if (kind === 'erase') {
         const outcome = await requestDiagErasure(forWallet, (message) =>
           signMessageAsync({ message }),
         );
-        setResult(
+        publish(
           outcome === 'processed'
             ? { forWallet, kind: 'erased' }
             : outcome === 'unavailable'
               ? { forWallet, kind: 'unavailable' }
-              : { forWallet, kind: 'error' },
+              : outcome === 'expired'
+                ? { forWallet, kind: 'expired' }
+                : { forWallet, kind: 'error' },
         );
       } else {
         const status = await requestDiagErasureStatus(forWallet, (message) =>
           signMessageAsync({ message }),
         );
-        setResult(
+        publish(
           status.status === 'unavailable'
             ? { forWallet, kind: 'unavailable' }
-            : status.status === 'error'
-              ? { forWallet, kind: 'error' }
-              : { forWallet, kind: 'status', status },
+            : status.status === 'expired'
+              ? { forWallet, kind: 'expired' }
+              : status.status === 'error'
+                ? { forWallet, kind: 'error' }
+                : { forWallet, kind: 'status', status },
         );
       }
     } catch (e) {
       // A dismissed wallet prompt is a cancel, not a failure — the
       // card simply returns to rest. Anything else is reported.
-      if (!isUserRejection(e)) setResult({ forWallet, kind: 'error' });
+      if (!isUserRejection(e)) publish({ forWallet, kind: 'error' });
     } finally {
-      setBusyFor((prev) => (prev === forWallet ? null : prev));
+      setPendingRun((prev) => (prev?.id === runId ? null : prev));
     }
   }
 
@@ -150,8 +180,12 @@ export function DiagErasureCard() {
         <p className="muted">{copy.dataRights.diagNotConfigured}</p>
       ) : !address ? (
         <p className="muted">{copy.dataRights.diagConnect}</p>
-      ) : contractWallet.data === true ? (
+      ) : accountKind.data === 'contract' ? (
         <p className="muted">{copy.dataRights.diagContractWallet}</p>
+      ) : accountKind.data === 'uninspectable' || accountKind.isError ? (
+        <p className="muted">{copy.dataRights.diagUninspectable}</p>
+      ) : accountKind.data !== 'eoa' ? (
+        <p className="muted">{copy.dataRights.diagBusy}</p>
       ) : (
         <>
           {shown?.kind === 'erased' ? (
@@ -184,6 +218,11 @@ export function DiagErasureCard() {
           {shown?.kind === 'unavailable' ? (
             <div className="banner banner-danger" role="alert">
               {copy.dataRights.diagUnavailable}
+            </div>
+          ) : null}
+          {shown?.kind === 'expired' ? (
+            <div className="banner" role="alert">
+              {copy.dataRights.diagExpired}
             </div>
           ) : null}
           {shown?.kind === 'error' ? (

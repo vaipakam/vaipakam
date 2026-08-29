@@ -237,7 +237,9 @@
       "diagRetainedLabel": "El servicio informa de que algunos registros fueron retenidos:",
       "diagUnavailable": "El servicio de soporte no puede procesar solicitudes de borrado en este momento. Inténtelo más tarde, o escriba a support@vaipakam.com y tramitaremos una solicitud de borrado para su monedero.",
       "diagError": "La solicitud no pudo completarse y es posible que no se haya borrado nada. Inténtelo de nuevo en un momento.",
-      "diagContractWallet": "Este monedero es una cuenta de contrato inteligente y el servicio de soporte aún no puede verificar sus firmas. Escriba a support@vaipakam.com y tramitaremos una solicitud de borrado para su monedero."
+      "diagContractWallet": "Este monedero es una cuenta de contrato inteligente y el servicio de soporte aún no puede verificar sus firmas. Escriba a support@vaipakam.com y tramitaremos una solicitud de borrado para su monedero.",
+      "diagUninspectable": "Este monedero está conectado a una red que esta aplicación no puede inspeccionar desde aquí, así que no podemos saber si el servicio de soporte puede verificar sus firmas. Escriba a support@vaipakam.com y tramitaremos una solicitud de borrado para su monedero, o cambie a una red compatible e inténtelo de nuevo.",
+      "diagExpired": "Aprobar la firma tardó más de lo que la solicitud sigue siendo válida, así que no se envió nada. Inténtelo de nuevo y apruebe la ventana del monedero en menos de diez minutos."
     },
     "killSwitch": {
       "disabled": "Esta acción está desactivada ahora mismo — los operadores la pausaron por precaución mientras revisan algo. Lo que ya es tuyo no se ve afectado: pagos, reclamos y retiros siguen abiertos."

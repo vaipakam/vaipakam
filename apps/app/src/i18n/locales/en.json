@@ -243,6 +243,8 @@
       "diagConnect": "Connect the wallet whose records you want erased. The request is signed by that wallet — that signature is how the service knows the request really comes from you.",
       "diagNotConfigured": "This build is not connected to the support service, so the signed request cannot be sent from here. Email support@vaipakam.com and we will process an erasure request for your wallet.",
       "diagContractWallet": "This wallet is a smart-contract account, and the support service cannot verify its signatures yet. Email support@vaipakam.com and we will process an erasure request for your wallet.",
+      "diagUninspectable": "This wallet is connected to a network this app cannot inspect from here, so we cannot tell whether the support service can verify its signatures. Email support@vaipakam.com and we will process an erasure request for your wallet — or switch to a supported network and try again.",
+      "diagExpired": "Approving the signature took longer than the request stays valid, so nothing was sent. Try again, approving the wallet prompt within ten minutes.",
       "diagEraseButton": "Erase my error reports",
       "diagStatusButton": "Check for retained records",
       "diagBusy": "Waiting for your wallet…",

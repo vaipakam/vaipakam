@@ -88,6 +88,28 @@ describe('requestDiagErasure', () => {
     stubAgent(() => new Response('{}', { status: 500 }));
     expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('error');
   });
+
+  it('reports EXPIRED — and sends nothing — when approval outlives the window', async () => {
+    // #2008 round 3 P2: the wallet prompt is unbounded and `issuedAt`
+    // starts aging when it opens. A signature approved after the
+    // service's replay window can only be rejected as stale, so it is
+    // never sent, and the user gets an outcome they can act on.
+    vi.useFakeTimers();
+    try {
+      const calls = stubAgent(
+        () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
+      );
+      const outcome = await requestDiagErasure(WALLET, async () => {
+        // The user takes eleven minutes to approve.
+        vi.setSystemTime(Date.now() + 11 * 60 * 1000);
+        return SIG;
+      });
+      expect(outcome).toBe('expired');
+      expect(calls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('requestDiagErasureStatus', () => {

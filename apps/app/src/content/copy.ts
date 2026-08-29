@@ -435,6 +435,16 @@ const copySource = {
        only fail. The working route is offered instead. */
     diagContractWallet:
       'This wallet is a smart-contract account, and the support service cannot verify its signatures yet. Email support@vaipakam.com and we will process an erasure request for your wallet.',
+    /* #2008 round 3 P2 — the wallet's own chain may be one this app
+       has no client for; a wallet we cannot vouch for gets the
+       working route, not a prompt that may only fail. */
+    diagUninspectable:
+      'This wallet is connected to a network this app cannot inspect from here, so we cannot tell whether the support service can verify its signatures. Email support@vaipakam.com and we will process an erasure request for your wallet — or switch to a supported network and try again.',
+    /* #2008 round 3 P2 — the signature stays valid for ten minutes
+       from the moment the prompt opens; approved later, it can only
+       be rejected, so it is not sent and the user is told why. */
+    diagExpired:
+      'Approving the signature took longer than the request stays valid, so nothing was sent. Try again, approving the wallet prompt within ten minutes.',
     diagEraseButton: 'Erase my error reports',
     diagStatusButton: 'Check for retained records',
     diagBusy: 'Waiting for your wallet…',
