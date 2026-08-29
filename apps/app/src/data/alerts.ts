@@ -143,18 +143,17 @@ const OPT_IN_FLAGS = ['repayDue', 'risky', 'telegramLinked', 'pushEnabled'] as c
  * "what happens when the baseline is unknown" with something that
  * never runs.
  *
- * What remains, stated rather than implied: on a device with no saved
- * record the baseline IS the defaults, both lanes on, and a save posts
- * the whole record — so a held user's first opt-out here also posts
- * the other default lane's bands. Making that case fail closed instead
- * would re-create exactly the lock-out this function was written to
- * remove, since the untouched default lane is what would trip it. The
- * fix is on the wire — send only the lane being changed — which is an
- * `apps/agent` contract change, tracked as #2000. Bounded in
- * the meantime by what a defaults-derived save can actually reach:
- * `telegramLinked` is a local mirror that is never posted, and
- * `push_channel` is sent only when `pushEnabled` is already true, so
- * such a save can enrol no NEW delivery channel.
+ * On a device with no saved record the baseline IS the defaults, both
+ * lanes on, and a held user's first opt-out is judged against them.
+ * Making that case fail closed instead would re-create exactly the
+ * lock-out this function was written to remove, since the untouched
+ * default lane is what would trip it. What USED to remain here — the
+ * whole record travelling with every save, so that first opt-out also
+ * posted the untouched default lane's bands — was closed on the wire
+ * by #2000: bands are sent only on a save that changed the risky lane
+ * (see `SaveAlertPrefsOptions.bandsChanged`), and the agent preserves
+ * stored values on absence, so a defaults-derived save no longer
+ * writes anything the user did not touch.
  */
 export function addsAlertOptIn(prev: AlertPrefs, next: AlertPrefs): boolean {
   return OPT_IN_FLAGS.some((flag) => next[flag] && !prev[flag]);
@@ -241,6 +240,17 @@ export interface SaveAlertPrefsOptions {
    *  device's defaults can't silently re-enable (or re-disable) an
    *  opt-out made on another device. */
   dueDateChanged?: boolean;
+  /** True ONLY when this save is the user changing the RISKY lane —
+   *  the toggle itself, or the advanced band numbers behind it
+   *  (#2000). The bands are how that lane's state travels (real
+   *  bands = on, floor bands = off), and until #2000 they were sent
+   *  on EVERY save — so a fresh device's default lane state rode
+   *  along with an unrelated change and overwrote an opt-out made
+   *  elsewhere, exactly the failure the due-date flag's omission
+   *  rule already prevented for its own field. Same rule now: absent
+   *  bands mean "no change" and the agent preserves the stored
+   *  values (server defaults only when no record exists at all). */
+  bandsChanged?: boolean;
   /** Wallet signer — required when the save switches the due-date
    *  reminder off (the agent refuses an unsigned opt-out). */
   signMessage?: (message: string) => Promise<string>;
@@ -257,9 +267,18 @@ export async function saveAlertPrefs(
   prefs: AlertPrefs,
   opts: SaveAlertPrefsOptions = {},
 ): Promise<void> {
-  const bands: AlertBands = prefs.risky
-    ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
-    : FLOOR_BANDS;
+  // Bands travel ONLY when this save is the user changing the risky
+  // lane (#2000) — mirroring the due-date field's omission rule. Sent
+  // unconditionally, a fresh device's DEFAULT lane state (defaults on,
+  // real bands) rode along with an unrelated first save and overwrote
+  // a floor-band opt-out made on another device; the client cannot
+  // tell defaults from state, but it can tell exactly which saves
+  // touched the lane, which is the narrower and sufficient signal.
+  const bands: AlertBands | null = opts.bandsChanged
+    ? prefs.risky
+      ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
+      : FLOOR_BANDS
+    : null;
   let optOutProof: { issuedAt: number; signature: string } | null = null;
   if (opts.dueDateChanged && !prefs.repayDue) {
     if (!opts.signMessage) {
@@ -276,9 +295,13 @@ export async function saveAlertPrefs(
   const res = await post('/thresholds', {
     wallet,
     chain_id: chainId,
-    warn_hf: bands.warnHf,
-    alert_hf: bands.alertHf,
-    critical_hf: bands.criticalHf,
+    ...(bands
+      ? {
+          warn_hf: bands.warnHf,
+          alert_hf: bands.alertHf,
+          critical_hf: bands.criticalHf,
+        }
+      : {}),
     ...(opts.dueDateChanged
       ? { notify_maturity_approaching: prefs.repayDue }
       : {}),

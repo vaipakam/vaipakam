@@ -138,6 +138,49 @@ describe('upsertThresholds rollout-window fallback (#1056 round 8)', () => {
   });
 });
 
+describe('upsertThresholds bandless writes (#2000)', () => {
+  // The bands carry the risky lane's state, so a save that did not
+  // touch that lane omits them — and the agent must preserve what is
+  // stored rather than requiring the client to echo values it cannot
+  // vouch for (a fresh device only holds the defaults).
+  const BANDLESS = { wallet: BASE.wallet, chain_id: BASE.chain_id };
+
+  it('preserves the STORED bands when a row exists', async () => {
+    const db = new FakeD1();
+    db.firstResult = { warn_hf: 2.0, alert_hf: 1.4, critical_hf: 1.1 };
+    await upsertThresholds(db as unknown as D1Database, {
+      ...BANDLESS,
+      notify_maturity_approaching: false,
+    });
+    // One SELECT to read the stored bands, then the write binding
+    // exactly those values — the opt-out changes nothing about the
+    // lane the user did not touch.
+    expect(db.executed).toHaveLength(2);
+    expect(db.executed[0]!.sql).toContain('SELECT warn_hf');
+    const write = db.executed[1]!;
+    expect(write.sql).toContain('INSERT INTO user_thresholds');
+    expect(write.args.slice(2, 5)).toEqual([2.0, 1.4, 1.1]);
+  });
+
+  it('writes the defaults when no row exists to preserve', async () => {
+    // A first-ever write that omitted bands intends no lane change,
+    // and for a wallet with no record the lane's state IS the
+    // default — the same values apps/app shows as the starting state.
+    const db = new FakeD1();
+    db.firstResult = null;
+    await upsertThresholds(db as unknown as D1Database, { ...BANDLESS });
+    expect(db.executed).toHaveLength(2);
+    expect(db.executed[1]!.args.slice(2, 5)).toEqual([1.5, 1.2, 1.05]);
+  });
+
+  it('performs no read when the bands are present — the historical path is untouched', async () => {
+    const db = new FakeD1();
+    await upsertThresholds(db as unknown as D1Database, { ...BASE });
+    expect(db.executed).toHaveLength(1);
+    expect(db.executed[0]!.sql).toContain('INSERT INTO user_thresholds');
+  });
+});
+
 describe('getTelegramChatId (UX-012 test-alert lookup)', () => {
   it('returns the chat id + locale when a link exists (wallet lower-cased)', async () => {
     const db = new FakeD1();

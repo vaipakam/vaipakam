@@ -7,8 +7,14 @@
  * to switch a lane OFF (the round-8 defect — a gate trapping somebody
  * in a subscription), and permitting a held wallet to switch one on.
  */
-import { describe, expect, it } from 'vitest';
-import { DEFAULT_PREFS, addsAlertOptIn, type AlertPrefs } from './alerts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  DEFAULT_PREFS,
+  FLOOR_BANDS,
+  addsAlertOptIn,
+  saveAlertPrefs,
+  type AlertPrefs,
+} from './alerts';
 
 const prefs = (over: Partial<AlertPrefs> = {}): AlertPrefs => ({
   ...DEFAULT_PREFS,
@@ -87,5 +93,64 @@ describe('addsAlertOptIn', () => {
     expect(
       addsAlertOptIn(DEFAULT_PREFS, { ...DEFAULT_PREFS, telegramLinked: true }),
     ).toBe(true);
+  });
+});
+
+describe('saveAlertPrefs wire shape (#2000)', () => {
+  // The defect this closes: the whole record travelled with every
+  // save, so a fresh device's DEFAULT risky-lane state rode along
+  // with an unrelated change and overwrote a floor-band opt-out made
+  // elsewhere. Bands now travel ONLY on a save that changed the
+  // risky lane, the same omission rule the due-date flag already
+  // carries; the agent preserves stored values on absence.
+  const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282' as const;
+
+  function stubAgent(): Array<Record<string, unknown>> {
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: unknown, init?: RequestInit) => {
+        bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+    return bodies;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it('omits every band unless this save changed the risky lane', async () => {
+    const bodies = stubAgent();
+    // A first opt-out from a fresh device: the due-date toggle only.
+    await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, repayDue: true }, {
+      dueDateChanged: true,
+    });
+    expect(bodies[0]!.warn_hf).toBeUndefined();
+    expect(bodies[0]!.alert_hf).toBeUndefined();
+    expect(bodies[0]!.critical_hf).toBeUndefined();
+    expect(bodies[0]!.notify_maturity_approaching).toBe(true);
+  });
+
+  it('sends the REAL bands when the lane was switched on or tuned', async () => {
+    const bodies = stubAgent();
+    await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, risky: true }, {
+      bandsChanged: true,
+    });
+    expect(bodies[0]!.warn_hf).toBe(DEFAULT_PREFS.warnHf);
+    expect(bodies[0]!.critical_hf).toBe(DEFAULT_PREFS.criticalHf);
+  });
+
+  it('sends the FLOOR bands when the lane was switched off — that IS the opt-out', async () => {
+    const bodies = stubAgent();
+    await saveAlertPrefs(WALLET, 84532, { ...DEFAULT_PREFS, risky: false }, {
+      bandsChanged: true,
+    });
+    expect(bodies[0]!.warn_hf).toBe(FLOOR_BANDS.warnHf);
+    expect(bodies[0]!.alert_hf).toBe(FLOOR_BANDS.alertHf);
+    expect(bodies[0]!.critical_hf).toBe(FLOOR_BANDS.criticalHf);
   });
 });

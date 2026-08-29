@@ -64,8 +64,24 @@ export class OptOutStorageUnavailableError extends Error {
 
 type ThresholdsUpsert = Omit<
   UserThresholds,
-  'tg_chat_id' | 'push_channel' | 'locale' | 'notify_maturity_approaching'
+  | 'warn_hf'
+  | 'alert_hf'
+  | 'critical_hf'
+  | 'tg_chat_id'
+  | 'push_channel'
+  | 'locale'
+  | 'notify_maturity_approaching'
 > & {
+  /** #2000 — the bands are optional AS A SET (the parser enforces
+   *  all-or-none): absent means "no band change" and the stored
+   *  values are preserved, the same contract `push_channel` and the
+   *  pre-notify flag already carry. The bands express the risky
+   *  lane's state, so a client save that did not touch that lane
+   *  omits them — otherwise a fresh device's defaults overwrote an
+   *  opt-out made elsewhere. */
+  warn_hf?: number;
+  alert_hf?: number;
+  critical_hf?: number;
   tg_chat_id?: string | null;
   push_channel?: string | null;
   locale?: string | null;
@@ -73,12 +89,53 @@ type ThresholdsUpsert = Omit<
   notify_maturity_approaching?: boolean;
 };
 
+/** What a BANDLESS upsert writes when no row exists to preserve —
+ *  the same sensible defaults `apps/app` shows as the risky lane's
+ *  starting state (`DEFAULT_BANDS` there; keep the two in step). A
+ *  first-ever write that omitted bands intends no lane change, and
+ *  for a wallet with no record the lane's state IS the default. */
+const DEFAULT_BANDS = { warn_hf: 1.5, alert_hf: 1.2, critical_hf: 1.05 };
+
+type ResolvedThresholdsUpsert = ThresholdsUpsert & {
+  warn_hf: number;
+  alert_hf: number;
+  critical_hf: number;
+};
+
+/** Resolve a bandless upsert to concrete bands: the stored row's when
+ *  one exists (preserve — the caller intends no lane change), else
+ *  the defaults. A read-then-write rather than SQL COALESCE because
+ *  `excluded.` in a conflict arm sees post-default values and cannot
+ *  express "keep yours" for NOT NULL columns — the same reason the
+ *  pre-notify flag runs two statement shapes. Last-write-wins races
+ *  are unchanged from the existing upsert. */
+async function resolveBands(
+  db: D1Database,
+  t: ThresholdsUpsert,
+): Promise<ResolvedThresholdsUpsert> {
+  if (
+    t.warn_hf !== undefined &&
+    t.alert_hf !== undefined &&
+    t.critical_hf !== undefined
+  ) {
+    return t as ResolvedThresholdsUpsert;
+  }
+  const stored = await db
+    .prepare(
+      `SELECT warn_hf, alert_hf, critical_hf FROM user_thresholds
+       WHERE wallet = ? AND chain_id = ?`,
+    )
+    .bind(t.wallet.toLowerCase(), t.chain_id)
+    .first<{ warn_hf: number; alert_hf: number; critical_hf: number }>();
+  return { ...t, ...(stored ?? DEFAULT_BANDS) };
+}
+
 /** The pre-0027 column set. Used when the flag is absent (no change
  *  intended) AND as the rollout-window fallback for an opted-IN write
  *  (true equals the column default, so nothing is lost). */
 async function upsertThresholdsLegacy(
   db: D1Database,
-  t: ThresholdsUpsert,
+  t: ResolvedThresholdsUpsert,
   now: number,
 ): Promise<void> {
   await db
@@ -117,14 +174,18 @@ export async function upsertThresholds(
   t: ThresholdsUpsert,
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
+  // #2000 — absent bands resolve to the stored row's (preserve) or,
+  // for a first-ever write, the defaults, BEFORE choosing statement
+  // shapes: every write below binds concrete band values.
+  const resolved = await resolveBands(db, t);
   // The pre-notify opt-out updates ONLY when the caller sent it —
   // absence must preserve a stored opt-out (an older client updating
   // its bands must not re-enable reminders), while new rows take the
   // column default (opted in). Two statements because `excluded.` in
   // the conflict arm sees post-default values, which can't express
   // "no change".
-  if (t.notify_maturity_approaching === undefined) {
-    await upsertThresholdsLegacy(db, t, now);
+  if (resolved.notify_maturity_approaching === undefined) {
+    await upsertThresholdsLegacy(db, resolved, now);
     return;
   }
   try {
@@ -144,15 +205,15 @@ export async function upsertThresholds(
            updated_at = excluded.updated_at`,
       )
       .bind(
-        t.wallet.toLowerCase(),
-        t.chain_id,
-        t.warn_hf,
-        t.alert_hf,
-        t.critical_hf,
-        t.tg_chat_id ?? null,
-        t.push_channel ?? null,
-        t.locale ?? 'en',
-        t.notify_maturity_approaching ? 1 : 0,
+        resolved.wallet.toLowerCase(),
+        resolved.chain_id,
+        resolved.warn_hf,
+        resolved.alert_hf,
+        resolved.critical_hf,
+        resolved.tg_chat_id ?? null,
+        resolved.push_channel ?? null,
+        resolved.locale ?? 'en',
+        resolved.notify_maturity_approaching ? 1 : 0,
         now,
         now,
       )
@@ -166,10 +227,10 @@ export async function upsertThresholds(
     // no column named X" for an INSERT column list — this INSERT
     // path hits the latter (verified live on the staging D1).
     if (!/no such column|has no column named/i.test(String(err))) throw err;
-    if (t.notify_maturity_approaching) {
+    if (resolved.notify_maturity_approaching) {
       // Opted-in equals the column default — the legacy write loses
       // nothing.
-      await upsertThresholdsLegacy(db, t, now);
+      await upsertThresholdsLegacy(db, resolved, now);
       return;
     }
     // An opt-out CANNOT be stored without the column; surface it
