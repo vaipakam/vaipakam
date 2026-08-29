@@ -4616,6 +4616,91 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ── Config-backed safety, YAML spellings, and Windows case (#1995 r16).
+  it('keep_vars is read from the DEPLOYED worker (#1995 r16)', () => {
+    // One package enabling it must not bless a bare upload in the other. The
+    // file supplies the scope here, since there is no `cd` to supply it.
+    seed('apps/keeper/wrangler.jsonc', '{"keep_vars": true}\n');
+    const r = runWith('apps/agent/release.sh', 'wrangler versions upload\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a COMMENTED declaration does not enable it (#1995 r16)', () => {
+    // A config that merely documents the remedy was read as applying it.
+    seed('apps/agent/wrangler.jsonc', '{\n  // "keep_vars": true\n}\n');
+    const r = runWith('apps/agent/r.sh', 'wrangler versions upload\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('while the real setting still makes it safe (#1995 r16 control)', () => {
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
+    expect(runWith('apps/agent/r2.sh', 'wrangler versions upload\n').ok).toBe(true);
+  });
+
+  it('a QUOTED run key is the same mapping key (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        working-directory: apps/agent\n' +
+        '        "run": |\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('an ANCHORED working-directory scalar resolves (#1995 r16)', () => {
+    // The `run:` matcher already stepped over anchors; this one did not.
+    const r = runWith(
+      '.github/workflows/w2.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n' +
+        '        working-directory: &agent-dir apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a zsh template executes the body (#1995 r16)', () => {
+    const r = runWith(
+      '.github/workflows/w3.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: "zsh {0}"\n' +
+        '        working-directory: apps/agent\n        run: wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('Windows resolves the executable case-insensitively (#1995 r16)', () => {
+    // Third time an interpreter transform went in at one of the three `run:`
+    // ingest points and not the others, so they share one function now. This
+    // case uses the SINGLE-LINE spelling, which the block-only fix never
+    // reached.
+    const r = runWith(
+      '.github/workflows/w4.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: pwsh\n' +
+        '        working-directory: apps/agent\n        run: Wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a BASH workflow step does not case-fold either (#1995 r16 control)', () => {
+    // The `.sh` control above cannot pin this: a shell FILE never reaches the
+    // interpreter transform at all, so only a YAML step with `shell: bash`
+    // distinguishes "fold for Windows" from "fold always". A mutant applying
+    // the fold on every path survived until this case existed.
+    const r = runWith(
+      '.github/workflows/w5.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - name: go\n        shell: bash\n' +
+        '        working-directory: apps/agent\n        run: |\n          Wrangler deploy\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('but on a POSIX path Wrangler is a different file (#1995 r16 control)', () => {
+    // Case-folding belongs where the interpreter is known; doing it everywhere
+    // would invent a command that does not exist on a POSIX runner.
+    expect(runWith('cs.sh', 'cd apps/agent\nWrangler deploy\n').ok).toBe(true);
+  });
+
   it('but a REAL command beside an allowlisted quote is still caught (#1924 r27)', () => {
     const r = runWith(
       'docs/ToDo.md',

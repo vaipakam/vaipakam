@@ -1153,7 +1153,22 @@ function isHelpInvocation(cmd) {
   return flagEnabled(upTo, '--help') || flagEnabled(upTo, '-h');
 }
 
-function commandIsSafe(cmd) {
+/**
+ * Strip comments before reading a config setting.
+ *
+ * A JSONC or TOML file that merely DOCUMENTS the remedy — `// "keep_vars": true`
+ * — was read as enabling it, so a config saying "you could set this" blessed a
+ * destructive upload (#1995 r16). Line and block comments both, in the two
+ * comment styles those formats use.
+ */
+function withoutComments(text) {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|\s)\/\/[^\n]*/g, '$1')
+    .replace(/(^|\s)#[^\n]*/g, '$1');
+}
+
+function commandIsSafe(cmd, scopeHint = null) {
   if (isHelpInvocation(cmd)) return true;
   // `run deploy` gets the same option-value strip the flags do: it was a raw
   // substring test, so `--message="run deploy"` blessed a bare deploy that
@@ -1200,11 +1215,16 @@ function commandIsSafe(cmd) {
   // `keep_vars: true`. Neither scoped config does today, which is the true
   // state of affairs rather than something this predicate should paper over.
   if (/\bversions\b[\s\S]*?\bupload\b/.test(bare)) {
-    const target = SCOPED.find((sc) => new RegExp(`(^|/)${sc.dir}(/|$)`).test(cmd));
+    // The config of the worker THIS command deploys, not of any scoped worker.
+    // Reading either config meant one package enabling `keep_vars` blessed a
+    // bare upload in the OTHER — the caller already knows which, from the cwd
+    // or the file, so it says (#1995 r16).
+    const target =
+      SCOPED.find((sc) => new RegExp(`(^|/)${sc.dir}(/|$)`).test(cmd)) ?? scopeHint;
     for (const sc of target ? [target] : SCOPED) {
       for (const name of ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml']) {
         try {
-          const cfg = readFileSync(`${REPO_ROOT}/${sc.dir}/${name}`, 'utf8');
+          const cfg = withoutComments(readFileSync(`${REPO_ROOT}/${sc.dir}/${name}`, 'utf8'));
           if (/["']?keep_vars["']?\s*[:=]\s*true/.test(cfg)) return true;
         } catch {
           /* no such config */
@@ -2760,8 +2780,18 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
     // indicator — `- run: &deploy |` is a valid step — and rejecting the line
     // sent the whole block down the flow-scalar path, where the indicator, the
     // `cd` and the deploy folded into ordinary text (#1995 r16).
+    // `"run"` is the same mapping key after YAML parsing, and an unquoted-only
+    // matcher never extracted the block, so the step's working-directory was
+    // never associated with the deploy inside it (#1995 r16).
+    //
+    // The FLOW matcher below carries the same quoting, and the two mask each
+    // other: reverting this one alone changes no verdict, because the flow path
+    // then claims `"run": |` and treats the `|` as its scalar. Measured by
+    // reverting both, which does break it. Kept here because a block scalar is
+    // a block, and the flow path handling it is an accident rather than the
+    // model — a fixture cannot tell them apart, so this says so instead.
     const run = lines[i].match(
-      /^(\s*)(?:-\s+)?run:\s*(?:[&*][\w-]+\s*|!!?[\w:.-]*\s*)*([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/,
+      /^(\s*)(?:-\s+)?["']?run["']?:\s*(?:[&*][\w-]+\s*|!!?[\w:.-]*\s*)*([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/,
     );
     // A `run:` value does not have to be a BLOCK scalar to span lines. A quoted
     // or plain multiline flow scalar folds its newlines to spaces just as `>`
@@ -2775,7 +2805,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
     // merely contains `run:` would join lines the author never joined — the
     // same scoping mistake the shell scanner made over markdown at r27.
     const flow =
-      isYaml && !run ? lines[i].match(/^(\s*)(?:-\s+)?run:[ \t]+(\S.*)$/) : null;
+      isYaml && !run ? lines[i].match(/^(\s*)(?:-\s+)?["']?run["']?:[ \t]+(\S.*)$/) : null;
     if (anyFence) {
       const start = i + 1;
       let j = start;
@@ -2830,12 +2860,7 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
         ((stepIsShell(lines, i) || launchesDeploy) && !stepIsDisabled(lines, i))
       ) {
         const interp = isYaml ? stepShellName(lines, i) : null;
-        const folded =
-          interp === 'cmd'
-            ? windowsSeparators(foldCaretContinuations(body))
-            : interp === 'pwsh' || interp === 'powershell'
-              ? windowsSeparators(powershellAssignments(body))
-              : body;
+        const folded = forInterpreter(body, interp);
         out.push(
           ...offset(
             logicalLines(folded),
@@ -2873,7 +2898,15 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       ) {
         const wd = workingDirFor(lines, i);
         if (wd) {
-          out.push(...offset(logicalLines(flow[2]), i, blockId, wd, stepEnvVars(lines, i)));
+          out.push(
+            ...offset(
+              logicalLines(forInterpreter(flow[2], stepShellName(lines, i))),
+              i,
+              blockId,
+              wd,
+              stepEnvVars(lines, i),
+            ),
+          );
           blockId += 1;
         }
       }
@@ -2895,7 +2928,9 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
         ) {
           out.push(
             ...offset(
-              logicalLines(foldFlowScalar(parts, q)),
+              logicalLines(
+                forInterpreter(foldFlowScalar(parts, q), isYaml ? stepShellName(lines, i) : null),
+              ),
               i,
               blockId,
               isYaml ? workingDirFor(lines, i) : '',
@@ -3225,7 +3260,21 @@ function scanStepKeys(lines, runIdx, re) {
  * shell. Actions' documented shell keywords are the ones here; a custom
  * `command {0}` template names its own interpreter and is not among them.
  */
-const SHELL_KEYWORDS = new Set(['bash', 'sh', 'pwsh', 'powershell', 'cmd']);
+// The POSIX families a runner may have, not just the two Actions documents by
+// name: a `shell: zsh {0}` template really does execute the body, and treating
+// it as non-shell dropped the block (#1995 r16). Same list `isShellFile` uses
+// for shebangs, which is where the omission showed as an inconsistency.
+const SHELL_KEYWORDS = new Set([
+  'bash',
+  'sh',
+  'zsh',
+  'ksh',
+  'dash',
+  'ash',
+  'pwsh',
+  'powershell',
+  'cmd',
+]);
 
 /**
  * The declared values a `shell:` matrix expression can take.
@@ -3394,7 +3443,17 @@ function foldCaretContinuations(body) {
  * elsewhere in the body is left alone.
  */
 function windowsSeparators(body) {
-  return body.replace(/(?<=[\w.$}])\\(?=[\w.$])/g, '/');
+  return (
+    body
+      .replace(/(?<=[\w.$}])\\(?=[\w.$])/g, '/')
+      // Windows resolves an executable case-insensitively, so `Wrangler deploy`
+      // in a pwsh or cmd step runs the same shim — and a case-sensitive
+      // detector saw nothing at all (#1995 r16). Normalised here, where the
+      // interpreter is known, rather than by making the pattern
+      // case-insensitive everywhere: on a POSIX runner `Wrangler` is a
+      // different file, and matching it there would invent a command.
+      .replace(/\bWrangler(2?)\b/g, 'wrangler$1')
+  );
 }
 
 /**
@@ -3449,6 +3508,24 @@ function stepIsDisabled(lines, runIdx) {
   return false;
 }
 
+/**
+ * Everything a body needs before the shell scanner reads it, given the step's
+ * interpreter.
+ *
+ * ONE function, because this is the third time an interpreter transform went in
+ * at one of the three `run:` ingest points and not the others — carets, then
+ * separators, then the case-fold. A body reaching the scanner untransformed
+ * looks exactly like a body with nothing to transform, so the omission is
+ * invisible until a fixture happens to use that spelling.
+ */
+function forInterpreter(body, interp) {
+  if (interp === 'cmd') return windowsSeparators(foldCaretContinuations(body));
+  if (interp === 'pwsh' || interp === 'powershell') {
+    return windowsSeparators(powershellAssignments(body));
+  }
+  return body;
+}
+
 function stepIsShell(lines, runIdx) {
   const m = scanStepKeys(
     lines,
@@ -3501,8 +3578,12 @@ function workingDirFor(lines, runIdx) {
   // `\S+` stop at the first space and captured `apps/${{` (#1995 r16).
   // Ordered expression-first so the braces' inner spaces are consumed by that
   // branch rather than ending the word.
+  // `&anchor` / `*alias` / `!!tag` may sit between the key and the value —
+  // `working-directory: &agent-dir apps/agent` is `apps/agent` to YAML — and
+  // capturing the property instead of the scalar missed the package (#1995
+  // r16). The `run:` matcher already stepped over them; this one did not.
   const WD =
-    /^\s*(?:-\s+)?working-directory:\s*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^\s])+))/;
+    /^\s*(?:-\s+)?["']?working-directory["']?:\s*(?:[&*][\w-]+\s+|!!?[\w:.-]*\s+)*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^\s])+))/;
   // FLOW-style mapping (#1995 r13): `defaults: { run: { working-directory: X } }`
   // is the same Actions configuration as the block form, and only the block
   // form was recognised — so a workflow written this way ran its inline deploy
@@ -4082,6 +4163,13 @@ for (const file of walk(REPO_ROOT)) {
         new RegExp(ANY_DEPLOY_RE).test(expandCommandVars(dequote(l.text), fileVars)) ||
         // …and on the form with adjacent string literals folded.
         new RegExp(ANY_DEPLOY_RE).test(foldStringConcat(l.text)) ||
+        // Case-insensitively too. Windows resolves an executable without
+        // regard to case, and the normalisation that handles it happens at
+        // BLOCK ingest — which never runs if the file is skipped here first
+        // (#1995 r16). This only ADMITS the file; whether the command counts is
+        // still decided per interpreter, so a POSIX `Wrangler` is scanned and
+        // then correctly ignored.
+        new RegExp(ANY_DEPLOY_RE, 'i').test(l.text) ||
         // A file that SOURCES another may hold the scope for a deploy written
         // somewhere else. `cd apps/agent` then `source ../../deploy.sh` carries
         // no deploy TEXT, so the prefilter skipped the caller and the helper's
@@ -4286,7 +4374,15 @@ for (const file of walk(REPO_ROOT)) {
         // `expandCommandVars` leaves multiword values alone away from the head,
         // so this cannot resurrect the `echo "$MSG"` case: what it admits here
         // is a lone flag word, which is what the reported wrapper writes.
-        if (commandIsSafe(seg) || commandIsSafe(expandCommandVars(seg, fileVars))) continue;
+        // The scope the caller already has, so a `versions upload` reads the
+        // config of the worker it actually deploys.
+        const safeHint = lineScope ?? null;
+        if (
+          commandIsSafe(seg, safeHint) ||
+          commandIsSafe(expandCommandVars(seg, fileVars), safeHint)
+        ) {
+          continue;
+        }
         // Fall back to the whole line only when the segment itself names
         // nothing: prose often establishes the package in an earlier clause,
         // and a file inside a scoped tree scopes every line in it.
@@ -4750,7 +4846,21 @@ for (const file of walk(REPO_ROOT)) {
         // `expandCommandVars` leaves multiword values alone away from the head,
         // so this cannot resurrect the `echo "$MSG"` case: what it admits here
         // is a lone flag word, which is what the reported wrapper writes.
-        if (commandIsSafe(seg) || commandIsSafe(expandCommandVars(seg, fileVars))) continue;
+        // The cwd first, then the FILE. `apps/agent/release.sh` running a bare
+        // `versions upload` with no `cd` has no cwd scope at all, and falling
+        // through to "any scoped config" let the KEEPER's `keep_vars` bless an
+        // AGENT upload (#1995 r16) — the caller does know which worker, just
+        // not from the directory walk.
+        const safeHint =
+          input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
+          SCOPED.find((sc) => rel.startsWith(`${sc.dir}/`)) ??
+          null;
+        if (
+          commandIsSafe(seg, safeHint) ||
+          commandIsSafe(expandCommandVars(seg, fileVars), safeHint)
+        ) {
+          continue;
+        }
         flagged = true;
         const many = sel ? [] : filterScopes(seg) ?? [];
         if (many.length > 1) for (const sc of many) hitScopes.add(sc);
