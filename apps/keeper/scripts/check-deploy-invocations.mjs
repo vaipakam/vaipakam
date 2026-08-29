@@ -2036,6 +2036,36 @@ function netParens(text) {
 }
 
 /**
+ * Net brace depth, quotes respected — `netParens` for `{`/`}`.
+ *
+ * Braces are how a FUNCTION BODY is delimited, and the multiline definition
+ * walk below needs to know when one closes. Same model as parens on purpose:
+ * a `{` inside a quoted string is data, not structure.
+ */
+function netBraces(text) {
+  let n = 0;
+  let quote = null;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '\\') {
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') {
+      quote = ch;
+      continue;
+    }
+    if (ch === '{') n += 1;
+    else if (ch === '}') n -= 1;
+  }
+  return n;
+}
+
+/**
  * The scoped package the shell is standing in, if any — INCLUDING from a
  * subdirectory of it.
  *
@@ -2969,9 +2999,161 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
         continue;
       }
     }
+    // A deploy EXECUTED BY AN ACTION rather than typed as a command.
+    // `cloudflare/wrangler-action` runs `wrangler <command>` (deploy when no
+    // `command` input is given) from its `workingDirectory` input — so the
+    // standard form carries a bare scoped deploy with no line for
+    // ANY_DEPLOY_RE to match, and the whole workflow was discarded at the file
+    // prefilter (#1995 r17). Each command line is synthesised as the wrangler
+    // invocation it becomes and fed through the SAME pipeline: the prefilter
+    // admits the file because the synthesised line is in this list, and the
+    // walk scores it with the input directory as the block's cwd — so
+    // `--keep-vars`, `--name` and the safety predicate behave exactly as for
+    // a typed command.
+    const uses = isYaml
+      ? lines[i].match(
+          /^\s*(?:-\s+)?["']?uses["']?:\s*["']?cloudflare\/wrangler-action(?=[@"'\s]|$)/,
+        )
+      : null;
+    if (uses) {
+      if (!stepIsDisabled(lines, i)) {
+        const wd = actionInput(lines, i, 'workingDirectory');
+        const cmd = actionInput(lines, i, 'command');
+        const cmds = cmd
+          ? cmd.value
+              .split('\n')
+              .map((c, k) => ({ text: c.trim(), at: cmd.line + (cmd.block ? k + 1 : 0) }))
+              .filter((c) => c.text !== '')
+          : [{ text: 'deploy', at: i }];
+        out.push(
+          ...cmds.map((c) => ({
+            text: `wrangler ${c.text}`,
+            line: c.at + 1,
+            block: blockId,
+            cwd: wd ? normalizeActionPath(wd.value) : '',
+            env: null,
+          })),
+        );
+        blockId += 1;
+      }
+      i += 1;
+      continue;
+    }
+    // A step written as a FLOW mapping is the same step. With a job-level
+    // `defaults.run.working-directory`, `- { name: deploy, run: wrangler
+    // deploy }` runs the bare deploy from the protected package, but the
+    // `run:` matchers above are line-anchored and never extracted the
+    // mid-mapping key (#1995 r17). The body is emitted as its own block with
+    // the same directory seeding as a block-style step. Without a directory
+    // nothing is emitted: the physical-line scan already judges the text, and
+    // emitting both reported one violation twice — the r8 rule again.
+    const flowStep =
+      isYaml && !run && !flow ? lines[i].match(/^\s*-\s*\{(.*)\}\s*(?:#.*)?$/) : null;
+    if (flowStep) {
+      const inMap = (name) => {
+        const m = flowStep[1].match(
+          new RegExp(
+            `(?:^|,)\\s*["']?${name}["']?\\s*:\\s*(?:"((?:[^"\\\\]|\\\\.)*)"|'([^']*)'|([^,}]*))`,
+          ),
+        );
+        const v = m && (m[1] ?? m[2] ?? m[3]);
+        return v === undefined || v === null ? null : v.trim();
+      };
+      const runVal = inMap('run');
+      const ifVal = inMap('if');
+      const shellVal = inMap('shell');
+      // Comments cannot appear inside a single-line flow mapping, so the
+      // static-false test needs no comment strip here.
+      const disabled = ifVal !== null && /^(?:false|\$\{\{\s*false\s*\}\})$/.test(ifVal);
+      const isShell = shellVal === null || SHELL_KEYWORDS.has(interpreterOf(shellVal));
+      const launches = runVal !== null && new RegExp(ARGV_DEPLOY_RE).test(runVal);
+      if (runVal !== null && (isShell || launches) && !disabled) {
+        const wdVal = inMap('working-directory');
+        const wd = wdVal !== null ? normalizeActionPath(wdVal) : workingDirFor(lines, i);
+        if (wd) {
+          out.push(
+            ...offset(
+              logicalLines(
+                forInterpreter(
+                  runVal,
+                  shellVal !== null ? interpreterOf(shellVal) : stepShellName(lines, i),
+                ),
+              ),
+              i,
+              blockId,
+              wd,
+              stepEnvVars(lines, i),
+            ),
+          );
+          blockId += 1;
+        }
+      }
+    }
     i += 1;
   }
   return out;
+}
+
+/**
+ * The literal value of ONE `with:` input on the step at `usesIdx`.
+ *
+ * Reads only the step's own `with:` mapping — an action INPUT lives one level
+ * below the step's key column, which is exactly where `scanStepKeys`
+ * deliberately stops. A block-scalar value (wrangler-action's multiline
+ * `command:` runs each line as its own wrangler invocation) is returned
+ * newline-joined and flagged, so the caller can point each report at the
+ * command's own line; a FOLDED scalar is one command and is joined with
+ * spaces, exactly as YAML folds it.
+ */
+function actionInput(lines, usesIdx, name) {
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  const bounds = stepBounds(lines, usesIdx);
+  if (!bounds) return null;
+  for (let i = bounds.start; i < bounds.end && i < lines.length; i += 1) {
+    if (!/^\s*(?:-\s+)?with:\s*(?:#.*)?$/.test(lines[i])) continue;
+    if (indentOf(lines[i]) !== bounds.keyIndent && !/^\s*-\s/.test(lines[i])) continue;
+    const wi = /^\s*-\s/.test(lines[i]) ? bounds.keyIndent : indentOf(lines[i]);
+    for (let j = i + 1; j < bounds.end && j < lines.length; j += 1) {
+      if (lines[j].trim() === '') continue;
+      if (indentOf(lines[j]) <= wi) break;
+      const km = lines[j].match(new RegExp(`^(\\s*)["']?${name}["']?:\\s*(.*)$`));
+      if (!km) continue;
+      const rest = km[2].trim();
+      const block = rest.match(/^([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/);
+      if (block) {
+        const body = [];
+        for (let k = j + 1; k < bounds.end && k < lines.length; k += 1) {
+          if (lines[k].trim() === '') continue;
+          if (indentOf(lines[k]) <= km[1].length) break;
+          body.push(lines[k].trim());
+        }
+        if (block[1] === '>') return { value: body.join(' '), line: j, block: false };
+        return { value: body.join('\n'), line: j, block: true };
+      }
+      const q = rest.match(/^(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$/);
+      const value = q ? (q[1] ?? q[2]) : rest.replace(/\s+#.*$/, '');
+      return value === '' ? null : { value, line: j, block: false };
+    }
+    return null;
+  }
+  return null;
+}
+
+/**
+ * The light normalisation both new workflow readers share: expressions expand
+ * to nothing (the literal segments still identify the package — the same rule
+ * `stepEnvVars` and the working-directory resolver take), separators collapse,
+ * and `..` pops, so `scopeOfCwd` sees the directory the runner actually
+ * starts in.
+ */
+function normalizeActionPath(raw) {
+  const out = [];
+  for (const part of raw.replace(/\$\{\{[^}]*\}\}/g, '').split(/[\\/]/)) {
+    if (part === '' || part === '.') continue;
+    if (part === '..' && out.length > 0 && out[out.length - 1] !== '..') out.pop();
+    else out.push(part);
+  }
+  return out.join('/');
 }
 
 /**
@@ -3521,15 +3703,22 @@ function powershellAssignments(body) {
  */
 function stepIsDisabled(lines, runIdx) {
   const FALSE = /^(?:false|\$\{\{\s*false\s*\}\}|'false'|"false")$/;
+  // A trailing YAML comment is not part of the scalar. `if: false # temporarily
+  // disabled` parses as the boolean `false`, but the capture kept the comment
+  // and the anchored test failed, so a step Actions will never run blocked the
+  // build (#1995 r17). Stripped only at a token boundary — a `#` glued to text
+  // is content — and only for THIS test: none of the false spellings can
+  // contain one, so the strip cannot turn a live condition into a dead one.
+  const scalar = (v) => v.trim().replace(/\s+#.*$/, '');
   const m = scanStepKeys(lines, runIdx, /^\s*(?:-\s+)?if:\s*(\S.*?)\s*$/);
-  if (m && FALSE.test(m[1].trim())) return true;
+  if (m && FALSE.test(scalar(m[1]))) return true;
   const job = jobBounds(lines, runIdx);
   if (!job) return false;
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
   for (let i = job.start; i < job.end && i < lines.length; i += 1) {
     if (indentOf(lines[i]) !== job.indent + 2) continue;
     const jm = lines[i].match(/^\s*if:\s*(\S.*?)\s*$/);
-    if (jm && FALSE.test(jm[1].trim())) return true;
+    if (jm && FALSE.test(scalar(jm[1]))) return true;
   }
   return false;
 }
@@ -4298,6 +4487,27 @@ for (const file of walk(REPO_ROOT)) {
   const stateStack = [];
   /** Functions whose body deploys unsafely, by name, for the current block. */
   const deployFns = new Map();
+  /**
+   * A function DEFINITION still being collected, when its body spans lines.
+   *
+   * `deploy_worker() {` / `wrangler deploy` / `}` is the ordinary way to write
+   * a Bash helper, and processing each logical line separately recorded an
+   * EMPTY body at the opening line — so the call after `cd apps/agent` looked
+   * up nothing, and the body's own lines were scored as if they executed where
+   * they are written, which a definition does not (#1995 r17). Segments are
+   * accumulated until the brace that opened the body closes, then judged with
+   * exactly the same predicate as the single-line form.
+   */
+  let pendingFn = null;
+  const unsafeDeploySegs = (segs) =>
+    segs
+      .map((c) => c.trim())
+      .filter(
+        (c) =>
+          (new RegExp(ANY_DEPLOY_RE).test(c) ||
+            new RegExp(ANY_DEPLOY_RE).test(dequote(c))) &&
+          !commandIsSafe(c),
+      );
   folded.forEach(({ text: line, line: lineNo, block, physical, cwd: blockCwd, env: blockEnv }) => {
     // Each embedded block is a SEPARATE shell — an Actions step starts fresh,
     // and so does the next fenced example. Carrying `cwdIsKeeper` across them
@@ -4308,6 +4518,7 @@ for (const file of walk(REPO_ROOT)) {
       currentBlock = block;
       shellVars.clear();
       deployFns.clear();
+      pendingFn = null;
       // A new shell starts outside every subshell the previous one opened.
       depth = 0;
       stateStack.length = 0;
@@ -4516,6 +4727,37 @@ for (const file of walk(REPO_ROOT)) {
       for (let pi = 0; pi < segments.length; pi += 1) {
         const part = segments[pi];
         const nextPart = segments[pi + 1];
+        // A definition's body is DATA until called: collect it rather than walk
+        // it, exactly as the single-line form's `continue` already treats its
+        // body (#1995 r17). Depth bookkeeping is skipped on purpose — nothing
+        // in an unexecuted body moves the shell.
+        if (pendingFn) {
+          let text = part.text;
+          if (pendingFn.awaiting) {
+            const open = text.match(/^\s*\{([\s\S]*)$/);
+            if (!open) {
+              // Not a definition after all — fall through and score normally.
+              pendingFn = null;
+            } else {
+              pendingFn.awaiting = false;
+              pendingFn.depth = 1;
+              text = open[1];
+            }
+          }
+          if (pendingFn) {
+            pendingFn.depth += netBraces(text);
+            if (pendingFn.depth <= 0) {
+              const tail = text.replace(/\}\s*$/, '');
+              if (tail.trim() !== '') pendingFn.segs.push(tail);
+              const unsafe = unsafeDeploySegs(pendingFn.segs);
+              if (unsafe.length > 0) deployFns.set(pendingFn.name, unsafe);
+              pendingFn = null;
+            } else if (text.trim() !== '') {
+              pendingFn.segs.push(text);
+            }
+            continue;
+          }
+        }
         // Close any subshell the PREVIOUS segment ended.
         if (pendingDepth < depth) {
           for (let k = namedPrefix.length - 1; k >= 0; k -= 1) {
@@ -4852,16 +5094,31 @@ for (const file of walk(REPO_ROOT)) {
           /^(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)\s*\{([\s\S]*)$/,
         );
         if (fnDef) {
+          // Braces still open: the body continues on the FOLLOWING lines, and
+          // recording the empty remainder here is how a multiline helper's
+          // deploy went unrecorded and its call was ignored (#1995 r17). The
+          // rest is collected at the top of this loop.
+          const open = 1 + netBraces(fnDef[2]);
+          if (open > 0) {
+            pendingFn = {
+              name: fnDef[1],
+              segs: fnDef[2].trim() !== '' ? [fnDef[2]] : [],
+              depth: open,
+              awaiting: false,
+            };
+            continue;
+          }
           const body = fnDef[2].replace(/\}\s*$/, '');
-          const unsafe = splitCommands(body)
-            .map((c) => c.text.trim())
-            .filter(
-              (c) =>
-                (new RegExp(ANY_DEPLOY_RE).test(c) ||
-                  new RegExp(ANY_DEPLOY_RE).test(dequote(c))) &&
-                !commandIsSafe(c),
-            );
+          const unsafe = unsafeDeploySegs(splitCommands(body).map((c) => c.text));
           if (unsafe.length > 0) deployFns.set(fnDef[1], unsafe);
+          continue;
+        }
+        // The `{`-on-the-next-line layout of the same definition. `name()`
+        // standing alone is only ever an opener — as a command it is a syntax
+        // error — so the brace is expected on the segment that follows.
+        const fnOpen = seg.match(/^(?:function\s+)?([A-Za-z_][\w-]*)\s*\(\s*\)\s*$/);
+        if (fnOpen) {
+          pendingFn = { name: fnOpen[1], segs: [], depth: 0, awaiting: true };
           continue;
         }
         // `\b` so `wrangler deployments list` is not read as a deploy.
