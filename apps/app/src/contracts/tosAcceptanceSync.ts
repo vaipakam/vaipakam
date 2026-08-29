@@ -54,6 +54,7 @@ import {
 import {
   ACCEPTANCE_PIN_TTL_MS,
   MAX_FUTURE_SKEW_MS,
+  acceptanceIsPinned,
   acceptanceScope,
   adoptOrderedPin,
   observePinExpiry,
@@ -391,6 +392,24 @@ export function applyAcceptancePinFrame(
     // canonical v3 the frame is truthfully reporting. The pin data is
     // refused (ordering is right on the information it has), but the
     // reads run, because only they can decide which branch won.
+    //
+    // Round 20 P1: the refusal can have RETIRED the incumbent (fork
+    // rivals at one chain position leave neither pin standing), and a
+    // fresh pinBacked verdict resting on that retired pin is then
+    // orphaned — its expiry timer reports `superseded` and exits
+    // without aging, so if the reads below hang, both gates keep
+    // trusting it for the rest of the verdict window. A pinBacked
+    // verdict whose backing pin no longer exists has nothing left to
+    // correct or revalidate it: age it now, so the gates stop
+    // honouring either fork while the reads decide.
+    if (
+      freshCached?.pinBacked &&
+      !acceptanceIsPinned(scope, freshCached.version, freshCached.hash, now)
+    ) {
+      queryClient.setQueryData<TosVerdictData>(queryKey, freshCached, {
+        updatedAt: Date.now() - MAX_VERDICT_AGE_MS - VERDICT_CLOCK_TICK_MS - 1_000,
+      });
+    }
     scheduleAuthoritativeReads();
     return;
   }

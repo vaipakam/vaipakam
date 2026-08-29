@@ -269,6 +269,32 @@ describe('applyAcceptancePinFrame', () => {
     expect(client.getQueryData<TosVerdictData>(key)?.version).toBe(4);
   });
 
+  it('retiring fork rivals also ages the orphaned pin-backed verdict', () => {
+    // Round 20 P1: when rivals at one chain position leave neither pin
+    // standing, the incumbent's fresh pinBacked verdict would
+    // otherwise coast — its expiry timer reports superseded and exits
+    // without aging — keeping both gates open for the rest of the
+    // verdict window if the reads hang. Orphaned pin-backed verdicts
+    // are aged in the refusal path itself.
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    const now = Date.now();
+    // Incumbent: a v4 acceptance promoted over a matching fresh
+    // refusal — pinBacked verdict plus pin.
+    const h4 = `0x${'44'.repeat(32)}` as `0x${string}`;
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 4, hash: h4 });
+    applyAcceptancePinFrame(client, frame({ version: 4, hash: h4, at: now }), now);
+    expect(client.getQueryData<TosVerdictData>(key)?.pinBacked).toBe(true);
+    // Rival: a different acceptance at the SAME (block, txIndex).
+    applyAcceptancePinFrame(client, frame({ version: 3, at: now + 1_000 }), now + 1_000);
+    const scope = acceptanceScope(84532, ADDRESS);
+    expect(acceptanceIsPinned(scope, 4, h4, now + 2_000)).toBe(false);
+    expect(acceptanceIsPinned(scope, 3, HASH, now + 2_000)).toBe(false);
+    const state = client.getQueryState<TosVerdictData>(key);
+    expect(state?.data?.version).toBe(4);
+    expect(state && Date.now() - state.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(true);
+  });
+
   it('a fresh differing read refuses even a frame from a HIGHER block', () => {
     // Round 15 P1, withdrawing round 14's height carve-out: height is
     // not ancestry. A rollback can leave the canonical head BELOW an
