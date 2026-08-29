@@ -119,6 +119,14 @@ interface AcceptancePin {
    *  window at delivery, so the cross-tab simultaneous-expiry
    *  property is preserved up to delivery skew. */
   monoDeadline: number;
+  /** Adoption sequence number (round 33 P2): which `storePin` call
+   *  created this entry, sampled by the heartbeat at every beat.
+   *  Poisoning condemns only pins that EXISTED ACROSS the suspect
+   *  interval — one adopted after the last beat never spanned the
+   *  discontinuity the beat detected, and blanket-poisoning it aged a
+   *  freshly aligned acceptance's verdict for a fault that predates
+   *  it. Clock-free by construction, like the beat budget. */
+  adoptedSeq: number;
   /** Heartbeats observed while this pin has been alive (round 29 P1).
    *  Beats fire only while the page is AWAKE, so the count is a
    *  clock-free lower bound on real elapsed time — the one measure
@@ -152,6 +160,7 @@ interface AcceptancePin {
 }
 
 const pins = new Map<string, AcceptancePin>();
+let adoptionCounter = 0;
 
 const defaultMonoNow = () =>
   typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -189,6 +198,7 @@ function pinExpired(pin: AcceptancePin, now: number): boolean {
 const CLOCK_REGRESSION_CHECK_MS = 10_000;
 let lastBeatWall = 0;
 let lastBeatMono = 0;
+let lastBeatAdoption = 0;
 let beatTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
@@ -223,6 +233,7 @@ function ensureClockWatch(): void {
   if (beatTimer !== null) return;
   lastBeatWall = Date.now();
   lastBeatMono = monoNow();
+  lastBeatAdoption = adoptionCounter;
   beatTimer = setInterval(() => {
     const wall = Date.now();
     const mono = monoNow();
@@ -255,9 +266,15 @@ function ensureClockWatch(): void {
     // elapsed time is unknowable, and unknowable means fail closed.
     if (Math.abs(wall - lastBeatWall - (mono - lastBeatMono)) > MAX_FUTURE_SKEW_MS) {
       for (const pin of pins.values()) {
-        pin.monoDeadline = Number.NEGATIVE_INFINITY;
+        // Only pins that SPANNED the suspect interval are condemned
+        // (round 33 P2): one adopted since the last beat is anchored
+        // on the post-discontinuity clocks and never crossed the
+        // fault the deltas detected.
+        if (pin.adoptedSeq <= lastBeatAdoption) {
+          pin.monoDeadline = Number.NEGATIVE_INFINITY;
+          poisoned = true;
+        }
       }
-      poisoned = pins.size > 0;
     }
     if (poisoned) {
       // Wake every scheduled expiry check NOW (round 29 P1) — the
@@ -267,6 +284,7 @@ function ensureClockWatch(): void {
     }
     lastBeatWall = wall;
     lastBeatMono = mono;
+    lastBeatAdoption = adoptionCounter;
     if (pins.size === 0) stopClockWatch();
   }, CLOCK_REGRESSION_CHECK_MS);
 }
@@ -291,6 +309,7 @@ function storePin(
     // when one of the clocks misbehaves.
     monoDeadline: monoNow() + Math.max(0, at + ACCEPTANCE_PIN_TTL_MS - now),
     beats: 0,
+    adoptedSeq: ++adoptionCounter,
   });
   ensureClockWatch();
 }
@@ -633,6 +652,8 @@ export function __clearAcceptancePins(): void {
   stopClockWatch();
   lastBeatWall = 0;
   lastBeatMono = 0;
+  lastBeatAdoption = 0;
+  adoptionCounter = 0;
   // Scheduled revalidations from a finished test would otherwise stay
   // subscribed and answer a later test's poison event first — deleting
   // the shared-scope pin before that test's own check can observe it.

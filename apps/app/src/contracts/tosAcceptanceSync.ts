@@ -285,7 +285,27 @@ export function applyAcceptancePinFrame(
   // and only an authoritative read can tell what is true now. One
   // immediate, one delayed, never a poll.
   const scheduleAuthoritativeReads = () => {
-    void queryClient.invalidateQueries({ queryKey });
+    // Round 33 P2, mirroring the boot path: an invalidation issued
+    // while the INITIAL fetch is still in flight with no cached data
+    // JOINS that request — and so does the four-second one if the
+    // fetch outlives it — so a read issued BEFORE a long-pending
+    // acceptance mined could satisfy every "authoritative read" this
+    // refusal path promises, with no pin installed to correct it. In
+    // the data-less coalescing case a DISTINCT read is chained after
+    // the joined request settles; every other case keeps the plain
+    // immediate-plus-delayed pair.
+    const dataless = queryClient
+      .getQueryCache()
+      .findAll({ queryKey })
+      .some((q) => q.state.fetchStatus === 'fetching' && q.state.data === undefined);
+    const first = queryClient.invalidateQueries({ queryKey });
+    if (dataless) {
+      void first
+        .then(() => queryClient.invalidateQueries({ queryKey }))
+        .catch(() => {
+          /* refetch failures surface through the query itself */
+        });
+    }
     setTimeout(() => {
       void queryClient.invalidateQueries({ queryKey });
     }, RECEIVER_SECOND_READ_MS);
@@ -314,10 +334,7 @@ export function applyAcceptancePinFrame(
   // enabled Accept button standing until the next poll. Authoritative
   // reads are the one thing a stale frame is still good for.
   if (now - frame.at > ACCEPTANCE_PIN_TTL_MS) {
-    void queryClient.invalidateQueries({ queryKey });
-    setTimeout(() => {
-      void queryClient.invalidateQueries({ queryKey });
-    }, RECEIVER_SECOND_READ_MS);
+    scheduleAuthoritativeReads();
     return;
   }
   const scope = acceptanceScope(frame.chainId, frame.address);
