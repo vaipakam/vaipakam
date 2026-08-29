@@ -37,6 +37,12 @@ function runWith(relPath: string, content: string): { ok: boolean; out: string }
     const out = execFileSync('node', [SCRIPT], {
       env: { ...process.env, CHECK_DEPLOY_ROOT: root },
       encoding: 'utf8',
+      // A sync child is beyond vitest's own test timeout, so a guard that
+      // stops terminating (the ReDoS class the alert-1957/1958 canaries pin)
+      // would HANG the suite, not fail it. The kill turns that into a loud
+      // ok:false. 60 s is two orders above the slowest healthy fixture run.
+      timeout: 60_000,
+      killSignal: 'SIGKILL',
     });
     return { ok: true, out };
   } catch (err) {
@@ -4795,5 +4801,41 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
         '&& cd apps/agent && wrangler deploy\n',
     );
     expect(r.ok).toBe(false);
+  });
+
+  it('a TAGGED block scalar still opens a run block (CodeQL js/redos fix)', () => {
+    // The ReDoS fix made the whitespace after a tag or anchor property
+    // MANDATORY. YAML requires that whitespace too, so no recognised form may
+    // be lost — this pins the tag spelling the fix touched most directly.
+    const r = runWith(
+      '.github/workflows/wt.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - run: !!str |\n          cd apps/agent\n          wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a pathological run-property line terminates (CodeQL js/redos, alert 1958)', () => {
+    // With every part of the tag item optional, `run:!` + `!!`×n split in 2^n
+    // ways — 13 s at n=20, unreachable at n=2000. Completing under the test
+    // timeout IS the assertion, exactly like the canonical-directory walk test.
+    const r = runWith(
+      '.github/workflows/wr.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - run:!' + '!!'.repeat(2000) + '\n' +
+        '      - name: real\n        working-directory: apps/keeper\n        run: wrangler deploy --keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('a pathological env value terminates the reader (CodeQL js/redos, alert 1957)', () => {
+    // `$` and `{` are also non-space, so `${{}}`×n + a forced tail failure
+    // doubled per repetition on the old union — ~313 ms at n=22. The value is
+    // garbage, so only termination and the step verdict are asserted.
+    const r = runWith(
+      '.github/workflows/we.yml',
+      'name: w\nenv:\n  PATHO: ' + '${{}}'.repeat(2000) + ' !\n' +
+        'jobs:\n  d:\n    steps:\n      - working-directory: apps/keeper\n        run: wrangler deploy --keep-vars\n',
+    );
+    expect(r.ok).toBe(true);
   });
 });

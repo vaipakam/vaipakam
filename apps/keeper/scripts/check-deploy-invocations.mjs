@@ -2816,8 +2816,16 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
     // reverting both, which does break it. Kept here because a block scalar is
     // a block, and the flow path handling it is an accident rather than the
     // model — a fixture cannot tell them apart, so this says so instead.
+    // The property items require a trailing `\s+`, not `\s*`: YAML separates
+    // a tag or anchor from its node with whitespace, and with every part of
+    // the tag item optional a run of `!!` could be split between one `!!` tag
+    // and two `!` tags in 2^n ways — `run:!` followed by repeated `!!` and no
+    // indicator took 13 s at twenty repetitions (CodeQL js/redos, alert 1958).
+    // Mandatory whitespace makes the split deterministic. The only strings
+    // this stops matching are `run:!|` shapes that glue the property to the
+    // indicator — not a mapping to YAML in the first place.
     const run = lines[i].match(
-      /^(\s*)(?:-\s+)?["']?run["']?:\s*(?:[&*][\w-]+\s*|!!?[\w:.-]*\s*)*([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/,
+      /^(\s*)(?:-\s+)?["']?run["']?:\s*(?:[&*][\w-]+\s+|!!?[\w:.-]*\s+)*([|>])(?:[-+]?\d?|\d?[-+]?)\s*(?:#.*)?$/,
     );
     // A `run:` value does not have to be a BLOCK scalar to span lines. A quoted
     // or plain multiline flow scalar folds its newlines to spaces just as `>`
@@ -3142,7 +3150,14 @@ function stepEnvVars(lines, runIdx) {
         // the identical defect the `working-directory` pattern had two rounds
         // ago, in the reader written after it.
         const kv = lines[j].match(
-          /^\s*([A-Za-z_][A-Za-z0-9_]*):\s*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^\s])+))\s*$/,
+          // `$` and `{` are non-space, so a value full of `${{`-shaped text
+          // could be split between the expression branch and the char branch
+          // in exponentially many ways when the trailing `\s*$` failed
+          // (CodeQL js/redos, alert 1957). The middle branch takes `$` exactly
+          // when it does NOT open a well-formed expression, so every position
+          // has one viable branch and the language is unchanged — an unclosed
+          // `${{oops` is still consumed character-wise, as before.
+          /^\s*([A-Za-z_][A-Za-z0-9_]*):\s*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|\$(?!\{\{[^}]*\}\})|[^$\s])+))\s*$/,
         );
         const raw = kv && (kv[2] ?? kv[3] ?? kv[4]);
         // Empty components are dropped, which is what `normalizePath` does for
@@ -3608,8 +3623,12 @@ function workingDirFor(lines, runIdx) {
   // `working-directory: &agent-dir apps/agent` is `apps/agent` to YAML — and
   // capturing the property instead of the scalar missed the package (#1995
   // r16). The `run:` matcher already stepped over them; this one did not.
+  // The unquoted branch carries the same expression-or-char union the env
+  // value reader had to disambiguate (js/redos): nothing follows the union
+  // HERE, so today it cannot be forced to backtrack — but that safety is one
+  // appended anchor away from gone, so it takes the same `$`-lookahead form.
   const WD =
-    /^\s*(?:-\s+)?["']?working-directory["']?:\s*(?:[&*][\w-]+\s+|!!?[\w:.-]*\s+)*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^\s])+))/;
+    /^\s*(?:-\s+)?["']?working-directory["']?:\s*(?:[&*][\w-]+\s+|!!?[\w:.-]*\s+)*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|\$(?!\{\{[^}]*\}\})|[^$\s])+))/;
   // FLOW-style mapping (#1995 r13): `defaults: { run: { working-directory: X } }`
   // is the same Actions configuration as the block form, and only the block
   // form was recognised — so a workflow written this way ran its inline deploy
