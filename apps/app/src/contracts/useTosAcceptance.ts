@@ -236,7 +236,23 @@ export function useTosAcceptance(): TosAcceptanceState {
       // text the modal displayed, not to whatever is in force by the
       // time it mines. A version installed mid-flow makes this call
       // revert rather than silently record consent to unseen terms.
-      await write('acceptTerms', [query.data.version, query.data.hash]);
+      // The pin's anchor is stamped at SUBMISSION — the moment the
+      // signed transaction has a hash — not when this continuation
+      // resumes (#2004 round 12 P2). The two differ by however long
+      // the tab was suspended after mining: anchored at resume, an
+      // acceptance orphaned during the pause would be rebroadcast
+      // with a brand-new 90-second window. Anchored at submission the
+      // window can only START EARLY (mining follows submission by
+      // seconds), which shortens the pin's life — the safe direction.
+      // A suspension long enough to expire the anchor leaves the
+      // verdict write and the reads to carry the case, exactly like
+      // an expired frame.
+      let submittedAt = Date.now();
+      await write('acceptTerms', [query.data.version, query.data.hash], {
+        onSubmitted: () => {
+          submittedAt = Date.now();
+        },
+      });
       // Review round 10 P2: the acceptance is CONFIRMED at this point —
       // `write` returns only after the receipt is settled — but the
       // reads that follow can still be behind it. A public RPC serving
@@ -259,7 +275,7 @@ export function useTosAcceptance(): TosAcceptanceState {
       // refused local receipt is real but superseded, and the
       // invalidation below re-reads the newer truth.
       const acceptedVersion = query.data.version;
-      const pinnedAt = Date.now();
+      const pinnedAt = submittedAt;
       // A fresh read is used here to REJECT a conflicting receipt,
       // never to REQUIRE a matching one (#2004 round 5 P1 shaped by
       // round 6 P2). The asymmetry with the receiver is deliberate and
@@ -280,19 +296,32 @@ export function useTosAcceptance(): TosAcceptanceState {
       // receipt — an ordinary read installs no pin, so ordering alone
       // cannot see that — and a conflicted receipt applies nothing,
       // with the invalidations below re-reading the newer truth.
-      const fresh = freshVerdict(queryClient, queryKey, pinnedAt);
+      const fresh = freshVerdict(queryClient, queryKey, Date.now());
+      // ANY fresh read that disagrees conflicts (#2004 round 12 P1) —
+      // not only a numerically greater version. Within one branch the
+      // version is monotonic, so a fresh LOWER version than the one
+      // just accepted can only mean a reorg rolled the chain back
+      // under this receipt; writing the receipt's verdict over that
+      // authoritative read would open both gates under a version no
+      // longer current, and broadcasting would ask every tab to do
+      // the same. Equal version and hash is the one non-conflict: a
+      // fresh refusal there is the lag this whole module corrects.
       const conflicted =
         fresh !== undefined &&
-        (fresh.version > acceptedVersion ||
-          (fresh.version === acceptedVersion && fresh.hash !== query.data.hash));
+        (fresh.version !== acceptedVersion || fresh.hash !== query.data.hash);
       const adopted =
         !conflicted &&
-        adoptOrderedPin(scope, acceptedVersion, query.data.hash, pinnedAt, pinnedAt);
+        adoptOrderedPin(scope, acceptedVersion, query.data.hash, pinnedAt, Date.now());
       // No freshness bar on the cache write for the receipt — it IS
       // the outcome, anchored; a stale or empty entry is simply
-      // seeded, which round 1 already argued is the acting tab's
-      // prerogative.
-      const cacheAdopted = adopted;
+      // seeded (round 1's acting-tab prerogative) — EXCEPT a fresh
+      // verdict a node already CONFIRMED, which is preserved (round
+      // 12 P2, mirroring the receiver's round-11 rule): rewriting it
+      // pinBacked would volunteer node-given truth for expiry aging.
+      // When unconflicted, `fresh` either matches exactly or is
+      // undefined, so `fresh.accepted` is precisely "a node already
+      // said yes to this same version and text".
+      const cacheAdopted = adopted && fresh?.accepted !== true;
       if (cacheAdopted) {
         // Not optimism about an unknown outcome — it is the outcome,
         // anchored to a receipt this call waited for. Writing it here
@@ -320,17 +349,18 @@ export function useTosAcceptance(): TosAcceptanceState {
       // acting tab's `pinnedAt` travels with it: the 90s bound must
       // expire at the same moment everywhere, or a reorged acceptance
       // stays papered over in whichever tab heard about it last.
-      // Gated on the CACHE decision, not on pin adoption alone (#2004
-      // round 3 P1): an ordinary refetch installs no pin, so a local
-      // v3 receipt settling after this tab's own read discovered v4
-      // can win ordering while the cache guard rightly refuses it —
-      // and a receiving tab still cached at v3 would have written
-      // `accepted: true` from the broadcast. What this tab refuses to
-      // believe about a receipt, it must not ask other tabs to
-      // believe either. The frame carries the Diamond the acceptance
-      // was mined against (round 3 P1), so a tab configured for a
-      // different deployment of the same chain drops it.
-      if (cacheAdopted && address) {
+      // Gated on BELIEF — `adopted`, which since round 12 embodies
+      // the full conflict check — not on whether the cache write
+      // happened: the write is also skipped when a node already
+      // confirmed this exact acceptance, and that is a reason to
+      // broadcast, not to stay silent (other tabs may still hold
+      // refusals). What this tab refuses to believe about a receipt,
+      // it must not ask other tabs to believe; what it believes on a
+      // node's word travels fine. The frame carries the Diamond the
+      // acceptance was mined against (round 3 P1), so a tab
+      // configured for a different deployment of the same chain
+      // drops it.
+      if (adopted && address) {
         publishAcceptancePin(
           buildAcceptancePinFrame(
             readChain.chainId,

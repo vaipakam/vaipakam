@@ -77,6 +77,18 @@ const RECEIVER_SECOND_READ_MS = 4_000;
  */
 const MAX_FUTURE_SKEW_MS = 5_000;
 
+/**
+ * Upper bound between expiry-check wake-ups (#2004 round 12 P2). The
+ * check's timeout is MONOTONIC while the pin's life is WALL-CLOCK, and
+ * the two clocks can shift either way: backward shifts are handled by
+ * re-arming for the pin's remaining life, but a FORWARD shift makes
+ * the pin expire in wall time before the original timeout fires — so
+ * no single arm may sleep longer than this, keeping the worst-case
+ * overshoot of the stated 90-second bound at one cadence instead of
+ * the whole shift. A handful of map-lookup wake-ups per acceptance.
+ */
+const EXPIRY_RECHECK_MS = 30_000;
+
 /** What the acting tab broadcasts after `acceptTerms` is mined and its
  *  receipt waited for. `kind` is the discriminator on the shared
  *  receipt-sync rail, whose other frame carries invalidation roots. */
@@ -391,12 +403,14 @@ export function scheduleExpiryRevalidation(
     // extends the matching pin's window past ours too. Either way the
     // pin has authority left, and a check that skipped once and never
     // returned would let an orphaned acceptance keep correcting polls
-    // until wall time caught up. Re-arm for the pin's remaining life
-    // instead; each re-arm is bounded by the TTL and stops the first
-    // time the pin is genuinely dead.
+    // until wall time caught up. Re-arm instead — never sleeping past
+    // `EXPIRY_RECHECK_MS`, so a FORWARD shift (round 12 P2) is caught
+    // within one cadence rather than at the original timeout. Each
+    // re-arm is bounded and the loop stops the first time the pin is
+    // genuinely dead.
     const remaining = pinRemainingMs(scope, version, hash, Date.now());
     if (remaining !== null) {
-      setTimeout(check, remaining + 1_000);
+      setTimeout(check, Math.min(remaining + 1_000, EXPIRY_RECHECK_MS));
       return;
     }
     const cur = queryClient.getQueryData<TosVerdictData>(queryKey);
@@ -417,5 +431,5 @@ export function scheduleExpiryRevalidation(
     }
     void queryClient.invalidateQueries({ queryKey });
   };
-  setTimeout(check, at + ACCEPTANCE_PIN_TTL_MS - now + 1_000);
+  setTimeout(check, Math.min(at + ACCEPTANCE_PIN_TTL_MS - now + 1_000, EXPIRY_RECHECK_MS));
 }
