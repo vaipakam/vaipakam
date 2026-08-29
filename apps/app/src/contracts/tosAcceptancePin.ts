@@ -126,7 +126,28 @@ interface AcceptancePin {
    *  wall and monotonic deltas agree at zero and both expiry bounds
    *  plus the disagreement check are blinded together. A pin whose
    *  beat budget exceeds the TTL has provably outlived its window in
-   *  awake time alone, whatever the clocks claim. */
+   *  awake time alone, whatever the clocks claim.
+   *
+   *  DOCUMENTED RESIDUAL (round 30, examined and accepted): the
+   *  budget bounds awake time, not the blinded suspension itself, so
+   *  a pin created just before such a sleep can still spend its full
+   *  budget after resume. This is where in-page detection ENDS, not
+   *  an oversight: the web platform has no reliable event for system
+   *  sleep (Page Lifecycle freeze/resume is background-tab freezing;
+   *  `visibilitychange` fires identically for a two-second tab
+   *  switch and a blinded two-hour sleep, and the two are
+   *  indistinguishable at resume PRECISELY because the scenario is
+   *  defined by the clocks agreeing) — and poisoning on every
+   *  return-to-visible would destroy the feature's primary flow, the
+   *  hidden tab that received the acceptance frame and is switched
+   *  to moments later. The scenario needs a wall correction matching
+   *  the sleep within the 5s allowance — outside deliberate clock
+   *  manipulation a negligible coincidence, and this gate is
+   *  client-side enforcement whose threat model is accidents, not an
+   *  operator of the machine, who could bypass it in devtools.
+   *  Exposure even then is bounded below one TTL of awake time by
+   *  this budget, and every read served by a current node replaces
+   *  the verdict outright throughout. */
   beats: number;
 }
 
