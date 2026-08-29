@@ -222,7 +222,7 @@
       "scopeDiagnostics": "Les rapports d’erreur conservés par notre service d’assistance. Ils sont distincts de votre navigateur et sont effacés sur demande : écrivez à support@vaipakam.com et nous supprimerons les enregistrements liés à votre portefeuille.",
       "scopeTabs": "Les autres onglets, s’agissant du téléchargement. Une petite partie des données appartient à chaque onglet séparément : le téléchargement couvre donc l’onglet où vous êtes — l’effacement, lui, atteint les autres. Téléchargez depuis chaque onglet si vous voulez l’ensemble.",
       "scopeSite": "Le site principal vaipakam.com. Il conserve son propre stockage distinct, avec ses propres commandes sur ce site.",
-      "scopeCookies": "Votre langue et votre thème sont partagés avec vaipakam.com via un cookie du domaine commun ; les effacer ici les réinitialise donc aussi là-bas."
+      "scopeCookies": "Votre choix de langue est partagé avec vaipakam.com via un cookie sur le domaine commun, donc effacer ici le réinitialise aussi là-bas. Votre thème n’est pas partagé — chaque site garde le sien — mais vaipakam.com enregistre son choix de thème dans un cookie que ce navigateur détient, donc effacer ici supprime ce cookie et le thème du site principal revient lui aussi à sa valeur par défaut."
     },
     "killSwitch": {
       "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."

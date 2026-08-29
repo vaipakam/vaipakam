@@ -47,9 +47,12 @@ prominently as what it can:
 - **Error reports held by support**, which are removed on request by
   email.
 
-Your language and theme are shared with the main site through a
-preference both sites can read, so erasing here resets them there too.
-That is said on the page rather than left as a surprise.
+Your language choice is shared with the main site through a preference
+both sites read, so erasing here resets it there too. Your theme is not
+shared — each site keeps its own — but the main site stores its theme
+choice where this browser holds it, so erasing clears that as well and
+the main site's theme returns to its default. Both effects are said on
+the page rather than left as a surprise.
 
 One deliberate choice worth naming: the page does not reload after
 erasing. The old version did, which meant the confirmation vanished

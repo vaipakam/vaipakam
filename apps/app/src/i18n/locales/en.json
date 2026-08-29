@@ -240,7 +240,7 @@
       "scopeDiagnostics": "Error reports kept by our support service. Those are separate from your browser, and are erased on request — email support@vaipakam.com and we will remove the records for your wallet.",
       "scopeTabs": "Other tabs, when it comes to the download. A small amount of data belongs to each tab on its own, so a download covers the tab you are on — erasing still clears the others. Download from each tab if you want the full picture.",
       "scopeSite": "The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.",
-      "scopeCookies": "Your language and theme are shared with vaipakam.com through a cookie on the shared domain, so erasing here resets them there too."
+      "scopeCookies": "Your language choice is shared with vaipakam.com through a cookie on the shared domain, so erasing here resets it there too. Your theme is not shared — each site keeps its own — but vaipakam.com stores its theme choice in a cookie this browser holds, so erasing here clears that cookie and the main site’s theme returns to its default as well."
     },
     "killSwitch": {
       "disabled": "This action is switched off right now — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, claims, and withdrawals all stay open."

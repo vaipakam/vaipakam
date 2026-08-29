@@ -421,8 +421,15 @@ const copySource = {
       'Other tabs, when it comes to the download. A small amount of data belongs to each tab on its own, so a download covers the tab you are on — erasing still clears the others. Download from each tab if you want the full picture.',
     scopeSite:
       'The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.',
+    /* Review round 9 P2 — this said language AND theme are shared.
+       Only the language is: every language change is mirrored to the
+       parent-domain cookie both sites read. The theme is per-surface —
+       this app never reads or writes the marketing site's theme
+       cookie — but that cookie lives where this browser holds it, so
+       the download includes it and an erase clears it. Two different
+       relationships, now stated as two. */
     scopeCookies:
-      'Your language and theme are shared with vaipakam.com through a cookie on the shared domain, so erasing here resets them there too.',
+      'Your language choice is shared with vaipakam.com through a cookie on the shared domain, so erasing here resets it there too. Your theme is not shared — each site keeps its own — but vaipakam.com stores its theme choice in a cookie this browser holds, so erasing here clears that cookie and the main site’s theme returns to its default as well.',
   },
   killSwitch: {
     disabled:

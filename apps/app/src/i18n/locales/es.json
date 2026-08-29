@@ -222,7 +222,7 @@
       "scopeDiagnostics": "Los informes de errores que guarda nuestro servicio de soporte. Están separados de tu navegador y se eliminan a petición: escribe a support@vaipakam.com y borraremos los registros de tu billetera.",
       "scopeTabs": "Otras pestañas, en lo que respecta a la descarga. Una pequeña parte de los datos pertenece a cada pestaña por separado, así que la descarga cubre la pestaña en la que estás; el borrado sí limpia las demás. Descarga desde cada pestaña si quieres el panorama completo.",
       "scopeSite": "El sitio principal vaipakam.com. Mantiene su propio almacén separado, con sus propios controles en ese sitio.",
-      "scopeCookies": "Tu idioma y tu tema se comparten con vaipakam.com mediante una cookie del dominio compartido, así que borrarlos aquí también los restablece allí."
+      "scopeCookies": "Tu elección de idioma se comparte con vaipakam.com mediante una cookie en el dominio compartido, así que borrar aquí también la restablece allí. Tu tema no se comparte — cada sitio mantiene el suyo — pero vaipakam.com guarda su elección de tema en una cookie que este navegador conserva, así que borrar aquí elimina esa cookie y el tema del sitio principal también vuelve a su valor predeterminado."
     },
     "killSwitch": {
       "disabled": "Esta acción está desactivada ahora mismo — los operadores la pausaron por precaución mientras revisan algo. Lo que ya es tuyo no se ve afectado: pagos, reclamos y retiros siguen abiertos."

@@ -222,7 +222,7 @@
       "scopeDiagnostics": "Fehlerberichte, die unser Support-Dienst aufbewahrt. Sie liegen getrennt von Ihrem Browser und werden auf Anfrage gelöscht — schreiben Sie an support@vaipakam.com, und wir entfernen die Datensätze zu Ihrer Wallet.",
       "scopeTabs": "Andere Tabs, was den Download betrifft. Ein kleiner Teil der Daten gehört jedem Tab für sich, daher deckt ein Download den Tab ab, in dem Sie sich befinden — das Löschen erreicht die anderen trotzdem. Laden Sie aus jedem Tab herunter, wenn Sie das vollständige Bild möchten.",
       "scopeSite": "Die Hauptseite vaipakam.com. Sie führt einen eigenen, getrennten Speicher mit eigenen Bedienelementen auf jener Seite.",
-      "scopeCookies": "Sprache und Erscheinungsbild werden über ein Cookie der gemeinsamen Domain mit vaipakam.com geteilt; ein Löschen hier setzt sie also auch dort zurück."
+      "scopeCookies": "Ihre Sprachwahl wird über ein Cookie auf der gemeinsamen Domain mit vaipakam.com geteilt, daher setzt ein Löschen hier sie auch dort zurück. Ihr Theme wird nicht geteilt — jede Seite behält ihr eigenes — aber vaipakam.com speichert seine Theme-Wahl in einem Cookie, das dieser Browser hält, daher entfernt ein Löschen hier dieses Cookie, und das Theme der Hauptseite kehrt ebenfalls zu seinem Standard zurück."
     },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."

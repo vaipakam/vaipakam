@@ -725,9 +725,13 @@ Thin-market honesty rules apply.
   and the record of which notifications have been seen. A page that reports
   preferences returned to their defaults while the app keeps showing them is
   making a claim the user can see is untrue.
-- The language and theme preference is shared with the marketing site, so
-  erasing resets it there too. This is stated on the page rather than
-  discovered afterwards.
+- The language choice is genuinely shared with the marketing site through a
+  preference on the shared domain, so erasing resets it there too. The theme
+  is not shared — each surface keeps its own — but the marketing site's theme
+  choice is held where this browser can reach it, so the download includes it
+  and an erasure clears it, returning the marketing site's theme to its
+  default as well. Each relationship is stated at its true extent on the page
+  rather than discovered afterwards.
 - Erasing does not reload the page, so the confirmation of what happened
   survives long enough to be read.
 - **If any part of the browser's storage could not be read, the result is

@@ -26,7 +26,7 @@
  * refused, and partly erased — with anything REMAINING or UNREADABLE
  * outranking anything removed. See `eraseMyData`.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
@@ -109,6 +109,30 @@ export function DataRights() {
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
   }, []);
+  // Review round 9 P2 — the same-document half. Round 8 un-gated the
+  // CONTROLS, but the "what is stored right now" figure still described
+  // a moment that could recede indefinitely: the still-mounted bell
+  // writes a lastseen key, no `storage` event fires for the writing
+  // document, and nothing re-renders this page. There is no browser
+  // signal for a document's own storage writes short of instrumenting
+  // every writer, so while this page is mounted it re-checks on a slow
+  // poll and re-renders ONLY when the figure it is showing has become
+  // wrong. The displayed pair is recorded after each render (an
+  // every-render effect, not a render-time ref write) so the poll
+  // compares against what the user is actually seeing.
+  const shownFigures = useRef({ count: 0, refused: false });
+  useEffect(() => {
+    const id = setInterval(() => {
+      const now = inspectMyData();
+      if (
+        now.count !== shownFigures.current.count ||
+        now.refused !== shownFigures.current.refused
+      ) {
+        setStorageTick((tick) => tick + 1);
+      }
+    }, 2_000);
+    return () => clearInterval(id);
+  }, []);
   // Read on render rather than held in state: after an erase the page
   // must show the new figure, and a stale count on a data-rights page
   // is the same class of untruth as a false success message. One
@@ -122,6 +146,12 @@ export function DataRights() {
   // one case it was written for. (The buttons that gating disabled
   // then are un-gated entirely as of round 8.)
   const refused = snapshot.refused;
+  // What this render is showing, recorded for the poll above to
+  // compare against — an every-render effect rather than a render-time
+  // ref write, which the refs rule forbids.
+  useEffect(() => {
+    shownFigures.current = { count: stored, refused };
+  });
 
   function onDownload() {
     // Read FRESH rather than using the render-time snapshot (review

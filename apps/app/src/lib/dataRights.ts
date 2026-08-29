@@ -58,11 +58,15 @@ export const STORAGE_PREFIXES: readonly string[] = [
 /**
  * Parent-domain cookies (`.vaipakam.com`) carrying user preferences.
  *
- * Listed separately because they are not per-origin: they are how the
- * marketing site and this app agree on language and theme. Clearing
- * them here clears them for both, which is the user's intent when they
- * ask for their data to be removed — and is said in the page copy
- * rather than left as a surprise.
+ * Listed separately because they are not per-origin. Their
+ * relationships differ (review round 9 P2): `vaipakam_lang` is
+ * genuinely shared — the i18n package mirrors every language change to
+ * it and both sites read it — while `vaipakam_theme` belongs to the
+ * marketing site alone; this app never consults it and keeps its own
+ * theme under `app.theme`. Both still belong HERE because this browser
+ * holds them: the export must disclose them and the erasure must clear
+ * them, and clearing the theme cookie resets the marketing site's
+ * theme — which the page copy says rather than leaves as a surprise.
  */
 /** Where `diagnostics/lastError.ts` stores its record. Named here so
  *  the export can tell "already included" from "held only in memory". */
