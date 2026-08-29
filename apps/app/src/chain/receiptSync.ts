@@ -224,7 +224,15 @@ export function publishAcceptancePin(frame: AcceptancePinFrame): void {
   // the pin before the invalidation's refetch can land — never the
   // bare-invalidation race the issue rejected — while an old tab
   // simply re-reads the chain, the best a build without pins can do.
-  const legacyHint: ReceiptFrame = { roots: [TOS_QUERY_ROOT] };
+  // `legacyTermsHint` marks the frame for NEW receivers to IGNORE
+  // (round 32 P2): a current tab already handles the pin frame, which
+  // schedules its own immediate and delayed reads — letting this
+  // compatibility frame fall through the ordinary roots path stacked
+  // a further immediate-plus-delayed pair on top, up to four Terms
+  // fetches per acceptance per tab. Old receivers check only that
+  // `roots` is an array and ignore unknown fields, so the marker is
+  // invisible to exactly the builds the hint exists for.
+  const legacyHint = { roots: [TOS_QUERY_ROOT], legacyTermsHint: true };
   const ch = getChannel();
   if (ch) {
     try {
@@ -300,6 +308,12 @@ export function listenForReceiptInvalidations(
       applyAcceptancePinFrame(queryClient, pin);
       return;
     }
+    // The legacy Terms hint is for PREVIOUS builds only (round 32
+    // P2): this build's pin handler above already scheduled the
+    // authoritative reads, and applying the hint too stacked a second
+    // immediate-plus-delayed pair — and could cancel/restart the
+    // first fetch — for nothing.
+    if ((data as { legacyTermsHint?: unknown } | null)?.legacyTermsHint) return;
     const frame = data as ReceiptFrame | null;
     if (!frame || !Array.isArray(frame.roots)) return;
     const roots = frame.roots.filter((r): r is string => typeof r === 'string');
@@ -354,7 +368,16 @@ export function listenForReceiptInvalidations(
     const termsPredicate = (q: { queryKey: readonly unknown[] }) =>
       q.queryKey[0] === TOS_QUERY_ROOT;
     const termsOnly = { refetchType: 'active' as const, predicate: termsPredicate };
-    const wasInFlight = queryClient.isFetching({ predicate: termsPredicate }) > 0;
+    // Only a DATA-LESS in-flight fetch coalesces (round 32 P2 —
+    // TanStack v5 joins the running promise only when `state.data` is
+    // undefined; with cached data, invalidation's default
+    // cancelRefetch restarts the fetch instead, and an unconditional
+    // chain would re-create the six-request overhead whenever a
+    // background refetch happened to overlap this timer).
+    const wasInFlight = queryClient
+      .getQueryCache()
+      .findAll({ predicate: termsPredicate })
+      .some((q) => q.state.fetchStatus === 'fetching' && q.state.data === undefined);
     void queryClient
       .invalidateQueries(termsOnly)
       .then(() => (wasInFlight ? queryClient.invalidateQueries(termsOnly) : undefined))
