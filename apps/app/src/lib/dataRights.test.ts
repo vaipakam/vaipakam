@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import {
+  incompleteExportNote,
   isAppStorageKey,
   liveLastErrorEntry,
   STORAGE_PREFIXES,
@@ -349,6 +350,23 @@ describe('liveLastErrorEntry', () => {
       key: 'vaipakam.app.lastError (live)',
       value: record,
     });
+  });
+});
+
+describe('incompleteExportNote', () => {
+  // Review round 7 P2. A partial export separated from the page's
+  // on-screen refusal warning read as a complete one — the file must
+  // carry the warning itself, naming exactly the stores it is missing.
+  it('names the missing store and says the data is absent', () => {
+    const note = incompleteExportNote(['localStorage']);
+    expect(note).toContain('INCOMPLETE');
+    expect(note).toContain('localStorage');
+    expect(note).toContain('NOT in this file');
+  });
+
+  it('lists every refused store when there is more than one', () => {
+    const note = incompleteExportNote(['sessionStorage', 'cookies']);
+    expect(note).toContain('sessionStorage and cookies');
   });
 });
 

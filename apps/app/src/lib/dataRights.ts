@@ -89,11 +89,35 @@ export interface DataRightsExport {
   /** Browser identification, so a user holding exports from several
    *  devices can tell them apart. */
   userAgent: string;
+  /** Present ONLY when a store refused to be read (review round 7
+   *  P2): the file is then missing whatever that store holds, and a
+   *  file separated from the page's on-screen warning must carry the
+   *  warning itself — the note below claims to contain the app's
+   *  browser data, and without this marker a partial export reads as
+   *  a complete one. Placed before the data so a person opening the
+   *  file meets it first. */
+  incomplete?: {
+    unreadableStores: string[];
+    note: string;
+  };
   localStorage: Record<string, unknown>;
   sessionStorage: Record<string, unknown>;
   cookies: Record<string, string>;
   /** Carried inside the file so it stays true away from this page. */
   note: string;
+}
+
+/** The warning a partial export carries inside itself. Pure so the
+ *  node-environment suite can pin it without a DOM. */
+export function incompleteExportNote(stores: readonly string[]): string {
+  return (
+    'INCOMPLETE: this browser refused to let the app read ' +
+    stores.join(' and ') +
+    ', so whatever ' +
+    (stores.length > 1 ? 'those stores hold' : 'that store holds') +
+    ' is NOT in this file. Clearing site data through your browser’s own ' +
+    'settings still reaches it.'
+  );
 }
 
 /* Review round 5 P2 — this used to say the wallet address is "not held
@@ -294,10 +318,26 @@ export function inspectMyData(): DataRightsSnapshot {
   const cookies = readCookies();
   const live = liveLastErrorEntry(session.data[LAST_ERROR_KEY], readLastError());
   if (live) session.data[live.key] = live.value;
+  // Which stores refused, by the name a user would recognise. Feeds
+  // both the page's `refused` flag and the in-file incomplete marker,
+  // so the two cannot disagree about which stores are missing.
+  const unreadable = [
+    ...(local.refused ? ['localStorage'] : []),
+    ...(session.refused ? ['sessionStorage'] : []),
+    ...(cookies.refused ? ['cookies'] : []),
+  ];
   const payload: DataRightsExport = {
     exportedAt: new Date().toISOString(),
     origin: typeof window === 'undefined' ? 'unknown' : window.location.origin,
     userAgent: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent,
+    ...(unreadable.length > 0
+      ? {
+          incomplete: {
+            unreadableStores: unreadable,
+            note: incompleteExportNote(unreadable),
+          },
+        }
+      : {}),
     localStorage: local.data,
     sessionStorage: session.data,
     cookies: cookies.data,
@@ -309,7 +349,9 @@ export function inspectMyData(): DataRightsSnapshot {
       Object.keys(local.data).length +
       Object.keys(session.data).length +
       Object.keys(cookies.data).length,
-    refused: local.refused || session.refused || cookies.refused,
+    // Derived from the same list as the in-file marker, so the page's
+    // warning and the file's can never name different states.
+    refused: unreadable.length > 0,
   };
 }
 

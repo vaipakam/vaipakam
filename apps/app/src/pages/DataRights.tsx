@@ -26,10 +26,15 @@
  * refused, and partly erased — with anything REMAINING or UNREADABLE
  * outranking anything removed. See `eraseMyData`.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
-import { eraseMyData, inspectMyData, type EraseResult } from '../lib/dataRights';
+import {
+  eraseMyData,
+  inspectMyData,
+  isAppStorageKey,
+  type EraseResult,
+} from '../lib/dataRights';
 import { useTheme } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
 import { useTranslation } from 'react-i18next';
@@ -80,6 +85,28 @@ export function DataRights() {
   // erased language active and the picker still showing it — while the
   // copy promised the user would be asked again.
   const { i18n } = useTranslation();
+  // Review round 7 P2: reading on render only helps when a render
+  // happens, and browser storage does not cause one. A page opened
+  // with nothing stored sat with both controls disabled while another
+  // tab wrote per-wallet settings — data appearing that the user could
+  // neither download nor erase from the page built for exactly that.
+  // The cross-tab `storage` event is the one signal the browser gives
+  // for this; it never fires for the writing tab itself, but on THIS
+  // page the user's own same-tab writes come from navigating away and
+  // back, which is a fresh render anyway. Filtered to keys the scan
+  // would actually reach, so unrelated tools' writes (a wallet
+  // connector's session churn) do not re-render a data-rights page.
+  const [, setStorageTick] = useState(0);
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      // `key === null` is a whole-store clear — always relevant.
+      if (event.key === null || isAppStorageKey(event.key)) {
+        setStorageTick((tick) => tick + 1);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
   // Read on render rather than held in state: after an erase the page
   // must show the new figure, and a stale count on a data-rights page
   // is the same class of untruth as a false success message. One
