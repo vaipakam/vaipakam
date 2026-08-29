@@ -336,25 +336,28 @@ export function listenForReceiptInvalidations(
   // Active-only, once per tab boot — a frame is an optimization, the
   // read is the truth.
   //
-  // TWO invalidations, the second chained on the first settling
-  // (round 28 P2): with the INITIAL fetch still in flight and no
-  // cached data, an invalidation coalesces into that same request —
-  // TanStack returns the in-flight promise — so a slow first read
-  // issued BEFORE the acceptance would have satisfied the "re-read"
-  // with pre-acceptance data. Awaiting the first invalidation
-  // guarantees whatever was in flight has settled; the second then
-  // starts a DISTINCT read. When nothing was in flight the cost is
-  // one extra active-only refetch at boot, which the query's own
-  // staleTime absorbs.
+  // The second invalidation is chained ONLY when the first actually
+  // coalesced with an in-flight fetch (round 28 P2, narrowed by round
+  // 31 P2): with the INITIAL fetch still running and no cached data,
+  // an invalidation joins that same request — TanStack returns the
+  // in-flight promise — so a slow first read issued BEFORE the
+  // acceptance would have satisfied the "re-read" with
+  // pre-acceptance data; awaiting the joined invalidation and then
+  // issuing a second gives a genuinely distinct read. But on the
+  // NORMAL boot, where the initial fetch finished inside the delay,
+  // an unconditional chain forced two full refetches — invalidation
+  // does not consult staleTime — costing six RPC calls where one
+  // recheck was intended. Whether anything is in flight is sampled
+  // immediately before the first invalidation, which is what decides
+  // whether that invalidation could have coalesced at all.
   const bootRecheck = setTimeout(() => {
-    const termsOnly = {
-      refetchType: 'active' as const,
-      predicate: (q: { queryKey: readonly unknown[] }) =>
-        q.queryKey[0] === TOS_QUERY_ROOT,
-    };
+    const termsPredicate = (q: { queryKey: readonly unknown[] }) =>
+      q.queryKey[0] === TOS_QUERY_ROOT;
+    const termsOnly = { refetchType: 'active' as const, predicate: termsPredicate };
+    const wasInFlight = queryClient.isFetching({ predicate: termsPredicate }) > 0;
     void queryClient
       .invalidateQueries(termsOnly)
-      .then(() => queryClient.invalidateQueries(termsOnly))
+      .then(() => (wasInFlight ? queryClient.invalidateQueries(termsOnly) : undefined))
       .catch(() => {
         /* refetch failures surface through the queries themselves */
       });
