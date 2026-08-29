@@ -431,18 +431,28 @@ export function useTosAcceptance(): TosAcceptanceState {
       // acting tab's `pinnedAt` travels with it: the 90s bound must
       // expire at the same moment everywhere, or a reorged acceptance
       // stays papered over in whichever tab heard about it last.
-      // Gated on BELIEF — `adopted`, which since round 12 embodies
-      // the full conflict check — not on whether the cache write
-      // happened: the write is also skipped when a node already
-      // confirmed this exact acceptance, and that is a reason to
-      // broadcast, not to stay silent (other tabs may still hold
-      // refusals). What this tab refuses to believe about a receipt,
-      // it must not ask other tabs to believe; what it believes on a
-      // node's word travels fine. The frame carries the Diamond the
-      // acceptance was mined against (round 3 P1), so a tab
-      // configured for a different deployment of the same chain
-      // drops it.
-      if (adopted && address) {
+      //
+      // Gated on BELIEF — `!conflicted` — not on whether the PIN was
+      // adoptable (round 23 P2, refining round 12's rule). The two
+      // diverge exactly when the anchor is outside its bounds: a
+      // transaction that sat pending past the pin window mines a
+      // perfectly real acceptance whose stamp no pin may carry — and
+      // staying silent left every other tab's enabled Accept button
+      // standing until its 60-second poll, the redundant payment this
+      // whole feature exists to prevent. Broadcasting it is safe
+      // without any window because the receivers' own guards decide
+      // what a frame may do: an in-window frame adopts, an expired or
+      // future-dated one is a READ HINT — immediate and delayed
+      // authoritative reads, nothing adopted — which is precisely
+      // what a just-mined long-pending acceptance needs other tabs to
+      // do. What this tab refuses to BELIEVE (a conflicted receipt),
+      // it must not ask other tabs to act on; what it believes but
+      // cannot anchor, it may still report, because a reported
+      // acceptance is a hint to read, never a command to trust. The
+      // frame carries the Diamond the acceptance was mined against
+      // (round 3 P1), so a tab configured for a different deployment
+      // of the same chain drops it.
+      if (!conflicted && address) {
         publishAcceptancePin(
           buildAcceptancePinFrame(
             readChain.chainId,
