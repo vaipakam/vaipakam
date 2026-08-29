@@ -9,7 +9,10 @@
  * into claims about what was deleted.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildErasureMessage } from '@vaipakam/lib/erasureMessage';
+import {
+  buildErasureMessage,
+  buildErasureStatusMessage,
+} from '@vaipakam/lib/erasureMessage';
 import {
   requestDiagErasure,
   requestDiagErasureStatus,
@@ -88,6 +91,24 @@ describe('requestDiagErasure', () => {
 });
 
 describe('requestDiagErasureStatus', () => {
+  it('signs the STATUS message — never the erasure capability (#2008 round 2 P1)', () => {
+    // A user who asks only to LOOK must not sign bytes that could be
+    // replayed as authority to DELETE: the two operations sign
+    // different frozen messages, verified per endpoint.
+    const calls = stubAgent(
+      () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
+    );
+    let signed = '';
+    return requestDiagErasureStatus(WALLET, async (message) => {
+      signed = message;
+      return SIG;
+    }).then(() => {
+      const body = calls[0]!.body;
+      expect(signed).toBe(buildErasureStatusMessage(WALLET, body.issuedAt as number));
+      expect(signed).not.toBe(buildErasureMessage(WALLET, body.issuedAt as number));
+    });
+  });
+
   it('passes the operator-disclosed retention note through, verbatim', async () => {
     stubAgent(
       () =>

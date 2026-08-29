@@ -60,7 +60,10 @@
  */
 
 import { recoverMessageAddress, type Hex } from 'viem';
-import { buildErasureMessage } from '@vaipakam/lib/erasureMessage';
+import {
+  buildErasureMessage,
+  buildErasureStatusMessage,
+} from '@vaipakam/lib/erasureMessage';
 import type { Env } from './env';
 import { isHexAddress, walletHash } from './diagHash';
 import { isProtocolAdmin, type AdminVerifier } from './diagAdminAuth';
@@ -106,7 +109,7 @@ const DEFAULT_DISCLOSURE_NOTE =
  * imported source of truth is how that stays true. Re-exported so
  * this module's public surface (and its tests) are unchanged.
  */
-export { buildErasureMessage };
+export { buildErasureMessage, buildErasureStatusMessage };
 
 // ─── Request parsing + signature verification ──────────────────────
 
@@ -160,11 +163,19 @@ type VerifyResult =
 async function verifySignedRequest(
   req: SignedRequest,
   nowSeconds: number,
+  // The message is PER OPERATION (#2008 round 2 P1): with both
+  // endpoints verifying the same bytes, every status signature was
+  // also a valid erasure capability for the whole replay window —
+  // replaying a status body against /diag/erasure deleted records
+  // the user only asked to LOOK at. Each handler passes its own
+  // builder, so a signature authorises exactly the operation whose
+  // words the user saw.
+  buildMessage: (wallet: string, issuedAt: number) => string,
 ): Promise<VerifyResult> {
   if (Math.abs(nowSeconds - req.issuedAt) > SIGNATURE_MAX_AGE_SECONDS) {
     return { ok: false, status: 400, reason: 'request timestamp is stale' };
   }
-  const message = buildErasureMessage(req.wallet, req.issuedAt);
+  const message = buildMessage(req.wallet, req.issuedAt);
   let recovered: string;
   try {
     recovered = await recoverMessageAddress({
@@ -237,7 +248,7 @@ export async function handleDiagErasure(
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedRequest(parsed.req, nowSeconds);
+  const verified = await verifySignedRequest(parsed.req, nowSeconds, buildErasureMessage);
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },
@@ -295,7 +306,7 @@ export async function handleDiagErasureStatus(
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedRequest(parsed.req, nowSeconds);
+  const verified = await verifySignedRequest(parsed.req, nowSeconds, buildErasureStatusMessage);
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },

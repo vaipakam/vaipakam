@@ -738,8 +738,15 @@ Thin-market honesty rules apply.
   page states exactly that, identically to everyone. A companion check
   reports retained records only where the law allows saying so; its quiet
   answer is phrased as "none are reported", never "none exist", because only
-  the first is knowable. A build with no support-service connection says the
-  control cannot be used from there and names the e-mail route instead.
+  the first is knowable. The erase and the check each sign THEIR OWN words —
+  what a user signs to look at their records can never be replayed as
+  authority to delete them. A build with no support-service connection says
+  the control cannot be used from there and names the e-mail route instead;
+  a wallet whose signatures the service cannot verify (a smart-contract
+  account) is told so and given the same working route, rather than a prompt
+  that could only fail. The e-mail route promises what the signed route
+  promises — that a request will be processed — never an unconditional
+  removal the retention rules cannot always satisfy.
 - **Every live preference the erasure covers is visibly reset**, not merely
   cleared from storage: the theme, the interface mode, the display language,
   and the record of which notifications have been seen. A page that reports

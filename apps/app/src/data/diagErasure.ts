@@ -29,7 +29,10 @@
  * card says the control is not available in this build and no
  * request is ever fired.
  */
-import { buildErasureMessage } from '@vaipakam/lib/erasureMessage';
+import {
+  buildErasureMessage,
+  buildErasureStatusMessage,
+} from '@vaipakam/lib/erasureMessage';
 
 const TIMEOUT_MS = 10_000;
 
@@ -65,24 +68,48 @@ export type DiagErasureStatus =
   | { status: 'unavailable' }
   | { status: 'error' };
 
+interface SignedPostResult {
+  ok: boolean;
+  httpStatus: number;
+  /** The parsed JSON body, or null when it was absent/malformed —
+   *  parsed HERE, under the same abort deadline as the request
+   *  itself (#2008 round 2 P2): headers can arrive within the
+   *  timeout while the body stalls forever, and a `res.json()` back
+   *  in the caller would then hang with no timer left to cut it. */
+  data: Record<string, unknown> | null;
+}
+
 async function postSigned(
   path: '/diag/erasure' | '/diag/erasure/status',
   wallet: string,
   signMessage: (message: string) => Promise<string>,
-): Promise<Response> {
+  // Per-operation message (#2008 round 2 P1): the status check signs
+  // its OWN frozen words, so the signature a user gave to LOOK can
+  // never be replayed as authority to DELETE — the Worker verifies
+  // the matching builder per endpoint.
+  buildMessage: (wallet: string, issuedAt: number) => string,
+): Promise<SignedPostResult> {
   const origin = agentOrigin();
   if (!origin) throw new Error('diagnostics erasure backend not configured');
   const issuedAt = Math.floor(Date.now() / 1000);
-  const signature = await signMessage(buildErasureMessage(wallet, issuedAt));
+  const signature = await signMessage(buildMessage(wallet, issuedAt));
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    return await fetch(`${origin}${path}`, {
+    const res = await fetch(`${origin}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ wallet, issuedAt, signature }),
       signal: ctrl.signal,
     });
+    // Read the body while the timer is still armed — an abort during
+    // the read rejects `json()`, which lands in the catch and reads
+    // as a malformed body, i.e. a failure. Never a hang.
+    const data = (await res.json().catch(() => null)) as Record<
+      string,
+      unknown
+    > | null;
+    return { ok: res.ok, httpStatus: res.status, data };
   } finally {
     clearTimeout(t);
   }
@@ -99,19 +126,17 @@ export async function requestDiagErasure(
   wallet: `0x${string}`,
   signMessage: (message: string) => Promise<string>,
 ): Promise<DiagErasureOutcome> {
-  const res = await postSigned('/diag/erasure', wallet, signMessage);
+  const res = await postSigned('/diag/erasure', wallet, signMessage, buildErasureMessage);
   if (res.ok) {
     // A 2xx alone is not the service's acknowledgement (#2008 round
     // 1 P1): a misconfigured origin or an intermediary can return a
     // 204 or a fallback page, and reporting THAT as processed would
     // falsely confirm a legal-right request the erasure handler
     // never saw. Only the service's own uniform payload counts.
-    const data = (await res.json().catch(() => null)) as { status?: string } | null;
-    return data?.status === 'processed' ? 'processed' : 'error';
+    return res.data?.status === 'processed' ? 'processed' : 'error';
   }
-  if (res.status === 503) {
-    const data = (await res.json().catch(() => null)) as { error?: string } | null;
-    if (data?.error === 'erasure_not_configured') return 'unavailable';
+  if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
+    return 'unavailable';
   }
   return 'error';
 }
@@ -126,25 +151,28 @@ export async function requestDiagErasureStatus(
   wallet: `0x${string}`,
   signMessage: (message: string) => Promise<string>,
 ): Promise<DiagErasureStatus> {
-  const res = await postSigned('/diag/erasure/status', wallet, signMessage);
+  const res = await postSigned(
+    '/diag/erasure/status',
+    wallet,
+    signMessage,
+    buildErasureStatusMessage,
+  );
   if (res.ok) {
-    const data = (await res.json().catch(() => null)) as {
-      status?: string;
-      note?: string;
-    } | null;
-    if (data?.status === 'retained_by_law' && typeof data.note === 'string') {
-      return { status: 'retained_by_law', note: data.note };
+    if (
+      res.data?.status === 'retained_by_law' &&
+      typeof res.data.note === 'string'
+    ) {
+      return { status: 'retained_by_law', note: res.data.note };
     }
     // Same rule as the erasure call (#2008 round 1 P1): only the
     // service's own uniform payload may render as the reassuring
     // answer — an unparseable or unknown 2xx body is a failure, not
     // a green light.
-    if (data?.status === 'processed') return { status: 'processed' };
+    if (res.data?.status === 'processed') return { status: 'processed' };
     return { status: 'error' };
   }
-  if (res.status === 503) {
-    const data = (await res.json().catch(() => null)) as { error?: string } | null;
-    if (data?.error === 'erasure_not_configured') return { status: 'unavailable' };
+  if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
+    return { status: 'unavailable' };
   }
   return { status: 'error' };
 }

@@ -429,6 +429,12 @@ const copySource = {
        never that removal is guaranteed. */
     diagNotConfigured:
       'This build is not connected to the support service, so the signed request cannot be sent from here. Email support@vaipakam.com and we will process an erasure request for your wallet.',
+    /* #2008 round 2 P2 — a smart-contract account (a Safe, a
+       deployed smart wallet) signs via ERC-1271, which the service
+       cannot verify yet; prompting would collect a signature that can
+       only fail. The working route is offered instead. */
+    diagContractWallet:
+      'This wallet is a smart-contract account, and the support service cannot verify its signatures yet. Email support@vaipakam.com and we will process an erasure request for your wallet.',
     diagEraseButton: 'Erase my error reports',
     diagStatusButton: 'Check for retained records',
     diagBusy: 'Waiting for your wallet…',

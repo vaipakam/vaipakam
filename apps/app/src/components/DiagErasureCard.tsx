@@ -21,8 +21,10 @@
  */
 import { useState } from 'react';
 import { FileX2, ShieldCheck } from 'lucide-react';
-import { useAccount, useSignMessage } from 'wagmi';
+import { useAccount, usePublicClient, useSignMessage } from 'wagmi';
+import { useQuery } from '@tanstack/react-query';
 import { copy } from '../content/copy';
+import { useActiveChain } from '../chain/useActiveChain';
 import {
   diagErasureConfigured,
   requestDiagErasure,
@@ -40,8 +42,18 @@ type CardResult = { forWallet: string } & (
 
 export function DiagErasureCard() {
   const { address } = useAccount();
+  const { readChain } = useActiveChain();
+  const publicClient = usePublicClient({ chainId: readChain.chainId });
   const { signMessageAsync } = useSignMessage();
-  const [busy, setBusy] = useState(false);
+  // Busy is scoped to the wallet that started the operation (#2008
+  // round 2 P2): a signature prompt has no timeout — the deadline
+  // arms only after signing — so wallet A's pending prompt must not
+  // pin wallet B's controls shut for however long A's wallet takes.
+  // Rendering disables only when the pending operation belongs to
+  // the CONNECTED wallet, and the completion clears the flag only if
+  // it still owns it, so A's late settle cannot clear a pending
+  // operation B started meanwhile.
+  const [busyFor, setBusyFor] = useState<string | null>(null);
   const [result, setResult] = useState<CardResult | null>(null);
   // A result belongs to the wallet that asked (#2008 round 1 P1):
   // wallet A's disclosed retention note — or its reassuring clear
@@ -60,13 +72,38 @@ export function DiagErasureCard() {
 
   const configured = diagErasureConfigured();
   const shown = result && result.forWallet === address ? result : null;
+  const busy = busyFor !== null && busyFor === address;
+
+  // Smart-contract accounts (a Safe, a deployed smart wallet) sign
+  // via ERC-1271/6492, which the service cannot verify yet — it
+  // recovers a plain ECDSA signer and requires it to equal the
+  // wallet — so their requests always end in the generic failure
+  // (#2008 round 2 P2). Detect the DEPLOYED case by bytecode and
+  // present the working email route instead of a prompt that cannot
+  // succeed. Fail-open on a failed or pending read: blocking an EOA
+  // on a hiccup would withhold a working control, while letting a
+  // contract wallet through merely reproduces the honest generic
+  // failure. An UNDEPLOYED counterfactual smart wallet has no
+  // bytecode to detect and still lands in that generic failure —
+  // that residual, and real ERC-1271 verification across every
+  // signed endpoint, is tracked as a follow-up issue.
+  const contractWallet = useQuery({
+    queryKey: ['diagErasure', 'isContract', readChain.chainId, address ?? null],
+    enabled: Boolean(configured && publicClient && address),
+    staleTime: Infinity,
+    retry: false,
+    queryFn: async () => {
+      const code = await publicClient!.getCode({ address: address! });
+      return Boolean(code && code !== '0x');
+    },
+  });
 
   async function run(kind: 'erase' | 'status') {
     if (!address) return;
     // Captured at the moment of the click — the completion below may
     // run after a wallet switch, and it must record who it answers.
     const forWallet = address;
-    setBusy(true);
+    setBusyFor(forWallet);
     setResult(null);
     try {
       if (kind === 'erase') {
@@ -97,7 +134,7 @@ export function DiagErasureCard() {
       // card simply returns to rest. Anything else is reported.
       if (!isUserRejection(e)) setResult({ forWallet, kind: 'error' });
     } finally {
-      setBusy(false);
+      setBusyFor((prev) => (prev === forWallet ? null : prev));
     }
   }
 
@@ -113,6 +150,8 @@ export function DiagErasureCard() {
         <p className="muted">{copy.dataRights.diagNotConfigured}</p>
       ) : !address ? (
         <p className="muted">{copy.dataRights.diagConnect}</p>
+      ) : contractWallet.data === true ? (
+        <p className="muted">{copy.dataRights.diagContractWallet}</p>
       ) : (
         <>
           {shown?.kind === 'erased' ? (

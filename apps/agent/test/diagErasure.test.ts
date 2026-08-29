@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   buildErasureMessage,
+  buildErasureStatusMessage,
   buildLegalHoldMessage,
   handleDiagErasure,
   handleDiagErasureStatus,
@@ -263,6 +264,20 @@ async function signedBody(
   return { wallet, issuedAt, signature };
 }
 
+/** The STATUS counterpart (#2008 round 2 P1) — signs the status
+ *  message, which the status endpoint verifies; the erasure message
+ *  is a different frozen format so one signature can never authorise
+ *  the other. */
+async function signedStatusBody(
+  account: PrivateKeyAccount,
+  issuedAt: number = nowSec(),
+): Promise<{ wallet: string; issuedAt: number; signature: string }> {
+  const wallet = account.address;
+  const message = buildErasureStatusMessage(wallet, issuedAt);
+  const signature = await account.signMessage({ message });
+  return { wallet, issuedAt, signature };
+}
+
 function post(path: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request('https://agent.test' + path, {
     method: 'POST',
@@ -422,7 +437,7 @@ describe('handleDiagErasureStatus', () => {
 
   it('returns the uniform payload when there is no hold', async () => {
     const res = await handleDiagErasureStatus(
-      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      post('/diag/erasure/status', await signedStatusBody(ACCOUNT_A)),
       makeEnv(db),
       CORS,
     );
@@ -441,7 +456,7 @@ describe('handleDiagErasureStatus', () => {
       updated_at: nowSec(),
     });
     const res = await handleDiagErasureStatus(
-      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      post('/diag/erasure/status', await signedStatusBody(ACCOUNT_A)),
       makeEnv(db),
       CORS,
     );
@@ -459,7 +474,7 @@ describe('handleDiagErasureStatus', () => {
       updated_at: nowSec(),
     });
     const res = await handleDiagErasureStatus(
-      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      post('/diag/erasure/status', await signedStatusBody(ACCOUNT_A)),
       makeEnv(db),
       CORS,
     );
@@ -480,7 +495,7 @@ describe('handleDiagErasureStatus', () => {
       updated_at: nowSec(),
     });
     const res = await handleDiagErasureStatus(
-      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      post('/diag/erasure/status', await signedStatusBody(ACCOUNT_A)),
       makeEnv(db),
       CORS,
     );
@@ -494,6 +509,36 @@ describe('handleDiagErasureStatus', () => {
 //
 // ACCOUNT_A is the protocol admin (the request signer + the address
 // the injected verifier authorises). ACCOUNT_B is the held user.
+
+
+describe('per-operation signatures (#2008 round 2 P1)', () => {
+  let db: FakeD1;
+  beforeEach(() => {
+    db = new FakeD1();
+  });
+
+  it('the status endpoint rejects an ERASURE-signed body', async () => {
+    const res = await handleDiagErasureStatus(
+      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      makeEnv(db),
+      CORS,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('the erasure endpoint rejects a STATUS-signed body — a look can never delete', async () => {
+    const hash = await seedErrors(db, ACCOUNT_A.address, 3);
+    const res = await handleDiagErasure(
+      post('/diag/erasure', await signedStatusBody(ACCOUNT_A)),
+      makeEnv(db),
+      CORS,
+    );
+    expect(res.status).toBe(400);
+    // The records the replayed status signature tried to reach are
+    // untouched.
+    expect(db.errors.filter((e) => e.wallet_hash === hash)).toHaveLength(3);
+  });
+});
 
 describe('handleDiagLegalHold', () => {
   let db: FakeD1;

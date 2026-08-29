@@ -236,7 +236,8 @@
       "diagStatusClear": "Aucun enregistrement conservé n’est signalé pour ce portefeuille.",
       "diagRetainedLabel": "Le service signale que certains enregistrements ont été conservés :",
       "diagUnavailable": "Le service de support ne peut pas traiter les demandes d'effacement pour le moment. Réessayez plus tard, ou écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille.",
-      "diagError": "La demande n'a pas pu aboutir, et il est possible que rien n'ait été effacé. Réessayez dans un instant."
+      "diagError": "La demande n'a pas pu aboutir, et il est possible que rien n'ait été effacé. Réessayez dans un instant.",
+      "diagContractWallet": "Ce portefeuille est un compte de contrat intelligent, et le service de support ne peut pas encore vérifier ses signatures. Écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille."
     },
     "killSwitch": {
       "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."

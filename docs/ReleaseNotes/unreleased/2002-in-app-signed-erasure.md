@@ -27,5 +27,15 @@ The signed message itself now lives in one shared module imported by
 both the app and the service — the two must produce byte-identical
 text, or every request would be rejected, and a second hand-written
 copy was the likeliest way this feature could have shipped broken.
+The two operations sign different messages, each saying what it
+authorises: the words a user signs to look at their records can never
+be replayed as authority to delete them.
+
+One honest limit, stated where it applies: a smart-contract wallet's
+signatures cannot be verified by the support service yet, so a
+deployed one is shown the working email route instead of a prompt
+that could only fail. Verifying those signatures properly, across
+every signed request the service accepts, is tracked as its own
+follow-up (#2009).
 
 Closes #2002.

@@ -34,3 +34,29 @@ export function buildErasureMessage(wallet: string, issuedAt: number): string {
     `Issued at (unix): ${issuedAt}`,
   ].join('\n');
 }
+
+/**
+ * The message signed for a STATUS check — deliberately DIFFERENT
+ * wording from {@link buildErasureMessage}, so one signature can
+ * never authorise the other (#2008 round 2 P1: with both endpoints
+ * verifying the same bytes, every status signature was also a valid
+ * erasure capability for the whole replay window — a user who asked
+ * only to LOOK had signed something that could DELETE). The same
+ * rule the alerts link/unlink/test messages already follow. The
+ * erasure format above is untouched — it is the frozen one mirrored
+ * in the PIA doc — and this one is frozen from its first release the
+ * same way.
+ */
+export function buildErasureStatusMessage(wallet: string, issuedAt: number): string {
+  return [
+    'Vaipakam — Check my error-diagnostics records',
+    '',
+    'I request a status check on the server-side error-capture',
+    'records associated with the wallet below. This request erases',
+    'nothing. Signing this message proves ownership of the wallet.',
+    'It is not a transaction and costs no gas.',
+    '',
+    `Wallet: ${wallet.toLowerCase()}`,
+    `Issued at (unix): ${issuedAt}`,
+  ].join('\n');
+}

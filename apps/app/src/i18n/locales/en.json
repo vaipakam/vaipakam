@@ -242,6 +242,7 @@
       "diagBody": "When something goes wrong in the app, an error report can be captured and kept by our support service to help fix it. Those records live on that service, not in your browser, and you can have the ones associated with your wallet erased from here.",
       "diagConnect": "Connect the wallet whose records you want erased. The request is signed by that wallet — that signature is how the service knows the request really comes from you.",
       "diagNotConfigured": "This build is not connected to the support service, so the signed request cannot be sent from here. Email support@vaipakam.com and we will process an erasure request for your wallet.",
+      "diagContractWallet": "This wallet is a smart-contract account, and the support service cannot verify its signatures yet. Email support@vaipakam.com and we will process an erasure request for your wallet.",
       "diagEraseButton": "Erase my error reports",
       "diagStatusButton": "Check for retained records",
       "diagBusy": "Waiting for your wallet…",
