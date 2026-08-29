@@ -22,6 +22,7 @@ import { MAX_VERDICT_AGE_MS, tosQueryKey, type TosVerdictData } from './tosGate'
 import {
   __clearAcceptancePins,
   acceptanceIsPinned,
+  acceptanceReconciling,
   acceptanceScope,
   ACCEPTANCE_PIN_TTL_MS,
 } from './tosAcceptancePin';
@@ -128,7 +129,7 @@ describe('acceptance read-hint frame', () => {
     expect(parseAcceptanceReadHintFrame({ ...hint(), address: '' })).toBeNull();
   });
 
-  it('applies as reads only — no pin, no cache write', () => {
+  it('applies as reads only — no pin, no cache write — and HOLDS the acceptance offer', () => {
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
     client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
@@ -142,6 +143,11 @@ describe('acceptance read-hint frame', () => {
     expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, Date.now())).toBe(
       false,
     );
+    // Round 37 P1: while the hint's reads reconcile, the acceptance
+    // OFFER is held — a lagging RPC's cached `false` must not keep an
+    // enabled Accept button offering a redundant paid re-acceptance
+    // that a pinless acceptance can no longer prevent.
+    expect(acceptanceReconciling(acceptanceScope(84532, ADDRESS), Date.now())).toBe(true);
   });
 
   it('drops a hint about a different Diamond, or an unknown chain', () => {
@@ -533,6 +539,10 @@ describe('applyAcceptancePinFrame', () => {
     expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, at)).toBe(false);
     expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
     invalidate.mockRestore();
+    // Round 37 P1: an out-of-window frame is exactly the evidence
+    // that holds the acceptance offer while the reads reconcile —
+    // the long-pending mine whose pin window has already passed.
+    expect(acceptanceReconciling(acceptanceScope(84532, ADDRESS), Date.now())).toBe(true);
   });
 
   it('never demotes a node-CONFIRMED verdict to pin-backed', () => {

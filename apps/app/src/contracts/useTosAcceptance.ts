@@ -54,8 +54,10 @@ import {
 import {
   MAX_FUTURE_SKEW_MS,
   acceptanceIsPinned,
+  acceptanceReconciling,
   acceptanceScope,
   adoptReceiptPin,
+  holdAcceptanceForReconciliation,
   monotonicNow,
   retireDifferingPin,
   retireSupersededPin,
@@ -94,6 +96,16 @@ export interface TosAcceptanceState {
   reload: () => Promise<void>;
   /** True while an acceptance transaction is in flight. */
   submitting: boolean;
+  /** True while the acceptance OFFER is held for reconciliation
+   *  (#2004 round 37 P1): unverifiable evidence arrived that an
+   *  acceptance already happened — an out-of-window frame, a read
+   *  hint, an unanchorable local receipt — and the authoritative
+   *  reads it scheduled have not had their window to land. The gate
+   *  itself is untouched (fail-closed as ever); only the Accept
+   *  button is withheld, so a lagging RPC's cached `false` cannot
+   *  offer a redundant paid re-acceptance during the seconds the
+   *  reads need. Bounded — see `ACCEPTANCE_RECONCILIATION_HOLD_MS`. */
+  reconciling: boolean;
 }
 
 export function useTosAcceptance(): TosAcceptanceState {
@@ -267,6 +279,25 @@ export function useTosAcceptance(): TosAcceptanceState {
     setSubmitting(true);
     setWriteError(null);
     try {
+      // The non-trusting submission lock (round 37 P1). A live
+      // reconciliation hold means unverifiable evidence arrived that
+      // an acceptance ALREADY happened — an out-of-window frame, a
+      // read hint, this tab's own unanchorable receipt — and the
+      // authoritative reads it scheduled may not have landed yet. The
+      // UI disables the button on the same hold; this guard is the
+      // backstop for a click that races it: force one awaited read
+      // and submit only if the settled answer still says the wallet
+      // has not accepted. Nothing is trusted — no gate opens, no
+      // verdict is written — the wallet is just not charged for an
+      // acceptance the chain may already hold. A read that resolves
+      // `false` past this point is the chain's answer, and the write
+      // proceeds; the contract still anchors it to the displayed
+      // version and reverts on stale terms.
+      if (acceptanceReconciling(scope, Date.now())) {
+        await queryClient.invalidateQueries({ queryKey });
+        const settled = queryClient.getQueryData<TosVerdictData>(queryKey);
+        if (settled?.accepted) return;
+      }
       // The version and hash come from the SAME read that told us the
       // wallet has not accepted — so the transaction is anchored to the
       // text the modal displayed, not to whatever is in force by the
@@ -444,17 +475,35 @@ export function useTosAcceptance(): TosAcceptanceState {
       // own valid machinery.
       if (!conflicted && !adopted) {
         retireDifferingPin(scope, acceptedVersion, query.data.hash);
+        // The verdict to age is read DIRECTLY from the cache, not
+        // through `freshVerdict` (round 37 P1): the same backward
+        // clock correction that makes `anchorConsistent` false can
+        // leave the incumbent entry's `dataUpdatedAt` beyond the
+        // five-second future allowance, so `fresh` is undefined here
+        // — and gating the aging on it deleted the pin while leaving
+        // its verdict un-aged, with the expiry timer observing
+        // `superseded` and exiting silently. As wall time caught up,
+        // that orphaned future-stamped verdict became fresh AGAIN and
+        // reopened both gates for the rest of the verdict window.
+        // Aging is idempotent and harmless on an already-stale entry,
+        // so the direct read is safe in every case.
+        const cur = queryClient.getQueryData<TosVerdictData>(queryKey);
         if (
-          fresh?.pinBacked &&
-          (fresh.version !== acceptedVersion || fresh.hash !== query.data.hash)
+          cur?.pinBacked &&
+          (cur.version !== acceptedVersion || cur.hash !== query.data.hash)
         ) {
           // Aged, not deleted, mirroring the receiver's round-16/20
           // rule — and past the render-clock slack, so the gate's
           // lagging `nowMs` cannot read it as fresh for a tick.
-          queryClient.setQueryData<TosVerdictData>(queryKey, fresh, {
+          queryClient.setQueryData<TosVerdictData>(queryKey, cur, {
             updatedAt: Date.now() - MAX_VERDICT_AGE_MS - VERDICT_CLOCK_TICK_MS - 1_000,
           });
         }
+        // With no pin installed, this tab's OWN next lagging read can
+        // re-arm its prompt too (round 37 P1) — hold the acceptance
+        // offer for the reconciliation window, exactly as the
+        // receivers of the read-hint broadcast below hold theirs.
+        holdAcceptanceForReconciliation(scope, Date.now());
       }
 
       // No freshness bar on the cache write for the receipt — it IS
@@ -638,6 +687,12 @@ export function useTosAcceptance(): TosAcceptanceState {
     nowMs > 0 &&
     isVerdictStale(query.dataUpdatedAt, nowMs, MAX_VERDICT_AGE_MS, MAX_VERDICT_FUTURE_MS);
   const readOk = query.isSuccess && !stale;
+  // Computed against the render clock like `stale` — the hold is
+  // armed from event paths whose invalidations re-render this hook,
+  // and released within one clock tick of expiry. Both edges err
+  // toward HOLDING slightly longer, the fail-closed direction for a
+  // control whose only power is withholding a payment offer.
+  const reconciling = nowMs > 0 && acceptanceReconciling(scope, nowMs);
   return {
     // Still gated on `readOk`: the lag correction lives in `queryFn`,
     // so a failed or stale read closes the gate exactly as it always
@@ -654,5 +709,6 @@ export function useTosAcceptance(): TosAcceptanceState {
     accept,
     reload,
     submitting,
+    reconciling,
   };
 }

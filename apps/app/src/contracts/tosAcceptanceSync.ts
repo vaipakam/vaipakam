@@ -57,6 +57,7 @@ import {
   acceptanceIsPinned,
   acceptanceScope,
   adoptOrderedPin,
+  holdAcceptanceForReconciliation,
   observePinExpiry,
   onPinsPoisoned,
 } from './tosAcceptancePin';
@@ -207,11 +208,24 @@ export function applyAcceptanceReadHint(
  * invalidation and one after `RECEIVER_SECOND_READ_MS` — with a
  * DISTINCT read chained past a data-less in-flight fetch, which both
  * plain invalidations would otherwise merely join.
+ *
+ * Every caller reaches here because it holds evidence an acceptance
+ * happened that it cannot (or must not) pin — so alongside the reads,
+ * the scope's acceptance offer is HELD for the reconciliation window
+ * (round 37 P1): until the reads land, a lagging RPC's cached
+ * `accepted: false` would keep an enabled Accept button offering the
+ * redundant paid re-acceptance the pin can no longer prevent. The
+ * hold is non-trusting and bounded — see
+ * `ACCEPTANCE_RECONCILIATION_HOLD_MS`.
  */
 function scheduleAuthoritativeReadsFor(
   queryClient: QueryClient,
   queryKey: ReturnType<typeof tosQueryKey>,
 ): void {
+  holdAcceptanceForReconciliation(
+    acceptanceScope(queryKey[1], queryKey[2] ?? undefined),
+    Date.now(),
+  );
   const dataless = queryClient
     .getQueryCache()
     .findAll({ queryKey })

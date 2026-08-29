@@ -9,13 +9,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACCEPTANCE_PIN_TTL_MS,
+  ACCEPTANCE_RECONCILIATION_HOLD_MS,
   MAX_FUTURE_SKEW_MS,
   __clearAcceptancePins,
   __setMonoNowForTests,
   acceptanceIsPinned,
   acceptanceScope,
+  acceptanceReconciling,
   adoptOrderedPin,
   adoptReceiptPin,
+  holdAcceptanceForReconciliation,
   observePinExpiry,
   pinAcceptance,
   retireDifferingPin,
@@ -447,6 +450,34 @@ describe('retireDifferingPin', () => {
     pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
     retireDifferingPin(SCOPE, 3, HASH);
     expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 1_000)).toBe(true);
+  });
+});
+
+describe('acceptance reconciliation hold', () => {
+  // #2004 round 37 P1: unverifiable evidence that an acceptance
+  // happened (an out-of-window frame, a read hint, an unanchorable
+  // local receipt) holds the acceptance OFFER while the scheduled
+  // reads land — otherwise a lagging RPC's cached `false` keeps an
+  // Accept button enabled for a redundant paid re-acceptance the pin
+  // can no longer prevent. Non-trusting (opens nothing) and bounded
+  // (held forever, a stray broadcast could disable acceptance).
+  it('holds for the bounded window, then releases', () => {
+    holdAcceptanceForReconciliation(SCOPE, T0);
+    expect(acceptanceReconciling(SCOPE, T0)).toBe(true);
+    expect(acceptanceReconciling(SCOPE, T0 + ACCEPTANCE_RECONCILIATION_HOLD_MS - 1)).toBe(
+      true,
+    );
+    expect(acceptanceReconciling(SCOPE, T0 + ACCEPTANCE_RECONCILIATION_HOLD_MS)).toBe(false);
+  });
+
+  it('re-arming extends the window; other scopes are never held', () => {
+    holdAcceptanceForReconciliation(SCOPE, T0);
+    holdAcceptanceForReconciliation(SCOPE, T0 + 10_000);
+    expect(acceptanceReconciling(SCOPE, T0 + ACCEPTANCE_RECONCILIATION_HOLD_MS + 5_000)).toBe(
+      true,
+    );
+    const other = acceptanceScope(84532, '0xAbC0000000000000000000000000000000000002');
+    expect(acceptanceReconciling(other, T0)).toBe(false);
   });
 });
 

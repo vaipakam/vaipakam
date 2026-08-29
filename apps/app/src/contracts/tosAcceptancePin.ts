@@ -601,6 +601,47 @@ export function retireSupersededPin(scope: string, version: number, hash: string
 }
 
 /**
+ * How long an acceptance offer is HELD after unverifiable evidence
+ * that an acceptance happened arrives (#2004 round 37 P1). An
+ * out-of-window frame, a read hint, an unanchorable local receipt —
+ * each says "someone accepted; go read" without supporting a pin, and
+ * the reads they schedule take seconds to land. In that window a
+ * cached `accepted: false` served by a lagging RPC keeps another
+ * tab's Accept button enabled, offering exactly the redundant paid
+ * re-acceptance this module exists to prevent — the pin used to close
+ * that window, and an unpinnable acceptance has nothing else to close
+ * it with. The hold is NON-TRUSTING: it opens no gate and writes no
+ * verdict, it only withholds the OFFER of a second payment while the
+ * scheduled reads reconcile. Bounded deliberately: held forever, a
+ * stray or malicious same-origin broadcast could disable acceptance
+ * outright, and past the bound the chain-follower posture applies as
+ * everywhere else — the reads have had their chance, and a `false`
+ * still standing is the chain's answer to act on. Covers the
+ * immediate read, the 4-second delayed read, and ordinary RPC
+ * latency on both.
+ */
+export const ACCEPTANCE_RECONCILIATION_HOLD_MS = 15_000;
+
+const reconciliationHolds = new Map<string, number>();
+
+/** Arm (or re-arm) the scope's reconciliation hold. Called by every
+ *  read-hint path — the paths that know an acceptance happened but
+ *  cannot pin it. */
+export function holdAcceptanceForReconciliation(scope: string, now: number): void {
+  reconciliationHolds.set(scope, now + ACCEPTANCE_RECONCILIATION_HOLD_MS);
+}
+
+/** True while the scope's acceptance offer should be withheld.
+ *  Deliberately NON-MUTATING — it is read during render, where
+ *  pruning would be a side effect; entries are overwritten on
+ *  re-arm and the map holds at most one entry per wallet/chain
+ *  actually used. */
+export function acceptanceReconciling(scope: string, now: number): boolean {
+  const until = reconciliationHolds.get(scope);
+  return until !== undefined && now < until;
+}
+
+/**
  * Retire whatever pin the scope holds when it DIFFERS from a
  * just-settled LOCAL receipt's terms (#2004 round 36 P1). The
  * receipt-supersedes doctrine (`adoptReceiptPin`) normally replaces a
@@ -694,6 +735,7 @@ export function observePinExpiry(
 /** Test seam only — the app never forgets a pin, it lets it expire. */
 export function __clearAcceptancePins(): void {
   pins.clear();
+  reconciliationHolds.clear();
   stopClockWatch();
   lastBeatWall = 0;
   lastBeatMono = 0;
