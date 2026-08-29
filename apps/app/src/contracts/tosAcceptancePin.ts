@@ -632,7 +632,40 @@ export function retireSupersededPin(scope: string, version: number, hash: string
  */
 export const ACCEPTANCE_RECONCILIATION_HOLD_MS = 15_000;
 
-const reconciliationHolds = new Map<string, number>();
+/**
+ * The most a SEQUENCE of re-armed holds may keep the offer withheld
+ * (#2004 round 40 P2). Every arm used to replace the deadline with a
+ * fresh window, so a peer tab publishing frames faster than the
+ * window — stale, buggy, or hostile — kept the Accept action disabled
+ * indefinitely: an untrusted cross-tab hint turned into a persistent
+ * denial of the only recovery action. A sequence's cap is anchored at
+ * its FIRST arm; arms within the sequence extend the hold only up to
+ * that cap, and — the part that makes the cap real — an arm arriving
+ * after the cap does NOT start a fresh sequence while the chatter
+ * continues: a new sequence requires the scope to have gone QUIET
+ * (no arm for a full window) first. So a lone burst behaves exactly
+ * as before, a genuine flurry (an acceptance plus its re-broadcasts)
+ * gets at most three windows, and continuous chatter denies the
+ * button once, for the cap, and never again until it actually stops.
+ * The reads have had three windows by then; a `false` still standing
+ * is the chain's answer the user may act on — and the redundant-
+ * payment protection this hold provides is, like the rest of this
+ * module, a guard against accidents, not against an operator of the
+ * same origin, who could bypass it in devtools.
+ */
+export const ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS = 45_000;
+
+interface ReconciliationHold {
+  /** Monotonic deadline the offer is withheld until. */
+  until: number;
+  /** The sequence's hard ceiling — first arm plus the cap. */
+  cap: number;
+  /** Monotonic time of the latest arm, live or capped: what decides
+   *  whether the NEXT arm continues this sequence or starts fresh. */
+  lastArm: number;
+}
+
+const reconciliationHolds = new Map<string, ReconciliationHold>();
 
 /** Listeners notified when a hold is ARMED (round 38 P2). The map
  *  write alone is invisible to React — with a cached `false` verdict
@@ -653,9 +686,24 @@ export function onAcceptanceHoldsChanged(listener: () => void): () => void {
 
 /** Arm (or re-arm) the scope's reconciliation hold. Called by every
  *  read-hint path — the paths that know an acceptance happened but
- *  cannot pin it. */
+ *  cannot pin it. Bounded per SEQUENCE, not per arm — see
+ *  `ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS` (round 40 P2). */
 export function holdAcceptanceForReconciliation(scope: string): void {
-  reconciliationHolds.set(scope, monoNow() + ACCEPTANCE_RECONCILIATION_HOLD_MS);
+  const now = monoNow();
+  const existing = reconciliationHolds.get(scope);
+  // The same unresolved sequence continues while the previous hold is
+  // live OR the chatter has not yet gone quiet for a full window; a
+  // fresh cap anchor requires genuine silence first, or continuous
+  // arming would lapse-and-restart its way around the cap.
+  const sameSequence =
+    existing !== undefined &&
+    now < Math.max(existing.until, existing.lastArm + ACCEPTANCE_RECONCILIATION_HOLD_MS);
+  const cap = sameSequence ? existing.cap : now + ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS;
+  reconciliationHolds.set(scope, {
+    until: Math.min(now + ACCEPTANCE_RECONCILIATION_HOLD_MS, cap),
+    cap,
+    lastArm: now,
+  });
   for (const listener of [...holdListeners]) listener();
 }
 
@@ -671,8 +719,8 @@ export function acceptanceReconciling(scope: string): boolean {
  *  sleep against, so both track the SAME monotonic deadline the
  *  predicate reads. */
 export function acceptanceReconciliationRemainingMs(scope: string): number {
-  const until = reconciliationHolds.get(scope);
-  return until === undefined ? 0 : Math.max(0, until - monoNow());
+  const hold = reconciliationHolds.get(scope);
+  return hold === undefined ? 0 : Math.max(0, hold.until - monoNow());
 }
 
 /**

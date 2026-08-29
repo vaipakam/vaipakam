@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ACCEPTANCE_PIN_TTL_MS,
+  ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS,
   ACCEPTANCE_RECONCILIATION_HOLD_MS,
   MAX_FUTURE_SKEW_MS,
   __clearAcceptancePins,
@@ -490,6 +491,40 @@ describe('acceptance reconciliation hold', () => {
     expect(acceptanceReconciling(SCOPE)).toBe(true);
     const other = acceptanceScope(84532, '0xAbC0000000000000000000000000000000000002');
     expect(acceptanceReconciling(other)).toBe(false);
+  });
+
+  it('continuous re-arming cannot deny acceptance past the sequence cap', () => {
+    // Round 40 P2: every arm used to replace the deadline outright, so
+    // a peer tab publishing frames faster than the window kept the
+    // Accept action disabled for ever — an untrusted hint as a
+    // persistent denial of the only recovery action. The cap anchors
+    // at the sequence's FIRST arm; and an arm after the cap does not
+    // start a fresh sequence while the chatter continues, or
+    // lapse-and-restart would walk around the cap.
+    let mono = 0;
+    __setMonoNowForTests(() => mono);
+    holdAcceptanceForReconciliation(SCOPE);
+    // Re-arm every 5 seconds, well past the cap.
+    for (mono = 5_000; mono <= ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS + 60_000; mono += 5_000) {
+      holdAcceptanceForReconciliation(SCOPE);
+      expect(acceptanceReconciling(SCOPE)).toBe(
+        mono < ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS,
+      );
+    }
+  });
+
+  it('a sequence that has gone QUIET for a full window can hold again', () => {
+    // The cap bounds a sequence, not the feature: once the chatter
+    // stops for a whole window, the next genuine evidence gets its
+    // ordinary hold.
+    let mono = 0;
+    __setMonoNowForTests(() => mono);
+    holdAcceptanceForReconciliation(SCOPE);
+    mono = ACCEPTANCE_RECONCILIATION_HOLD_CAP_MS + 10_000;
+    holdAcceptanceForReconciliation(SCOPE);
+    // Quiet since the first sequence lapsed at 15s, far longer than a
+    // window: this is a fresh sequence with a fresh hold.
+    expect(acceptanceReconciling(SCOPE)).toBe(true);
   });
 
   it('arming a hold notifies subscribers; unsubscribing stops it', () => {

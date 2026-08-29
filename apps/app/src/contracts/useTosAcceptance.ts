@@ -37,7 +37,7 @@
  *    structural: a superseded query's data is never the active query's
  *    data, so there is no window to get wrong.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
@@ -206,8 +206,18 @@ export function useTosAcceptance(): TosAcceptanceState {
   // change (and unmount — the cleanup runs for both) bumps the epoch;
   // the continuation samples it at entry and abandons itself silently
   // after every await once it no longer matches.
+  //
+  // A LAYOUT effect, not a passive one (round 40 P2): passive
+  // cleanups run after the commit, so a continuation settling in the
+  // gap between the new scope rendering and the cleanup running could
+  // observe the old epoch, pass its check, and still reach `write`
+  // with the previous closure. Layout cleanup runs synchronously
+  // within the commit — JS being single-threaded, every async
+  // continuation resumes either before the commit (old scope still
+  // rendered, consistent) or after the bump. Same fix as the
+  // IndexerPushSync address ref (#1670 round 1).
   const acceptEpoch = useRef(0);
-  useEffect(() => {
+  useLayoutEffect(() => {
     return () => {
       acceptEpoch.current += 1;
     };
