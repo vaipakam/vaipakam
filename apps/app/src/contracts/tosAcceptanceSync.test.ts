@@ -493,6 +493,35 @@ describe('applyAcceptancePinFrame', () => {
     expect(client.getQueryData<TosVerdictData>(key)?.pinBacked).toBeUndefined();
   });
 
+  it('poisoning wakes the expiry machinery immediately — no cadence wait', () => {
+    // Round 29 P1: the heartbeat's poison used to change only
+    // deadlines, leaving the pin-backed verdict trusted until the
+    // expiry timer's next wake — up to a whole recheck cadence. The
+    // poison now runs every live check at once: one beat after the
+    // clocks disagree, the verdict is already aged.
+    vi.useFakeTimers();
+    try {
+      const client = new QueryClient();
+      const key = tosQueryKey(84532, ADDRESS);
+      const t0 = Date.now();
+      client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+      applyAcceptancePinFrame(client, frame({ at: t0 }), t0);
+      expect(client.getQueryData<TosVerdictData>(key)?.pinBacked).toBe(true);
+      // A 10-second backward correction while awake: the clocks
+      // disagree at the next beat.
+      vi.setSystemTime(t0 - 10_000);
+      vi.advanceTimersByTime(10_500);
+      // Aged at the beat itself — well inside the 30-second cadence.
+      const aged = client.getQueryState<TosVerdictData>(key);
+      expect(aged && Date.now() - aged.dataUpdatedAt > MAX_VERDICT_AGE_MS).toBe(true);
+      expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, Date.now())).toBe(
+        false,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a backward clock correction cannot extend the pin past its elapsed life', () => {
     // Round 26 P1, superseding round 11's wall-clock premise: the pin
     // carries a monotonic deadline stamped at adoption, and expiry is

@@ -58,6 +58,7 @@ import {
   acceptanceScope,
   adoptOrderedPin,
   observePinExpiry,
+  onPinsPoisoned,
 } from './tosAcceptancePin';
 
 /**
@@ -496,6 +497,19 @@ export function scheduleExpiryRevalidation(
   at: number,
   now: number,
 ): void {
+  // Registered with the pin module's poison notifications for the
+  // timer's whole life (round 29 P1): when the clock-disagreement
+  // heartbeat poisons pins, every live check runs IMMEDIATELY —
+  // observing `expired`, aging its verdict, triggering its reads —
+  // instead of letting the gates trust a condemned verdict until the
+  // next cadence wake. The subscription is dropped on both terminal
+  // paths below; a straggling timer firing after that observes
+  // `superseded` and stays silent, as ever.
+  let unsubscribePoison: (() => void) | null = null;
+  const dropPoisonSubscription = () => {
+    unsubscribePoison?.();
+    unsubscribePoison = null;
+  };
   const check = () => {
     // The timeout is MONOTONIC; the pin's life is WALL-CLOCK. A clock
     // corrected backward after scheduling can fire this while the pin
@@ -516,6 +530,7 @@ export function scheduleExpiryRevalidation(
       setTimeout(check, Math.min(observed.remainingMs + 1_000, EXPIRY_RECHECK_MS));
       return;
     }
+    dropPoisonSubscription();
     // SUPERSEDED is not expiry (round 18 P2): a newer acceptance or a
     // superseding read replaced this timer's pin, and freshness now
     // belongs to the replacement's own machinery. Going on to
@@ -544,5 +559,6 @@ export function scheduleExpiryRevalidation(
     }
     void queryClient.invalidateQueries({ queryKey });
   };
+  unsubscribePoison = onPinsPoisoned(check);
   setTimeout(check, Math.min(at + ACCEPTANCE_PIN_TTL_MS - now + 1_000, EXPIRY_RECHECK_MS));
 }

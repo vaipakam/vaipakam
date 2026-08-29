@@ -161,6 +161,27 @@ let lastBeatWall = 0;
 let lastBeatMono = 0;
 let beatTimer: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * Listeners the heartbeat WAKES when it poisons pins (#2004 round 29
+ * P1). Poisoning alone only changes deadlines; the pin-backed
+ * VERDICTS those pins were vouching for stay fresh in the query
+ * cache until each expiry timer's next wake — up to a whole recheck
+ * cadence during which both gates keep trusting a verdict this
+ * module has already ruled untrustworthy. Each scheduled expiry
+ * revalidation registers its check here and removes it on its own
+ * terminal paths, so a poison event runs every live check at once:
+ * the checks observe `expired`, age their verdicts, and trigger the
+ * authoritative reads immediately.
+ */
+const poisonListeners = new Set<() => void>();
+
+export function onPinsPoisoned(listener: () => void): () => void {
+  poisonListeners.add(listener);
+  return () => {
+    poisonListeners.delete(listener);
+  };
+}
+
 function stopClockWatch(): void {
   if (beatTimer !== null) {
     clearInterval(beatTimer);
@@ -189,6 +210,10 @@ function ensureClockWatch(): void {
       for (const pin of pins.values()) {
         pin.monoDeadline = Number.NEGATIVE_INFINITY;
       }
+      // Wake every scheduled expiry check NOW (round 29 P1) — the
+      // verdicts resting on the poisoned pins must stop being served
+      // at the moment of the ruling, not at the next cadence.
+      for (const listener of [...poisonListeners]) listener();
     }
     lastBeatWall = wall;
     lastBeatMono = mono;
@@ -556,4 +581,9 @@ export function __clearAcceptancePins(): void {
   pins.clear();
   stopClockWatch();
   lastBeatWall = 0;
+  lastBeatMono = 0;
+  // Scheduled revalidations from a finished test would otherwise stay
+  // subscribed and answer a later test's poison event first — deleting
+  // the shared-scope pin before that test's own check can observe it.
+  poisonListeners.clear();
 }
