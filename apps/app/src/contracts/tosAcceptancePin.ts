@@ -42,10 +42,12 @@
  * that the receipt was orphaned, which is what the bound is for.
  *
  * Per-TAB by itself; shared across tabs by broadcast (#2001). The
- * acting tab publishes `{chainId, address, version, at}` on the
- * receipt-sync rail after pinning locally, and every receiving tab
- * stores the SAME `at` — see `tosAcceptanceSync.ts` for why the TTL
- * must not restart on delivery.
+ * acting tab publishes `{chainId, diamond, address, version, hash, at}`
+ * on the receipt-sync rail after pinning locally — the Diamond and the
+ * content hash are load-bearing, not incidental (see the frame's field
+ * docs in `tosAcceptanceSync.ts`) — and every receiving tab stores the
+ * SAME `at` — see `tosAcceptanceSync.ts` for why the TTL must not
+ * restart on delivery.
  */
 
 /**

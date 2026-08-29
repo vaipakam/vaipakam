@@ -81,6 +81,13 @@ export function tosGateVerdict({
  */
 export const MAX_VERDICT_AGE_MS = 180_000;
 
+/** How often `useTosAcceptance` refreshes the clock it compares
+ *  `dataUpdatedAt` against. Exported because anything that BACKDATES a
+ *  verdict to force staleness must clear this lag too (#2004 round 10
+ *  P2): a timestamp exactly at the bound reads as fresh for up to one
+ *  tick to a gate whose `nowMs` has not ticked yet. */
+export const VERDICT_CLOCK_TICK_MS = 15_000;
+
 /**
  * True when a successful verdict is too old to keep the gate open.
  *

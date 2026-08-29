@@ -43,7 +43,12 @@ import { usePublicClient } from 'wagmi';
 import { DIAMOND_ABI_VIEM } from '@vaipakam/contracts/abis';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useDiamondWrite } from './diamond';
-import { isVerdictStale, tosQueryKey, type TosVerdictData } from './tosGate';
+import {
+  isVerdictStale,
+  tosQueryKey,
+  VERDICT_CLOCK_TICK_MS,
+  type TosVerdictData,
+} from './tosGate';
 import { acceptanceIsPinned, acceptanceScope, adoptOrderedPin } from './tosAcceptancePin';
 import {
   buildAcceptancePinFrame,
@@ -106,7 +111,7 @@ export function useTosAcceptance(): TosAcceptanceState {
     // the same immediacy without the violation.
     const tick = () => setNowMs(Date.now());
     const seed = setTimeout(tick, 0);
-    const id = setInterval(tick, 15_000);
+    const id = setInterval(tick, VERDICT_CLOCK_TICK_MS);
     return () => {
       clearTimeout(seed);
       clearInterval(id);
@@ -337,7 +342,6 @@ export function useTosAcceptance(): TosAcceptanceState {
           ),
         );
       }
-      await queryClient.invalidateQueries({ queryKey });
       // Codex review round 1 P2: one immediate re-read is not enough.
       // A public RPC can still serve the parent block for seconds after
       // a receipt, so the refetch can return the pre-transaction
@@ -358,11 +362,19 @@ export function useTosAcceptance(): TosAcceptanceState {
         scheduleExpiryRevalidation(
           queryClient,
           queryKey,
+          scope,
           acceptedVersion,
+          query.data.hash,
           pinnedAt,
           pinnedAt,
         );
       }
+      // The awaited immediate read comes LAST (round 10 P2): both
+      // timers above must already be armed when it starts, because a
+      // hung RPC here — the exact failure the expiry revalidation
+      // exists to contain — would otherwise prevent the timers that
+      // contain it from ever being scheduled.
+      await queryClient.invalidateQueries({ queryKey });
     } catch (err) {
       // Codex review round 2 P2: through the SHARED mapper, like every
       // other Diamond write. Raw viem text skipped the localized

@@ -306,6 +306,32 @@ describe('applyAcceptancePinFrame', () => {
     invalidate.mockRestore();
   });
 
+  it('a dead timer cannot age its replacement’s verdict', () => {
+    // Round 10 P2: a later acceptance at the same version installs a
+    // replacement pin and verdict; the FIRST acceptance's expiry timer
+    // still fires, and matching on version alone would age the
+    // replacement while its own window is still open — closing the
+    // gates on a valid acceptance if the forced read then hangs.
+    vi.useFakeTimers();
+    try {
+      const client = new QueryClient();
+      const key = tosQueryKey(84532, ADDRESS);
+      const t0 = Date.now();
+      client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+      applyAcceptancePinFrame(client, frame({ at: t0 }), t0);
+      // 30s later: a re-acceptance of the same version arrives.
+      vi.advanceTimersByTime(30_000);
+      applyAcceptancePinFrame(client, frame({ at: t0 + 30_000 }), t0 + 30_000);
+      const freshAt = client.getQueryState<TosVerdictData>(key)?.dataUpdatedAt;
+      // Advance past the FIRST timer's expiry but inside the second's
+      // window: the replacement's verdict must be untouched.
+      vi.advanceTimersByTime(ACCEPTANCE_PIN_TTL_MS - 30_000 + 1_100);
+      expect(client.getQueryState<TosVerdictData>(key)?.dataUpdatedAt).toBe(freshAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a delayed OLDER frame cannot evict a newer pin', () => {
     // Review round 1 P2: BroadcastChannel delivery is not globally
     // ordered across senders, so a v3 frame can arrive after the v4

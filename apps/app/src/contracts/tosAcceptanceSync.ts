@@ -13,8 +13,14 @@
  * exactly the window in which somebody who just accepted in one tab is
  * most likely to click in the other, and the click costs gas.
  *
- * What crosses the tab boundary is the PIN — wallet, chain, version,
- * and the acting tab's timestamp — not an instruction to invalidate.
+ * What crosses the tab boundary is the PIN — wallet, chain, the
+ * Diamond the acceptance was mined against, version, the content HASH
+ * of the accepted text, and the acting tab's timestamp — not an
+ * instruction to invalidate. The last-named two are not incidental:
+ * the hash is what stops a same-version reorg asserting acceptance of
+ * different text (round 4), and the Diamond is what stops an old
+ * deployment's acceptance opening a new one during a rollout
+ * (round 3).
  * Adding the verdict's root to `RECEIPT_FLOOR_ROOTS` was considered in
  * the issue and rejected there: tab B would refetch against its own
  * possibly-lagging RPC, get `false` back, and have no pin of its own
@@ -37,10 +43,12 @@ import {
   isVerdictStale,
   MAX_VERDICT_AGE_MS,
   tosQueryKey,
+  VERDICT_CLOCK_TICK_MS,
   type TosVerdictData,
 } from './tosGate';
 import {
   ACCEPTANCE_PIN_TTL_MS,
+  acceptanceIsPinned,
   acceptanceScope,
   adoptOrderedPin,
 } from './tosAcceptancePin';
@@ -331,7 +339,15 @@ export function applyAcceptancePinFrame(
     });
   }
   scheduleAuthoritativeReads();
-  scheduleExpiryRevalidation(queryClient, queryKey, frame.version, frame.at, now);
+  scheduleExpiryRevalidation(
+    queryClient,
+    queryKey,
+    scope,
+    frame.version,
+    frame.hash,
+    frame.at,
+    now,
+  );
 }
 
 /**
@@ -354,16 +370,36 @@ export function applyAcceptancePinFrame(
 export function scheduleExpiryRevalidation(
   queryClient: QueryClient,
   queryKey: ReturnType<typeof tosQueryKey>,
+  scope: string,
   version: number,
+  hash: string,
   at: number,
   now: number,
 ): void {
   setTimeout(
     () => {
       const cur = queryClient.getQueryData<TosVerdictData>(queryKey);
-      if (cur?.pinBacked && cur.version === version) {
+      if (
+        cur?.pinBacked &&
+        cur.version === version &&
+        // The timer ages only the verdict of ITS OWN pin (round 10
+        // P2): a later acceptance at the same version — a permitted
+        // re-acceptance, or different text after a reorg — installs a
+        // replacement pin and verdict, and this dead timer must not
+        // expire them while the replacement is still inside its
+        // window. Hash ties the timer to its text; the live-pin check
+        // catches a same-version-same-hash re-acceptance, whose own
+        // timer fires later.
+        cur.hash === hash &&
+        !acceptanceIsPinned(scope, version, hash, Date.now())
+      ) {
         queryClient.setQueryData<TosVerdictData>(queryKey, cur, {
-          updatedAt: Date.now() - MAX_VERDICT_AGE_MS - 1_000,
+          // Backdated past the verdict bound PLUS the gate's clock
+          // tick (round 10 P2): the hook compares against a `nowMs`
+          // that can lag `Date.now()` by a full tick, and a timestamp
+          // exactly at the bound read as fresh to it for up to ~14
+          // more seconds.
+          updatedAt: Date.now() - MAX_VERDICT_AGE_MS - VERDICT_CLOCK_TICK_MS - 1_000,
         });
       }
       void queryClient.invalidateQueries({ queryKey });
