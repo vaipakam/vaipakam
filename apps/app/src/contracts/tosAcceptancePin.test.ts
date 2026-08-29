@@ -15,6 +15,7 @@ import {
   acceptanceScope,
   adoptOrderedPin,
   adoptReceiptPin,
+  observePinExpiry,
   pinAcceptance,
   retireSupersededPin,
 } from './tosAcceptancePin';
@@ -262,5 +263,40 @@ describe('retireSupersededPin', () => {
     pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
     retireSupersededPin(SCOPE, 3, HASH);
     expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 1_000)).toBe(true);
+  });
+});
+
+describe('observePinExpiry', () => {
+  // #2004 round 18 P1: the expiry timer's observation of death must
+  // BE the retirement — a dead pin left in the map was resurrected by
+  // a backward clock correction after the timer, the only thing that
+  // would have aged its product, had terminated.
+  const H2 = `0x${'ef'.repeat(32)}`;
+
+  it('reports a live pin with its remaining life', () => {
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
+    expect(observePinExpiry(SCOPE, 3, HASH, T0 + 30_000)).toEqual({
+      state: 'live',
+      remainingMs: ACCEPTANCE_PIN_TTL_MS - 30_000,
+    });
+  });
+
+  it('retires an expired pin, so a backward clock cannot resurrect it', () => {
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
+    expect(observePinExpiry(SCOPE, 3, HASH, T0 + ACCEPTANCE_PIN_TTL_MS + 1)).toEqual({
+      state: 'expired',
+    });
+    // The clock is corrected back inside the original window: with the
+    // corpse retained this reported true, reopening both gates with no
+    // timer left to age the verdict it manufactures.
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 1_000)).toBe(false);
+  });
+
+  it('reports superseded — and retires nothing — when a different pin holds the scope', () => {
+    pinAcceptance(SCOPE, 4, H2, B0 + 2, 0, T0);
+    expect(observePinExpiry(SCOPE, 3, HASH, T0 + 1_000)).toEqual({ state: 'superseded' });
+    expect(acceptanceIsPinned(SCOPE, 4, H2, T0 + 1_000)).toBe(true);
+    __clearAcceptancePins();
+    expect(observePinExpiry(SCOPE, 3, HASH, T0)).toEqual({ state: 'superseded' });
   });
 });

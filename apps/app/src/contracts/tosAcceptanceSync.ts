@@ -56,7 +56,7 @@ import {
   MAX_FUTURE_SKEW_MS,
   acceptanceScope,
   adoptOrderedPin,
-  pinRemainingMs,
+  observePinExpiry,
 } from './tosAcceptancePin';
 
 /**
@@ -482,12 +482,25 @@ export function scheduleExpiryRevalidation(
     // `EXPIRY_RECHECK_MS`, so a FORWARD shift (round 12 P2) is caught
     // within one cadence rather than at the original timeout. Each
     // re-arm is bounded and the loop stops the first time the pin is
-    // genuinely dead.
-    const remaining = pinRemainingMs(scope, version, hash, Date.now());
-    if (remaining !== null) {
-      setTimeout(check, Math.min(remaining + 1_000, EXPIRY_RECHECK_MS));
+    // genuinely dead — which the observation itself RETIRES (round 18
+    // P1), so a later backward clock correction cannot resurrect the
+    // corpse after this timer, the only thing that would have aged
+    // its product, has terminated.
+    const observed = observePinExpiry(scope, version, hash, Date.now());
+    if (observed.state === 'live') {
+      setTimeout(check, Math.min(observed.remainingMs + 1_000, EXPIRY_RECHECK_MS));
       return;
     }
+    // SUPERSEDED is not expiry (round 18 P2): a newer acceptance or a
+    // superseding read replaced this timer's pin, and freshness now
+    // belongs to the replacement's own machinery. Going on to
+    // invalidate here could hit a node still serving the PREVIOUS
+    // version — which the replacement pin cannot correct — and
+    // regress the cache to an obsolete refusal; and the verdict this
+    // timer would age has already been replaced or aged by whatever
+    // superseded the pin. A superseded timer's only correct move is
+    // silence.
+    if (observed.state === 'superseded') return;
     const cur = queryClient.getQueryData<TosVerdictData>(queryKey);
     // The timer ages only the verdict of ITS OWN pin (round 10 P2): a
     // later acceptance at the same version with DIFFERENT text

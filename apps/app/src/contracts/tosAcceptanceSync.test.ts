@@ -472,6 +472,40 @@ describe('applyAcceptancePinFrame', () => {
     }
   });
 
+  it('a SUPERSEDED timer goes silent — no refetch under the replacement pin', () => {
+    // Round 18 P2: with its pin replaced by a DIFFERENT version's, the
+    // old timer's invalidation could hit a node still serving the
+    // previous version — which the replacement pin cannot correct —
+    // regressing the cache to an obsolete refusal. Superseded is not
+    // expiry; the replacement's own machinery owns freshness now.
+    vi.useFakeTimers();
+    try {
+      const client = new QueryClient();
+      const key = tosQueryKey(84532, ADDRESS);
+      const t0 = Date.now();
+      client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+      applyAcceptancePinFrame(client, frame({ at: t0 }), t0);
+      // 40s later a v4 acceptance replaces the v3 pin.
+      vi.advanceTimersByTime(40_000);
+      const h4 = `0x${'44'.repeat(32)}` as `0x${string}`;
+      applyAcceptancePinFrame(
+        client,
+        frame({ version: 4, hash: h4, at: t0 + 40_000, block: B0 + 2 }),
+        t0 + 40_000,
+      );
+      const invalidate = vi.spyOn(client, 'invalidateQueries');
+      // Advance past the v3 pin's original expiry (t0+90s) but inside
+      // the v4 pin's window: the only invalidation in this stretch is
+      // the v4 application's own 4-second second read — the v3 timer
+      // fires, observes itself superseded, and does nothing.
+      vi.advanceTimersByTime(55_000);
+      expect(invalidate.mock.calls.length).toBe(1);
+      invalidate.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a delayed OLDER frame cannot evict a newer pin', () => {
     // Review round 1 P2: BroadcastChannel delivery is not globally
     // ordered across senders, so a v3 frame can arrive after the v4

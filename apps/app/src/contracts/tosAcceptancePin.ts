@@ -319,25 +319,50 @@ export function retireSupersededPin(scope: string, version: number, hash: string
   }
 }
 
+/** What the expiry timer sees when it looks at its own pin. */
+export type PinExpiryObservation =
+  | { state: 'live'; remainingMs: number }
+  | { state: 'expired' }
+  | { state: 'superseded' };
+
 /**
- * Wall-clock milliseconds this exact pin (scope, version AND hash) has
- * left, or null when no matching live pin exists. Read-only — deletion
- * of expired pins stays with `acceptanceIsPinned`. Exists for the
- * expiry revalidation timer (#2004 round 11 P2): a MONOTONIC timeout
- * can fire while a backward-shifted wall clock still considers the pin
- * live, and the timer must know how long to re-arm for rather than
- * skipping once and never returning.
+ * The expiry revalidation timer's view of its exact pin (scope,
+ * version AND hash), in three states the timer treats differently
+ * (#2004 rounds 11, 17 and 18):
+ *
+ *   - `live` — the pin still has wall-clock life, with how much: a
+ *     MONOTONIC timeout can fire while a backward-shifted wall clock
+ *     still considers the pin live, and the timer re-arms for the
+ *     remainder rather than skipping once and never returning (round
+ *     11 P2).
+ *   - `expired` — this exact pin was observed past its TTL and is
+ *     RETIRED here, not merely reported (round 18 P1): returned
+ *     un-deleted, a later backward clock correction made
+ *     `acceptanceIsPinned` see the corpse as young again and
+ *     resurrect the correction — with the timer already terminated,
+ *     so nothing was left to age what it manufactured. Observation
+ *     of death is the retirement.
+ *   - `superseded` — the scope holds no pin, or a DIFFERENT one: a
+ *     newer acceptance or a superseding read replaced this timer's
+ *     pin, and the replacement's own machinery owns freshness now.
+ *     The distinction from `expired` matters (round 18 P2): the old
+ *     timer must go silent rather than refetch, because its refetch
+ *     can hit a node still serving the PREVIOUS version — which the
+ *     replacement pin, matching only its own version, cannot correct
+ *     — regressing the cache to an obsolete refusal.
  */
-export function pinRemainingMs(
+export function observePinExpiry(
   scope: string,
   version: number,
   hash: string,
   now: number,
-): number | null {
+): PinExpiryObservation {
   const pin = pins.get(scope);
-  if (!pin || pin.version !== version || pin.hash !== hash) return null;
+  if (!pin || pin.version !== version || pin.hash !== hash) return { state: 'superseded' };
   const remaining = ACCEPTANCE_PIN_TTL_MS - (now - pin.at);
-  return remaining > 0 ? remaining : null;
+  if (remaining > 0) return { state: 'live', remainingMs: remaining };
+  pins.delete(scope);
+  return { state: 'expired' };
 }
 
 /** Test seam only — the app never forgets a pin, it lets it expire. */

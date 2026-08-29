@@ -332,11 +332,19 @@ export function useTosAcceptance(): TosAcceptanceState {
             publicClient.getBlock(),
             publicClient.getBlock({ blockNumber: receipt.blockNumber }),
           ]);
-          const chainAgeMs = Math.max(
-            0,
-            (Number(latestBlock.timestamp) - Number(minedBlock.timestamp)) * 1_000,
-          );
-          pinnedAt = Date.now() - chainAgeMs;
+          // The height lookup returns whatever block CURRENTLY holds
+          // that number — after a reorg, the replacement, whose
+          // recent timestamp would hand the ORPHANED receipt a fresh
+          // anchor (round 18 P1). Only the block that actually
+          // carries this receipt may re-anchor it; otherwise the raw
+          // refused stamp stands and the reads decide.
+          if (minedBlock.hash === receipt.blockHash) {
+            const chainAgeMs = Math.max(
+              0,
+              (Number(latestBlock.timestamp) - Number(minedBlock.timestamp)) * 1_000,
+            );
+            pinnedAt = Date.now() - chainAgeMs;
+          }
         } catch {
           // Keep the raw stamp: adoption refuses, reads decide.
         }
@@ -494,6 +502,10 @@ export function useTosAcceptance(): TosAcceptanceState {
       // re-read — see `scheduleExpiryRevalidation`. Scheduled only
       // when a pin was adopted; a superseded receipt installed none.
       if (adopted) {
+        // `now` is the REAL clock, not the anchor (round 18 P2): a
+        // chain-age anchor can already be most of a window old, and
+        // scheduling as if it were fresh left the first check a full
+        // cadence away while the pin had seconds to live.
         scheduleExpiryRevalidation(
           queryClient,
           queryKey,
@@ -501,7 +513,7 @@ export function useTosAcceptance(): TosAcceptanceState {
           acceptedVersion,
           query.data.hash,
           pinnedAt,
-          pinnedAt,
+          Date.now(),
         );
       }
       // The awaited immediate read comes LAST (round 10 P2): both
