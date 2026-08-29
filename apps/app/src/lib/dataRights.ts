@@ -202,9 +202,24 @@ function readCookies(): { data: Record<string, string>; refused: boolean } {
       if (eq < 0) continue;
       const name = part.slice(0, eq).trim();
       if (!PREFERENCE_COOKIES.includes(name)) continue;
-      out[name] = decodeURIComponent(part.slice(eq + 1));
+      const raw = part.slice(eq + 1);
+      // Decoding is per-cookie and falls back to the raw text (review
+      // round 4 P2). `decodeURIComponent` throws on malformed percent
+      // encoding — `vaipakam_lang=%` is enough — and a single throw
+      // used to abort the whole scan through the outer catch. The
+      // export then lost every preference cookie AND `clearCookies`
+      // received no names to expire, so a cookie survived an erasure
+      // because its VALUE was unreadable. The name is what deletion
+      // needs, and it was legible throughout.
+      try {
+        out[name] = decodeURIComponent(raw);
+      } catch {
+        out[name] = raw;
+      }
     }
   } catch {
+    // Only reachable if `document.cookie` itself is unavailable, which
+    // is a genuine refusal rather than one bad value.
     return { data: out, refused: true };
   }
   return { data: out, refused: false };

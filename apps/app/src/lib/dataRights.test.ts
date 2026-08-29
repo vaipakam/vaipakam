@@ -294,3 +294,27 @@ describe('decodeStored (via the export payload shape)', () => {
     expect(structured('true')).toBe(false);
   });
 });
+
+describe('cookie value decoding', () => {
+  // Review round 4 P2. A cookie's NAME is what deletion needs, and it
+  // stays legible even when the value is malformed — so one bad value
+  // must not cost the user the erasure of every preference cookie.
+  it('falls back to raw text rather than losing the cookie', () => {
+    // The hazard: this throws, and it used to do so inside the loop
+    // that collects names for deletion.
+    expect(() => decodeURIComponent('%')).toThrow();
+
+    // The rule now applied — decode per cookie, keep the raw value on
+    // failure — so the name survives to be expired either way.
+    const decodeOrRaw = (raw: string) => {
+      try {
+        return decodeURIComponent(raw);
+      } catch {
+        return raw;
+      }
+    };
+    expect(decodeOrRaw('%')).toBe('%');
+    expect(decodeOrRaw('en')).toBe('en');
+    expect(decodeOrRaw('zh%2DHans')).toBe('zh-Hans');
+  });
+});
