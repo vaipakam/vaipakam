@@ -72,16 +72,26 @@ interface AcceptancePin {
   at: number;
   /** The block the acceptance MINED in — the receipt's block on the
    *  acting tab, carried verbatim in the broadcast frame everywhere
-   *  else (#2004 round 14, both P2s). Ordering between pins is decided
-   *  by this, not by `at` or by version: wall stamps cannot survive a
+   *  else (#2004 round 14). Frame-vs-frame ordering runs on this
+   *  rather than on `at` or on version: wall stamps cannot survive a
    *  clock correction, and the version counter orders only within one
    *  branch — a restored lower version after a rollback is NEWER than
    *  the orphaned higher one, which version ordering gets exactly
-   *  backwards. Chain height is the one marker every acceptance
-   *  carries that a clock shift cannot reorder. `at` keeps its two
-   *  jobs — the shared TTL window, and the tiebreak between two
-   *  acceptances mined in the same block. */
+   *  backwards. Height is a HEURISTIC, not ancestry (round 15): a
+   *  reorg to a shorter replacement chain can put newer canonical
+   *  evidence BELOW a dead pin's height, and no client-side marker
+   *  can prove descent — which is why the locally mined receipt does
+   *  not use this ordering at all (`adoptReceiptPin`), and why every
+   *  refusal is bounded by the TTL and backed by authoritative
+   *  reads. */
   block: number;
+  /** The acceptance transaction's index within its block (round 15
+   *  P2). Two acceptances in one block — the same wallet acting from
+   *  two tabs — are nonce-ordered on chain, and their indices record
+   *  that order exactly; wall stamps do not, and can invert under a
+   *  clock correction. `at` remains only as the final tiebreak for a
+   *  re-broadcast of the SAME transaction. */
+  txIndex: number;
 }
 
 const pins = new Map<string, AcceptancePin>();
@@ -93,39 +103,37 @@ export function acceptanceScope(chainId: number, address: string | undefined): s
 }
 
 /** Record this scope's acceptance of `version` unconditionally. Kept
- *  as the pin's primitive and for its own unit surface; every
- *  PRODUCTION path — the acting tab's own receipt included — adopts
- *  through `adoptOrderedPin` instead, because once acceptances can
- *  arrive from other tabs, even a locally mined receipt is not
- *  necessarily the newest fact this tab holds (#2004 round 2 P1: a
- *  slow RPC can deliver the local v3 receipt AFTER another tab's v4
- *  broadcast has been applied here). */
+ *  as the pin's primitive and for its own unit surface; production
+ *  paths never call it. Remote frames adopt through `adoptOrderedPin`
+ *  (delivery is not globally ordered, so a straggler must be
+ *  refusable), and the acting tab's own receipt through
+ *  `adoptReceiptPin` (trusted, but refusable on its own expiry) —
+ *  the split is deliberate, see each function for which review
+ *  rounds forced it. */
 export function pinAcceptance(
   scope: string,
   version: number,
   hash: string,
   block: number,
+  txIndex: number,
   now: number,
 ): void {
-  pins.set(scope, { version, hash, at: now, block });
+  pins.set(scope, { version, hash, at: now, block, txIndex });
 }
 
 /**
- * Adopt a pin — from the broadcast OR from a locally settled receipt —
- * WITHOUT letting a stale one regress a newer one (#2004 review round
- * 1 P2, extended to the local path in round 2 P1). Delivery is not
- * globally ordered across senders, and a local `write` promise can
- * resolve after a newer remote acceptance was applied here. One pin
- * per scope means an unconditional `set` would REPLACE the newer pin
- * with the older; the cache guard keeps the newer verdict, but the
- * next lagging `false` read at that version would find only the old
- * pin — uncorrectable, prompt re-armed, second payment back on the
- * table.
+ * Adopt a REMOTE frame's pin WITHOUT letting a stale one regress a
+ * newer one (#2004 review round 1 P2). Delivery is not globally
+ * ordered across senders. One pin per scope means an unconditional
+ * `set` would REPLACE the newer pin with the older; the cache guard
+ * keeps the newer verdict, but the next lagging `false` read at that
+ * version would find only the old pin — uncorrectable, prompt
+ * re-armed, second payment back on the table.
  *
- * Ordering is by the acceptance's MINED BLOCK, with `at` as the
- * same-block tiebreak (#2004 round 14, unifying rounds 2 and 13).
- * The two markers this used to order by are each wrong in a case the
- * other is not:
+ * Ordering is by the acceptance's chain position — (mined block,
+ * transaction index), with `at` only as the duplicate tiebreak
+ * (#2004 rounds 14 and 15). The markers this used to order by are
+ * each wrong in a case the others are not:
  *
  *   - VERSION ordering is monotonic only within one branch. After a
  *     rollback restores a lower version, the orphaned higher-version
@@ -138,15 +146,15 @@ export function pinAcceptance(
  *     than an incumbent stamped before it, and the genuinely newer
  *     evidence lost (round 14 P2).
  *
- * The mined block is the one marker every acceptance carries that
- * neither a governance rollback nor a clock shift can reorder: within
- * a branch it is exactly acceptance order, and across a reorg the
- * canonical chain's new head is at or past the orphaned tip, so the
- * post-reorg acceptance wins on height. This is also why the local
- * receipt no longer needs a separate trusted path — round 2's
- * slow-RPC case (v4 frame applied, stale v3 receipt resolving late)
- * refuses on height alone, and round 13's orphaned-higher-pin case
- * adopts on it.
+ * Within a branch, (block, txIndex) is exactly acceptance order.
+ * Across branches it is a heuristic — round 15 P2: a reorg to a
+ * shorter replacement chain can mine newer canonical evidence BELOW a
+ * dead pin's height, and this ordering will refuse it. That residual
+ * is deliberate and bounded: a frame is hearsay about history, the
+ * refusal still runs the authoritative reads (the receiver's rule),
+ * and the wrong incumbent cannot outlive its TTL. The locally mined
+ * receipt — the one piece of evidence that is NOT hearsay — does not
+ * take this ordering at all; see `adoptReceiptPin`.
  *
  * Returns whether the pin was adopted, so callers can gate everything
  * that must not outrun ordering — the cache write, the broadcast — on
@@ -159,6 +167,13 @@ export function pinAcceptance(
  * reads — leaving the fresh receipt unpinned and unbroadcast while
  * lagging reads keep offering another paid acceptance. Past the bound
  * a pin has no authority left to reject with.
+ *
+ * An expired CANDIDATE is refused outright (round 15 P2): a pin
+ * carries the acting tab's `at`, and a delivery — or a suspended
+ * continuation — arriving past that window must apply nothing, the
+ * same rule the receiver applies to expired frames. Adopting it would
+ * store a pin already dead on arrival while telling the caller to
+ * write and broadcast on its authority.
  */
 export function adoptOrderedPin(
   scope: string,
@@ -166,8 +181,10 @@ export function adoptOrderedPin(
   hash: string,
   at: number,
   block: number,
+  txIndex: number,
   now: number,
 ): boolean {
+  if (now - at > ACCEPTANCE_PIN_TTL_MS) return false;
   let existing = pins.get(scope);
   if (existing && now - existing.at > ACCEPTANCE_PIN_TTL_MS) {
     pins.delete(scope);
@@ -175,11 +192,49 @@ export function adoptOrderedPin(
   }
   if (
     existing &&
-    (existing.block > block || (existing.block === block && existing.at >= at))
+    (existing.block > block ||
+      (existing.block === block && existing.txIndex > txIndex) ||
+      (existing.block === block && existing.txIndex === txIndex && existing.at >= at))
   ) {
     return false;
   }
-  pins.set(scope, { version, hash, at, block });
+  pins.set(scope, { version, hash, at, block, txIndex });
+  return true;
+}
+
+/**
+ * Trusted adoption for the tab's OWN just-settled receipt (#2004
+ * round 13 P2, retired in round 14, restored in round 15 P2 — this
+ * time with no comparison at all, which is what makes it stable).
+ *
+ * A receipt this tab watched settle moments ago is the newest
+ * canonical fact it holds: `acceptTerms` reverts unless its version
+ * and hash are current, so the settling node vouched for them at the
+ * chain head it serves. Any incumbent pin is at best ninety-second-old
+ * hearsay. The attempts to ORDER receipt against incumbent each fell
+ * to a case the chosen marker could not see — version ordering to a
+ * rollback (round 13), wall stamps to a clock correction (round 14),
+ * height to a shorter replacement chain (round 15) — because no
+ * client-side marker proves ancestry. So the receipt does not order;
+ * it supersedes. The one refusal left is the candidate's own expiry
+ * (round 15 P2): a continuation resuming from a suspension longer
+ * than the TTL carries an anchor already outside the safety window,
+ * and must apply nothing — the caller's authoritative reads take the
+ * case, exactly like an expired frame. The caller's fresh-read
+ * conflict guard still runs FIRST, so a receipt this tab has already
+ * read past never reaches here.
+ */
+export function adoptReceiptPin(
+  scope: string,
+  version: number,
+  hash: string,
+  at: number,
+  block: number,
+  txIndex: number,
+  now: number,
+): boolean {
+  if (now - at > ACCEPTANCE_PIN_TTL_MS) return false;
+  pins.set(scope, { version, hash, at, block, txIndex });
   return true;
 }
 

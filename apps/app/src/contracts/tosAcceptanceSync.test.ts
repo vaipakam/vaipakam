@@ -29,13 +29,24 @@ const ADDRESS = '0xAbCd000000000000000000000000000000000001';
 // drops any frame not mined against the deployment this build reads,
 // so the tests must speak with the configuration's own voice.
 const DIAMOND = '0xd89fd7F787e4415460b23891E97570a4881fb995';
-// The default mined block frames carry. Ordering and the receiver's
-// fresh-read comparison run on chain height (#2004 round 14).
+// The default chain position frames carry — mined block and
+// transaction index. Frame-vs-frame pin ordering runs on these
+// (#2004 rounds 14–15).
 const B0 = 4_200_000;
+const TX0 = 7;
 
 function frame(overrides: Partial<AcceptancePinFrame> = {}): AcceptancePinFrame {
   return {
-    ...buildAcceptancePinFrame(84532, DIAMOND, ADDRESS, 3, HASH, 1_700_000_000_000, B0),
+    ...buildAcceptancePinFrame(
+      84532,
+      DIAMOND,
+      ADDRESS,
+      3,
+      HASH,
+      1_700_000_000_000,
+      B0,
+      TX0,
+    ),
     ...overrides,
   };
 }
@@ -77,11 +88,17 @@ describe('parseAcceptancePinFrame', () => {
     expect(parseAcceptancePinFrame({ ...frame(), hash: `0x${'zz'.repeat(32)}` })).toBeNull();
     expect(parseAcceptancePinFrame(frame({ at: 0 }))).toBeNull();
     expect(parseAcceptancePinFrame({ ...frame(), at: Number.NaN })).toBeNull();
-    // Ordering runs on the mined block, so a frame without a plausible
-    // one has nothing to be ordered by (#2004 round 14).
+    // Ordering runs on the chain position, so a frame without a
+    // plausible one has nothing to be ordered by (#2004 rounds 14–15).
+    // A transaction index of ZERO is real — the block's first
+    // transaction — and must parse.
     expect(parseAcceptancePinFrame(frame({ block: 0 }))).toBeNull();
     expect(parseAcceptancePinFrame(frame({ block: 1.5 }))).toBeNull();
     expect(parseAcceptancePinFrame({ ...frame(), block: undefined })).toBeNull();
+    expect(parseAcceptancePinFrame(frame({ txIndex: -1 }))).toBeNull();
+    expect(parseAcceptancePinFrame(frame({ txIndex: 2.5 }))).toBeNull();
+    expect(parseAcceptancePinFrame({ ...frame(), txIndex: undefined })).toBeNull();
+    expect(parseAcceptancePinFrame(frame({ txIndex: 0 }))).toEqual(frame({ txIndex: 0 }));
   });
 });
 
@@ -162,15 +179,7 @@ describe('applyAcceptancePinFrame', () => {
     // outranks any frame from before it.
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
-    // The v4 read observed a block PAST the v3 acceptance's — it has
-    // genuinely read beyond the frame (#2004 round 14 qualified the
-    // refusal by height; this read clears it).
-    const newer: TosVerdictData = {
-      accepted: false,
-      version: 4,
-      hash: HASH,
-      observedBlock: B0 + 5,
-    };
+    const newer: TosVerdictData = { accepted: false, version: 4, hash: HASH };
     client.setQueryData(key, newer);
     applyAcceptancePinFrame(client, frame({ version: 3 }), frame().at);
     expect(client.getQueryData(key)).toEqual(newer);
@@ -187,14 +196,7 @@ describe('applyAcceptancePinFrame', () => {
     // now refuses — read hint only.
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
-    // The restored read observed a block at/past the orphaned
-    // acceptance's — the post-rollback canonical chain (#2004 round 14).
-    const restored: TosVerdictData = {
-      accepted: false,
-      version: 3,
-      hash: HASH,
-      observedBlock: B0 + 5,
-    };
+    const restored: TosVerdictData = { accepted: false, version: 3, hash: HASH };
     client.setQueryData(key, restored);
     const invalidate = vi.spyOn(client, 'invalidateQueries');
     applyAcceptancePinFrame(client, frame({ version: 4 }), frame().at);
@@ -206,45 +208,25 @@ describe('applyAcceptancePinFrame', () => {
     invalidate.mockRestore();
   });
 
-  it('a fresh differing read BELOW the frame’s block does not refuse it', () => {
-    // Round 14: "fresh" measures when the tab asked, not how far the
-    // answer reached. A refetch resolving after a governance bump can
-    // have read a lagging node's earlier block; refusing the bump's
-    // frame on that answer discarded a canonical acceptance. The pin
-    // adopts — the CACHE stays untouched (the verdict write still
-    // requires an exact version+hash match), and the reads decide.
+  it('a fresh differing read refuses even a frame from a HIGHER block', () => {
+    // Round 15 P1, withdrawing round 14's height carve-out: height is
+    // not ancestry. A rollback can leave the canonical head BELOW an
+    // orphaned acceptance's height, and treating the lower-height
+    // fresh read as mere lag admitted exactly the orphaned frame this
+    // guard exists to refuse. The differing fresh read always wins;
+    // the frame is a read hint.
     const client = new QueryClient();
     const key = tosQueryKey(84532, ADDRESS);
-    const lagging: TosVerdictData = {
-      accepted: false,
-      version: 3,
-      hash: HASH,
-      observedBlock: B0 - 5,
-    };
-    client.setQueryData(key, lagging);
+    const canonical: TosVerdictData = { accepted: false, version: 3, hash: HASH };
+    client.setQueryData(key, canonical);
     const invalidate = vi.spyOn(client, 'invalidateQueries');
-    applyAcceptancePinFrame(client, frame({ version: 4 }), frame().at);
-    expect(client.getQueryData(key)).toEqual(lagging);
+    applyAcceptancePinFrame(client, frame({ version: 4, block: B0 + 5 }), frame().at);
+    expect(client.getQueryData(key)).toEqual(canonical);
     expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 4, HASH, frame().at)).toBe(
-      true,
+      false,
     );
     expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
     invalidate.mockRestore();
-  });
-
-  it('a fresh differing read with NO height refuses conservatively', () => {
-    // A verdict from before the field existed cannot be ordered
-    // against the frame, and a legal gate resolves the tie closed —
-    // round 13's behaviour, kept for exactly this entry.
-    const client = new QueryClient();
-    const key = tosQueryKey(84532, ADDRESS);
-    const unordered: TosVerdictData = { accepted: false, version: 4, hash: HASH };
-    client.setQueryData(key, unordered);
-    applyAcceptancePinFrame(client, frame({ version: 3 }), frame().at);
-    expect(client.getQueryData(key)).toEqual(unordered);
-    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, frame().at)).toBe(
-      false,
-    );
   });
 
   it('a STALE newer verdict does not refuse — the restored-version story stands', () => {

@@ -49,7 +49,7 @@ import {
   VERDICT_CLOCK_TICK_MS,
   type TosVerdictData,
 } from './tosGate';
-import { acceptanceIsPinned, acceptanceScope, adoptOrderedPin } from './tosAcceptancePin';
+import { acceptanceIsPinned, acceptanceScope, adoptReceiptPin } from './tosAcceptancePin';
 import {
   buildAcceptancePinFrame,
   freshVerdict,
@@ -217,10 +217,6 @@ export function useTosAcceptance(): TosAcceptanceState {
         // read confirms it (#2004 round 9 P2). A genuinely confirmed
         // `true` carries no flag.
         ...(correctLag ? { pinBacked: true } : {}),
-        // The height this answer reaches (#2004 round 14) — what lets
-        // a later receipt or frame tell a read that is merely RECENT
-        // from one that has actually read past it.
-        observedBlock: Number(blockNumber),
       };
     },
   });
@@ -261,12 +257,13 @@ export function useTosAcceptance(): TosAcceptanceState {
           },
         },
       );
-      // The height the acceptance mined at — what every ordering
-      // decision below runs on (#2004 round 14): wall stamps do not
-      // survive a clock correction and cache freshness does not say
-      // how far up the chain a read reached, but the receipt's block
-      // orders this acceptance against both pins and reads.
+      // The receipt's chain position — (mined block, transaction
+      // index) — travels with the pin and the broadcast frame (#2004
+      // rounds 14–15): it is what remote receivers order frames by,
+      // since wall stamps do not survive a clock correction and the
+      // version counter does not survive a rollback.
       const receiptBlock = Number(receipt.blockNumber);
+      const receiptTxIndex = receipt.transactionIndex;
       // Review round 10 P2: the acceptance is CONFIRMED at this point —
       // `write` returns only after the receipt is settled — but the
       // reads that follow can still be behind it. A public RPC serving
@@ -311,44 +308,40 @@ export function useTosAcceptance(): TosAcceptanceState {
       // cannot see that — and a conflicted receipt applies nothing,
       // with the invalidations below re-reading the newer truth.
       const fresh = freshVerdict(queryClient, queryKey, Date.now());
-      // A fresh read that disagrees conflicts (#2004 round 12 P1) —
-      // on version in either direction, or on hash — UNLESS it is
-      // provably BEHIND the receipt by chain height (round 14 P2).
-      // "Fresh" measures when this tab asked, not how far the answer
-      // reached: a background refetch can resolve AFTER the receipt
-      // while having read a lagging node's earlier block, and treating
-      // that answer as a rollback discarded a receipt the user just
-      // paid for — neither cached, nor pinned, nor broadcast. So when
-      // both sides carry heights, the heights decide: a differing
-      // read observed strictly BELOW the receipt's block is
-      // pre-acceptance evidence and does not conflict; one at or past
-      // it has genuinely read beyond the receipt — a reorg rolled the
-      // chain back under it — and writing the receipt's verdict over
-      // that authoritative read would open both gates under a version
-      // no longer current, with the broadcast asking every tab to do
-      // the same. A differing read with no height refuses
-      // conservatively. Equal version and hash is the one
-      // unconditional non-conflict: a fresh refusal there is the lag
-      // this whole module corrects.
+      // ANY fresh read that disagrees conflicts (#2004 round 12 P1) —
+      // not only a numerically greater version, and with no height
+      // carve-out. Round 14 excused a differing read whose observed
+      // block sat below the receipt's as pre-acceptance lag; round
+      // 15's P1 withdrew the same reasoning on the receiver, and it
+      // fails here identically: height is not ancestry, so a fresh
+      // post-rollback read at a lower height is indistinguishable
+      // from a lagging pre-acceptance one, and a legal gate resolves
+      // that tie by believing the read and re-reading — the receipt
+      // is real but unprovable against it, and the invalidations
+      // below re-read the truth either way. Equal version and hash is
+      // the one non-conflict: a fresh refusal there is the lag this
+      // whole module corrects.
       const conflicted =
         fresh !== undefined &&
-        (fresh.version !== acceptedVersion || fresh.hash !== query.data.hash) &&
-        !(fresh.observedBlock !== undefined && fresh.observedBlock < receiptBlock);
-      // The SAME ordered adoption every pin takes (round 14, retiring
-      // round 13's separate trusted-local path): ordering is by mined
-      // block, which handles both cases the special path existed for —
-      // an orphaned higher-version pin loses to this receipt on
-      // height, and round 2's slow-RPC case (a newer acceptance's pin
-      // already applied here) wins on height — without comparing wall
-      // stamps a clock correction can reorder.
+        (fresh.version !== acceptedVersion || fresh.hash !== query.data.hash);
+      // Trusted adoption for the tab's own receipt (#2004 round 15
+      // P2, restoring round 13's path minus its comparison): a
+      // just-settled receipt supersedes any incumbent pin outright —
+      // every attempt to ORDER the two fell to a case its marker
+      // could not see (version to a rollback, wall stamps to a clock
+      // correction, height to a shorter replacement chain). The one
+      // refusal left is the anchor's own expiry: a continuation
+      // resuming from a suspension longer than the TTL applies
+      // nothing, and the reads below carry the case.
       const adopted =
         !conflicted &&
-        adoptOrderedPin(
+        adoptReceiptPin(
           scope,
           acceptedVersion,
           query.data.hash,
           pinnedAt,
           receiptBlock,
+          receiptTxIndex,
           Date.now(),
         );
       // No freshness bar on the cache write for the receipt — it IS
@@ -376,11 +369,6 @@ export function useTosAcceptance(): TosAcceptanceState {
           // aged out at the pin's expiry unless a node confirms it
           // first (#2004 round 9 P2).
           pinBacked: true,
-          // The MAX of the receipt's block and whatever height the
-          // entry being replaced had already read to (round 14) —
-          // regressing the height would make this tab's own evidence
-          // look older than reads it has already absorbed.
-          observedBlock: Math.max(receiptBlock, fresh?.observedBlock ?? 0),
         });
       }
       // #2001: the pin and the cache write above are per-TAB, so a
@@ -414,6 +402,7 @@ export function useTosAcceptance(): TosAcceptanceState {
             query.data.hash,
             pinnedAt,
             receiptBlock,
+            receiptTxIndex,
           ),
         );
       }
