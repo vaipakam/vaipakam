@@ -142,6 +142,93 @@ export function buildAcceptancePinFrame(
   };
 }
 
+/** A NON-ADOPTABLE announcement that an acceptance happened (#2004
+ *  round 35 P1). Sent instead of the pin frame when the acting tab's
+ *  anchor crossed a clock discontinuity between submission and
+ *  settlement: its wall-apparent age is IN-window while its true age
+ *  is unknowable, and a receiver — which never observed the anchor's
+ *  submission — would adopt it as a fresh pin its own heartbeat
+ *  cannot indict. The hint carries no window at all; a receiver only
+ *  runs its authoritative reads, which is everything an unanchorable
+ *  acceptance can honestly ask for. */
+export interface AcceptanceReadHintFrame {
+  kind: 'tos-acceptance-read-hint';
+  chainId: number;
+  /** Same round-3 rule as the pin frame: a hint about a different
+   *  deployment's Terms is dropped, not read. */
+  diamond: string;
+  address: string;
+}
+
+export function buildAcceptanceReadHintFrame(
+  chainId: number,
+  diamond: string,
+  address: string,
+): AcceptanceReadHintFrame {
+  return { kind: 'tos-acceptance-read-hint', chainId, diamond, address };
+}
+
+export function parseAcceptanceReadHintFrame(
+  data: unknown,
+): AcceptanceReadHintFrame | null {
+  if (typeof data !== 'object' || data === null) return null;
+  const f = data as Record<string, unknown>;
+  if (f.kind !== 'tos-acceptance-read-hint') return null;
+  if (typeof f.chainId !== 'number' || !Number.isInteger(f.chainId) || f.chainId <= 0)
+    return null;
+  if (typeof f.diamond !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(f.diamond)) return null;
+  if (typeof f.address !== 'string' || f.address.length === 0) return null;
+  return {
+    kind: 'tos-acceptance-read-hint',
+    chainId: f.chainId,
+    diamond: f.diamond,
+    address: f.address,
+  };
+}
+
+/**
+ * Apply a read hint: verify the deployment, then run the same
+ * immediate-plus-delayed authoritative reads every refusal path uses —
+ * and nothing else. No pin, no cache write, no timers beyond the
+ * delayed read.
+ */
+export function applyAcceptanceReadHint(
+  queryClient: QueryClient,
+  hint: AcceptanceReadHintFrame,
+): void {
+  const deployment = getDeployment(hint.chainId);
+  if (!deployment || deployment.diamond.toLowerCase() !== hint.diamond.toLowerCase())
+    return;
+  scheduleAuthoritativeReadsFor(queryClient, tosQueryKey(hint.chainId, hint.address));
+}
+
+/**
+ * The refusal paths' shared read pair (rounds 2, 33): one immediate
+ * invalidation and one after `RECEIVER_SECOND_READ_MS` — with a
+ * DISTINCT read chained past a data-less in-flight fetch, which both
+ * plain invalidations would otherwise merely join.
+ */
+function scheduleAuthoritativeReadsFor(
+  queryClient: QueryClient,
+  queryKey: ReturnType<typeof tosQueryKey>,
+): void {
+  const dataless = queryClient
+    .getQueryCache()
+    .findAll({ queryKey })
+    .some((q) => q.state.fetchStatus === 'fetching' && q.state.data === undefined);
+  const first = queryClient.invalidateQueries({ queryKey });
+  if (dataless) {
+    void first
+      .then(() => queryClient.invalidateQueries({ queryKey }))
+      .catch(() => {
+        /* refetch failures surface through the query itself */
+      });
+  }
+  setTimeout(() => {
+    void queryClient.invalidateQueries({ queryKey });
+  }, RECEIVER_SECOND_READ_MS);
+}
+
 /**
  * Validate an incoming frame. Everything on the rail is external input
  * — another tab, or a `localStorage` ping any code on the origin could
@@ -285,31 +372,9 @@ export function applyAcceptancePinFrame(
   // and only an authoritative read can tell what is true now. One
   // immediate, one delayed, never a poll.
   const scheduleAuthoritativeReads = () => {
-    // Round 33 P2, mirroring the boot path: an invalidation issued
-    // while the INITIAL fetch is still in flight with no cached data
-    // JOINS that request — and so does the four-second one if the
-    // fetch outlives it — so a read issued BEFORE a long-pending
-    // acceptance mined could satisfy every "authoritative read" this
-    // refusal path promises, with no pin installed to correct it. In
-    // the data-less coalescing case a DISTINCT read is chained after
-    // the joined request settles; every other case keeps the plain
-    // immediate-plus-delayed pair.
-    const dataless = queryClient
-      .getQueryCache()
-      .findAll({ queryKey })
-      .some((q) => q.state.fetchStatus === 'fetching' && q.state.data === undefined);
-    const first = queryClient.invalidateQueries({ queryKey });
-    if (dataless) {
-      void first
-        .then(() => queryClient.invalidateQueries({ queryKey }))
-        .catch(() => {
-          /* refetch failures surface through the query itself */
-        });
-    }
-    setTimeout(() => {
-      void queryClient.invalidateQueries({ queryKey });
-    }, RECEIVER_SECOND_READ_MS);
+    scheduleAuthoritativeReadsFor(queryClient, queryKey);
   };
+
   // Round 4 P1: a frame dated in the FUTURE adopts nothing — its
   // negative age would pass the expiry check below, and its pin would
   // never expire while outranking every legitimate one. See

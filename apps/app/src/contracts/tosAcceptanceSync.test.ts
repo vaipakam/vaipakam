@@ -10,8 +10,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QueryClient } from '@tanstack/react-query';
 import {
   applyAcceptancePinFrame,
+  applyAcceptanceReadHint,
   buildAcceptancePinFrame,
+  buildAcceptanceReadHintFrame,
   parseAcceptancePinFrame,
+  parseAcceptanceReadHintFrame,
   shouldAdoptPinnedVerdict,
   type AcceptancePinFrame,
 } from './tosAcceptanceSync';
@@ -99,6 +102,57 @@ describe('parseAcceptancePinFrame', () => {
     expect(parseAcceptancePinFrame(frame({ txIndex: 2.5 }))).toBeNull();
     expect(parseAcceptancePinFrame({ ...frame(), txIndex: undefined })).toBeNull();
     expect(parseAcceptancePinFrame(frame({ txIndex: 0 }))).toEqual(frame({ txIndex: 0 }));
+  });
+});
+
+describe('acceptance read-hint frame', () => {
+  // Round 35 P1: when the acting tab's anchor crossed a clock
+  // discontinuity mid-flight, its pin frame would hand receivers a
+  // wall-apparent window whose true age is unknowable — and a
+  // receiver, never having observed the submission, cannot indict it.
+  // The acting tab sends this NON-ADOPTABLE hint instead; the only
+  // thing a receiver may do with it is run its authoritative reads.
+  const hint = () => buildAcceptanceReadHintFrame(84532, DIAMOND, ADDRESS);
+
+  it('parses a well-formed hint and rejects malformed ones', () => {
+    expect(parseAcceptanceReadHintFrame(hint())).toEqual(hint());
+    expect(parseAcceptanceReadHintFrame(JSON.parse(JSON.stringify(hint())))).toEqual(hint());
+    // The pin frame is a different kind — neither parser claims the
+    // other's frames.
+    expect(parseAcceptanceReadHintFrame(frame())).toBeNull();
+    expect(parseAcceptancePinFrame(hint())).toBeNull();
+    expect(parseAcceptanceReadHintFrame(null)).toBeNull();
+    expect(parseAcceptanceReadHintFrame({ ...hint(), chainId: '84532' })).toBeNull();
+    expect(parseAcceptanceReadHintFrame({ ...hint(), chainId: 0 })).toBeNull();
+    expect(parseAcceptanceReadHintFrame({ ...hint(), diamond: '0x1234' })).toBeNull();
+    expect(parseAcceptanceReadHintFrame({ ...hint(), address: '' })).toBeNull();
+  });
+
+  it('applies as reads only — no pin, no cache write', () => {
+    const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS);
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    applyAcceptanceReadHint(client, hint());
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: key });
+    invalidate.mockRestore();
+    // The verdict and the pin store are untouched: an unanchorable
+    // acceptance may ask for a read and nothing more.
+    expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(false);
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, HASH, Date.now())).toBe(
+      false,
+    );
+  });
+
+  it('drops a hint about a different Diamond, or an unknown chain', () => {
+    // Same round-3 rule as the pin frame: a hint about a deployment
+    // this build does not read proves nothing about the one it does.
+    const client = new QueryClient();
+    const invalidate = vi.spyOn(client, 'invalidateQueries');
+    applyAcceptanceReadHint(client, { ...hint(), diamond: `0x${'11'.repeat(20)}` });
+    applyAcceptanceReadHint(client, { ...hint(), chainId: 999_983 });
+    expect(invalidate).not.toHaveBeenCalled();
+    invalidate.mockRestore();
   });
 });
 

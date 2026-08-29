@@ -31,8 +31,11 @@ import type { QueryClient } from '@tanstack/react-query';
 import { bumpClaimVerdictEpoch } from '../data/claimVerdictCache';
 import {
   applyAcceptancePinFrame,
+  applyAcceptanceReadHint,
   parseAcceptancePinFrame,
+  parseAcceptanceReadHintFrame,
   type AcceptancePinFrame,
+  type AcceptanceReadHintFrame,
 } from '../contracts/tosAcceptanceSync';
 import { TOS_QUERY_ROOT } from '../contracts/tosGate';
 
@@ -212,7 +215,9 @@ export function publishReceiptInvalidation(
  * pin and cache write; this frame is for everyone else, and both
  * transports self-exclude the sender.
  */
-export function publishAcceptancePin(frame: AcceptancePinFrame): void {
+export function publishAcceptancePin(
+  frame: AcceptancePinFrame | AcceptanceReadHintFrame,
+): void {
   // The pin frame FIRST, then a legacy roots frame naming the Terms
   // query root (#2004 round 25 P2). A tab still running the PREVIOUS
   // build ignores the pin frame by design (no `roots` array), and the
@@ -306,6 +311,14 @@ export function listenForReceiptInvalidations(
     const pin = parseAcceptancePinFrame(data);
     if (pin) {
       applyAcceptancePinFrame(queryClient, pin);
+      return;
+    }
+    // The non-adoptable read hint (round 35 P1): an acceptance whose
+    // anchor crossed a clock discontinuity is announced without a
+    // window — receivers only read.
+    const hint = parseAcceptanceReadHintFrame(data);
+    if (hint) {
+      applyAcceptanceReadHint(queryClient, hint);
       return;
     }
     // The legacy Terms hint is for PREVIOUS builds only (round 32

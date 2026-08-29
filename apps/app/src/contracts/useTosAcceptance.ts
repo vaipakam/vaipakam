@@ -61,6 +61,7 @@ import {
 } from './tosAcceptancePin';
 import {
   buildAcceptancePinFrame,
+  buildAcceptanceReadHintFrame,
   freshVerdict,
   scheduleExpiryRevalidation,
 } from './tosAcceptanceSync';
@@ -491,17 +492,31 @@ export function useTosAcceptance(): TosAcceptanceState {
       // (round 3 P1), so a tab configured for a different deployment
       // of the same chain drops it.
       if (!conflicted && address) {
+        // An INCONSISTENT anchor is announced as a non-adoptable read
+        // hint, never as a pin frame (round 35 P1): its wall-apparent
+        // age is in-window while its true age is unknowable, and a
+        // receiver — which never observed the submission — would
+        // adopt it as a fresh pin its own heartbeat cannot indict.
+        // The hint tells every tab an acceptance happened and to go
+        // read, which is everything an unanchorable acceptance can
+        // honestly ask of them.
         publishAcceptancePin(
-          buildAcceptancePinFrame(
-            readChain.chainId,
-            readChain.diamondAddress,
-            address,
-            acceptedVersion,
-            query.data.hash,
-            pinnedAt,
-            receiptBlock,
-            receiptTxIndex,
-          ),
+          anchorConsistent
+            ? buildAcceptancePinFrame(
+                readChain.chainId,
+                readChain.diamondAddress,
+                address,
+                acceptedVersion,
+                query.data.hash,
+                pinnedAt,
+                receiptBlock,
+                receiptTxIndex,
+              )
+            : buildAcceptanceReadHintFrame(
+                readChain.chainId,
+                readChain.diamondAddress,
+                address,
+              ),
         );
       }
       // Codex review round 1 P2: one immediate re-read is not enough.
