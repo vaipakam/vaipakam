@@ -338,8 +338,16 @@ const copySource = {
     downloadButton: 'Download my data',
     downloadDone: 'Saved',
     eraseTitle: 'Erase it from this browser',
+    /* Review round 3 P2 — this used to promise you would "be asked
+       about cookies and language again". Neither happens: the cookie
+       banner belongs to vaipakam.com and its choice lives on that
+       origin, which this app cannot reach, and the language is reset
+       directly rather than re-asked. Promising a prompt that never
+       arrives is the same defect as promising an erasure that does not
+       reach, and a user expecting to revisit consent here would have
+       kept their old choice believing otherwise. */
     eraseBody:
-      'Removes all of it from this device. Your preferences go back to their defaults, you will be asked about cookies and language again, and anything you had part-way through will lose its local marker.',
+      'Removes all of it from this device. Your display preferences go back to their defaults, and anything you had part-way through will lose its local marker.',
     eraseButton: 'Erase my data',
     eraseConfirm: 'Yes, erase it',
     eraseCancel: 'Cancel',
@@ -347,7 +355,15 @@ const copySource = {
       'This cannot be undone. Download a copy first if you want to keep one.',
     /** Counts are shown rather than a bare "done" — see `eraseMyData`
      *  for why the three outcomes must stay distinguishable. */
-    eraseDone: tmpl('Erased {{count}} stored items from this browser.', ['count']),
+    /* Review round 3 P2 — "from this browser" under-reported whenever
+       another tab cleared its own session data on the broadcast, since
+       the count is only what THIS tab removed. The reach is browser-
+       wide; the number is not, so the sentence says both rather than
+       letting one stand for the other. */
+    eraseDone: tmpl(
+      'Erased {{count}} stored items. Any other tabs you have open have been told to clear theirs as well.',
+      ['count'],
+    ),
     eraseNothing: 'There was nothing stored in this browser to erase.',
     /* A PARTIAL clear is possible: the erase skips a key that throws
        and keeps going, so some can go while others stay. Reporting

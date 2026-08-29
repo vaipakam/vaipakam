@@ -728,11 +728,19 @@ Thin-market honesty rules apply.
 - **If any part of the browser's storage could not be read, the result is
   reported as incomplete rather than successful.** The app cannot claim to have
   emptied a store it was never allowed to look inside.
+- **The page promises no prompt it does not produce.** Erasing returns display
+  preferences to their defaults; it does not re-ask for cookie consent, which
+  belongs to the marketing site and is stored on that site's own origin, and it
+  does not re-ask for a language. Promising a prompt that never arrives is the
+  same failure as promising an erasure that does not reach — a user expecting
+  to revisit a choice would keep it while believing they had not.
 - **An erasure reaches the app's other open tabs.** A small amount of data
   belongs to each tab individually, and a page that says "this browser" may not
   mean "this tab". The download is the exception and says so: it covers the tab
   it was taken from, because collecting the others would mean waiting on tabs
-  that may never answer.
+  that may never answer. The reported COUNT is likewise what the acting tab
+  removed, and the wording says so rather than presenting it as a
+  browser-wide total.
 - **The marketing site's equivalent page does not cover the connected app, and
   cannot.** Browser origin isolation means neither site can read or clear the
   other's stored data. Each surface needs its own controls; neither may claim
