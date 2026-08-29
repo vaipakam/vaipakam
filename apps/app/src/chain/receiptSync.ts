@@ -222,10 +222,18 @@ export function publishAcceptancePin(frame: AcceptancePinFrame): void {
     }
   }
   try {
-    // The value must differ per write or repeat events are swallowed;
-    // `at` is stamped per acceptance, and two acceptances cannot share
-    // a millisecond — a receipt wait sits between them.
     localStorage.setItem(STORAGE_PING_KEY, JSON.stringify(frame));
+    // Removed IMMEDIATELY after dispatch (#2004 review round 1 P2):
+    // unlike the roots frame, this one carries the wallet address, and
+    // a lingering copy is per-wallet data in browser storage that the
+    // Data Rights export would disclose while its note says the
+    // address appears only where the user saved settings. Each storage
+    // MUTATION delivers its own event with its own value snapshot, so
+    // other tabs still receive the set (the removal's null `newValue`
+    // is ignored by every receiver) — and clearing the key also means
+    // the next write always differs, so repeat pings are never
+    // swallowed by the value-must-change rule.
+    localStorage.removeItem(STORAGE_PING_KEY);
   } catch {
     /* storage unavailable (private mode) — nothing else to try */
   }

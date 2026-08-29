@@ -75,12 +75,22 @@ describe('shouldAdoptPinnedVerdict', () => {
     hash: HASH,
   });
 
-  it('adopts into an empty cache and at a matching version', () => {
+  it('adopts only at a matching version', () => {
     // Acceptance is write-only on-chain, so at a matching version the
     // mined `true` can only be AHEAD of a cached `false`.
-    expect(shouldAdoptPinnedVerdict(undefined, 3)).toBe(true);
     expect(shouldAdoptPinnedVerdict(cachedAt(3), 3)).toBe(true);
     expect(shouldAdoptPinnedVerdict(cachedAt(3, true), 3)).toBe(true);
+  });
+
+  it('refuses an EMPTY cache — a frame does not establish version currency', () => {
+    // Review round 1 P1. The acting tab may seed its empty cache
+    // because its receipt anchors the version (`acceptTerms` reverts
+    // on a stale one); a frame proves only that the wallet accepted
+    // that version at some point. Seeding `accepted: true` here would
+    // be a fresh successful entry TanStack serves while the first real
+    // read is in flight — the gate open under a version the wallet
+    // never accepted, from a tab that never read the chain at all.
+    expect(shouldAdoptPinnedVerdict(undefined, 3)).toBe(false);
   });
 
   it('refuses when the receiving tab has seen a different version', () => {
@@ -107,14 +117,15 @@ describe('applyAcceptancePinFrame', () => {
     expect(acceptanceIsPinned(scope, 3, at + ACCEPTANCE_PIN_TTL_MS + 1)).toBe(false);
   });
 
-  it('writes the mined verdict into an empty cache', () => {
+  it('stores only the pin into an empty cache — never a verdict', () => {
+    // Review round 1 P1: the tab that has never read the chain takes
+    // the pin and nothing else; its FIRST real read adopts it exactly
+    // when the chain still reports this version, through the same
+    // queryFn correction every other read uses.
     const client = new QueryClient();
     applyAcceptancePinFrame(client, frame());
-    expect(client.getQueryData(tosQueryKey(84532, ADDRESS))).toEqual({
-      accepted: true,
-      version: 3,
-      hash: HASH,
-    });
+    expect(client.getQueryData(tosQueryKey(84532, ADDRESS))).toBeUndefined();
+    expect(acceptanceIsPinned(acceptanceScope(84532, ADDRESS), 3, frame().at)).toBe(true);
   });
 
   it('overwrites a stale false at the same version', () => {
@@ -145,7 +156,39 @@ describe('applyAcceptancePinFrame', () => {
     // connected. If the apply path built its own key spelling, the
     // write and the gate's read would miss each other silently.
     const client = new QueryClient();
+    const key = tosQueryKey(84532, ADDRESS.toLowerCase());
+    client.setQueryData<TosVerdictData>(key, { accepted: false, version: 3, hash: HASH });
     applyAcceptancePinFrame(client, frame({ address: ADDRESS.toUpperCase().replace('0X', '0x') }));
-    expect(client.getQueryData(tosQueryKey(84532, ADDRESS.toLowerCase()))).toBeDefined();
+    expect(client.getQueryData<TosVerdictData>(key)?.accepted).toBe(true);
+  });
+
+  it('a delayed OLDER frame cannot evict a newer pin', () => {
+    // Review round 1 P2: BroadcastChannel delivery is not globally
+    // ordered across senders, so a v3 frame can arrive after the v4
+    // one. One pin per scope — an unconditional overwrite would leave
+    // only the v3 pin, and the next lagging `false` read at v4 would
+    // find nothing to correct it: prompt re-armed, second payment back
+    // on the table.
+    const client = new QueryClient();
+    const scope = acceptanceScope(84532, ADDRESS);
+    const v4At = 1_700_000_100_000;
+    applyAcceptancePinFrame(client, frame({ version: 4, at: v4At }));
+    applyAcceptancePinFrame(client, frame({ version: 3, at: v4At - 5_000 }));
+    expect(acceptanceIsPinned(scope, 4, v4At)).toBe(true);
+    expect(acceptanceIsPinned(scope, 3, v4At)).toBe(false);
+  });
+
+  it('a duplicate frame at the same version cannot rewind the window', () => {
+    // Same version, older timestamp: the existing pin's window stands.
+    // A LATER same-version acceptance (the chain permits one) extends
+    // it, anchored to a real receipt.
+    const client = new QueryClient();
+    const scope = acceptanceScope(84532, ADDRESS);
+    const at = 1_700_000_000_000;
+    applyAcceptancePinFrame(client, frame({ at }));
+    applyAcceptancePinFrame(client, frame({ at: at - 60_000 }));
+    expect(acceptanceIsPinned(scope, 3, at + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
+    applyAcceptancePinFrame(client, frame({ at: at + 30_000 }));
+    expect(acceptanceIsPinned(scope, 3, at + 30_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(true);
   });
 });

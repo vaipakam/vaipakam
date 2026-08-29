@@ -33,7 +33,7 @@
  */
 import type { QueryClient } from '@tanstack/react-query';
 import { tosQueryKey, type TosVerdictData } from './tosGate';
-import { acceptanceScope, pinAcceptance } from './tosAcceptancePin';
+import { acceptanceScope, adoptBroadcastPin } from './tosAcceptancePin';
 
 /** What the acting tab broadcasts after `acceptTerms` is mined and its
  *  receipt waited for. `kind` is the discriminator on the shared
@@ -92,21 +92,34 @@ export function parseAcceptancePinFrame(data: unknown): AcceptancePinFrame | nul
  * Whether the receiving tab may write the mined verdict straight into
  * its cache, ahead of the refetch.
  *
- * Yes when it holds nothing, or holds a verdict at the SAME version —
- * acceptance is write-only on-chain, so at a matching version the
- * mined `true` can only be ahead of a cached `false`, never wrong.
- * No when the cached version DIFFERS: this tab has seen a version the
- * acting tab had not when it accepted (governance installed a new one
- * in between), and overwriting would open the gate on terms the wallet
- * never accepted. The pin is still stored — it simply never matches
- * the newer version — and the invalidation that follows re-reads the
- * truth.
+ * ONLY when it already holds a verdict at the SAME version. Acceptance
+ * is write-only on-chain, so at a matching version the mined `true`
+ * can only be ahead of a cached `false`, never wrong — and rewriting
+ * `accepted` within a version leaves the entry's implicit claim about
+ * WHICH version is in force exactly as the tab's own read left it.
+ *
+ * A DIFFERENT cached version refuses for the obvious reason: this tab
+ * has seen a version the acting tab had not when it accepted, and
+ * overwriting would open the gate on terms the wallet never accepted.
+ *
+ * An ABSENT entry refuses too (review round 1 P1), and the asymmetry
+ * with the acting tab is the point. The acting tab may seed an empty
+ * cache because its receipt anchors the version: `acceptTerms` reverts
+ * on a stale version, so a mined acceptance proves the version was in
+ * force when it mined. A frame proves only that the wallet accepted
+ * that version AT SOME POINT — governance may have installed a newer
+ * one since — and a seeded `accepted: true` is a fresh successful
+ * entry TanStack would serve while its first real read is still in
+ * flight, opening both gates under the newer version. So an empty
+ * cache takes only the pin; the first real read adopts it exactly when
+ * the chain still reports that version, through the same `queryFn`
+ * correction every other read uses.
  */
 export function shouldAdoptPinnedVerdict(
   cached: TosVerdictData | undefined,
   version: number,
 ): boolean {
-  return cached === undefined || cached.version === version;
+  return cached !== undefined && cached.version === version;
 }
 
 /**
@@ -124,7 +137,9 @@ export function applyAcceptancePinFrame(
   frame: AcceptancePinFrame,
 ): void {
   const scope = acceptanceScope(frame.chainId, frame.address);
-  pinAcceptance(scope, frame.version, frame.at);
+  // Ordered adoption, not a plain overwrite: a delayed older frame
+  // must not evict a newer pin — see `adoptBroadcastPin`.
+  adoptBroadcastPin(scope, frame.version, frame.at);
   const queryKey = tosQueryKey(frame.chainId, frame.address);
   const cached = queryClient.getQueryData<TosVerdictData>(queryKey);
   if (shouldAdoptPinnedVerdict(cached, frame.version)) {
