@@ -325,7 +325,22 @@ export function listenForReceiptInvalidations(
   };
   window.addEventListener('storage', onStorage);
 
+  // Round 27 P2: a tab that was BOOTING when an acceptance broadcast
+  // went out had no listener yet — BroadcastChannel does not queue for
+  // future subscribers, and the storage fallback is skipped when the
+  // channel delivers (and clears its value immediately regardless). If
+  // that tab's INITIAL Terms read then hit a lagging RPC, its cached
+  // refusal stood until the 60-second poll. One delayed re-read at
+  // listener start covers the gap: by the lag-window delay the read
+  // layer serves the acceptance the missed frame was announcing.
+  // Active-only, once per tab boot — a frame is an optimization, the
+  // read is the truth.
+  const bootRecheck = setTimeout(() => {
+    invalidateRoots(queryClient, [TOS_QUERY_ROOT]);
+  }, SECOND_READ_DELAY_MS);
+
   return () => {
+    clearTimeout(bootRecheck);
     ch?.removeEventListener('message', onMessage);
     window.removeEventListener('storage', onStorage);
   };

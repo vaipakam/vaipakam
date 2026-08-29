@@ -137,6 +137,51 @@ function pinExpired(pin: AcceptancePin, now: number): boolean {
   return now - pin.at > ACCEPTANCE_PIN_TTL_MS || monoNow() > pin.monoDeadline;
 }
 
+/**
+ * The two expiry clocks can be blinded TOGETHER (round 27 P1): on
+ * platforms where the monotonic clock stalls through a system sleep,
+ * a wall correction applied DURING that sleep leaves neither bound
+ * having observed the suspension — the wall window gained the
+ * correction, the elapsed window gained the nap. No clock readable
+ * from inside the page can measure that interval, so the fail-closed
+ * answer is detection rather than measurement: while any pin lives, a
+ * heartbeat watches for the wall clock REGRESSING between beats (the
+ * signature both blinding scenarios share), and on detecting one it
+ * poisons every pin's monotonic deadline. Poisoned — not deleted:
+ * death through `pinExpired` lets the expiry timers observe
+ * `expired` and AGE the pin-backed verdicts they guard, where a bare
+ * deletion would read as `superseded` and leave those verdicts
+ * coasting (round 20's orphan, deliberately avoided). The heartbeat
+ * runs only while pins exist — at most a handful of beats per
+ * 90-second window — and a correction smaller than the shared skew
+ * allowance is tolerated as ordinary adjustment.
+ */
+const CLOCK_REGRESSION_CHECK_MS = 10_000;
+let lastBeatWall = 0;
+let beatTimer: ReturnType<typeof setInterval> | null = null;
+
+function stopClockWatch(): void {
+  if (beatTimer !== null) {
+    clearInterval(beatTimer);
+    beatTimer = null;
+  }
+}
+
+function ensureClockWatch(): void {
+  if (beatTimer !== null) return;
+  lastBeatWall = Date.now();
+  beatTimer = setInterval(() => {
+    const wall = Date.now();
+    if (wall < lastBeatWall - MAX_FUTURE_SKEW_MS) {
+      for (const pin of pins.values()) {
+        pin.monoDeadline = Number.NEGATIVE_INFINITY;
+      }
+    }
+    lastBeatWall = wall;
+    if (pins.size === 0) stopClockWatch();
+  }, CLOCK_REGRESSION_CHECK_MS);
+}
+
 function storePin(
   scope: string,
   version: number,
@@ -157,6 +202,43 @@ function storePin(
     // when one of the clocks misbehaves.
     monoDeadline: monoNow() + Math.max(0, at + ACCEPTANCE_PIN_TTL_MS - now),
   });
+  ensureClockWatch();
+}
+
+/**
+ * Merge a SAME-TERMS candidate into a live incumbent (round 27 P1,
+ * refining round 25's later-anchor rule). Identical version and hash
+ * protect identically, so the merged pin keeps the BEST of each
+ * independent piece of evidence: the LATER anchor (the longer
+ * window, with its deadline) and the NEWER chain position (the
+ * stronger ordering stand — round 25's early return kept the
+ * incumbent's older block too, and a fork-rival frame from a height
+ * between the two positions then beat a pin whose true acceptance
+ * had mined above it). Both fields came from real receipts of the
+ * same text; neither may be regressed by the other's arrival.
+ */
+function mergeSameTermsPin(
+  scope: string,
+  existing: AcceptancePin,
+  at: number,
+  block: number,
+  txIndex: number,
+  now: number,
+): void {
+  const laterAnchor = existing.at >= at;
+  const newerPosition =
+    existing.block > block || (existing.block === block && existing.txIndex >= txIndex);
+  pins.set(scope, {
+    version: existing.version,
+    hash: existing.hash,
+    at: laterAnchor ? existing.at : at,
+    block: newerPosition ? existing.block : block,
+    txIndex: newerPosition ? existing.txIndex : txIndex,
+    monoDeadline: laterAnchor
+      ? existing.monoDeadline
+      : monoNow() + Math.max(0, at + ACCEPTANCE_PIN_TTL_MS - now),
+  });
+  ensureClockWatch();
 }
 
 /** Identifies one wallet on one chain. Acceptance is recorded per
@@ -259,14 +341,12 @@ export function adoptOrderedPin(
   }
   if (existing && existing.version === version && existing.hash === hash) {
     // SAME terms — a duplicate re-broadcast, or a genuine second
-    // acceptance of identical text. Chain position is irrelevant to
-    // what the pin protects here (the terms are the terms); the only
-    // meaningful difference is the WINDOW, so the later anchor wins
-    // and an earlier one changes nothing (round 25 P2 generalized
-    // this from same-position duplicates: a re-acceptance mined in a
-    // later block must also not REGRESS the window an earlier-mined,
-    // later-anchored acceptance already carries).
-    if (existing.at >= at) return false;
+    // acceptance of identical text. Neither the window nor the chain
+    // position may be regressed (rounds 25 and 27): the pins MERGE,
+    // keeping the later anchor and the newer position, whichever
+    // frame carried each.
+    mergeSameTermsPin(scope, existing, at, block, txIndex, now);
+    return true;
   } else if (existing && existing.block === block && existing.txIndex === txIndex) {
     // Two DIFFERENT transactions claiming one chain position can
     // only be fork rivals (round 19 P2), and frames carry no branch
@@ -330,22 +410,23 @@ export function adoptReceiptPin(
 ): boolean {
   if (now - at > ACCEPTANCE_PIN_TTL_MS || at > now + MAX_FUTURE_SKEW_MS) return false;
   const existing = pins.get(scope);
-  // A LIVE incumbent for the SAME terms with a LATER anchor stands
-  // (round 25 P2): this receipt sat pending while another tab's
-  // acceptance of identical text was adopted here, and superseding
-  // that pin would only REGRESS the shared window — the expiry timers
-  // key on version and hash, so every tab's protection would shrink
-  // to this receipt's nearly-spent anchor. The receipt is still fully
-  // believed (the return is true and the caller proceeds); the pin
-  // simply keeps the longer of two anchors for one and the same
-  // acceptance semantics.
+  // A LIVE incumbent for the SAME terms MERGES with the receipt
+  // (round 25 P2, refined by round 27 P1): this receipt sat pending
+  // while another tab's acceptance of identical text was adopted
+  // here. Superseding outright would regress the shared window to
+  // this receipt's nearly-spent anchor; keeping the incumbent
+  // untouched — round 25's first cut — discarded the receipt's NEWER
+  // chain position, and a fork-rival frame from a height between the
+  // two positions then beat a pin whose true acceptance had mined
+  // above it. The merge keeps the later anchor AND the newer
+  // position; the receipt is fully believed either way.
   if (
     existing &&
     existing.version === version &&
     existing.hash === hash &&
-    existing.at > at &&
     !pinExpired(existing, now)
   ) {
+    mergeSameTermsPin(scope, existing, at, block, txIndex, now);
     return true;
   }
   storePin(scope, version, hash, at, block, txIndex, now);
@@ -469,4 +550,6 @@ export function observePinExpiry(
 /** Test seam only — the app never forgets a pin, it lets it expire. */
 export function __clearAcceptancePins(): void {
   pins.clear();
+  stopClockWatch();
+  lastBeatWall = 0;
 }

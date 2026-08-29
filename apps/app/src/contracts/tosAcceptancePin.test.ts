@@ -148,25 +148,34 @@ describe('adoptOrderedPin', () => {
     expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + 20_000, B0, 4, T0 + 20_000)).toBe(false);
   });
 
-  it('breaks an identical chain position by the later stamp ONLY for the same acceptance', () => {
-    // The same transaction re-broadcast — a duplicate frame. The
-    // later stamp anchors the longer window.
-    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0);
-    expect(adoptOrderedPin(SCOPE, 3, HASH, T0, B0, TX0, T0 + 1_000)).toBe(false);
-    expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + 5_000, B0, TX0, T0 + 6_000)).toBe(true);
-  });
-
-  it('a same-terms frame never regresses the window, whatever its chain position', () => {
-    // Round 25 P2: identical version and hash means identical
-    // protection — the only meaningful difference is the window, so
-    // the later anchor wins even from an earlier block, and an
-    // earlier anchor changes nothing even from a later one.
+  it('same-terms frames MERGE — the window never regresses, whatever the position', () => {
+    // Rounds 25 and 27: identical version and hash protect
+    // identically, so same-terms pins merge, keeping the later anchor
+    // and the newer chain position from whichever frame carried each.
+    // A duplicate with an earlier anchor changes the window not at
+    // all; one with a later anchor extends it.
     pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0 + 30_000);
-    expect(adoptOrderedPin(SCOPE, 3, HASH, T0, B0 + 5, 0, T0 + 31_000)).toBe(false);
+    expect(adoptOrderedPin(SCOPE, 3, HASH, T0, B0 + 5, 0, T0 + 31_000)).toBe(true);
     expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 30_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(
       true,
     );
     expect(adoptOrderedPin(SCOPE, 3, HASH, T0 + 40_000, B0 - 5, 0, T0 + 41_000)).toBe(true);
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 40_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(
+      true,
+    );
+  });
+
+  it('the merge keeps the newer chain position, so a fork rival cannot slip between', () => {
+    // Round 27 P1: with the incumbent's LATER anchor but OLDER block
+    // kept whole, a differing frame from a height between the two
+    // positions would have beaten the pin whose true acceptance mined
+    // above it. After the merge the recorded position is the higher
+    // one, and the mid-height rival loses on ordering.
+    pinAcceptance(SCOPE, 3, HASH, B0, TX0, T0 + 30_000);
+    expect(adoptOrderedPin(SCOPE, 3, HASH, T0, B0 + 10, 0, T0 + 31_000)).toBe(true);
+    const H4 = `0x${'44'.repeat(32)}`;
+    expect(adoptOrderedPin(SCOPE, 4, H4, T0 + 32_000, B0 + 5, 0, T0 + 32_000)).toBe(false);
+    expect(acceptanceIsPinned(SCOPE, 3, HASH, T0 + 33_000)).toBe(true);
   });
 
   it('leaves NEITHER pin standing when fork rivals claim one position', () => {
@@ -245,17 +254,21 @@ describe('adoptReceiptPin', () => {
     expect(acceptanceIsPinned(SCOPE, 3, H2, late)).toBe(false);
   });
 
-  it('keeps a live same-terms incumbent whose anchor is LATER', () => {
-    // Round 25 P2: this receipt sat pending while another tab's
-    // acceptance of identical text was adopted here with a longer
-    // window. Superseding would shrink every tab's protection to a
-    // nearly-spent anchor; the receipt is still believed (true), but
-    // the longer same-semantics anchor stands.
+  it('merges with a live same-terms incumbent: later anchor AND newer position both kept', () => {
+    // Round 25 P2 refined by round 27 P1: this receipt sat pending
+    // while another tab's acceptance of identical text was adopted
+    // here with a longer window. The merge keeps that window (no
+    // regression to the nearly-spent anchor) AND the receipt's newer
+    // chain position — round 25's untouched-incumbent cut let a
+    // fork-rival frame from between the two heights beat the pin.
     pinAcceptance(SCOPE, 3, H2, B0, TX0, T0 + 60_000);
-    expect(adoptReceiptPin(SCOPE, 3, H2, T0, B0 + 5, 0, T0 + 61_000)).toBe(true);
+    expect(adoptReceiptPin(SCOPE, 3, H2, T0, B0 + 10, 0, T0 + 61_000)).toBe(true);
     expect(acceptanceIsPinned(SCOPE, 3, H2, T0 + 60_000 + ACCEPTANCE_PIN_TTL_MS)).toBe(
       true,
     );
+    const H4 = `0x${'44'.repeat(32)}`;
+    expect(adoptOrderedPin(SCOPE, 4, H4, T0 + 62_000, B0 + 5, 0, T0 + 62_000)).toBe(false);
+    expect(acceptanceIsPinned(SCOPE, 3, H2, T0 + 63_000)).toBe(true);
   });
 
   it('refuses a receipt anchored in the future beyond the skew allowance', () => {
