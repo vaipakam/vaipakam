@@ -13,7 +13,12 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ANVIL_URL, waitForAnvil } from './lib/anvil';
+import {
+  ANVIL_URL,
+  assertForkUsable,
+  isForkUnusableError,
+  waitForAnvil,
+} from './lib/anvil';
 import { createAndFundWallets } from './lib/wallets';
 import { seedRoleAssets } from './lib/seed';
 
@@ -154,8 +159,54 @@ export default async function globalSetup(): Promise<void> {
       anvilDied,
     ]);
     if (anvilOutcome === 'ready') {
-      anvilStarted = true;
-      break;
+      // READY IS NOT USABLE (#1979). anvil forks lazily: `eth_chainId`
+      // is answered from its own config and never touches the upstream,
+      // so a fork whose base block the upstream can no longer serve is
+      // up, ready, and broken. That used to surface at the first
+      // `setBalance` in `createAndFundWallets` — past this loop, so a
+      // transient upstream turned innocent PRs red with no retry. One
+      // state read here puts the failure back inside the retry it was
+      // always meant for.
+      let forkError: unknown = null;
+      try {
+        await assertForkUsable();
+      } catch (e) {
+        forkError = e;
+      }
+      if (forkError === null) {
+        anvilStarted = true;
+        break;
+      }
+      // Only the fork-backend class is retried. Anything else is a real
+      // failure and must not be laundered into a flake.
+      if (!isForkUnusableError(forkError)) throw forkError;
+      // Unlike the exit-before-ready path, THIS child is alive — kill it
+      // before the port check below, and drop its PID once it is gone so
+      // teardown cannot later kill a reassigned number.
+      anvil.kill('SIGKILL');
+      await anvilDied;
+      const liveIdx = anvil.pid ? pids.indexOf(anvil.pid) : -1;
+      if (liveIdx !== -1) pids.splice(liveIdx, 1);
+      fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
+
+      if (attempt === attempts) {
+        throw new Error(
+          `anvil started and reported ready, but its fork base is not ` +
+            `servable after ${attempts} attempt(s): ${String(forkError)}. ` +
+            `The fork RPC could not return state for the block anvil ` +
+            `forked at — it was pruned or reorged out from under the run. ` +
+            `See #1979.`,
+        );
+      }
+      // Said out loud for the same reason the exit-before-ready retry is:
+      // a silent retry turns a degrading RPC into an invisible slowdown.
+      console.warn(
+        `[e2e] anvil is up but its fork base is not servable ` +
+          `(${String(forkError)}) — attempt ${attempt}/${attempts}, retrying`,
+      );
+      await new Promise((r) => setTimeout(r, 2_000 * attempt));
+      await assertNothingListening(ANVIL_URL, 'anvil');
+      continue;
     }
     // The child is confirmed dead. Drop its PID before doing anything
     // else, including throwing: teardown kills every recorded PID, and
@@ -202,7 +253,9 @@ export default async function globalSetup(): Promise<void> {
   if (!anvilStarted) {
     throw new Error('anvil did not start');
   }
-  console.log('[e2e] anvil fork ready (chainId 84532)');
+  // "usable" not "ready" (#1979): the fork's base state has been read,
+  // so this line now means what the next hundred lines depend on.
+  console.log('[e2e] anvil fork usable (chainId 84532, fork state readable)');
 
   const stub = spawn(
     process.execPath,

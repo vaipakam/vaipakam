@@ -41,6 +41,45 @@ export async function mine(blocks = 1): Promise<void> {
   for (let i = 0; i < blocks; i++) await anvilRpc('evm_mine', []);
 }
 
+/**
+ * Errors that mean the FORK BACKEND could not serve state for the block
+ * anvil forked at — as opposed to anvil itself being broken (#1979).
+ * The upstream pruned or reorged the head between anvil's genesis and
+ * the first state read, or a fallback endpoint in the pool never had
+ * it. Transient by nature: a fresh anvil picks a new head.
+ */
+const FORK_UNUSABLE_RE = /unknown block|block could not be found|header not found/i;
+
+export function isForkUnusableError(e: unknown): boolean {
+  return FORK_UNUSABLE_RE.test(e instanceof Error ? e.message : String(e));
+}
+
+/**
+ * Prove the fork is USABLE, not merely listening (#1979).
+ *
+ * `waitForAnvil` answers "is anvil up?" — `eth_chainId` is served from
+ * anvil's own config and never touches the upstream. But anvil forks
+ * LAZILY: it accepts RPC immediately and fetches account state on
+ * demand. So a fork whose base block the upstream can no longer serve
+ * is up, ready, and unusable, and the failure surfaces at the first
+ * state read — which used to be `setBalance` in `createAndFundWallets`,
+ * far past every retry branch in global-setup.
+ *
+ * This is that first state read, pulled forward to where the retry can
+ * still act on it. `eth_getBalance` against the fork's parent state is
+ * the cheapest call that must reach the upstream; the address is
+ * arbitrary (a nonexistent account still forces the lookup).
+ *
+ * Throws the underlying error unchanged — the caller classifies it with
+ * `isForkUnusableError`, so a genuine bug is never swallowed as a flake.
+ */
+export async function assertForkUsable(): Promise<void> {
+  await anvilRpc<string>('eth_getBalance', [
+    '0x000000000000000000000000000000000000dEaD',
+    'latest',
+  ]);
+}
+
 /** Wait until anvil answers with the expected fork chain id. */
 export async function waitForAnvil(timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
