@@ -181,7 +181,12 @@ are only meaningful to the extent we hold data about you.
   small amount of data belonging to the tab you run it from — a little
   is per-tab, so download from each open tab if you want the complete
   picture. What it exports is browser storage, not a wallet-keyed
-  profile: we do not assemble one.
+  profile: we do not assemble one. Note before you share the file: it
+  is not purely a copy of storage. It also records when it was made,
+  the site it was made on, and your browser's user-agent string, which
+  identifies your browser and operating system. That is generated at
+  export time, is never sent to us, and is included so the file is
+  self-describing — but it does travel with the file if you pass it on.
 - **Right to erasure.** Use the "Delete my data" control on the same
   page. It clears the app's local storage for that site, the session
   storage in the tab you run it from, and the shared `vaipakam.com`
@@ -189,8 +194,12 @@ are only meaningful to the extent we hold data about you.
   also asks any other open tabs to clear their own session storage; a
   tab that cannot hear that request — an older build, or a browser
   without the messaging feature it uses — keeps its session data until
-  you close it. Three further limits, stated plainly because a control
-  that overstates itself is worse than none.
+  you close it. It does NOT clear your wallet-connection state, which
+  the wallet-connection library stores under its own name: after
+  deleting, a reload can reconnect the same wallet. Disconnect in the
+  app, or clear site data in your browser, if that is what you wanted.
+  Three further limits, stated plainly because a control that
+  overstates itself is worse than none.
   First, on-chain transactions are public and immutable — we have no
   power to erase them, and that is a wallet / chain-level question
   rather than a data-processor one. Second, the app's own local and
@@ -231,10 +240,12 @@ inherently handle.
   pre-filled GitHub report the Diagnostics drawer builds (which sends
   it to GitHub at that moment), or sending a support ticket with the
   attach box ticked.
-- Server-side error records: none are being created — the current
-  app sends none (see "Error records on our servers"). Any record
-  created before that changed is pruned 90 days after its capture,
-  and can be erased sooner on your signed request.
+- Server-side error records: the shipping app creates none — it sends
+  no error records at all (see "Error records on our servers"). Any
+  record that does exist, whether captured while automatic capture ran
+  or by our own operators exercising the endpoint's health check, is
+  pruned 90 days after its capture and can be erased sooner on your
+  signed request.
 - Alert subscriptions: unlinking removes the Telegram chat
   connection immediately; alert preferences and delivery dedupe
   records (which carry no Telegram identity) are kept so re-linking
