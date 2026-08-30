@@ -87,8 +87,9 @@ reimplements it.)*
   pair/duration/liquidity filters, rank-by-distance-to-anchor, accept modal with Permit2.
 - `apps/app` (the flagship redesign) had only a flat advanced-mode list
   (`pages/Offers.tsx`) — no table, no depth, no pair pivot.
-- `packages/ui` is deliberately thin (5 primitives). No dense multi-panel layout
-  primitive, no chart. Both would be net-new.
+- There is no shared component package to build on: `packages/ui` held five thin
+  primitives and was retired in #1963. No dense multi-panel layout primitive, no
+  chart — both would be net-new, now with no shared base under them at all.
 - The Basic/Advanced doctrine (`ModeContext`, `BasicUserUXSimplification.md`) gives the
   terminal a natural home: an advanced-only route, hidden from Basic nav, deep-linkable.
 

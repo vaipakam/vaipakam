@@ -63,5 +63,5 @@ No secrets — there's nothing here that requires server-side credentials. `apps
 ## Related
 
 - `apps/app` — the connected app. An INDEPENDENT tree, not an overlay: it was developed separately and shares no source with this one (which is why, as noted above, neither can regress the other). The only coupling is the cross-domain links in `src/lib/appUrl.ts`. The "overlay on a shared marketing base" description belonged to the app this one replaced.
-- `packages/ui` — React primitives, ORPHANED since #1854: nothing imports them (this app keeps only an unused dependency entry), and nothing typechecks the package either. See its README and #1963.
+- `packages/ui` — **RETIRED in #1963.** It held five React primitives, was orphaned by the #1854 `apps/defi` deletion, and this app's dependency entry on it was never a real import. Both the package and that entry are gone; recover the source from git history if a surface ever wants them.
 - `packages/lib` — `crossDomainPref` (parent-domain cookie helper for preference sync across the two surfaces). LANGUAGE-only in practice today: the connected app reads the language cookie but not the theme one (see the note in `src/context/ThemeContext.tsx`).

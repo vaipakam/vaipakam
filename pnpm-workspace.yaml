@@ -48,8 +48,11 @@
 # `packages/` holds shared internal libraries — no deploy of their
 # own, consumed by the apps via workspace `:` protocol:
 #   - packages/contracts  ABI JSONs + deployments + ChainConfig
-#   - packages/ui         shared React components
 #   - packages/lib        shared utilities (formatters, multicall, ...)
+#   (packages/ui, five shared React primitives, was RETIRED in #1963.
+#    #1854 deleted apps/defi, its last consumer, leaving a package that
+#    nothing imported and nothing typechecked. Recover from git history
+#    if a surface ever wants those primitives back.)
 #
 # `contracts/` (Foundry) is intentionally NOT in this workspace —
 # it's a Solidity project, not a JS package. Its build tooling

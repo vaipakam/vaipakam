@@ -126,7 +126,10 @@ jobs:
           # verification every signed endpoint now routes through. Being
           # outside this detector meant an agent-only PR did not even
           # TRIGGER the workflow, so the gap was two-layered.
-          DEFI_RE='^(apps/(app|indexer|keeper|agent)/|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
+          # `packages/ui` was in this list until #1963 retired the package
+          # (orphaned by the #1854 apps/defi deletion). No path can match
+          # a package that no longer exists.
+          DEFI_RE='^(apps/(app|indexer|keeper|agent)/|packages/(lib|contracts|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else

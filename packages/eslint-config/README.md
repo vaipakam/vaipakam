@@ -25,7 +25,7 @@ guard body is shared. The table is an index; the headers are the source.
 | Package | Why a narrow guard | Deleted when |
 | --- | --- | --- |
 | `apps/www` | had **no** lint configuration at all; the gap was found when a conditional hook survived in the copy of `LiveValue` that the docs actually render | www gets a full config |
-| `packages/ui` | not deployed itself, but compiled **into** deployed surfaces; per-app guards run from their own directory and do not follow imports across the workspace boundary | the package gets a full config |
+| `packages/ui` | not deployed itself, but compiled **into** deployed surfaces; per-app guards run from their own directory and do not follow imports across the workspace boundary | **RETIRED** — the package was deleted in #1963 once #1854 removed its last consumer, so the guard went with it |
 
 `apps/app` is absent on purpose — it runs a full `eslint .` with four
 react-hooks rules promoted to error (#1520).
