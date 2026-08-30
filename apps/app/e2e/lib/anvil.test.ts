@@ -9,7 +9,11 @@
  * case `vitest.config.ts` describes.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { assertForkUsable, isForkUnusableError } from './anvil';
+import {
+  ForkProbeTimeoutError,
+  assertForkUsable,
+  isForkUnusableError,
+} from './anvil';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -50,6 +54,14 @@ describe('isForkUnusableError', () => {
     );
     expect(isForkUnusableError(new Error('invalid opcode'))).toBe(false);
     expect(isForkUnusableError(undefined)).toBe(false);
+  });
+
+  it('recognises the probe\u2019s OWN deadline, by class not by phrase', () => {
+    // The timeout is its own class deliberately: "timed out" is far too
+    // generic to sit in the message regex — a timed-out contract call or
+    // a slow unrelated fetch would start being retried as a fork flake.
+    expect(isForkUnusableError(new ForkProbeTimeoutError(30_000))).toBe(true);
+    expect(isForkUnusableError(new Error('request timed out'))).toBe(false);
   });
 });
 
@@ -97,5 +109,29 @@ describe('assertForkUsable', () => {
     await assertForkUsable().catch((e: unknown) => {
       expect(isForkUnusableError(e)).toBe(false);
     });
+  });
+
+  it('is BOUNDED — a hanging upstream fails instead of hanging the run', async () => {
+    // The probe is the only harness call that reaches THROUGH anvil to a
+    // service we do not control, and it sits on the critical path of
+    // every fork-tier run. Unbounded, an upstream outage would replace a
+    // red run with a job that sits until Playwright kills it.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (_url: unknown, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => {
+              const err = new Error('aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          }),
+      ),
+    );
+    const err = await assertForkUsable(25).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ForkProbeTimeoutError);
+    expect(isForkUnusableError(err)).toBe(true);
+    expect(String(err)).toMatch(/25ms/);
   });
 });
