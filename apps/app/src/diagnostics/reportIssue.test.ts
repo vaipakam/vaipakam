@@ -172,6 +172,19 @@ describe('redactText — fails closed rather than guessing (#2024 Codex r2)', ()
     expect(out).not.toContain(ADDR);
   });
 
+  it('takes the hex payload with the escapes it was attached to', () => {
+    // Codex r5 P1, and the sharpest finding of the review. Deleting the
+    // escape run ALONE was fail-OPEN wearing fail-closed's clothes: with only
+    // the `0x` escaped, `%30%78` + forty plain hex digits became
+    // `…1234567890abcdef…` — every digit of the account, on a public issue,
+    // one fixed two-character prefix from whole. Measured on the real
+    // function before the fix, on this branch and the oversized one.
+    const deep = pctPercentsN(`%30%78${ADDR.slice(2)}`, 64);
+    const out = redactText(deep);
+    expect(out).not.toContain(ADDR.slice(2));
+    expect(out).not.toContain(ADDR.slice(2, 22));
+  });
+
   it('a run of escaped percent signs is a fixpoint, not an exhaustion', () => {
     // Worth pinning because it corrected my own mental model: `%25%25…`
     // decodes to `%%…`, and a percent followed by a percent is not an escape,
@@ -241,6 +254,27 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     const out = redactText(`${ADDR} ${'%25x'.repeat(1_000_000)}`);
     expect(out).toContain(SHORT);
     expect(out).not.toContain(ADDR);
+  });
+
+  it('takes the hex payload with the escapes in the oversized branch too', () => {
+    // The same r5 P1 shape, reached by size rather than by nesting. Both
+    // fail-closed branches shared the one regex, so both leaked and both are
+    // pinned — fixing only the branch a finding names is how the other one
+    // comes back.
+    const out = redactText(`%30%78${ADDR.slice(2)} ${'y'.repeat(MAX_MAPPED_INPUT)}`);
+    expect(out).not.toContain(ADDR.slice(2));
+    expect(out).not.toContain(ADDR.slice(2, 22));
+  });
+
+  it('drops hex-spelled text adjacent to an escape, which is the price of that', () => {
+    // Pinned so the trade is a decision rather than a surprise: in the
+    // already-lossy branches, a hex-looking word touching an escape goes with
+    // it. There is no length below which a leftover is provably not the
+    // remainder of an address, so this is the safe side of the line.
+    const out = redactText(`%20decade ${'y'.repeat(MAX_MAPPED_INPUT)}`);
+    expect(out).not.toContain('decade');
+    // Text NOT touching an escape is untouched, so the loss stays local.
+    expect(out).toContain('y');
   });
 
   it('drops an address straddling the truncation boundary rather than halving it', () => {

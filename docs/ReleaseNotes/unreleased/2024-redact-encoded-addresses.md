@@ -35,6 +35,18 @@ report, is a poor way to ask for help. If the cut lands in the middle of an
 address, the fragment is dropped rather than carried through as half an
 account.
 
+There are two situations the shortener cannot fully account for: a message
+too large to read in full, and escapes nested too deeply to unwrap within a
+sensible amount of work. In both it now discards the escaped material rather
+than passing it on, and — this was the subtler half — discards any hex sitting
+against it. Removing only the escapes had looked like the cautious choice and
+was not: where just the leading `0x` of an address was escaped, taking the
+escapes away left all forty of the remaining characters in place, and a reader
+of the public issue is a fixed two-character prefix from the whole account. An
+address can be broken at any point, so no leftover is safely short. The cost is
+that a word spelled entirely in hexadecimal letters is discarded alongside a
+neighbouring escape in those two cases, which is the right way round.
+
 The behaviour arrived with its first tests. Nothing had covered the
 shortener before, which is how the gap survived unnoticed, and the new cases
 are written against the contract rather than the code: what must never

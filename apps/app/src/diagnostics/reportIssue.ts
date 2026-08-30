@@ -105,8 +105,28 @@ function decodeWithMap(text: string): { decoded: string; map: number[] } {
 const DECODE_WORK_PER_CHAR = 8;
 const DECODE_WORK_FLOOR = 1024;
 
-/** A run of percent-escapes, used only by the fail-closed path. */
-const ESCAPE_RUN_RE = /(?:%[0-9a-fA-F]{2})+/g;
+/**
+ * A run of percent-escapes TOGETHER with any hex clinging to either side —
+ * used only by the two fail-closed paths (#2024, Codex r5 P1).
+ *
+ * Dropping the escapes alone was not fail-closed, it was fail-open with a
+ * tidier appearance. `%30%78` followed by forty plain hex digits is only the
+ * `0x` escaped, so removing the run left `…1234567890abcdef…` — every digit of
+ * the address, on a PUBLIC issue, one fixed two-character prefix from being
+ * whole. Verified before the fix, on both the oversized branch and the
+ * budget-exhaustion branch.
+ *
+ * The lesson generalises past that one spelling: the address can be split
+ * anywhere, so ANY hex touching a removed escape may be the remainder of one,
+ * and there is no length below which the leftover is safe. So the deletion
+ * takes the adjacent payload with it.
+ *
+ * What that costs is hex-spelled words next to an escape — `%20decade` becomes
+ * a single ellipsis. Only these two already-lossy branches pay it: one has
+ * given up on reading past 64 KB, the other on resolving the escapes at all.
+ * Losing a word beats publishing an account.
+ */
+const ESCAPE_RUN_RE = /[a-fA-F0-9]*(?:%[0-9a-fA-F]{2})+[a-fA-F0-9]*/g;
 
 /**
  * Decode to a fixpoint, reporting whether the budget was exhausted first.
