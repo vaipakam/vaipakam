@@ -33,12 +33,15 @@ at the moment the form opens — whether or not you go on to submit the
 issue, and whether or not you close the tab. What you control is
 whether an issue is filed, not whether GitHub receives the details.
 
-Read the form before opening it if that matters to you, and note it
-can carry more than the drawer previewed: the drawer shows the first
-300 characters of the error message and no component trace, while the
-report carries up to 1,200 characters of error text and up to 1,000
-characters of trace. Any wallet address is shortened to `0x1234…abcd`
-first. We do NOT send your IP, user-agent, or browsing history.
+If you want to see it all first, do it before opening the link — not
+after, since by then it has been sent. The drawer's own summary is
+partial: it shows the first 300 characters of the error message and no
+component trace, while the report carries up to 1,200 characters of
+error text and up to 1,000 characters of trace. The drawer's "Copy
+details" button gives you the full text the report is built from, and
+copying is local — it sends nothing. Any wallet address is shortened
+to `0x1234…abcd` first. We do NOT send your IP, user-agent, or
+browsing history.
 
 **Error records on our servers — no automatic capture.** An earlier
 version of the app sent a record of each UI error to a Cloudflare
@@ -67,7 +70,13 @@ service reliability) under GDPR Art 6(1)(f). Your erasure control is
 live regardless of the pause: you can have the error-diagnostics
 records associated with your wallet erased at any time, directly and
 without a support ticket, by signing an erasure request with that
-wallet in the app. To make this possible a one-way keyed hash of
+wallet in the app. One qualification, for smart-account (contract)
+wallets: such a signature is verified on one network at a time, so a
+single request covers the records captured on the network that
+verified it. To cover the others, repeat the request on each, or email
+support@vaipakam.com and we will process it for your wallet
+everywhere. An ordinary wallet's signature is not network-bound and
+needs no repetition. To make this possible a one-way keyed hash of
 your wallet address is stored alongside each record; your full
 address is used only momentarily to compute that hash and is never
 stored. In rare cases where the law requires us to retain specific

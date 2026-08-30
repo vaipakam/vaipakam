@@ -82,14 +82,17 @@ export default function PrivacyPage() {
           </p>
 
           <p>
-            Read the form before opening it if that matters to you, and
-            note it can carry more than the drawer previewed: the
-            drawer shows the first 300 characters of the error message
-            and no component trace, while the report carries up to
-            1,200 characters of error text and up to 1,000 characters
-            of trace. Any wallet address is shortened to{' '}
-            <code>0x1234…abcd</code> first. We do NOT send your IP,
-            user-agent, or browsing history.
+            If you want to see it all first, do it before opening the
+            link — not after, since by then it has been sent. The
+            drawer's own summary is partial: it shows the first 300
+            characters of the error message and no component trace,
+            while the report carries up to 1,200 characters of error
+            text and up to 1,000 characters of trace. The drawer's
+            "Copy details" button gives you the full text the report is
+            built from, and copying is local — it sends nothing. Any
+            wallet address is shortened to <code>0x1234…abcd</code>{' '}
+            first. We do NOT send your IP, user-agent, or browsing
+            history.
           </p>
 
           <p>
@@ -129,10 +132,17 @@ export default function PrivacyPage() {
             pause: you can have the error-diagnostics records
             associated with your wallet erased at any time, directly
             and without a support ticket, by signing an erasure request
-            with that wallet in the app. To make this possible a
-            one-way keyed hash of your wallet address is stored
-            alongside each record; your full address is used only
-            momentarily to compute that hash and is never stored. In
+            with that wallet in the app. One qualification, for
+            smart-account (contract) wallets: such a signature is
+            verified on one network at a time, so a single request
+            covers the records captured on the network that verified
+            it. To cover the others, repeat the request on each, or
+            email support@vaipakam.com and we will process it for your
+            wallet everywhere. An ordinary wallet's signature is not
+            network-bound and needs no repetition. To make this
+            possible a one-way keyed hash of your wallet address is
+            stored alongside each record; your full address is used
+            only momentarily to compute that hash and is never stored. In
             rare cases where the law requires us to retain specific
             records, automated erasure will skip them; where the law
             permits, we will tell you so.

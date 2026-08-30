@@ -4,8 +4,12 @@ The published Privacy Policy told every visitor that each UI error was
 recorded on our servers with a per-event UUID, carrying their redacted
 wallet, chain id, locale, theme, viewport and app version, and retained
 for ninety days. No shipping client does any of that. The endpoint is
-deployed and works, but its only callers lived in the connected app that
-#1854 retired, so nothing has sent it a record since. The adjacent
+deployed and works, but its only client-side callers lived in the
+connected app that #1854 retired, so no shipping frontend has sent it a
+record since. That is deliberately narrower than "nothing has": the
+deployment runbook carries a smoke test that posts a record and verifies
+the row lands, so an operator exercising it does create one, and an audit
+of recently created rows should expect that. The adjacent
 paragraph was stale in the same way, describing a wallet-keyed "journey
 log" in local storage; the current app keeps one slot in session storage
 holding the most recent error, not keyed to any wallet, discarded when
