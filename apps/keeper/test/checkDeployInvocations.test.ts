@@ -5555,3 +5555,147 @@ describe('check-deploy-invocations — #1995 r19', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe('check-deploy-invocations — #1995 r20', () => {
+  const AGENT = '{"name":"@vaipakam/agent"}\n';
+  const AGENT_ALIAS =
+    '{"name":"@vaipakam/agent","scripts":{"deploy":"wrangler deploy --keep-vars","release":"pnpm run deploy"}}\n';
+  const CALLEE =
+    'name: callee\non:\n  workflow_call:\n    inputs:\n      dir:\n        required: true\n        type: string\n' +
+    'jobs:\n  d:\n    steps:\n      - working-directory: ${{ inputs.dir }}\n        run: wrangler deploy\n';
+
+  it('a caller passing a MATRIX value to a reusable workflow (r20)', () => {
+    seed('apps/agent/package.json', AGENT);
+    seed('.github/workflows/callee.yml', CALLEE);
+    const r = runWith(
+      '.github/workflows/caller.yml',
+      'name: caller\njobs:\n  c:\n    strategy:\n      matrix:\n        dir: [apps/agent]\n' +
+        '    uses: ./.github/workflows/callee.yml\n    with:\n      dir: ${{ matrix.dir }}\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a caller matrix that lands outside scope passes (r20 control)', () => {
+    seed('apps/agent/package.json', AGENT);
+    seed('.github/workflows/callee.yml', CALLEE);
+    const r = runWith(
+      '.github/workflows/caller.yml',
+      'name: caller\njobs:\n  c:\n    strategy:\n      matrix:\n        dir: [apps/www]\n' +
+        '    uses: ./.github/workflows/callee.yml\n    with:\n      dir: ${{ matrix.dir }}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an EXTENSIONLESS executed helper inherits the caller cwd (r20)', () => {
+    seed('apps/agent/package.json', AGENT);
+    seed('deploy-helper', 'wrangler deploy\n');
+    const r = runWith('x.sh', 'cd apps/agent\n../../deploy-helper\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a .bash helper does too (r20)', () => {
+    seed('apps/agent/package.json', AGENT);
+    seed('deploy-helper.bash', 'wrangler deploy\n');
+    const r = runWith('x.sh', 'cd apps/agent\n../../deploy-helper.bash\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('but a helper carrying the flag is safe (r20 control)', () => {
+    seed('apps/agent/package.json', AGENT);
+    seed('deploy-helper', 'wrangler deploy --keep-vars\n');
+    expect(runWith('x.sh', 'cd apps/agent\n../../deploy-helper\n').ok).toBe(true);
+  });
+
+  it('and a BARE word is a command, not a path to open (r20 control)', () => {
+    seed('apps/agent/package.json', AGENT);
+    expect(runWith('x.sh', 'cd apps/agent\nsome_unknown_command\n').ok).toBe(true);
+  });
+
+  it('an ASSIGNMENT-PREFIXED call still invokes the helper (r20)', () => {
+    seed('apps/agent/package.json', AGENT);
+    const r = runWith(
+      'x.sh',
+      'deploy_worker() {\n  wrangler deploy\n}\ncd apps/agent\nMODE=production deploy_worker arg\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but an assignment-prefixed UNKNOWN name resolves nothing (r20 control)', () => {
+    seed('apps/agent/package.json', AGENT);
+    expect(runWith('x.sh', 'cd apps/agent\nMODE=production some_other_thing arg\n').ok).toBe(true);
+  });
+
+  it('a selector-less alias resolves against the CURRENT package (r20)', () => {
+    seed('apps/agent/package.json', AGENT_ALIAS);
+    const r = runWith('apps/agent/release.sh', 'pnpm run release -- --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and against the MODELLED cwd when the wrapper lives elsewhere (r20)', () => {
+    seed('apps/agent/package.json', AGENT_ALIAS);
+    const r = runWith('tools/rel.sh', 'cd apps/agent\npnpm run release -- --no-keep-vars\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but the same alias without forwarded arguments is safe (r20 control)', () => {
+    seed('apps/agent/package.json', AGENT_ALIAS);
+    expect(runWith('tools/rel.sh', 'cd apps/agent\npnpm run release\n').ok).toBe(true);
+  });
+
+  it('and an alias in an UNSCOPED package is not ours (r20 control)', () => {
+    seed('apps/agent/package.json', AGENT_ALIAS);
+    seed(
+      'apps/www/package.json',
+      '{"name":"@vaipakam/www","scripts":{"release":"pnpm run deploy","deploy":"wrangler deploy"}}\n',
+    );
+    expect(runWith('apps/www/release.sh', 'pnpm run release -- --no-keep-vars\n').ok).toBe(true);
+  });
+
+  it('an INLINE Windows step with no working-directory is still read (r20)', () => {
+    seed('apps/agent/package.json', AGENT);
+    seed('apps/agent/wrangler.jsonc', '{"name":"vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - shell: cmd\n' +
+        '        run: wrangler.cmd deploy --config apps\\agent\\wrangler.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but the same inline step carrying the flag is safe (r20 control)', () => {
+    seed('apps/agent/package.json', AGENT);
+    seed('apps/agent/wrangler.jsonc', '{"name":"vaipakam-agent"}\n');
+    const r = runWith(
+      '.github/workflows/w.yml',
+      'name: w\njobs:\n  d:\n    steps:\n      - shell: cmd\n' +
+        '        run: wrangler.cmd deploy --keep-vars --config apps\\agent\\wrangler.jsonc\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('an assignment-shaped line does not backtrack the command reader (r20)', () => {
+    // `executedCommand` nested a quantified word inside a quantified
+    // assignment group. Reading it per SEGMENT — which finding r20 required —
+    // took ONE real file (contracts/script/deploy-chain.sh) to 29.5 s and the
+    // tree from 101 s to over 400 s. This shape doubles per character on the
+    // old pattern: 36 s at 32 characters, past the child timeout at 34, and
+    // 43 ms linearly. Completing IS the assertion.
+    //
+    // The file must carry a DEPLOY as well, or the prefilter skips it and the
+    // command reader is never reached — the first version of this fixture
+    // passed on the reverted implementation for exactly that reason, which is
+    // what a vacuous canary looks like.
+    seed('apps/agent/package.json', AGENT);
+    const r = runWith(
+      'apps/agent/slow.sh',
+      `A=${'y'.repeat(36)}"\nwrangler deploy --keep-vars\n`,
+    );
+    expect(r.ok).toBe(true);
+  });
+});

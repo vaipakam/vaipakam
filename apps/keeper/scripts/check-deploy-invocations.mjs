@@ -258,6 +258,26 @@ const WORD = String.raw`(?:"[^"]*"|'[^']*'|(?:\\[\s\S])|[^\s"'\`;&|)\\]+)+`;
  */
 const DECL_PREFIX = String.raw`(?:(?:export|declare|typeset|local|readonly)\s+(?:-[A-Za-z]+\s+)*)?`;
 
+// A helper EXECUTED as its own process, by any filename the walk itself will
+// open. Requiring `.sh` missed the extensionless and `.bash` spellings that
+// `looksExecutable` and `SHELL_EXTENSIONS` explicitly admit (#1995 r20).
+//
+// Three spellings, and the narrowness of each is load-bearing:
+//
+//   `bash helper`      — a launcher names its script, whatever it is called
+//   `./deploy-helper`  — PATH-QUALIFIED and EXTENSIONLESS, the conventional
+//                        executable wrapper `looksExecutable` also admits
+//   `path/to/x.sh`     — any of the shell extensions the walk itself opens
+//
+// A bare word is a `$PATH` lookup or a function call, not a file in this
+// tree. Two earlier cuts were too wide and both were caught by measurement
+// rather than by review: accepting ANY slashed token made `cd apps/agent`
+// look like an executed helper, and allowing a DOTTED basename after `./`
+// meant `./src/index.ts` did too — so the walk read and fully parsed every
+// TypeScript file it saw mentioned. That took the real-tree run from 101 s
+// to over 400 s, on 1096 matching lines where `.sh` alone matches 250.
+const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))`;
+
 /** Collapse a captured word to what the shell would hand the command. */
 function dequote(w) {
   return (
@@ -1109,10 +1129,46 @@ function executedCommand(cmd) {
   // `deploy`. Matching wholly-quoted or whitespace-free values left the quoted
   // tail behind as apparent arguments (#1995 r6) — the same chunked-word lesson
   // as #1924 r23/r24 and #1995 r4a, in its fourth place.
-  const CHUNKS = '(?:"[^"]*"|\'[^\']*\'|(?:\\\\[\\s\\S])|[^\\s"\'\\\\]+)*';
-  return cmd
-    .replace(/^[\s(){]*/, '')
-    .replace(new RegExp(`^(?:[A-Za-z_][A-Za-z0-9_]*=${CHUNKS}\\s+)*`), '');
+  // Scanned LINEARLY rather than matched. The pattern this replaces nested a
+  // quantified word (`CHUNKS`) inside a quantified assignment group, which is
+  // the ambiguous shape this file has been bitten by three times: a segment
+  // that does not match explores every partition of its leading run. It cost
+  // 29.5 s on ONE file — `contracts/script/deploy-chain.sh` — once #1995 r20
+  // began calling this per SEGMENT to find assignment-prefixed helper calls,
+  // taking the whole tree from 101 s to over 400 s. Same contract: drop
+  // opening punctuation, then any run of `NAME=<word>` prefixes, where a word
+  // may mix quoted and unquoted chunks and carry escapes.
+  let t = cmd.replace(/^[\s(){]*/, '');
+  for (;;) {
+    const m = /^[A-Za-z_][A-Za-z0-9_]*=/.exec(t);
+    if (!m) break;
+    let j = m[0].length;
+    let quote = null;
+    while (j < t.length) {
+      const c = t[j];
+      if (quote) {
+        if (c === quote) quote = null;
+        j += 1;
+      } else if (c === '"' || c === "'") {
+        quote = c;
+        j += 1;
+      } else if (c === '\\') {
+        j += 2;
+      } else if (/\s/.test(c)) {
+        break;
+      } else {
+        j += 1;
+      }
+    }
+    // The group being replaced ended in `\s+`, so an assignment with NO
+    // separator after it is not a prefix at all — `A=1` and the `B=2` of
+    // `A=1 B=2` stay put. Verified against the old pattern over a corpus that
+    // includes exactly these, which is how this rule was found.
+    const ws = t.slice(j).match(/^\s+/)?.[0].length ?? 0;
+    if (ws === 0) break;
+    t = t.slice(j + ws);
+  }
+  return t;
 }
 
 /**
@@ -1597,7 +1653,7 @@ function packageScripts(dir) {
  * SCOPED packages are consulted — an alias elsewhere cannot produce a
  * violation this guard reports.
  */
-function resolveRunAlias(text) {
+function resolveRunAlias(text, ctxDir = null) {
   if (!/\b(?:pnpm|npm|yarn)\b/.test(text)) return null;
   const m = text.match(
     new RegExp(
@@ -1609,7 +1665,15 @@ function resolveRunAlias(text) {
     /(?:--filter(?:-prod)?|-F)[=\s]+("[^"]*"|'[^']*'|[^\s]+)|workspace\s+([^\s]+)/,
   );
   const selName = sel ? dequote(sel[1] ?? sel[2]) : null;
-  const dir = selName ? SCOPED.find((sc) => sc.filter === selName)?.dir : null;
+  // With NO selector the package manager runs the CURRENT package's script —
+  // `pnpm run release` inside apps/agent is the agent's alias — and returning
+  // null there missed the most ordinary spelling of all (#1995 r20). The
+  // caller supplies that context from the file's own path or the modelled
+  // cwd; an explicit selector still wins, and a selector naming something
+  // unscoped still resolves to nothing rather than falling back.
+  const dir = selName
+    ? (SCOPED.find((sc) => sc.filter === selName)?.dir ?? null)
+    : ctxDir;
   if (!dir) return null;
   let cur = m[3];
   for (let hop = 0; hop < 3; hop += 1) {
@@ -3155,18 +3219,25 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
         !stepIsDisabled(lines, i)
       ) {
         const wd = workingDirFor(lines, i, !flowLaunches);
-        if (wd) {
+        // An inline step with NO working-directory was dropped entirely, so
+        // its body never reached `forInterpreter` — and a Windows step needs
+        // that transform to be read at all: `wrangler.cmd deploy --config
+        // apps\agent\wrangler.jsonc` names the package only once the
+        // backslashes are separators. The physical-line scan that would
+        // otherwise judge it does not know the interpreter, which is why the
+        // identical body passed inline and failed as a block scalar (#1995
+        // r20). Emitted with an empty cwd, where the command's own selectors
+        // establish scope; the duplicate with the physical line is removed by
+        // the dedupe at the reporting site, as it already is for a seeded one.
+        const stepInterp = stepShellName(lines, i);
+        const needsTransform =
+          stepInterp === 'cmd' || stepInterp === 'pwsh' || stepInterp === 'powershell';
+        if (wd || needsTransform) {
           const env = stepEnvVars(lines, i);
           const base = expandActionsEnv(flow[2], env);
           for (const b of expandMatrixVariants(lines, i, base) ?? [base]) {
             out.push(
-              ...offset(
-                logicalLines(forInterpreter(b, stepShellName(lines, i))),
-                i,
-                blockId,
-                wd,
-                env,
-              ),
+              ...offset(logicalLines(forInterpreter(b, stepInterp)), i, blockId, wd, env),
             );
             blockId += 1;
           }
@@ -4287,10 +4358,21 @@ function callerSuppliedInputs(key) {
         for (let k = j + 1; k < ls.length; k += 1) {
           if (ls[k].trim() === '') continue;
           if (indentOf(ls[k]) <= ui) break;
+          // The unquoted alternative admits an EXPRESSION, which contains
+          // spaces: `dir: ${{ matrix.dir }}` had `\S+` stop at the brace and
+          // recorded the unusable fragment `${{` (#1995 r20) — the r11
+          // working-directory defect, now in its third reader. A caller-side
+          // matrix expression resolves against the CALLER's own declarations,
+          // bounded to the job that carries the `uses:` line, which is what
+          // `matrixValuesFor` already does for a step.
           const kv = ls[k].match(
-            new RegExp(`^\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S+))\\s*$`),
+            new RegExp(`^\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S.*?))\\s*$`),
           );
-          if (kv) vals.push(kv[1] ?? kv[2] ?? kv[3]);
+          if (!kv) continue;
+          const rawVal = (kv[1] ?? kv[2] ?? kv[3]).replace(/\s+#.*$/, '').trim();
+          const expr = rawVal.match(/^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$/);
+          if (expr) vals.push(...matrixValuesFor(ls, i, expr[1], null));
+          else if (!/\$\{\{/.test(rawVal)) vals.push(rawVal);
         }
         break;
       }
@@ -4861,6 +4943,24 @@ function* walk(dir) {
   }
 }
 
+/** The scoped package a path sits inside, for alias resolution context. */
+function packageContextOf(rel) {
+  return SCOPED.find((sc) => rel === sc.dir || rel.startsWith(`${sc.dir}/`))?.dir ?? null;
+}
+
+/**
+ * The package a selector-less `pnpm run <alias>` runs in, for the shell walk.
+ *
+ * The MODELLED cwd first and the file only as a fallback, which is the same
+ * precedence the scope resolution uses a few lines down: a wrapper that has
+ * `cd`-ed somewhere runs the script of the package it stands in, whatever
+ * tree the wrapper itself is stored in.
+ */
+function aliasContext(states, rel) {
+  const at = states.map((st) => scopeOfCwd(st.cwd)).find(Boolean);
+  return at ? at.dir : packageContextOf(rel);
+}
+
 const violations = [];
 for (const file of walk(REPO_ROOT)) {
   const rel = relative(REPO_ROOT, file);
@@ -4937,7 +5037,17 @@ for (const file of walk(REPO_ROOT)) {
         new RegExp(ANY_DEPLOY_RE, 'i').test(l.text) ||
         // …and on the form with a manifest ALIAS resolved: `run release`
         // carries no deploy text at all until the alias chain is followed.
-        new RegExp(ANY_DEPLOY_RE).test(resolveRunAlias(l.text) ?? '') ||
+        // ANY scoped package as the alias context, not just this file's own.
+        // The prefilter is per-FILE and cannot know where the shell will have
+        // `cd`-ed by the time the command runs: a wrapper stored outside a
+        // protected package that enters one — `cd ../agent; pnpm run release`
+        // — resolved to nothing here and the whole file was skipped before the
+        // walk could apply its modelled cwd (#1995 r20, caught by a control).
+        // Admission only; which package the command belongs to is still
+        // decided per segment by the cwd-aware context.
+        SCOPED.some((sc) =>
+          new RegExp(ANY_DEPLOY_RE).test(resolveRunAlias(l.text, sc.dir) ?? ''),
+        ) ||
         // `cloudflare/wrangler-action` performs the deploy with no deploy
         // TEXT anywhere in the file — the action synthesises the command from
         // its inputs — so the prefilter discarded exactly the workflows the
@@ -4958,7 +5068,7 @@ for (const file of walk(REPO_ROOT)) {
         // text either, and deferring only `source` skipped exactly this
         // caller (#1995 r19). Admits the file; the walk decides what the
         // helper actually contains.
-        /(?:^|[\s;&|(])(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*)?(?:[\w.@-]+\/)*[\w.@-]+\.sh(?:\s|$)/.test(
+        new RegExp(String.raw`(?:^|[\s;&|(])${EXEC_HELPER_RE}(?:\s|$)`).test(
           l.text,
         ),
     )
@@ -5165,7 +5275,7 @@ for (const file of walk(REPO_ROOT)) {
           !new RegExp(ANY_DEPLOY_RE).test(foldStringConcat(seg)) &&
           !new RegExp(ANY_DEPLOY_RE).test(seg) &&
           !new RegExp(ANY_DEPLOY_RE).test(dequote(seg)) &&
-          !new RegExp(ANY_DEPLOY_RE).test(resolveRunAlias(seg) ?? '')
+          !new RegExp(ANY_DEPLOY_RE).test(resolveRunAlias(seg, packageContextOf(rel)) ?? '')
         ) {
           continue;
         }
@@ -5184,7 +5294,7 @@ for (const file of walk(REPO_ROOT)) {
         // resolves: `run release` is whatever the manifest says it is, both
         // for blessing the safe spelling and for catching the forwarded
         // negation.
-        const aliased = resolveRunAlias(seg);
+        const aliased = resolveRunAlias(seg, packageContextOf(rel));
         if (
           commandIsSafe(aliased ?? seg, safeHint) ||
           (aliased === null && commandIsSafe(expandCommandVars(seg, fileVars), safeHint))
@@ -5510,14 +5620,21 @@ for (const file of walk(REPO_ROOT)) {
         // out of the detection being read-only — nothing here touches the
         // walk's states, and `sourcedDeploys` applies the helper's moves only
         // to the deferred entries themselves.
+        // Leading `VAR=value` words are ENVIRONMENT, not the command — the
+        // same reading `executedCommand` gives every other command word.
+        const runWord = executedCommand(seg);
         const execHelper =
           !dir &&
-          seg.match(
-            /^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*)?((?:[\w.@-]+\/)*[\w.@-]+\.sh)(?:\s|$)/,
+          runWord.match(
+            new RegExp(
+              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)))(?:\s|$)`,
+            ),
           );
         if (execHelper) {
           deferred.push(
-            ...sourcedDeploys(resolveDir(input[0]?.cwd ?? '', execHelper[1], shellVars)),
+            ...sourcedDeploys(
+              resolveDir(input[0]?.cwd ?? '', execHelper[1] ?? execHelper[2], shellVars),
+            ),
           );
         }
         if (/^shopt\s+-s\b[^;]*\bexpand_aliases\b/.test(seg)) aliasesOn = true;
@@ -5536,7 +5653,11 @@ for (const file of walk(REPO_ROOT)) {
         // whole segment missed every call that passes one (#1995 r19). Only
         // names actually recorded in `deployFns`/`deployAliases` resolve, so
         // ordinary commands' first words look up nothing.
-        const callName = seg.match(/^([A-Za-z_][\w-]*)(?:\s+\S.*)?$/)?.[1];
+        // …and the call itself may be assignment-prefixed: `MODE=production
+        // deploy_worker arg` still invokes the recorded helper, but the
+        // matcher required the name to be the segment's first word (#1995
+        // r20). Read from the same `executedCommand` view.
+        const callName = runWord.match(/^([A-Za-z_][\w-]*)(?:\s+\S.*)?$/)?.[1];
         if (callName && deployFns.has(callName)) deferred.push(...deployFns.get(callName));
         if (callName && aliasesOn && deployAliases.has(callName)) {
           deferred.push(...deployAliases.get(callName));
@@ -5768,7 +5889,9 @@ for (const file of walk(REPO_ROOT)) {
           !new RegExp(ANY_DEPLOY_RE).test(seg) &&
           // Same widening as the prefilter above (#1995 r9).
           !new RegExp(ANY_DEPLOY_RE).test(dequote(seg)) &&
-          !new RegExp(ANY_DEPLOY_RE).test(resolveRunAlias(seg) ?? '')
+          !new RegExp(ANY_DEPLOY_RE).test(
+            resolveRunAlias(seg, aliasContext(input, rel)) ?? '',
+          )
         ) {
           continue;
         }
@@ -5829,7 +5952,7 @@ for (const file of walk(REPO_ROOT)) {
           : input.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ??
             SCOPED.find((sc) => rel.startsWith(`${sc.dir}/`)) ??
             null;
-        const aliased = resolveRunAlias(seg);
+        const aliased = resolveRunAlias(seg, aliasContext(input, rel));
         if (
           commandIsSafe(aliased ?? seg, safeHint) ||
           (aliased === null && commandIsSafe(expandCommandVars(seg, fileVars), safeHint))
