@@ -267,7 +267,7 @@
       "linked": "Telegram 已链接 — 此钱包的提醒会发送到您的聊天。",
       "unlink": "取消链接",
       "unlinkElsewhereTitle": "在另一台设备上链接了此钱包？",
-      "unlinkElsewhereBody": "它的 Telegram 链接存在我们的服务器上，不只在此浏览器中。可在此断开 — 会停止所有位置的消息。",
+      "unlinkElsewhereBody": "其 Telegram 关联保存在我们的服务器上，而不仅仅是此浏览器中。在此断开——普通钱包会在所有地方停止消息；智能账户钱包的签名则停止其指定网络的消息。",
       "unlinkElsewhere": "取消链接此钱包",
       "unlinked": "已取消链接。此钱包不会再收到 Telegram 消息。",
       "toggleRepayDue": "在利息付款到期前给我发消息",
@@ -282,7 +282,8 @@
       "pushEnable": "启用 Push 投递",
       "pushEnabled": "此钱包的 Push 投递已开启。",
       "pushButton": "打开 Push 频道",
-      "loanNudge": "想在此贷款变得有风险时收到 Telegram 警告？请在设置中配置提醒。"
+      "loanNudge": "想在此贷款变得有风险时收到 Telegram 警告？请在设置中配置提醒。",
+      "unlinkedChainOnly": "已为此网络解除关联。智能账户钱包按网络逐一断开——如果此钱包在其他网络上也已关联，请在相应网络上用各自的签名解除。"
     },
     "notifications": {
       "bellLabel": "通知",

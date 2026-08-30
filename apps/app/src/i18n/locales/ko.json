@@ -267,7 +267,7 @@
       "linked": "Telegram이 연동되었습니다 — 이 월렛의 알림이 채팅으로 전송됩니다.",
       "unlink": "연동 해제",
       "unlinkElsewhereTitle": "다른 기기에서 이 월렛을 연동했나요?",
-      "unlinkElsewhereBody": "그 Telegram 연동은 이 브라우저뿐 아니라 저희 서버에 저장되어 있습니다. 여기서 연결을 끊으면 어디서든 메시지가 중단됩니다.",
+      "unlinkElsewhereBody": "해당 Telegram 연결은 이 브라우저만이 아니라 저희 서버에 저장됩니다. 여기에서 해제하세요 — 일반 지갑은 모든 곳에서 메시지가 중지되고, 스마트 계정 지갑의 서명은 서명이 지정한 네트워크의 메시지를 중지합니다.",
       "unlinkElsewhere": "이 월렛 연동 해제",
       "unlinked": "연동을 해제했습니다. 이 월렛으로는 더 이상 Telegram 메시지가 오지 않습니다.",
       "toggleRepayDue": "이자 납부 기한이 되기 전에 알림 보내기",
@@ -282,7 +282,8 @@
       "pushEnable": "Push 전송 활성화",
       "pushEnabled": "이 월렛의 Push 전송이 켜져 있습니다.",
       "pushButton": "Push 채널 열기",
-      "loanNudge": "이 대출이 위험해지면 Telegram 경고를 받고 싶으세요? 설정에서 알림을 설정하세요."
+      "loanNudge": "이 대출이 위험해지면 Telegram 경고를 받고 싶으세요? 설정에서 알림을 설정하세요.",
+      "unlinkedChainOnly": "이 네트워크에서 연결이 해제되었습니다. 스마트 계정 지갑은 네트워크별로 해제됩니다. 이 지갑이 다른 네트워크에도 연결되어 있다면 각 네트워크에서 해당 서명으로 해제하세요."
     },
     "notifications": {
       "bellLabel": "알림",

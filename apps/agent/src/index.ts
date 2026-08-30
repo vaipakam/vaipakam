@@ -583,7 +583,14 @@ async function handleUnlinkTelegram(
   } else {
     await unlinkTelegram(env.DB, parsed.req.wallet);
   }
-  return json({ ok: true }, 200, corsOrigin);
+  // The response NAMES the scope that applied (#2013 round 4 P1), so
+  // the app can confirm honestly instead of announcing a wallet-wide
+  // disconnect a chain-scoped authority did not buy.
+  return json(
+    { ok: true, scope: verified.via === 'chain' ? 'chain' : 'wallet' },
+    200,
+    corsOrigin,
+  );
 }
 
 /** UX-012 — push a single test alert to the wallet's linked Telegram

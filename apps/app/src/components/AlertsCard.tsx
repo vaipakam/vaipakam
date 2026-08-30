@@ -227,13 +227,15 @@ export function AlertsCard() {
     try {
       // Signed like linking — otherwise anyone could silently switch
       // off another wallet's risk alerts.
-      await unlinkTelegram(address, chainId, (message) =>
+      const scope = await unlinkTelegram(address, chainId, (message) =>
         signMessageAsync({ message }),
       );
       const next = { ...prefs, telegramLinked: false };
       storeAlertPrefs(chainId, address, next);
       setPrefs(next);
-      setNotice(copy.alerts.unlinked);
+      setNotice(
+        scope === 'chain' ? copy.alerts.unlinkedChainOnly : copy.alerts.unlinked,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

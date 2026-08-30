@@ -267,7 +267,7 @@
       "linked": "Telegram vinculado — las alertas para esta billetera van a tu chat.",
       "unlink": "Desvincular",
       "unlinkElsewhereTitle": "¿Vinculaste esta billetera en otro dispositivo?",
-      "unlinkElsewhereBody": "Su vínculo de Telegram vive en nuestro servidor, no solo en este navegador. Desconéctalo aquí — detiene los mensajes en todas partes.",
+      "unlinkElsewhereBody": "Su vínculo de Telegram vive en nuestro servidor, no solo en este navegador. Desconéctelo aquí: con un monedero ordinario eso detiene los mensajes en todas partes; la firma de un monedero de cuenta inteligente los detiene para la red que nombra.",
       "unlinkElsewhere": "Desvincular esta billetera",
       "unlinked": "Desvinculada. No habrá más mensajes de Telegram para esta billetera.",
       "toggleRepayDue": "Avísame antes de que venza un pago de intereses",
@@ -282,7 +282,8 @@
       "pushEnable": "Activar entrega Push",
       "pushEnabled": "La entrega Push está activa para esta billetera.",
       "pushButton": "Abrir el canal Push",
-      "loanNudge": "¿Quieres un aviso de Telegram si este préstamo se vuelve riesgoso? Configura alertas en Configuración."
+      "loanNudge": "¿Quieres un aviso de Telegram si este préstamo se vuelve riesgoso? Configura alertas en Configuración.",
+      "unlinkedChainOnly": "Desvinculado para esta red. Un monedero de cuenta inteligente se desconecta por red — si este monedero está vinculado en otras redes, desvincule cada una desde allí con su propia firma."
     },
     "notifications": {
       "bellLabel": "Notificaciones",

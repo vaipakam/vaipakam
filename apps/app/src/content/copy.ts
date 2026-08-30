@@ -533,9 +533,16 @@ const copySource = {
     // UX-043 — a clear labelled action, not an ambiguous centered link.
     unlinkElsewhereTitle: 'Linked this wallet on another device?',
     unlinkElsewhereBody:
-      'Its Telegram link lives on our server, not just this browser. Disconnect it here — it stops messages everywhere.',
+      'Its Telegram link lives on our server, not just this browser. Disconnect it here — with an ordinary wallet that stops messages everywhere; a smart-account wallet\u2019s signature stops them for the network it names.',
     unlinkElsewhere: 'Unlink this wallet',
     unlinked: 'Unlinked. No more Telegram messages for this wallet.',
+    /* #2013 r4 — a smart account's chain-verified signature carries
+       authority only for the network it names (its contract can have
+       different controllers elsewhere), so the service clears that
+       network alone and says so; the confirmation must not announce
+       a wallet-wide disconnect that did not happen. */
+    unlinkedChainOnly:
+      'Unlinked for this network. A smart-account wallet is disconnected per network \u2014 if this wallet is linked on other networks, unlink each one from there with its own signature.',
     toggleRepayDue: 'Message me before an interest payment comes due',
     toggleRisky: 'Message me if my loan gets risky',
     riskyOffNote:

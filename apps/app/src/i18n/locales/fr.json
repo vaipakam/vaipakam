@@ -267,7 +267,7 @@
       "linked": "Telegram lié — les alertes pour ce portefeuille vont dans votre chat.",
       "unlink": "Dissocier",
       "unlinkElsewhereTitle": "Vous avez lié ce portefeuille sur un autre appareil ?",
-      "unlinkElsewhereBody": "Son lien Telegram vit sur notre serveur, pas seulement dans ce navigateur. Déconnectez-le ici — cela arrête les messages partout.",
+      "unlinkElsewhereBody": "Son lien Telegram vit sur notre serveur, pas seulement dans ce navigateur. Déconnectez-le ici — avec un portefeuille ordinaire, cela arrête les messages partout ; la signature d’un portefeuille de compte intelligent les arrête pour le réseau qu’elle nomme.",
       "unlinkElsewhere": "Dissocier ce portefeuille",
       "unlinked": "Dissocié. Plus aucun message Telegram pour ce portefeuille.",
       "toggleRepayDue": "M'envoyer un message avant l'échéance d'un paiement d'intérêts",
@@ -282,7 +282,8 @@
       "pushEnable": "Activer la livraison Push",
       "pushEnabled": "La livraison Push est activée pour ce portefeuille.",
       "pushButton": "Ouvrir le canal Push",
-      "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres."
+      "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres.",
+      "unlinkedChainOnly": "Dissocié pour ce réseau. Un portefeuille de compte intelligent se déconnecte réseau par réseau — si ce portefeuille est lié sur d’autres réseaux, dissociez chacun depuis celui-ci avec sa propre signature."
     },
     "notifications": {
       "bellLabel": "Notifications",

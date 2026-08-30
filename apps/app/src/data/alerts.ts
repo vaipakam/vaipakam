@@ -417,8 +417,8 @@ export function buildTelegramUnlinkMessage(
     'Vaipakam — Unlink Telegram alerts',
     '',
     'I request that Telegram alert delivery for the wallet below be',
-    'disconnected everywhere. Signing this message proves ownership',
-    'of the wallet. It is not a transaction and costs no gas.',
+    'disconnected. Signing this message proves ownership of the',
+    'wallet. It is not a transaction and costs no gas.',
     '',
     `Wallet: ${wallet.toLowerCase()}`,
     `Chain id: ${chainId}`,
@@ -494,7 +494,7 @@ export async function unlinkTelegram(
   wallet: `0x${string}`,
   chainId: number,
   signMessage: (message: string) => Promise<string>,
-): Promise<void> {
+): Promise<'wallet' | 'chain'> {
   const issuedAt = Math.floor(Date.now() / 1000);
   const signature = await signMessage(
     buildTelegramUnlinkMessage(wallet, chainId, issuedAt),
@@ -506,4 +506,14 @@ export async function unlinkTelegram(
     signature,
   });
   if (!res.ok) throw new Error(`unlinking Telegram failed (${res.status})`);
+  // The service reports which SCOPE the clear applied to (#2013 r4):
+  // 'wallet' for an ordinary key (the universal controller), 'chain'
+  // for a smart account whose contract approved on the signed chain
+  // only — the confirmation the card shows must match what actually
+  // happened. A missing field (an agent from before the scoped
+  // response) means the old wallet-wide behaviour.
+  const data = (await res.json().catch(() => null)) as {
+    scope?: unknown;
+  } | null;
+  return data?.scope === 'chain' ? 'chain' : 'wallet';
 }

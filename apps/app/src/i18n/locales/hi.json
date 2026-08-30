@@ -267,7 +267,7 @@
       "linked": "Telegram linked — इस wallet के alerts आपके chat में जाएँगे।",
       "unlink": "Unlink",
       "unlinkElsewhereTitle": "इस wallet को दूसरे device पर link किया था?",
-      "unlinkElsewhereBody": "इसका Telegram link हमारे server पर रहता है, सिर्फ इस browser में नहीं। यहाँ disconnect करें — messages हर जगह बंद हो जाएँगे।",
+      "unlinkElsewhereBody": "इसका Telegram लिंक हमारे सर्वर पर रहता है, केवल इस ब्राउज़र में नहीं। इसे यहाँ डिस्कनेक्ट करें — साधारण वॉलेट से सभी जगह संदेश रुक जाते हैं; स्मार्ट-खाता वॉलेट की हस्ताक्षर से उस नेटवर्क के संदेश रुकते हैं जिसे वह नामित करती है।",
       "unlinkElsewhere": "इस wallet को unlink करें",
       "unlinked": "Unlinked. इस wallet के लिए अब Telegram messages नहीं आएँगे।",
       "toggleRepayDue": "Interest payment due होने से पहले मुझे message करें",
@@ -282,7 +282,8 @@
       "pushEnable": "Push delivery enable करें",
       "pushEnabled": "इस wallet के लिए Push delivery on है।",
       "pushButton": "Push channel खोलें",
-      "loanNudge": "इस loan के risky होने पर Telegram warning चाहिए? Settings में alerts set up करें।"
+      "loanNudge": "इस loan के risky होने पर Telegram warning चाहिए? Settings में alerts set up करें।",
+      "unlinkedChainOnly": "इस नेटवर्क के लिए अनलिंक किया गया। स्मार्ट-खाता वॉलेट प्रति नेटवर्क डिस्कनेक्ट होता है — यदि यह वॉलेट अन्य नेटवर्क पर लिंक है, तो प्रत्येक को वहाँ से उसकी अपनी हस्ताक्षर से अनलिंक करें।"
     },
     "notifications": {
       "bellLabel": "Notifications",

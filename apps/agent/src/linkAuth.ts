@@ -77,6 +77,16 @@ export function buildTelegramLinkMessage(
  * from the link message, so a signature captured for one action can
  * never authorise the other. Mirrored byte-for-byte by the frontends,
  * same as the link message.
+ *
+ * The wording is SCOPE-NEUTRAL (#2013 round 4 P1): it does not say
+ * "everywhere", because the effect's scope follows the signer's
+ * authority — an ECDSA key (the universal controller) clears the
+ * wallet everywhere, while a smart account's chain-verified approval
+ * clears only the chain the message names. The signed `Chain id`
+ * line is the scope the signer can always vouch for; clearing MORE
+ * on an ECDSA signature is privacy-protective over-delivery. The
+ * handler reports which scope applied and the app confirms
+ * accordingly.
  */
 export function buildTelegramUnlinkMessage(
   wallet: string,
@@ -87,8 +97,8 @@ export function buildTelegramUnlinkMessage(
     'Vaipakam — Unlink Telegram alerts',
     '',
     'I request that Telegram alert delivery for the wallet below be',
-    'disconnected everywhere. Signing this message proves ownership',
-    'of the wallet. It is not a transaction and costs no gas.',
+    'disconnected. Signing this message proves ownership of the',
+    'wallet. It is not a transaction and costs no gas.',
     '',
     `Wallet: ${wallet.toLowerCase()}`,
     `Chain id: ${chainId}`,

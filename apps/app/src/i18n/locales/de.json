@@ -267,7 +267,7 @@
       "linked": "Telegram verknüpft — Benachrichtigungen für diese Wallet gehen an Ihren Chat.",
       "unlink": "Verknüpfung lösen",
       "unlinkElsewhereTitle": "Diese Wallet auf einem anderen Gerät verknüpft?",
-      "unlinkElsewhereBody": "Die Telegram-Verknüpfung liegt auf unserem Server, nicht nur in diesem Browser. Trennen Sie sie hier — dadurch stoppen Nachrichten überall.",
+      "unlinkElsewhereBody": "Ihre Telegram-Verknüpfung liegt auf unserem Server, nicht nur in diesem Browser. Trennen Sie sie hier — bei einer gewöhnlichen Wallet stoppt das die Nachrichten überall; die Signatur einer Smart-Account-Wallet stoppt sie für das Netzwerk, das sie benennt.",
       "unlinkElsewhere": "Diese Wallet trennen",
       "unlinked": "Verknüpfung gelöst. Keine Telegram-Nachrichten mehr für diese Wallet.",
       "toggleRepayDue": "Vor Fälligkeit einer Zinszahlung benachrichtigen",
@@ -282,7 +282,8 @@
       "pushEnable": "Push-Zustellung aktivieren",
       "pushEnabled": "Push-Zustellung ist für diese Wallet aktiv.",
       "pushButton": "Push-Kanal öffnen",
-      "loanNudge": "Möchten Sie eine Telegram-Warnung, wenn dieser Kredit riskant wird? Richten Sie Benachrichtigungen in den Einstellungen ein."
+      "loanNudge": "Möchten Sie eine Telegram-Warnung, wenn dieser Kredit riskant wird? Richten Sie Benachrichtigungen in den Einstellungen ein.",
+      "unlinkedChainOnly": "Für dieses Netzwerk getrennt. Eine Smart-Account-Wallet wird pro Netzwerk getrennt — ist diese Wallet in anderen Netzwerken verknüpft, trennen Sie jedes dort mit einer eigenen Signatur."
     },
     "notifications": {
       "bellLabel": "Benachrichtigungen",
