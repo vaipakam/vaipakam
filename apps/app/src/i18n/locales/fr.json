@@ -239,7 +239,8 @@
       "diagError": "La demande n'a pas pu aboutir, et il est possible que rien n'ait été effacé. Réessayez dans un instant.",
       "diagExpired": "La demande signée a expiré avant que le service ne l’accepte : aucun enregistrement n’a donc été consulté ni effacé. Réessayez en approuvant l’invite du portefeuille sans tarder ; si cela se reproduit, l’horloge de cet appareil est peut-être mal réglée.",
       "diagVerifyUnavailable": "Le service d’assistance n’a pas pu vérifier la signature de votre portefeuille pour le moment : le réseau sur lequel vit le compte de votre portefeuille n’était pas joignable depuis le service. Cela ne signifie pas que la signature était incorrecte. Réessayez dans un moment, ou écrivez à support@vaipakam.com et nous traiterons une demande d’effacement pour votre portefeuille.",
-      "diagProcessedChainOnly": "Votre demande d’effacement a été traitée pour le réseau auquel votre portefeuille est actuellement connecté. La signature d’un portefeuille à compte intelligent n’est vérifiée que sur un réseau à la fois : les enregistrements capturés sur d’autres réseaux ne sont donc pas couverts — changez de réseau et répétez la demande, ou écrivez à support@vaipakam.com et nous la traiterons pour votre portefeuille partout."
+      "diagProcessedChainOnly": "Votre demande d’effacement a été traitée uniquement pour les enregistrements de {{network}}. La signature d’un portefeuille à compte intelligent n’est vérifiée que sur un réseau à la fois : les enregistrements capturés sur d’autres réseaux ne sont donc pas couverts — passez sur un autre réseau et répétez la demande, ou écrivez à support@vaipakam.com et nous la traiterons pour votre portefeuille partout.",
+      "diagProcessedChainUnknown": "Votre demande d’effacement a été traitée uniquement pour les enregistrements d’un seul réseau — celui qui a vérifié la signature de votre portefeuille. La signature d’un portefeuille à compte intelligent n’est vérifiée que sur un réseau à la fois : les enregistrements capturés sur d’autres réseaux ne sont donc pas couverts — changez de réseau et répétez la demande, ou écrivez à support@vaipakam.com et nous la traiterons pour votre portefeuille partout."
     },
     "killSwitch": {
       "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."
@@ -284,7 +285,7 @@
       "pushEnabled": "La livraison Push est activée pour ce portefeuille.",
       "pushButton": "Ouvrir le canal Push",
       "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres.",
-      "unlinkedChainOnly": "Dissocié pour ce réseau. Un portefeuille de compte intelligent se déconnecte réseau par réseau — si ce portefeuille est lié sur d’autres réseaux, dissociez chacun depuis celui-ci avec sa propre signature."
+      "unlinkedChainOnly": "Dissocié pour {{network}}. Un portefeuille à compte intelligent se déconnecte réseau par réseau — si ce portefeuille est lié sur d’autres réseaux, dissociez chacun depuis ce réseau avec sa propre signature."
     },
     "notifications": {
       "bellLabel": "Notifications",

@@ -59,7 +59,7 @@ import {
   universalSignatureValidatorByteCode,
   type Hex,
 } from 'viem';
-import { getChainConfigs, type Env } from './env';
+import { getRpcChains, type Env } from './env';
 
 /**
  * Signature shape: 0x-prefixed, even-length hex. NOT fixed at 65
@@ -269,7 +269,13 @@ export async function verifyWalletSignature(
     }
   }
 
-  const configured = getChainConfigs(env);
+  // Every RPC-configured chain, NOT the deployment-gated list
+  // (#2013 round 6 P2): verification is a deployless eth_call, so a
+  // smart account on a chain with an RPC binding but no Vaipakam
+  // deployment — an Ethereum Safe during the testnet phase — must
+  // still be checkable rather than 503ing while its EOA twin passes
+  // the fast path.
+  const configured = getRpcChains(env);
   const relevant =
     chainId === undefined
       ? configured

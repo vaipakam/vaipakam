@@ -482,7 +482,14 @@ describe('handleDiagErasure', () => {
     // The response names its SCOPE — branching only on signature
     // type, never on what the database held — so the client's
     // confirmation cannot claim chains this authority never covered.
-    expect(await res.json()).toEqual({ status: 'processed', scope: 'chain' });
+    expect(await res.json()).toEqual({
+      status: 'processed',
+      scope: 'chain',
+      // Names the CONFIRMING chain (#2013 r6): the client must not
+      // describe the scope as "the network you are connected to" —
+      // the wallet can switch chains before the confirmation renders.
+      chainId: 84532,
+    });
     // The uniform response never says what happened; the database
     // shows the scope: 84532's rows gone, everything else intact.
     const remaining = db.errors.filter((e) => e.wallet_hash === hash);

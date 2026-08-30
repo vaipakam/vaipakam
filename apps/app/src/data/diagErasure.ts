@@ -84,6 +84,18 @@ export type DiagErasureOutcome =
    *  processed; the user should try again. */
   | 'error';
 
+/** The erasure call's result: the outcome, plus — for the
+ *  chain-scoped confirmation — WHICH chain the service says its
+ *  verification confirmed (#2013 r6). The service's own echo, never
+ *  the wallet's current chain: the wallet can switch networks while
+ *  the request is in flight or before the confirmation is read, so
+ *  "the network you are connected to" is not a claim the client can
+ *  make. Null when the service named no chain. */
+export interface DiagErasureResult {
+  outcome: DiagErasureOutcome;
+  chainId: number | null;
+}
+
 /** The status call adds one more: the operator-disclosed legal
  *  retention note. A gagged or absent hold is indistinguishable from
  *  "processed" BY DESIGN — see the module header. */
@@ -209,7 +221,7 @@ export async function requestDiagErasure(
   wallet: `0x${string}`,
   signMessage: (message: string) => Promise<string>,
   chainId?: number,
-): Promise<DiagErasureOutcome> {
+): Promise<DiagErasureResult> {
   const res = await postSigned(
     '/diag/erasure',
     wallet,
@@ -217,7 +229,7 @@ export async function requestDiagErasure(
     buildErasureMessage,
     chainId,
   );
-  if (res.expired) return 'expired';
+  if (res.expired) return { outcome: 'expired', chainId: null };
   if (res.ok) {
     // A 2xx alone is not the service's acknowledgement (#2008 round
     // 1 P1): a misconfigured origin or an intermediary can return a
@@ -225,16 +237,26 @@ export async function requestDiagErasure(
     // falsely confirm a legal-right request the erasure handler
     // never saw. Only the service's own uniform payload counts.
     if (res.data?.status === 'processed') {
-      return res.data.scope === 'chain' ? 'processedChainOnly' : 'processed';
+      if (res.data.scope === 'chain') {
+        const echoed = res.data.chainId;
+        return {
+          outcome: 'processedChainOnly',
+          chainId:
+            typeof echoed === 'number' && Number.isInteger(echoed) && echoed > 0
+              ? echoed
+              : null,
+        };
+      }
+      return { outcome: 'processed', chainId: null };
     }
-    return 'error';
+    return { outcome: 'error', chainId: null };
   }
   if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
-    return 'unavailable';
+    return { outcome: 'unavailable', chainId: null };
   }
-  if (verifyUnavailable(res)) return 'unverifiable';
-  if (staleRejected(res)) return 'expired';
-  return 'error';
+  if (verifyUnavailable(res)) return { outcome: 'unverifiable', chainId: null };
+  if (staleRejected(res)) return { outcome: 'expired', chainId: null };
+  return { outcome: 'error', chainId: null };
 }
 
 /**

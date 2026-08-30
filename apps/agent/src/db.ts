@@ -468,21 +468,26 @@ export async function unlinkTelegram(
   db: D1Database,
   wallet: string,
 ): Promise<void> {
-  await db
-    .prepare(
-      `UPDATE user_thresholds
-       SET tg_chat_id = NULL, updated_at = ?
-       WHERE wallet = ?`,
-    )
-    .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase())
-    .run();
-  // Revoke any pending handshake codes too — an unexpired code from
-  // another tab/device could otherwise re-link the wallet after this
-  // privacy action, silently reversing it.
-  await db
-    .prepare(`DELETE FROM telegram_links WHERE wallet = ?`)
-    .bind(wallet.toLowerCase())
-    .run();
+  // ONE atomic batch (#2013 round 6 P2): the chat-id clear and the
+  // handshake-code revocation succeed or fail together. Sequential
+  // statements could clear the chat id, fail the code deletion, and
+  // report an error — leaving an unexpired code able to re-link the
+  // wallet and silently reverse the privacy action.
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE user_thresholds
+         SET tg_chat_id = NULL, updated_at = ?
+         WHERE wallet = ?`,
+      )
+      .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase()),
+    // Revoke any pending handshake codes too — an unexpired code from
+    // another tab/device could otherwise re-link the wallet after this
+    // privacy action, silently reversing it.
+    db
+      .prepare(`DELETE FROM telegram_links WHERE wallet = ?`)
+      .bind(wallet.toLowerCase()),
+  ]);
 }
 
 /** #2013 round 3 P1 — the CHAIN-SCOPED unlink, used when the request
@@ -500,18 +505,19 @@ export async function unlinkTelegramOnChain(
   wallet: string,
   chainId: number,
 ): Promise<void> {
-  await db
-    .prepare(
-      `UPDATE user_thresholds
-       SET tg_chat_id = NULL, updated_at = ?
-       WHERE wallet = ? AND chain_id = ?`,
-    )
-    .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
-    .run();
-  await db
-    .prepare(`DELETE FROM telegram_links WHERE wallet = ? AND chain_id = ?`)
-    .bind(wallet.toLowerCase(), chainId)
-    .run();
+  // Same atomic-batch rule as `unlinkTelegram` (#2013 round 6 P2).
+  await db.batch([
+    db
+      .prepare(
+        `UPDATE user_thresholds
+         SET tg_chat_id = NULL, updated_at = ?
+         WHERE wallet = ? AND chain_id = ?`,
+      )
+      .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId),
+    db
+      .prepare(`DELETE FROM telegram_links WHERE wallet = ? AND chain_id = ?`)
+      .bind(wallet.toLowerCase(), chainId),
+  ]);
 }
 
 /** Sweep expired handshake codes — run at the start of each cron tick

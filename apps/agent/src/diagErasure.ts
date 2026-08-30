@@ -356,16 +356,19 @@ export async function handleDiagErasure(
   }
 
   // INVARIANT 1: uniform response, no branching on RETENTION state,
-  // no row counts. `scope` is a function of the SIGNATURE TYPE alone
-  // (#2013 r5) — identical for the held and unheld cases, so it
-  // reveals nothing the caller did not already know — and lets the
-  // app confirm honestly that a chain-verified authority's request
-  // covered one chain's records rather than the wallet's.
+  // no row counts. `scope` — and, on the chain scope, WHICH chain —
+  // is a function of the SIGNATURE VERDICT alone (#2013 r5+r6) —
+  // identical for the held and unheld cases, so it reveals nothing
+  // the caller did not already know — and lets the app confirm
+  // honestly that a chain-verified authority's request covered one
+  // NAMED chain's records rather than the wallet's: the wallet may
+  // sit on a different chain by the time the confirmation renders,
+  // so "the network you are connected to" is not a claim the client
+  // can safely make on its own (round 6 P2).
   return json(
-    {
-      status: 'processed',
-      scope: verified.via === 'chain' ? 'chain' : 'wallet',
-    },
+    verified.via === 'chain'
+      ? { status: 'processed', scope: 'chain', chainId: verified.chainId }
+      : { status: 'processed', scope: 'wallet' },
     200,
     corsOrigin,
   );

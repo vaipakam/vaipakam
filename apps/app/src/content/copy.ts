@@ -453,13 +453,21 @@ const copySource = {
     diagSignNote:
       'Proving the wallet is yours is a free signature — not a transaction, and it costs no gas.',
     diagProcessed: 'Your erasure request was processed.',
-    /* #2013 round 5 — a smart account's signature is approved by the
-       account contract on ONE network, so the service scopes the
-       erasure to that network's records and says so. This message
-       must match that honest scope: it may not imply the wallet's
-       records on other networks were touched. */
-    diagProcessedChainOnly:
-      'Your erasure request was processed for the network your wallet is currently connected to. A smart-account wallet’s signature is verified on one network at a time, so records captured on other networks are not covered — switch networks and repeat the request there, or email support@vaipakam.com and we will process it for your wallet everywhere.',
+    /* #2013 rounds 5–6 — a smart account's signature is approved by
+       the account contract on ONE network, so the service scopes the
+       erasure to that network's records and says so, naming the
+       chain in its response. The confirmation NAMES that network —
+       never "the network you are connected to", which may already be
+       a different one by the time it renders. The Unknown variant
+       covers a service response that named no chain the app can
+       describe: still honest about the one-network scope, just
+       without the name. */
+    diagProcessedChainOnly: tmpl(
+      'Your erasure request was processed for records from {{network}} only. A smart-account wallet’s signature is verified on one network at a time, so records captured on other networks are not covered — switch to another network and repeat the request there, or email support@vaipakam.com and we will process it for your wallet everywhere.',
+      ['network'],
+    ),
+    diagProcessedChainUnknown:
+      'Your erasure request was processed for one network’s records only — the network that verified your wallet’s signature. A smart-account wallet’s signature is verified on one network at a time, so records captured on other networks are not covered — switch networks and repeat the request there, or email support@vaipakam.com and we will process it for your wallet everywhere.',
     diagUniformNote:
       'The confirmation is deliberately the same for every wallet: it does not say whether any records existed, so nothing about your records can be read from it. Where the law requires some records to be kept, the check below reports that only when the law allows saying so.',
     diagStatusClear: 'No retained records are reported for this wallet.',
@@ -548,8 +556,13 @@ const copySource = {
        different controllers elsewhere), so the service clears that
        network alone and says so; the confirmation must not announce
        a wallet-wide disconnect that did not happen. */
-    unlinkedChainOnly:
-      'Unlinked for this network. A smart-account wallet is disconnected per network \u2014 if this wallet is linked on other networks, unlink each one from there with its own signature.',
+    unlinkedChainOnly: tmpl(
+      // Names the network the unlink covered (#2013 r6) \u2014 a
+      // completion can land after a network switch, so "this
+      // network" could describe the wrong one.
+      'Unlinked for {{network}}. A smart-account wallet is disconnected per network \u2014 if this wallet is linked on other networks, unlink each one from there with its own signature.',
+      ['network'],
+    ),
     toggleRepayDue: 'Message me before an interest payment comes due',
     toggleRisky: 'Message me if my loan gets risky',
     riskyOffNote:

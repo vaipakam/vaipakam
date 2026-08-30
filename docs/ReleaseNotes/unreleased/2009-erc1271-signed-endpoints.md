@@ -15,7 +15,9 @@ The service now verifies those signatures properly, against the
 network the account lives on, through one shared verifier used by the
 whole family. An ordinary wallet's signature still verifies instantly
 with no network call; a smart account's is checked with the network
-the signed request names — or, for the erasure requests, whose frozen
+the signed request names — any network the service can talk to,
+whether or not Vaipakam is deployed there, since the check needs
+only the account's own contract — or, for the erasure requests, whose frozen
 wording predates the idea of naming a network, the network the app
 sends alongside, which chooses only where the check runs and never
 what it proves. The detection workaround in the erasure card is gone:
@@ -49,7 +51,10 @@ alerts under such a signature disconnects that network's alerts
 only, and an erasure request erases that network's records only —
 with the signed wording, the service's confirmation, and the app's
 message all saying that scope plainly, so nobody reads a one-network
-action as a wallet-wide one. An ordinary wallet's signature proves
+action as a wallet-wide one. The confirmation NAMES the network the
+service says it covered — never "the network you are connected to",
+because the wallet can be on a different network by the time the
+message renders. An ordinary wallet's signature proves
 the one keyholder everywhere and keeps the wallet-wide behaviour.
 The retention check still answers for the wallet as a whole: legal
 holds have no per-network granularity for the answer to narrow to.

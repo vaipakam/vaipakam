@@ -239,7 +239,8 @@
       "diagError": "Die Anfrage konnte nicht abgeschlossen werden, und möglicherweise wurde nichts gelöscht. Versuchen Sie es gleich noch einmal.",
       "diagExpired": "Die signierte Anfrage ist abgelaufen, bevor der Dienst sie angenommen hat – es wurden also keine Einträge geprüft oder gelöscht. Versuchen Sie es erneut und bestätigen Sie die Wallet-Abfrage zügig; tritt dies wiederholt auf, geht möglicherweise die Uhr dieses Geräts falsch.",
       "diagVerifyUnavailable": "Der Support-Dienst konnte die Signatur Ihrer Wallet gerade nicht überprüfen – das Netzwerk, in dem Ihr Wallet-Konto lebt, war vom Dienst aus nicht erreichbar. Das bedeutet nicht, dass die Signatur falsch war. Versuchen Sie es in Kürze erneut, oder schreiben Sie an support@vaipakam.com und wir bearbeiten eine Löschanfrage für Ihre Wallet.",
-      "diagProcessedChainOnly": "Ihr Löschantrag wurde für das Netzwerk verarbeitet, mit dem Ihre Wallet gerade verbunden ist. Die Signatur einer Smart-Account-Wallet wird jeweils nur auf einem Netzwerk geprüft, daher sind auf anderen Netzwerken erfasste Einträge nicht abgedeckt — wechseln Sie das Netzwerk und wiederholen Sie den Antrag dort, oder schreiben Sie an support@vaipakam.com, und wir verarbeiten ihn für Ihre Wallet überall."
+      "diagProcessedChainOnly": "Ihr Löschantrag wurde nur für die Einträge von {{network}} verarbeitet. Die Signatur einer Smart-Account-Wallet wird jeweils nur auf einem Netzwerk geprüft, daher sind auf anderen Netzwerken erfasste Einträge nicht abgedeckt — wechseln Sie auf ein anderes Netzwerk und wiederholen Sie den Antrag dort, oder schreiben Sie an support@vaipakam.com, und wir verarbeiten ihn für Ihre Wallet überall.",
+      "diagProcessedChainUnknown": "Ihr Löschantrag wurde nur für die Einträge eines einzigen Netzwerks verarbeitet — des Netzwerks, das die Signatur Ihrer Wallet geprüft hat. Die Signatur einer Smart-Account-Wallet wird jeweils nur auf einem Netzwerk geprüft, daher sind auf anderen Netzwerken erfasste Einträge nicht abgedeckt — wechseln Sie das Netzwerk und wiederholen Sie den Antrag dort, oder schreiben Sie an support@vaipakam.com, und wir verarbeiten ihn für Ihre Wallet überall."
     },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."
@@ -284,7 +285,7 @@
       "pushEnabled": "Push-Zustellung ist für diese Wallet aktiv.",
       "pushButton": "Push-Kanal öffnen",
       "loanNudge": "Möchten Sie eine Telegram-Warnung, wenn dieser Kredit riskant wird? Richten Sie Benachrichtigungen in den Einstellungen ein.",
-      "unlinkedChainOnly": "Für dieses Netzwerk getrennt. Eine Smart-Account-Wallet wird pro Netzwerk getrennt — ist diese Wallet in anderen Netzwerken verknüpft, trennen Sie jedes dort mit einer eigenen Signatur."
+      "unlinkedChainOnly": "Für {{network}} getrennt. Eine Smart-Account-Wallet wird pro Netzwerk getrennt — ist diese Wallet auf anderen Netzwerken verknüpft, trennen Sie jede dort mit ihrer eigenen Signatur."
     },
     "notifications": {
       "bellLabel": "Benachrichtigungen",

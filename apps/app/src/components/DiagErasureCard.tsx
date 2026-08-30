@@ -22,6 +22,7 @@
 import { useRef, useState } from 'react';
 import { FileX2, ShieldCheck } from 'lucide-react';
 import { useAccount, useSignMessage } from 'wagmi';
+import { chainDisplayName } from '../chain/chains';
 import { copy } from '../content/copy';
 import {
   diagErasureConfigured,
@@ -33,7 +34,12 @@ import { isUserRejection } from '../lib/errors';
 
 type CardResult =
   | { kind: 'erased' }
-  | { kind: 'erasedChainOnly' }
+  // The chain the SERVICE confirmed (#2013 r6) — its own echo, never
+  // the wallet's current chain: the confirmation must name the
+  // network it actually covered, because the wallet may sit on a
+  // different one by the time this renders. Null when the service
+  // named none; the banner then describes the scope without a name.
+  | { kind: 'erasedChainOnly'; chainId: number | null }
   | { kind: 'status'; status: DiagErasureStatus }
   | { kind: 'unavailable' }
   | { kind: 'expired' }
@@ -114,21 +120,21 @@ export function DiagErasureCard() {
     });
     try {
       if (kind === 'erase') {
-        const outcome = await requestDiagErasure(
+        const res = await requestDiagErasure(
           forWallet,
           (message) => signMessageAsync({ message }),
           forChain,
         );
         publish(
-          outcome === 'processed'
+          res.outcome === 'processed'
             ? { kind: 'erased' }
-            : outcome === 'processedChainOnly'
-              ? { kind: 'erasedChainOnly' }
-              : outcome === 'unavailable'
+            : res.outcome === 'processedChainOnly'
+              ? { kind: 'erasedChainOnly', chainId: res.chainId }
+              : res.outcome === 'unavailable'
                 ? { kind: 'unavailable' }
-                : outcome === 'expired'
+                : res.outcome === 'expired'
                   ? { kind: 'expired' }
-                  : outcome === 'unverifiable'
+                  : res.outcome === 'unverifiable'
                     ? { kind: 'unverifiable' }
                     : { kind: 'error' },
         );
@@ -185,7 +191,15 @@ export function DiagErasureCard() {
           ) : null}
           {shown?.kind === 'erasedChainOnly' ? (
             <div className="banner banner-success" role="status">
-              {copy.dataRights.diagProcessedChainOnly}
+              {/* Names the chain the SERVICE confirmed — never "the
+                  network you are connected to", which may already be
+                  a different one (#2013 r6). */}
+              {(() => {
+                const network = chainDisplayName(shown.chainId ?? undefined);
+                return network
+                  ? copy.dataRights.diagProcessedChainOnly(network)
+                  : copy.dataRights.diagProcessedChainUnknown;
+              })()}
             </div>
           ) : null}
           {shown?.kind === 'status' ? (

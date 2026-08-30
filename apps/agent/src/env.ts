@@ -484,19 +484,20 @@ export interface ChainConfig {
   diamond: string;
 }
 
-/**
- * Resolve chain configs from env + the consolidated deployments
- * JSON. Same shape as apps/{keeper,indexer} versions.
- *
- * #1651 — this said the meta table covers "every chain with a Diamond
- * OR a VPFIBuyAdapter". There is no adapter since #687-A, and the set
- * was never derived from one: a row survives only if BOTH its RPC
- * secret is set AND `getDeployment` returns a record, so the result is
- * Diamond-driven and self-limiting. Listing a chain here that has
- * neither is inert, which is why `RPC_ZKEVM` can sit in the table while
- * being deliberately never set.
- */
-export function getChainConfigs(env: Env): ChainConfig[] {
+/** A chain the Worker can TALK to — an RPC binding and nothing more.
+ *  Deliberately not gated on a protocol deployment (#2013 round 6
+ *  P2): signature verification against a smart account's contract
+ *  needs only an RPC (the universal validator is deployless), and a
+ *  Safe on a chain Vaipakam has not deployed to is still a real
+ *  signer whose requests must be checkable. */
+export interface RpcChain {
+  id: number;
+  name: string;
+  rpc: string;
+}
+
+/** Every chain with an RPC binding set, deployment or not. */
+export function getRpcChains(env: Env): RpcChain[] {
   const meta: { id: number; name: string; rpc: string | undefined }[] = [
     // Mainnets — included once both the deployment artifact and the
     // matching RPC secret land.
@@ -515,17 +516,34 @@ export function getChainConfigs(env: Env): ChainConfig[] {
     { id: 80002, name: 'Polygon Amoy', rpc: env.RPC_POLYGON_AMOY },
     { id: 97, name: 'BNB Testnet', rpc: env.RPC_BNB_TESTNET },
   ];
-  const out: ChainConfig[] = [];
+  const out: RpcChain[] = [];
   for (const m of meta) {
     if (!m.rpc) continue;
-    const dep = getDeployment(m.id);
+    out.push({ id: m.id, name: m.name, rpc: m.rpc });
+  }
+  return out;
+}
+
+/**
+ * Resolve chain configs from env + the consolidated deployments
+ * JSON. Same shape as apps/{keeper,indexer} versions.
+ *
+ * #1651 — this said the meta table covers "every chain with a Diamond
+ * OR a VPFIBuyAdapter". There is no adapter since #687-A, and the set
+ * was never derived from one: a row survives only if BOTH its RPC
+ * secret is set AND `getDeployment` returns a record, so the result is
+ * Diamond-driven and self-limiting. Listing a chain here that has
+ * neither is inert, which is why `RPC_ZKEVM` can sit in the table while
+ * being deliberately never set. (Since #2013 round 6 the RPC half
+ * lives in `getRpcChains` above — this keeps the deployment gate for
+ * the callers that read the Diamond.)
+ */
+export function getChainConfigs(env: Env): ChainConfig[] {
+  const out: ChainConfig[] = [];
+  for (const c of getRpcChains(env)) {
+    const dep = getDeployment(c.id);
     if (!dep) continue;
-    out.push({
-      id: m.id,
-      name: m.name,
-      rpc: m.rpc,
-      diamond: dep.diamond,
-    });
+    out.push({ ...c, diamond: dep.diamond });
   }
   return out;
 }

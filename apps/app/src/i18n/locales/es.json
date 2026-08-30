@@ -239,7 +239,8 @@
       "diagError": "La solicitud no pudo completarse y es posible que no se haya borrado nada. Inténtelo de nuevo en un momento.",
       "diagExpired": "La solicitud firmada caducó antes de que el servicio la aceptara, así que no se consultó ni se borró ningún registro. Inténtelo de nuevo y apruebe la ventana del monedero sin demora; si esto se repite, puede que el reloj de este dispositivo esté mal ajustado.",
       "diagVerifyUnavailable": "El servicio de soporte no pudo verificar la firma de su monedero en este momento: la red en la que vive la cuenta de su monedero no era accesible desde el servicio. Esto no significa que la firma fuera incorrecta. Inténtelo de nuevo dentro de un rato, o escriba a support@vaipakam.com y tramitaremos una solicitud de borrado para su monedero.",
-      "diagProcessedChainOnly": "Tu solicitud de borrado se procesó para la red a la que tu monedero está conectado ahora. La firma de un monedero de cuenta inteligente se verifica en una sola red a la vez, por lo que los registros capturados en otras redes no quedan cubiertos: cambia de red y repite la solicitud allí, o escribe a support@vaipakam.com y la procesaremos para tu monedero en todas partes."
+      "diagProcessedChainOnly": "Tu solicitud de borrado se procesó únicamente para los registros de {{network}}. La firma de un monedero de cuenta inteligente se verifica en una sola red a la vez, por lo que los registros capturados en otras redes no quedan cubiertos: cambia a otra red y repite la solicitud allí, o escribe a support@vaipakam.com y la procesaremos para tu monedero en todas partes.",
+      "diagProcessedChainUnknown": "Tu solicitud de borrado se procesó únicamente para los registros de una red: la red que verificó la firma de tu monedero. La firma de un monedero de cuenta inteligente se verifica en una sola red a la vez, por lo que los registros capturados en otras redes no quedan cubiertos: cambia de red y repite la solicitud allí, o escribe a support@vaipakam.com y la procesaremos para tu monedero en todas partes."
     },
     "killSwitch": {
       "disabled": "Esta acción está desactivada ahora mismo — los operadores la pausaron por precaución mientras revisan algo. Lo que ya es tuyo no se ve afectado: pagos, reclamos y retiros siguen abiertos."
@@ -284,7 +285,7 @@
       "pushEnabled": "La entrega Push está activa para esta billetera.",
       "pushButton": "Abrir el canal Push",
       "loanNudge": "¿Quieres un aviso de Telegram si este préstamo se vuelve riesgoso? Configura alertas en Configuración.",
-      "unlinkedChainOnly": "Desvinculado para esta red. Un monedero de cuenta inteligente se desconecta por red — si este monedero está vinculado en otras redes, desvincule cada una desde allí con su propia firma."
+      "unlinkedChainOnly": "Desvinculado para {{network}}. Un monedero de cuenta inteligente se desconecta por red — si este monedero está vinculado en otras redes, desvincule cada una desde allí con su propia firma."
     },
     "notifications": {
       "bellLabel": "Notificaciones",

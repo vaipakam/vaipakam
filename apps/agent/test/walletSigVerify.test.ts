@@ -159,8 +159,6 @@ describe('verifyWalletSignature', () => {
 
   it('omitted chainId tries every configured chain and takes the first yes', async () => {
     const blob = `0x${'ab'.repeat(700)}`;
-    // Both chains must exist in the consolidated deployments for
-    // getChainConfigs to keep them — Base Sepolia + Arbitrum Sepolia.
     const env = {
       RPC_BASE_SEPOLIA: 'http://a.test',
       RPC_ARB_SEPOLIA: 'http://b.test',
@@ -183,6 +181,26 @@ describe('verifyWalletSignature', () => {
       // authority downstream needs to know which contract vouched.
     ).toEqual({ ok: true, via: 'chain', chainId: 421614 });
     expect(consulted).toContain('http://b.test');
+  });
+
+  it('verifies on a chain with an RPC but NO protocol deployment (#2013 r6)', async () => {
+    // Signature verification is a deployless eth_call — a Safe on a
+    // chain Vaipakam has not deployed to is still a real signer. The
+    // chain list must come from the RPC bindings, not the
+    // deployment-gated getChainConfigs (which drops Sepolia:
+    // deployments carry only 421614/84532/97).
+    const blob = `0x${'ab'.repeat(700)}`;
+    const env = { RPC_SEPOLIA: 'http://nodep.test' } as Env;
+    expect(
+      await verifyWalletSignature(
+        env,
+        ACCOUNT_A.address,
+        MESSAGE,
+        blob,
+        11155111,
+        YES,
+      ),
+    ).toEqual({ ok: true, via: 'chain', chainId: 11155111 });
   });
 
   it('a refused rate gate is LIMITED — before any chain is consulted (#2013)', async () => {
