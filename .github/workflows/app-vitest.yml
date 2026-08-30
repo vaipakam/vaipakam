@@ -97,7 +97,8 @@ jobs:
           echo "$CHANGED"
 
           # apps/app + apps/indexer source + the packages they import
-          # (a lib/contracts/ui change can break any suite), plus the root
+          # (a lib/contracts change can break any suite — `ui` was in
+          # this set until #1963 retired the package), plus the root
           # dependency / workspace inputs a Vitest/jsdom/React/wagmi bump
           # rides in on, plus this workflow file itself. packages/i18n
           # joined post-#1563: the connected-app suite asserts token

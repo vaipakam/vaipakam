@@ -35,9 +35,9 @@
     border-color 0.15s ease,
     box-shadow 0.15s ease;
   /* No min-width here — the parent settings-row already gives
-   * the picker reasonable width via flex layout, and 180px
-   * (ChainPicker's default) would overflow on narrow gear
-   * popovers at viewport widths approaching the 320px max. */
+   * the picker reasonable width via flex layout, and the 180px the
+   * retired ChainPicker defaulted to (#1963) would overflow on narrow
+   * gear popovers at viewport widths approaching the 320px max. */
   min-width: 140px;
   justify-content: space-between;
 }
