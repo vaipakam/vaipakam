@@ -5921,6 +5921,91 @@ describe('check-deploy-invocations — configured preservation (#1995 root fix)'
   });
 });
 
+describe('check-deploy-invocations — #1995 r22', () => {
+  // `matrix['dir']` is `matrix.dir` to Actions, but seven matchers knew only
+  // the dot form — so the value fell through to the unknown-expression rule,
+  // which blanks it, and the step scoped nothing.
+  it('an indexed matrix reference in a working-directory', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    strategy:',
+        '      matrix:',
+        '        dir: [apps/agent]',
+        '    steps:',
+        "      - run: wrangler deploy",
+        "        working-directory: ${{ matrix['dir'] }}",
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('an indexed env reference in a run body', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    env:',
+        '      DEPLOY_CMD: wrangler deploy',
+        '    steps:',
+        '      - working-directory: apps/keeper',
+        '        run: ${{ env["DEPLOY_CMD"] }}',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but an indexed reference to an unprotected directory still passes', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    strategy:',
+        '      matrix:',
+        '        dir: [apps/indexer]',
+        '    steps:',
+        '      - run: wrangler deploy',
+        "        working-directory: ${{ matrix['dir'] }}",
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // A Node-launched helper inherits the caller's cwd exactly as a shell one
+  // does; the helper matchers knew only shell and Windows launchers.
+  it('a Node-launched helper whose argv deploy runs in a protected package', () => {
+    seed('deploy.mjs', "spawnSync('wrangler', ['deploy']);\n");
+    const r = runWith('w.sh', 'cd apps/agent\nnode ../../deploy.mjs\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but the same Node helper launched from an unprotected package passes', () => {
+    seed('deploy.mjs', "spawnSync('wrangler', ['deploy']);\n");
+    const r = runWith('w.sh', 'cd apps/indexer\nnode ../../deploy.mjs\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('and a bare script path with no launcher is still not a helper', () => {
+    // The r20 width lesson: requiring BOTH the launcher word and the
+    // extension is what keeps this away from every .ts file in the tree.
+    seed('src/index.ts', "spawnSync('wrangler', ['deploy']);\n");
+    const r = runWith('w.sh', 'cd apps/agent\necho ./src/index.ts\n');
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe('check-deploy-invocations — #1995 r22 (config reading)', () => {
   const PKG = '{"name":"@vaipakam/agent"}\n';
 
@@ -5934,8 +6019,6 @@ describe('check-deploy-invocations — #1995 r22 (config reading)', () => {
   });
 
   it('but a // inside a string is data, not a comment', () => {
-    // The inverse: the strip must not truncate a URL and leave the config
-    // unparseable, which would read as "no keep_vars" — the wrong failure.
     seed('apps/agent/package.json', PKG);
     seed(
       'apps/agent/wrangler.jsonc',

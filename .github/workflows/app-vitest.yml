@@ -119,7 +119,16 @@ jobs:
           # per-item reads, a failure the pass itself reports as success.
           # The one Worker holding KEEPER_PRIVATE_KEY is not where an
           # unrun test suite belongs.
-          DEFI_RE='^(apps/(app|indexer|keeper)/|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
+          # The var-preservation invariant (apps/keeper/test/workerKeepVars.test.ts)
+          # asserts `keep_vars` for FIVE Workers, two of which — apps/agent and
+          # the two ops Workers — no rule above brings into this job. So an
+          # agent-only or ops-only PR could delete the key with the invariant
+          # never running, and that invariant is now what carries the whole
+          # var-preservation property (#1995). Their CONFIGS are listed rather
+          # than their directories: the key can only be lost by editing one of
+          # these files, and widening to the whole directory would run the app,
+          # indexer and keeper suites for every unrelated agent or ops change.
+          DEFI_RE='^(apps/(app|indexer|keeper)/|apps/agent/wrangler\.jsonc$|ops/(mesh-watcher|offchain-data-warm)/wrangler\.jsonc$|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else

@@ -12,14 +12,30 @@ import { join } from 'node:path';
  * the key removed, which is the part a passing check cannot demonstrate about
  * itself.
  *
- * Two runners on purpose. CI runs the script unconditionally, because the
- * Workers it covers span `apps/` and `ops/` while the job running this suite
- * is path-gated to `apps/(app|indexer|keeper)` — an agent-only or ops-only
- * change would otherwise skip the invariant (Codex #1995 r22). This suite is
- * the fast local feedback, and it must not become a second implementation.
+ * TWO gates, deliberately, because they fail differently:
+ *
+ *   - `ci.yml`'s `worker keep_vars (unconditional)` job runs the script on
+ *     every PR with no path filter, the same shape and for the same stated
+ *     reason as `D1 name consistency` — a path gate excludes exactly the
+ *     changes the check exists to catch. It needs no install step, so it is
+ *     cheap enough to be unconditional.
+ *   - `app-vitest.yml`'s filter additionally brings THIS suite in whenever a
+ *     listed config changes, so the richer assertions run too. The last test
+ *     below reads that filter and asserts it covers every listed Worker,
+ *     because a gate nobody checks is how the invariant went unrun in the
+ *     first place (#1995 r22).
  */
 const REPO_ROOT = new URL('../../../', import.meta.url).pathname.replace(/\/$/, '');
 const SCRIPT = join(REPO_ROOT, 'apps/keeper/scripts/check-keep-vars.mjs');
+
+/** Kept in step with the same list inside the script, which is the authority. */
+const VAR_CARRYING_WORKERS = [
+  'apps/agent',
+  'apps/keeper',
+  'apps/indexer',
+  'ops/mesh-watcher',
+  'ops/offchain-data-warm',
+];
 
 function runCheck(): { ok: boolean; out: string } {
   try {
@@ -37,17 +53,21 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
     expect(r.out).toContain('preserve their dashboard-managed vars');
   });
 
-  it.each([
-    'apps/agent',
-    'apps/keeper',
-    'apps/indexer',
-    'ops/mesh-watcher',
-    'ops/offchain-data-warm',
-  ])('fails when %s loses the declaration', (dir) => {
+  it('covers exactly the Workers the script covers', () => {
+    // The list above is a convenience for the tests below; the script owns the
+    // real one. If they drift, the mutation tests would silently stop covering
+    // a Worker — so the drift itself is asserted.
+    const src = readFileSync(SCRIPT, 'utf8');
+    const block = /const VAR_CARRYING_WORKERS = \[([\s\S]*?)\]/.exec(src)?.[1] ?? '';
+    const inScript = [...block.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+    expect(inScript).toEqual(VAR_CARRYING_WORKERS);
+  });
+
+  it.each(VAR_CARRYING_WORKERS)('fails when %s loses the declaration', (dir) => {
     // The check RUNS ON ITS OWN CASE, once per Worker: a check that only ever
     // passes proves nothing about the Worker it names. The config is restored
-    // in `finally`, and the assertion is made after restoring so a failure
-    // cannot leave the tree edited.
+    // in `finally`, and the restore is asserted before the verdict so a
+    // failure cannot leave the tree edited.
     const path = join(REPO_ROOT, dir, 'wrangler.jsonc');
     const original = readFileSync(path, 'utf8');
     let result: { ok: boolean; out: string };
@@ -62,5 +82,40 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
     expect(readFileSync(path, 'utf8')).toBe(original);
     expect(result.ok, `${dir}: removing keep_vars did not fail the check`).toBe(false);
     expect(result.out).toContain(dir);
+  });
+
+  it('CI actually runs this suite when any listed config changes', () => {
+    // The unconditional job is the primary gate, but this suite carries the
+    // richer assertions and is path-gated. That gate listed
+    // `apps/(app|indexer|keeper)` only, so an agent-only or ops-only PR could
+    // delete `keep_vars` with this file never executing (#1995 r22).
+    //
+    // Asserted against the workflow's own regex rather than restated here: a
+    // copy would drift, and the failure mode is silence.
+    const wf = readFileSync(join(REPO_ROOT, '.github/workflows/app-vitest.yml'), 'utf8');
+    const line = wf.split('\n').find((l) => l.trim().startsWith('DEFI_RE='));
+    expect(line, 'DEFI_RE not found in app-vitest.yml').toBeTruthy();
+    const pattern = /DEFI_RE='(.*)'\s*$/.exec(line as string)?.[1];
+    expect(pattern, 'DEFI_RE is not single-quoted as expected').toBeTruthy();
+    const re = new RegExp(pattern as string);
+    for (const dir of VAR_CARRYING_WORKERS) {
+      expect(
+        re.test(`${dir}/wrangler.jsonc`),
+        `${dir}/wrangler.jsonc does not trigger the vitest job, so removing its keep_vars would go unchecked`,
+      ).toBe(true);
+    }
+    // …and the test file itself, so editing the invariant runs it.
+    expect(re.test('apps/keeper/test/workerKeepVars.test.ts')).toBe(true);
+  });
+
+  it('the unconditional CI job exists and is not path-gated', () => {
+    // The other half of the same worry: this suite's gate is asserted above,
+    // and the job that needs NO gate is asserted here. A job that quietly
+    // gained an `if:` would look identical from the outside.
+    const ci = readFileSync(join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8');
+    const job = /\n  worker-keep-vars:\n([\s\S]*?)(?=\n  [a-z0-9-]+:\n)/.exec(ci)?.[1] ?? '';
+    expect(job, 'worker-keep-vars job not found in ci.yml').toBeTruthy();
+    expect(job).toContain('check-keep-vars.mjs');
+    expect(/^\s{4}if:/m.test(job), 'the unconditional job has acquired an if: gate').toBe(false);
   });
 });
