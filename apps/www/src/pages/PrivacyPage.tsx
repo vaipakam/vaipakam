@@ -67,7 +67,13 @@ export default function PrivacyPage() {
             session storage. It is a single slot, not a running log of
             your activity, it is not keyed to your wallet, and it is
             discarded when you close the tab. It never leaves your
-            device on its own.
+            device on its own. (One edge case, for completeness: the
+            app holds the newest record in memory as well, so that a
+            browser refusing to write to session storage — a full
+            quota, a locked-down profile — still has it for a support
+            report. If a write fails while an older record is already
+            stored, that older one stays until the tab closes, and a
+            data export would show both.)
           </p>
 
           <p>
@@ -90,6 +96,15 @@ export default function PrivacyPage() {
             status, and the app build. When a stored error exists, its
             time, page, message and — where there is one — component
             trace are appended.
+          </p>
+
+          <p>
+            Because the whole report has to fit in a link, a long one is
+            trimmed to fit: the component trace is dropped first, and if
+            it is still too long the error is dropped entirely, leaving
+            the always-carried fields above. So the report GitHub
+            receives can contain <em>less</em> than "Copy details" shows
+            you — never more.
           </p>
 
           <p>
@@ -295,6 +310,20 @@ export default function PrivacyPage() {
               it.
             </li>
             <li>
+              <strong>
+                GitHub — only when you open a support report.
+              </strong>{' '}
+              The Diagnostics drawer's report is a GitHub issue opened
+              through a pre-filled link, so opening it sends GitHub the
+              report described under "Diagnostics": page, network, your
+              shortened wallet address, connection and cache status,
+              app build, and the stored error if there is one. This
+              happens when the form opens, not when an issue is
+              submitted, and it happens only because you chose to open
+              it. GitHub is a public issue tracker — anything you then
+              submit is public.
+            </li>
+            <li>
               <strong>Nobody else by default.</strong> We do not sell
               or rent any data.
             </li>
@@ -383,7 +412,10 @@ export default function PrivacyPage() {
             off-chain operational records live in Cloudflare's database
             service. Analytics (if consented) are processed by Google.
             Alert messages you opt into and support-ticket alert
-            metadata (never ticket contents) pass through Telegram. Encrypted backups of the off-chain
+            metadata (never ticket contents) pass through Telegram. If
+            you open a support report from the Diagnostics drawer, that
+            report goes to GitHub, whose services are US-based.
+            Encrypted backups of the off-chain
             records are stored with Backblaze B2 — encrypted before
             upload, so Backblaze holds only ciphertext; nightly backup
             archives are kept 30 days and monthly archives 12 months,
