@@ -218,7 +218,11 @@ const RUN_DEPLOY_RE = String.raw`(?:(?:pnpm|npm|yarn)(?:\s+[^\s]+)*?\s+(?:${RUN_
 // is a NAMED group so this pattern never renumbers `ARGV_DEPLOY_RE`'s
 // backreferences if the two are ever composed; the tempered dot keeps the
 // scan inside one string literal.
-const SHELLSTR_DEPLOY_RE = String.raw`\b(?:os\.system|system|subprocess\.(?:run|call|check_call|check_output|Popen)|execSync|exec|execaCommandSync|execaCommand|execa)\s*\(\s*[frbu]{0,3}(?<sq>['"\`])(?:(?!\k<sq>)[\s\S])*?wrangler2?(?:\.(?:cmd|ps1|bat))?\s(?:(?!\k<sq>)[\s\S])*?\bdeploy\b`;
+// `versions upload` ships code and config exactly as `deploy` does and is
+// already a deploy to `ARGV_DEPLOY_RE` and `DEPLOY_RE` — but the shell-string
+// predicate recognised only `deploy`, so a non-shell step's block was
+// discarded and the upload never met its `working-directory` (#1995 r21).
+const SHELLSTR_DEPLOY_RE = String.raw`\b(?:os\.system|system|subprocess\.(?:run|call|check_call|check_output|Popen)|execSync|exec|execaCommandSync|execaCommand|execa)\s*\(\s*[frbu]{0,3}(?<sq>['"\`])(?:(?!\k<sq>)[\s\S])*?wrangler2?(?:\.(?:cmd|ps1|bat))?\s(?:(?!\k<sq>)[\s\S])*?\b(?:deploy|versions\s+upload)\b`;
 const launchesDeployText = (t) =>
   new RegExp(ARGV_DEPLOY_RE).test(t) || new RegExp(SHELLSTR_DEPLOY_RE).test(t);
 const ANY_DEPLOY_RE = `(?:${DEPLOY_RE}|${RUN_DEPLOY_RE}|${ARGV_DEPLOY_RE})`;
@@ -276,7 +280,14 @@ const DECL_PREFIX = String.raw`(?:(?:export|declare|typeset|local|readonly)\s+(?
 // meant `./src/index.ts` did too — so the walk read and fully parsed every
 // TypeScript file it saw mentioned. That took the real-tree run from 101 s
 // to over 400 s, on 1096 matching lines where `.sh` alone matches 250.
-const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))`;
+//
+// A WINDOWS helper is the same proposition in the other family: `call
+// ..\..\deploy.cmd` after `cd /d apps\agent` runs the child in the protected
+// directory, and both matchers knew only POSIX names — so the helper was
+// scanned on its own, scopeless (#1995 r21). Its alternative REQUIRES one of
+// the Windows extensions, which is what keeps the optional launcher prefix
+// from re-opening the width problem above: no bare word can match it.
+const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+)*\s+)?(?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))`;
 
 /** Collapse a captured word to what the shell would hand the command. */
 function dequote(w) {
@@ -1240,11 +1251,53 @@ function isHelpInvocation(cmd) {
  * destructive upload (#1995 r16). Line and block comments both, in the two
  * comment styles those formats use.
  */
+/**
+ * …and STRINGS are not comments. The regex form deleted from a `//` inside a
+ * string value — `"note": "operator says // keep this"` — which truncated the
+ * text mid-string, left the JSON unparseable, and failed a legitimate scoped
+ * upload whose config really does set the flag (#1995 r21). A false red.
+ *
+ * A scanner rather than a cleverer regex: "am I inside a string" is state, and
+ * the whitespace requirement before `//` and `#` is kept exactly as it was, so
+ * nothing OUTSIDE a string changes verdict.
+ */
 function withoutComments(text) {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|\s)\/\/[^\n]*/g, '$1')
-    .replace(/(^|\s)#[^\n]*/g, '$1');
+  let out = '';
+  let quote = null;
+  let i = 0;
+  const atBoundary = () => out === '' || /\s/.test(out[out.length - 1]);
+  while (i < text.length) {
+    const ch = text[i];
+    if (quote) {
+      if (ch === '\\') {
+        out += ch + (text[i + 1] ?? '');
+        i += 2;
+        continue;
+      }
+      if (ch === quote) quote = null;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      out += ch;
+      i += 1;
+      continue;
+    }
+    if (ch === '/' && text[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      i = end === -1 ? text.length : end + 2;
+      continue;
+    }
+    if (((ch === '/' && text[i + 1] === '/') || ch === '#') && atBoundary()) {
+      while (i < text.length && text[i] !== '\n') i += 1;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
 }
 
 function commandIsSafe(cmd, scopeHint = null) {
@@ -2044,9 +2097,16 @@ function expandCommandVars(text, vars) {
   // A MULTIWORD value only substitutes at the head of the text, which is the
   // command position for a segment. Anywhere else it is an argument or a
   // message, and expanding it there is what reported `echo "$MSG"` as a deploy.
-  const head = text.match(/^\s*"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?/);
+  // `eval` EXECUTES its argument, so the word after it is a command position
+  // too: `CMD='wrangler deploy'; eval "$CMD"` runs the deploy, but the head
+  // test saw `eval` as the command word and left `$CMD` an inert argument
+  // (#1995 r21). Only `eval` — the point of the head rule is that an ordinary
+  // argument is data, and `echo "$MSG"` must stay silent.
+  const evalLead = text.match(/^\s*eval\s+/);
+  const rest = evalLead ? text.slice(evalLead[0].length) : text;
+  const head = rest.match(/^\s*"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?/);
   if (head && vars.has(head[1]) && /\s/.test(vars.get(head[1]))) {
-    return text.replace(head[0], vars.get(head[1]));
+    return (evalLead?.[0] ?? '') + rest.replace(head[0], vars.get(head[1]));
   }
   return text.replace(
       // `${TARGET:?missing}` and its siblings (`:-`, `:+`, `:=`, `#`, `%`) are
@@ -2748,8 +2808,15 @@ function dirDirective(seg) {
   // per-segment fact rather than as a directive that moves the state (#1995
   // r16). GNU env documents the option; the selector logic modelled pnpm's and
   // wrangler's cwd options and not this wrapper's.
+  // The short option's value may be ATTACHED — `env -C"$TARGET" wrangler
+  // deploy` and `env -Capps/agent pwd` are both accepted by GNU env, which
+  // documents `-C, --chdir=DIR` — but requiring a space or `=` after `-C`
+  // missed the attached spelling entirely (#1995 r21). Captured as a WORD so
+  // an attached QUOTED value stays one argument.
   const envChdir = seg.match(
-    /(?:^|\s)env\s+(?:-[A-Za-z]+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:-C|--chdir)[= ]\s*(\S+)/,
+    new RegExp(
+      String.raw`(?:^|\s)env\s+(?:-[A-Za-z]+\s+|[A-Za-z_][A-Za-z0-9_]*=\S*\s+)*(?:--chdir[= ]\s*|-C[= ]?\s*)(${WORD})`,
+    ),
   );
   if (envChdir) return { kind: 'env-chdir', target: dequote(envChdir[1]) };
   // A `case` ARM LABEL sits in front of the command the same way `then` does —
@@ -3334,10 +3401,17 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           const wdF = wm[0] ?? wm[1] ?? wm[2] ?? null;
           const cleanCmdF = cmdF === null ? 'deploy' : stripYamlProps(cmdF.trim());
           const cwdF = wdF === null ? '' : workingDirFor(lines, i, false, wdF.trim());
-          out.push(
-            ...offset(logicalLines(`wrangler ${cleanCmdF}`), i, blockId, cwdF ?? '', null),
-          );
-          blockId += 1;
+          // Same expression resolution as the block-style action step above
+          // (#1995 r21) — this is the flow spelling of one configuration, and
+          // giving it to one and not the other is how this file drifts.
+          const envF = stepEnvVars(lines, i);
+          const baseF = expandActionsEnv(cleanCmdF, envF);
+          for (const variant of expandMatrixVariants(lines, i, baseF) ?? [baseF]) {
+            out.push(
+              ...offset(logicalLines(`wrangler ${variant}`), i, blockId, cwdF ?? '', null),
+            );
+            blockId += 1;
+          }
         }
         i += 1;
         continue;
@@ -3355,23 +3429,25 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           : stepIsDisabled(lines, i);
         const launches = launchesDeployText(body);
         const wd = flowValue('working-directory')?.trim() ?? workingDirFor(lines, i, !launches);
-        if ((isShell || launches) && !disabled && wd) {
+        const flowInterp = shellName ? interpreterOf(shellName) : stepShellName(lines, i);
+        // The same allowance the BLOCK-style inline step got at r20, which
+        // this branch did not receive: with no working-directory the step was
+        // dropped before `forInterpreter` could run, and a Windows body needs
+        // that transform to name a package at all — `wrangler.cmd deploy
+        // --config apps\agent\wrangler.jsonc` is agent-scoped only once the
+        // backslashes are separators. So the identical body was caught
+        // block-style and passed flow-mapped (#1995 r21). Empty cwd; the
+        // command's own selectors establish scope, and the duplicate with the
+        // physical line is removed by the reporting dedupe.
+        const flowNeedsTransform =
+          flowInterp === 'cmd' || flowInterp === 'pwsh' || flowInterp === 'powershell';
+        if ((isShell || launches) && !disabled && (wd || flowNeedsTransform)) {
           const env = stepEnvVars(lines, i);
-          out.push(
-            ...offset(
-              logicalLines(
-                forInterpreter(
-                  expandActionsEnv(body, env),
-                  shellName ? interpreterOf(shellName) : stepShellName(lines, i),
-                ),
-              ),
-              i,
-              blockId,
-              wd,
-              env,
-            ),
-          );
-          blockId += 1;
+          const base = expandActionsEnv(body, env);
+          for (const b of expandMatrixVariants(lines, i, base) ?? [base]) {
+            out.push(...offset(logicalLines(forInterpreter(b, flowInterp)), i, blockId, wd, env));
+            blockId += 1;
+          }
         }
       }
       i += 1;
@@ -3446,14 +3522,24 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       // EACH line of a multiline command is its own `wrangler <line>` — that
       // is how the action executes a block-scalar input — so each gets the
       // prefix, not just the first (#1995 r19).
-      const synth = cleanCmd
-        .split('\n')
-        .map((c) => c.trim())
-        .filter(Boolean)
-        .map((c) => `wrangler ${c}`)
-        .join('\n');
-      out.push(...offset(logicalLines(synth || 'wrangler deploy'), i, blockId, cwd ?? '', null));
-      blockId += 1;
+      // The command input is an EXPRESSION as often as the directory is:
+      // `command: ${{ matrix.cmd }}` with `cmd: deploy` synthesised the
+      // literal `wrangler ${{ matrix.cmd }}`, which carries no deploy — the
+      // directory half had this resolution since r18 and the command half
+      // never got it (#1995 r21). Same resolvers, so the two halves cannot
+      // drift apart again.
+      const actEnv = stepEnvVars(lines, i);
+      const cmdBase = expandActionsEnv(cleanCmd, actEnv);
+      for (const variant of expandMatrixVariants(lines, i, cmdBase) ?? [cmdBase]) {
+        const synth = variant
+          .split('\n')
+          .map((c) => c.trim())
+          .filter(Boolean)
+          .map((c) => `wrangler ${c}`)
+          .join('\n');
+        out.push(...offset(logicalLines(synth || 'wrangler deploy'), i, blockId, cwd ?? '', null));
+        blockId += 1;
+      }
       i += 1;
       continue;
     }
@@ -5631,18 +5717,23 @@ for (const file of walk(REPO_ROOT)) {
         // Leading `VAR=value` words are ENVIRONMENT, not the command — the
         // same reading `executedCommand` gives every other command word.
         const runWord = executedCommand(seg);
+        // The third alternative is the WINDOWS family — `call ..\..\deploy.cmd`
+        // and its launcher spellings (#1995 r21). It requires one of the
+        // Windows extensions, which is what lets the optional launcher prefix
+        // stay optional without admitting a bare word.
         const execHelper =
           !dir &&
           runWord.match(
             new RegExp(
-              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)))(?:\s|$)`,
+              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1)))(?:\s|$)`,
             ),
           );
         if (execHelper) {
+          // A Windows path names the same file with the other separator, and
+          // `resolveDir` speaks `/`.
+          const target = (execHelper[1] ?? execHelper[2] ?? execHelper[3]).replace(/\\/g, '/');
           deferred.push(
-            ...sourcedDeploys(
-              resolveDir(input[0]?.cwd ?? '', execHelper[1] ?? execHelper[2], shellVars),
-            ),
+            ...sourcedDeploys(resolveDir(input[0]?.cwd ?? '', target, shellVars)),
           );
         }
         if (/^shopt\s+-s\b[^;]*\bexpand_aliases\b/.test(seg)) aliasesOn = true;
