@@ -70,7 +70,14 @@
  * already exists on the base branch.
  */
 import { execFileSync } from 'node:child_process';
-import { lstatSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+} from 'node:fs';
 import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { keccak256 } from 'viem';
@@ -134,24 +141,42 @@ for (const meta of TERMS_VERSION_METAS) {
   // publication-time checks while the CI immutability job later sees
   // only the unchanged link path — a PR could then edit the TARGET and
   // silently change the "frozen" route without ever touching v<N>.md.
-  // lstat (not stat) so the link itself is what gets judged.
+  // ONE descriptor does the reject-symlink, type-check and read
+  // (O_NOFOLLOW at open, fstat + read on the fd): a check on the path
+  // followed by a read of the path is a check-then-use race, and the
+  // bytes judged must be the bytes read. O_NOFOLLOW is a POSIX flag —
+  // this script runs on the Linux CI runners and POSIX dev machines.
+  let fd: number;
   try {
-    if (!lstatSync(frozenPath).isFile()) {
+    fd = openSync(frozenPath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ELOOP') {
+      fail(
+        `v${meta.version}: ${frozenPath} is a symbolic link — a frozen ` +
+          `archive must hold its own bytes, never link to another file`,
+      );
+    } else {
+      fail(
+        `v${meta.version} is registered but its frozen source ` +
+          `${frozenPath} does not exist — the pinned route would render ` +
+          `the not-published fallback for a version the registry claims`,
+      );
+    }
+    continue;
+  }
+  let bytes: Buffer;
+  try {
+    if (!fstatSync(fd).isFile()) {
       fail(
         `v${meta.version}: ${frozenPath} is not a regular file — a frozen ` +
-          `archive must hold its own bytes, never link to another file`,
+          `archive must hold its own bytes`,
       );
       continue;
     }
-  } catch {
-    fail(
-      `v${meta.version} is registered but its frozen source ` +
-        `${frozenPath} does not exist — the pinned route would render ` +
-        `the not-published fallback for a version the registry claims`,
-    );
-    continue;
+    bytes = readFileSync(fd);
+  } finally {
+    closeSync(fd);
   }
-  const bytes = readFileSync(frozenPath);
   // The WORKING-TREE bytes must equal the GIT-INDEX blob (#2010
   // round 5 P2): a later `.gitattributes` change (e.g. `eol=crlf` on
   // these paths) transforms the checkout — which is what the page
