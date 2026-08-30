@@ -49,6 +49,17 @@ address can be broken at any point, so no leftover is safely short. The cost is
 that a word spelled entirely in hexadecimal letters is discarded alongside a
 neighbouring escape in those two cases, which is the right way round.
 
+The same promise is made twice, and it was only being kept once. A support
+message sent from the app's contact form goes to a service that shortens
+addresses again on arrival, on the stated grounds that it cannot trust
+whatever built the request — a point that covers a deliberately crafted one
+and, more ordinarily, a browser still running yesterday's copy of the app.
+That second check knew only how to recognise an address written plainly, so
+an encoded one passed it and was stored and forwarded intact. Both sides now
+share a single implementation of the rule rather than keeping their own
+readings of it, which is also the only way a promise this detailed stays true
+in two places as it changes.
+
 The behaviour arrived with its first tests. Nothing had covered the
 shortener before, which is how the gap survived unnoticed, and the new cases
 are written against the contract rather than the code: what must never

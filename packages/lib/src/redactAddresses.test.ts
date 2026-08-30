@@ -1,12 +1,17 @@
 /**
  * The report redaction contract (#2024).
  *
- * `reportIssue.ts` states it in its own header — "wallet address is
+ * `apps/app`'s report builder states it in its own header — "wallet address is
  * SHORTENED to 0x1234…abcd — the full address never leaves the device via a
  * report" — and the published Privacy Policy repeats it to users. Until this
  * file existed, nothing tested it: `redactText` and `redactCap` had no unit
  * coverage at all, which is how a percent-encoded address passed the scrubber
  * unnoticed.
+ *
+ * The suite lives beside the implementation in `@vaipakam/lib` because the
+ * contract binds TWO surfaces — the connected app's report builder and
+ * `apps/agent`'s support-ticket endpoint, which re-scrubs because it trusts
+ * no client. One suite covers both; a second copy would drift.
  *
  * The cases below are written against the CONTRACT rather than the
  * implementation: what must never survive into a report, and what must
@@ -19,7 +24,7 @@ import {
   redactAddress,
   redactCap,
   redactText,
-} from './reportIssue';
+} from './redactAddresses';
 
 const ADDR = '0x1234567890abcdef1234567890abcdef12345678';
 const SHORT = '0x1234…5678';
@@ -185,6 +190,17 @@ describe('redactText — fails closed rather than guessing (#2024 Codex r2)', ()
     expect(out).not.toContain(ADDR.slice(2, 22));
   });
 
+  it('takes the payload when only the leading zero is encoded', () => {
+    // Codex r7 P1. `%30x` spells the same prefix as `%30%78` with just the
+    // zero escaped, and the adjacency scan stopped at the literal `x` because
+    // `x` is not a hex digit — forwarding `…x1234567890abcdef…`, recoverable
+    // by prepending a fixed `0`. The prefix alphabet is `0`, `x`, `X`; two of
+    // those were already hex, and the third is the hole.
+    const out = redactText(pctPercentsN(`%30x${ADDR.slice(2)}`, 64));
+    expect(out).not.toContain(ADDR.slice(2));
+    expect(out).not.toContain(`x${ADDR.slice(2, 22)}`);
+  });
+
   it('a run of escaped percent signs is a fixpoint, not an exhaustion', () => {
     // Worth pinning because it corrected my own mental model: `%25%25…`
     // decodes to `%%…`, and a percent followed by a percent is not an escape,
@@ -264,6 +280,12 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     const out = redactText(`%30%78${ADDR.slice(2)} ${'y'.repeat(MAX_MAPPED_INPUT)}`);
     expect(out).not.toContain(ADDR.slice(2));
     expect(out).not.toContain(ADDR.slice(2, 22));
+  });
+
+  it('takes the payload when only the leading zero is encoded, oversized too', () => {
+    const out = redactText(`%30x${ADDR.slice(2)} ${'y'.repeat(MAX_MAPPED_INPUT)}`);
+    expect(out).not.toContain(ADDR.slice(2));
+    expect(out).not.toContain(`x${ADDR.slice(2, 22)}`);
   });
 
   it('drops hex-spelled text adjacent to an escape, which is the price of that', () => {

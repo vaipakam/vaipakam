@@ -41,6 +41,10 @@
       "types": "./src/crossDomainPref.ts",
       "default": "./src/crossDomainPref.ts"
     },
+    "./redactAddresses": {
+      "types": "./src/redactAddresses.ts",
+      "default": "./src/redactAddresses.ts"
+    },
     "./prepayOrderShape": {
       "types": "./src/prepayOrderShape.ts",
       "default": "./src/prepayOrderShape.ts"
