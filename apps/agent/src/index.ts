@@ -112,6 +112,7 @@ import {
   reserveTestAlert,
   sweepExpiredLinks,
   unlinkTelegram,
+  unlinkTelegramOnChain,
   upsertThresholds,
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
@@ -568,10 +569,20 @@ async function handleUnlinkTelegram(
       corsOrigin,
     );
   }
-  // chain_id is bound into the signed message (same body shape as the
-  // link issue) but the clear is wallet-wide — see unlinkTelegram for
-  // why.
-  await unlinkTelegram(env.DB, parsed.req.wallet);
+  // The clear's SCOPE follows the authority that signed (#2013 round
+  // 3 P1). An ECDSA key is the wallet's universal controller, so its
+  // unlink honours the privacy promise wallet-wide (see
+  // unlinkTelegram). A smart account verified via its contract has
+  // authority only on the chain whose contract approved — divergent
+  // per-chain controllers are real (Safe owners drift apart) — so a
+  // chain-verified unlink clears exactly the signed chain_id's rows,
+  // and silencing the wallet's other chains needs each chain's own
+  // controller to sign.
+  if (verified.via === 'chain') {
+    await unlinkTelegramOnChain(env.DB, parsed.req.wallet, parsed.req.chain_id);
+  } else {
+    await unlinkTelegram(env.DB, parsed.req.wallet);
+  }
   return json({ ok: true }, 200, corsOrigin);
 }
 

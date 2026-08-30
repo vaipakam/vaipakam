@@ -228,6 +228,20 @@ describe('verifySignedLinkRequest', () => {
     if (!parsed.ok) throw new Error('parse failed');
     const v = await verifySignedLinkRequest(parsed.req, NOW, CHAIN_ENV, 'link', CONFIRM);
     expect(v.ok).toBe(true);
+    // The verdict carries HOW it verified (#2013 r3): chain-scoped
+    // contract approval, which the unlink handler must not spend on
+    // wallet-wide effects.
+    if (v.ok) expect(v.via).toBe('chain');
+  });
+
+  it("an ECDSA owner's verdict is via 'ecdsa' — universal authority (#2013 r3)", async () => {
+    const parsed = parseSignedLinkRequest(
+      await signedBody(ACCOUNT_A, ACCOUNT_A.address, NOW),
+    );
+    if (!parsed.ok) throw new Error('parse failed');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, 'link', NEVER);
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.via).toBe('ecdsa');
   });
 
   it('an unverifiable signature is 503 UNAVAILABLE, never a 401 mismatch (#2009)', async () => {

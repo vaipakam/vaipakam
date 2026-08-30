@@ -209,7 +209,16 @@ export function parseSignedLinkRequest(body: unknown): LinkParseResult {
 }
 
 export type LinkVerifyResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /** How the signature verified (#2013 round 3 P1) — 'ecdsa' is
+       *  the wallet's universal key, 'chain' is a contract's
+       *  approval on the SIGNED chain only. The unlink handler
+       *  scopes its effect on this: chain-verified authority must
+       *  not clear other chains' rows, whose contracts may have
+       *  different controllers. */
+      via: 'ecdsa' | 'chain';
+    }
   | { ok: false; status: number; reason: string };
 
 /**
@@ -247,7 +256,7 @@ export async function verifySignedLinkRequest(
     checker,
     chainPathAllowed,
   );
-  if (verdict.ok) return { ok: true };
+  if (verdict.ok) return { ok: true, via: verdict.via };
   if (verdict.reason === 'limited') {
     return {
       ok: false,

@@ -79,11 +79,26 @@ export function isValidSignatureShape(s: unknown): s is string {
 }
 
 export type WalletSigVerdict =
-  | { ok: true }
+  | {
+      ok: true;
+      /** HOW it verified (#2013 round 3 P1): 'ecdsa' means the
+       *  wallet's private key signed — the universal controller,
+       *  whose authority spans every chain. 'chain' means a contract
+       *  at the address approved on ONE chain, and a contract can
+       *  have different controllers per chain — so chain-verified
+       *  authority must not be spent on wallet-wide effects (the
+       *  unlink handler scopes on this). */
+      via: 'ecdsa' | 'chain';
+    }
   | {
       ok: false;
-      /** mismatch: every relevant chain answered and none confirmed.
-       *  unavailable: no definitive answer could be obtained.
+      /** mismatch: EVERY relevant chain answered and none confirmed
+       *  (#2013 round 3 P1 — an unanswered relevant chain forces
+       *  `unavailable`, because the account might approve exactly
+       *  there; a denial from a different chain proves nothing
+       *  about it).
+       *  unavailable: no complete definitive answer could be
+       *  obtained.
        *  limited: the chain path's rate budget refused this request
        *  before any chain was consulted (#2013 round 1 P1). */
       reason: 'mismatch' | 'unavailable' | 'limited';
@@ -241,7 +256,9 @@ export async function verifyWalletSignature(
   if ((signature.length - 2) / 2 === 65) {
     try {
       const recovered = await recoverMessageAddress({ message, signature: sig });
-      if (recovered.toLowerCase() === wallet.toLowerCase()) return { ok: true };
+      if (recovered.toLowerCase() === wallet.toLowerCase()) {
+        return { ok: true, via: 'ecdsa' };
+      }
     } catch {
       // Not ECDSA-recoverable — the chain path decides.
     }
@@ -268,22 +285,36 @@ export async function verifyWalletSignature(
   const chains = relevant.slice(0, maxChains);
   const capped = chains.length < relevant.length;
 
-  let sawDefinitiveNo = false;
-  for (const chain of chains) {
-    try {
-      if (await checker(chain.rpc, chain.id, address, message, sig)) {
-        return { ok: true };
+  // CONCURRENT consultation (#2013 round 3 P2): a serial loop's
+  // aggregate could outlive the callers' request deadlines (three
+  // chains × two 2.5s RPCs ≈ 15s vs the erasure client's 10s abort),
+  // letting a last-chain success erase records after the browser
+  // reported failure. In parallel the wall time is one chain's worst
+  // case (≈5s), under every caller deadline; the extra subrequests
+  // on a would-have-short-circuited yes are bounded by the fan-out
+  // cap and metered by the gate above.
+  const outcomes = await Promise.all(
+    chains.map(async (chain) => {
+      try {
+        return {
+          answered: true,
+          yes: await checker(chain.rpc, chain.id, address, message, sig),
+        };
+      } catch {
+        // RPC down, transient, or serving the wrong chain — no
+        // answer from this chain. A throw is never a "no".
+        return { answered: false, yes: false };
       }
-      sawDefinitiveNo = true;
-    } catch {
-      // RPC down, transient, or serving the wrong chain — no answer
-      // from this chain; try the next. A throw is never a "no".
-    }
+    }),
+  );
+  if (outcomes.some((o) => o.answered && o.yes)) return { ok: true, via: 'chain' };
+  // A mismatch requires a COMPLETE set of denials (#2013 round 3
+  // P1): if the cap excluded a relevant chain, or any consulted
+  // chain gave no answer, the account might approve exactly on the
+  // chain we could not hear from — a denial elsewhere proves nothing
+  // about it, and the honest verdict is "cannot fully check".
+  if (capped || outcomes.some((o) => !o.answered)) {
+    return { ok: false, reason: 'unavailable' };
   }
-  // A deny is definitive only for the chains actually consulted:
-  // when the fan-out cap excluded some, the honest verdict is
-  // "cannot fully check", never a mismatch the excluded chain might
-  // have contradicted.
-  if (capped) return { ok: false, reason: 'unavailable' };
-  return { ok: false, reason: sawDefinitiveNo ? 'mismatch' : 'unavailable' };
+  return { ok: false, reason: 'mismatch' };
 }

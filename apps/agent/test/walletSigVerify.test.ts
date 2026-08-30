@@ -72,7 +72,7 @@ describe('verifyWalletSignature', () => {
       undefined,
       NEVER,
     );
-    expect(v).toEqual({ ok: true });
+    expect(v).toEqual({ ok: true, via: 'ecdsa' });
   });
 
   it('a 65-byte signature by the WRONG key falls to the chain path — a 1271 owner-key signature is not a mismatch until a chain says so', async () => {
@@ -87,7 +87,7 @@ describe('verifyWalletSignature', () => {
         84532,
         YES,
       ),
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, via: 'chain' });
     // The chain denies: NOW it is a mismatch.
     expect(
       await verifyWalletSignature(
@@ -112,7 +112,7 @@ describe('verifyWalletSignature', () => {
         84532,
         YES,
       ),
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, via: 'chain' });
   });
 
   it('an RPC failure is UNAVAILABLE, never a mismatch', async () => {
@@ -179,7 +179,7 @@ describe('verifyWalletSignature', () => {
         undefined,
         secondYes,
       ),
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, via: 'chain' });
     expect(consulted).toContain('http://b.test');
   });
 
@@ -214,7 +214,7 @@ describe('verifyWalletSignature', () => {
           return false;
         },
       ),
-    ).toEqual({ ok: true });
+    ).toEqual({ ok: true, via: 'ecdsa' });
     expect(gateAsked).toBe(false);
   });
 
@@ -248,7 +248,7 @@ describe('verifyWalletSignature', () => {
     expect(consulted).toHaveLength(2);
   });
 
-  it('one chain erroring while another definitively denies is a MISMATCH', async () => {
+  it('one chain erroring while another denies is UNAVAILABLE — the down chain might have confirmed (#2013 r3)', async () => {
     const blob = `0x${'ab'.repeat(700)}`;
     const env = {
       RPC_BASE_SEPOLIA: 'http://a.test',
@@ -266,6 +266,24 @@ describe('verifyWalletSignature', () => {
         blob,
         undefined,
         oneDownOneNo,
+      ),
+    ).toEqual({ ok: false, reason: 'unavailable' });
+  });
+
+  it('a mismatch requires EVERY relevant chain to answer no (#2013 r3)', async () => {
+    const blob = `0x${'ab'.repeat(700)}`;
+    const env = {
+      RPC_BASE_SEPOLIA: 'http://a.test',
+      RPC_ARB_SEPOLIA: 'http://b.test',
+    } as Env;
+    expect(
+      await verifyWalletSignature(
+        env,
+        ACCOUNT_A.address,
+        MESSAGE,
+        blob,
+        undefined,
+        NO,
       ),
     ).toEqual({ ok: false, reason: 'mismatch' });
   });

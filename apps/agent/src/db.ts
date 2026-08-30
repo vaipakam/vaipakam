@@ -485,6 +485,35 @@ export async function unlinkTelegram(
     .run();
 }
 
+/** #2013 round 3 P1 — the CHAIN-SCOPED unlink, used when the request
+ *  was authorised by a smart account's contract on ONE chain rather
+ *  than by an ECDSA key. An ECDSA key is the wallet's universal
+ *  controller, so its unlink honours the privacy promise wallet-wide
+ *  (see `unlinkTelegram`). A contract at the same address can have
+ *  DIFFERENT controllers on different chains — divergent Safe owners
+ *  are the canonical case — and chain X's controller must not be able
+ *  to silence chain Y's alerts: alert suppression is the exact harm
+ *  the unlink signature exists to prevent (#1033). So chain-verified
+ *  authority clears exactly the chain whose contract approved it. */
+export async function unlinkTelegramOnChain(
+  db: D1Database,
+  wallet: string,
+  chainId: number,
+): Promise<void> {
+  await db
+    .prepare(
+      `UPDATE user_thresholds
+       SET tg_chat_id = NULL, updated_at = ?
+       WHERE wallet = ? AND chain_id = ?`,
+    )
+    .bind(Math.floor(Date.now() / 1000), wallet.toLowerCase(), chainId)
+    .run();
+  await db
+    .prepare(`DELETE FROM telegram_links WHERE wallet = ? AND chain_id = ?`)
+    .bind(wallet.toLowerCase(), chainId)
+    .run();
+}
+
 /** Sweep expired handshake codes — run at the start of each cron tick
  *  to keep the table bounded. */
 export async function sweepExpiredLinks(db: D1Database): Promise<void> {
