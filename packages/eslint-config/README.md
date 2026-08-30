@@ -25,7 +25,6 @@ guard body is shared. The table is an index; the headers are the source.
 | Package | Why a narrow guard | Deleted when |
 | --- | --- | --- |
 | `apps/www` | had **no** lint configuration at all; the gap was found when a conditional hook survived in the copy of `LiveValue` that the docs actually render | www gets a full config |
-| `packages/ui` | not deployed itself, but compiled **into** deployed surfaces; per-app guards run from their own directory and do not follow imports across the workspace boundary | **RETIRED** — the package was deleted in #1963 once #1854 removed its last consumer, so the guard went with it |
 
 `apps/app` is absent on purpose — it runs a full `eslint .` with four
 react-hooks rules promoted to error (#1520).
@@ -35,6 +34,17 @@ The table lost three rows in #1854: `apps/defi`, `apps/alpha` and
 Their narrow guards existed for reasons that died with them — a
 `no-explicit-any` backlog nobody was going to clear on a frozen app, and
 two prototypes whose lint had never run.
+
+It lost a fourth in #1963: `packages/ui` had a narrow guard because it was
+compiled **into** deployed surfaces rather than deployed itself, and per-app
+guards run from their own directory without following imports across the
+workspace boundary. That reason expired with the package — #1854 had already
+removed its last consumer, so nothing compiled it in any more — and the
+package and its guard were deleted together. Rows are removed rather than
+kept as historical entries because the table indexes **live** config headers:
+a row whose `eslint.hooks.config.js` does not exist would send a maintainer
+following the verification instructions below to a package that cannot be
+tested.
 
 ### Two design choices that look like omissions
 

@@ -504,7 +504,18 @@ img { max-width: 100%; display: block; }
   transform: translateY(0);
 }
 
-/* ── InfoTip component (`<InfoTip>` in components/InfoTip.tsx) ──
+/* ── InfoTip styles — CURRENTLY UNUSED on this site ──
+ *
+ * These rules styled `<InfoTip>` in the shared `packages/ui`, RETIRED
+ * in #1963. There is no `components/InfoTip.tsx` to open any more, and
+ * no markup on this site emits `.info-tip-trigger` or
+ * `.info-tip-bubble` — `<HoverTip>`, the surviving portal tooltip,
+ * styles its bubble inline. So nothing here is reachable today.
+ *
+ * Left in place rather than deleted with the package: removing style
+ * rules is a visual-risk change that wants its own review, and the
+ * description below still documents the tooltip conventions this site
+ * follows. Do not read it as live styling.
  *
  * (i) info icon trigger + portal-rendered tooltip bubble. Pairs with
  * the React component for cases where:

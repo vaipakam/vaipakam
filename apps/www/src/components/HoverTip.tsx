@@ -23,10 +23,11 @@ import { createPortal } from 'react-dom';
  * `overflow-x: auto` with `overflow-y: visible` resolves both axes
  * to `auto`, so the pseudo-element can't escape the rectangle.
  *
- * The fix mirrors `<InfoTip>`'s portal trick: render the bubble
- * into `document.body`, position it relative to the viewport via
- * `position: fixed` with JS-computed coordinates from the trigger's
- * bounding rect. Free of every clipping ancestor.
+ * The fix is the portal trick taken from `<InfoTip>` in the shared
+ * `packages/ui` (RETIRED in #1963 — prior art, not a file to open):
+ * render the bubble into `document.body`, position it relative to the
+ * viewport via `position: fixed` with JS-computed coordinates from the
+ * trigger's bounding rect. Free of every clipping ancestor.
  *
  * Usage:
  *   <HoverTip text="One short sentence">
