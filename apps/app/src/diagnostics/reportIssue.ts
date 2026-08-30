@@ -79,46 +79,70 @@ function decodeWithMap(text: string): { decoded: string; map: number[] } {
   return { decoded, map };
 }
 
-/** Scrub any full address ANYWHERE in report text — crash messages,
- *  component stacks, and deep-link paths routinely embed the
- *  connected account, and the redaction contract covers the whole
- *  public report, not just the wallet row. Applied to the finished
- *  body/title so future fields can't reintroduce a leak; exported so
- *  the drawer's ON-SCREEN error row honours the same contract. */
 /**
- * How many times to peel percent-encoding while looking for an address
- * (#2024, Codex r1).
+ * Peel percent-encoding until it stops changing, under a WORK budget
+ * (#2024, Codex r1 and r2).
  *
- * ONE PASS IS NOT ENOUGH, and I chose one anyway when filing this — the
- * mistake is worth naming. `%2530%2578…` decodes once to `%30%78…`, which is
- * still encoded and still matches nothing, so a single pass returns the text
- * untouched and the recipient recovers the address with a second decode.
- * Double-encoding is not exotic: it is what happens to a URL carried inside
- * another URL's query parameter.
+ * Two wrong answers preceded this one, and both are worth naming because the
+ * second looked principled.
  *
- * The bound is a formality rather than a real limit. Every escape costs three
- * characters and yields one, so each level shrinks the text roughly threefold
- * and the loop converges in a handful of steps for any input a browser could
- * hold; the loop also stops as soon as a pass changes nothing. The cap is
- * here so a crafted input cannot make that reasoning load-bearing.
+ * r1: a single pass. `%2530%2578…` decodes once to `%30%78…` — still encoded,
+ * still matching nothing — so the text came back untouched and a recipient
+ * recovered the address with a second decode.
+ *
+ * r2: a fixed depth of 8, justified by "each escape costs three characters and
+ * yields one, so a level shrinks the text threefold". That reasoning is FALSE
+ * for selective encoding. Encode only the two `%` signs at each outer level and
+ * the string grows by four characters per level, so nine levels fit in 78
+ * characters, outlast a depth cap, and leak.
+ *
+ * So the loop runs to a fixpoint and the limit is a budget on characters
+ * PROCESSED rather than on depth — depth is the thing an attacker controls
+ * cheaply, length is not. If the budget runs out with escapes still present,
+ * the caller FAILS CLOSED: it cannot show that nothing is hidden, so it stops
+ * claiming to.
  */
-const MAX_DECODE_DEPTH = 8;
+const DECODE_WORK_PER_CHAR = 8;
+const DECODE_WORK_FLOOR = 1024;
 
-/** Each decoding level, with a map from ITS positions back to the original. */
-function decodeLevels(text: string): { text: string; map: number[] }[] {
-  const levels: { text: string; map: number[] }[] = [];
+/** A run of percent-escapes, used only by the fail-closed path. */
+const ESCAPE_RUN_RE = /(?:%[0-9a-fA-F]{2})+/g;
+
+/**
+ * Decode to a fixpoint, reporting whether the budget was exhausted first.
+ *
+ * ONLY THE FIXPOINT IS SEARCHED, and that is a correctness property rather
+ * than an economy (Codex r2's second finding). An address that is literal at
+ * any level contains no escapes, so every later pass leaves it untouched and
+ * it is still present at the fixpoint — searching intermediate levels can
+ * therefore find nothing the fixpoint misses. It can, however, find things
+ * that are NOT there: a transaction hash whose first 42 characters are encoded
+ * once and whose tail is encoded twice shows an apparent 20-byte address at
+ * level one, and the negative lookahead accepts it because the next character
+ * is `%`. At the fixpoint the same span is a 64-hex run and is correctly
+ * rejected. Scanning every level recorded that false match and nothing
+ * withdrew it.
+ */
+function decodeToFixpoint(text: string): {
+  text: string;
+  map: number[];
+  exhausted: boolean;
+} {
   let current = text;
   // Identity map into the original, with the same end sentinel decodeWithMap
   // produces so composition stays total.
   let currentMap = Array.from({ length: text.length + 1 }, (_, i) => i);
-  for (let depth = 0; depth < MAX_DECODE_DEPTH; depth++) {
+  let budget = text.length * DECODE_WORK_PER_CHAR + DECODE_WORK_FLOOR;
+  for (;;) {
+    if (budget < current.length) {
+      return { text: current, map: currentMap, exhausted: current.includes('%') };
+    }
+    budget -= current.length;
     const { decoded, map } = decodeWithMap(current);
-    if (decoded === current) break;
+    if (decoded === current) return { text: current, map: currentMap, exhausted: false };
     currentMap = map.map((p) => currentMap[p]!);
     current = decoded;
-    levels.push({ text: current, map: currentMap });
   }
-  return levels;
 }
 
 /** Scrub any full address ANYWHERE in report text — crash messages,
@@ -133,31 +157,28 @@ export function redactText(text: string): string {
   // so everything without one is finished here (#2024).
   if (!plain.includes('%')) return plain;
 
-  // Collect the spans to redact in ORIGINAL coordinates, across every
-  // decoding depth, so the splice keeps the rest of the text spelled exactly
-  // as it arrived.
-  const spans: { from: number; to: number; text: string }[] = [];
-  for (const level of decodeLevels(plain)) {
-    ADDRESS_RE.lastIndex = 0;
-    for (const m of level.text.matchAll(ADDRESS_RE)) {
-      const from = level.map[m.index];
-      const to = level.map[m.index + m[0].length];
-      if (from === undefined || to === undefined || to <= from) continue;
-      spans.push({ from, to, text: shortenMatch(m[0]) });
-    }
+  const final = decodeToFixpoint(plain);
+  if (final.exhausted) {
+    // FAIL CLOSED. The budget ran out with escapes still unresolved, so this
+    // cannot demonstrate that no address is hidden in them — and on a report
+    // that opens a PUBLIC issue, "probably fine" is not the standard. Drop
+    // the escape runs rather than forwarding text whose meaning is unknown.
+    // Nothing legitimate reaches here: the budget is eight times the input
+    // plus a floor, and honest nesting converges in a few passes.
+    return plain.replace(ESCAPE_RUN_RE, '…');
   }
-  if (spans.length === 0) return plain;
 
-  // One address can be found at several depths and map to the same original
-  // span, and a shallower find can enclose a deeper one. Sort by start, widest
-  // first, then keep only spans that do not overlap one already kept.
-  spans.sort((a, b) => a.from - b.from || b.to - a.to);
+  // Splice onto the ORIGINAL spans so everything the redaction does not need
+  // to touch keeps its exact spelling.
+  ADDRESS_RE.lastIndex = 0;
   let out = '';
   let cursor = 0;
-  for (const s of spans) {
-    if (s.from < cursor) continue;
-    out += plain.slice(cursor, s.from) + s.text;
-    cursor = s.to;
+  for (const m of final.text.matchAll(ADDRESS_RE)) {
+    const from = final.map[m.index];
+    const to = final.map[m.index + m[0].length];
+    if (from === undefined || to === undefined || to <= from || from < cursor) continue;
+    out += plain.slice(cursor, from) + shortenMatch(m[0]);
+    cursor = to;
   }
   return out + plain.slice(cursor);
 }

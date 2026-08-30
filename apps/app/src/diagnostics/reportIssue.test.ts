@@ -127,6 +127,78 @@ describe('redactText — nested encoding (#2024 Codex r1)', () => {
     for (let i = 0; i < 6; i++) s = pctAll(s);
     expect(() => redactText(s)).not.toThrow();
   });
+
+  // Codex r2 P1. Encoding EVERY character triples the length each level, so a
+  // depth cap looked generous. Encoding only the two `%` signs grows it by
+  // four characters per level, so nine levels fit in 78 characters and outlast
+  // any fixed depth. The loop runs to a fixpoint under a work budget instead.
+  const pctPercents = (s: string): string => s.replaceAll('%', '%25');
+
+  it('shortens a nine-level selectively-encoded address', () => {
+    let s = `%30%78${ADDR.slice(2)}`;
+    for (let i = 0; i < 8; i++) s = pctPercents(s);
+    expect(s.length).toBeLessThan(200);
+    expect(redactText(s)).toBe(SHORT);
+  });
+
+  it('shortens a twenty-level selectively-encoded address', () => {
+    let s = `%30%78${ADDR.slice(2)}`;
+    for (let i = 0; i < 20; i++) s = pctPercents(s);
+    expect(redactText(s)).toBe(SHORT);
+  });
+});
+
+describe('redactText — fails closed rather than guessing (#2024 Codex r2)', () => {
+  const pctPercentsN = (s: string, n: number): string => {
+    let out = s;
+    for (let i = 0; i < n; i++) out = out.replaceAll('%', '%25');
+    return out;
+  };
+
+  it('drops unresolved escape runs when the work budget is exhausted', () => {
+    // Selective encoding costs one PASS per level while adding only four
+    // characters, so deep enough nesting outruns a budget proportional to
+    // length. The contract says nothing may leave that this cannot account
+    // for, so the unresolved escapes go rather than being forwarded verbatim
+    // for a recipient to finish decoding.
+    const deep = pctPercentsN(`%30%78${ADDR.slice(2)}`, 64);
+    const out = redactText(deep);
+    expect(out).not.toContain('%25');
+    expect(out).toContain('…');
+    expect(out).not.toContain(ADDR);
+  });
+
+  it('a run of escaped percent signs is a fixpoint, not an exhaustion', () => {
+    // Worth pinning because it corrected my own mental model: `%25%25…`
+    // decodes to `%%…`, and a percent followed by a percent is not an escape,
+    // so the loop CONVERGES in two passes. Nothing is hidden in it, so the
+    // text is returned as it stands rather than being scrubbed. Failing
+    // closed here would corrupt ordinary text for no privacy gain.
+    const run = '%25'.repeat(2_000);
+    expect(redactText(run)).toBe(run);
+  });
+
+  it('is bounded — a pathological input returns promptly', () => {
+    const deep = pctPercentsN(`%30%78${ADDR.slice(2)}`, 200);
+    const started = Date.now();
+    const out = redactText(deep);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(out).not.toContain(ADDR);
+  });
+});
+
+describe('redactText — a hash must survive mixed-depth encoding (#2024 Codex r2)', () => {
+  it('does not shorten a hash whose head and tail are encoded at different depths', () => {
+    // At level 1 the first 42 characters read as an address followed by `%`,
+    // and the negative lookahead accepts that. Only at the fixpoint is the
+    // full 64-hex run visible and correctly rejected — which is why the
+    // search runs there and not at every intermediate level.
+    const hash = `0x${'d'.repeat(64)}`;
+    const head = pctAll(hash.slice(0, 42));
+    const tail = pctAll(pctAll(hash.slice(42)));
+    const out = redactText(head + tail);
+    expect(out).not.toContain('…');
+  });
 });
 
 describe('redactText — malformed input must never throw', () => {
