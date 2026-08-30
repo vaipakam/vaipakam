@@ -408,6 +408,36 @@ describe('handleDiagErasure', () => {
     expect(staleBody.reason).toBe('request timestamp is stale');
   });
 
+  it('rate-limits the chain path with 429 — the fast path stays free (#2013)', async () => {
+    // A refused SIG_VERIFY_RATELIMIT budget turns a chain-path
+    // request into a 429; a valid plain-ECDSA request never touches
+    // the budget and still succeeds under the same refused limiter.
+    const refuse = {
+      limit: async () => ({ success: false }),
+    } as unknown as Env['SIG_VERIFY_RATELIMIT'];
+    const envLimited = withChain(
+      makeEnv(db, { SIG_VERIFY_RATELIMIT: refuse }),
+    );
+    const chainPath = await handleDiagErasure(
+      post('/diag/erasure', {
+        wallet: ACCOUNT_A.address,
+        issuedAt: nowSec(),
+        signature: '0x' + 'ab'.repeat(700), // 6492-shaped → chain path
+      }),
+      envLimited,
+      CORS,
+      DENY_CHAIN,
+    );
+    expect(chainPath.status).toBe(429);
+    const fastPath = await handleDiagErasure(
+      post('/diag/erasure', await signedBody(ACCOUNT_A)),
+      envLimited,
+      CORS,
+      DENY_CHAIN,
+    );
+    expect(fastPath.status).toBe(200);
+  });
+
   it('rejects a signature that recovers to a different wallet with 400', async () => {
     // A signs a message naming B's wallet → recovery yields A ≠ B.
     const body = await signedBody(ACCOUNT_A, nowSec(), ACCOUNT_B.address);

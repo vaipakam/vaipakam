@@ -203,6 +203,11 @@ interface BaseEnv {
   // support requests arrive at human cadence; the binding is an
   // abuse safety net for the shared D1 + ops-Telegram notify.
   SUPPORT_TICKET_RATELIMIT?: RateLimitBinding;
+  /** #2013 — meters the signature-verification CHAIN PATH (ERC-1271/
+   *  6492 checks spend RPC subrequests on unauthenticated bodies;
+   *  the ECDSA fast path stays free). Per client IP, consumed via
+   *  `chainVerifyGate` in walletSigVerify.ts. */
+  SIG_VERIFY_RATELIMIT?: RateLimitBinding;
 
   // #1040 phase 1 — ops-INTERNAL Telegram bot for the new-ticket
   // notify (two-bot policy: the operator reads this alert, so it
@@ -440,6 +445,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     OPENSEA_OFFERS_UPSTREAM_RATELIMIT: raw.OPENSEA_OFFERS_UPSTREAM_RATELIMIT,
     OPENSEA_SIGNED_OFFER_RATELIMIT: raw.OPENSEA_SIGNED_OFFER_RATELIMIT,
     SUPPORT_TICKET_RATELIMIT: raw.SUPPORT_TICKET_RATELIMIT,
+    SIG_VERIFY_RATELIMIT: raw.SIG_VERIFY_RATELIMIT,
     TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
     TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,

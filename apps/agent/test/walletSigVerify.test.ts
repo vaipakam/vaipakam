@@ -182,6 +182,71 @@ describe('verifyWalletSignature', () => {
     expect(consulted).toContain('http://b.test');
   });
 
+  it('a refused rate gate is LIMITED — before any chain is consulted (#2013)', async () => {
+    const blob = `0x${'ab'.repeat(700)}`;
+    expect(
+      await verifyWalletSignature(
+        ENV_ONE_CHAIN,
+        ACCOUNT_A.address,
+        MESSAGE,
+        blob,
+        84532,
+        NEVER, // the gate must refuse before this could fire
+        async () => false,
+      ),
+    ).toEqual({ ok: false, reason: 'limited' });
+  });
+
+  it('the gate never charges the ECDSA fast path (#2013)', async () => {
+    const signature = await ACCOUNT_A.signMessage({ message: MESSAGE });
+    let gateAsked = false;
+    expect(
+      await verifyWalletSignature(
+        ENV_ONE_CHAIN,
+        ACCOUNT_A.address,
+        MESSAGE,
+        signature,
+        84532,
+        NEVER,
+        async () => {
+          gateAsked = true;
+          return false;
+        },
+      ),
+    ).toEqual({ ok: true });
+    expect(gateAsked).toBe(false);
+  });
+
+  it('the fan-out cap bounds consultation, and capped-and-denied is UNAVAILABLE, never mismatch (#2013)', async () => {
+    const blob = `0x${'ab'.repeat(700)}`;
+    // Three configured chains, cap of two: only two consulted, and
+    // since the third might have confirmed, an all-deny outcome is
+    // "cannot fully check" rather than a false mismatch.
+    const env = {
+      RPC_BASE_SEPOLIA: 'http://a.test',
+      RPC_ARB_SEPOLIA: 'http://b.test',
+      RPC_BNB_TESTNET: 'http://c.test',
+    } as Env;
+    const consulted: string[] = [];
+    const denyAll: ChainSigChecker = async (rpcUrl) => {
+      consulted.push(rpcUrl);
+      return false;
+    };
+    expect(
+      await verifyWalletSignature(
+        env,
+        ACCOUNT_A.address,
+        MESSAGE,
+        blob,
+        undefined,
+        denyAll,
+        undefined,
+        2,
+      ),
+    ).toEqual({ ok: false, reason: 'unavailable' });
+    expect(consulted).toHaveLength(2);
+  });
+
   it('one chain erroring while another definitively denies is a MISMATCH', async () => {
     const blob = `0x${'ab'.repeat(700)}`;
     const env = {

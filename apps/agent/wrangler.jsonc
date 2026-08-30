@@ -133,6 +133,18 @@
         "simple": { "limit": 60, "period": 60 },
       },
       {
+        // #2013 — the signature-verification CHAIN PATH (ERC-1271/
+        // 6492 checks against configured RPCs). Only requests that
+        // fall past the free ECDSA fast path consume this, so a
+        // human smart-account user spends ~1 per signed action;
+        // the budget is sized for people and tight for a caller
+        // spraying fake bodies to burn RPC quota.
+        "name": "SIG_VERIFY_RATELIMIT",
+        "type": "ratelimit",
+        "namespace_id": "1011",
+        "simple": { "limit": 10, "period": 60 },
+      },
+      {
         // T-086 step 14 — POST /opensea/listing is one call per
         // borrower post/update tx, so the budget is tight on
         // purpose. The endpoint exists so casual NFT buyers see

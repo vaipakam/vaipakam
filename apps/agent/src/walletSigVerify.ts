@@ -76,10 +76,50 @@ export type WalletSigVerdict =
   | { ok: true }
   | {
       ok: false;
-      /** mismatch: every consulted chain answered, none confirmed.
-       *  unavailable: no definitive answer could be obtained. */
-      reason: 'mismatch' | 'unavailable';
+      /** mismatch: every relevant chain answered and none confirmed.
+       *  unavailable: no definitive answer could be obtained.
+       *  limited: the chain path's rate budget refused this request
+       *  before any chain was consulted (#2013 round 1 P1). */
+      reason: 'mismatch' | 'unavailable' | 'limited';
     };
+
+/**
+ * No-hint fan-out cap (#2013 round 1 P1): a request that names no
+ * chain would otherwise consult EVERY configured chain, letting an
+ * unauthenticated caller multiply one fake body into a subrequest
+ * per chain. Capped consultation keeps its honesty: when the cap
+ * excluded chains and none of the consulted ones confirmed, the
+ * verdict is UNAVAILABLE, never mismatch — a deny is definitive only
+ * for the chains actually asked, and an account living on an
+ * unconsulted chain must not be told its signature is invalid.
+ * Covers every currently-deployed chain; revisit when the deployed
+ * set grows past it.
+ */
+export const MAX_CHAINS_PER_REQUEST = 3;
+
+/**
+ * Build the pre-chain-path gate from the Worker's rate-limit binding
+ * (#2013 round 1 P1): the chain path spends RPC subrequests before
+ * the caller has proven anything, so it is metered per client IP
+ * like the other abusable endpoints (`DIAG_RECORD_RATELIMIT`
+ * pattern). The ECDSA fast path stays free — it costs nothing.
+ * Skipped silently when the binding is not configured (local dev),
+ * matching every other rate-limit binding in this Worker.
+ */
+export function chainVerifyGate(
+  env: Env,
+  req: Request,
+): () => Promise<boolean> {
+  return async () => {
+    const limiter = env.SIG_VERIFY_RATELIMIT;
+    if (!limiter) return true;
+    const ip =
+      req.headers.get('CF-Connecting-IP') ??
+      req.headers.get('X-Forwarded-For') ??
+      'unknown';
+    return (await limiter.limit({ key: ip })).success;
+  };
+}
 
 /**
  * The chain-consulting primitive, injectable for tests (the same
@@ -97,8 +137,19 @@ export type ChainSigChecker = (
 
 /** Real checker: viem's `verifyMessage` public action — ERC-6492
  *  aware (deployless verification for counterfactual accounts),
- *  falling through to ERC-1271 and plain ECDSA. Upstream-tested in
- *  viem; the decision logic around it is what our tests pin. */
+ *  falling through to ERC-1271 and plain ECDSA.
+ *
+ *  A bare `false` from it is NOT yet a verdict (#2013 round 1 P1,
+ *  reproduced by review against an unreachable transport): viem's
+ *  6492 path converts a failed `eth_call` — wrapped TRANSPORT
+ *  failures included — into a verification failure, which would turn
+ *  an RPC outage into a false "signature does not match". So a
+ *  `false` is trusted only after a liveness probe shows the
+ *  transport can answer at all; a probe that throws routes this
+ *  chain into the caller's no-answer handling instead. Residual: a
+ *  transport that failed the verify call yet answers the probe an
+ *  instant later still reads as a deny — a race this cheap probe
+ *  cannot fully close, bounded by the caller's other chains. */
 export const verifyOnChain: ChainSigChecker = async (
   rpcUrl,
   wallet,
@@ -106,7 +157,10 @@ export const verifyOnChain: ChainSigChecker = async (
   signature,
 ) => {
   const client = createPublicClient({ transport: http(rpcUrl) });
-  return client.verifyMessage({ address: wallet, message, signature });
+  const ok = await client.verifyMessage({ address: wallet, message, signature });
+  if (ok) return true;
+  await client.getChainId();
+  return false;
 };
 
 /**
@@ -124,6 +178,13 @@ export async function verifyWalletSignature(
   signature: string,
   chainId?: number,
   checker: ChainSigChecker = verifyOnChain,
+  // The rate gate for the CHAIN PATH only (#2013 round 1 P1) —
+  // consulted once, after the free fast path, before any RPC is
+  // spent. Absent → ungated (callers without a request context,
+  // and the default for tests of the decision logic).
+  chainPathAllowed?: () => Promise<boolean>,
+  // Injectable for tests; production uses the exported cap.
+  maxChains: number = MAX_CHAINS_PER_REQUEST,
 ): Promise<WalletSigVerdict> {
   const sig = signature as Hex;
   const address = wallet as `0x${string}`;
@@ -141,16 +202,25 @@ export async function verifyWalletSignature(
   }
 
   const configured = getChainConfigs(env);
-  const chains =
+  const relevant =
     chainId === undefined
       ? configured
       : configured.filter((c) => c.id === chainId);
-  if (chains.length === 0) {
+  if (relevant.length === 0) {
     // A named chain this Worker has no RPC for — or no chains
     // configured at all (the natural pre-deploy state). We cannot
     // say "invalid"; we can only say we cannot check.
     return { ok: false, reason: 'unavailable' };
   }
+
+  // Everything past this line spends RPC subrequests on an
+  // unauthenticated body — the gate meters it (#2013 round 1 P1).
+  if (chainPathAllowed && !(await chainPathAllowed())) {
+    return { ok: false, reason: 'limited' };
+  }
+
+  const chains = relevant.slice(0, maxChains);
+  const capped = chains.length < relevant.length;
 
   let sawDefinitiveNo = false;
   for (const chain of chains) {
@@ -162,5 +232,10 @@ export async function verifyWalletSignature(
       // next. A throw is never treated as a "no".
     }
   }
+  // A deny is definitive only for the chains actually consulted:
+  // when the fan-out cap excluded some, the honest verdict is
+  // "cannot fully check", never a mismatch the excluded chain might
+  // have contradicted.
+  if (capped) return { ok: false, reason: 'unavailable' };
   return { ok: false, reason: sawDefinitiveNo ? 'mismatch' : 'unavailable' };
 }

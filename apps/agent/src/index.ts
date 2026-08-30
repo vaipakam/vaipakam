@@ -120,6 +120,7 @@ import {
   parseSignedLinkRequest,
   verifySignedLinkRequest,
 } from './linkAuth';
+import { chainVerifyGate } from './walletSigVerify';
 
 export default {
   async scheduled(
@@ -429,6 +430,8 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
       Math.floor(Date.now() / 1000),
       env,
       'mute-duedate',
+      undefined,
+      chainVerifyGate(env, req),
     );
     if (!verified.ok) {
       return json(
@@ -493,6 +496,9 @@ async function handleIssueTelegramLink(
     parsed.req,
     Math.floor(Date.now() / 1000),
     env,
+    'link',
+    undefined,
+    chainVerifyGate(env, req),
   );
   if (!verified.ok) {
     return json(
@@ -552,6 +558,8 @@ async function handleUnlinkTelegram(
     Math.floor(Date.now() / 1000),
     env,
     'unlink',
+    undefined,
+    chainVerifyGate(env, req),
   );
   if (!verified.ok) {
     return json(
@@ -603,7 +611,14 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
     );
   }
   const now = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedLinkRequest(parsed.req, now, env, 'test-alert');
+  const verified = await verifySignedLinkRequest(
+    parsed.req,
+    now,
+    env,
+    'test-alert',
+    undefined,
+    chainVerifyGate(env, req),
+  );
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },

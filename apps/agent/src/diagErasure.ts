@@ -72,6 +72,7 @@ import type { Env } from './env';
 import { isHexAddress, walletHash } from './diagHash';
 import { isProtocolAdmin, type AdminVerifier } from './diagAdminAuth';
 import {
+  chainVerifyGate,
   isValidSignatureShape,
   verifyOnChain,
   verifyWalletSignature,
@@ -208,6 +209,9 @@ async function verifySignedRequest(
   buildMessage: (wallet: string, issuedAt: number) => string,
   env: Env,
   checker: ChainSigChecker = verifyOnChain,
+  // The chain path's per-IP rate gate (#2013) — handlers pass
+  // `chainVerifyGate(env, request)`.
+  chainPathAllowed?: () => Promise<boolean>,
 ): Promise<VerifyResult> {
   if (Math.abs(nowSeconds - req.issuedAt) > SIGNATURE_MAX_AGE_SECONDS) {
     return { ok: false, status: 400, reason: 'request timestamp is stale' };
@@ -224,8 +228,16 @@ async function verifySignedRequest(
     req.signature,
     req.chainId,
     checker,
+    chainPathAllowed,
   );
   if (verdict.ok) return { ok: true };
+  if (verdict.reason === 'limited') {
+    return {
+      ok: false,
+      status: 429,
+      reason: 'too many verification attempts — try again shortly',
+    };
+  }
   return verdict.reason === 'unavailable'
     ? {
         ok: false,
@@ -301,6 +313,7 @@ export async function handleDiagErasure(
     buildErasureMessage,
     env,
     sigChecker,
+    chainVerifyGate(env, req),
   );
   if (!verified.ok) {
     return json(
@@ -366,6 +379,7 @@ export async function handleDiagErasureStatus(
     buildErasureStatusMessage,
     env,
     sigChecker,
+    chainVerifyGate(env, req),
   );
   if (!verified.ok) {
     return json(

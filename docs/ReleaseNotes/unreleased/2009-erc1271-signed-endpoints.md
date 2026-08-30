@@ -26,7 +26,20 @@ REACH the account's network to check a signature, it says so — a
 dedicated "could not verify right now" answer, with its own message
 in the app — rather than calling the signature invalid, which it has
 no grounds to say and which would send the user into retries that
-cannot succeed.
+cannot succeed. That honesty is defended in depth: the verification
+library the service uses reports an unreachable network the same way
+it reports a wrong signature, so the service double-checks that the
+network can answer at all before believing a "no"; and when a
+request names no network, the number the service will consult is
+capped — with the capped case also reported as "could not fully
+check", never as a rejection a skipped network might have
+contradicted.
+
+The on-chain checks also cost the service calls to networks it pays
+for, on requests nobody has yet proven anything about — so they are
+metered per caller, the way the service's other abusable surfaces
+already are. An ordinary wallet's instant verification is never
+charged against that budget.
 
 The admin-only legal-hold endpoint keeps its ordinary-wallet-only
 verification by design: that flow derives WHO is calling from the
