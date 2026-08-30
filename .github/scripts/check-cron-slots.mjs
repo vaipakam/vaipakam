@@ -1221,24 +1221,45 @@ function checkAuthorityFormatting(md) {
     problems.push(message);
   };
   for (const line of lines) {
-    // Four columns of indentation is an indented code block to CommonMark and
+    // Four columns of whitespace is an indented code block to CommonMark and
     // list continuation inside a list item, and telling those apart is
-    // finding #1. Measured with the gate's OWN {indentWidth} rather than a
-    // regex (Codex #1990 r1): a tab advances to the next multiple of four, so
-    // `   \t` is width four while matching neither "four spaces" nor "a tab in
-    // column zero". That was the third iteration of this rule's bug reappearing
-    // in its replacement. Sharing the helper means the classifier and the
-    // constraint cannot disagree about what an indent is — they compute it
-    // with the same code.
-    if (line.trim() !== '' && indentWidth(line) >= 4) {
+    // finding #1.
+    //
+    // POSITION-FREE, after two rounds of getting position wrong (Codex #1990
+    // r1 and r2). The first version matched `^(?: {4,}|\t)` and missed
+    // `   \t`, because a tab advances to the next multiple of four. The
+    // second used the gate's own `indentWidth` — correct about tabs, and
+    // still wrong, because `indentWidth` stops at the first non-space and so
+    // reports ZERO for `-     text`, where CommonMark opens a code block
+    // inside the list item. That is the container-context dependency this
+    // constraint exists to remove, surviving two attempts to write it out.
+    //
+    // The blunt form has no position to be wrong about: no tab anywhere on
+    // the line, and no run of four or more spaces anywhere on the line.
+    // Together those make four columns of whitespace unreachable in any
+    // container, leading or not. Measured, as every rule here is: the
+    // authority contains zero tabs, zero four-space runs, and forty-three
+    // lines of two-space continuation that stay legal.
+    if (line.includes('\t')) {
+      once(
+        'tab',
+        'the authority contains a tab character; this file may not use tabs, ' +
+          'because a tab advances to the next multiple of four columns and so ' +
+          'can open an indented code block at a width no count of spaces ' +
+          'would predict. Indent with spaces, at most two',
+      );
+    }
+    if (line.includes('    ')) {
       once(
         'indent',
-        'the authority indents a line by four or more columns (counting a tab ' +
-          'as advancing to the next multiple of four); this file may not use ' +
-          'indented code blocks, because an indented line means one thing at ' +
-          'top level and another inside a list item and this gate does not ' +
-          'implement the difference. Use a fenced ``` block, or indent by no ' +
-          'more than two columns for ordinary continuation',
+        'the authority contains a run of four or more spaces; this file may ' +
+          'not use indented code blocks, because four columns of whitespace ' +
+          'means one thing at top level and another inside a list item, and ' +
+          'this gate does not implement the difference. The rule counts a run ' +
+          'ANYWHERE on the line rather than only at its start, since ' +
+          'indentation after a list marker opens a code block just as leading ' +
+          'indentation does. Use a fenced ``` block, or indent by no more ' +
+          'than two spaces for ordinary continuation',
       );
     }
     // A block quote can carry any other construct inside it, including a
@@ -4601,6 +4622,14 @@ const FORMATTING_CASES = [
   ['one space then a tab', 'text\n\n \tcode()\n', 1],
   ['three spaces then a tab', 'text\n\n   \tcode()\n', 1],
   ['three spaces alone is continuation, not code', 'text\n\n   still prose\n', 0],
+  ['two-space continuation stays legal', 'text\n  wrapped line\n', 0],
+  // Codex #1990 r2: `indentWidth` stops at the first non-space, so it reports
+  // ZERO here while CommonMark opens a code block inside the list item. The
+  // rule counts a whitespace run anywhere for exactly this case.
+  ['indentation after a list marker', '-     code()\n', 1],
+  ['indentation after an ordered list marker', '1.     code()\n', 1],
+  ['a four-space run mid-line', 'a    b\n', 1],
+  ['a tab anywhere, not only leading', 'text\tmore\n', 1],
   ['indent inside a fence is still an indent for this rule', '```\n    code()\n```\n', 1],
   ['a block quote', '> quoted\n', 1],
   ['an indented block quote', '  > quoted\n', 1],

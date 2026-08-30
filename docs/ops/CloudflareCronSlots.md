@@ -198,12 +198,13 @@ document says:
 
 - **No HTML comments.** Every check asks what the rendered document
   claims, and this file may not hide any of itself.
-- **No indented code blocks.** Four columns means one thing at top level
-  and another inside a list item. Use a fenced ```` ``` ```` block; ordinary
-  continuation indents by two columns, as it does above. A tab counts as
-  advancing to the next multiple of four, measured with the same helper
-  the gate's own scanner uses, so the two cannot disagree about what an
-  indent is.
+- **No tab characters, and no run of four or more spaces.** Four columns
+  of whitespace opens a code block at top level and continues a list item
+  inside one, and this gate does not tell those apart. Both rules count
+  the whole line rather than its start, because indentation after a list
+  bullet opens a code block just as leading indentation does. Use a
+  fenced ```` ``` ```` block for code; ordinary continuation indents by two
+  spaces, as it does above.
 - **No greater-than character at all.** A block quote can open a fence the
   scanner does not track, and where its marker sits — column zero,
   indented, or after a list bullet — is precisely the context this gate
