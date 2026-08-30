@@ -108,6 +108,30 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
     expect(re.test('apps/keeper/test/workerKeepVars.test.ts')).toBe(true);
   });
 
+  it('a REQUIRED job runs the invariant, not only the unconditional one', () => {
+    // Branch protection gates on a list of contexts that no PR can change, and
+    // the unconditional job is not on it — so on its own it can be red while
+    // the PR stays mechanically mergeable (Codex #1995 r22). The keeper's
+    // `typecheck` is invoked by the REQUIRED `workspaces` job, so running the
+    // script there makes the invariant blocking without a ruleset change.
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'apps/keeper/package.json'), 'utf8'));
+    expect(pkg.scripts.typecheck).toContain('check-keep-vars.mjs');
+
+    // …and that job must TRIGGER for every config the invariant asserts, or it
+    // is path-skipped on exactly the change it exists to catch. Read from the
+    // workflow's own filter rather than restated.
+    const ci = readFileSync(join(REPO_ROOT, '.github/workflows/ci.yml'), 'utf8');
+    const pattern = /WORKSPACES_RE='(.*)'/.exec(ci)?.[1];
+    expect(pattern, 'WORKSPACES_RE not found in ci.yml').toBeTruthy();
+    const re = new RegExp(pattern as string);
+    for (const dir of VAR_CARRYING_WORKERS) {
+      expect(
+        re.test(`${dir}/wrangler.jsonc`),
+        `${dir}/wrangler.jsonc does not trigger the required workspaces job`,
+      ).toBe(true);
+    }
+  });
+
   it('the unconditional CI job exists and is not path-gated', () => {
     // The other half of the same worry: this suite's gate is asserted above,
     // and the job that needs NO gate is asserted here. A job that quietly

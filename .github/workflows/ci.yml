@@ -87,6 +87,15 @@
 # ProjectProcedures §7.1, which now says how to check rather than
 # asserting a list that can drift.
 #
+# ⚠ OPERATOR ACTION OWED (#1995 r22): `worker keep_vars (unconditional)`
+# belongs in that required list too, and adding it needs the same ruleset
+# change no PR can make. Until then the invariant is ALSO run inside
+# apps/keeper's `typecheck`, which the REQUIRED `workspaces` job invokes —
+# so removing `keep_vars` from any covered Worker fails a blocking check
+# today, and `WORKSPACES_RE` lists the two ops configs so that job is not
+# path-skipped on exactly that change. The unconditional job stays as the
+# belt: it needs no install and cannot be skipped by a path nobody predicted.
+#
 # ⚠ OPERATOR ACTION OWED (#1924 r22): `keeper deploy guard (--keep-vars,
 # tree-wide)` belongs in that required list and is NOT in it yet — adding
 # it needs a ruleset change nobody can make from a PR. Until it is added
@@ -312,7 +321,16 @@ jobs:
           # copy the site renders and fingerprints. A PR editing only the
           # canonical document is exactly the one-sided drift the guard
           # rejects — without this it would be path-skipped on it.
-          WORKSPACES_RE='^(apps/|packages/|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          # The two ops wrangler configs are in here for the same shape of
+          # reason: apps/keeper's typecheck runs the keep_vars invariant, which
+          # asserts those Workers too, and `^apps/` does not reach them. A PR
+          # deleting `keep_vars` from an ops config is exactly the change the
+          # invariant exists to catch, and without this the REQUIRED job that
+          # runs it would be path-skipped on it — leaving the PR mechanically
+          # mergeable with the unconditional job red (Codex #1995 r22). The
+          # config files rather than the directories, so ordinary ops work does
+          # not pull in every workspace typecheck.
+          WORKSPACES_RE='^(apps/|packages/|ops/(mesh-watcher|offchain-data-warm)/wrangler\.jsonc$|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
