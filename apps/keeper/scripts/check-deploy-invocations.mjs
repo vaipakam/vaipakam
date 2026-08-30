@@ -4344,7 +4344,15 @@ function callerSuppliedInputs(key) {
     for (let i = 0; i < ls.length; i += 1) {
       if (
         !new RegExp(
-          String.raw`^\s*uses:\s*["']?\./\.github/workflows/${base.replace(/\./g, '\\.')}["']?(?:@|\s|$)`,
+          // FULLY escaped, not just the dots. A filename may legally contain
+          // `+`, `(`, `[` or a backslash, and escaping one metacharacter class
+          // while interpolating the rest builds a pattern that means something
+          // other than the literal name (CodeQL js/incomplete-sanitization).
+          // Same escape the scope matchers use.
+          String.raw`^\s*uses:\s*["']?\./\.github/workflows/${base.replace(
+            /[.*+?^${}()|[\]\\]/g,
+            '\\$&',
+          )}["']?(?:@|\s|$)`,
         ).test(ls[i])
       ) {
         continue;
