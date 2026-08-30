@@ -807,6 +807,15 @@ Thin-market honesty rules apply.
   exact text, and links to read the Terms and the Privacy Policy before
   deciding. The language control is available on that prompt, because a user
   who cannot read the terms cannot meaningfully agree to them.
+- **The Terms link on that prompt is pinned to the version being accepted.**
+  The marketing site keeps every published Terms version readable at its own
+  permanent address, unchanged forever, alongside the always-current page —
+  so the prompt's link resolves to the exact text whose version and
+  fingerprint the acceptance records, even during a rollout window when the
+  current page already shows the next version's text. A pinned address for a
+  version the site does not serve yet must say so honestly rather than fail
+  silently, so a user is never left unable to tell whether they are reading
+  what they are accepting.
 - **Anything that reduces the user's commitments stays available**, whether or
   not they have accepted. That covers repaying and closing positions,
   claiming settled funds, withdrawing their own assets, cancelling their own

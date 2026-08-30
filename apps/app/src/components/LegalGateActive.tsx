@@ -19,7 +19,7 @@ import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
 import { useTosAcceptance } from '../contracts/useTosAcceptance';
 import { tosGateVerdict } from '../contracts/tosGate';
-import { LEGAL_URLS } from '../lib/legalUrls';
+import { LEGAL_URLS, termsUrlForVersion } from '../lib/legalUrls';
 import { TermsStatusCard } from './TermsStatusCard';
 import { LanguagePicker } from './LanguagePicker';
 
@@ -111,8 +111,14 @@ export function LegalGateActive({
           </div>
           <div className="legal-gate-row">
             <dt>{copy.legalGate.contentHash}</dt>
-            <dd className="mono">
-              {`${currentHash.slice(0, 10)}…${currentHash.slice(-6)}`}
+            {/* The COMPLETE hash, never truncated (#1998 / #2010 r5):
+                the pinned Terms page publishes its full canonical
+                fingerprint precisely so a reader can compare the two,
+                and a prefix…suffix display makes that check
+                impossible — two different hashes can share both ends.
+                break-all keeps the 66 chars from widening the card. */}
+            <dd className="mono" style={{ wordBreak: 'break-all' }}>
+              {currentHash}
             </dd>
           </div>
         </dl>
@@ -120,10 +126,15 @@ export function LegalGateActive({
         {/* The terms live on the marketing site, which is a separate
             origin — so these are external links, not routes. A gated
             user must be able to READ what they are accepting without
-            first getting past the gate. */}
+            first getting past the gate. The Terms link is PINNED to
+            the version read from chain (#1998): during a rollout the
+            mutable /terms already serves the next text while this
+            gate still asks for the current version — only the
+            version-pinned route shows the exact text the acceptance
+            will record. */}
         <div className="legal-gate-links">
           <a
-            href={LEGAL_URLS.terms}
+            href={termsUrlForVersion(currentVersion)}
             target="_blank"
             rel="noreferrer"
             className="legal-gate-link"

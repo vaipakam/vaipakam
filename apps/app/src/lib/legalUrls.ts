@@ -12,18 +12,31 @@
  * consent label would keep working while the gate pointed somewhere
  * that no longer served the text being accepted.
  *
- * KNOWN GAP — #1998, raised by Codex on #1997 and deferred there because
- * the fix belongs to `apps/www`. `/terms` is a single MUTABLE page with
- * no version-pinned route, while the gate asks a wallet to accept a
- * specific version and content hash. Publishing the next Terms page and
- * calling `setCurrentTos` cannot be simultaneous and the runbook orders
- * the page first, so during that window the gate correctly asks for
- * version N while this link already serves N+1 — the user reads one text
- * and records acceptance of another. Linking to `/terms/vN` from here
- * before `apps/www` serves it would produce a 404, which is worse; the
- * fix is versioned hosting, tracked in #1998.
+ * VERSIONED TERMS (#1998): `apps/www` serves every published Terms
+ * version at a pinned route `/terms/v<N>` (frozen forever), with the
+ * current version still at `/terms`. The gate asks a wallet to accept
+ * a specific on-chain version and content hash, so it links the
+ * PINNED route for the version it read from chain — during a rollout
+ * (new page published before `setCurrentTos` executes, per the
+ * runbook's ordering) `/terms` already shows N+1 while the gate asks
+ * for N, and only the pinned link shows the text the acceptance
+ * actually records. An unknown `/terms/v<N>` renders an honest
+ * "not published here" explainer on `apps/www` (never a silent 404),
+ * so linking a version ahead of a www deploy fails safe.
  */
 export const LEGAL_URLS = {
   terms: 'https://vaipakam.com/terms',
   privacy: 'https://vaipakam.com/privacy',
 } as const;
+
+/**
+ * The version-pinned Terms URL for an on-chain ToS version. Callers
+ * fall back to `LEGAL_URLS.terms` when no version is known (the gate
+ * before its read lands, or the dormant `currentTosVersion == 0`
+ * state) — a pinned `/terms/v0` names nothing.
+ */
+export function termsUrlForVersion(version: number): string {
+  return Number.isInteger(version) && version > 0
+    ? `${LEGAL_URLS.terms}/v${version}`
+    : LEGAL_URLS.terms;
+}

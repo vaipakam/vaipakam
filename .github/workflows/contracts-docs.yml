@@ -62,6 +62,16 @@ jobs:
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
+        with:
+          # PINNED to the last mdbook-era release, in lockstep with
+          # ci.yml's Build docs job (#2010): Foundry v1.8.0
+          # (2026-08-27) migrated `forge doc` to Solar+Vocs — the
+          # `--build` flag is gone and the output is a vocs/MDX
+          # scaffold, not the `docs/book` mdbook tree this workflow's
+          # breadcrumb step and Pages deploy consume. Unpinned, every
+          # push to main would fail the Pages build. The vocs
+          # migration (#2011) unpins BOTH workflows together.
+          version: v1.7.1
 
       # The "Restore foundry cache" step that sat here was REMOVED in
       # #1493: `forge doc` runs its own solc pass and never read the

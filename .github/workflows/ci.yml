@@ -304,7 +304,14 @@ jobs:
           # and workspaces=false, so without this the guard would be
           # path-skipped on exactly the change it exists to catch, and the
           # published documentation would go stale silently (Codex #1623 r1).
-          WORKSPACES_RE='^(apps/|packages/|ops/offchain-data-warm/src/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
+          #
+          # docs/Terms/ is in here for the same shape of reason (#1998 /
+          # Codex #2010 r1): apps/www's typecheck runs the guard comparing
+          # the canonical Terms document against the frozen version-pinned
+          # copy the site renders and fingerprints. A PR editing only the
+          # canonical document is exactly the one-sided drift the guard
+          # rejects — without this it would be path-skipped on it.
+          WORKSPACES_RE='^(apps/|packages/|ops/offchain-data-warm/src/|docs/Terms/|docs/ops/OffChainRestore\.md$|docs/ops/AdminConfigurableKnobsAndSwitches\.md$|contracts/script/sync-admin-knobs-doc\.sh$|contracts/src/libraries/LibVaipakam\.sol$|pnpm-lock\.yaml|pnpm-workspace\.yaml|package\.json|\.github/workflows/ci\.yml$)'
           if echo "$CHANGED" | grep -Eq "$WORKSPACES_RE"; then
             echo "workspaces=true" >> "$GITHUB_OUTPUT"
           else
@@ -764,7 +771,18 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
-          version: stable
+          # PINNED to the last mdbook-era release, NOT `stable` (#2010):
+          # Foundry v1.8.0 (2026-08-27) migrated `forge doc` from
+          # Solang+mdbook to Solar+Vocs — the `--build` flag is gone and
+          # the output is a vocs/MDX scaffold, not the `docs/book` mdbook
+          # tree every downstream step here (breadcrumb, PR-preview
+          # artifact) and the contracts-docs.yml Pages deploy consume.
+          # Under `stable` this job went red the day v1.8.0 shipped, on
+          # PRs that touched no contracts at all. Migrating the docs
+          # pipeline to the vocs output is tracked in #2011; unpin when
+          # that lands. The pin is doc-job-local — contracts-fast and
+          # slither stay on `stable`, which they pass on.
+          version: v1.7.1
 
       # The #1221 warm-artifact download + in-job warm compile that used
       # to sit here were REMOVED in #1493 (with their cache-key
@@ -893,6 +911,51 @@ jobs:
           # LTS to match what the keeper-bot CI also pins to.
           node-version: '22'
           cache: 'pnpm'
+
+      # ── Terms archives are immutable (#1998 / Codex #2010 r2+r3 P1) ──
+      # Published Terms versions are FROZEN: wallets record on-chain
+      # acceptance against a version's content hash, and `/terms/v<N>`
+      # promises to resolve to that exact text forever. The
+      # typecheck-time guard (`check-terms-canonical-hash.ts`) pins
+      # every frozen file to its registered fingerprint — but both
+      # sides of that comparison live in the same PR-editable tree, so
+      # a PR rewriting a published `v<N>.md` AND its registered hash
+      # together passes it. Immutability needs an anchor OUTSIDE the
+      # PR: diff against the PR's base commit and fail on any change
+      # to a `v<N>.md` that exists there (adding a NEW version is the
+      # one allowed change).
+      #
+      # This step lives INSIDE the required `workspaces` job (r3 P1) —
+      # a standalone informational job failed without blocking merge.
+      # The placement is sound because every path that can touch a
+      # frozen archive is under `apps/`, which sets `workspaces=true`
+      # in the change detector: whenever this job is path-skipped, no
+      # archive changed. PR-only — push/schedule runs have no base.
+      - name: Published Terms archives are unchanged from the base
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # The default pull_request checkout is the TEST MERGE commit
+          # (refs/pull/N/merge = PR head merged into the base tip), so a
+          # plain two-dot diff against base.sha shows exactly the PR's
+          # effective changes — a v<N>.md that landed on main after this
+          # PR branched is on BOTH sides and does not read as a
+          # deletion. Do not switch this checkout to head.sha without
+          # also switching to a merge-base diff.
+          git fetch --depth=1 origin "$BASE_SHA"
+          # --diff-filter=a excludes Added: a new version file is the
+          # one legitimate change. M/D/R/C/T of an existing archive all
+          # fail — a published version's bytes are load-bearing for
+          # acceptances already recorded against its hashes.
+          CHANGED=$(git diff --name-only --diff-filter=a "$BASE_SHA" HEAD -- 'apps/www/src/pages/terms/v*.md')
+          if [[ -n "$CHANGED" ]]; then
+            echo "::error::published Terms version files were modified or deleted — they are frozen forever (acceptances are recorded against their hashes). A Terms change is a NEW v<N>.md + registry entry, never an edit:"
+            echo "$CHANGED"
+            exit 1
+          fi
+          echo "OK — no published Terms archive was touched."
 
       - name: Install workspace dependencies
         run: pnpm install --frozen-lockfile

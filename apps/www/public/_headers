@@ -120,6 +120,42 @@
 /index.html
   Cache-Control: public, max-age=0, must-revalidate
 
+# Version-pinned Terms archives (#1998 / Codex #2010 r3): tell crawlers
+
+# at the HTTP layer not to index them. The client-side meta tag only
+
+# exists after JavaScript runs; a non-JS crawler requesting /terms/v1
+
+# gets the SPA shell (single-page-application not_found_handling) with
+
+# no directive, and these routes are deliberately absent from the
+
+# sitemap and prerender set — absence does not stop a crawler that
+
+# follows the on-page version-index links. Header rules match the
+
+# REQUEST path, so this attaches to the shell response too.
+
+/terms/v*
+  X-Robots-Tag: noindex
+
+# The same archive routes are also mounted beneath the `:locale`
+
+# prefix (App.tsx renders one route tree twice), so /es/terms/v1 etc.
+
+# are equally valid archive URLs and need the same directive — the
+
+# unprefixed rule above does not match them (#2010 r4, verified with
+
+# wrangler dev). `:locale` is a single-segment placeholder; matching
+
+# a non-locale first segment too is harmless, since any
+
+# /<segment>/terms/v* path serves the same shell.
+
+/:locale/terms/v*
+  X-Robots-Tag: noindex
+
 # Immutable static assets (Vite emits content-hashed filenames in /assets/*).
 
 /assets/*
