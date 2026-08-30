@@ -306,7 +306,7 @@ const DECL_PREFIX = String.raw`(?:(?:export|declare|typeset|local|readonly)\s+(?
 // as a shell helper's does (#1995 r22). BOTH the launcher word and a script
 // extension are required — that is what keeps it away from the r20 width
 // problem, since a bare `./x.ts` still matches nothing here.
-const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+)*\s+)?(?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1)|(?:node|bun|tsx)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts))`;
+const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?(?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1)|(?:node|bun|tsx)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts))`;
 
 /** Collapse a captured word to what the shell would hand the command. */
 function dequote(w) {
@@ -365,6 +365,10 @@ const EXTENSIONS = [
   // Windows deployment helpers. `walk` never yielded these, so a
   // `deploy.ps1` beside a protected worker was not opened at all — even
   // though workflow BODIES under pwsh/cmd were already modelled (#1995 r17).
+  // A standalone `.py` helper can carry an argv deploy that `ARGV_DEPLOY_RE`
+  // already recognises — the detector existed, the walk simply never yielded
+  // the file (#1995 r22).
+  '.py',
   '.ps1',
   '.cmd',
   '.bat',
@@ -2114,7 +2118,13 @@ function expandCommandVars(text, vars) {
   // test saw `eval` as the command word and left `$CMD` an inert argument
   // (#1995 r21). Only `eval` — the point of the head rule is that an ordinary
   // argument is data, and `echo "$MSG"` must stay silent.
-  const evalLead = text.match(/^\s*eval\s+/);
+  // A shell's `-c` PAYLOAD is a command position for the same reason `eval`'s
+  // argument is: `CMD='wrangler deploy'; bash -c "$CMD"` executes the deploy
+  // (#1995 r22). Both spellings, one rule — the launcher and its options are
+  // stepped over, and what follows is treated as the command word.
+  const evalLead = text.match(
+    /^\s*(?:eval|(?:bash|sh|zsh|ksh|dash)\s+(?:-[A-Za-z]*c[A-Za-z]*|-\S+\s+-[A-Za-z]*c[A-Za-z]*))\s+/,
+  );
   const rest = evalLead ? text.slice(evalLead[0].length) : text;
   const head = rest.match(/^\s*"?\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?"?/);
   if (head && vars.has(head[1]) && /\s/.test(vars.get(head[1]))) {
@@ -2636,7 +2646,19 @@ function sourcedDeploys(relPath, depth = 0) {
   if (sourcedDeployCache.has(key)) return sourcedDeployCache.get(key);
   let out = [];
   try {
-    const text = readFileSync(`${REPO_ROOT}/${relPath.replace(/^\.\//, '')}`, 'utf8');
+    const raw = readFileSync(`${REPO_ROOT}/${relPath.replace(/^\.\//, '')}`, 'utf8');
+    // A Windows helper gets the SAME interpreter transform here that it gets
+    // when the walk opens it directly — backslash separators, case-folded
+    // Wrangler, caret continuations. The deferred reader sent the raw text
+    // through the POSIX scanner, so `call ..\..\deploy.cmd` holding
+    // `Wrangler deploy` was invisible while the identical file scanned
+    // standalone was caught (#1995 r22). One transform, chosen by extension,
+    // wherever a helper body is read.
+    const text = /\.ps1$/i.test(relPath)
+      ? forInterpreter(raw, 'pwsh')
+      : /\.(?:cmd|bat)$/i.test(relPath)
+        ? forInterpreter(raw, 'cmd')
+        : raw;
     const segs = [];
     for (const { text: line } of logicalLines(text)) {
       for (const part of splitCommands(line)) segs.push(part.text.trim());
@@ -3424,11 +3446,24 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           ? /^(?:false|\$\{\{\s*false\s*\}\})$/.test(disabledF.replace(/\s+#.*$/, '').trim())
           : stepIsDisabled(lines, i);
         if (!isOff) {
-          const withM = flowStep[1].match(/["']?with["']?:\s*\{([^}]*)\}/);
+          // The `with:` block itself must survive an expression's braces too —
+          // stopping at the first `}` truncated the block before `command:`
+          // even became visible.
+          const withM = flowStep[1].match(
+            /["']?with["']?:\s*\{((?:\$\{\{[^}]*\}\}|[^}])*)\}/,
+          );
+          // Expression-aware, like the block-form reader: `${{ … }}` carries
+          // braces, and stopping at the first `}` captured `${{ matrix.cmd`
+          // — which expands to nothing, so a real matrix-driven action deploy
+          // passed (#1995 r22).
           const inWith = (key) =>
             withM
               ? (withM[1]
-                  .match(new RegExp(`["']?${key}["']?:\\s*(?:"([^"]*)"|'([^']*)'|([^,}]+))`))
+                  .match(
+                    new RegExp(
+                      `["']?${key}["']?:\\s*(?:"([^"]*)"|'([^']*)'|((?:\\$\\{\\{[^}]*\\}\\}|[^,}])+))`,
+                    ),
+                  )
                   ?.slice(1) ?? [])
               : [];
           const wm = inWith('workingDirectory');
@@ -3540,14 +3575,20 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           if (wm && wd === null) {
             wd = (wm[1] ?? wm[2] ?? wm[3]).replace(/\s+#.*$/, '').trim();
           }
-          const fcm = lines[k].match(
-            /with:\s*\{[^}]*["']?command["']?:\s*(?:"([^"]*)"|'([^']*)'|([^,}]+))/,
-          );
+          // `${{ … }}` contains braces, so an unquoted flow value must not stop
+          // at the first `}`: `command: '${{ matrix.cmd }}'` was captured as
+          // `${{ matrix.cmd` and expanded to nothing (#1995 r22). The
+          // expression alternative comes first so its braces are consumed by
+          // it — the same ordering the working-directory reader uses.
+          const FLOWVAL = String.raw`(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^,}])+))`;
+          const fcm = lines[k].match(new RegExp(String.raw`with:\s*\{.*?["']?command["']?:\s*${FLOWVAL}`));
           if (fcm && cmd === null) cmd = (fcm[1] ?? fcm[2] ?? fcm[3]).trim();
           const fwm = lines[k].match(
-            /with:\s*\{[^}]*["']?workingDirectory["']?:\s*(?:"([^"]*)"|'([^']*)'|([^,}\s]+))/,
+            new RegExp(
+              String.raw`with:\s*\{.*?["']?workingDirectory["']?:\s*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^,}\s])+))`,
+            ),
           );
-          if (fwm && wd === null) wd = fwm[1] ?? fwm[2] ?? fwm[3];
+          if (fwm && wd === null) wd = (fwm[1] ?? fwm[2] ?? fwm[3]).trim();
         }
       }
       const cleanCmd = cmd === null ? 'deploy' : stripYamlProps(cmd);
@@ -3566,15 +3607,48 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       // drift apart again.
       const actEnv = stepEnvVars(lines, i);
       const cmdBase = expandActionsEnv(cleanCmd, actEnv);
-      for (const variant of expandMatrixVariants(lines, i, cmdBase) ?? [cmdBase]) {
-        const synth = variant
+      // The directory and the command may BOTH be matrix-driven, and then they
+      // travel together: `include` pairing `{dir: apps/agent, cmd: 'deploy
+      // --keep-vars'}` with `{dir: apps/indexer, cmd: deploy}` runs no unsafe
+      // agent deploy at all. Resolving the two independently — the directory
+      // once, the command over every value — synthesised the agent's directory
+      // beside the indexer's bare command and failed CI on a correct workflow
+      // (#1995 r22). A false red, which is the costlier direction.
+      //
+      // Same rule the shell axis got at r17, and the legs come from the same
+      // reader. Only when BOTH inputs name matrix keys and an `include:`
+      // actually pairs them; independent axis lists still cross-product, which
+      // is what a real cross-product matrix does.
+      const emit = (text, dir) => {
+        const synth = text
           .split('\n')
           .map((c) => c.trim())
           .filter(Boolean)
           .map((c) => `wrangler ${c}`)
           .join('\n');
-        out.push(...offset(logicalLines(synth || 'wrangler deploy'), i, blockId, cwd ?? '', null));
+        out.push(...offset(logicalLines(synth || 'wrangler deploy'), i, blockId, dir ?? '', null));
         blockId += 1;
+      };
+      const wdKey = wd && normalizeCtxRefs(wd).match(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/)?.[1];
+      const cmdKey = normalizeCtxRefs(cmdBase).match(
+        /\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/,
+      )?.[1];
+      const jb = jobBounds(lines, i);
+      const legs =
+        wdKey && cmdKey
+          ? matrixIncludeLegs(lines, jb ? jb.start : 0, jb ? jb.end : lines.length).filter(
+              (e) => e.has(wdKey) && e.has(cmdKey),
+            )
+          : [];
+      if (legs.length > 0) {
+        for (const leg of legs) {
+          const legDir = workingDirFor(lines, i, false, leg.get(wdKey));
+          emit(leg.get(cmdKey), legDir);
+        }
+      } else {
+        for (const variant of expandMatrixVariants(lines, i, cmdBase) ?? [cmdBase]) {
+          emit(variant, cwd);
+        }
       }
       i += 1;
       continue;
@@ -4229,6 +4303,66 @@ function stepIsShell(lines, runIdx) {
  * second reader of the matrix would drift exactly the way the three run
  * ingest points used to.
  */
+/**
+ * `include:` entries as one Map per leg, in both block and flow spellings.
+ *
+ * Extracted so a leg's members can be read TOGETHER. Two readers already need
+ * that — `matrixValuesFor`, to drop a leg whose interpreter cannot run the
+ * step, and the wrangler-action reader, to pair a leg's directory with its own
+ * command rather than with every other leg's (#1995 r22).
+ */
+function matrixIncludeLegs(lines, from, to) {
+  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
+  const legs = [];
+  const membersOf = (text) => {
+    const entry = new Map();
+    for (const kv of text.matchAll(
+      /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
+    )) {
+      entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
+    }
+    return entry;
+  };
+  for (let i = from; i < to && i < lines.length; i += 1) {
+    const flowInc = lines[i].match(/\binclude:\s*\[(.*)\]/);
+    if (flowInc) {
+      for (const em of flowInc[1].matchAll(/\{([^}]*)\}/g)) {
+        const entry = membersOf(em[1]);
+        if (entry.size > 0) legs.push(entry);
+      }
+      continue;
+    }
+    if (!/^\s*include:\s*$/.test(lines[i])) continue;
+    const ii = indentOf(lines[i]);
+    let cur = null;
+    for (let j = i + 1; j < lines.length && j < to; j += 1) {
+      if (lines[j].trim() === '') continue;
+      if (indentOf(lines[j]) <= ii) break;
+      const flowEntry = lines[j].match(/^\s*-\s*\{([^}]*)\}\s*$/);
+      if (flowEntry) {
+        const entry = membersOf(flowEntry[1]);
+        if (entry.size > 0) legs.push(entry);
+        cur = null;
+        continue;
+      }
+      const dash = lines[j].match(
+        /^\s*-\s+([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
+      );
+      const member = lines[j].match(
+        /^\s*([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
+      );
+      if (dash) {
+        cur = new Map();
+        legs.push(cur);
+        cur.set(dash[1], dash[2] ?? dash[3] ?? dash[4]);
+      } else if (member && cur) {
+        cur.set(member[1], member[2] ?? member[3] ?? member[4]);
+      }
+    }
+  }
+  return legs;
+}
+
 function matrixValuesFor(lines, runIdx, key, shellAxisKey) {
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
   const vals = [];
@@ -4293,53 +4427,7 @@ function matrixValuesFor(lines, runIdx, key, shellAxisKey) {
   // interpreter runs no shell there. Entries without the shell axis, and
   // every value from a plain axis list, stay — a cross product pairs those
   // with every interpreter.
-  for (let i = from; i < to && i < lines.length; i += 1) {
-    const flowInc = lines[i].match(/\binclude:\s*\[(.*)\]/);
-    if (flowInc) {
-      for (const em of flowInc[1].matchAll(/\{([^}]*)\}/g)) {
-        const entry = new Map();
-        for (const kv of em[1].matchAll(
-          /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
-        )) {
-          entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
-        }
-        if (entry.size > 0) includeLegs.push(entry);
-      }
-      continue;
-    }
-    if (!/^\s*include:\s*$/.test(lines[i])) continue;
-    const ii = indentOf(lines[i]);
-    let cur = null;
-    for (let j = i + 1; j < lines.length && j < to; j += 1) {
-      if (lines[j].trim() === '') continue;
-      if (indentOf(lines[j]) <= ii) break;
-      const flowEntry = lines[j].match(/^\s*-\s*\{([^}]*)\}\s*$/);
-      if (flowEntry) {
-        const entry = new Map();
-        for (const kv of flowEntry[1].matchAll(
-          /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
-        )) {
-          entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
-        }
-        if (entry.size > 0) includeLegs.push(entry);
-        cur = null;
-        continue;
-      }
-      const dash = lines[j].match(
-        /^\s*-\s+([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
-      );
-      const member = lines[j].match(
-        /^\s*([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
-      );
-      if (dash) {
-        cur = new Map();
-        includeLegs.push(cur);
-        cur.set(dash[1], dash[2] ?? dash[3] ?? dash[4]);
-      } else if (member && cur) {
-        cur.set(member[1], member[2] ?? member[3] ?? member[4]);
-      }
-    }
-  }
+  includeLegs.push(...matrixIncludeLegs(lines, from, to));
   for (const entry of includeLegs) {
     if (!entry.has(key)) continue;
     if (
@@ -4487,6 +4575,22 @@ function callerSuppliedInputs(key) {
         if (ls[j].trim() === '') continue;
         if (indentOf(ls[j]) < ui) break;
         if (indentOf(ls[j]) !== ui) continue;
+        // A FLOW `with: { dir: apps/agent }` is the same input, and only the
+        // block spelling was read — so a required input resolved to nothing
+        // and the callee's bare deploy passed (#1995 r22). Safe to tie to this
+        // `uses:` because it sits at the job key's own indent inside the job
+        // that carries it, which is the same anchoring the block form uses.
+        const flowWith = ls[j].match(/^\s*with:\s*\{(.*)\}\s*$/);
+        if (flowWith) {
+          const fm = flowWith[1].match(
+            new RegExp(`["']?${key}["']?:\\s*(?:"([^"]*)"|'([^']*)'|([^,}]+))`),
+          );
+          if (fm) {
+            const v = (fm[1] ?? fm[2] ?? fm[3]).trim();
+            if (!/\$\{\{/.test(v)) vals.push(v);
+          }
+          break;
+        }
         if (!/^\s*with:\s*$/.test(ls[j])) continue;
         for (let k = j + 1; k < ls.length; k += 1) {
           if (ls[k].trim() === '') continue;
@@ -5765,7 +5869,7 @@ for (const file of walk(REPO_ROOT)) {
           !dir &&
           runWord.match(
             new RegExp(
-              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))|(?:node|bun|tsx)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts)))(?:\s|$)`,
+              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))|(?:node|bun|tsx)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts)))(?:\s|$)`,
             ),
           );
         if (execHelper) {

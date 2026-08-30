@@ -6063,3 +6063,129 @@ describe('check-deploy-invocations — #1995 r22 (config reading)', () => {
     expect(r.out).toContain('apps/agent');
   });
 });
+
+describe('check-deploy-invocations — #1995 r22 (scanner reach)', () => {
+  const PKG = '{"name":"@vaipakam/agent"}\n';
+
+  it('a flow-mapped action whose command is a matrix expression', () => {
+    seed('apps/agent/package.json', PKG);
+    const r = runWith(
+      '.github/workflows/a.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        cmd: [deploy]\n    steps:\n' +
+        "      - { uses: cloudflare/wrangler-action@v3, with: { workingDirectory: apps/agent, command: '${{ matrix.cmd }}' } }\n",
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('action inputs pair BY LEG, so a safe agent leg is not crossed with an unsafe one', () => {
+    // A false red, which is the costlier direction: resolving the directory
+    // once and the command over every value synthesised the agent's directory
+    // beside the indexer's bare command, failing CI on a correct workflow.
+    seed('apps/agent/package.json', PKG);
+    seed('apps/indexer/package.json', '{"name":"@vaipakam/indexer"}\n');
+    const r = runWith(
+      '.github/workflows/b.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        include:\n' +
+        "          - dir: apps/agent\n            cmd: 'deploy --keep-vars'\n" +
+        '          - dir: apps/indexer\n            cmd: deploy\n' +
+        '    steps:\n      - uses: cloudflare/wrangler-action@v3\n        with:\n' +
+        '          workingDirectory: ${{ matrix.dir }}\n          command: ${{ matrix.cmd }}\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('but the leg where the AGENT is unsafe is still reported (control)', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('apps/indexer/package.json', '{"name":"@vaipakam/indexer"}\n');
+    const r = runWith(
+      '.github/workflows/b.yml',
+      'name: w\njobs:\n  d:\n    strategy:\n      matrix:\n        include:\n' +
+        '          - dir: apps/agent\n            cmd: deploy\n' +
+        "          - dir: apps/indexer\n            cmd: 'deploy --keep-vars'\n" +
+        '    steps:\n      - uses: cloudflare/wrangler-action@v3\n        with:\n' +
+        '          workingDirectory: ${{ matrix.dir }}\n          command: ${{ matrix.cmd }}\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a deferred WINDOWS helper body gets its interpreter transform', () => {
+    // The file scanned standalone was caught; the same file reached through a
+    // caller was not, because the deferred reader used the POSIX scanner.
+    seed('apps/agent/package.json', PKG);
+    seed('deploy.cmd', 'Wrangler deploy\n');
+    const r = runWith('x.sh', 'cd apps/agent\ncall ../../deploy.cmd\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the same helper carrying the flag is safe (control)', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('deploy.cmd', 'Wrangler deploy --keep-vars\n');
+    expect(runWith('x.sh', 'cd apps/agent\ncall ../../deploy.cmd\n').ok).toBe(true);
+  });
+
+  it('a launcher option may take a VALUE before the script path', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('deploy.ps1', 'wrangler deploy\n');
+    const r = runWith(
+      'x.sh',
+      'cd apps/agent\npowershell -ExecutionPolicy Bypass -File ../../deploy.ps1\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("a shell's -c payload is a command position, as eval's argument is", () => {
+    seed('apps/agent/package.json', PKG);
+    const r = runWith('x.sh', "CMD='wrangler deploy'\ncd apps/agent\nbash -c \"$CMD\"\n");
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a multiword value away from a command position stays inert (control)', () => {
+    // The standing `echo "$MSG"` case: widening the command-position rule must
+    // not resurrect it.
+    seed('apps/agent/package.json', PKG);
+    expect(runWith('x.sh', 'MSG="wrangler deploy"\ncd apps/agent\necho "$MSG"\n').ok).toBe(true);
+  });
+
+  it('a caller supplying its input as a FLOW mapping', () => {
+    seed('apps/agent/package.json', PKG);
+    seed(
+      '.github/workflows/callee.yml',
+      'name: callee\non:\n  workflow_call:\n    inputs:\n      dir:\n        required: true\n' +
+        '        type: string\njobs:\n  d:\n    steps:\n      - working-directory: ${{ inputs.dir }}\n' +
+        '        run: wrangler deploy\n',
+    );
+    const r = runWith(
+      '.github/workflows/caller.yml',
+      'name: caller\njobs:\n  c:\n    uses: ./.github/workflows/callee.yml\n    with: { dir: apps/agent }\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a standalone PYTHON helper is walked', () => {
+    // `ARGV_DEPLOY_RE` already recognised this; the walk simply never yielded
+    // the file.
+    seed('apps/agent/package.json', PKG);
+    const r = runWith(
+      'deploy.py',
+      'import subprocess\nsubprocess.run(["wrangler", "deploy", "--config", "apps/agent/wrangler.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a python helper deploying an UNSCOPED worker passes (control)', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('apps/www/package.json', '{"name":"@vaipakam/www"}\n');
+    expect(
+      runWith(
+        'deploy.py',
+        'import subprocess\nsubprocess.run(["wrangler","deploy","--config","apps/www/wrangler.jsonc"])\n',
+      ).ok,
+    ).toBe(true);
+  });
+});
