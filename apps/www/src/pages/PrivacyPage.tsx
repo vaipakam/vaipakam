@@ -91,7 +91,10 @@ export default function PrivacyPage() {
             The report is more than the stored error, and it is sent
             even when there is no stored error at all. It always
             carries: the page you are on, the network, your wallet
-            address shortened to <code>0x1234…abcd</code>, your
+            address (shortened to <code>0x1234…abcd</code> — the report
+            is passed through an address shortener as it is built,
+            covering the wallet field and any address appearing in the
+            page address or error text), your
             blockchain-connection status, your market-data cache
             status, and the app build. When a stored error exists, its
             time, page, message and — where there is one — component
@@ -101,10 +104,13 @@ export default function PrivacyPage() {
           <p>
             Because the whole report has to fit in a link, a long one is
             trimmed to fit: the component trace is dropped first, and if
-            it is still too long the error is dropped entirely, leaving
-            the always-carried fields above. So the report GitHub
-            receives can contain <em>less</em> than "Copy details" shows
-            you — never more.
+            it is still too long the error block goes too, leaving the
+            always-carried fields above. Even then the issue's title
+            still contains the first 60 characters of the error
+            message, which is where it is put when the report is built.
+            So the report GitHub receives can contain <em>less</em> of
+            the error than "Copy details" shows you — but never nothing
+            of it, and never more.
           </p>
 
           <p>
@@ -354,8 +360,13 @@ export default function PrivacyPage() {
               reach your wallet-connection state, which the
               wallet-connection library keeps under its own name — so a
               connected user's export does not contain it. What it
-              exports is browser storage, not a wallet-keyed profile:
-              we do not assemble one. Note
+              exports is browser storage — we assemble no profile of
+              you on our side. Be aware though that where you have
+              saved per-wallet settings, such as alert preferences or
+              which notifications you have seen, your full wallet
+              address appears in the stored key names, so the file does
+              link that address to those settings. The file says so on
+              its face as well. Note
               before you share the file: it is not purely a copy of
               storage. It also records when it was made, the site it
               was made on, and your browser's user-agent string, which
