@@ -172,6 +172,46 @@ describe('decodeContractError', () => {
     expect(decodeContractError({ message: 'raw js error' })).toBe('raw js error');
   });
 
+  // #2017 round 1 P2: the four cases above each supply ONE candidate
+  // field, so a reordered chain (shortMessage ahead of reason, say)
+  // would leave every one of them green. Precedence is only actually
+  // pinned by inputs where the candidates COMPETE — each stage below
+  // removes the winner and asserts the next one takes over.
+  it('resolves the fallback chain in order when the fields compete', () => {
+    const all = {
+      reason: 'from reason',
+      shortMessage: 'from shortMessage',
+      data: { message: 'from data.message' },
+      message: 'from message',
+    };
+    expect(decodeContractError(all, 'from fallback')).toBe('from reason');
+
+    const { reason: _r, ...noReason } = all;
+    expect(decodeContractError(noReason, 'from fallback')).toBe('from shortMessage');
+
+    const { shortMessage: _s, ...noShort } = noReason;
+    expect(decodeContractError(noShort, 'from fallback')).toBe('from data.message');
+
+    const { data: _d, ...noData } = noShort;
+    expect(decodeContractError(noData, 'from fallback')).toBe('from message');
+
+    const { message: _m, ...noMessage } = noData;
+    expect(decodeContractError(noMessage, 'from fallback')).toBe('from fallback');
+  });
+
+  it('lets a known selector\u2019s friendly copy beat every text field', () => {
+    // The friendly path returns BEFORE the chain is consulted, so the
+    // richest competing input must still surface curated copy.
+    expect(
+      decodeContractError({
+        data: SEL_HF_TOO_LOW,
+        reason: 'from reason',
+        shortMessage: 'from shortMessage',
+        message: 'from message',
+      }),
+    ).toMatch(/Health factor too low/i);
+  });
+
   it('appends named revert onto generic "unknown custom error" texts', () => {
     const msg = decodeContractError({
       reason: 'unknown custom error',
@@ -225,6 +265,24 @@ describe('decodeContractError', () => {
       });
       expect(msg).toMatch(/Health factor too low/i);
       expect(msg).not.toMatch(/could not estimate/i);
+    });
+
+    // #2017 round 1 P2: the case above returns through the friendly-copy
+    // path before the `!sel` guard is ever evaluated, so deleting that
+    // guard would leave it green. This is the input that actually
+    // reaches it — a gas-cap message carrying a concrete selector the
+    // local tables do not know. The selector proves a real revert was
+    // decoded, so the misleading rewrite must be suppressed even though
+    // there is no friendly copy to show instead.
+    it('suppresses the rewrite for an UNKNOWN selector too — the guard itself', () => {
+      const msg = decodeContractError({
+        message: 'execution reverted: exceeds max transaction gas limit',
+        data: '0xdeadbeef' + 'ff'.repeat(32),
+      });
+      expect(msg).not.toMatch(/could not estimate/i);
+      expect(msg).not.toMatch(/NOT a real gas shortage/i);
+      // The untouched base message is what surfaces.
+      expect(msg).toBe('execution reverted: exceeds max transaction gas limit');
     });
   });
 
@@ -343,9 +401,30 @@ describe('friendlyContractError', () => {
       name: 'HealthFactorTooLow',
       selector: SEL_HF_TOO_LOW,
     });
-    expect(viaSelector).toMatch(/Health factor too low/i);
-    // Identical to what the write-path decoder surfaces for that selector.
+    // #2017 round 1 P2: `/Health factor too low/i` alone proves nothing
+    // here — that is EXACTLY what `HealthFactorTooLow` humanizes to, so
+    // dropping the curated message (or resolving the name ahead of the
+    // selector) would keep the old assertion green while silently losing
+    // the actionable half. The curated copy's ADVICE is the part worth
+    // pinning, and it cannot come from humanizing a name.
+    expect(viaSelector).toBe('Health factor too low. Add collateral to bring it above 1.5.');
+    expect(viaSelector).toMatch(/add collateral/i);
+    expect(viaSelector).not.toBe(humanizeErrorName('HealthFactorTooLow'));
+    // Identical to what the write-path decoder surfaces for that selector,
+    // so the dry-run footer and the submit banner speak one voice.
     expect(viaSelector).toBe(decodeContractError({ data: SEL_HF_TOO_LOW }));
+  });
+
+  it('lets the SELECTOR win when a conflicting name is supplied', () => {
+    // The resolution order is the point: a caller passing a name that
+    // disagrees with the selector must still get the selector's curated
+    // guidance, not the other error's copy or a humanized fallback.
+    expect(
+      friendlyContractError({
+        name: 'MaxLendingAboveCeiling',
+        selector: SEL_HF_TOO_LOW,
+      }),
+    ).toBe('Health factor too low. Add collateral to bring it above 1.5.');
   });
 
   it('returns null when nothing identifies the error', () => {
