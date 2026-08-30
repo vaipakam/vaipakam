@@ -96,16 +96,15 @@ describe('redactText — nested encoding (#2024 Codex r1)', () => {
   });
 
   it('shortens a mixed-depth pair, emitting each exactly once', () => {
-    // This is also the case that pins span collapsing, and it is the ONLY
-    // one that does — worth stating, because an earlier version of this
-    // suite claimed that job for a single twice-encoded address and did not
-    // do it. That input yields one match at one depth, so it passes whether
-    // or not overlaps are handled.
+    // Two addresses encoded to DIFFERENT depths in one string, both literal
+    // at the fixpoint and therefore both found in a single scan.
     //
-    // Here the once-encoded `a` decodes to a literal address at depth 1 AND
-    // is still literal at depth 2, so it is found twice and maps to the same
-    // original span, while `b` is found only at depth 2. Dropping the overlap
-    // guard doubles `a`. Verified by mutation, not by assumption.
+    // This case has carried two wrong claims in as many rounds, so it is
+    // worth being precise about what it does NOT show. It does not pin span
+    // collapsing: the search runs only at the fixpoint, `matchAll` yields
+    // disjoint matches over one string, and there is consequently no overlap
+    // arithmetic left to exercise (Codex r3 P3 — the guard was removed rather
+    // than left as untestable defence).
     const out = redactText(`a=${pctAll(ADDR)}&b=${pctAll(pctAll(ADDR))}`);
     expect(out).toBe(`a=${SHORT}&b=${SHORT}`);
     expect(out.match(/…/g)).toHaveLength(2);
@@ -187,7 +186,40 @@ describe('redactText — fails closed rather than guessing (#2024 Codex r2)', ()
   });
 });
 
-describe('redactText — a hash must survive mixed-depth encoding (#2024 Codex r2)', () => {
+describe('redactText — very large input stays bounded (#2024 Codex r3)', () => {
+  it('handles a multi-megabyte escaped message promptly', () => {
+    // `redactCap` redacts BEFORE capping, so a caught provider error arrives
+    // here whole even though the caller keeps 1,200 characters. Building a
+    // per-character map over megabytes, once per decoding pass, measured
+    // ~3.8 s and would leave the Support drawer unusable exactly after the
+    // failure someone wants to report.
+    const huge = '%25'.repeat(1_000_000);
+    const started = Date.now();
+    const out = redactText(huge);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(out).not.toContain('%25');
+  });
+
+  it('still redacts an address inside an oversized message', () => {
+    const huge = `${'x'.repeat(70_000)} ${ADDR} ${'%41'.repeat(100)}`;
+    const out = redactText(huge);
+    expect(out).toContain(SHORT);
+    expect(out).not.toContain(ADDR);
+    expect(out).not.toContain('%41');
+  });
+});
+
+describe('redactText — a hash must survive mixed-depth encoding (#2024 Codex r2/r3)', () => {
+  it('does not shorten a hash with a LITERAL head and an escaped tail', () => {
+    // Codex r3 P2. The eager literal pass shortened this before the fixpoint
+    // could reveal the 64-hex run: `0x` + 40 hex followed by `%` satisfies the
+    // negative lookahead, so the head read as an address. The earlier
+    // mixed-depth case missed it because that one encodes the head too.
+    const hash = `0x${'e'.repeat(64)}`;
+    const out = redactText(hash.slice(0, 42) + pctAll(hash.slice(42)));
+    expect(out).not.toContain('…');
+  });
+
   it('does not shorten a hash whose head and tail are encoded at different depths', () => {
     // At level 1 the first 42 characters read as an address followed by `%`,
     // and the negative lookahead accepts that. Only at the fixpoint is the

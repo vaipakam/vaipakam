@@ -145,6 +145,24 @@ function decodeToFixpoint(text: string): {
   }
 }
 
+/**
+ * Above this, the index map is not built at all (#2024, Codex r2 P2).
+ *
+ * `redactCap` redacts BEFORE capping — deliberately, since capping first
+ * strands a partial address the scrubber no longer recognises — so a caught
+ * provider error of several megabytes arrives here whole even though the
+ * caller keeps 1,200 characters of it. Building a per-character map over that,
+ * once per decoding pass, measured ~3.8 s and would leave the Support drawer
+ * unusable exactly after the kind of failure someone wants to report.
+ *
+ * Beyond the ceiling the function stays linear and allocation-free: literal
+ * addresses are shortened by regex and every escape run is dropped unread.
+ * That is fail-closed — nothing can hide in an escape that is no longer there
+ * — at the cost of escape fidelity in a message far past anything a report
+ * will keep.
+ */
+const MAX_MAPPED_INPUT = 64 * 1024;
+
 /** Scrub any full address ANYWHERE in report text — crash messages,
  *  component stacks, and deep-link paths routinely embed the
  *  connected account, and the redaction contract covers the whole
@@ -152,35 +170,47 @@ function decodeToFixpoint(text: string): {
  *  body/title so future fields can't reintroduce a leak; exported so
  *  the drawer's ON-SCREEN error row honours the same contract. */
 export function redactText(text: string): string {
-  const plain = text.replace(ADDRESS_RE, shortenMatch);
-  // Percent-escapes are the only way an address hides from the pass above,
-  // so everything without one is finished here (#2024).
-  if (!plain.includes('%')) return plain;
+  // No escapes means the text IS its own fixpoint, so the cheap pass is the
+  // whole job — and this is the overwhelmingly common case.
+  if (!text.includes('%')) return text.replace(ADDRESS_RE, shortenMatch);
 
-  const final = decodeToFixpoint(plain);
+  if (text.length > MAX_MAPPED_INPUT) {
+    // Escape runs go FIRST so nothing hides behind them, then literals are
+    // shortened. A hash whose tail was escaped now reads as an address and is
+    // shortened too: with the tail unread there is no way to tell, and losing
+    // a hash to over-redaction is the right side of that trade.
+    return text.replace(ESCAPE_RUN_RE, '…').replace(ADDRESS_RE, shortenMatch);
+  }
+
+  // NO EAGER LITERAL PASS (Codex r3 P2). Shortening literals before the
+  // fixpoint corrupts a hash whose head is literal and whose tail is escaped:
+  // `0x` + 40 hex followed by `%` satisfies the negative lookahead, so the
+  // head reads as an address and is replaced before decoding could reveal the
+  // 64-hex run. A literal address needs no pre-pass anyway — it carries no
+  // escapes, so it is still literal at the fixpoint and is found there.
+  const final = decodeToFixpoint(text);
   if (final.exhausted) {
-    // FAIL CLOSED. The budget ran out with escapes still unresolved, so this
-    // cannot demonstrate that no address is hidden in them — and on a report
-    // that opens a PUBLIC issue, "probably fine" is not the standard. Drop
-    // the escape runs rather than forwarding text whose meaning is unknown.
-    // Nothing legitimate reaches here: the budget is eight times the input
-    // plus a floor, and honest nesting converges in a few passes.
-    return plain.replace(ESCAPE_RUN_RE, '…');
+    // FAIL CLOSED. The budget ran out with escapes unresolved, so this cannot
+    // demonstrate that no address is hidden in them — and on a report that
+    // opens a PUBLIC issue, "probably fine" is not the standard. Literals are
+    // handled here explicitly, since the pre-pass above is gone.
+    return text.replace(ESCAPE_RUN_RE, '…').replace(ADDRESS_RE, shortenMatch);
   }
 
   // Splice onto the ORIGINAL spans so everything the redaction does not need
-  // to touch keeps its exact spelling.
+  // to touch keeps its exact spelling. `matchAll` yields disjoint matches over
+  // one string, so no overlap arithmetic is needed.
   ADDRESS_RE.lastIndex = 0;
   let out = '';
   let cursor = 0;
   for (const m of final.text.matchAll(ADDRESS_RE)) {
     const from = final.map[m.index];
     const to = final.map[m.index + m[0].length];
-    if (from === undefined || to === undefined || to <= from || from < cursor) continue;
-    out += plain.slice(cursor, from) + shortenMatch(m[0]);
+    if (from === undefined || to === undefined || to <= from) continue;
+    out += text.slice(cursor, from) + shortenMatch(m[0]);
     cursor = to;
   }
-  return out + plain.slice(cursor);
+  return out + text.slice(cursor);
 }
 
 /** Redact FIRST, then cap: truncation that cuts through an address
