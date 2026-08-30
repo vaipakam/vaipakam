@@ -78,6 +78,16 @@ the chain, not only submitted transactions; and cross-tab erasure is a
 best-effort announcement, so a tab that cannot hear it keeps its own
 session data until it closes.
 
+Review also found a third surface, which is the reason this is worth
+reading as more than a wording change. The Data Rights page carries its
+own legal footer from the locale bundle, and it told visitors — in all
+ten languages — that "we record every UI error event server-side with a
+per-event UUID". Left alone, the site would have shipped two live pages
+giving the same user opposite answers about whether their errors are
+collected. That footer is corrected in every locale, and its final clause
+now points readers at the policy for what a support report they choose to
+send contains.
+
 Both halves of the hand-maintained mirror move together — the canonical
 policy document and the published page — and the policy goes to version 4
 with today's effective date, since what it claims about collection has

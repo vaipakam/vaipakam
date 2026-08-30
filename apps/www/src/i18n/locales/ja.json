@@ -123,7 +123,7 @@
     "journeyTitle": "Journey log をダウンロード (このセッション)",
     "journeyBody": "このタブのセッション中にメモリ上へ保持された journey-log buffer (UI イベント) を JSON ファイルとして保存します。Discord DM や support thread で共有する際に便利です。上の Download / Delete とは独立しており、そちらは保存済み namespace を対象にしますが、これは live event buffer のみを取得します。",
     "journeyCta": "Journey log をダウンロード (JSON)",
-    "legalFooter": "上記の項目について、Vaipakam は data controller として取り扱います。サーバー側には個人データを保存しません (アカウント、メールリスト、ウォレットに紐づく analytics はありません)。監査目的で、各 UI error event を event UUID とともにサーバー側へ記録します — 取得内容は Privacy Policy を確認してください。"
+    "legalFooter": "上記の項目について、Vaipakam は data controller として取り扱います。サーバー側には個人データを保存しません (アカウント、メールリスト、ウォレットに紐づく analytics はありません)。アプリが自動でサーバーに error report を送ることはありません — あなたが送信を選んだ support report の内容は Privacy Policy を確認してください。"
   },
   "dashboard": {
     "connectTitle": "ウォレットを接続",

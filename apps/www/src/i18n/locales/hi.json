@@ -123,7 +123,7 @@
     "journeyTitle": "Journey log डाउनलोड करें (यह session)",
     "journeyBody": "इस tab session का in-memory journey-log buffer (UI events) JSON फ़ाइल के रूप में सहेजता है। Discord DM या support thread में साझा करने के लिए उपयोगी। ऊपर वाले व्यापक Download / Delete से अलग — वे stored namespace को छूते हैं; यह केवल live event buffer कैप्चर करता है।",
     "journeyCta": "Journey log डाउनलोड करें (JSON)",
-    "legalFooter": "ऊपर बताए गए items के लिए Vaipakam data controller के रूप में कार्य करता है। हम server-side कोई personal data नहीं रखते (न accounts, न email lists, न wallet से जुड़े analytics)। Audit के लिए, हम हर UI error event को server-side एक event UUID के साथ record करते हैं — क्या capture होता है, यह जानने के लिए Privacy Policy देखें।"
+    "legalFooter": "ऊपर बताए गए items के लिए Vaipakam data controller के रूप में कार्य करता है। हम server-side कोई personal data नहीं रखते (न accounts, न email lists, न wallet से जुड़े analytics)। App अपने आप हमारे server को error report नहीं भेजता — आप जो support report भेजना चुनते हैं उसमें क्या होता है, यह जानने के लिए Privacy Policy देखें।"
   },
   "dashboard": {
     "connectTitle": "अपना वॉलेट कनेक्ट करें",
