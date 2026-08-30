@@ -1,14 +1,17 @@
 # Release Notes — 2026-08-29
 
-Three user-facing threads landed today, all in the connected app's
+Four user-facing threads landed today, all in the connected app's
 orbit: the Data Rights page returns (download or erase what the app
 keeps in the browser), a Terms acceptance made in one tab now closes
 the prompt in every open tab instead of inviting a second paid
-acceptance, and alert preference saves stopped posting the whole
+acceptance, alert preference saves stopped posting the whole
 record — a fresh device can no longer overwrite choices made
-elsewhere by saving its own assumptions. Alongside the last of these,
-the functional spec now records the deliberate posture that Terms
-enforcement for notification settings lives in the app (#1999).
+elsewhere by saving its own assumptions — and the Data Rights page
+gained the in-app signed request for erasing the error reports
+support keeps, the control the Privacy Policy had promised. Alongside
+the alerts change, the functional spec now records the deliberate
+posture that Terms enforcement for notification settings lives in
+the app (#1999).
 
 ## Connected app — you can take your data with you, or remove it
 
@@ -56,8 +59,10 @@ prominently as what it can:
 - **Alerts.** If you linked Telegram, that link is held by the alerts
   service, not your browser. Unlinking in Settings is what removes it.
 - **The main site's own data**, which has its own controls there.
-- **Error reports held by support**, which are removed on request by
-  email.
+- **Error reports held by support** — beyond the local controls'
+  reach, but not beyond the page's: later the same day the page
+  gained its own signed erasure request for them (the fourth thread,
+  below), with email remaining the fallback route.
 
 Two shared-domain preferences sit in this browser and are disclosed in
 the download and removed by the erase: the language, which both sites
@@ -143,3 +148,60 @@ what they read, rather than taking the late news on trust. A tab that has meanwh
 version is deliberately left prompting: an acceptance of older text
 never opens the gate on newer text.
 <!-- assembled-fragment: 2001-cross-tab-acceptance.md sha256=06a212962430d0663ebc184b2ecdec23864b60a0c2fd060524bba4607c78b45f -->
+
+## The promised in-app erasure of support's error reports now exists (#2008)
+
+The Privacy Policy tells users, as a statement of legal right, that the
+error-diagnostics records associated with their wallet can be erased
+"by signing an erasure request with that wallet in the app". The
+service behind that promise has existed for months; the app control had
+not. A user who went looking for it found only the Data Rights page's
+honest admission that error reports held by support were out of its
+reach.
+
+The control now exists, on that same page. Connect the wallet, sign a
+free message — not a transaction, no gas — and the request goes to the
+service, which erases the records keyed to that wallet. A companion
+check asks whether anything was retained. One timing note for
+operators: this ships the APP side of the promise. The erasure
+service's deployment itself remains gated on the recorded
+crypto/privacy-lawyer sign-off, and a build not configured with the
+service's address says so honestly and offers the email route — the
+page never pretends at a control the deployment does not yet serve.
+
+The interface is deliberately as reticent as the service it talks to.
+The service's confirmation is uniform by design: it never says whether
+any records existed, because records can be under a legal retention
+order the service is forbidden to mention, and one wallet's answer must
+not read differently from another's. The page says exactly that, in the
+same words to everyone, rather than dressing the confirmation up as
+"deleted N records". The retention check reports something only where
+the law permits saying so, and its quiet answer is phrased as "none are
+reported" — never "none exist", which the page cannot know.
+
+The signed message itself now lives in one shared module imported by
+both the app and the service — the two must produce byte-identical
+text, or every request would be rejected, and a second hand-written
+copy was the likeliest way this feature could have shipped broken.
+The two operations sign different messages, each saying what it
+authorises: the words a user signs to look at their records can never
+be replayed as authority to delete them.
+
+A signed request is only valid for ten minutes, and the wallet's
+approval prompt has no such clock — so an approval given too late to
+reach the service in time, or stamped by a computer whose clock
+disagrees with the service's, is reported as "expired, try again"
+rather than as a failure the user can't interpret. A signature that
+visibly aged out while the prompt was open is never sent at all; the
+clock-skew case can only be seen by the service, whose rejection is
+translated into the same actionable answer.
+
+One honest limit, stated where it applies: a smart-contract wallet's
+signatures cannot be verified by the support service yet, so a
+deployed one is shown the working email route instead of a prompt
+that could only fail. Verifying those signatures properly, across
+every signed request the service accepts, is tracked as its own
+follow-up (#2009).
+
+Closes #2002.
+<!-- assembled-fragment: 2002-in-app-signed-erasure.md sha256=8802c566160282bafbdbbec7d8b8c7c785425b5e66c69d6d351261edc553dd67 -->
