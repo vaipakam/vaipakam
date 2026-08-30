@@ -39,9 +39,12 @@ partial: it shows the first 300 characters of the error message and no
 component trace, while the report carries up to 1,200 characters of
 error text and up to 1,000 characters of trace. The drawer's "Copy
 details" button gives you the full text the report is built from, and
-copying is local — it sends nothing. Any wallet address is shortened
-to `0x1234…abcd` first. We do NOT send your IP, user-agent, or
-browsing history.
+copying is local — it sends nothing. It does depend on your browser
+allowing clipboard access: where that is blocked or unavailable the
+copy simply does not happen, and in that browser there is no way to see
+the full text without opening the report — which, as above, sends it.
+Any wallet address is shortened to `0x1234…abcd` first. We do NOT send
+your IP, user-agent, or browsing history.
 
 **Error records on our servers — no automatic capture.** An earlier
 version of the app sent a record of each UI error to a Cloudflare

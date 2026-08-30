@@ -89,10 +89,14 @@ export default function PrivacyPage() {
             while the report carries up to 1,200 characters of error
             text and up to 1,000 characters of trace. The drawer's
             "Copy details" button gives you the full text the report is
-            built from, and copying is local — it sends nothing. Any
-            wallet address is shortened to <code>0x1234…abcd</code>{' '}
-            first. We do NOT send your IP, user-agent, or browsing
-            history.
+            built from, and copying is local — it sends nothing. It
+            does depend on your browser allowing clipboard access:
+            where that is blocked or unavailable the copy simply does
+            not happen, and in that browser there is no way to see the
+            full text without opening the report — which, as above,
+            sends it. Any wallet address is shortened to{' '}
+            <code>0x1234…abcd</code> first. We do NOT send your IP,
+            user-agent, or browsing history.
           </p>
 
           <p>
