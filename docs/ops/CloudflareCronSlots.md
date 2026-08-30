@@ -188,6 +188,48 @@ this file agrees with itself. CI runs that half, because it has no account
 credentials and because the restating is the part a reviewer cannot see
 happening.
 
+### How this file may be written
+
+The gate reads this document rather than parsing Markdown, so four
+constructs are ruled out here instead of being implemented there. None of
+them appears in this file today, so the rules cost an editor nothing —
+they exist so the checker and a reader can never disagree about what the
+document says:
+
+- **No HTML comments.** Every check asks what the rendered document
+  claims, and this file may not hide any of itself.
+- **No tab characters, and no run of four or more spaces.** Four columns
+  of whitespace opens a code block at top level and continues a list item
+  inside one, and this gate does not tell those apart. Both rules count
+  the whole line rather than its start, because indentation after a list
+  bullet opens a code block just as leading indentation does. Use a
+  fenced ```` ``` ```` block for code; ordinary continuation indents by two
+  spaces, as it does above.
+- **No greater-than character at all.** A block quote can open a fence the
+  scanner does not track, and where its marker sits — column zero,
+  indented, or after a list bullet — is precisely the context this gate
+  declines to parse. The rule is therefore the character rather than the
+  marker position: enumerating positions is what kept failing, here and
+  in the stamp count before it, because Markdown affords more prefixes
+  than an enumeration can hold. The character appears nowhere in this
+  file, so the blunt form costs nothing.
+- **No backslash before a table pipe.** A single backslash escapes the
+  pipe into a literal character; a doubled one escapes the backslash and
+  leaves the pipe as a cell separator. Telling those apart means counting
+  the escape run. Reword the cell instead.
+
+That last rule caught its own documentation on the first run: an earlier
+draft of this section spelled the two escape sequences out, and the gate
+correctly rejected the file. The advice the diagnostic gives — reword so
+no escape is needed — is the advice it gave its author, which is a fair
+sign the constraint is liveable.
+
+The reasoning is recorded in #1990: the gate exists to stop ten notes
+disagreeing about how many of five cron triggers are in use, and a
+CommonMark implementation is not required to do that. Constraining the
+input is decidable in one line each; parsing the language was not
+converging.
+
 ### What each half can and cannot tell you
 
 The two halves check two links of one chain — the summary is pinned to the
