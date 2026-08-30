@@ -48,6 +48,10 @@
     "./erasureMessage": {
       "types": "./src/erasureMessage.ts",
       "default": "./src/erasureMessage.ts"
+    },
+    "./alertsMessage": {
+      "types": "./src/alertsMessage.ts",
+      "default": "./src/alertsMessage.ts"
     }
   },
   "scripts": {

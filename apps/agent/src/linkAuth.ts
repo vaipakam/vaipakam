@@ -33,131 +33,36 @@
 
 import type { Env } from './env';
 import {
+  LINK_SIGNATURE_MAX_AGE_SECONDS,
+  buildDueDateOptOutMessage,
+  buildTelegramLinkMessage,
+  buildTelegramTestMessage,
+  buildTelegramUnlinkMessage,
+} from '@vaipakam/lib/alertsMessage';
+import {
   isValidSignatureShape,
   verifyOnChain,
   verifyWalletSignature,
   type ChainSigChecker,
 } from './walletSigVerify';
 
-/** Replay window — a signed link request older (or further in the
- *  future) than this is rejected. Mirrors the erasure endpoints. */
-export const LINK_SIGNATURE_MAX_AGE_SECONDS = 10 * 60;
+/* The four signed messages + their replay window live in
+ * `@vaipakam/lib/alertsMessage` (#2014), the ONE source both this
+ * Worker and the connected app import — the erasure family's
+ * discipline, applied here. They were duplicated byte-for-byte in
+ * `apps/app/src/data/alerts.ts`, held identical only by comments;
+ * a one-sided edit rejected every affected signed request in
+ * production with nothing catching it before deploy. Re-exported so
+ * this module's existing surface (and its tests) are unchanged. */
+export {
+  LINK_SIGNATURE_MAX_AGE_SECONDS,
+  buildDueDateOptOutMessage,
+  buildTelegramLinkMessage,
+  buildTelegramTestMessage,
+  buildTelegramUnlinkMessage,
+};
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-
-/**
- * Build the exact message a user signs to authorise linking Telegram
- * delivery for their wallet. This string MUST be byte-identical
- * between the wallet prompt the frontends show (`apps/app`
- * `data/alerts.ts`, `apps/app` `components/AlertsCard.tsx`) and the
- * reconstruction here, or signature recovery yields a different
- * address and the request is rejected. The wallet is lower-cased so a
- * checksummed and an all-lowercase spelling produce the same message.
- */
-export function buildTelegramLinkMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Link Telegram alerts',
-    '',
-    'I authorise Telegram alert delivery for the wallet below to the',
-    'chat that completes this link code. Signing this message proves',
-    'ownership of the wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
-/**
- * The unlink counterpart — deliberately a DIFFERENT headline and body
- * from the link message, so a signature captured for one action can
- * never authorise the other. Mirrored byte-for-byte by the frontends,
- * same as the link message.
- *
- * The wording is SCOPE-NEUTRAL (#2013 round 4 P1): it does not say
- * "everywhere", because the effect's scope follows the signer's
- * authority — an ECDSA key (the universal controller) clears the
- * wallet everywhere, while a smart account's chain-verified approval
- * clears only the chain the message names. The signed `Chain id`
- * line is the scope the signer can always vouch for; clearing MORE
- * on an ECDSA signature is privacy-protective over-delivery. The
- * handler reports which scope applied and the app confirms
- * accordingly.
- */
-export function buildTelegramUnlinkMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Unlink Telegram alerts',
-    '',
-    'I request that Telegram alert delivery for the wallet below be',
-    'disconnected. Signing this message proves ownership of the',
-    'wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
-/**
- * The due-date-mute counterpart — required when a `/thresholds` write
- * sets `notify_maturity_approaching` to false, since that silences
- * both due-date warning lanes (agent reminder + keeper pre-grace).
- * Mirrored byte-for-byte by the frontends like the other two.
- */
-export function buildDueDateOptOutMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Mute due-date payment reminders',
-    '',
-    'I request that payment due-date reminders for the wallet below',
-    'be switched off. Signing this message proves ownership of the',
-    'wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
-/**
- * The test-alert counterpart (UX-012) — signed before the Worker
- * pushes a one-off "your alerts are working" message to the linked
- * chat. Distinct headline / body from the other three so a captured
- * signature can never cross actions. Sending a Telegram message to a
- * wallet's chat is an outbound side-effect, so it gets the same
- * ownership proof as link / unlink: without it a spoofed-Origin caller
- * who knows a linked wallet's (public) address could spam that user's
- * Telegram with test messages.
- */
-export function buildTelegramTestMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Send a test alert',
-    '',
-    'I request one test alert be sent to the Telegram chat linked to',
-    'the wallet below, to confirm delivery works. Signing this message',
-    'proves ownership of the wallet. It is not a transaction and costs',
-    'no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
 
 export type AlertAuthAction = 'link' | 'unlink' | 'mute-duedate' | 'test-alert';
 
