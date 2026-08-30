@@ -14,7 +14,12 @@
  * defect from one that leaks an address, and both would be regressions.
  */
 import { describe, expect, it } from 'vitest';
-import { redactAddress, redactCap, redactText } from './reportIssue';
+import {
+  MAX_MAPPED_INPUT,
+  redactAddress,
+  redactCap,
+  redactText,
+} from './reportIssue';
 
 const ADDR = '0x1234567890abcdef1234567890abcdef12345678';
 const SHORT = '0x1234…5678';
@@ -201,11 +206,51 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
   });
 
   it('still redacts an address inside an oversized message', () => {
-    const huge = `${'x'.repeat(70_000)} ${ADDR} ${'%41'.repeat(100)}`;
+    // The address sits BEFORE the bulk, not after it: past the 64 KB ceiling
+    // the text is truncated rather than scanned (Codex r4 P2), so an address
+    // beyond that point is now dropped instead of shortened — safer, but it
+    // means this case has to place the address where a report would keep it.
+    const huge = `${ADDR} ${'%41'.repeat(100)} ${'x'.repeat(70_000)}`;
     const out = redactText(huge);
     expect(out).toContain(SHORT);
     expect(out).not.toContain(ADDR);
     expect(out).not.toContain('%41');
+  });
+
+  // Codex r4 P2. The case above and the one before it both hid this: a
+  // contiguous `%25` run collapses to a SINGLE ellipsis, so output stayed tiny
+  // however large the input was, and `'x'.repeat(70_000)` carries no escapes
+  // to expand. Escapes SEPARATED by ordinary characters can do neither — every
+  // three input characters still yield two of output — so the fallback
+  // materialised half the uncapped message before the caller's 1,200-character
+  // cap ever ran.
+  it('does not materialize output proportional to a huge separated-escape message', () => {
+    const huge = '%25x'.repeat(1_000_000);
+    expect(huge.length).toBe(4_000_000);
+    const started = Date.now();
+    const out = redactText(huge);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    // Half of four million is the number this must not produce. Bounding the
+    // input is what holds it down; without the slice this is ~2,000,000.
+    expect(out.length).toBeLessThanOrEqual(MAX_MAPPED_INPUT + 1);
+  });
+
+  it('still finds an address near the start of a huge separated-escape message', () => {
+    // Bounding the scan must not cost the redaction itself for anything the
+    // caller would actually keep.
+    const out = redactText(`${ADDR} ${'%25x'.repeat(1_000_000)}`);
+    expect(out).toContain(SHORT);
+    expect(out).not.toContain(ADDR);
+  });
+
+  it('drops an address straddling the truncation boundary rather than halving it', () => {
+    // The cut lands 20 characters into the address, leaving `0x` + 18 hex at
+    // the end of the head. Half an account is not something a report should
+    // forward, so the boundary fragment goes.
+    const head = 'x'.repeat(MAX_MAPPED_INPUT - 20);
+    const out = redactText(`${head}${ADDR}${'%41'.repeat(200)}`);
+    expect(out).not.toContain(ADDR.slice(0, 20));
+    expect(out.endsWith('…')).toBe(true);
   });
 });
 

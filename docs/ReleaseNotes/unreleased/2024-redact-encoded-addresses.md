@@ -26,6 +26,15 @@ helper that runs inside the crash reporter must not become a crash source,
 so a stray percent sign now passes through untouched instead of ending the
 report.
 
+A recorded error is whatever the failing code handed the browser, and a
+provider can hand it several megabytes. The shortener now stops reading at
+64 KB and marks the report truncated there, rather than scrubbing the whole
+of a message the report keeps twelve hundred characters of — a few seconds
+of a frozen drawer, immediately after the failure someone is trying to
+report, is a poor way to ask for help. If the cut lands in the middle of an
+address, the fragment is dropped rather than carried through as half an
+account.
+
 The behaviour arrived with its first tests. Nothing had covered the
 shortener before, which is how the gap survived unnoticed, and the new cases
 are written against the contract rather than the code: what must never

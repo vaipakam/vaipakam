@@ -155,13 +155,34 @@ function decodeToFixpoint(text: string): {
  * once per decoding pass, measured ~3.8 s and would leave the Support drawer
  * unusable exactly after the kind of failure someone wants to report.
  *
- * Beyond the ceiling the function stays linear and allocation-free: literal
- * addresses are shortened by regex and every escape run is dropped unread.
- * That is fail-closed — nothing can hide in an escape that is no longer there
- * — at the cost of escape fidelity in a message far past anything a report
- * will keep.
+ * Beyond the ceiling the function stops at it: only the first 64 KB is scanned
+ * at all, and the result is marked truncated. Dropping the map was not enough
+ * on its own (#2024, Codex r4 P2) — a message whose escapes are SEPARATED by
+ * ordinary characters, `%25x` repeated, cannot collapse into one run, so the
+ * two regex passes still materialised an output half the size of the whole
+ * uncapped input. Measured here: 20 million characters took 3.6 s and 360 MB
+ * of heap to produce 10 million characters, of which the caller keeps at most
+ * 1,200 — a frozen Support drawer, again exactly after the failure someone
+ * wants to report. Bounding the input makes the same case 24 ms.
+ *
+ * Within the ceiling the pass stays fail-closed — literal addresses are
+ * shortened by regex and every escape run is dropped unread, so nothing can
+ * hide in an escape that is no longer there. What it costs is escape fidelity,
+ * and now content, in a message far past anything a report will keep: every
+ * caller caps at 1,200 characters or fewer.
  */
-const MAX_MAPPED_INPUT = 64 * 1024;
+export const MAX_MAPPED_INPUT = 64 * 1024;
+
+/**
+ * A `0x`-prefixed hex run reaching the very end of the truncated head.
+ *
+ * The 64 KB cut can land in the middle of an address, and half an account
+ * forwarded verbatim is not something this module should be relied on to
+ * emit — the redact-before-cap ordering in `redactCap` exists to stop exactly
+ * that shape. Dropping the boundary fragment costs a few characters of a
+ * message that is already being truncated.
+ */
+const TRAILING_HEX_FRAGMENT_RE = /0[xX][a-fA-F0-9]*$/;
 
 /** Scrub any full address ANYWHERE in report text — crash messages,
  *  component stacks, and deep-link paths routinely embed the
@@ -179,7 +200,11 @@ export function redactText(text: string): string {
     // shortened. A hash whose tail was escaped now reads as an address and is
     // shortened too: with the tail unread there is no way to tell, and losing
     // a hash to over-redaction is the right side of that trade.
-    return text.replace(ESCAPE_RUN_RE, '…').replace(ADDRESS_RE, shortenMatch);
+    const head = text
+      .slice(0, MAX_MAPPED_INPUT)
+      .replace(ESCAPE_RUN_RE, '…')
+      .replace(ADDRESS_RE, shortenMatch);
+    return `${head.replace(TRAILING_HEX_FRAGMENT_RE, '')}…`;
   }
 
   // NO EAGER LITERAL PASS (Codex r3 P2). Shortening literals before the
