@@ -34,6 +34,7 @@ const ACCOUNT_B: PrivateKeyAccount = privateKeyToAccount(
 interface ErrorRow {
   id: string;
   wallet_hash: string | null;
+  chain_id?: number | null;
 }
 interface HoldRow {
   wallet_hash: string;
@@ -90,7 +91,16 @@ class FakeStmt {
     const s = this.sql;
     if (s.includes('DELETE FROM diag_errors')) {
       const wh = this.args[0] as string;
-      this.db.errors = this.db.errors.filter((e) => e.wallet_hash !== wh);
+      if (s.includes('chain_id')) {
+        // #2013 r5 — the chain-scoped erase a contract-verified
+        // signer is limited to.
+        const chain = this.args[1] as number;
+        this.db.errors = this.db.errors.filter(
+          (e) => !(e.wallet_hash === wh && e.chain_id === chain),
+        );
+      } else {
+        this.db.errors = this.db.errors.filter((e) => e.wallet_hash !== wh);
+      }
       return;
     }
     if (s.includes('INSERT INTO diag_legal_holds')) {
@@ -297,10 +307,19 @@ function post(path: string, body: unknown, headers: Record<string, string> = {})
 }
 
 /** Seed N error rows for an address; returns the address's hash. */
-async function seedErrors(db: FakeD1, address: string, count: number): Promise<string> {
+async function seedErrors(
+  db: FakeD1,
+  address: string,
+  count: number,
+  chainId: number | null = null,
+): Promise<string> {
   const hash = await walletHash(address, HMAC_KEY);
   for (let i = 0; i < count; i++) {
-    db.errors.push({ id: `${address}-${i}`, wallet_hash: hash });
+    db.errors.push({
+      id: `${address}-${chainId ?? 'x'}-${i}`,
+      wallet_hash: hash,
+      chain_id: chainId,
+    });
   }
   return hash;
 }
@@ -352,7 +371,9 @@ describe('handleDiagErasure', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'processed' });
+    // scope names the SIGNATURE's authority (ECDSA = wallet-wide) —
+    // it branches only on signature type, never on what was held.
+    expect(await res.json()).toEqual({ status: 'processed', scope: 'wallet' });
     // A's rows gone, B's untouched.
     expect(db.errors.filter((e) => e.id.startsWith(ACCOUNT_A.address))).toHaveLength(0);
     expect(db.errors.filter((e) => e.id.startsWith(ACCOUNT_B.address))).toHaveLength(2);
@@ -436,6 +457,37 @@ describe('handleDiagErasure', () => {
       DENY_CHAIN,
     );
     expect(fastPath.status).toBe(200);
+  });
+
+  it('a chain-verified authority erases ONLY the confirming chain (#2013 r5)', async () => {
+    // The divergent-controller doctrine, applied to erasure: chain
+    // 84532's contract approval must not destroy rows captured on
+    // 421614 (another controller's records) or rows with no chain
+    // attribution at all.
+    const hash = await seedErrors(db, ACCOUNT_A.address, 2, 84532);
+    await seedErrors(db, ACCOUNT_A.address, 2, 421614);
+    await seedErrors(db, ACCOUNT_A.address, 1, null);
+    const res = await handleDiagErasure(
+      post('/diag/erasure', {
+        wallet: ACCOUNT_A.address,
+        issuedAt: nowSec(),
+        signature: '0x' + 'ab'.repeat(700), // 6492-shaped → chain path
+        chainId: 84532,
+      }),
+      withChain(makeEnv(db)),
+      CORS,
+      async () => true, // the chain confirms the smart account
+    );
+    expect(res.status).toBe(200);
+    // The response names its SCOPE — branching only on signature
+    // type, never on what the database held — so the client's
+    // confirmation cannot claim chains this authority never covered.
+    expect(await res.json()).toEqual({ status: 'processed', scope: 'chain' });
+    // The uniform response never says what happened; the database
+    // shows the scope: 84532's rows gone, everything else intact.
+    const remaining = db.errors.filter((e) => e.wallet_hash === hash);
+    expect(remaining).toHaveLength(3);
+    expect(remaining.every((e) => e.chain_id !== 84532)).toBe(true);
   });
 
   it('rejects a signature that recovers to a different wallet with 400', async () => {

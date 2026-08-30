@@ -63,6 +63,29 @@ describe('requestDiagErasure', () => {
     expect(body.signature).toBe(SIG);
   });
 
+  it('maps a chain-scoped processed response to its own honest outcome (#2013 r5)', async () => {
+    // A chain-verified smart-account signature authorizes ONE chain,
+    // and the service says so with `scope: 'chain'` — the client must
+    // surface that as the scoped confirmation, never the wallet-wide
+    // one. A missing/other scope stays the uniform wallet answer.
+    stubAgent(
+      () =>
+        new Response(JSON.stringify({ status: 'processed', scope: 'chain' }), {
+          status: 200,
+        }),
+    );
+    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe(
+      'processedChainOnly',
+    );
+    stubAgent(
+      () =>
+        new Response(JSON.stringify({ status: 'processed', scope: 'wallet' }), {
+          status: 200,
+        }),
+    );
+    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('processed');
+  });
+
   it('rejects a malformed 2xx — only the service’s own payload confirms', async () => {
     // #2008 round 1 P1: a 204, or a fallback page from an
     // intermediary, is not the erasure handler's acknowledgement —

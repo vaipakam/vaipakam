@@ -41,6 +41,19 @@ metered per caller, the way the service's other abusable surfaces
 already are. An ordinary wallet's instant verification is never
 charged against that budget.
 
+Authority proven by one network's account contract stays scoped to
+that network. A smart account can have different controllers on
+different networks, so a signature its Base contract approved must
+not disturb what its Arbitrum contract governs: unlinking Telegram
+alerts under such a signature disconnects that network's alerts
+only, and an erasure request erases that network's records only —
+with the signed wording, the service's confirmation, and the app's
+message all saying that scope plainly, so nobody reads a one-network
+action as a wallet-wide one. An ordinary wallet's signature proves
+the one keyholder everywhere and keeps the wallet-wide behaviour.
+The retention check still answers for the wallet as a whole: legal
+holds have no per-network granularity for the answer to narrow to.
+
 The admin-only legal-hold endpoint keeps its ordinary-wallet-only
 verification by design: that flow derives WHO is calling from the
 signature itself, which only ordinary signatures can do, and the

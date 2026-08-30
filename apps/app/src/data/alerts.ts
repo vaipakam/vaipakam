@@ -191,18 +191,37 @@ export function storeAlertPrefs(
   }
 }
 
-async function post(path: string, body: unknown): Promise<Response> {
+interface PostResult {
+  ok: boolean;
+  status: number;
+  /** Parsed JSON body, or null when absent/malformed — parsed HERE,
+   *  under the same abort deadline as the request itself (#2013 r5
+   *  P2, the same hazard #2008 fixed in diagErasure): headers can
+   *  arrive within the timeout while the body stalls forever, and a
+   *  `res.json()` back in a caller would then hang with no timer
+   *  left to cut it — the card stuck busy with its controls
+   *  disabled. An abort during the read rejects `json()`, which is
+   *  caught and reads as a malformed body. */
+  data: Record<string, unknown> | null;
+}
+
+async function post(path: string, body: unknown): Promise<PostResult> {
   const origin = agentOrigin();
   if (!origin) throw new Error('alerts backend not configured');
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    return await fetch(`${origin}${path}`, {
+    const res = await fetch(`${origin}${path}`, {
       method: path === '/thresholds' ? 'PUT' : 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
+    const data = (await res.json().catch(() => null)) as Record<
+      string,
+      unknown
+    > | null;
+    return { ok: res.ok, status: res.status, data };
   } finally {
     clearTimeout(t);
   }
@@ -324,17 +343,13 @@ export async function saveAlertPrefs(
   // deployment order that avoids it entirely (agent first) is stated
   // in the release note.
   if (!res.ok && res.status === 400 && !sendBands) {
-    const data = (await res.json().catch(() => null)) as { error?: string } | null;
-    if (data?.error === 'invalid-payload') {
+    if (res.data?.error === 'invalid-payload') {
       res = await post('/thresholds', body(true));
     }
   }
   if (!res.ok) {
     if (res.status === 503) {
-      const data = (await res.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      if (data?.error === 'optout-unavailable') {
+      if (res.data?.error === 'optout-unavailable') {
         // Rollout window: the agent can't store an opt-out until its
         // storage migration lands. Honest, plain-words failure — the
         // opposite of silently pretending the switch worked.
@@ -393,13 +408,12 @@ export async function issueTelegramLink(
     signature,
   });
   if (!res.ok) throw new Error(`starting the Telegram link failed (${res.status})`);
-  const data = (await res.json()) as {
-    ok?: boolean;
-    code?: string;
-    bot_url?: string | null;
-  };
-  if (!data.code) throw new Error('the alerts backend returned no link code');
-  return { code: data.code, botUrl: data.bot_url ?? null };
+  const code = res.data?.code;
+  if (typeof code !== 'string' || !code) {
+    throw new Error('the alerts backend returned no link code');
+  }
+  const botUrl = res.data?.bot_url;
+  return { code, botUrl: typeof botUrl === 'string' ? botUrl : null };
 }
 
 /**
@@ -480,10 +494,7 @@ export async function sendTestTelegramAlert(
   // bare 404 (e.g. the endpoint not deployed yet) must NOT masquerade
   // as "your chat isn't linked" — fall through to the generic error.
   if (res.status === 404) {
-    const data = (await res.json().catch(() => null)) as {
-      error?: string;
-    } | null;
-    return data?.error === 'not-linked' ? 'not-linked' : 'error';
+    return res.data?.error === 'not-linked' ? 'not-linked' : 'error';
   }
   return 'error';
 }
@@ -512,8 +523,5 @@ export async function unlinkTelegram(
   // only — the confirmation the card shows must match what actually
   // happened. A missing field (an agent from before the scoped
   // response) means the old wallet-wide behaviour.
-  const data = (await res.json().catch(() => null)) as {
-    scope?: unknown;
-  } | null;
-  return data?.scope === 'chain' ? 'chain' : 'wallet';
+  return res.data?.scope === 'chain' ? 'chain' : 'wallet';
 }

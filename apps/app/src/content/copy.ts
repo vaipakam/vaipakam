@@ -453,6 +453,13 @@ const copySource = {
     diagSignNote:
       'Proving the wallet is yours is a free signature — not a transaction, and it costs no gas.',
     diagProcessed: 'Your erasure request was processed.',
+    /* #2013 round 5 — a smart account's signature is approved by the
+       account contract on ONE network, so the service scopes the
+       erasure to that network's records and says so. This message
+       must match that honest scope: it may not imply the wallet's
+       records on other networks were touched. */
+    diagProcessedChainOnly:
+      'Your erasure request was processed for the network your wallet is currently connected to. A smart-account wallet’s signature is verified on one network at a time, so records captured on other networks are not covered — switch networks and repeat the request there, or email support@vaipakam.com and we will process it for your wallet everywhere.',
     diagUniformNote:
       'The confirmation is deliberately the same for every wallet: it does not say whether any records existed, so nothing about your records can be read from it. Where the law requires some records to be kept, the check below reports that only when the law allows saying so.',
     diagStatusClear: 'No retained records are reported for this wallet.',

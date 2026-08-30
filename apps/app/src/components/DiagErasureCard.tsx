@@ -33,6 +33,7 @@ import { isUserRejection } from '../lib/errors';
 
 type CardResult =
   | { kind: 'erased' }
+  | { kind: 'erasedChainOnly' }
   | { kind: 'status'; status: DiagErasureStatus }
   | { kind: 'unavailable' }
   | { kind: 'expired' }
@@ -121,13 +122,15 @@ export function DiagErasureCard() {
         publish(
           outcome === 'processed'
             ? { kind: 'erased' }
-            : outcome === 'unavailable'
-              ? { kind: 'unavailable' }
-              : outcome === 'expired'
-                ? { kind: 'expired' }
-                : outcome === 'unverifiable'
-                  ? { kind: 'unverifiable' }
-                  : { kind: 'error' },
+            : outcome === 'processedChainOnly'
+              ? { kind: 'erasedChainOnly' }
+              : outcome === 'unavailable'
+                ? { kind: 'unavailable' }
+                : outcome === 'expired'
+                  ? { kind: 'expired' }
+                  : outcome === 'unverifiable'
+                    ? { kind: 'unverifiable' }
+                    : { kind: 'error' },
         );
       } else {
         const status = await requestDiagErasureStatus(
@@ -178,6 +181,11 @@ export function DiagErasureCard() {
           {shown?.kind === 'erased' ? (
             <div className="banner banner-success" role="status">
               {copy.dataRights.diagProcessed}
+            </div>
+          ) : null}
+          {shown?.kind === 'erasedChainOnly' ? (
+            <div className="banner banner-success" role="status">
+              {copy.dataRights.diagProcessedChainOnly}
             </div>
           ) : null}
           {shown?.kind === 'status' ? (

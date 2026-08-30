@@ -87,7 +87,7 @@ describe('verifyWalletSignature', () => {
         84532,
         YES,
       ),
-    ).toEqual({ ok: true, via: 'chain' });
+    ).toEqual({ ok: true, via: 'chain', chainId: 84532 });
     // The chain denies: NOW it is a mismatch.
     expect(
       await verifyWalletSignature(
@@ -112,7 +112,7 @@ describe('verifyWalletSignature', () => {
         84532,
         YES,
       ),
-    ).toEqual({ ok: true, via: 'chain' });
+    ).toEqual({ ok: true, via: 'chain', chainId: 84532 });
   });
 
   it('an RPC failure is UNAVAILABLE, never a mismatch', async () => {
@@ -179,7 +179,9 @@ describe('verifyWalletSignature', () => {
         undefined,
         secondYes,
       ),
-    ).toEqual({ ok: true, via: 'chain' });
+      // The verdict NAMES the confirming chain (#2013 r5): scoped
+      // authority downstream needs to know which contract vouched.
+    ).toEqual({ ok: true, via: 'chain', chainId: 421614 });
     expect(consulted).toContain('http://b.test');
   });
 

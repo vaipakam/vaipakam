@@ -59,6 +59,11 @@ export type DiagErasureOutcome =
   /** The service processed the request — the uniform answer, never a
    *  claim about what (if anything) was deleted. */
   | 'processed'
+  /** Processed for the CONNECTED CHAIN's records only (#2013 r5): a
+   *  smart account's chain-verified authority covers the chain whose
+   *  contract approved it, so the service scoped the erasure there —
+   *  the confirmation must not claim the wallet's other chains. */
+  | 'processedChainOnly'
   /** The service exists but its erasure storage is not configured
    *  (the operator has not set the deletion key) — a config state,
    *  not a retention signal, and worth its own honest message. */
@@ -219,7 +224,10 @@ export async function requestDiagErasure(
     // 204 or a fallback page, and reporting THAT as processed would
     // falsely confirm a legal-right request the erasure handler
     // never saw. Only the service's own uniform payload counts.
-    return res.data?.status === 'processed' ? 'processed' : 'error';
+    if (res.data?.status === 'processed') {
+      return res.data.scope === 'chain' ? 'processedChainOnly' : 'processed';
+    }
+    return 'error';
   }
   if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
     return 'unavailable';

@@ -81,14 +81,19 @@ export function isValidSignatureShape(s: unknown): s is string {
 export type WalletSigVerdict =
   | {
       ok: true;
-      /** HOW it verified (#2013 round 3 P1): 'ecdsa' means the
-       *  wallet's private key signed — the universal controller,
-       *  whose authority spans every chain. 'chain' means a contract
-       *  at the address approved on ONE chain, and a contract can
-       *  have different controllers per chain — so chain-verified
-       *  authority must not be spent on wallet-wide effects (the
-       *  unlink handler scopes on this). */
-      via: 'ecdsa' | 'chain';
+      /** The wallet's private key signed — the universal controller,
+       *  whose authority spans every chain (#2013 round 3 P1). */
+      via: 'ecdsa';
+    }
+  | {
+      ok: true;
+      /** A contract at the address approved on ONE chain — named
+       *  here, because a contract can have different controllers per
+       *  chain, so chain-verified authority must not be spent on
+       *  wallet-wide effects (#2013 rounds 3+5 P1: the unlink and
+       *  the diagnostics-erasure handlers both scope on this). */
+      via: 'chain';
+      chainId: number;
     }
   | {
       ok: false;
@@ -307,7 +312,8 @@ export async function verifyWalletSignature(
       }
     }),
   );
-  if (outcomes.some((o) => o.answered && o.yes)) return { ok: true, via: 'chain' };
+  const confirmed = chains.find((c, i) => outcomes[i]!.answered && outcomes[i]!.yes);
+  if (confirmed) return { ok: true, via: 'chain', chainId: confirmed.id };
   // A mismatch requires a COMPLETE set of denials (#2013 round 3
   // P1): if the cap excluded a relevant chain, or any consulted
   // chain gave no answer, the account might approve exactly on the

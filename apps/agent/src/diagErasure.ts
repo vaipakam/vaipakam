@@ -189,7 +189,8 @@ function parseSignedRequest(body: unknown): ParseResult {
 }
 
 type VerifyResult =
-  | { ok: true }
+  | { ok: true; via: 'ecdsa' }
+  | { ok: true; via: 'chain'; chainId: number }
   | { ok: false; status: number; reason: string };
 
 /**
@@ -230,7 +231,7 @@ async function verifySignedRequest(
     checker,
     chainPathAllowed,
   );
-  if (verdict.ok) return { ok: true };
+  if (verdict.ok) return verdict;
   if (verdict.reason === 'limited') {
     return {
       ok: false,
@@ -327,17 +328,47 @@ export async function handleDiagErasure(
   const hold = await getLegalHold(env.DB, hash);
 
   // Legal hold present → retain everything for this wallet-hash.
-  // Hold absent → delete every row keyed to this wallet-hash.
-  // Either way the response below is identical.
+  // Hold absent → delete the rows the signer's AUTHORITY covers
+  // (#2013 round 5 P1, the same divergent-controller doctrine as the
+  // Telegram unlink): an ECDSA key is the wallet's universal
+  // controller and erases every chain's rows; a smart account's
+  // contract approval proves authority only for the chain that
+  // confirmed it, so it erases that chain's rows alone — chain X's
+  // controller must not destroy records belonging to chain Y's.
+  // Rows captured with a NULL chain_id are likewise outside a
+  // chain-scoped authority's reach (nothing ties them to the chain
+  // that vouched) and wait for the universal key or support. Either
+  // way the response below is identical.
   if (!hold) {
-    await env.DB
-      .prepare(`DELETE FROM diag_errors WHERE wallet_hash = ?`)
-      .bind(hash)
-      .run();
+    if (verified.via === 'chain') {
+      await env.DB
+        .prepare(
+          `DELETE FROM diag_errors WHERE wallet_hash = ? AND chain_id = ?`,
+        )
+        .bind(hash, verified.chainId)
+        .run();
+    } else {
+      await env.DB
+        .prepare(`DELETE FROM diag_errors WHERE wallet_hash = ?`)
+        .bind(hash)
+        .run();
+    }
   }
 
-  // INVARIANT 1: uniform response, no branching, no row counts.
-  return json({ status: 'processed' }, 200, corsOrigin);
+  // INVARIANT 1: uniform response, no branching on RETENTION state,
+  // no row counts. `scope` is a function of the SIGNATURE TYPE alone
+  // (#2013 r5) — identical for the held and unheld cases, so it
+  // reveals nothing the caller did not already know — and lets the
+  // app confirm honestly that a chain-verified authority's request
+  // covered one chain's records rather than the wallet's.
+  return json(
+    {
+      status: 'processed',
+      scope: verified.via === 'chain' ? 'chain' : 'wallet',
+    },
+    200,
+    corsOrigin,
+  );
 }
 
 // ─── Endpoint: POST /diag/erasure/status ───────────────────────────
@@ -390,6 +421,11 @@ export async function handleDiagErasureStatus(
   }
 
   const hash = await walletHash(parsed.req.wallet, env.DIAG_WALLET_HMAC_KEY);
+  // Disclosure stays ADDRESS-scoped even for a chain-verified signer
+  // (#2013 r5): holds carry no per-chain state, and an operator's
+  // enabled disclosure for this wallet necessarily covers the
+  // requester's chain slice of it. Narrowing the answer by chain
+  // would invent a hold granularity the service does not have.
   const hold = await getLegalHold(env.DB, hash);
 
   if (hold && hold.disclosure_allowed === 1) {
