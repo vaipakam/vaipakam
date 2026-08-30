@@ -5700,6 +5700,181 @@ describe('check-deploy-invocations — #1995 r20', () => {
   });
 });
 
+describe('check-deploy-invocations — #1995 r21', () => {
+  // GNU env documents `-C, --chdir=DIR`; the value may be ATTACHED, and the
+  // matcher required whitespace or `=` after `-C`.
+  it('env with an attached short chdir carrying a static variable', () => {
+    const r = runWith(
+      'contracts/script/deploy.sh',
+      'TARGET=apps/agent\nenv -C"$TARGET" wrangler deploy\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('the attached literal form too', () => {
+    const r = runWith('contracts/script/deploy.sh', 'env -Capps/keeper wrangler deploy\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('but an attached chdir into an unprotected package passes', () => {
+    const r = runWith('contracts/script/deploy.sh', 'env -Capps/indexer wrangler deploy\n');
+    expect(r.ok).toBe(true);
+  });
+
+  // A `//` inside a JSON string is text, not a comment. Deleting it truncated
+  // the value, made the config unparseable, and failed a legitimate upload.
+  it('a JSONC config whose string value contains a comment marker still parses', () => {
+    seed(
+      'apps/agent/wrangler.jsonc',
+      '{\n  "note": "operator says // preserve this text",\n  "keep_vars": true\n}\n',
+    );
+    const r = runWith('apps/agent/README.md', 'wrangler versions upload\n');
+    expect(r.ok).toBe(true);
+  });
+
+  it('but a genuinely commented-out keep_vars is still not honoured', () => {
+    seed(
+      'apps/agent/wrangler.jsonc',
+      '{\n  "name": "vaipakam-agent"\n  // "keep_vars": true\n}\n',
+    );
+    const r = runWith('apps/agent/README.md', 'wrangler versions upload\n');
+    expect(r.ok).toBe(false);
+  });
+
+  // A Windows helper inherits the caller's cwd exactly as a POSIX one does;
+  // both helper matchers knew only POSIX filenames.
+  it('a Windows .cmd helper invoked with call after a scoped cd', () => {
+    seed('deploy.cmd', 'wrangler deploy\n');
+    const r = runWith('scripts/deploy.cmd', 'cd /d apps\\agent\ncall ..\\..\\deploy.cmd\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but the same Windows helper called from an unprotected package passes', () => {
+    seed('deploy.cmd', 'wrangler deploy\n');
+    const r = runWith('scripts/deploy.cmd', 'cd /d apps\\indexer\ncall ..\\..\\deploy.cmd\n');
+    expect(r.ok).toBe(true);
+  });
+
+  // `eval` executes its argument, so the word after it is a command position.
+  it('a static command string executed through eval', () => {
+    const r = runWith(
+      'contracts/script/deploy.sh',
+      "CMD='wrangler deploy'\ncd apps/agent\neval \"$CMD\"\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but the same value merely echoed stays silent', () => {
+    // The head rule exists so an ordinary argument is data; this is the
+    // control that kept it that way when the value rule admitted spaces.
+    const r = runWith(
+      'contracts/script/deploy.sh',
+      "MSG='wrangler deploy'\ncd apps/agent\necho \"$MSG\"\n",
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // A flow-mapped Windows step was dropped for want of a cwd, so its body
+  // never reached the interpreter transform that makes the path name a
+  // package — the block-style spelling of the same step was caught.
+  it('a flow-mapped Windows step with no working-directory', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: windows-latest',
+        '    steps:',
+        '      - { shell: cmd, run: wrangler.cmd deploy --config apps\\agent\\wrangler.jsonc }',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but the same flow-mapped step carrying --keep-vars passes', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: windows-latest',
+        '    steps:',
+        '      - { shell: cmd, run: wrangler.cmd deploy --keep-vars --config apps\\agent\\wrangler.jsonc }',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // The directory half of a wrangler-action step has resolved expressions
+  // since r18; the command half never did.
+  it('wrangler-action whose command comes from a matrix expression', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    strategy:',
+        '      matrix:',
+        '        cmd: [deploy]',
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: apps/agent',
+        '          command: ${{ matrix.cmd }}',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the same expression resolving to a safe command passes', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    strategy:',
+        '      matrix:',
+        '        cmd: ["deploy --keep-vars"]',
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: apps/agent',
+        '          command: ${{ matrix.cmd }}',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  // `versions upload` ships code and config as `deploy` does, and is already a
+  // deploy to the argv predicate; the shell-string one recognised only deploy.
+  it('a shell-string versions upload in a non-shell step', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    steps:',
+        '      - shell: python {0}',
+        '        working-directory: apps/agent',
+        '        run: subprocess.run("wrangler versions upload", shell=True)',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+});
+
 describe('check-deploy-invocations — configured preservation (#1995 root fix)', () => {
   const PKG = '{"name":"@vaipakam/agent"}\n';
 
