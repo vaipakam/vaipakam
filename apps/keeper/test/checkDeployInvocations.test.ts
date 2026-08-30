@@ -6063,3 +6063,90 @@ describe('check-deploy-invocations — #1995 r22 (config reading)', () => {
     expect(r.out).toContain('apps/agent');
   });
 });
+
+describe('check-deploy-invocations — #1995 r22b', () => {
+  // The `with:` capture ended at the first `}` of a `${{ … }}`, truncating the
+  // mapping mid-value so the command could not be expanded.
+  it('a nested flow-action mapping whose command is an expression', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    strategy:',
+        '      matrix:',
+        '        cmd: [deploy]',
+        '    steps:',
+        "      - { uses: cloudflare/wrangler-action@v3, with: { workingDirectory: apps/agent, command: '${{ matrix.cmd }}' } }",
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  // THE FALSE RED. Every real deployment here is safe: the agent leg carries
+  // --keep-vars and the indexer leg is unprotected. Crossing the legs invented
+  // a bare agent deploy that the workflow never runs, and failed CI.
+  it('include legs keep their command paired with their own directory', () => {
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    strategy:',
+        '      matrix:',
+        '        include:',
+        '          - dir: apps/agent',
+        "            cmd: 'deploy --keep-vars'",
+        '          - dir: apps/indexer',
+        '            cmd: deploy',
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: ${{ matrix.dir }}',
+        '          command: ${{ matrix.cmd }}',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(true);
+  });
+
+  it('but a genuinely unsafe leg is still caught', () => {
+    // The control that keeps the pairing fix from becoming a blanket excuse.
+    const r = runWith(
+      '.github/workflows/deploy.yml',
+      [
+        'jobs:',
+        '  deploy:',
+        '    runs-on: ubuntu-latest',
+        '    strategy:',
+        '      matrix:',
+        '        include:',
+        '          - dir: apps/agent',
+        '            cmd: deploy',
+        '          - dir: apps/indexer',
+        "            cmd: 'deploy --keep-vars'",
+        '    steps:',
+        '      - uses: cloudflare/wrangler-action@v3',
+        '        with:',
+        '          workingDirectory: ${{ matrix.dir }}',
+        '          command: ${{ matrix.cmd }}',
+        '',
+      ].join('\n'),
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  // A deferred Windows helper was sent through the POSIX scanner unchanged, so
+  // the case-insensitive spelling Windows actually executes was missed.
+  it('a deferred .cmd helper whose deploy is capitalised', () => {
+    seed('deploy.cmd', 'Wrangler deploy\n');
+    const r = runWith('scripts/w.cmd', 'cd /d apps\\agent\ncall ..\\..\\deploy.cmd\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+});
