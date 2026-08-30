@@ -5699,3 +5699,49 @@ describe('check-deploy-invocations — #1995 r20', () => {
     expect(r.ok).toBe(true);
   });
 });
+
+describe('check-deploy-invocations — configured preservation (#1995 root fix)', () => {
+  const PKG = '{"name":"@vaipakam/agent"}\n';
+
+  it('a config declaring keep_vars makes a BARE deploy safe', () => {
+    // The root fix. Wrangler resolves `props.keepVars || config.keep_vars` on
+    // the deploy path, so a Worker whose config preserves its vars is safe
+    // however the command is spelled — which is what lets this guard stop
+    // chasing spellings.
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
+    expect(runWith('x.sh', 'cd apps/agent\nwrangler deploy\n').ok).toBe(true);
+  });
+
+  it('but WITHOUT the key the same command is reported', () => {
+    // The guard is defence in depth that switches itself off: remove the root
+    // fix and the whole spelling-detection surface comes back.
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/wrangler.jsonc', '{"name":"vaipakam-agent"}\n');
+    const r = runWith('x.sh', 'cd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a COMMENTED-OUT key documents the remedy, it does not apply it', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/wrangler.jsonc', '{\n  // "keep_vars": true\n  "name": "x"\n}\n');
+    expect(runWith('x.sh', 'cd apps/agent\nwrangler deploy\n').ok).toBe(false);
+  });
+
+  it('and an explicit false is not a true', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": false}\n');
+    expect(runWith('x.sh', 'cd apps/agent\nwrangler deploy\n').ok).toBe(false);
+  });
+
+  it("one Worker's key does not bless another Worker's deploy", () => {
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/wrangler.jsonc', '{"name":"vaipakam-agent"}\n');
+    seed('apps/keeper/package.json', '{"name":"@vaipakam/keeper"}\n');
+    seed('apps/keeper/wrangler.jsonc', '{"keep_vars": true}\n');
+    const r = runWith('x.sh', 'cd apps/agent\nwrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+});

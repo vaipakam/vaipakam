@@ -565,6 +565,29 @@ artifacts and stay in their respective env / config:
 - ops/* Cloudflare secrets: use `TG_OPS_BOT_TOKEN` (NOT
   `TG_BOT_TOKEN`) — see "Two Telegram bots" below.
 
+**Dashboard-managed vars survive a deploy — declared, not remembered.**
+Every Worker carrying operator-tuned vars (`apps/{agent,keeper,indexer}`,
+`ops/{mesh-watcher,offchain-data-warm}`) sets `"keep_vars": true` in its own
+`wrangler.jsonc`. Wrangler otherwise treats the config as the source of truth
+and DELETES any var absent from it on deploy — which for the keeper is
+`HF_SCALE` / the `LIQ_*` thresholds / `SPLIT_*` / `PARTIAL_LIQ_*`, and for the
+agent `RECIPIENT_VALIDATING_TOKENS` / `OPENSEA_OFFERS_MAX_PAGES`. It reads the
+same field for `deploy` and for `versions upload`, so the declaration covers
+every route, and `apps/keeper/test/workerKeepVars.test.ts` pins it.
+
+Do NOT go back to requiring `--keep-vars` per call site: that predicate is
+unbounded (package scripts, manifest aliases, Makefile variables, sourced
+helpers, shell functions and aliases, matrix expressions, reusable-workflow
+inputs, Windows shims, `eval`, marketplace actions), and #1995 spent 242 review
+findings demonstrating it. The flag is still correct where it appears and the
+tree-wide scanner
+(`apps/keeper/scripts/check-deploy-invocations.mjs`) is kept as defence in
+depth — it now reads `keep_vars` too, so it stays quiet while the declaration
+holds and resumes full command-level scrutiny for any Worker that loses it.
+
+**The trade:** a deploy can no longer REMOVE a var. Deleting one is a
+deliberate dashboard action.
+
 **Two Telegram bots — by audience, never share tokens**:
 
 - `TG_BOT_TOKEN` — user-facing bot. Used by `apps/keeper` (HF-band

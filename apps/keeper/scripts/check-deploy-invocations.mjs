@@ -1284,16 +1284,27 @@ function commandIsSafe(cmd, scopeHint = null) {
   if (flagEnabled(flagText, '--keep-vars') || flagEnabled(flagText, '--dry-run')) {
     return true;
   }
-  // `versions upload` HAS NO `--keep-vars`. The pinned wrangler lists only
-  // `--dry-run` for it and derives `keepVars` from `config.keep_vars`, so the
-  // guard was blessing a command that cannot run while blocking every upload
-  // that can (#1995 r16) — it recommended a remedy the CLI rejects.
+  // CONFIGURED preservation makes the command safe — for BOTH verbs.
   //
-  // The preservation is CONFIGURED for that path, so that is what is read: an
-  // upload is safe when the wrangler config of the package it targets declares
-  // `keep_vars: true`. Neither scoped config does today, which is the true
-  // state of affairs rather than something this predicate should paper over.
-  if (/\bversions\b[\s\S]*?\bupload\b/.test(bare)) {
+  // `versions upload` has no `--keep-vars` at all: the pinned wrangler lists
+  // only `--dry-run` for it and derives `keepVars` from `config.keep_vars`, so
+  // the guard was blessing a command that cannot run while blocking every
+  // upload that can (#1995 r16). That was the first half of the rule.
+  //
+  // The second half is that `deploy` reads the SAME field —
+  // `const keepVars = props.keepVars || config.keep_vars` in wrangler 4.90.0 —
+  // and this predicate did not, so it went on demanding a per-invocation flag
+  // for a Worker whose config already preserves its vars. Requiring the flag
+  // at every call site means keeping an UNBOUNDED set of spellings correct
+  // across runbooks, scripts, workflows and package manifests; #1995 spent 242
+  // findings establishing that. Reading the config instead asks the bounded
+  // question wrangler itself asks.
+  //
+  // So this guard now activates precisely when the root fix is ABSENT: with
+  // `keep_vars: true` declared, every spelling is safe and nothing is
+  // reported; remove it and the whole spelling-detection surface comes back.
+  // Defence in depth that switches itself off when it is not needed.
+  {
     // The config of the worker THIS command deploys, not of any scoped worker.
     // Reading either config meant one package enabling `keep_vars` blessed a
     // bare upload in the OTHER — the caller already knows which, from the cwd
