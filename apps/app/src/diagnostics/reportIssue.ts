@@ -85,24 +85,79 @@ function decodeWithMap(text: string): { decoded: string; map: number[] } {
  *  public report, not just the wallet row. Applied to the finished
  *  body/title so future fields can't reintroduce a leak; exported so
  *  the drawer's ON-SCREEN error row honours the same contract. */
+/**
+ * How many times to peel percent-encoding while looking for an address
+ * (#2024, Codex r1).
+ *
+ * ONE PASS IS NOT ENOUGH, and I chose one anyway when filing this — the
+ * mistake is worth naming. `%2530%2578…` decodes once to `%30%78…`, which is
+ * still encoded and still matches nothing, so a single pass returns the text
+ * untouched and the recipient recovers the address with a second decode.
+ * Double-encoding is not exotic: it is what happens to a URL carried inside
+ * another URL's query parameter.
+ *
+ * The bound is a formality rather than a real limit. Every escape costs three
+ * characters and yields one, so each level shrinks the text roughly threefold
+ * and the loop converges in a handful of steps for any input a browser could
+ * hold; the loop also stops as soon as a pass changes nothing. The cap is
+ * here so a crafted input cannot make that reasoning load-bearing.
+ */
+const MAX_DECODE_DEPTH = 8;
+
+/** Each decoding level, with a map from ITS positions back to the original. */
+function decodeLevels(text: string): { text: string; map: number[] }[] {
+  const levels: { text: string; map: number[] }[] = [];
+  let current = text;
+  // Identity map into the original, with the same end sentinel decodeWithMap
+  // produces so composition stays total.
+  let currentMap = Array.from({ length: text.length + 1 }, (_, i) => i);
+  for (let depth = 0; depth < MAX_DECODE_DEPTH; depth++) {
+    const { decoded, map } = decodeWithMap(current);
+    if (decoded === current) break;
+    currentMap = map.map((p) => currentMap[p]!);
+    current = decoded;
+    levels.push({ text: current, map: currentMap });
+  }
+  return levels;
+}
+
+/** Scrub any full address ANYWHERE in report text — crash messages,
+ *  component stacks, and deep-link paths routinely embed the
+ *  connected account, and the redaction contract covers the whole
+ *  public report, not just the wallet row. Applied to the finished
+ *  body/title so future fields can't reintroduce a leak; exported so
+ *  the drawer's ON-SCREEN error row honours the same contract. */
 export function redactText(text: string): string {
   const plain = text.replace(ADDRESS_RE, shortenMatch);
   // Percent-escapes are the only way an address hides from the pass above,
   // so everything without one is finished here (#2024).
   if (!plain.includes('%')) return plain;
-  const { decoded, map } = decodeWithMap(plain);
-  ADDRESS_RE.lastIndex = 0;
+
+  // Collect the spans to redact in ORIGINAL coordinates, across every
+  // decoding depth, so the splice keeps the rest of the text spelled exactly
+  // as it arrived.
+  const spans: { from: number; to: number; text: string }[] = [];
+  for (const level of decodeLevels(plain)) {
+    ADDRESS_RE.lastIndex = 0;
+    for (const m of level.text.matchAll(ADDRESS_RE)) {
+      const from = level.map[m.index];
+      const to = level.map[m.index + m[0].length];
+      if (from === undefined || to === undefined || to <= from) continue;
+      spans.push({ from, to, text: shortenMatch(m[0]) });
+    }
+  }
+  if (spans.length === 0) return plain;
+
+  // One address can be found at several depths and map to the same original
+  // span, and a shallower find can enclose a deeper one. Sort by start, widest
+  // first, then keep only spans that do not overlap one already kept.
+  spans.sort((a, b) => a.from - b.from || b.to - a.to);
   let out = '';
   let cursor = 0;
-  for (const m of decoded.matchAll(ADDRESS_RE)) {
-    const from = map[m.index];
-    const to = map[m.index + m[0].length];
-    // A match already redacted by the plain pass cannot appear here, so any
-    // hit is one that was encoded; splice the ORIGINAL span so the rest of
-    // the text keeps its exact spelling.
-    if (from === undefined || to === undefined || from < cursor) continue;
-    out += plain.slice(cursor, from) + shortenMatch(m[0]);
-    cursor = to;
+  for (const s of spans) {
+    if (s.from < cursor) continue;
+    out += plain.slice(cursor, s.from) + s.text;
+    cursor = s.to;
   }
   return out + plain.slice(cursor);
 }

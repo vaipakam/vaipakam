@@ -82,6 +82,53 @@ describe('redactText — percent-encoded addresses (#2024)', () => {
   });
 });
 
+describe('redactText — nested encoding (#2024 Codex r1)', () => {
+  // A single decode pass leaves `%2530%2578…` looking like `%30%78…` — still
+  // encoded, still matching nothing — and the recipient recovers the address
+  // with a second decode. Double-encoding is what happens to a URL carried
+  // inside another URL's query parameter, so this is ordinary, not exotic.
+  it('shortens a twice-encoded address', () => {
+    expect(redactText(`?w=${pctAll(pctAll(ADDR))}`)).toBe(`?w=${SHORT}`);
+  });
+
+  it('shortens a three-times-encoded address', () => {
+    expect(redactText(pctAll(pctAll(pctAll(ADDR))))).toBe(SHORT);
+  });
+
+  it('shortens a mixed-depth pair, emitting each exactly once', () => {
+    // This is also the case that pins span collapsing, and it is the ONLY
+    // one that does — worth stating, because an earlier version of this
+    // suite claimed that job for a single twice-encoded address and did not
+    // do it. That input yields one match at one depth, so it passes whether
+    // or not overlaps are handled.
+    //
+    // Here the once-encoded `a` decodes to a literal address at depth 1 AND
+    // is still literal at depth 2, so it is found twice and maps to the same
+    // original span, while `b` is found only at depth 2. Dropping the overlap
+    // guard doubles `a`. Verified by mutation, not by assumption.
+    const out = redactText(`a=${pctAll(ADDR)}&b=${pctAll(pctAll(ADDR))}`);
+    expect(out).toBe(`a=${SHORT}&b=${SHORT}`);
+    expect(out.match(/…/g)).toHaveLength(2);
+  });
+
+  it('emits a single shortening for a twice-encoded address', () => {
+    const out = redactText(pctAll(pctAll(ADDR)));
+    expect(out).toBe(SHORT);
+  });
+
+  it('leaves a twice-encoded tx hash intact', () => {
+    const hash = `0x${'c'.repeat(64)}`;
+    const twice = pctAll(pctAll(hash));
+    expect(redactText(twice)).toBe(twice);
+  });
+
+  it('terminates on deeply nested input without throwing', () => {
+    let s = ADDR;
+    for (let i = 0; i < 6; i++) s = pctAll(s);
+    expect(() => redactText(s)).not.toThrow();
+  });
+});
+
 describe('redactText — malformed input must never throw', () => {
   // `decodeURIComponent` rejects all of these. A diagnostics helper that
   // throws becomes a crash source in the crash reporter, which is the one
