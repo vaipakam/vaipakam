@@ -24,10 +24,13 @@
  * EIP-191 `personal_sign` signature over a fixed, human-readable
  * message (see {@link buildErasureMessage}) that names the wallet
  * and an `issuedAt` timestamp. The Worker reconstructs the exact
- * message from the request body, recovers the signing address, and
- * requires it to equal the claimed wallet. The timestamp bounds
- * replay to a short window. The signature is not a transaction and
- * costs the user no gas.
+ * message from the request body and verifies the wallet authorised
+ * it — plain ECDSA recovery for an ordinary wallet, ERC-1271/6492
+ * against a configured chain's RPC for a smart account (#2009; see
+ * `walletSigVerify.ts`, including how the chain to verify on is
+ * chosen for this chain-field-less message format). The timestamp
+ * bounds replay to a short window. The signature is not a
+ * transaction and costs the user no gas.
  *
  * ── Why a keyed hash is the deletion key ─────────────────────────
  *
@@ -69,6 +72,12 @@ import type { Env } from './env';
 import { isHexAddress, walletHash } from './diagHash';
 import { isProtocolAdmin, type AdminVerifier } from './diagAdminAuth';
 import {
+  isValidSignatureShape,
+  verifyOnChain,
+  verifyWalletSignature,
+  type ChainSigChecker,
+} from './walletSigVerify';
+import {
   sha256Hex,
   storeLegalDocument,
   validateLegalDocument,
@@ -87,7 +96,13 @@ import {
  */
 const SIGNATURE_MAX_AGE_SECONDS = ERASURE_SIGNATURE_MAX_AGE_SECONDS;
 
-/** EIP-191 `personal_sign` signature: `0x` + 65 bytes = 132 chars. */
+/** EIP-191 `personal_sign` signature: `0x` + 65 bytes = 132 chars.
+ *  Used ONLY by the ADMIN legal-hold path now (#2009): that flow
+ *  derives the caller's identity FROM ECDSA recovery (there is no
+ *  claimed wallet to run ERC-1271 against — the recovered signer is
+ *  checked for ADMIN_ROLE), so it is structurally EOA-only, which
+ *  matches the admin reality. The USER endpoints accept smart-account
+ *  signatures via `walletSigVerify` and its wider shape check. */
 const SIGNATURE_RE = /^0x[0-9a-fA-F]{130}$/;
 
 /**
@@ -120,6 +135,14 @@ interface SignedRequest {
   wallet: string;
   issuedAt: number;
   signature: string;
+  /** Optional, UNSIGNED chain hint (#2009): the frozen message
+   *  formats carry no chain field (records are keyed by wallet
+   *  across chains), so a smart-account caller may name the chain
+   *  its account contract lives on for ERC-1271 verification.
+   *  Omitted → every configured chain is tried. Selects only WHERE
+   *  verification runs, never what it proves — see
+   *  `walletSigVerify`'s header. */
+  chainId?: number;
 }
 
 type ParseResult =
@@ -142,8 +165,16 @@ function parseSignedRequest(body: unknown): ParseResult {
   ) {
     return { ok: false, reason: 'issuedAt must be a positive unix-seconds number' };
   }
-  if (typeof b.signature !== 'string' || !SIGNATURE_RE.test(b.signature)) {
-    return { ok: false, reason: 'signature must be a 65-byte hex string' };
+  if (!isValidSignatureShape(b.signature)) {
+    return { ok: false, reason: 'signature must be 0x-prefixed hex' };
+  }
+  if (
+    b.chainId !== undefined &&
+    (typeof b.chainId !== 'number' ||
+      !Number.isInteger(b.chainId) ||
+      b.chainId <= 0)
+  ) {
+    return { ok: false, reason: 'chainId, when present, must be a positive integer' };
   }
   return {
     ok: true,
@@ -151,6 +182,7 @@ function parseSignedRequest(body: unknown): ParseResult {
       wallet: b.wallet,
       issuedAt: Math.floor(b.issuedAt),
       signature: b.signature,
+      chainId: b.chainId as number | undefined,
     },
   };
 }
@@ -174,26 +206,37 @@ async function verifySignedRequest(
   // builder, so a signature authorises exactly the operation whose
   // words the user saw.
   buildMessage: (wallet: string, issuedAt: number) => string,
+  env: Env,
+  checker: ChainSigChecker = verifyOnChain,
 ): Promise<VerifyResult> {
   if (Math.abs(nowSeconds - req.issuedAt) > SIGNATURE_MAX_AGE_SECONDS) {
     return { ok: false, status: 400, reason: 'request timestamp is stale' };
   }
   const message = buildMessage(req.wallet, req.issuedAt);
-  let recovered: string;
-  try {
-    recovered = await recoverMessageAddress({
-      message,
-      signature: req.signature as Hex,
-    });
-  } catch {
-    // A structurally-valid-looking hex string that isn't a real
-    // signature lands here.
-    return { ok: false, status: 400, reason: 'signature is not recoverable' };
-  }
-  if (recovered.toLowerCase() !== req.wallet.toLowerCase()) {
-    return { ok: false, status: 400, reason: 'signature does not match wallet' };
-  }
-  return { ok: true };
+  // Plain ECDSA for an ordinary wallet, ERC-1271/6492 against a
+  // configured chain for a smart account (#2009) — the shared
+  // verifier decides; the optional unsigned chainId hint only picks
+  // WHERE the on-chain check runs.
+  const verdict = await verifyWalletSignature(
+    env,
+    req.wallet,
+    message,
+    req.signature,
+    req.chainId,
+    checker,
+  );
+  if (verdict.ok) return { ok: true };
+  return verdict.reason === 'unavailable'
+    ? {
+        ok: false,
+        status: 503,
+        // Honest, not gag-relevant (same class as the malformed-4xx
+        // family): a smart account this Worker cannot reach a chain
+        // for is unverifiable, not invalid — a mismatch verdict here
+        // would send the user into a retry loop that cannot succeed.
+        reason: 'signature verification temporarily unavailable',
+      }
+    : { ok: false, status: 400, reason: 'signature does not match wallet' };
 }
 
 // ─── D1 helpers ────────────────────────────────────────────────────
@@ -231,6 +274,7 @@ export async function handleDiagErasure(
   req: Request,
   env: Env,
   corsOrigin: string,
+  sigChecker: ChainSigChecker = verifyOnChain,
 ): Promise<Response> {
   // The keyed hash is the deletion key — without the HMAC secret the
   // feature cannot function. This is a config error, not a retention
@@ -251,7 +295,13 @@ export async function handleDiagErasure(
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedRequest(parsed.req, nowSeconds, buildErasureMessage);
+  const verified = await verifySignedRequest(
+    parsed.req,
+    nowSeconds,
+    buildErasureMessage,
+    env,
+    sigChecker,
+  );
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },
@@ -292,6 +342,7 @@ export async function handleDiagErasureStatus(
   req: Request,
   env: Env,
   corsOrigin: string,
+  sigChecker: ChainSigChecker = verifyOnChain,
 ): Promise<Response> {
   if (!env.DIAG_WALLET_HMAC_KEY) {
     return json({ error: 'erasure_not_configured' }, 503, corsOrigin);
@@ -309,7 +360,13 @@ export async function handleDiagErasureStatus(
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedRequest(parsed.req, nowSeconds, buildErasureStatusMessage);
+  const verified = await verifySignedRequest(
+    parsed.req,
+    nowSeconds,
+    buildErasureStatusMessage,
+    env,
+    sigChecker,
+  );
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },

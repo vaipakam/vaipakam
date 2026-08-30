@@ -11,11 +11,12 @@
  * state the victim never asked for. The link request therefore
  * carries an EIP-191 `personal_sign` signature over the fixed
  * human-readable message below, naming the wallet, the chain and an
- * `issuedAt` timestamp; the Worker reconstructs the exact message,
- * recovers the signing address, and requires it to equal the claimed
- * wallet. Same pattern (and same replay window / same EOA-recovery
- * tradeoff — ERC-1271 smart-account support is a shared follow-up) as
- * the diagnostics-erasure endpoints in `diagErasure.ts`.
+ * `issuedAt` timestamp; the Worker reconstructs the exact message and
+ * verifies the wallet authorised it — plain ECDSA recovery for an
+ * ordinary wallet, ERC-1271/6492 against the signed `chain_id`'s RPC
+ * for a smart account (#2009, via the shared `walletSigVerify`
+ * module). Same pattern and same replay window as the
+ * diagnostics-erasure endpoints in `diagErasure.ts`.
  *
  * `/unlink/telegram` requires the same proof over its own action-
  * scoped message (round 5): a spoofed-Origin caller could otherwise
@@ -30,14 +31,17 @@
  * body-trusted — see the note on the handler in `index.ts`.
  */
 
-import { recoverMessageAddress, type Hex } from 'viem';
+import type { Env } from './env';
+import {
+  isValidSignatureShape,
+  verifyOnChain,
+  verifyWalletSignature,
+  type ChainSigChecker,
+} from './walletSigVerify';
 
 /** Replay window — a signed link request older (or further in the
  *  future) than this is rejected. Mirrors the erasure endpoints. */
 export const LINK_SIGNATURE_MAX_AGE_SECONDS = 10 * 60;
-
-/** EIP-191 `personal_sign` signature: `0x` + 65 bytes = 132 chars. */
-const SIGNATURE_RE = /^0x[0-9a-fA-F]{130}$/;
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
@@ -187,8 +191,11 @@ export function parseSignedLinkRequest(body: unknown): LinkParseResult {
   ) {
     return { ok: false, reason: 'issuedAt must be a positive unix-seconds number' };
   }
-  if (typeof b.signature !== 'string' || !SIGNATURE_RE.test(b.signature)) {
-    return { ok: false, reason: 'signature must be a 65-byte hex string' };
+  // No longer fixed at 65 bytes (#2009): an ERC-6492 wrapper from a
+  // counterfactual smart account is far longer. Shape + cap only —
+  // whether it VERIFIES is the next step's question.
+  if (!isValidSignatureShape(b.signature)) {
+    return { ok: false, reason: 'signature must be 0x-prefixed hex' };
   }
   return {
     ok: true,
@@ -207,12 +214,18 @@ export type LinkVerifyResult =
 
 /**
  * Verify a parsed signed link request: the timestamp is inside the
- * replay window AND the signature recovers to the claimed wallet.
+ * replay window AND the wallet authorised the action-scoped message —
+ * plain ECDSA for an ordinary wallet, ERC-1271/6492 against the
+ * signed `chain_id`'s configured RPC for a smart account (#2009).
+ * The chain to verify on comes from INSIDE the signed message, so a
+ * caller cannot steer verification to a chain the signer never named.
  */
 export async function verifySignedLinkRequest(
   req: SignedLinkRequest,
   nowSeconds: number,
+  env: Env,
   action: AlertAuthAction = 'link',
+  checker: ChainSigChecker = verifyOnChain,
 ): Promise<LinkVerifyResult> {
   if (Math.abs(nowSeconds - req.issuedAt) > LINK_SIGNATURE_MAX_AGE_SECONDS) {
     return { ok: false, status: 400, reason: 'request timestamp is stale' };
@@ -222,19 +235,23 @@ export async function verifySignedLinkRequest(
     req.chain_id,
     req.issuedAt,
   );
-  let recovered: string;
-  try {
-    recovered = await recoverMessageAddress({
-      message,
-      signature: req.signature as Hex,
-    });
-  } catch {
-    // A structurally-valid-looking hex string that isn't a real
-    // signature lands here.
-    return { ok: false, status: 400, reason: 'signature is not recoverable' };
-  }
-  if (recovered.toLowerCase() !== req.wallet.toLowerCase()) {
-    return { ok: false, status: 401, reason: 'signature does not match wallet' };
-  }
-  return { ok: true };
+  const verdict = await verifyWalletSignature(
+    env,
+    req.wallet,
+    message,
+    req.signature,
+    req.chain_id,
+    checker,
+  );
+  if (verdict.ok) return { ok: true };
+  return verdict.reason === 'unavailable'
+    ? {
+        ok: false,
+        status: 503,
+        // Honest, not gag-relevant (see walletSigVerify's header): a
+        // smart account on a chain this Worker cannot reach — or has
+        // no RPC configured for — is unverifiable, not invalid.
+        reason: 'signature verification temporarily unavailable',
+      }
+    : { ok: false, status: 401, reason: 'signature does not match wallet' };
 }

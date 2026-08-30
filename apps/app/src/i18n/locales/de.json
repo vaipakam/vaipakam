@@ -237,9 +237,8 @@
       "diagRetainedLabel": "Der Dienst meldet, dass einige Aufzeichnungen zurückbehalten wurden:",
       "diagUnavailable": "Der Support-Dienst kann Löschanfragen im Moment nicht verarbeiten. Versuchen Sie es später erneut, oder schreiben Sie an support@vaipakam.com, und wir bearbeiten eine Löschanfrage für Ihre Wallet.",
       "diagError": "Die Anfrage konnte nicht abgeschlossen werden, und möglicherweise wurde nichts gelöscht. Versuchen Sie es gleich noch einmal.",
-      "diagContractWallet": "Diese Wallet ist ein Smart-Contract-Konto, und der Support-Dienst kann ihre Signaturen noch nicht verifizieren. Schreiben Sie an support@vaipakam.com, und wir bearbeiten eine Löschanfrage für Ihre Wallet.",
-      "diagUninspectable": "Diese Wallet ist mit einem Netzwerk verbunden, das diese App von hier aus nicht prüfen kann, daher können wir nicht sagen, ob der Support-Dienst ihre Signaturen verifizieren kann. Schreiben Sie an support@vaipakam.com, und wir bearbeiten eine Löschanfrage für Ihre Wallet — oder wechseln Sie zu einem unterstützten Netzwerk und versuchen Sie es erneut.",
-      "diagExpired": "Die signierte Anfrage ist abgelaufen, bevor der Dienst sie angenommen hat – es wurden also keine Einträge geprüft oder gelöscht. Versuchen Sie es erneut und bestätigen Sie die Wallet-Abfrage zügig; tritt dies wiederholt auf, geht möglicherweise die Uhr dieses Geräts falsch."
+      "diagExpired": "Die signierte Anfrage ist abgelaufen, bevor der Dienst sie angenommen hat – es wurden also keine Einträge geprüft oder gelöscht. Versuchen Sie es erneut und bestätigen Sie die Wallet-Abfrage zügig; tritt dies wiederholt auf, geht möglicherweise die Uhr dieses Geräts falsch.",
+      "diagVerifyUnavailable": "Der Support-Dienst konnte die Signatur Ihrer Wallet gerade nicht überprüfen – das Netzwerk, in dem Ihr Wallet-Konto lebt, war vom Dienst aus nicht erreichbar. Das bedeutet nicht, dass die Signatur falsch war. Versuchen Sie es in Kürze erneut, oder schreiben Sie an support@vaipakam.com und wir bearbeiten eine Löschanfrage für Ihre Wallet."
     },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."

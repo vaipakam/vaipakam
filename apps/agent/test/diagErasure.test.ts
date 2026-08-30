@@ -164,6 +164,16 @@ class FakeR2 {
 
 // ─── Helpers ───────────────────────────────────────────────────────
 
+/** #2009 — a definitive chain denial for tests whose wrong-message
+ *  or wrong-key signatures must land as a 400 MISMATCH: without a
+ *  configured chain answering, an unrecoverable-or-mismatched
+ *  signature is honestly 503 "cannot check" (it could be a smart
+ *  account), which is not what these tests assert. The env carries
+ *  one configured chain and the checker denies. */
+const DENY_CHAIN = async () => false;
+const withChain = (env: Env): Env =>
+  ({ ...env, RPC_BASE_SEPOLIA: 'http://rpc.test' }) as Env;
+
 function makeEnv(
   db: FakeD1,
   overrides: Partial<Env> = {},
@@ -403,8 +413,9 @@ describe('handleDiagErasure', () => {
     const body = await signedBody(ACCOUNT_A, nowSec(), ACCOUNT_B.address);
     const res = await handleDiagErasure(
       post('/diag/erasure', body),
-      makeEnv(db),
+      withChain(makeEnv(db)),
       CORS,
+      DENY_CHAIN,
     );
     expect(res.status).toBe(400);
   });
@@ -416,8 +427,9 @@ describe('handleDiagErasure', () => {
         issuedAt: nowSec(),
         signature: '0x' + 'ab'.repeat(65),
       }),
-      makeEnv(db),
+      withChain(makeEnv(db)),
       CORS,
+      DENY_CHAIN,
     );
     expect(res.status).toBe(400);
   });
@@ -525,8 +537,9 @@ describe('per-operation signatures (#2008 round 2 P1)', () => {
   it('the status endpoint rejects an ERASURE-signed body', async () => {
     const res = await handleDiagErasureStatus(
       post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
-      makeEnv(db),
+      withChain(makeEnv(db)),
       CORS,
+      DENY_CHAIN,
     );
     expect(res.status).toBe(400);
   });
@@ -535,8 +548,9 @@ describe('per-operation signatures (#2008 round 2 P1)', () => {
     const hash = await seedErrors(db, ACCOUNT_A.address, 3);
     const res = await handleDiagErasure(
       post('/diag/erasure', await signedStatusBody(ACCOUNT_A)),
-      makeEnv(db),
+      withChain(makeEnv(db)),
       CORS,
+      DENY_CHAIN,
     );
     expect(res.status).toBe(400);
     // The records the replayed status signature tried to reach are

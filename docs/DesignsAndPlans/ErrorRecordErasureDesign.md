@@ -115,9 +115,19 @@ signature a user gave to LOOK at their records can never be replayed
 against the erasure endpoint as authority to DELETE them. Any client
 implementing the status endpoint must sign the status message; the
 erasure message gets a 400 there, by design. The Worker reconstructs
-the exact bytes of the matching message, recovers the signer (viem
-`recoverMessageAddress`), and requires it to equal the claimed
-wallet. `issuedAt` must be within a 10-minute window
+the exact bytes of the matching message and verifies the wallet
+authorised them — plain ECDSA recovery for an ordinary wallet, and
+since #2009 ERC-1271/ERC-6492 verification against a configured
+chain's RPC for a smart-contract account (deployed or
+counterfactual; `walletSigVerify.ts`, shared with the alerts-family
+endpoints). The frozen messages carry no chain field, so a request
+may name the account's chain in the UNSIGNED body — the hint only
+selects WHERE verification runs, never what it proves — and with no
+hint every configured chain is tried. Three verdicts, kept distinct:
+verified; definitively denied; and CANNOT-CHECK (503) when no chain
+could answer, because calling an unverifiable signature "invalid"
+sends a smart-account user into a retry loop that cannot succeed.
+`issuedAt` must be within a 10-minute window
 (`ERASURE_SIGNATURE_MAX_AGE_SECONDS`, shared with clients so they
 can refuse to send a signature that can only fail). The signature is
 not a transaction and costs no gas.
@@ -305,8 +315,9 @@ gates on `VITE_DIAG_RECORD_ENABLED`.
   signature and calls both signed endpoints. `buildErasureMessage`
   and `buildErasureStatusMessage` moved to
   `packages/lib/src/erasureMessage.ts` as part of that change.
-  Smart-contract-wallet (ERC-1271/6492) verification across the
-  signed endpoints is tracked as #2009.
+  Smart-contract-wallet (ERC-1271/6492) verification shipped with
+  #2009 — see the signature-scheme paragraph in §4.3; the interim
+  bytecode-detection shim the card carried is gone.
 - **Protocol-console legal-hold UI** — a panel in the interactive
   protocol console (admin-only, behind `useIsProtocolAdmin`) for the
   place / lift / set-disclosure actions: a file picker for the order

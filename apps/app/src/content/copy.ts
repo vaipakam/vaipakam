@@ -429,17 +429,15 @@ const copySource = {
        never that removal is guaranteed. */
     diagNotConfigured:
       'This build is not connected to the support service, so the signed request cannot be sent from here. Email support@vaipakam.com and we will process an erasure request for your wallet.',
-    /* #2008 round 2 P2 — a smart-contract account (a Safe, a
-       deployed smart wallet) signs via ERC-1271, which the service
-       cannot verify yet; prompting would collect a signature that can
-       only fail. The working route is offered instead. */
-    diagContractWallet:
-      'This wallet is a smart-contract account, and the support service cannot verify its signatures yet. Email support@vaipakam.com and we will process an erasure request for your wallet.',
-    /* #2008 round 3 P2 — the wallet's own chain may be one this app
-       has no client for; a wallet we cannot vouch for gets the
-       working route, not a prompt that may only fail. */
-    diagUninspectable:
-      'This wallet is connected to a network this app cannot inspect from here, so we cannot tell whether the support service can verify its signatures. Email support@vaipakam.com and we will process an erasure request for your wallet — or switch to a supported network and try again.',
+    /* #2009 — the service verifies smart-account signatures
+       on-chain (ERC-1271/6492), so every account type gets the
+       signature controls and the old detection-and-email-route
+       messages are gone. This message covers the one state that
+       replaced them: the service could not REACH the account's
+       chain to verify, which is neither "invalid" nor a generic
+       failure — retrying immediately cannot help. */
+    diagVerifyUnavailable:
+      'The support service could not verify your wallet\u2019s signature right now \u2014 the network your wallet account lives on was not reachable from the service. This does not mean the signature was wrong. Try again in a little while, or email support@vaipakam.com and we will process an erasure request for your wallet.',
     /* #2008 rounds 3–5 — the signature stays valid for ten minutes
        from the moment the prompt opens. This one message covers BOTH
        expiry routes honestly: a late approval held back before

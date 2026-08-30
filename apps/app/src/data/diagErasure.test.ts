@@ -134,6 +134,42 @@ describe('requestDiagErasure', () => {
     }
   });
 
+  it('carries the wallet chain as an UNSIGNED verification hint (#2009)', async () => {
+    // The frozen message has no chain field; the connected chain
+    // rides in the body so the service knows where a smart account's
+    // contract lives for ERC-1271 verification. Omitted when the
+    // wallet reports none.
+    let calls = stubAgent(
+      () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
+    );
+    await requestDiagErasure(WALLET, async () => SIG, 84532);
+    expect(calls[0]!.body.chainId).toBe(84532);
+    calls = stubAgent(
+      () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
+    );
+    await requestDiagErasure(WALLET, async () => SIG);
+    expect('chainId' in calls[0]!.body).toBe(false);
+  });
+
+  it('maps the service’s cannot-verify 503 to unverifiable — not invalid, not generic (#2009)', async () => {
+    stubAgent(
+      () =>
+        new Response(
+          JSON.stringify({
+            error: 'verification_failed',
+            reason: 'signature verification temporarily unavailable',
+          }),
+          { status: 503 },
+        ),
+    );
+    expect(await requestDiagErasure(WALLET, async () => SIG, 84532)).toBe(
+      'unverifiable',
+    );
+    expect(await requestDiagErasureStatus(WALLET, async () => SIG, 84532)).toEqual({
+      status: 'unverifiable',
+    });
+  });
+
   it('maps the WORKER’s stale rejection to expired — skew no margin can cover', async () => {
     // A skewed local clock stamps an `issuedAt` the Worker's clock
     // already considers stale; the pre-send check here sees nothing

@@ -427,6 +427,7 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
     const verified = await verifySignedLinkRequest(
       signed.req,
       Math.floor(Date.now() / 1000),
+      env,
       'mute-duedate',
     );
     if (!verified.ok) {
@@ -491,6 +492,7 @@ async function handleIssueTelegramLink(
   const verified = await verifySignedLinkRequest(
     parsed.req,
     Math.floor(Date.now() / 1000),
+    env,
   );
   if (!verified.ok) {
     return json(
@@ -548,6 +550,7 @@ async function handleUnlinkTelegram(
   const verified = await verifySignedLinkRequest(
     parsed.req,
     Math.floor(Date.now() / 1000),
+    env,
     'unlink',
   );
   if (!verified.ok) {
@@ -600,7 +603,7 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
     );
   }
   const now = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedLinkRequest(parsed.req, now, 'test-alert');
+  const verified = await verifySignedLinkRequest(parsed.req, now, env, 'test-alert');
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },

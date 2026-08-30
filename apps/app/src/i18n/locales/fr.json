@@ -237,9 +237,8 @@
       "diagRetainedLabel": "Le service signale que certains enregistrements ont été conservés :",
       "diagUnavailable": "Le service de support ne peut pas traiter les demandes d'effacement pour le moment. Réessayez plus tard, ou écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille.",
       "diagError": "La demande n'a pas pu aboutir, et il est possible que rien n'ait été effacé. Réessayez dans un instant.",
-      "diagContractWallet": "Ce portefeuille est un compte de contrat intelligent, et le service de support ne peut pas encore vérifier ses signatures. Écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille.",
-      "diagUninspectable": "Ce portefeuille est connecté à un réseau que cette application ne peut pas inspecter d'ici, nous ne pouvons donc pas savoir si le service de support peut vérifier ses signatures. Écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille — ou passez à un réseau pris en charge et réessayez.",
-      "diagExpired": "La demande signée a expiré avant que le service ne l’accepte : aucun enregistrement n’a donc été consulté ni effacé. Réessayez en approuvant l’invite du portefeuille sans tarder ; si cela se reproduit, l’horloge de cet appareil est peut-être mal réglée."
+      "diagExpired": "La demande signée a expiré avant que le service ne l’accepte : aucun enregistrement n’a donc été consulté ni effacé. Réessayez en approuvant l’invite du portefeuille sans tarder ; si cela se reproduit, l’horloge de cet appareil est peut-être mal réglée.",
+      "diagVerifyUnavailable": "Le service d’assistance n’a pas pu vérifier la signature de votre portefeuille pour le moment : le réseau sur lequel vit le compte de votre portefeuille n’était pas joignable depuis le service. Cela ne signifie pas que la signature était incorrecte. Réessayez dans un moment, ou écrivez à support@vaipakam.com et nous traiterons une demande d’effacement pour votre portefeuille."
     },
     "killSwitch": {
       "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."

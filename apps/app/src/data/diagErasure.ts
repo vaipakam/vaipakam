@@ -69,6 +69,12 @@ export type DiagErasureOutcome =
    *  user is told to try again rather than shown a generic failure
    *  for an approval they gave. */
   | 'expired'
+  /** The service could not VERIFY the signature right now (#2009):
+   *  a smart-account signature is checked on-chain, and the chain
+   *  the account lives on was unreachable or not configured on the
+   *  service. Distinct from `error` because retrying immediately
+   *  cannot help and the signature is NOT invalid. */
+  | 'unverifiable'
   /** Transport or service failure — the request may not have been
    *  processed; the user should try again. */
   | 'error';
@@ -81,6 +87,7 @@ export type DiagErasureStatus =
   | { status: 'retained_by_law'; note: string }
   | { status: 'unavailable' }
   | { status: 'expired' }
+  | { status: 'unverifiable' }
   | { status: 'error' };
 
 interface SignedPostResult {
@@ -106,6 +113,13 @@ async function postSigned(
   // never be replayed as authority to DELETE — the Worker verifies
   // the matching builder per endpoint.
   buildMessage: (wallet: string, issuedAt: number) => string,
+  // UNSIGNED chain hint (#2009): the frozen messages carry no chain
+  // field, so the wallet's connected chain rides in the body to tell
+  // the service where the account contract lives for ERC-1271
+  // verification. Selects only WHERE verification runs — the service
+  // still requires the account AT THIS ADDRESS to approve the exact
+  // signed bytes.
+  chainId?: number,
 ): Promise<SignedPostResult> {
   const origin = agentOrigin();
   if (!origin) throw new Error('diagnostics erasure backend not configured');
@@ -133,7 +147,11 @@ async function postSigned(
     const res = await fetch(`${origin}${path}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ wallet, issuedAt, signature }),
+      body: JSON.stringify(
+        chainId !== undefined
+          ? { wallet, issuedAt, signature, chainId }
+          : { wallet, issuedAt, signature },
+      ),
       signal: ctrl.signal,
     });
     // Read the body while the timer is still armed — an abort during
@@ -155,6 +173,18 @@ async function postSigned(
  *  stamped `issuedAt` is skewed from the Worker's; either way the
  *  honest outcome is "expired, try again", not a generic failure
  *  for an approval the user actually gave. */
+/** The service's "cannot check this signature right now" 503
+ *  (#2009): a smart-account signature is verified on-chain, and no
+ *  configured chain could answer. Not a mismatch and not a generic
+ *  failure — an immediate retry cannot help, and saying "invalid"
+ *  would be false. */
+function verifyUnavailable(res: SignedPostResult): boolean {
+  return (
+    res.httpStatus === 503 &&
+    res.data?.error === 'verification_failed'
+  );
+}
+
 function staleRejected(res: SignedPostResult): boolean {
   return (
     res.httpStatus === 400 &&
@@ -173,8 +203,15 @@ function staleRejected(res: SignedPostResult): boolean {
 export async function requestDiagErasure(
   wallet: `0x${string}`,
   signMessage: (message: string) => Promise<string>,
+  chainId?: number,
 ): Promise<DiagErasureOutcome> {
-  const res = await postSigned('/diag/erasure', wallet, signMessage, buildErasureMessage);
+  const res = await postSigned(
+    '/diag/erasure',
+    wallet,
+    signMessage,
+    buildErasureMessage,
+    chainId,
+  );
   if (res.expired) return 'expired';
   if (res.ok) {
     // A 2xx alone is not the service's acknowledgement (#2008 round
@@ -187,6 +224,7 @@ export async function requestDiagErasure(
   if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
     return 'unavailable';
   }
+  if (verifyUnavailable(res)) return 'unverifiable';
   if (staleRejected(res)) return 'expired';
   return 'error';
 }
@@ -200,12 +238,14 @@ export async function requestDiagErasure(
 export async function requestDiagErasureStatus(
   wallet: `0x${string}`,
   signMessage: (message: string) => Promise<string>,
+  chainId?: number,
 ): Promise<DiagErasureStatus> {
   const res = await postSigned(
     '/diag/erasure/status',
     wallet,
     signMessage,
     buildErasureStatusMessage,
+    chainId,
   );
   if (res.expired) return { status: 'expired' };
   if (res.ok) {
@@ -225,6 +265,7 @@ export async function requestDiagErasureStatus(
   if (res.httpStatus === 503 && res.data?.error === 'erasure_not_configured') {
     return { status: 'unavailable' };
   }
+  if (verifyUnavailable(res)) return { status: 'unverifiable' };
   if (staleRejected(res)) return { status: 'expired' };
   return { status: 'error' };
 }
