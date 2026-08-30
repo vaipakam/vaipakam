@@ -14,28 +14,41 @@ sends are public by design — every action you take on the protocol is
 visible on-chain to everyone. Nothing we can do (or not do) changes
 that. We do not store a separate copy of this data.
 
-**Diagnostics — on your device only.** When something in the app
-fails, the app keeps a record of the most recent error — the error
-message, the component trace where it has one, the page you were on,
-and a timestamp — in your browser's session storage. It is a single
+**Diagnostics — on your device only.** Two kinds of failure are
+recorded: a screen that crashes, and a transaction you submit that
+fails. For those, the app keeps a record of the most recent one — the
+error message, the component trace where it has one, the page you were
+on, and a timestamp — in your browser's session storage. Ordinary
+read, network and validation failures are not recorded. It is a single
 slot, not a running log of your activity, it is not keyed to your
 wallet, and it is discarded when you close the tab. It never leaves
-your device on its own. If you open a support report from the
-Diagnostics drawer, the app pre-fills a GitHub issue in your browser
-containing exactly what the drawer showed you — page, network,
-connection status, build, and that last error — with any wallet
-address shortened to `0x1234…abcd` and the error text length-capped.
-Whether to submit it is your choice. We do NOT send your IP,
+your device on its own.
+
+If you open a support report from the Diagnostics drawer, the app
+pre-fills a GitHub issue in your browser — page, network, connection
+status, build, and that last error — with any wallet address shortened
+to `0x1234…abcd`. Read it before you submit, because it can carry more
+than the drawer previewed: the drawer shows the first 300 characters
+of the error message and no component trace, while the report carries
+up to 1,200 characters of error text and up to 1,000 characters of
+trace. Whether to submit is your choice. We do NOT send your IP,
 user-agent, or browsing history.
 
-**Error records on our servers — not currently collected.** An
-earlier version of the app sent a record of each UI error to a
-Cloudflare Worker endpoint. **The current app does not.** No error
-record is transmitted from the app to us, so no data of this kind is
-being created about you today. The description below is kept because
-it governs any records created before this changed, and because it
-must be accurate again before such capture is reinstated. Where such
-a record exists it carries: the redacted wallet (`0x…abcd`), the
+**Error records on our servers — no automatic capture.** An earlier
+version of the app sent a record of each UI error to a Cloudflare
+Worker endpoint automatically, without your involvement. **The current
+app does not.** Simply using the app creates no error record on our
+servers.
+
+Two things that does not mean. It does not mean no diagnostics ever
+reach us: if you send a support ticket and tick the attach box, the
+same redacted block described above travels with that ticket and is
+stored alongside it — see "Support tickets", which governs it. That
+path is deliberate and requires your action each time. And it does not
+make the description below obsolete: it governs records captured while
+automatic capture was running, and it must be accurate again before
+automatic capture is ever reinstated. Where such a record exists it
+carries: the redacted wallet (`0x…abcd`), the
 error type / name / selector and the technical error message
 (truncated, and free of anything you typed), which screen / flow /
 step you were in, your chain id, interface locale, theme, viewport
@@ -146,18 +159,23 @@ The following rights apply regardless of your jurisdiction; several
 are only meaningful to the extent we hold data about you.
 
 - **Right to access.** Use the "Download my data" control on the app's
-  Data Rights page to export what the app holds in this browser. It is
-  per-origin browser storage, not a wallet-keyed profile: we do not
-  assemble one.
+  Data Rights page. It exports the app's storage for that site plus the
+  small amount of data belonging to the tab you run it from — a little
+  is per-tab, so download from each open tab if you want the complete
+  picture. What it exports is browser storage, not a wallet-keyed
+  profile: we do not assemble one.
 - **Right to erasure.** Use the "Delete my data" control on the same
-  page. It clears the app's browser-storage entries on this device.
-  Two limits stated plainly, because a control that overstates itself
-  is worse than none. On-chain transactions are public and immutable —
-  we have no power to erase them, and that is a wallet / chain-level
-  question rather than a data-processor one. And browser storage is
-  per-origin: clearing it here does not reset the marketing site,
-  which keeps its own copies of your language and theme preferences.
-  Erasing the error-diagnostics records held on our servers is a
+  page. It clears the app's local and session storage on this device,
+  and it also expires the shared `vaipakam.com` preference cookies
+  (language and theme), which are not per-origin. Three limits stated
+  plainly, because a control that overstates itself is worse than none.
+  First, on-chain transactions are public and immutable — we have no
+  power to erase them, and that is a wallet / chain-level question
+  rather than a data-processor one. Second, the app's own local and
+  session storage IS per-origin, so clearing it does not reset the
+  marketing site: that site keeps its own copies of your language and
+  theme and will recreate the shared cookies on your next visit there.
+  Third, erasing the error-diagnostics records held on our servers is a
   separate, signed request — see "Error records on our servers".
 - **Right to object.** You can revoke analytics consent at any moment
   via the Cookie settings footer link; no further analytics data
@@ -187,8 +205,9 @@ inherently handle.
 
 - Device diagnostics: the most recent error is kept in your
   browser's session storage and is discarded when you close the tab.
-  It leaves your browser only if you choose to submit the pre-filled
-  support report the Diagnostics drawer builds.
+  It leaves your browser only by an action you take — submitting the
+  pre-filled GitHub report the Diagnostics drawer builds, or sending a
+  support ticket with the attach box ticked.
 - Server-side error records: none are being created — the current
   app sends none (see "Error records on our servers"). Any record
   created before that changed is pruned 90 days after its capture,

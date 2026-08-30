@@ -44,6 +44,21 @@ that browser storage is per-origin, so clearing it does not reset the
 marketing site, and that erasing server-held error-diagnostics records is
 a separate signed request.
 
+Review then caught the narrowing over-correcting, which is worth
+recording because it is the mirror-image mistake of the one being fixed.
+Saying flatly that no error record is transmitted was itself false: a
+support ticket sent with the attach box ticked carries the same redacted
+diagnostics block to our servers, on a shipping, user-consented path. The
+claim is now scoped to *automatic* capture, with the consented path
+disclosed beside it. Three other absolutes went the same way. The local
+record is not kept whenever "something fails" — only a crashed screen or
+a failed transaction reaches it. The pre-filled GitHub report is not
+"exactly what the drawer showed": the drawer previews 300 characters and
+no component trace, while the report carries up to 1,200 characters of
+error text and 1,000 of trace, so the policy now tells the user to read
+it before submitting. And the export is not browser-wide, because a
+little data is per-tab — the app's own in-product copy already said so.
+
 Both halves of the hand-maintained mirror move together — the canonical
 policy document and the published page — and the policy goes to version 4
 with today's effective date, since what it claims about collection has
