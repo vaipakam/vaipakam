@@ -125,8 +125,43 @@ const DECODE_WORK_FLOOR = 1024;
  * a single ellipsis. Only these two already-lossy branches pay it: one has
  * given up on reading past 64 KB, the other on resolving the escapes at all.
  * Losing a word beats publishing an account.
+ *
+ * EXPRESSING IT AS ONE REGEX IS THE BUG (Codex r5 fix, r6 P2). Writing it
+ * `[a-fA-F0-9]*(?:%[0-9a-fA-F]{2})+[a-fA-F0-9]*` reads correctly and is
+ * quadratic: on hex-only text with no escape to find, the leading `*` consumes
+ * to the end and backtracks a character at a time, from every start position.
+ * Measured on 64 KB of `a`: 6850 ms, versus 1 ms for the anchored pattern. The
+ * fallback exists to keep an attacker-controlled provider error from freezing
+ * the Support drawer, so hanging it there is self-defeating.
+ *
+ * The pattern below therefore only ever anchors on a literal `%`, and the
+ * adjacent hex is taken by an explicit scan that cannot revisit consumed text.
  */
-const ESCAPE_RUN_RE = /[a-fA-F0-9]*(?:%[0-9a-fA-F]{2})+[a-fA-F0-9]*/g;
+const ESCAPE_RUN_RE = /(?:%[0-9a-fA-F]{2})+/g;
+const HEX_CHAR_RE = /[a-fA-F0-9]/;
+
+/**
+ * Replace every escape run — plus the hex touching either side — with one
+ * ellipsis, in linear time.
+ *
+ * Each backward scan stops at `cursor`, which only ever advances, so the two
+ * scans together touch each character at most once. A later match cannot begin
+ * inside a span already swallowed: the forward scan consumes only hex, and a
+ * match begins with `%`, which is not hex.
+ */
+function dropEscapeRunsWithHex(text: string): string {
+  let out = '';
+  let cursor = 0;
+  for (const m of text.matchAll(ESCAPE_RUN_RE)) {
+    let from = m.index;
+    let to = from + m[0].length;
+    while (from > cursor && HEX_CHAR_RE.test(text[from - 1]!)) from -= 1;
+    while (to < text.length && HEX_CHAR_RE.test(text[to]!)) to += 1;
+    out += `${text.slice(cursor, from)}…`;
+    cursor = to;
+  }
+  return out + text.slice(cursor);
+}
 
 /**
  * Decode to a fixpoint, reporting whether the budget was exhausted first.
@@ -211,21 +246,27 @@ const TRAILING_HEX_FRAGMENT_RE = /0[xX][a-fA-F0-9]*$/;
  *  body/title so future fields can't reintroduce a leak; exported so
  *  the drawer's ON-SCREEN error row honours the same contract. */
 export function redactText(text: string): string {
-  // No escapes means the text IS its own fixpoint, so the cheap pass is the
-  // whole job — and this is the overwhelmingly common case.
-  if (!text.includes('%')) return text.replace(ADDRESS_RE, shortenMatch);
-
+  // THE SIZE BOUND COMES FIRST, ahead of the no-escape fast path (Codex r6
+  // P2). That path is the common one and is cheap per character, which is why
+  // it sat above the ceiling and quietly escaped it: a provider error of 21.5
+  // million characters carrying nothing but literal addresses still built six
+  // million characters of output, ~119 MB, for a caller that keeps 1,200. A
+  // ceiling that the ordinary path can step around is not a ceiling.
   if (text.length > MAX_MAPPED_INPUT) {
     // Escape runs go FIRST so nothing hides behind them, then literals are
     // shortened. A hash whose tail was escaped now reads as an address and is
     // shortened too: with the tail unread there is no way to tell, and losing
     // a hash to over-redaction is the right side of that trade.
-    const head = text
-      .slice(0, MAX_MAPPED_INPUT)
-      .replace(ESCAPE_RUN_RE, '…')
-      .replace(ADDRESS_RE, shortenMatch);
+    const head = dropEscapeRunsWithHex(text.slice(0, MAX_MAPPED_INPUT)).replace(
+      ADDRESS_RE,
+      shortenMatch,
+    );
     return `${head.replace(TRAILING_HEX_FRAGMENT_RE, '')}…`;
   }
+
+  // No escapes means the text IS its own fixpoint, so the cheap pass is the
+  // whole job — and this is the overwhelmingly common case.
+  if (!text.includes('%')) return text.replace(ADDRESS_RE, shortenMatch);
 
   // NO EAGER LITERAL PASS (Codex r3 P2). Shortening literals before the
   // fixpoint corrupts a hash whose head is literal and whose tail is escaped:
@@ -239,7 +280,7 @@ export function redactText(text: string): string {
     // demonstrate that no address is hidden in them — and on a report that
     // opens a PUBLIC issue, "probably fine" is not the standard. Literals are
     // handled here explicitly, since the pre-pass above is gone.
-    return text.replace(ESCAPE_RUN_RE, '…').replace(ADDRESS_RE, shortenMatch);
+    return dropEscapeRunsWithHex(text).replace(ADDRESS_RE, shortenMatch);
   }
 
   // Splice onto the ORIGINAL spans so everything the redaction does not need

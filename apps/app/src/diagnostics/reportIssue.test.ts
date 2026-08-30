@@ -277,6 +277,32 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     expect(out).toContain('y');
   });
 
+  it('stays linear on a hex-only head whose first escape is past the cut', () => {
+    // Codex r6 P2, and a regression the r5 fix introduced. Expressing "escape
+    // run plus adjacent hex" as ONE regex reads correctly and is quadratic:
+    // with no `%` in the sliced head, the leading `[a-fA-F0-9]*` consumes to
+    // the end and backtracks a character at a time, from every start position.
+    // Measured on 64 KB of `a`: 6850 ms for the one-regex form, 1 ms anchored.
+    // A fallback whose job is to stop an attacker-controlled error freezing
+    // the drawer must not be the thing that freezes it.
+    const started = Date.now();
+    redactText(`${'a'.repeat(MAX_MAPPED_INPUT)}%25`);
+    expect(Date.now() - started).toBeLessThan(500);
+  });
+
+  it('bounds a huge address-only message, which has no escapes at all', () => {
+    // Codex r6 P2. The no-escape fast path is the common one and cheap per
+    // character, which is exactly why it sat ABOVE the ceiling and quietly
+    // stepped around it. A ceiling the ordinary path can bypass is not a
+    // ceiling, so the size check now runs first.
+    const huge = `${ADDR} `.repeat(200_000);
+    expect(huge).not.toContain('%');
+    const out = redactText(huge);
+    expect(out.length).toBeLessThanOrEqual(MAX_MAPPED_INPUT + 1);
+    expect(out).not.toContain(ADDR);
+    expect(out).toContain(SHORT);
+  });
+
   it('drops an address straddling the truncation boundary rather than halving it', () => {
     // The cut lands 20 characters into the address, leaving `0x` + 18 hex at
     // the end of the head. Half an account is not something a report should

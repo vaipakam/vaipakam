@@ -28,8 +28,10 @@ report.
 
 A recorded error is whatever the failing code handed the browser, and a
 provider can hand it several megabytes. The shortener now stops reading at
-64 KB and marks the report truncated there, rather than scrubbing the whole
-of a message the report keeps twelve hundred characters of — a few seconds
+64 KB in every case — including the ordinary one where a message carries no
+escapes at all, which had been quick enough per character to step around the
+limit unnoticed — and marks the report truncated there, rather than scrubbing
+the whole of a message the report keeps twelve hundred characters of — a few seconds
 of a frozen drawer, immediately after the failure someone is trying to
 report, is a poor way to ask for help. If the cut lands in the middle of an
 address, the fragment is dropped rather than carried through as half an
