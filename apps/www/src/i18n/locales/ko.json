@@ -123,7 +123,7 @@
     "journeyTitle": "Journey log 다운로드 (이 session)",
     "journeyBody": "이 탭 session의 in-memory journey-log buffer (UI events)를 JSON 파일로 저장합니다. Discord DM이나 support thread에 공유하기 좋습니다. 위의 더 넓은 Download / Delete와는 별개입니다 — 그것들은 stored namespace를 다루고, 이것은 live event buffer만 캡처합니다.",
     "journeyCta": "Journey log 다운로드 (JSON)",
-    "legalFooter": "위 항목에 대해 Vaipakam은 data controller로 작동합니다. 서버 측에는 개인 데이터를 저장하지 않습니다 (계정, 이메일 목록, wallet에 연결된 analytics 없음). 감사 목적상 각 UI error event를 event UUID와 함께 서버 측에 기록합니다 — 무엇이 캡처되는지는 Privacy Policy를 확인하세요."
+    "legalFooter": "위 항목에 대해 Vaipakam은 data controller로 작동합니다. 서버 측에는 개인 데이터를 저장하지 않습니다 (계정, 이메일 목록, wallet에 연결된 analytics 없음). 앱이 스스로 서버에 error report를 보내지는 않습니다 — 사용자가 보내기로 선택한 support report에 무엇이 담기는지는 Privacy Policy를 확인하세요."
   },
   "dashboard": {
     "connectTitle": "지갑을 연결하세요",

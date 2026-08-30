@@ -123,7 +123,7 @@
     "journeyTitle": "Journey log-ஐ பதிவிறக்கு (இந்த session)",
     "journeyBody": "இந்த tab session-இன் in-memory journey-log buffer-ஐ (UI நிகழ்வுகள்) JSON கோப்பாகச் சேமிக்கிறது. Discord DM அல்லது support thread-இல் பகிர பயனுள்ளது. மேலுள்ள விரிவான Download / Delete-இலிருந்து தனியாகும் — அவை stored namespace-ஐத் தொடும்; இது live event buffer மட்டும் பிடிக்கும்.",
     "journeyCta": "Journey log-ஐ பதிவிறக்கு (JSON)",
-    "legalFooter": "மேலுள்ள உருப்படிகளுக்கு Vaipakam data controller ஆக செயல்படுகிறது. Server-side personal data எதையும் நாங்கள் பராமரிப்பதில்லை (accounts இல்லை, email lists இல்லை, உங்கள் wallet-க்கு இணைக்கப்பட்ட analytics இல்லை). Audit நோக்கத்திற்காக ஒவ்வொரு UI error event-ஐ per-event UUID உடன் server-side பதிவு செய்கிறோம் — என்ன capture செய்யப்படுகிறது என்பதை Privacy Policy-யில் பார்க்கவும்."
+    "legalFooter": "மேலுள்ள உருப்படிகளுக்கு Vaipakam data controller ஆக செயல்படுகிறது. Server-side personal data எதையும் நாங்கள் பராமரிப்பதில்லை (accounts இல்லை, email lists இல்லை, உங்கள் wallet-க்கு இணைக்கப்பட்ட analytics இல்லை). App தானாக எங்கள் server-க்கு error report அனுப்புவதில்லை — நீங்கள் அனுப்பத் தேர்ந்தெடுக்கும் support report-இல் என்ன இருக்கிறது என்பதை Privacy Policy-யில் பார்க்கவும்."
   },
   "dashboard": {
     "connectTitle": "உங்கள் வாலெட்டை இணைக்கவும்",
