@@ -119,7 +119,14 @@ jobs:
           # per-item reads, a failure the pass itself reports as success.
           # The one Worker holding KEEPER_PRIVATE_KEY is not where an
           # unrun test suite belongs.
-          DEFI_RE='^(apps/(app|indexer|keeper)/|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
+          # apps/agent joined post-#1962 — the LAST Worker in that state,
+          # and not a quiet one: it holds PUSH_CHANNEL_PK (a real signing
+          # key), owns the Telegram link handshake, the diagnostics
+          # erasure and legal-hold paths, and the ERC-1271/6492 signature
+          # verification every signed endpoint now routes through. Being
+          # outside this detector meant an agent-only PR did not even
+          # TRIGGER the workflow, so the gap was two-layered.
+          DEFI_RE='^(apps/(app|indexer|keeper|agent)/|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else
@@ -186,3 +193,19 @@ jobs:
       # little if the guard itself never runs.
       - name: Run @vaipakam/keeper vitest
         run: pnpm --filter @vaipakam/keeper test
+
+      # apps/agent's suite (#1962) — the last Worker whose tests ran in no
+      # workflow at all, and the one with the largest blast radius: it
+      # holds PUSH_CHANNEL_PK, issues and revokes the Telegram link, and
+      # serves the diagnostics-erasure and legal-hold endpoints. Much of
+      # what its suite pins cannot be caught by a typecheck because the
+      # types are identical either way — that a status check's response is
+      # BYTE-IDENTICAL whether or not a gagged legal hold retained the
+      # records, that each action's signed message is distinct so a
+      # signature cannot cross actions, that an unreachable chain reads as
+      # "cannot verify" rather than "invalid signature", and that a
+      # chain-scoped authority erases only its own chain's rows. Those are
+      # privacy and authorization invariants; a green typecheck says
+      # nothing about any of them.
+      - name: Run @vaipakam/agent vitest
+        run: pnpm --filter @vaipakam/agent test

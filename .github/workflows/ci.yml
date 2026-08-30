@@ -66,15 +66,16 @@
 #                     apps/agent, apps/app via `tsc -b --noEmit`,
 #                     apps/www). Vitest suites are NOT run in this job.
 #                     `app-vitest.yml` runs
-#                     @vaipakam/{lib,app,indexer,keeper}.
-#                     The AGENT suite is run by NOTHING — it is outside
-#                     app-vitest.yml's change detector and no other
-#                     workflow invokes it, so agent test regressions are
-#                     currently ungated (#1962). The KEEPER suite was in
-#                     that same state until #1992: typechecked here, run
-#                     nowhere, so its 221 tests — including the #1946
-#                     guard that exists to catch Multicall3 batching
-#                     silently falling back — had never executed in CI.
+#                     @vaipakam/{lib,app,indexer,keeper,agent} — every
+#                     workspace suite, as of #1962. Two Workers reached
+#                     that list late and for the same reason: typechecked
+#                     here, run nowhere, so a green PR meant "it
+#                     compiles", never "its tests pass". KEEPER was fixed
+#                     in #1992 (221 tests, including the #1946 guard that
+#                     exists to catch Multicall3 batching silently
+#                     falling back); AGENT in #1962 — it was outside this
+#                     workflow's change DETECTOR too, so an agent-only PR
+#                     did not even trigger the run.
 #                     Issue #85, which used to be cited here, died with
 #                     the deleted app (#1854).
 #
