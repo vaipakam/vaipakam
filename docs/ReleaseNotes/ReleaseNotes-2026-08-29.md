@@ -59,8 +59,10 @@ prominently as what it can:
 - **Alerts.** If you linked Telegram, that link is held by the alerts
   service, not your browser. Unlinking in Settings is what removes it.
 - **The main site's own data**, which has its own controls there.
-- **Error reports held by support**, which are removed on request by
-  email.
+- **Error reports held by support** — beyond the local controls'
+  reach, but not beyond the page's: later the same day the page
+  gained its own signed erasure request for them (the fourth thread,
+  below), with email remaining the fallback route.
 
 Two shared-domain preferences sit in this browser and are disclosed in
 the download and removed by the erase: the language, which both sites
