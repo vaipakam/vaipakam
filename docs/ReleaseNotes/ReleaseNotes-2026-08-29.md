@@ -1,14 +1,17 @@
 # Release Notes — 2026-08-29
 
-Three user-facing threads landed today, all in the connected app's
+Four user-facing threads landed today, all in the connected app's
 orbit: the Data Rights page returns (download or erase what the app
 keeps in the browser), a Terms acceptance made in one tab now closes
 the prompt in every open tab instead of inviting a second paid
-acceptance, and alert preference saves stopped posting the whole
+acceptance, alert preference saves stopped posting the whole
 record — a fresh device can no longer overwrite choices made
-elsewhere by saving its own assumptions. Alongside the last of these,
-the functional spec now records the deliberate posture that Terms
-enforcement for notification settings lives in the app (#1999).
+elsewhere by saving its own assumptions — and the Data Rights page
+gained the in-app signed request for erasing the error reports
+support keeps, the control the Privacy Policy had promised. Alongside
+the alerts change, the functional spec now records the deliberate
+posture that Terms enforcement for notification settings lives in
+the app (#1999).
 
 ## Connected app — you can take your data with you, or remove it
 
@@ -157,7 +160,12 @@ reach.
 The control now exists, on that same page. Connect the wallet, sign a
 free message — not a transaction, no gas — and the request goes to the
 service, which erases the records keyed to that wallet. A companion
-check asks whether anything was retained.
+check asks whether anything was retained. One timing note for
+operators: this ships the APP side of the promise. The erasure
+service's deployment itself remains gated on the recorded
+crypto/privacy-lawyer sign-off, and a build not configured with the
+service's address says so honestly and offers the email route — the
+page never pretends at a control the deployment does not yet serve.
 
 The interface is deliberately as reticent as the service it talks to.
 The service's confirmation is uniform by design: it never says whether
@@ -181,8 +189,10 @@ A signed request is only valid for ten minutes, and the wallet's
 approval prompt has no such clock — so an approval given too late to
 reach the service in time, or stamped by a computer whose clock
 disagrees with the service's, is reported as "expired, try again"
-rather than as a failure the user can't interpret. Nothing is sent
-when it could only be rejected.
+rather than as a failure the user can't interpret. A signature that
+visibly aged out while the prompt was open is never sent at all; the
+clock-skew case can only be seen by the service, whose rejection is
+translated into the same actionable answer.
 
 One honest limit, stated where it applies: a smart-contract wallet's
 signatures cannot be verified by the support service yet, so a
