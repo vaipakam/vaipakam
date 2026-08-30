@@ -70,6 +70,35 @@ describe('extractRevertData', () => {
     ).toBe(SEL_HF_TOO_LOW);
   });
 
+  // #2017 round 2 P2: "last resort" was only asserted by ABSENCE — with no
+  // structured bytes present, the case passes even if the message regex is
+  // consulted FIRST. A wallet that keeps the authoritative payload in a
+  // structured field while its wrapper message quotes a different
+  // selector-shaped blob is the shape that breaks: the wrong error would
+  // be chosen and unrelated friendly copy shown. Each structured candidate
+  // is therefore raced against a competing message blob.
+  it('prefers every structured candidate OVER a selector in the message', () => {
+    const decoy = `execution reverted ${SEL_INSUFFICIENT_BALANCE}`;
+    expect(extractRevertData({ data: SEL_HF_TOO_LOW, message: decoy })).toBe(
+      SEL_HF_TOO_LOW,
+    );
+    expect(
+      extractRevertData({ data: { data: SEL_HF_TOO_LOW }, message: decoy }),
+    ).toBe(SEL_HF_TOO_LOW);
+    expect(
+      extractRevertData({ info: { error: { data: SEL_HF_TOO_LOW } }, message: decoy }),
+    ).toBe(SEL_HF_TOO_LOW);
+    expect(extractRevertData({ error: { data: SEL_HF_TOO_LOW }, message: decoy })).toBe(
+      SEL_HF_TOO_LOW,
+    );
+    expect(extractRevertData({ revert: { data: SEL_HF_TOO_LOW }, message: decoy })).toBe(
+      SEL_HF_TOO_LOW,
+    );
+    expect(extractRevertData({ raw: SEL_HF_TOO_LOW, message: decoy })).toBe(
+      SEL_HF_TOO_LOW,
+    );
+  });
+
   it('rejects too-short hex stubs (<10 chars) when found in structured fields', () => {
     // The 4-byte selector alone is 10 chars (0x + 8), so a 9-char stub is rejected.
     expect(extractRevertData({ data: '0xabcdefg' })).toBeUndefined();
@@ -212,6 +241,23 @@ describe('decodeContractError', () => {
     ).toMatch(/Health factor too low/i);
   });
 
+  // #2017 round 2 P2: the case above carries a STRING `data`, so it cannot
+  // also carry the `data.message` competitor — and a regression narrowing
+  // the decoder to top-level string selectors would leave it green while
+  // injected wallets (which nest the payload) showed the raw RPC message
+  // instead of curated guidance. This is that shape, with every competing
+  // field present and the exact curated copy asserted.
+  it('decodes a NESTED selector ahead of the sibling data.message', () => {
+    expect(
+      decodeContractError({
+        data: { data: SEL_HF_TOO_LOW, message: 'rpc message' },
+        reason: 'from reason',
+        shortMessage: 'from shortMessage',
+        message: 'from message',
+      }),
+    ).toBe('Health factor too low. Add collateral to bring it above 1.5.');
+  });
+
   it('appends named revert onto generic "unknown custom error" texts', () => {
     const msg = decodeContractError({
       reason: 'unknown custom error',
@@ -345,6 +391,26 @@ describe('decodeContractError', () => {
       expect(
         decodeContractError({ revert: { name: 'Error' }, reason: 'boom' }),
       ).toBe('boom');
+    });
+
+    // #2017 round 2 P2: `extractRevertName` excludes BOTH generic shapes,
+    // but only `Error` was exercised — dropping `Panic` from that guard
+    // left every case green while a Panic revert humanized to the useless
+    // string "Panic", hiding the diagnostic the base message carries.
+    it('keeps the base message for a generic Panic revert', () => {
+      expect(
+        decodeContractError({
+          revert: { name: 'Panic' },
+          reason: 'arithmetic underflow or overflow',
+        }),
+      ).toBe('arithmetic underflow or overflow');
+      // Same exclusion through viem's cause-chain spelling.
+      expect(
+        decodeContractError({
+          cause: { data: { errorName: 'Panic' } },
+          reason: 'division by zero',
+        }),
+      ).toBe('division by zero');
     });
 
     // #1094 Codex: viem stashes the decoded name on
