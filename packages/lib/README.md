@@ -8,8 +8,18 @@
 
 The **lowest layer of shared off-chain code** — utilities that have no React / Vite / Worker-specific dependency, so every consumer can import them. Consumers today: `apps/app`, `apps/www`, `apps/agent`, `apps/indexer`, `apps/keeper`.
 
-Current scope (Stage 2a of the source-tree refactor):
+Current scope:
 
+- `redactAddresses` — the wallet-address redaction contract: shortens a full
+  EVM address to `0x1234…abcd`, including one that arrives percent-encoded, at
+  any nesting depth, under a work budget and a size ceiling. It lives here
+  rather than in a consumer because it binds **two independent surfaces** —
+  `apps/app`'s support-report builder and `apps/agent`'s `POST /support/ticket`,
+  which re-scrubs precisely because it trusts no client — and a second copy
+  would drift (#2024). Change it here, never in a consumer.
+- `address`, `cronCadence`, `coingecko`, `prepayOrderShape`, `erasureMessage`,
+  `alertsMessage` — see each module's header; they post-date the Stage 2a list
+  below and were missing from it.
 - `multicall` — viem-based batched RPC helpers.
 - `decodeContractError` — error normaliser for revert reasons across facets.
 - `chainPlatforms` — `chainId → CoinGecko platform slug` mapping.
@@ -25,10 +35,22 @@ No dev loop — pure library code, imported by consumers.
 ## How to test
 
 ```bash
-pnpm --filter @vaipakam/lib exec tsc --noEmit
+pnpm --filter @vaipakam/lib test
 ```
 
-Per-function unit tests live alongside the source where they exist; the bar is "framework-agnostic, deterministic".
+That is the vitest suite, and it is what CI runs — the `vitest` job in
+`.github/workflows/app-vitest.yml` invokes it as its own step.
+
+**Do not use `pnpm --filter @vaipakam/lib exec tsc --noEmit`**, which this
+section used to recommend: the package has no `tsconfig.json`, so that command
+receives no files, prints the compiler's help text and exits 0. It passes
+unconditionally, including on code that does not compile. Types are checked
+transitively instead, when a consumer that imports the module typechecks
+(`pnpm --filter @vaipakam/app exec tsc -b --noEmit`, and the same for
+`@vaipakam/agent`).
+
+Per-function unit tests live alongside the source where they exist; the bar is
+"framework-agnostic, deterministic".
 
 ## Architecture
 
