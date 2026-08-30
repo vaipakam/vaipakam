@@ -1221,29 +1221,52 @@ function checkAuthorityFormatting(md) {
     problems.push(message);
   };
   for (const line of lines) {
-    // Four spaces or a leading tab is an indented code block to CommonMark
-    // and list continuation inside a list item, and telling those apart is
-    // finding #1. The authority uses fenced blocks and has no line indented
-    // past two spaces, so requiring fences removes the question entirely.
-    if (/^(?: {4,}|\t)\S/.test(line)) {
+    // Four columns of indentation is an indented code block to CommonMark and
+    // list continuation inside a list item, and telling those apart is
+    // finding #1. Measured with the gate's OWN {indentWidth} rather than a
+    // regex (Codex #1990 r1): a tab advances to the next multiple of four, so
+    // `   \t` is width four while matching neither "four spaces" nor "a tab in
+    // column zero". That was the third iteration of this rule's bug reappearing
+    // in its replacement. Sharing the helper means the classifier and the
+    // constraint cannot disagree about what an indent is — they compute it
+    // with the same code.
+    if (line.trim() !== '' && indentWidth(line) >= 4) {
       once(
         'indent',
-        'the authority indents a line by four spaces or a tab; this file may ' +
-          'not use indented code blocks, because an indented line means one ' +
-          'thing at top level and another inside a list item and this gate ' +
-          'does not implement the difference. Use a fenced ``` block, or ' +
-          'indent by no more than two spaces for ordinary continuation',
+        'the authority indents a line by four or more columns (counting a tab ' +
+          'as advancing to the next multiple of four); this file may not use ' +
+          'indented code blocks, because an indented line means one thing at ' +
+          'top level and another inside a list item and this gate does not ' +
+          'implement the difference. Use a fenced ``` block, or indent by no ' +
+          'more than two columns for ordinary continuation',
       );
     }
     // A block quote can carry any other construct inside it, including a
     // fence this scanner would not track (finding #2).
-    if (/^ *>/.test(line)) {
+    //
+    // ANYWHERE ON THE LINE, not behind an enumerated prefix (Codex #1990 r1).
+    // The first version anchored at `^ *>` and so missed `- > quoted`, where
+    // CommonMark renders a quote inside a list item — leaving the constraint
+    // dependent on container context, which is the parsing problem it exists
+    // to remove. Widening the anchor to admit list markers would repeat a
+    // mistake this file has already made three times over: the stamp count
+    // enumerated prefixes at r4, r10 and r11, and the note above it records
+    // the conclusion — "Markdown affords more than an enumeration can hold".
+    //
+    // So the rule does not look at position at all. The character is absent
+    // from the authority entirely (measured: zero occurrences), which makes
+    // the blunt form free, and a blunt form has no container context to be
+    // wrong about.
+    if (line.includes('>')) {
       once(
         'blockquote',
-        'the authority contains a block quote; this file may not use them, ' +
-          'because a quote can open a fenced block that this gate does not ' +
-          'track, and the checker and the reader would then disagree about ' +
-          'where the code stops. Write the passage as ordinary prose',
+        'the authority contains a ">" character; this file may not use one, ' +
+          'because a block quote can open a fenced block that this gate does ' +
+          'not track, and where the quote marker sits — column zero, indented, ' +
+          'or after a list bullet — is exactly the context this gate declines ' +
+          'to parse. The rule is the whole character rather than the marker ' +
+          'position, since enumerating the positions is what kept failing. ' +
+          'Write the passage as ordinary prose',
       );
     }
     // `\|` is a literal pipe and `\\|` is an escaped backslash before a cell
@@ -4571,10 +4594,22 @@ const FORMATTING_CASES = [
   ['a fenced block is the supported way to show code', '```\nx = 1\n```\n', 0],
   ['four-space indent', 'text\n\n    code()\n', 1],
   ['a leading tab', 'text\n\n\tcode()\n', 1],
+  // Codex #1990 r1: a tab advances to the next multiple of four, so one to
+  // three spaces then a tab is width four while being neither of the two
+  // shapes the first version matched. This is the mixed space-tab case that
+  // was already the third iteration of this rule on #1978.
+  ['one space then a tab', 'text\n\n \tcode()\n', 1],
+  ['three spaces then a tab', 'text\n\n   \tcode()\n', 1],
+  ['three spaces alone is continuation, not code', 'text\n\n   still prose\n', 0],
   ['indent inside a fence is still an indent for this rule', '```\n    code()\n```\n', 1],
   ['a block quote', '> quoted\n', 1],
   ['an indented block quote', '  > quoted\n', 1],
   ['a fence opened inside a block quote — finding #2', '> ```\n> x\n> ```\n', 1],
+  // Codex #1990 r1: CommonMark renders a quote inside a list item, and the
+  // anchored first version did not see it. The rule now ignores position.
+  ['a block quote inside a list item', '- > quoted\n', 1],
+  ['a block quote inside a nested list item', '  - > quoted\n', 1],
+  ['a quote marker mid-line still counts', 'prose with a > in it\n', 1],
   ['an escaped pipe in a table cell', '| a \\| b | c |\n', 1],
   ['a double backslash before a separator', '| a \\\\| b |\n', 1],
   ['a pipe with no escape is ordinary', '| a | b |\n', 0],

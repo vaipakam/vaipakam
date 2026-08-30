@@ -198,11 +198,20 @@ document says:
 
 - **No HTML comments.** Every check asks what the rendered document
   claims, and this file may not hide any of itself.
-- **No indented code blocks.** Four spaces means one thing at top level
+- **No indented code blocks.** Four columns means one thing at top level
   and another inside a list item. Use a fenced ```` ``` ```` block; ordinary
-  continuation indents by two spaces, as it does above.
-- **No block quotes.** A quote can open a fence the scanner does not
-  track, which is where the checker and the reader part company.
+  continuation indents by two columns, as it does above. A tab counts as
+  advancing to the next multiple of four, measured with the same helper
+  the gate's own scanner uses, so the two cannot disagree about what an
+  indent is.
+- **No greater-than character at all.** A block quote can open a fence the
+  scanner does not track, and where its marker sits — column zero,
+  indented, or after a list bullet — is precisely the context this gate
+  declines to parse. The rule is therefore the character rather than the
+  marker position: enumerating positions is what kept failing, here and
+  in the stamp count before it, because Markdown affords more prefixes
+  than an enumeration can hold. The character appears nowhere in this
+  file, so the blunt form costs nothing.
 - **No backslash before a table pipe.** A single backslash escapes the
   pipe into a literal character; a doubled one escapes the backslash and
   leaves the pipe as a cell separator. Telling those apart means counting
