@@ -227,10 +227,27 @@ for (const meta of TERMS_VERSION_METAS) {
   }
 }
 
-// (2) No frozen source without a registry entry.
+// (2) Every file the RUNTIME GLOB would bundle must be an exact
+// registered archive (#2010 round 6 P2): `TermsPage`'s
+// `import.meta.glob('./terms/v*.md')` eagerly embeds anything
+// matching `v*.md` — so a draft parked here as `v2-draft.md` would
+// ship unpublished Terms text inside the publicly downloadable page
+// chunk while a `^v\d+\.md$`-only orphan check never looked at it
+// (and the CI base-diff step, whose pathspec is the same `v*.md`,
+// would then freeze the draft against cleanup). Reject the whole
+// glob surface: canonical-named files must be registered, and any
+// other `v*.md` name must not exist at all.
 const registered = new Set(TERMS_VERSION_METAS.map((m) => `v${m.version}.md`));
 for (const name of readdirSync(frozenDir)) {
-  if (/^v\d+\.md$/.test(name) && !registered.has(name)) {
+  if (!(name.startsWith('v') && name.endsWith('.md'))) continue; // outside the glob
+  if (!/^v\d+\.md$/.test(name)) {
+    fail(
+      `${name} in ${frozenDir} matches the page's v*.md runtime glob but is ` +
+        `not a canonical v<N>.md archive name — Vite would bundle it into the ` +
+        `public Terms chunk, and the CI immutability step would then freeze ` +
+        `it. Drafts do not belong in this directory; rename or remove it`,
+    );
+  } else if (!registered.has(name)) {
     fail(
       `${name} exists in ${frozenDir} but has no versions.ts entry — ` +
         `either register it or remove it`,
