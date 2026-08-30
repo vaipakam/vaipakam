@@ -36,8 +36,75 @@ const ADDRESS_RE = /0[xX][a-fA-F0-9]{40}(?![a-fA-F0-9])/g;
  *  public report, not just the wallet row. Applied to the finished
  *  body/title so future fields can't reintroduce a leak; exported so
  *  the drawer's ON-SCREEN error row honours the same contract. */
+const shortenMatch = (m: string): string => `${m.slice(0, 6)}…${m.slice(-4)}`;
+
+/**
+ * Decode percent-escapes while remembering where each decoded character
+ * came from (#2024).
+ *
+ * `ctx.path` is `pathname + search` taken raw from the browser, and
+ * `location.search` does NOT decode escapes — so a deep link carrying
+ * `?wallet=%30%78%31…` presents no literal `0x…` to the scrubber and the
+ * address reaches GitHub reversibly. Decoding for the SEARCH while keeping
+ * an index map means the redaction can be applied back to the original
+ * span, so the report still shows the URL as it actually was, minus the
+ * address. Decoding the whole string instead would silently rewrite text a
+ * reader may need to see verbatim.
+ *
+ * Deliberately single-byte and ASCII-only: an address is ASCII, so there is
+ * no reason to reassemble multi-byte UTF-8 here. A `%C3%A9` pair decodes to
+ * two characters that match nothing and are mapped back individually, which
+ * is harmless. `decodeURIComponent` is not used at all — it throws on a
+ * malformed escape (`%zz`, a trailing `%`), and this module's standing rule
+ * is that a diagnostics helper must never become a crash source.
+ */
+function decodeWithMap(text: string): { decoded: string; map: number[] } {
+  let decoded = '';
+  const map: number[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const isEscape = text[i] === '%' && /^[0-9a-fA-F]{2}$/.test(text.slice(i + 1, i + 3));
+    if (isEscape) {
+      decoded += String.fromCharCode(parseInt(text.slice(i + 1, i + 3), 16));
+      map.push(i);
+      i += 3;
+    } else {
+      decoded += text[i];
+      map.push(i);
+      i += 1;
+    }
+  }
+  // Sentinel so a match ending at the last character can resolve its end.
+  map.push(text.length);
+  return { decoded, map };
+}
+
+/** Scrub any full address ANYWHERE in report text — crash messages,
+ *  component stacks, and deep-link paths routinely embed the
+ *  connected account, and the redaction contract covers the whole
+ *  public report, not just the wallet row. Applied to the finished
+ *  body/title so future fields can't reintroduce a leak; exported so
+ *  the drawer's ON-SCREEN error row honours the same contract. */
 export function redactText(text: string): string {
-  return text.replace(ADDRESS_RE, (m) => `${m.slice(0, 6)}…${m.slice(-4)}`);
+  const plain = text.replace(ADDRESS_RE, shortenMatch);
+  // Percent-escapes are the only way an address hides from the pass above,
+  // so everything without one is finished here (#2024).
+  if (!plain.includes('%')) return plain;
+  const { decoded, map } = decodeWithMap(plain);
+  ADDRESS_RE.lastIndex = 0;
+  let out = '';
+  let cursor = 0;
+  for (const m of decoded.matchAll(ADDRESS_RE)) {
+    const from = map[m.index];
+    const to = map[m.index + m[0].length];
+    // A match already redacted by the plain pass cannot appear here, so any
+    // hit is one that was encoded; splice the ORIGINAL span so the rest of
+    // the text keeps its exact spelling.
+    if (from === undefined || to === undefined || from < cursor) continue;
+    out += plain.slice(cursor, from) + shortenMatch(m[0]);
+    cursor = to;
+  }
+  return out + plain.slice(cursor);
 }
 
 /** Redact FIRST, then cap: truncation that cuts through an address

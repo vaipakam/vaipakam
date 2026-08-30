@@ -1692,6 +1692,17 @@ Its intended behaviour, as the test oracle for this surface:
   length-capped, and nothing else about the device or browsing is
   included. When a page crash is caught by the app's recovery card,
   the error is recorded so a subsequent report carries it.
+- The address redaction should hold however the address is spelled in
+  the text being redacted, not only when it is written plainly. A page
+  address is carried into a report as the browser reports it, and a
+  browser leaves percent-escapes in a query string undecoded — so an
+  address that arrives escaped must still be shortened, since a reader
+  of the report can recover it with one decode. Redaction that a link's
+  encoding can step around is not redaction; the promise is about what
+  the recipient can learn, not about which spelling the matcher happens
+  to recognise. Text the redaction does not need to change should reach
+  the report spelled exactly as it was, since a support reader may need
+  the link as the user actually had it.
 - The same Support panel can send a message DIRECTLY to the team: the
   user writes what happened in their own words, may leave an email
   for a reply (optional — and its absence never blocks the send),
