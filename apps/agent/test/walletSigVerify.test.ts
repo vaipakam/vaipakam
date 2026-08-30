@@ -8,12 +8,13 @@
  * cannot-check — never bleed into each other: a Worker that cannot
  * reach a chain must not call a signature INVALID.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { privateKeyToAccount } from 'viem/accounts';
 import type { Env } from '../src/env';
 import {
   MAX_SIGNATURE_BYTES,
   isValidSignatureShape,
+  verifyOnChain,
   verifyWalletSignature,
   type ChainSigChecker,
 } from '../src/walletSigVerify';
@@ -267,5 +268,92 @@ describe('verifyWalletSignature', () => {
         oneDownOneNo,
       ),
     ).toEqual({ ok: false, reason: 'mismatch' });
+  });
+});
+
+describe('verifyOnChain (the real checker, stubbed JSON-RPC)', () => {
+  // #2013 rounds 1–2 P1: this primitive was beaten twice in review —
+  // first viem's verifyMessage swallowing transport failures into
+  // `false`, then a liveness probe defeated by an RPC that 429s
+  // eth_call while serving eth_chainId. It now owns the verification
+  // call, so these tests drive it over a stubbed JSON-RPC transport
+  // and pin every answer class.
+  const CHAIN_HEX = '0x14a34'; // 84532
+  const YES_WORD = `0x${'0'.repeat(63)}1`;
+  const NO_WORD = `0x${'0'.repeat(64)}`;
+
+  function stubRpc(onCall: () => Response | { result: string }) {
+    const fetchStub = async (_url: unknown, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body)) as {
+        id: number;
+        method: string;
+      };
+      if (body.method === 'eth_chainId') {
+        return new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: body.id, result: CHAIN_HEX }),
+          { status: 200 },
+        );
+      }
+      if (body.method === 'eth_call') {
+        const r = onCall();
+        if (r instanceof Response) return r;
+        return new Response(
+          JSON.stringify({ jsonrpc: '2.0', id: body.id, result: r.result }),
+          { status: 200 },
+        );
+      }
+      throw new Error(`unexpected method ${body.method}`);
+    };
+    vi.stubGlobal('fetch', fetchStub);
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const SIG = `0x${'ab'.repeat(700)}` as `0x${string}`;
+
+  it('accepts a validator YES and denies a validator NO', async () => {
+    stubRpc(() => ({ result: YES_WORD }));
+    await expect(
+      verifyOnChain('http://rpc.test', 84532, ACCOUNT_A.address, MESSAGE, SIG),
+    ).resolves.toBe(true);
+    stubRpc(() => ({ result: NO_WORD }));
+    await expect(
+      verifyOnChain('http://rpc.test', 84532, ACCOUNT_A.address, MESSAGE, SIG),
+    ).resolves.toBe(false);
+  });
+
+  it('throws when the RPC serves a DIFFERENT chain than configured', async () => {
+    stubRpc(() => ({ result: YES_WORD }));
+    await expect(
+      verifyOnChain('http://rpc.test', 1, ACCOUNT_A.address, MESSAGE, SIG),
+    ).rejects.toThrow('different chain');
+  });
+
+  it('an eth_call the RPC REFUSES (429) throws — never a definitive no', async () => {
+    // The exact reproduction that beat the liveness-probe design:
+    // eth_chainId answered, eth_call rate-limited.
+    stubRpc(() => new Response('rate limited', { status: 429 }));
+    await expect(
+      verifyOnChain('http://rpc.test', 84532, ACCOUNT_A.address, MESSAGE, SIG),
+    ).rejects.toThrow();
+  });
+
+  it('a genuine execution revert is a definitive NO', async () => {
+    stubRpc(
+      () =>
+        new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: 2,
+            error: { code: 3, message: 'execution reverted' },
+          }),
+          { status: 200 },
+        ),
+    );
+    await expect(
+      verifyOnChain('http://rpc.test', 84532, ACCOUNT_A.address, MESSAGE, SIG),
+    ).resolves.toBe(false);
   });
 });

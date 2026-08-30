@@ -48,9 +48,15 @@
  */
 
 import {
+  BaseError,
+  ExecutionRevertedError,
   createPublicClient,
+  encodeDeployData,
+  hashMessage,
   http,
   recoverMessageAddress,
+  universalSignatureValidatorAbi,
+  universalSignatureValidatorByteCode,
   type Hex,
 } from 'viem';
 import { getChainConfigs, type Env } from './env';
@@ -124,43 +130,83 @@ export function chainVerifyGate(
 /**
  * The chain-consulting primitive, injectable for tests (the same
  * pattern as `AdminVerifier` in diagAdminAuth.ts): given a chain's
- * RPC url, does the account at `wallet` validate `signature` over
- * `message`? Throws on transport failure — the caller treats a throw
- * as "no answer from this chain", never as a no.
+ * RPC url and the chain id it is SUPPOSED to serve, does the account
+ * at `wallet` validate `signature` over `message`? Throws on
+ * transport failure — the caller treats a throw as "no answer from
+ * this chain", never as a no.
  */
 export type ChainSigChecker = (
   rpcUrl: string,
+  expectedChainId: number,
   wallet: `0x${string}`,
   message: string,
   signature: Hex,
 ) => Promise<boolean>;
 
-/** Real checker: viem's `verifyMessage` public action — ERC-6492
- *  aware (deployless verification for counterfactual accounts),
- *  falling through to ERC-1271 and plain ECDSA.
+/** Per-RPC-call budget. Deliberately BELOW the frontends' request
+ *  deadlines (#2013 round 2 P2 — the alerts client aborts its POST
+ *  at 6s, `apps/app/src/data/alerts.ts`): a verification that
+ *  succeeds after the browser gave up would let the Worker complete
+ *  a link/unlink/mute while the UI reports failure, leaving local
+ *  state opposite to the server's. Two calls at this budget with no
+ *  retries keep the single-chain worst case ≈5s. */
+const RPC_CALL_TIMEOUT_MS = 2500;
+
+/**
+ * Real checker (#2013 rounds 1–2 P1 hardened): this Worker OWNS the
+ * verification `eth_call` instead of trusting viem's `verifyMessage`
+ * boolean. viem's 6492 path converts a failed `eth_call` — wrapped
+ * transport failures, rate limits included — into `false`, which
+ * turned an RPC outage into a false "signature does not match"; a
+ * liveness probe on another method was tried and beaten by review
+ * with an RPC that 429s `eth_call` while serving `eth_chainId`. Here
+ * the deployless universal-validator call is made directly, so the
+ * verification call's OWN failure reaches us: only a genuine
+ * on-chain revert (some validator wallets deny by reverting) or a
+ * clean boolean counts as an answer; every other failure — HTTP
+ * errors, rate limits, timeouts — throws to the caller's no-answer
+ * handling.
  *
- *  A bare `false` from it is NOT yet a verdict (#2013 round 1 P1,
- *  reproduced by review against an unreachable transport): viem's
- *  6492 path converts a failed `eth_call` — wrapped TRANSPORT
- *  failures included — into a verification failure, which would turn
- *  an RPC outage into a false "signature does not match". So a
- *  `false` is trusted only after a liveness probe shows the
- *  transport can answer at all; a probe that throws routes this
- *  chain into the caller's no-answer handling instead. Residual: a
- *  transport that failed the verify call yet answers the probe an
- *  instant later still reads as a deny — a race this cheap probe
- *  cannot fully close, bounded by the caller's other chains. */
+ * The endpoint must also PROVE it serves the expected chain before
+ * either answer counts (#2013 round 2 P2): a crossed RPC secret or a
+ * provider misrouting to another network would otherwise let a
+ * same-address contract on the wrong chain confirm — or deny — for
+ * the chain the request named.
+ */
 export const verifyOnChain: ChainSigChecker = async (
   rpcUrl,
+  expectedChainId,
   wallet,
   message,
   signature,
 ) => {
-  const client = createPublicClient({ transport: http(rpcUrl) });
-  const ok = await client.verifyMessage({ address: wallet, message, signature });
-  if (ok) return true;
-  await client.getChainId();
-  return false;
+  const client = createPublicClient({
+    transport: http(rpcUrl, { timeout: RPC_CALL_TIMEOUT_MS, retryCount: 0 }),
+  });
+  if ((await client.getChainId()) !== expectedChainId) {
+    throw new Error('rpc endpoint serves a different chain than configured');
+  }
+  const data = encodeDeployData({
+    abi: universalSignatureValidatorAbi,
+    bytecode: universalSignatureValidatorByteCode,
+    args: [wallet, hashMessage(message), signature],
+  });
+  try {
+    const { data: result } = await client.call({ data });
+    return result !== undefined && BigInt(result) === 1n;
+  } catch (err) {
+    // A genuine execution revert is the validator's (or a quirky
+    // 1271 wallet's) way of saying no — a definitive answer. Any
+    // other failure is the transport failing US, not the signature
+    // failing verification.
+    if (
+      err instanceof BaseError &&
+      err.walk((e) => e instanceof ExecutionRevertedError)
+    ) {
+      return false;
+    }
+    throw err;
+  }
 };
 
 /**
@@ -225,11 +271,13 @@ export async function verifyWalletSignature(
   let sawDefinitiveNo = false;
   for (const chain of chains) {
     try {
-      if (await checker(chain.rpc, address, message, sig)) return { ok: true };
+      if (await checker(chain.rpc, chain.id, address, message, sig)) {
+        return { ok: true };
+      }
       sawDefinitiveNo = true;
     } catch {
-      // RPC down or transient — no answer from this chain; try the
-      // next. A throw is never treated as a "no".
+      // RPC down, transient, or serving the wrong chain — no answer
+      // from this chain; try the next. A throw is never a "no".
     }
   }
   // A deny is definitive only for the chains actually consulted:
