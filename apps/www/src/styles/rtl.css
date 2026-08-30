@@ -111,9 +111,11 @@
 
 /* ─── Tooltip / popover alignment ───────────────────────────────────
  * Tooltips that anchor on a left edge should anchor on the right
- * edge in RTL, and vice versa. The InfoTip portal-renders bubbles
- * with absolute positioning computed in JS — those re-clamp to the
- * viewport on each open and so stay correct without a CSS rule.
+ * edge in RTL, and vice versa. `<HoverTip>` portal-renders its bubble
+ * with fixed positioning computed in JS — that re-clamps to the
+ * viewport on each open and so stays correct without a CSS rule. (The
+ * same was true of `<InfoTip>`, which this note used to name; it lived
+ * in `packages/ui` and was retired in #1963.)
  * The CSS-driven `data-tooltip-placement` variants need explicit
  * mirroring here. */
 [dir="rtl"] [data-tooltip-placement="below-start"]::after {

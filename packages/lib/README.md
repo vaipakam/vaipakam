@@ -16,7 +16,7 @@ Current scope (Stage 2a of the source-tree refactor):
 - `canonicalAssets` — per-chain ERC-20 allow-lists.
 - `crossDomainPref` — parent-domain cookie helper for preference sync across the two surfaces. **Currently LANGUAGE-ONLY in practice:** the retired `apps/defi` also synced the theme through it, but `apps/app` does not — its `ThemeContext` and its boot script read and write only the app origin's `localStorage` and ignore the shared cookie, so a theme chosen on the marketing site does not follow the user into the connected app. That is an unported behaviour from #1854, not a design choice; the helper itself still supports both.
 
-**Non-goals:** anything that needs React (use `packages/ui`), anything that needs Vite env vars (stays in the consumer), anything contract-specific (use `packages/contracts`). Two candidate modules (`format` with i18n, `journeyLog` with contracts/config) are deferred until their Vite-coupled deps are extracted.
+**Non-goals:** anything that needs React (there is no shared React package — `packages/ui` was retired in #1963 — so it belongs in the consuming app), anything that needs Vite env vars (stays in the consumer), anything contract-specific (use `packages/contracts`). Two candidate modules (`format` with i18n, `journeyLog` with contracts/config) are deferred until their Vite-coupled deps are extracted.
 
 ## How to run
 
@@ -42,5 +42,6 @@ None — package is framework-agnostic by design.
 ## Related
 
 - `packages/contracts` — for ABI / deployment data.
-- `packages/ui` — for React-coupled shared primitives (sister package; this one is React-free).
 - Every consumer under `apps/*`.
+
+(There is no longer a sister React package: `packages/ui` was retired in #1963. This package stays React-free regardless — that was never a consequence of the sister package existing.)

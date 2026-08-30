@@ -23,10 +23,11 @@ import { createPortal } from 'react-dom';
  * `overflow-x: auto` with `overflow-y: visible` resolves both axes
  * to `auto`, so the pseudo-element can't escape the rectangle.
  *
- * The fix mirrors `<InfoTip>`'s portal trick: render the bubble
- * into `document.body`, position it relative to the viewport via
- * `position: fixed` with JS-computed coordinates from the trigger's
- * bounding rect. Free of every clipping ancestor.
+ * The fix is the portal trick taken from `<InfoTip>` in the shared
+ * `packages/ui` (RETIRED in #1963 — prior art, not a file to open):
+ * render the bubble into `document.body`, position it relative to the
+ * viewport via `position: fixed` with JS-computed coordinates from the
+ * trigger's bounding rect. Free of every clipping ancestor.
  *
  * Usage:
  *   <HoverTip text="One short sentence">
@@ -197,9 +198,10 @@ export function HoverTip({ text, children, placement = 'above' }: HoverTipProps)
               pointerEvents: 'none',
               opacity: coords ? 1 : 0,
               transition: 'opacity 0.15s ease',
-              // Same z-index tier as `<InfoTip>`'s bubble (see
-              // global.css comment "Above modals (z-index 1100),
-              // drawers (1200), sticky topbar"). The Diagnostics
+              // Same z-index tier the retired `<InfoTip>` bubble used
+              // (#1963); the rationale survives in the global.css
+              // comment "Above modals (z-index 1100),
+              // drawers (1200), sticky topbar". The Diagnostics
               // drawer sits at 1001, so the bubble must outrank it
               // or the tooltip renders behind the drawer surface.
               zIndex: 5000,
