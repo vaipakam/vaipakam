@@ -38,7 +38,24 @@
  * liquidation instead of total silence. Raw bands are editable only
  * under the advanced-mode reveal.
  */
+import {
+  buildDueDateOptOutMessage,
+  buildTelegramLinkMessage,
+  buildTelegramTestMessage,
+  buildTelegramUnlinkMessage,
+} from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
+
+/* The four signed messages come from `@vaipakam/lib/alertsMessage`
+ * (#2014) — ONE builder per action, imported by both this client and
+ * the agent Worker, because the Worker reconstructs the exact bytes
+ * to recover the signer and a drifted character rejects every
+ * request. They used to be hand-copied here alongside the agent's,
+ * held identical only by comments saying they must be; the erasure
+ * family (`@vaipakam/lib/erasureMessage`) had already established
+ * the fix. Deliberately NOT re-exported from here — nothing in the
+ * app imports a builder directly, and a pass-through export is one
+ * more place a future consumer could bind to instead of the lib. */
 
 const TIMEOUT_MS = 6_000;
 
@@ -227,31 +244,6 @@ async function post(path: string, body: unknown): Promise<PostResult> {
   }
 }
 
-/**
- * The mute counterpart of the link/unlink messages — MUST stay
- * byte-identical to `buildDueDateOptOutMessage` in
- * `apps/agent/src/linkAuth.ts`. Signed only when the user switches
- * the due-date reminder OFF: silencing a warning lane needs proof
- * the request comes from the wallet's owner.
- */
-export function buildDueDateOptOutMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Mute due-date payment reminders',
-    '',
-    'I request that payment due-date reminders for the wallet below',
-    'be switched off. Signing this message proves ownership of the',
-    'wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
 export interface SaveAlertPrefsOptions {
   /** True ONLY when this save is the user changing the due-date
    *  toggle. Otherwise the field is omitted from the body entirely —
@@ -365,30 +357,6 @@ export interface TelegramLink {
   botUrl: string | null;
 }
 
-/**
- * The exact message signed to authorise a Telegram link. MUST stay
- * byte-identical to `buildTelegramLinkMessage` in
- * `apps/agent/src/linkAuth.ts` — the agent reconstructs it verbatim
- * and recovers the signer; any drift rejects every link request.
- */
-export function buildTelegramLinkMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Link Telegram alerts',
-    '',
-    'I authorise Telegram alert delivery for the wallet below to the',
-    'chat that completes this link code. Signing this message proves',
-    'ownership of the wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
 /** Start the Telegram handshake: the wallet signs a free ownership
  *  proof (no gas, no transaction), then the agent issues a one-time
  *  code the user sends to the bot (deep link when configured). */
@@ -414,54 +382,6 @@ export async function issueTelegramLink(
   }
   const botUrl = res.data?.bot_url;
   return { code, botUrl: typeof botUrl === 'string' ? botUrl : null };
-}
-
-/**
- * The unlink counterpart of {@link buildTelegramLinkMessage} — MUST
- * stay byte-identical to `buildTelegramUnlinkMessage` in
- * `apps/agent/src/linkAuth.ts`. Deliberately different wording from
- * the link message so one signature can never authorise the other.
- */
-export function buildTelegramUnlinkMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Unlink Telegram alerts',
-    '',
-    'I request that Telegram alert delivery for the wallet below be',
-    'disconnected. Signing this message proves ownership of the',
-    'wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
-/**
- * The test-alert counterpart (UX-012) — MUST stay byte-identical to
- * `buildTelegramTestMessage` in `apps/agent/src/linkAuth.ts`. Distinct
- * wording so one signature can never authorise another action.
- */
-export function buildTelegramTestMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Send a test alert',
-    '',
-    'I request one test alert be sent to the Telegram chat linked to',
-    'the wallet below, to confirm delivery works. Signing this message',
-    'proves ownership of the wallet. It is not a transaction and costs',
-    'no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
 }
 
 /** Result of a test-alert round-trip (UX-012). `sent` proves delivery
