@@ -26,12 +26,19 @@ browser's session storage. It is a single slot, not a running log of
 your activity, it is not keyed to your wallet, and it is discarded when
 you close the tab. It never leaves your device on its own.
 
-The Diagnostics drawer can build a support report from it: a GitHub
-issue, pre-filled and opened in a new tab. **Opening it sends those
-details to GitHub.** They travel inside the link, so they reach GitHub
-at the moment the form opens — whether or not you go on to submit the
-issue, and whether or not you close the tab. What you control is
-whether an issue is filed, not whether GitHub receives the details.
+The Diagnostics drawer can build a support report: a GitHub issue,
+pre-filled and opened in a new tab. **Opening it sends the report to
+GitHub.** It travels inside the link, so it reaches GitHub at the
+moment the form opens — whether or not you go on to submit the issue,
+and whether or not you close the tab. What you control is whether an
+issue is filed, not whether GitHub receives it.
+
+The report is more than the stored error, and it is sent even when
+there is no stored error at all. It always carries: the page you are
+on, the network, your wallet address shortened to `0x1234…abcd`, your
+blockchain-connection status, your market-data cache status, and the
+app build. When a stored error exists, its time, page, message and —
+where there is one — component trace are appended.
 
 If you want to see it all first, do it before opening the link — not
 after, since by then it has been sent. The drawer's own summary is
@@ -60,7 +67,9 @@ path is deliberate and requires your action each time. And it does not
 make the description below obsolete: it governs records captured while
 automatic capture was running, and it must be accurate again before
 automatic capture is ever reinstated. Where such a record exists it
-carries: the redacted wallet (`0x…abcd`), the
+carries: a per-event identifier (a random UUID, which support can use
+to look the record up — it is stored with the record but is not put
+into any GitHub report), the redacted wallet (`0x…abcd`), the
 error type / name / selector and the technical error message
 (truncated, and free of anything you typed), which screen / flow /
 step you were in, your chain id, interface locale, theme, viewport
@@ -180,7 +189,10 @@ are only meaningful to the extent we hold data about you.
   Data Rights page. It exports the app's storage for that site plus the
   small amount of data belonging to the tab you run it from — a little
   is per-tab, so download from each open tab if you want the complete
-  picture. What it exports is browser storage, not a wallet-keyed
+  picture. Like the erasure below, it does not reach your
+  wallet-connection state, which the wallet-connection library keeps
+  under its own name — so a connected user's export does not contain
+  it. What it exports is browser storage, not a wallet-keyed
   profile: we do not assemble one. Note before you share the file: it
   is not purely a copy of storage. It also records when it was made,
   the site it was made on, and your browser's user-agent string, which
@@ -244,8 +256,10 @@ inherently handle.
   no error records at all (see "Error records on our servers"). Any
   record that does exist, whether captured while automatic capture ran
   or by our own operators exercising the endpoint's health check, is
-  pruned 90 days after its capture and can be erased sooner on your
-  signed request.
+  pruned 90 days after its capture. A signed erasure request reaches
+  the records tied to your wallet; a record captured with no wallet
+  connected — including the operators' own health check — is not tied
+  to anyone and waits for that 90-day prune.
 - Alert subscriptions: unlinking removes the Telegram chat
   connection immediately; alert preferences and delivery dedupe
   records (which carry no Telegram identity) are kept so re-linking
