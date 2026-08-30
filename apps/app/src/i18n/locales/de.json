@@ -88,6 +88,10 @@
       "activity": {
         "title": "Aktivität — Vaipakam"
       },
+      "dataRights": {
+        "title": "Ihre Daten — Vaipakam",
+        "description": "Laden Sie die Daten herunter, die die Vaipakam-App in diesem Browser speichert, oder löschen Sie sie."
+      },
       "settings": {
         "title": "Einstellungen — Vaipakam"
       },
@@ -191,6 +195,53 @@
       "phasePermit": "Berechtigung signieren… ({{c}} von {{t}}) — kostenlos, kein Gas",
       "phaseSend": "Einreichen… ({{c}} von {{t}})"
     },
+    "dataRights": {
+      "title": "Ihre Daten",
+      "subtitle": "Was diese App in Ihrem Browser speichert und wie Sie eine Kopie erhalten oder sie löschen.",
+      "downloadTitle": "Eine Kopie herunterladen",
+      "downloadBody": "Speichert alles, was diese App in diesem Browser abgelegt hat, in einer einzigen Datei zum Aufbewahren oder Nachlesen: Ihre Anzeigeeinstellungen, Ihre Alarmeinstellungen, welche Benachrichtigungen Sie gesehen haben, und Markierungen für Begonnenes, das Sie nicht abgeschlossen haben.",
+      "downloadButton": "Meine Daten herunterladen",
+      "downloadDone": "Gespeichert",
+      "eraseTitle": "Aus diesem Browser löschen",
+      "eraseBody": "Entfernt alles von diesem Gerät. Ihre Anzeigeeinstellungen kehren zu den Standardwerten zurück, und alles Halbfertige verliert seine lokale Markierung.",
+      "eraseButton": "Meine Daten löschen",
+      "eraseConfirm": "Ja, löschen",
+      "eraseCancel": "Abbrechen",
+      "eraseConfirmPrompt": "Das lässt sich nicht rückgängig machen. Laden Sie vorher eine Kopie herunter, wenn Sie eine behalten möchten.",
+      "eraseDone": "{{count}} gespeicherte Einträge wurden gelöscht. Ihre übrigen geöffneten Tabs wurden ebenfalls aufgefordert, ihre eigenen zu löschen.",
+      "eraseNothing": "In diesem Browser war nichts gespeichert, das gelöscht werden könnte.",
+      "erasePartial": "{{removed}} Einträge wurden gelöscht, {{left}} konnten jedoch nicht entfernt werden. Das Löschen der Websitedaten über die Einstellungen Ihres Browsers entfernt den Rest.",
+      "eraseBlocked": "Dieser Browser hat der App nicht erlaubt, ihren Speicher zu leeren, daher wurde nichts entfernt. Private Fenster und strenge Datenschutzeinstellungen können das bewirken — das Löschen der Websitedaten über die Einstellungen Ihres Browsers funktioniert.",
+      "holdingTitle": "Was derzeit gespeichert ist",
+      "holdingCount": "{{count}} Einträge",
+      "holdingNone": "Derzeit ist in diesem Browser nichts gespeichert.",
+      "holdingUnreadable": "Dieser Browser lässt die App ihren eigenen Speicher nicht lesen, daher können wir Ihnen nicht zeigen, was dort liegt. Private Fenster und strenge Datenschutzeinstellungen bewirken das. Das Löschen der Websitedaten über die Einstellungen Ihres Browsers entfernt es dennoch.",
+      "scopeTitle": "Was hiervon nicht erfasst wird",
+      "scopeChain": "Alles auf der Blockchain. Die von Ihnen signierten Transaktionen liegen dort, nicht in Ihrem Browser, und sind daher nicht in diesem Download enthalten — sie sind jedoch öffentlich, und Sie können sie selbst in jedem Block-Explorer nachschlagen. Was niemand kann, Vaipakam eingeschlossen, ist sie zu löschen. Ihre Wallet-Adresse ist die eine Ausnahme: Wo Sie Einstellungen pro Wallet gespeichert haben, erscheint sie in den gespeicherten Schlüsselnamen und ist damit in den Daten Ihres Browsers und im Download enthalten — das Löschen hier entfernt nur diese lokalen Kopien, niemals etwas auf der Chain.",
+      "scopeAlerts": "Benachrichtigungen. Wenn Sie Telegram verknüpft haben, liegt diese Verbindung beim Benachrichtigungsdienst, nicht in Ihrem Browser. Das Aufheben der Verknüpfung in den Einstellungen entfernt die Telegram-Verbindung selbst; Ihre Benachrichtigungseinstellungen bleiben für eine erneute Verknüpfung bei diesem Dienst. Schreiben Sie an support@vaipakam.com, um auch diese entfernen zu lassen.",
+      "scopeDiagnostics": "Fehlerberichte, die unser Support-Dienst aufbewahrt. Sie sind von Ihrem Browser getrennt, das lokale Löschen oben erreicht sie also nicht — der Abschnitt „Fehlerberichte\" auf dieser Seite sendet für sie eine signierte Löschanfrage, und eine E-Mail an support@vaipakam.com funktioniert ebenfalls.",
+      "scopeTabs": "Andere Tabs, was den Download betrifft. Ein kleiner Teil der Daten gehört jedem Tab für sich, daher deckt ein Download den Tab ab, in dem Sie sich befinden — das Löschen erreicht die anderen trotzdem. Laden Sie aus jedem Tab herunter, wenn Sie das vollständige Bild möchten.",
+      "scopeSite": "Die Hauptseite vaipakam.com. Sie führt einen eigenen, getrennten Speicher mit eigenen Bedienelementen auf jener Seite.",
+      "scopeCookies": "Zwei Einstellungs-Cookies auf der gemeinsamen Domain liegen in diesem Browser, daher enthält der Download sie und ein Löschen entfernt sie. Eines ist Ihre Sprache, die beide Seiten lesen — so folgt Ihnen eine auf einer Seite gewählte Sprache zur anderen. Das andere ist das eigene Theme der Hauptseite; diese App verwendet es nie, und Ihr Theme hier wird separat gespeichert, nicht geteilt. Löschen setzt diese App vollständig zurück, aber nicht vaipakam.com: Die Hauptseite behält eigene Kopien ihrer Einstellungen und stellt sie beim nächsten Besuch wieder her, Cookies eingeschlossen — deren Entfernung ist Sache ihrer eigenen Datenkontrollen.",
+      "diagTitle": "Die vom Support aufbewahrten Fehlerberichte löschen",
+      "diagBody": "Wenn in der App etwas schiefgeht, kann ein Fehlerbericht erfasst und von unserem Support-Dienst aufbewahrt werden, um das Problem zu beheben. Diese Aufzeichnungen liegen bei diesem Dienst, nicht in Ihrem Browser, und Sie können von hier aus die mit Ihrer Wallet verknüpften löschen lassen.",
+      "diagConnect": "Verbinden Sie die Wallet, deren Aufzeichnungen gelöscht werden sollen. Die Anfrage wird mit dieser Wallet signiert — diese Signatur ist der Nachweis für den Dienst, dass die Anfrage wirklich von Ihnen stammt.",
+      "diagNotConfigured": "Dieser Build ist nicht mit dem Support-Dienst verbunden, die signierte Anfrage kann von hier also nicht gesendet werden. Schreiben Sie an support@vaipakam.com, und wir bearbeiten eine Löschanfrage für Ihre Wallet.",
+      "diagEraseButton": "Meine Fehlerberichte löschen",
+      "diagStatusButton": "Auf zurückbehaltene Aufzeichnungen prüfen",
+      "diagBusy": "Warten auf Ihre Wallet…",
+      "diagSignNote": "Der Nachweis, dass die Wallet Ihnen gehört, ist eine kostenlose Signatur — keine Transaktion, und sie kostet kein Gas.",
+      "diagProcessed": "Ihre Löschanfrage wurde verarbeitet.",
+      "diagUniformNote": "Die Bestätigung ist absichtlich für jede Wallet gleich: Sie sagt nicht, ob Aufzeichnungen existierten, sodass sich daraus nichts über Ihre Aufzeichnungen ablesen lässt. Wo das Gesetz die Aufbewahrung bestimmter Aufzeichnungen verlangt, meldet die Prüfung unten das nur, wenn das Gesetz erlaubt, es zu sagen.",
+      "diagStatusClear": "Für diese Wallet werden keine zurückbehaltenen Aufzeichnungen gemeldet.",
+      "diagRetainedLabel": "Der Dienst meldet, dass einige Aufzeichnungen zurückbehalten wurden:",
+      "diagUnavailable": "Der Support-Dienst kann Löschanfragen im Moment nicht verarbeiten. Versuchen Sie es später erneut, oder schreiben Sie an support@vaipakam.com, und wir bearbeiten eine Löschanfrage für Ihre Wallet.",
+      "diagError": "Die Anfrage konnte nicht abgeschlossen werden, und möglicherweise wurde nichts gelöscht. Versuchen Sie es gleich noch einmal.",
+      "diagExpired": "Die signierte Anfrage ist abgelaufen, bevor der Dienst sie angenommen hat – es wurden also keine Einträge geprüft oder gelöscht. Versuchen Sie es erneut und bestätigen Sie die Wallet-Abfrage zügig; tritt dies wiederholt auf, geht möglicherweise die Uhr dieses Geräts falsch.",
+      "diagVerifyUnavailable": "Der Support-Dienst konnte die Signatur Ihrer Wallet gerade nicht überprüfen – das Netzwerk, in dem Ihr Wallet-Konto lebt, war vom Dienst aus nicht erreichbar. Das bedeutet nicht, dass die Signatur falsch war. Versuchen Sie es in Kürze erneut, oder schreiben Sie an support@vaipakam.com und wir bearbeiten eine Löschanfrage für Ihre Wallet.",
+      "diagProcessedChainOnly": "Ihr Löschantrag wurde nur für die Einträge von {{network}} verarbeitet. Die Signatur einer Smart-Account-Wallet wird jeweils nur auf einem Netzwerk geprüft, daher sind auf anderen Netzwerken erfasste Einträge nicht abgedeckt — wechseln Sie auf ein anderes Netzwerk und wiederholen Sie den Antrag dort, oder schreiben Sie an support@vaipakam.com, und wir verarbeiten ihn für Ihre Wallet überall.",
+      "diagProcessedChainUnknown": "Ihr Löschantrag wurde nur für die Einträge eines einzigen Netzwerks verarbeitet — des Netzwerks, das die Signatur Ihrer Wallet geprüft hat. Die Signatur einer Smart-Account-Wallet wird jeweils nur auf einem Netzwerk geprüft, daher sind auf anderen Netzwerken erfasste Einträge nicht abgedeckt — wechseln Sie das Netzwerk und wiederholen Sie den Antrag dort, oder schreiben Sie an support@vaipakam.com, und wir verarbeiten ihn für Ihre Wallet überall."
+    },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."
     },
@@ -218,7 +269,7 @@
       "linked": "Telegram verknüpft — Benachrichtigungen für diese Wallet gehen an Ihren Chat.",
       "unlink": "Verknüpfung lösen",
       "unlinkElsewhereTitle": "Diese Wallet auf einem anderen Gerät verknüpft?",
-      "unlinkElsewhereBody": "Die Telegram-Verknüpfung liegt auf unserem Server, nicht nur in diesem Browser. Trennen Sie sie hier — dadurch stoppen Nachrichten überall.",
+      "unlinkElsewhereBody": "Ihre Telegram-Verknüpfung liegt auf unserem Server, nicht nur in diesem Browser. Trennen Sie sie hier — bei einer gewöhnlichen Wallet stoppt das die Nachrichten überall; die Signatur einer Smart-Account-Wallet stoppt sie für das Netzwerk, das sie benennt.",
       "unlinkElsewhere": "Diese Wallet trennen",
       "unlinked": "Verknüpfung gelöst. Keine Telegram-Nachrichten mehr für diese Wallet.",
       "toggleRepayDue": "Vor Fälligkeit einer Zinszahlung benachrichtigen",
@@ -233,7 +284,8 @@
       "pushEnable": "Push-Zustellung aktivieren",
       "pushEnabled": "Push-Zustellung ist für diese Wallet aktiv.",
       "pushButton": "Push-Kanal öffnen",
-      "loanNudge": "Möchten Sie eine Telegram-Warnung, wenn dieser Kredit riskant wird? Richten Sie Benachrichtigungen in den Einstellungen ein."
+      "loanNudge": "Möchten Sie eine Telegram-Warnung, wenn dieser Kredit riskant wird? Richten Sie Benachrichtigungen in den Einstellungen ein.",
+      "unlinkedChainOnly": "Für {{network}} getrennt. Eine Smart-Account-Wallet wird pro Netzwerk getrennt — ist diese Wallet auf anderen Netzwerken verknüpft, trennen Sie jede dort mit ihrer eigenen Signatur."
     },
     "notifications": {
       "bellLabel": "Benachrichtigungen",
@@ -1873,7 +1925,9 @@
         "vaultUpgradeRequired": "Eine Seite dieses Handels nutzt eine alte Vault-Version und muss sie aktualisieren, bevor gehandelt werden kann. Es wurde nichts gesendet.",
         "selfTrade": "Das ist Ihr eigenes Angebot, Sie können es daher nicht annehmen. Stornieren Sie es stattdessen, wenn Sie es vom Buch nehmen möchten.",
         "unknown": "Das Protokoll nimmt dieses Angebot derzeit nicht an. Es wurde nichts gesendet — aktualisieren und erneut versuchen oder später noch einmal vorbeischauen."
-      }
+      },
+      "termsNotAccepted": "Sie müssen die Bedingungen von Vaipakam annehmen, bevor Sie das tun. Öffnen Sie die Startseite und Sie werden einmalig gefragt – Rückzahlen, Beanspruchen und Abheben funktionieren in beiden Fällen weiter.",
+      "termsCheckUnavailable": "Wir konnten gerade nicht bestätigen, ob die Bedingungen von Vaipakam für Ihre Wallet gelten – warten Sie einen Moment und versuchen Sie es erneut."
     },
     "fees": {
       "borrowerLIF": "Vaipakam berechnet eine Kreditinitialisierungsgebühr von {{pct}} auf den geliehenen Betrag.",
@@ -2242,7 +2296,8 @@
         "vpfiSub": "Optional — Protokollgebühren durch Halten von VPFI reduzieren",
         "activitySub": "Alles, was Ihre Wallet auf Vaipakam getan hat",
         "riskAccessSub": "Lege fest, wie riskant die Assets in deinen Geschäften sein dürfen",
-        "helpSub": "Antworten in einfacher Sprache und Build-Infos"
+        "helpSub": "Antworten in einfacher Sprache und Build-Infos",
+        "dataRightsSub": "Herunterladen oder Löschen dessen, was diese App in Ihrem Browser speichert"
       }
     },
     "common": {
@@ -2272,6 +2327,24 @@
       "copyAria": "Adresse {{address}} kopieren",
       "viewAria": "{{address}} im Block-Explorer anzeigen",
       "copied": "Adresse kopiert"
+    },
+    "legalGate": {
+      "verifying": "Wird geprüft, ob die Bedingungen für Ihre Wallet gelten…",
+      "readErrorTitle": "Bedingungen konnten nicht geprüft werden",
+      "readErrorBody": "Wir konnten das Netzwerk nicht erreichen, um festzustellen, ob Sie die Bedingungen von Vaipakam annehmen müssen. Deshalb bleibt die App geschlossen, statt zu raten. Mit Ihrer Wallet und Ihren Positionen ist alles in Ordnung – versuchen Sie es gleich noch einmal.",
+      "retry": "Erneut versuchen",
+      "loadFailedTitle": "Die Prüfung der Bedingungen konnte nicht geladen werden",
+      "loadFailedBody": "Ein Teil der App wurde nicht geladen, daher können wir nicht feststellen, ob Sie die Bedingungen von Vaipakam annehmen müssen – sie bleibt geschlossen, statt zu raten. Ein Neuladen der Seite behebt das meist. Rückzahlen, Beanspruchen und Abheben funktionieren in beiden Fällen weiter.",
+      "reload": "Seite neu laden",
+      "title": "Bedingungen annehmen, um fortzufahren",
+      "body": "Die Betreiber von Vaipakam haben eine Fassung der Bedingungen in Kraft gesetzt. Die Annahme sendet eine einmalige Transaktion, die festhält, welcher Fassung Sie zugestimmt haben – Ihre Wallet fragt nach einer Bestätigung, und es fällt eine kleine Netzwerkgebühr an. Erneut gefragt werden Sie nur, wenn sich die Bedingungen ändern – oder wenn Sie zu einem anderen Netzwerk wechseln, da jedes Netzwerk seinen eigenen Eintrag führt.",
+      "currentVersion": "Geltende Fassung",
+      "contentHash": "Inhalts-Fingerabdruck",
+      "readTerms": "Bedingungen lesen",
+      "privacyPolicy": "Datenschutzerklärung",
+      "signAccept": "Annehmen und fortfahren",
+      "signing": "Warten auf Ihre Wallet…",
+      "footnote": "Ihre Annahme wird on-chain gegen genau die oben gezeigte Fassung und den Fingerabdruck festgehalten, sodass später überprüfbar bleibt, wozu Sie zugestimmt haben. Rückzahlen, Beanspruchen und Abheben werden dadurch nie blockiert."
     }
   },
   "contractError": {

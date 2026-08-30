@@ -29,6 +29,15 @@
  */
 import type { QueryClient } from '@tanstack/react-query';
 import { bumpClaimVerdictEpoch } from '../data/claimVerdictCache';
+import {
+  applyAcceptancePinFrame,
+  applyAcceptanceReadHint,
+  parseAcceptancePinFrame,
+  parseAcceptanceReadHintFrame,
+  type AcceptancePinFrame,
+  type AcceptanceReadHintFrame,
+} from '../contracts/tosAcceptanceSync';
+import { TOS_QUERY_ROOT } from '../contracts/tosGate';
 
 /** Every root a confirmed own-write may have moved. Kept coarse on
  *  purpose: these refetch `refetchType: 'active'` only, so the cost is
@@ -195,6 +204,76 @@ export function publishReceiptInvalidation(
   }
 }
 
+/**
+ * Publish a mined Terms acceptance to every other tab (#2001). Same
+ * rail, same transport fallback as the invalidation frames, but a
+ * different KIND of message: it carries the acceptance pin itself, not
+ * roots to refetch — a receiving tab refetching against its own
+ * lagging RPC would read `false` with no pin to correct it, which is
+ * why this is not simply a root in `RECEIPT_FLOOR_ROOTS` (the issue
+ * records that rejection). The acting tab has already applied its own
+ * pin and cache write; this frame is for everyone else, and both
+ * transports self-exclude the sender.
+ */
+export function publishAcceptancePin(
+  frame: AcceptancePinFrame | AcceptanceReadHintFrame,
+): void {
+  // The pin frame FIRST, then a legacy roots frame naming the Terms
+  // query root (#2004 round 25 P2). A tab still running the PREVIOUS
+  // build ignores the pin frame by design (no `roots` array), and the
+  // receipt floor deliberately omits this root — so during a rolling
+  // deployment an old tab heard nothing and held its enabled Accept
+  // prompt until its own poll. The roots frame is a plain
+  // invalidation every build understands. The ORDER carries the
+  // safety: the rail delivers in order, so a new-build tab applies
+  // the pin before the invalidation's refetch can land — never the
+  // bare-invalidation race the issue rejected — while an old tab
+  // simply re-reads the chain, the best a build without pins can do.
+  // `legacyTermsHint` marks the frame for NEW receivers to IGNORE
+  // (round 32 P2): a current tab already handles the pin frame, which
+  // schedules its own immediate and delayed reads — letting this
+  // compatibility frame fall through the ordinary roots path stacked
+  // a further immediate-plus-delayed pair on top, up to four Terms
+  // fetches per acceptance per tab. Old receivers check only that
+  // `roots` is an array and ignore unknown fields, so the marker is
+  // invisible to exactly the builds the hint exists for.
+  const legacyHint = { roots: [TOS_QUERY_ROOT], legacyTermsHint: true };
+  const ch = getChannel();
+  if (ch) {
+    try {
+      ch.postMessage(frame);
+      ch.postMessage(legacyHint);
+      return; // delivered — the storage ping would double-deliver
+    } catch {
+      /* channel closed — fall through to the storage ping */
+    }
+  }
+  try {
+    localStorage.setItem(STORAGE_PING_KEY, JSON.stringify(frame));
+    // Removed IMMEDIATELY after dispatch (#2004 review round 1 P2):
+    // unlike the roots frame, this one carries the wallet address, and
+    // a lingering copy is per-wallet data in browser storage that the
+    // Data Rights export would disclose while its note says the
+    // address appears only where the user saved settings. Each storage
+    // MUTATION delivers its own event with its own value snapshot, so
+    // other tabs still receive the set (the removal's null `newValue`
+    // is ignored by every receiver) — and clearing the key also means
+    // the next write always differs, so repeat pings are never
+    // swallowed by the value-must-change rule.
+    localStorage.removeItem(STORAGE_PING_KEY);
+    // The legacy hint takes the same mutation-per-message path; it
+    // carries no wallet address, but clearing keeps the
+    // value-must-change rule satisfied for whatever writes next.
+    localStorage.setItem(
+      STORAGE_PING_KEY,
+      JSON.stringify({ ...legacyHint, at: Date.now() }),
+    );
+    localStorage.removeItem(STORAGE_PING_KEY);
+  } catch {
+    /* storage unavailable (private mode) — nothing else to try */
+  }
+}
+
 /** The shared QueryClient, registered by the app-shell listener so
  *  plain async helpers with no hook context (the ERC-20 approval
  *  helpers) can publish through the same rail. */
@@ -222,7 +301,33 @@ export function listenForReceiptInvalidations(
   queryClient: QueryClient,
 ): () => void {
   sharedClient = queryClient;
-  const apply = (frame: ReceiptFrame | null) => {
+  const apply = (data: unknown) => {
+    // The rail carries two frame kinds. The acceptance pin is checked
+    // first because it is the one with a discriminator; the legacy
+    // invalidation frame is shaped only by its `roots` array, and a
+    // pin frame has none — so an OLD tab receiving a pin frame falls
+    // through its own array check and ignores it, which is what keeps
+    // mixed-version tabs safe during a deploy.
+    const pin = parseAcceptancePinFrame(data);
+    if (pin) {
+      applyAcceptancePinFrame(queryClient, pin);
+      return;
+    }
+    // The non-adoptable read hint (round 35 P1): an acceptance whose
+    // anchor crossed a clock discontinuity is announced without a
+    // window — receivers only read.
+    const hint = parseAcceptanceReadHintFrame(data);
+    if (hint) {
+      applyAcceptanceReadHint(queryClient, hint);
+      return;
+    }
+    // The legacy Terms hint is for PREVIOUS builds only (round 32
+    // P2): this build's pin handler above already scheduled the
+    // authoritative reads, and applying the hint too stacked a second
+    // immediate-plus-delayed pair — and could cancel/restart the
+    // first fetch — for nothing.
+    if ((data as { legacyTermsHint?: unknown } | null)?.legacyTermsHint) return;
+    const frame = data as ReceiptFrame | null;
     if (!frame || !Array.isArray(frame.roots)) return;
     const roots = frame.roots.filter((r): r is string => typeof r === 'string');
     if (roots.length === 0) return;
@@ -234,20 +339,68 @@ export function listenForReceiptInvalidations(
   };
 
   const ch = getChannel();
-  const onMessage = (ev: MessageEvent) => apply(ev.data as ReceiptFrame | null);
+  const onMessage = (ev: MessageEvent) => apply(ev.data);
   ch?.addEventListener('message', onMessage);
 
   const onStorage = (ev: StorageEvent) => {
     if (ev.key !== STORAGE_PING_KEY || !ev.newValue) return;
     try {
-      apply(JSON.parse(ev.newValue) as ReceiptFrame);
+      apply(JSON.parse(ev.newValue));
     } catch {
       /* malformed ping — ignore */
     }
   };
   window.addEventListener('storage', onStorage);
 
+  // Round 27 P2: a tab that was BOOTING when an acceptance broadcast
+  // went out had no listener yet — BroadcastChannel does not queue for
+  // future subscribers, and the storage fallback is skipped when the
+  // channel delivers (and clears its value immediately regardless). If
+  // that tab's INITIAL Terms read then hit a lagging RPC, its cached
+  // refusal stood until the 60-second poll. One delayed re-read at
+  // listener start covers the gap: by the lag-window delay the read
+  // layer serves the acceptance the missed frame was announcing.
+  // Active-only, once per tab boot — a frame is an optimization, the
+  // read is the truth.
+  //
+  // The second invalidation is chained ONLY when the first actually
+  // coalesced with an in-flight fetch (round 28 P2, narrowed by round
+  // 31 P2): with the INITIAL fetch still running and no cached data,
+  // an invalidation joins that same request — TanStack returns the
+  // in-flight promise — so a slow first read issued BEFORE the
+  // acceptance would have satisfied the "re-read" with
+  // pre-acceptance data; awaiting the joined invalidation and then
+  // issuing a second gives a genuinely distinct read. But on the
+  // NORMAL boot, where the initial fetch finished inside the delay,
+  // an unconditional chain forced two full refetches — invalidation
+  // does not consult staleTime — costing six RPC calls where one
+  // recheck was intended. Whether anything is in flight is sampled
+  // immediately before the first invalidation, which is what decides
+  // whether that invalidation could have coalesced at all.
+  const bootRecheck = setTimeout(() => {
+    const termsPredicate = (q: { queryKey: readonly unknown[] }) =>
+      q.queryKey[0] === TOS_QUERY_ROOT;
+    const termsOnly = { refetchType: 'active' as const, predicate: termsPredicate };
+    // Only a DATA-LESS in-flight fetch coalesces (round 32 P2 —
+    // TanStack v5 joins the running promise only when `state.data` is
+    // undefined; with cached data, invalidation's default
+    // cancelRefetch restarts the fetch instead, and an unconditional
+    // chain would re-create the six-request overhead whenever a
+    // background refetch happened to overlap this timer).
+    const wasInFlight = queryClient
+      .getQueryCache()
+      .findAll({ predicate: termsPredicate })
+      .some((q) => q.state.fetchStatus === 'fetching' && q.state.data === undefined);
+    void queryClient
+      .invalidateQueries(termsOnly)
+      .then(() => (wasInFlight ? queryClient.invalidateQueries(termsOnly) : undefined))
+      .catch(() => {
+        /* refetch failures surface through the queries themselves */
+      });
+  }, SECOND_READ_DELAY_MS);
+
   return () => {
+    clearTimeout(bootRecheck);
     ch?.removeEventListener('message', onMessage);
     window.removeEventListener('storage', onStorage);
   };

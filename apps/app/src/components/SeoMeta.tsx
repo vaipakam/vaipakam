@@ -113,6 +113,11 @@ function metaForPath(rawPathname: string): RouteMeta {
     return { ...seo.recover, index: false, follow: false };
   }
   if (pathname === '/faucet') return { ...seo.faucet, index: false };
+  // #1960 review round 1 P2 — without this row the page fell through to
+  // `notFound`, so a working data-rights page announced itself as "Page
+  // not found" in the tab and could carry a stale description from the
+  // previous route. noindex like the other per-user surfaces.
+  if (pathname === '/data-rights') return { ...seo.dataRights, index: false };
   return { ...seo.notFound, index: false };
 }
 

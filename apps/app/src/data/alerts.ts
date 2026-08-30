@@ -38,7 +38,24 @@
  * liquidation instead of total silence. Raw bands are editable only
  * under the advanced-mode reveal.
  */
+import {
+  buildDueDateOptOutMessage,
+  buildTelegramLinkMessage,
+  buildTelegramTestMessage,
+  buildTelegramUnlinkMessage,
+} from '@vaipakam/lib/alertsMessage';
 import { copy } from '../content/copy';
+
+/* The four signed messages come from `@vaipakam/lib/alertsMessage`
+ * (#2014) — ONE builder per action, imported by both this client and
+ * the agent Worker, because the Worker reconstructs the exact bytes
+ * to recover the signer and a drifted character rejects every
+ * request. They used to be hand-copied here alongside the agent's,
+ * held identical only by comments saying they must be; the erasure
+ * family (`@vaipakam/lib/erasureMessage`) had already established
+ * the fix. Deliberately NOT re-exported from here — nothing in the
+ * app imports a builder directly, and a pass-through export is one
+ * more place a future consumer could bind to instead of the lib. */
 
 const TIMEOUT_MS = 6_000;
 
@@ -107,6 +124,58 @@ export const DEFAULT_PREFS: AlertPrefs = {
   ...DEFAULT_BANDS,
 };
 
+/**
+ * The four fields that are OPT-INS — each one a channel or a lane the
+ * user has asked to receive. The HF bands are not among them: they
+ * tune an opt-in already made (the advanced form only appears once
+ * `risky` is on), so changing one neither enrols nor withdraws.
+ */
+const OPT_IN_FLAGS = ['repayDue', 'risky', 'telegramLinked', 'pushEnabled'] as const;
+
+/**
+ * Does this save ADD an opt-in — i.e. is it enrolment (#1961 review
+ * round 9 P1)?
+ *
+ * The Terms gate holds enrolment and never holds an opt-out, so the
+ * question it has to ask about an alerts save is which of the two this
+ * one is. Round 8 answered it by asking whether anything was left
+ * enabled AFTERWARDS, which is not the same question and got it wrong
+ * in the common case: fresh preferences default `repayDue` and `risky`
+ * both on, so a held user switching either one off produced a record
+ * that still had the other on, was read as enrolment, and was refused.
+ * Every user with two lanes enabled was locked out of disabling either
+ * — the gate trapping somebody in a subscription, which is precisely
+ * the shape it exists to avoid.
+ *
+ * So the DIRECTION decides, per field, against what is stored now: a
+ * flag going false → true is enrolment; a flag going true → false, or
+ * a save that flips nothing, is not.
+ *
+ * The baseline is REQUIRED, and that is the honest signature rather
+ * than a convenience (review round 10 P1). An earlier version accepted
+ * `null` and failed closed on it, which read as a guard and was not
+ * one: `loadAlertPrefs` returns `DEFAULT_PREFS` when storage is empty,
+ * so no caller could ever reach that branch. Dead code shaped like
+ * protection is worse than no code, because it answers the question
+ * "what happens when the baseline is unknown" with something that
+ * never runs.
+ *
+ * On a device with no saved record the baseline IS the defaults, both
+ * lanes on, and a held user's first opt-out is judged against them.
+ * Making that case fail closed instead would re-create exactly the
+ * lock-out this function was written to remove, since the untouched
+ * default lane is what would trip it. What USED to remain here — the
+ * whole record travelling with every save, so that first opt-out also
+ * posted the untouched default lane's bands — was closed on the wire
+ * by #2000: bands are sent only on a save that changed the risky lane
+ * (see `SaveAlertPrefsOptions.bandsChanged`), and the agent preserves
+ * stored values on absence, so a defaults-derived save no longer
+ * writes anything the user did not touch.
+ */
+export function addsAlertOptIn(prev: AlertPrefs, next: AlertPrefs): boolean {
+  return OPT_IN_FLAGS.some((flag) => next[flag] && !prev[flag]);
+}
+
 /** The agent re-validates warn > alert > critical > 1.00 and rejects
  *  otherwise — mirror it client-side so the advanced form can explain
  *  instead of surfacing a bare 400. */
@@ -139,46 +208,40 @@ export function storeAlertPrefs(
   }
 }
 
-async function post(path: string, body: unknown): Promise<Response> {
+interface PostResult {
+  ok: boolean;
+  status: number;
+  /** Parsed JSON body, or null when absent/malformed — parsed HERE,
+   *  under the same abort deadline as the request itself (#2013 r5
+   *  P2, the same hazard #2008 fixed in diagErasure): headers can
+   *  arrive within the timeout while the body stalls forever, and a
+   *  `res.json()` back in a caller would then hang with no timer
+   *  left to cut it — the card stuck busy with its controls
+   *  disabled. An abort during the read rejects `json()`, which is
+   *  caught and reads as a malformed body. */
+  data: Record<string, unknown> | null;
+}
+
+async function post(path: string, body: unknown): Promise<PostResult> {
   const origin = agentOrigin();
   if (!origin) throw new Error('alerts backend not configured');
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    return await fetch(`${origin}${path}`, {
+    const res = await fetch(`${origin}${path}`, {
       method: path === '/thresholds' ? 'PUT' : 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
       signal: ctrl.signal,
     });
+    const data = (await res.json().catch(() => null)) as Record<
+      string,
+      unknown
+    > | null;
+    return { ok: res.ok, status: res.status, data };
   } finally {
     clearTimeout(t);
   }
-}
-
-/**
- * The mute counterpart of the link/unlink messages — MUST stay
- * byte-identical to `buildDueDateOptOutMessage` in
- * `apps/agent/src/linkAuth.ts`. Signed only when the user switches
- * the due-date reminder OFF: silencing a warning lane needs proof
- * the request comes from the wallet's owner.
- */
-export function buildDueDateOptOutMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Mute due-date payment reminders',
-    '',
-    'I request that payment due-date reminders for the wallet below',
-    'be switched off. Signing this message proves ownership of the',
-    'wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
 }
 
 export interface SaveAlertPrefsOptions {
@@ -188,6 +251,17 @@ export interface SaveAlertPrefsOptions {
    *  device's defaults can't silently re-enable (or re-disable) an
    *  opt-out made on another device. */
   dueDateChanged?: boolean;
+  /** True ONLY when this save is the user changing the RISKY lane —
+   *  the toggle itself, or the advanced band numbers behind it
+   *  (#2000). The bands are how that lane's state travels (real
+   *  bands = on, floor bands = off), and until #2000 they were sent
+   *  on EVERY save — so a fresh device's default lane state rode
+   *  along with an unrelated change and overwrote an opt-out made
+   *  elsewhere, exactly the failure the due-date flag's omission
+   *  rule already prevented for its own field. Same rule now: absent
+   *  bands mean "no change" and the agent preserves the stored
+   *  values (server defaults only when no record exists at all). */
+  bandsChanged?: boolean;
   /** Wallet signer — required when the save switches the due-date
    *  reminder off (the agent refuses an unsigned opt-out). */
   signMessage?: (message: string) => Promise<string>;
@@ -204,9 +278,14 @@ export async function saveAlertPrefs(
   prefs: AlertPrefs,
   opts: SaveAlertPrefsOptions = {},
 ): Promise<void> {
-  const bands: AlertBands = prefs.risky
-    ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
-    : FLOOR_BANDS;
+  // Bands travel ONLY when this save is the user changing the risky
+  // lane (#2000) — mirroring the due-date field's omission rule. Sent
+  // unconditionally, a fresh device's DEFAULT lane state (defaults on,
+  // real bands) rode along with an unrelated first save and overwrote
+  // a floor-band opt-out made on another device; the client cannot
+  // tell defaults from state, but it can tell exactly which saves
+  // touched the lane, which is the narrower and sufficient signal.
+  const sendBands = Boolean(opts.bandsChanged);
   let optOutProof: { issuedAt: number; signature: string } | null = null;
   if (opts.dueDateChanged && !prefs.repayDue) {
     if (!opts.signMessage) {
@@ -220,12 +299,21 @@ export async function saveAlertPrefs(
       ),
     };
   }
-  const res = await post('/thresholds', {
+  // The lane's CURRENT wire expression — used when this save changed
+  // the lane, and by the rollout shim below.
+  const laneBands: AlertBands = prefs.risky
+    ? { warnHf: prefs.warnHf, alertHf: prefs.alertHf, criticalHf: prefs.criticalHf }
+    : FLOOR_BANDS;
+  const body = (withBands: boolean) => ({
     wallet,
     chain_id: chainId,
-    warn_hf: bands.warnHf,
-    alert_hf: bands.alertHf,
-    critical_hf: bands.criticalHf,
+    ...(withBands
+      ? {
+          warn_hf: laneBands.warnHf,
+          alert_hf: laneBands.alertHf,
+          critical_hf: laneBands.criticalHf,
+        }
+      : {}),
     ...(opts.dueDateChanged
       ? { notify_maturity_approaching: prefs.repayDue }
       : {}),
@@ -233,12 +321,27 @@ export async function saveAlertPrefs(
     // One-way by backend design (COALESCE): only sent when enabling.
     ...(prefs.pushEnabled ? { push_channel: 'subscribed' } : {}),
   });
+  let res = await post('/thresholds', body(sendBands));
+  // Rollout shim (#2005 round 1 P2): the app and the agent deploy
+  // independently, and an app deployed FIRST sends bandless saves to
+  // a parser that still requires all three — every due-date or push
+  // save would 400, a held user unable to mute a reminder being the
+  // worst of it. A bandless save refused as `invalid-payload` is
+  // retried ONCE with the lane's current bands — the pre-#2000 wire,
+  // no worse than every save before this change — so an out-of-order
+  // window degrades to the old behaviour instead of breaking. The
+  // shim never fires against the new agent (which accepts bandless
+  // bodies), costs nothing once both sides are current, and the
+  // deployment order that avoids it entirely (agent first) is stated
+  // in the release note.
+  if (!res.ok && res.status === 400 && !sendBands) {
+    if (res.data?.error === 'invalid-payload') {
+      res = await post('/thresholds', body(true));
+    }
+  }
   if (!res.ok) {
     if (res.status === 503) {
-      const data = (await res.json().catch(() => null)) as {
-        error?: string;
-      } | null;
-      if (data?.error === 'optout-unavailable') {
+      if (res.data?.error === 'optout-unavailable') {
         // Rollout window: the agent can't store an opt-out until its
         // storage migration lands. Honest, plain-words failure — the
         // opposite of silently pretending the switch worked.
@@ -252,30 +355,6 @@ export async function saveAlertPrefs(
 export interface TelegramLink {
   code: string;
   botUrl: string | null;
-}
-
-/**
- * The exact message signed to authorise a Telegram link. MUST stay
- * byte-identical to `buildTelegramLinkMessage` in
- * `apps/agent/src/linkAuth.ts` — the agent reconstructs it verbatim
- * and recovers the signer; any drift rejects every link request.
- */
-export function buildTelegramLinkMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Link Telegram alerts',
-    '',
-    'I authorise Telegram alert delivery for the wallet below to the',
-    'chat that completes this link code. Signing this message proves',
-    'ownership of the wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
 }
 
 /** Start the Telegram handshake: the wallet signs a free ownership
@@ -297,61 +376,12 @@ export async function issueTelegramLink(
     signature,
   });
   if (!res.ok) throw new Error(`starting the Telegram link failed (${res.status})`);
-  const data = (await res.json()) as {
-    ok?: boolean;
-    code?: string;
-    bot_url?: string | null;
-  };
-  if (!data.code) throw new Error('the alerts backend returned no link code');
-  return { code: data.code, botUrl: data.bot_url ?? null };
-}
-
-/**
- * The unlink counterpart of {@link buildTelegramLinkMessage} — MUST
- * stay byte-identical to `buildTelegramUnlinkMessage` in
- * `apps/agent/src/linkAuth.ts`. Deliberately different wording from
- * the link message so one signature can never authorise the other.
- */
-export function buildTelegramUnlinkMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Unlink Telegram alerts',
-    '',
-    'I request that Telegram alert delivery for the wallet below be',
-    'disconnected everywhere. Signing this message proves ownership',
-    'of the wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
-/**
- * The test-alert counterpart (UX-012) — MUST stay byte-identical to
- * `buildTelegramTestMessage` in `apps/agent/src/linkAuth.ts`. Distinct
- * wording so one signature can never authorise another action.
- */
-export function buildTelegramTestMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Send a test alert',
-    '',
-    'I request one test alert be sent to the Telegram chat linked to',
-    'the wallet below, to confirm delivery works. Signing this message',
-    'proves ownership of the wallet. It is not a transaction and costs',
-    'no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
+  const code = res.data?.code;
+  if (typeof code !== 'string' || !code) {
+    throw new Error('the alerts backend returned no link code');
+  }
+  const botUrl = res.data?.bot_url;
+  return { code, botUrl: typeof botUrl === 'string' ? botUrl : null };
 }
 
 /** Result of a test-alert round-trip (UX-012). `sent` proves delivery
@@ -384,10 +414,7 @@ export async function sendTestTelegramAlert(
   // bare 404 (e.g. the endpoint not deployed yet) must NOT masquerade
   // as "your chat isn't linked" — fall through to the generic error.
   if (res.status === 404) {
-    const data = (await res.json().catch(() => null)) as {
-      error?: string;
-    } | null;
-    return data?.error === 'not-linked' ? 'not-linked' : 'error';
+    return res.data?.error === 'not-linked' ? 'not-linked' : 'error';
   }
   return 'error';
 }
@@ -398,7 +425,7 @@ export async function unlinkTelegram(
   wallet: `0x${string}`,
   chainId: number,
   signMessage: (message: string) => Promise<string>,
-): Promise<void> {
+): Promise<'wallet' | 'chain'> {
   const issuedAt = Math.floor(Date.now() / 1000);
   const signature = await signMessage(
     buildTelegramUnlinkMessage(wallet, chainId, issuedAt),
@@ -410,4 +437,11 @@ export async function unlinkTelegram(
     signature,
   });
   if (!res.ok) throw new Error(`unlinking Telegram failed (${res.status})`);
+  // The service reports which SCOPE the clear applied to (#2013 r4):
+  // 'wallet' for an ordinary key (the universal controller), 'chain'
+  // for a smart account whose contract approved on the signed chain
+  // only — the confirmation the card shows must match what actually
+  // happened. A missing field (an agent from before the scoped
+  // response) means the old wallet-wide behaviour.
+  return res.data?.scope === 'chain' ? 'chain' : 'wallet';
 }

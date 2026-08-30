@@ -543,34 +543,61 @@ pair on `LegalFacet`. The retail launch ships with
 `currentTosVersion == 0`, which short-circuits `isAccepted(...)` to
 `true` for every wallet — the gate is dormant. Whenever the canonical
 ToS text changes (`docs/Terms/TermsOfService.md` is the source of
-truth; `apps/www/src/pages/TermsPage.tsx` mirrors it), governance must
-also bump the on-chain pair so users re-sign before the frontend
-re-opens.
+truth; since #1998 `apps/www` RENDERS the text from a frozen
+byte-copy of it and serves every published version at a pinned route
+`/terms/v<N>` — there is no hand-mirrored transcription to keep in
+sync), governance must also bump the on-chain pair so users re-sign
+before the frontend re-opens.
 
-1. Edit the canonical text in `docs/Terms/TermsOfService.md` and the
-   mirrored copy in `apps/www/src/pages/TermsPage.tsx`. Verify the two
-   bodies are byte-identical (modulo HTML wrapping in the React file).
-2. Compute the canonical content hash. **No derivation utility exists
-   in the repo, and no frontend derives it** — so whatever bytes32
-   governance commits IS the hash of record. (The retired connected app
-   carried a `useTosAcceptance` hook that read the on-chain
-   `currentTosHash` and echoed it back in `acceptTerms`; it was deleted
-   with that app in #1854, and `apps/app` reads no ToS hash at all
-   today. That makes the point below stronger, not weaker: nothing in
-   the tree cross-checks the committed hash against the text.) Before first
-   activation (the gate ships dormant, `currentTosVersion == 0`),
-   governance must pick and record the derivation — e.g. keccak256
-   over the exact committed bytes of `docs/Terms/TermsOfService.md` —
-   and note it in the proposal so the hash can be independently
-   re-derived from the text it covers.
-3. **Deploy the updated terms FIRST**: ship `TermsPage.tsx` (and the
-   canonical `docs/Terms/TermsOfService.md`) and verify the rendered
-   text is the text the new hash covers. Order matters because
-   nothing on-chain or in the frontend compares text to hash — the
-   frontend only echoes `currentTosHash` — so activating the hash
-   before the text is live opens a window where users record
-   acceptance of terms the public site does not yet show, and no
-   gate exists that would catch it.
+1. Edit the canonical text in `docs/Terms/TermsOfService.md`, then
+   publish it as the NEW version in `apps/www`: copy the file
+   byte-for-byte to `apps/www/src/pages/terms/v<N>.md` (N = the new
+   version number) and add the matching entry — version, effective
+   date, keccak256 of those bytes — to
+   `apps/www/src/pages/terms/versions.ts`. **Never edit a published
+   `v<M>.md` or its registry entry** — old versions stay frozen at
+   their pinned routes because acceptances were recorded against
+   them. The page picks the new file up automatically. Two separate
+   guards enforce this, and they catch DIFFERENT things: the
+   `check-terms-canonical-hash` guard (in `apps/www`'s typecheck,
+   which CI runs for `docs/Terms/` changes too) fails the build when
+   the frozen copy, the registry hash, and the canonical document do
+   not all agree *within one tree* — but an edit that rewrites a
+   published archive AND its registered hash together still agrees
+   with itself, so cross-commit immutability is enforced by the
+   "Published Terms archives are unchanged from the base" step
+   inside CI's REQUIRED `workspaces` job, which diffs the PR against
+   its base and rejects any change to a `v<M>.md` that exists there.
+   A local typecheck alone therefore CANNOT confirm an archive edit
+   is legal; only the base diff can, and it will refuse it.
+2. The content hash for `setCurrentTos` is the same value the site
+   publishes: each `/terms/v<N>` page displays its "canonical source
+   fingerprint" — keccak256 over the exact bytes of the version's
+   frozen Markdown, which are the bytes the page renders — and the
+   guard script recomputes it on every typecheck. Adopt that
+   derivation in the proposal (record it there so the hash can be
+   independently re-derived from the text it covers); with it, users
+   and auditors can compare the fingerprint the site publishes
+   against the hash the acceptance gate shows from chain. Note the
+   gate itself only ECHOES the on-chain hash (`useTosAcceptance`
+   reads and re-submits it; it derives nothing) — the cross-check
+   from text to hash lives in the guard script and in anyone
+   re-deriving the fingerprint, not in the app.
+3. **Deploy the updated `apps/www` FIRST** and verify `/terms/v<N>`
+   serves the new text (and that its displayed fingerprint equals
+   the hash the proposal will commit). Order matters because the
+   frontend only echoes `currentTosHash`, so activating the hash
+   before the text is live would open a window where users record
+   acceptance of terms the public site does not yet show — with
+   versioned hosting that window fails SAFE rather than silently: the
+   acceptance gate links the version-pinned route for the version it
+   read from chain, so a not-yet-published version renders an honest
+   "not published here" explainer telling the user not to accept
+   text they cannot read, instead of someone else's text. The
+   reverse interval (page live, `setCurrentTos` not yet executed) is
+   also harmless now: `/terms` already shows the new text, but the
+   gate's pinned link still resolves to the exact old version its
+   hash pins — the user reads what they record.
 4. Governance Safe schedules
    `timelock.schedule(target=diamond, data=setCurrentTos(newVersion,
    newHash), delay=48h)`. `newVersion` MUST strictly exceed

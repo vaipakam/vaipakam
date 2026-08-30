@@ -112,6 +112,7 @@ import {
   reserveTestAlert,
   sweepExpiredLinks,
   unlinkTelegram,
+  unlinkTelegramOnChain,
   upsertThresholds,
 } from './db';
 import { extractLinkCode, sendMessage, type TelegramUpdate } from './telegram';
@@ -120,6 +121,7 @@ import {
   parseSignedLinkRequest,
   verifySignedLinkRequest,
 } from './linkAuth';
+import { chainVerifyGate } from './walletSigVerify';
 
 export default {
   async scheduled(
@@ -427,7 +429,10 @@ async function handlePutThresholds(req: Request, env: Env): Promise<Response> {
     const verified = await verifySignedLinkRequest(
       signed.req,
       Math.floor(Date.now() / 1000),
+      env,
       'mute-duedate',
+      undefined,
+      chainVerifyGate(env, req),
     );
     if (!verified.ok) {
       return json(
@@ -491,6 +496,10 @@ async function handleIssueTelegramLink(
   const verified = await verifySignedLinkRequest(
     parsed.req,
     Math.floor(Date.now() / 1000),
+    env,
+    'link',
+    undefined,
+    chainVerifyGate(env, req),
   );
   if (!verified.ok) {
     return json(
@@ -548,7 +557,10 @@ async function handleUnlinkTelegram(
   const verified = await verifySignedLinkRequest(
     parsed.req,
     Math.floor(Date.now() / 1000),
+    env,
     'unlink',
+    undefined,
+    chainVerifyGate(env, req),
   );
   if (!verified.ok) {
     return json(
@@ -557,11 +569,28 @@ async function handleUnlinkTelegram(
       corsOrigin,
     );
   }
-  // chain_id is bound into the signed message (same body shape as the
-  // link issue) but the clear is wallet-wide — see unlinkTelegram for
-  // why.
-  await unlinkTelegram(env.DB, parsed.req.wallet);
-  return json({ ok: true }, 200, corsOrigin);
+  // The clear's SCOPE follows the authority that signed (#2013 round
+  // 3 P1). An ECDSA key is the wallet's universal controller, so its
+  // unlink honours the privacy promise wallet-wide (see
+  // unlinkTelegram). A smart account verified via its contract has
+  // authority only on the chain whose contract approved — divergent
+  // per-chain controllers are real (Safe owners drift apart) — so a
+  // chain-verified unlink clears exactly the signed chain_id's rows,
+  // and silencing the wallet's other chains needs each chain's own
+  // controller to sign.
+  if (verified.via === 'chain') {
+    await unlinkTelegramOnChain(env.DB, parsed.req.wallet, parsed.req.chain_id);
+  } else {
+    await unlinkTelegram(env.DB, parsed.req.wallet);
+  }
+  // The response NAMES the scope that applied (#2013 round 4 P1), so
+  // the app can confirm honestly instead of announcing a wallet-wide
+  // disconnect a chain-scoped authority did not buy.
+  return json(
+    { ok: true, scope: verified.via === 'chain' ? 'chain' : 'wallet' },
+    200,
+    corsOrigin,
+  );
 }
 
 /** UX-012 — push a single test alert to the wallet's linked Telegram
@@ -600,7 +629,14 @@ async function handleTestTelegram(req: Request, env: Env): Promise<Response> {
     );
   }
   const now = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedLinkRequest(parsed.req, now, 'test-alert');
+  const verified = await verifySignedLinkRequest(
+    parsed.req,
+    now,
+    env,
+    'test-alert',
+    undefined,
+    chainVerifyGate(env, req),
+  );
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },
@@ -748,9 +784,16 @@ function json(data: unknown, status: number, corsOrigin: string): Response {
 interface PutThresholdsBody {
   wallet: string;
   chain_id: number;
-  warn_hf: number;
-  alert_hf: number;
-  critical_hf: number;
+  /** #2000 — the HF bands are optional AS A SET: all three present
+   *  (validated) or all three absent, meaning "no band change" — the
+   *  stored values are preserved, same contract as `push_channel`
+   *  and the pre-notify flag. The bands carry the risky lane's
+   *  state, so a client save that did not touch that lane omits
+   *  them; before this, a fresh device's default lane state rode
+   *  along with every unrelated save. */
+  warn_hf?: number;
+  alert_hf?: number;
+  critical_hf?: number;
   push_channel?: string | null;
   /** #1033 — opt-out for the periodic-interest pre-notify. Optional
    *  boolean in the body; absent means opted in (the historical
@@ -758,31 +801,50 @@ interface PutThresholdsBody {
   notify_maturity_approaching?: boolean;
 }
 
-function parsePutThresholds(x: unknown): PutThresholdsBody | null {
+export function parsePutThresholds(x: unknown): PutThresholdsBody | null {
   if (!x || typeof x !== 'object') return null;
   const b = x as Record<string, unknown>;
   if (typeof b.wallet !== 'string' || !/^0x[a-fA-F0-9]{40}$/.test(b.wallet)) {
     return null;
   }
   if (typeof b.chain_id !== 'number') return null;
-  if (
-    typeof b.warn_hf !== 'number' ||
-    typeof b.alert_hf !== 'number' ||
-    typeof b.critical_hf !== 'number'
-  ) {
-    return null;
+  // Bands: each field is a number or absent — a present-but-malformed
+  // value is a bad request, never silently read as "no change" — and
+  // presence is ALL-OR-NONE (#2000): a partial set has no coherent
+  // meaning (the three values are one lane state), and letting one
+  // band through alone would splice it into stored values no client
+  // ever proposed together.
+  for (const k of ['warn_hf', 'alert_hf', 'critical_hf'] as const) {
+    if (b[k] !== undefined && typeof b[k] !== 'number') return null;
   }
-  // Sanity: warn > alert > critical > 1.0 is the sensible ordering
-  // (though the watcher handles arbitrary orderings safely).
-  if (!(b.warn_hf > b.alert_hf && b.alert_hf > b.critical_hf)) return null;
-  if (b.critical_hf <= 1) return null;
+  const bandCount = [b.warn_hf, b.alert_hf, b.critical_hf].filter(
+    (v) => v !== undefined,
+  ).length;
+  if (bandCount !== 0 && bandCount !== 3) return null;
+  if (bandCount === 3) {
+    // Sanity: warn > alert > critical > 1.0 is the sensible ordering
+    // (though the watcher handles arbitrary orderings safely).
+    if (
+      !(
+        (b.warn_hf as number) > (b.alert_hf as number) &&
+        (b.alert_hf as number) > (b.critical_hf as number)
+      )
+    ) {
+      return null;
+    }
+    if ((b.critical_hf as number) <= 1) return null;
+  }
   const push = typeof b.push_channel === 'string' ? b.push_channel : null;
   return {
     wallet: b.wallet,
     chain_id: b.chain_id,
-    warn_hf: b.warn_hf,
-    alert_hf: b.alert_hf,
-    critical_hf: b.critical_hf,
+    ...(bandCount === 3
+      ? {
+          warn_hf: b.warn_hf as number,
+          alert_hf: b.alert_hf as number,
+          critical_hf: b.critical_hf as number,
+        }
+      : {}),
     push_channel: push,
     // Absent/non-boolean → undefined = "no change": an older client
     // updating only its bands must not silently re-enable a stored

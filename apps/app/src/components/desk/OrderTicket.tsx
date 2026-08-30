@@ -22,7 +22,11 @@ import { useQueryClient } from '@tanstack/react-query';
 import { encodeFunctionData } from 'viem';
 import { copy } from '../../content/copy';
 import { useActiveChain } from '../../chain/useActiveChain';
-import { DIAMOND_ABI_VIEM, useDiamondWrite } from '../../contracts/diamond';
+import {
+  DIAMOND_ABI_VIEM,
+  useDiamondWrite,
+  useTermsBlockNonExitWrites,
+} from '../../contracts/diamond';
 import {
   disablePermit2ForSession,
   usePermit2Signing,
@@ -172,6 +176,7 @@ export function OrderTicket({
   const { data: walletClient } = useWalletClient();
   const publicClient = usePublicClient({ chainId: walletChain?.chainId });
   const { write } = useDiamondWrite();
+  const termsVerdict = useTermsBlockNonExitWrites();
   const { setOpen } = useModal();
   const permit2 = usePermit2Signing();
   const queryClient = useQueryClient();
@@ -568,6 +573,26 @@ export function OrderTicket({
       setError(copy.killSwitch.disabled);
       return;
     }
+    // #1961 review round 6 P1 — BOTH posting paths check the Terms, and
+    // they check FIRST.
+    //
+    // `/desk` is exempt from the route gate so a held user can still
+    // cancel a live signed order. That exemption is only safe while
+    // every ORDER-CREATING path on the page is refused, and posting is
+    // where this page creates exposure. The gasless path never reaches
+    // `useDiamondWrite` at all — it signs and publishes through
+    // `postSignedOffer` — so the write-level enforcement could not see
+    // it, and the on-chain path would have mined an approval before
+    // being refused.
+    const terms = termsVerdict();
+    if (terms !== 'ok') {
+      setError(
+        terms === 'unknown'
+          ? copy.errors.termsCheckUnavailable
+          : copy.errors.termsNotAccepted,
+      );
+      return;
+    }
     if (lockRef.current) return; // synchronous re-entrancy lock
     lockRef.current = true;
     setBusy(true);
@@ -746,6 +771,26 @@ export function OrderTicket({
   async function submitGasless() {
     if (killed) {
       setError(copy.killSwitch.disabled);
+      return;
+    }
+    // #1961 review round 6 P1 — BOTH posting paths check the Terms, and
+    // they check FIRST.
+    //
+    // `/desk` is exempt from the route gate so a held user can still
+    // cancel a live signed order. That exemption is only safe while
+    // every ORDER-CREATING path on the page is refused, and posting is
+    // where this page creates exposure. The gasless path never reaches
+    // `useDiamondWrite` at all — it signs and publishes through
+    // `postSignedOffer` — so the write-level enforcement could not see
+    // it, and the on-chain path would have mined an approval before
+    // being refused.
+    const terms = termsVerdict();
+    if (terms !== 'ok') {
+      setError(
+        terms === 'unknown'
+          ? copy.errors.termsCheckUnavailable
+          : copy.errors.termsNotAccepted,
+      );
       return;
     }
     if (lockRef.current) return;

@@ -60,10 +60,11 @@
  *      marketing CTA promises that landing position.
  *
  * BLOCKERS — do not flip while any of these is open:
- *   - #1961: `apps/app` has NO ToS gate. The retired app failed closed on
- *     `currentTosVersion`, and the contracts delegate that enforcement to
- *     the client, so flipping with a ToS in force would let every wallet
- *     transact without accepting terms.
+ *   - #1961 — CLEARED. `apps/app` now gates every routed surface on the
+ *     in-force ToS version, failing closed on a pending or failed read
+ *     (`apps/app/src/contracts/tosGate.ts`, `LegalGate.tsx`). The gate is
+ *     inert while `currentTosVersion` is 0 and bites the moment governance
+ *     installs one, which is what the flip needed.
  *   - #1960: `apps/app` has NO Data Rights route. The marketing site's
  *     export/erase controls cannot stand in — they run on this origin and
  *     browser storage is same-origin, so they can neither read nor clear

@@ -464,10 +464,19 @@ Thin-market honesty rules apply.
 - Alerts are optional and outcome-oriented.
 - Users may link an external delivery channel for repayment and risk reminders.
 - Link, unlink, and preference changes that affect delivery require proof of
-  wallet ownership.
+  wallet ownership. Ownership proven by one network's account contract (a
+  smart-account wallet) counts for that network alone: an unlink under such
+  proof disconnects that network's alerts only, and the confirmation says
+  so — an ordinary wallet's signature proves its keyholder everywhere and
+  unlinks the wallet everywhere.
 - Stored alert data is described plainly before linking.
 - Turning off important reminders is explicit and cannot happen merely because
   the user opens the card from another device.
+- A saved preference change carries ONLY the settings the user changed in that
+  save. Settings the user did not touch are preserved as stored — a device
+  that has never seen the wallet's preferences cannot silently overwrite a
+  choice made elsewhere by saving its own starting assumptions alongside an
+  unrelated change.
 - If no alert backend is configured, the app states that alerts are unavailable
   and sends nothing.
 
@@ -689,6 +698,233 @@ Thin-market honesty rules apply.
 - Support reports and diagnostics minimize personal data.
 - Wallet and analytics integrations should avoid unnecessary telemetry where
   the app can control it.
+
+### Data rights over locally-held data
+
+- The app offers a page where a user can **download everything the app keeps in
+  their browser** as a single readable file, and **erase it from that device**.
+  Both are reachable without connecting a wallet and without accepting any
+  terms.
+- The page states the number of stored items before an erasure is confirmed,
+  and what was actually removed afterwards. **A browser that refuses to let the
+  app clear its storage is reported as a refusal, not a success** — private
+  windows and restrictive privacy settings do this, and reporting it as done
+  would be a false assurance about a legal right. The user is pointed at the
+  browser's own controls, which work.
+- Erasure covers what this app stored and nothing else. State belonging to a
+  wallet connector or another tool is left untouched: removing it would
+  disconnect the user as a side effect of exercising a data right.
+- The page states its limits as prominently as its controls, and each is
+  stated at its true extent. It does not reach on-chain data — which is public,
+  so the user can look it up themselves, and permanent, so nobody can erase it.
+  **The wallet address is named as the one exception**: where the user saved
+  per-wallet settings, the address is part of the locally stored data and
+  therefore part of the download, and the file itself says so — being public
+  on the chain and being absent from this browser are different facts, and a
+  user deciding whether the file is safe to share is owed the second one.
+  It does not reach the alerts service: **unlinking removes the messaging
+  connection only, and the alert preferences are deliberately retained there
+  for a future relink**, so removing those is a support request. It does not
+  reach the marketing site's separate store; and the LOCAL download-and-erase
+  controls do not reach the error reports held by support — those have their
+  own signed control on the same page, described below. **Overstating reach is
+  the primary way a page of this kind misleads** — and understating what a
+  user can obtain is the same failure pointed the other way — so each
+  exclusion is named at its real size.
+- The same page carries the **signed erasure of the error reports support
+  keeps** — the server-side counterpart the Privacy Policy promises. The
+  request is authorised by a free wallet signature (no transaction, no gas)
+  proving ownership of the wallet whose records it names. The service's
+  answers are deliberately uniform, and the page must not out-inform them:
+  a processed request never says whether any records existed — records can be
+  under a retention order the service is forbidden to mention, and one
+  wallet's confirmation must not read differently from another's — and the
+  page states exactly that, identically to everyone. A companion check
+  reports retained records only where the law allows saying so; its quiet
+  answer is phrased as "none are reported", never "none exist", because only
+  the first is knowable. The erase and the check each sign THEIR OWN words —
+  what a user signs to look at their records can never be replayed as
+  authority to delete them. A build with no support-service connection says
+  the control cannot be used from there and names the e-mail route instead.
+  Smart-contract wallet accounts (a Safe, a smart wallet — deployed or not
+  yet deployed) can use the signed controls like any other wallet: the
+  service verifies their signatures against the network the account lives
+  on. When that network cannot be reached for verification, the user is told
+  the signature could not be CHECKED — never that it was wrong — with the
+  e-mail route as the alternative, since an immediate retry cannot help.
+  Authority a network's account contract approved reaches only that
+  network's records: such an account can be controlled by different parties
+  on different networks, so an erasure it signs covers the records captured
+  on the approving network, and the confirmation says so plainly — pointing
+  at a network switch, or the e-mail route, for the rest. An ordinary
+  wallet's signature proves its one keyholder everywhere, so its erasure
+  keeps the wallet-wide scope. The retention check's answer stays
+  wallet-wide in both cases, because retention has no per-network shape to
+  narrow to. The
+  e-mail route promises what the signed route promises — that a request will
+  be processed — never an unconditional removal the retention rules cannot
+  always satisfy.
+- **Every live preference the erasure covers is visibly reset**, not merely
+  cleared from storage: the theme, the interface mode, the display language,
+  and the record of which notifications have been seen. A page that reports
+  preferences returned to their defaults while the app keeps showing them is
+  making a claim the user can see is untrue.
+- Two shared-domain preference cookies are part of what this browser holds,
+  so the download includes them and an erasure removes them — and they differ
+  in kind, which the page states rather than blurs. The language is genuinely
+  shared: both surfaces read it, so a choice on one follows to the other. The
+  theme cookie is the marketing site's own preference, which this app never
+  consults — this app's theme is stored separately and is not shared. **The
+  page promises no cross-site reset**: the marketing site keeps origin-local
+  copies of its preferences and restores them, shared copies included, on the
+  next visit, so resetting that site belongs to its own data controls and the
+  page says so. Erasing here fully resets this app's own language and theme.
+- Erasing does not reload the page, so the confirmation of what happened
+  survives long enough to be read.
+- **If any part of the browser's storage could not be read, the result is
+  reported as incomplete rather than successful.** The app cannot claim to have
+  emptied a store it was never allowed to look inside.
+- **A partial download warns inside the file itself**, naming the stores whose
+  contents are missing. The file travels away from the page, so the page's
+  on-screen warning must travel with it — a partial export that reads as
+  complete is the same false assurance in portable form.
+- **The controls act on what is stored at the moment they are used, not at the
+  moment the page was drawn.** Browser storage can change without the page
+  noticing — from another tab, or from the app's own surfaces in the same one —
+  so neither control is withheld on the strength of a possibly stale count. A
+  store that really is empty yields an honestly empty download or a "nothing
+  was stored" erasure report, which are truthful answers; a control that
+  denies data it would in fact find is not.
+- **The page promises no prompt it does not produce.** Erasing returns display
+  preferences to their defaults; it does not re-ask for cookie consent, which
+  belongs to the marketing site and is stored on that site's own origin, and it
+  does not re-ask for a language. Promising a prompt that never arrives is the
+  same failure as promising an erasure that does not reach — a user expecting
+  to revisit a choice would keep it while believing they had not.
+- **An erasure reaches the app's other open tabs.** A small amount of data
+  belongs to each tab individually, and a page that says "this browser" may not
+  mean "this tab". The download is the exception and says so: it covers the tab
+  it was taken from, because collecting the others would mean waiting on tabs
+  that may never answer. The reported COUNT is likewise what the acting tab
+  removed, and the wording says so rather than presenting it as a
+  browser-wide total.
+- **The marketing site's equivalent page does not cover the connected app, and
+  cannot.** Browser origin isolation means neither site can read or clear the
+  other's stored data. Each surface needs its own controls; neither may claim
+  to cover the other's.
+
+### Terms of Service acceptance
+
+- The protocol can have a version of the Terms of Service in force, or none.
+  While none is in force, the app behaves as though the requirement does not
+  exist: no user is asked anything and no surface is withheld.
+- While a version IS in force, a connected wallet that has not accepted that
+  version cannot take on new exposure and cannot reach the surfaces that exist
+  only to create it. It is shown which version applies, a fingerprint of the
+  exact text, and links to read the Terms and the Privacy Policy before
+  deciding. The language control is available on that prompt, because a user
+  who cannot read the terms cannot meaningfully agree to them.
+- **The Terms link on that prompt is pinned to the version being accepted.**
+  The marketing site keeps every published Terms version readable at its own
+  permanent address, unchanged forever, alongside the always-current page —
+  so the prompt's link resolves to the exact text whose version and
+  fingerprint the acceptance records, even during a rollout window when the
+  current page already shows the next version's text. A pinned address for a
+  version the site does not serve yet must say so honestly rather than fail
+  silently, so a user is never left unable to tell whether they are reading
+  what they are accepting.
+- **Anything that reduces the user's commitments stays available**, whether or
+  not they have accepted. That covers repaying and closing positions,
+  claiming settled funds, withdrawing their own assets, cancelling their own
+  standing offers and orders, adding collateral to a position at risk, and —
+  in both cases where a third party or an automatic process holds authority —
+  withdrawing that authority: a keeper's permission over their positions, and
+  the consent that allows fees to be deducted automatically from their vault.
+  It also covers **handing a position over in one step** to someone who has
+  already offered to take it — a lender being bought out, or a borrower's
+  obligation moving to a replacement. Those end the user's position outright,
+  so refusing them would leave the slow route open and the instant one shut.
+  Publishing a standing offer of one's own is a different thing and is not
+  covered, even when the intent behind it is to leave.
+- **An acceptance is honoured in every open tab, not only the one that paid.**
+  The chain permits a second acceptance and would charge for it while changing
+  nothing but a timestamp — so the moment one tab's acceptance is confirmed,
+  every other tab holding the same wallet on the same network is told. For an
+  acceptance confirmed within its short safety window — the ordinary case —
+  every tab applies the same correction at once: its prompt closes and its
+  writes proceed without asking again. An acceptance that took unusually long
+  to confirm — network congestion can hold a transaction pending beyond that
+  window — is instead announced to every tab as a signal to re-check the
+  chain immediately: prompts close as soon as that re-check reads the
+  recorded acceptance, which by then any current node reports, rather than
+  in the same instant. The correction, where applied, is bounded by the same
+  short window in every tab, expiring simultaneously, so an acceptance undone
+  by a chain reorganisation is not papered over anywhere for longer than in
+  the tab that made it. A tab that has meanwhile seen a newer terms version
+  keeps prompting for the newer version — an acceptance of older text never
+  opens the gate on newer text.
+- The requirement applies to notification settings on the same terms, even
+  though nothing there touches the protocol. Signing up — linking a messaging
+  channel, or switching a reminder on — waits for acceptance. Switching a
+  reminder off, or unlinking a channel, always works. **Each reminder can be
+  switched off on its own**: turning one off is never read as signing up for
+  whichever others happen to be on, which would leave a user unable to
+  silence any of them.
+- **Where that requirement is enforced for notification settings is a
+  deliberate, recorded choice, not an oversight.** The check lives in the app
+  the user runs; the notification service that stores the preferences does
+  not verify acceptance itself, even though for these settings the app's
+  check is the only one. That is accepted because notification preferences
+  create no exposure: nothing there moves funds, creates an obligation, or
+  touches the protocol, so circumventing the app's check gains only reminders
+  about one's own positions — while every action that does create exposure
+  has its own check in front of it. The boundary this records for the future:
+  should the notification service ever gain a capability that creates a
+  commitment or moves value, that capability must carry its own service-side
+  acceptance check rather than inheriting this posture.
+- A refusal never costs the user anything. Where an action needs a separate
+  approval transaction first, the requirement is checked before that approval,
+  not after it.
+- The check is made against the network the action is scoped to. A wallet
+  connected to a network the app does not support is not thereby exempt: an
+  action still aimed at a supported network is judged by that network's terms,
+  not permitted for want of an answer.
+- Acceptance is a single action recorded against that exact version and
+  fingerprint, so what a user agreed to remains checkable afterwards.
+- **A user is never asked to pay for the same acceptance twice.** Once an
+  acceptance has been confirmed as recorded, the app treats it as recorded even
+  while its own subsequent checks are still catching up. Re-presenting the
+  prompt in that window would invite a second payment that buys nothing.
+- Where the app refuses an action and tells the user to go and accept, the
+  destination it names is one that actually asks. The surfaces that stay open
+  regardless of acceptance deliberately do not ask, so naming them would send
+  the user back to the same refusal.
+- A user is asked again only when the terms change to a new version. An
+  earlier acceptance no longer counts once a new version is in force.
+- Acceptance is recorded separately per network. A user who has accepted on
+  one supported network is asked again on another.
+- A visitor with no wallet connected is never gated. The requirement is about
+  the party who would transact.
+- **Surfaces that only show information are never withheld.** The explainer,
+  the user's own history, and position-token verification carry no action at
+  all, so there is nothing on them for the requirement to withhold — and a
+  user asking what the terms mean must not be met by a page that will not
+  open.
+- **When the app cannot determine whether terms apply, it withholds new
+  exposure and says so, rather than allowing it.** This is the intended
+  behaviour and not a degraded one: the requirement is enforced by the app
+  alone — the protocol records acceptance and publishes the version in force,
+  but does not itself refuse an action from a wallet that has not accepted —
+  so allowing access on an unanswered check would mean the requirement stops
+  applying exactly when the check is unreliable.
+- **Not knowing is not refusing, and the user is told which it is.** A check
+  that has not finished, failed, or grown too old to trust is reported as an
+  inability to confirm, with an invitation to retry. Only a current, answered
+  check reports that the user has not accepted. Telling somebody who has
+  already accepted that they must accept is both untrue and leaves them
+  nothing to do.
+- Repaying, claiming and withdrawing are never withheld by this requirement.
+  A user must always be able to close a position and take their assets out.
 
 ## Regression Expectations
 

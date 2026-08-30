@@ -57,6 +57,9 @@ const NftVerifier = lazy(() =>
 const Faucet = lazy(() =>
   import('./pages/Faucet').then((m) => ({ default: m.Faucet })),
 );
+const DataRights = lazy(() =>
+  import('./pages/DataRights').then((m) => ({ default: m.DataRights })),
+);
 const RiskAccess = lazy(() =>
   import('./pages/RiskAccess').then((m) => ({ default: m.RiskAccess })),
 );
@@ -94,6 +97,10 @@ export function App() {
         <Route path="/recover" element={<Recover />} />
         <Route path="/faucet" element={<Faucet />} />
         <Route path="/help" element={<Help />} />
+        {/* #1960 — the connected app's own data-rights controls. The
+            marketing site's page cannot reach this origin's storage,
+            so this is a separate page, not a link to that one. */}
+        <Route path="/data-rights" element={<DataRights />} />
 
         {/* Aliases people will guess or carry over from apps/defi. */}
         <Route path="/earn" element={<Navigate to="/lend" replace />} />

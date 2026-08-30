@@ -2647,18 +2647,17 @@ function sourcedDeploys(relPath, depth = 0) {
   let out = [];
   try {
     const raw = readFileSync(`${REPO_ROOT}/${relPath.replace(/^\.\//, '')}`, 'utf8');
-    // A Windows helper gets the SAME interpreter transform here that it gets
-    // when the walk opens it directly — backslash separators, case-folded
-    // Wrangler, caret continuations. The deferred reader sent the raw text
-    // through the POSIX scanner, so `call ..\..\deploy.cmd` holding
-    // `Wrangler deploy` was invisible while the identical file scanned
-    // standalone was caught (#1995 r22). One transform, chosen by extension,
-    // wherever a helper body is read.
-    const text = /\.ps1$/i.test(relPath)
-      ? forInterpreter(raw, 'pwsh')
-      : /\.(?:cmd|bat)$/i.test(relPath)
-        ? forInterpreter(raw, 'cmd')
-        : raw;
+    // A deferred helper gets the SAME interpreter transform the top-level walk
+    // applies to a file of that extension. Sending a `.cmd` body straight
+    // through the POSIX scanner missed `Wrangler deploy`, which Windows runs
+    // case-insensitively, and left `^` continuations unfolded (#1995 r22) —
+    // the transform is a property of the FILE, and this reader had skipped it.
+    const winInterp = /\.(?:cmd|bat)$/i.test(relPath)
+      ? 'cmd'
+      : /\.ps1$/i.test(relPath)
+        ? 'pwsh'
+        : null;
+    const text = winInterp ? forInterpreter(raw, winInterp) : raw;
     const segs = [];
     for (const { text: line } of logicalLines(text)) {
       for (const part of splitCommands(line)) segs.push(part.text.trim());
@@ -3171,6 +3170,69 @@ function stripYamlProps(v) {
  * Only the contexts this file resolves, and only a literal key: `matrix[x]`
  * names a key computed at runtime, which is not answerable from the text.
  */
+/**
+ * The body of a nested flow mapping — `with: { … }` — by BRACE BALANCE, with
+ * `${{ … }}` treated as opaque and quotes respected.
+ *
+ * A `[^}]*` capture ends at the first `}` of an expression's `}}`, which
+ * truncates the mapping mid-value (#1995 r22). Returns null when no balanced
+ * mapping is found, which the caller reads as "no inputs" exactly as before.
+ */
+function flowMappingBody(text, key) {
+  const open = new RegExp(String.raw`["']?${key}["']?:\s*\{`).exec(text);
+  if (!open) return null;
+  let i = open.index + open[0].length;
+  const start = i;
+  let depth = 1;
+  let quote = null;
+  while (i < text.length && depth > 0) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      i += 1;
+      continue;
+    }
+    if (text.startsWith('${{', i)) {
+      const end = text.indexOf('}}', i + 3);
+      i = end === -1 ? text.length : end + 2;
+      continue;
+    }
+    if (c === '{') depth += 1;
+    else if (c === '}') depth -= 1;
+    i += 1;
+  }
+  return depth === 0 ? text.slice(start, i - 1) : null;
+}
+
+/**
+ * An action step's (directory, command) pairs, held to their matrix LEG.
+ *
+ * Returns null when leg pairing does not apply — either input carries no
+ * matrix reference, or no `include:` leg defines every key both of them use —
+ * and the caller then keeps the cross-product behaviour, which is correct for
+ * plain axis lists because every combination really does run.
+ */
+function actionMatrixLegPairs(lines, runIdx, rawWd, rawCmd) {
+  const MREF = /\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/g;
+  const wdRaw = normalizeCtxRefs(rawWd ?? '');
+  const cmdRaw = normalizeCtxRefs(rawCmd ?? '');
+  const keysOf = (t) => [...t.matchAll(MREF)].map((m) => m[1]);
+  const wdKeys = keysOf(wdRaw);
+  const cmdKeys = keysOf(cmdRaw);
+  if (wdKeys.length === 0 || cmdKeys.length === 0) return null;
+  const needed = [...new Set([...wdKeys, ...cmdKeys])];
+  const legs = matrixIncludeLegs(lines, runIdx).filter((l) => needed.every((k) => l.has(k)));
+  if (legs.length === 0) return null;
+  const sub = (t, leg) => t.replace(MREF, (m0, k) => leg.get(k) ?? m0);
+  return legs.map((leg) => ({ wd: sub(wdRaw, leg), cmd: sub(cmdRaw, leg) }));
+}
+
 function normalizeCtxRefs(text) {
   if (!text || !text.includes('[')) return text;
   return text.replace(
@@ -3446,26 +3508,21 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           ? /^(?:false|\$\{\{\s*false\s*\}\})$/.test(disabledF.replace(/\s+#.*$/, '').trim())
           : stepIsDisabled(lines, i);
         if (!isOff) {
-          // The `with:` block itself must survive an expression's braces too —
-          // stopping at the first `}` truncated the block before `command:`
-          // even became visible.
-          const withM = flowStep[1].match(
-            /["']?with["']?:\s*\{((?:\$\{\{[^}]*\}\}|[^}])*)\}/,
-          );
-          // Expression-aware, like the block-form reader: `${{ … }}` carries
-          // braces, and stopping at the first `}` captured `${{ matrix.cmd`
-          // — which expands to nothing, so a real matrix-driven action deploy
-          // passed (#1995 r22).
+          // BRACE-BALANCED, and an expression is opaque. `[^}]*` ended at the
+          // first `}` of a `${{ … }}` inside the mapping, so a nested
+          // `with:` carrying an expression produced a truncated command that
+          // could not then be expanded (#1995 r22).
+          const withBody = flowMappingBody(flowStep[1], 'with');
           const inWith = (key) =>
-            withM
-              ? (withM[1]
+            withBody === null
+              ? []
+              : (withBody
                   .match(
                     new RegExp(
                       `["']?${key}["']?:\\s*(?:"([^"]*)"|'([^']*)'|((?:\\$\\{\\{[^}]*\\}\\}|[^,}])+))`,
                     ),
                   )
-                  ?.slice(1) ?? [])
-              : [];
+                  ?.slice(1) ?? []);
           const wm = inWith('workingDirectory');
           const cm = inWith('command');
           const cmdF = cm[0] ?? cm[1] ?? cm[2] ?? null;
@@ -3476,12 +3533,29 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           // (#1995 r21) — this is the flow spelling of one configuration, and
           // giving it to one and not the other is how this file drifts.
           const envF = stepEnvVars(lines, i);
-          const baseF = expandActionsEnv(cleanCmdF, envF);
-          for (const variant of expandMatrixVariants(lines, i, baseF) ?? [baseF]) {
-            out.push(
-              ...offset(logicalLines(`wrangler ${variant}`), i, blockId, cwdF ?? '', null),
-            );
-            blockId += 1;
+          // Same leg pairing as the block-style action step (#1995 r22).
+          const legPairsF = actionMatrixLegPairs(lines, i, wdF, cleanCmdF);
+          if (legPairsF) {
+            for (const p of legPairsF) {
+              out.push(
+                ...offset(
+                  logicalLines(`wrangler ${p.cmd}`),
+                  i,
+                  blockId,
+                  workingDirFor(lines, i, false, p.wd) ?? '',
+                  null,
+                ),
+              );
+              blockId += 1;
+            }
+          } else {
+            const baseF = expandActionsEnv(cleanCmdF, envF);
+            for (const variant of expandMatrixVariants(lines, i, baseF) ?? [baseF]) {
+              out.push(
+                ...offset(logicalLines(`wrangler ${variant}`), i, blockId, cwdF ?? '', null),
+              );
+              blockId += 1;
+            }
           }
         }
         i += 1;
@@ -3575,20 +3649,14 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
           if (wm && wd === null) {
             wd = (wm[1] ?? wm[2] ?? wm[3]).replace(/\s+#.*$/, '').trim();
           }
-          // `${{ … }}` contains braces, so an unquoted flow value must not stop
-          // at the first `}`: `command: '${{ matrix.cmd }}'` was captured as
-          // `${{ matrix.cmd` and expanded to nothing (#1995 r22). The
-          // expression alternative comes first so its braces are consumed by
-          // it — the same ordering the working-directory reader uses.
-          const FLOWVAL = String.raw`(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^,}])+))`;
-          const fcm = lines[k].match(new RegExp(String.raw`with:\s*\{.*?["']?command["']?:\s*${FLOWVAL}`));
+          const fcm = lines[k].match(
+            /with:\s*\{[^}]*["']?command["']?:\s*(?:"([^"]*)"|'([^']*)'|([^,}]+))/,
+          );
           if (fcm && cmd === null) cmd = (fcm[1] ?? fcm[2] ?? fcm[3]).trim();
           const fwm = lines[k].match(
-            new RegExp(
-              String.raw`with:\s*\{.*?["']?workingDirectory["']?:\s*(?:"([^"]*)"|'([^']*)'|((?:\$\{\{[^}]*\}\}|[^,}\s])+))`,
-            ),
+            /with:\s*\{[^}]*["']?workingDirectory["']?:\s*(?:"([^"]*)"|'([^']*)'|([^,}\s]+))/,
           );
-          if (fwm && wd === null) wd = (fwm[1] ?? fwm[2] ?? fwm[3]).trim();
+          if (fwm && wd === null) wd = fwm[1] ?? fwm[2] ?? fwm[3];
         }
       }
       const cleanCmd = cmd === null ? 'deploy' : stripYamlProps(cmd);
@@ -3606,49 +3674,37 @@ function embeddedShellLines(text, isYaml = false, isMarkdown = false) {
       // never got it (#1995 r21). Same resolvers, so the two halves cannot
       // drift apart again.
       const actEnv = stepEnvVars(lines, i);
-      const cmdBase = expandActionsEnv(cleanCmd, actEnv);
-      // The directory and the command may BOTH be matrix-driven, and then they
-      // travel together: `include` pairing `{dir: apps/agent, cmd: 'deploy
-      // --keep-vars'}` with `{dir: apps/indexer, cmd: deploy}` runs no unsafe
-      // agent deploy at all. Resolving the two independently — the directory
-      // once, the command over every value — synthesised the agent's directory
-      // beside the indexer's bare command and failed CI on a correct workflow
-      // (#1995 r22). A false red, which is the costlier direction.
-      //
-      // Same rule the shell axis got at r17, and the legs come from the same
-      // reader. Only when BOTH inputs name matrix keys and an `include:`
-      // actually pairs them; independent axis lists still cross-product, which
-      // is what a real cross-product matrix does.
-      const emit = (text, dir) => {
-        const synth = text
+      const synthOf = (variant) =>
+        variant
           .split('\n')
           .map((c) => c.trim())
           .filter(Boolean)
           .map((c) => `wrangler ${c}`)
-          .join('\n');
-        out.push(...offset(logicalLines(synth || 'wrangler deploy'), i, blockId, dir ?? '', null));
+          .join('\n') || 'wrangler deploy';
+      // Matrix LEGS first: a directory and a command drawn from the same
+      // `include:` entry travel together, and crossing them invents a
+      // combination the workflow never runs (#1995 r22).
+      const legPairs = actionMatrixLegPairs(lines, i, wd, cleanCmd);
+      if (legPairs) {
+        for (const p of legPairs) {
+          out.push(
+            ...offset(
+              logicalLines(synthOf(p.cmd)),
+              i,
+              blockId,
+              workingDirFor(lines, i, false, p.wd) ?? '',
+              null,
+            ),
+          );
+          blockId += 1;
+        }
+        i += 1;
+        continue;
+      }
+      const cmdBase = expandActionsEnv(cleanCmd, actEnv);
+      for (const variant of expandMatrixVariants(lines, i, cmdBase) ?? [cmdBase]) {
+        out.push(...offset(logicalLines(synthOf(variant)), i, blockId, cwd ?? '', null));
         blockId += 1;
-      };
-      const wdKey = wd && normalizeCtxRefs(wd).match(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/)?.[1];
-      const cmdKey = normalizeCtxRefs(cmdBase).match(
-        /\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/,
-      )?.[1];
-      const jb = jobBounds(lines, i);
-      const legs =
-        wdKey && cmdKey
-          ? matrixIncludeLegs(lines, jb ? jb.start : 0, jb ? jb.end : lines.length).filter(
-              (e) => e.has(wdKey) && e.has(cmdKey),
-            )
-          : [];
-      if (legs.length > 0) {
-        for (const leg of legs) {
-          const legDir = workingDirFor(lines, i, false, leg.get(wdKey));
-          emit(leg.get(cmdKey), legDir);
-        }
-      } else {
-        for (const variant of expandMatrixVariants(lines, i, cmdBase) ?? [cmdBase]) {
-          emit(variant, cwd);
-        }
       }
       i += 1;
       continue;
@@ -4304,66 +4360,23 @@ function stepIsShell(lines, runIdx) {
  * ingest points used to.
  */
 /**
- * `include:` entries as one Map per leg, in both block and flow spellings.
+ * The `include:` LEGS of the containing job's matrix, each as a Map.
  *
- * Extracted so a leg's members can be read TOGETHER. Two readers already need
- * that — `matrixValuesFor`, to drop a leg whose interpreter cannot run the
- * step, and the wrangler-action reader, to pair a leg's directory with its own
- * command rather than with every other leg's (#1995 r22).
+ * `matrixValuesFor` flattens these into per-key lists, which is right for one
+ * axis and wrong for two: an action step drawing its DIRECTORY and its COMMAND
+ * from the same leg must keep them paired. Taking the cross product invented a
+ * combination the workflow never runs — pairing `{dir: apps/agent, cmd: deploy
+ * --keep-vars}` with the indexer leg's bare `deploy` reported a synthetic bare
+ * agent deploy and failed CI on a correct workflow (#1995 r22). A false red.
+ *
+ * One collector, called by both readers, so the flat and paired views cannot
+ * disagree about what a leg is.
  */
-function matrixIncludeLegs(lines, from, to) {
-  const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
-  const legs = [];
-  const membersOf = (text) => {
-    const entry = new Map();
-    for (const kv of text.matchAll(
-      /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
-    )) {
-      entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
-    }
-    return entry;
-  };
-  for (let i = from; i < to && i < lines.length; i += 1) {
-    const flowInc = lines[i].match(/\binclude:\s*\[(.*)\]/);
-    if (flowInc) {
-      for (const em of flowInc[1].matchAll(/\{([^}]*)\}/g)) {
-        const entry = membersOf(em[1]);
-        if (entry.size > 0) legs.push(entry);
-      }
-      continue;
-    }
-    if (!/^\s*include:\s*$/.test(lines[i])) continue;
-    const ii = indentOf(lines[i]);
-    let cur = null;
-    for (let j = i + 1; j < lines.length && j < to; j += 1) {
-      if (lines[j].trim() === '') continue;
-      if (indentOf(lines[j]) <= ii) break;
-      const flowEntry = lines[j].match(/^\s*-\s*\{([^}]*)\}\s*$/);
-      if (flowEntry) {
-        const entry = membersOf(flowEntry[1]);
-        if (entry.size > 0) legs.push(entry);
-        cur = null;
-        continue;
-      }
-      const dash = lines[j].match(
-        /^\s*-\s+([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
-      );
-      const member = lines[j].match(
-        /^\s*([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
-      );
-      if (dash) {
-        cur = new Map();
-        legs.push(cur);
-        cur.set(dash[1], dash[2] ?? dash[3] ?? dash[4]);
-      } else if (member && cur) {
-        cur.set(member[1], member[2] ?? member[3] ?? member[4]);
-      }
-    }
-  }
-  return legs;
+function matrixIncludeLegs(lines, runIdx) {
+  return matrixValuesFor(lines, runIdx, null, null, true);
 }
 
-function matrixValuesFor(lines, runIdx, key, shellAxisKey) {
+function matrixValuesFor(lines, runIdx, key, shellAxisKey, legsOnly = false) {
   const indentOf = (l) => (l.match(/^\s*/) ?? [''])[0].length;
   const vals = [];
   const includeLegs = [];
@@ -4374,7 +4387,7 @@ function matrixValuesFor(lines, runIdx, key, shellAxisKey) {
   const jb = jobBounds(lines, runIdx);
   const from = jb ? jb.start : 0;
   const to = jb ? jb.end : lines.length;
-  for (let i = from; i < to; i += 1) {
+  for (let i = legsOnly ? to : from; i < to; i += 1) {
     const inline = lines[i].match(new RegExp(`^\\s*${key}:\\s*\\[([^\\]]*)\\]`));
     if (inline) {
       vals.push(...inline[1].split(',').map((v) => v.trim().replace(/^["']|["']$/g, '')));
@@ -4427,7 +4440,54 @@ function matrixValuesFor(lines, runIdx, key, shellAxisKey) {
   // interpreter runs no shell there. Entries without the shell axis, and
   // every value from a plain axis list, stay — a cross product pairs those
   // with every interpreter.
-  includeLegs.push(...matrixIncludeLegs(lines, from, to));
+  for (let i = from; i < to && i < lines.length; i += 1) {
+    const flowInc = lines[i].match(/\binclude:\s*\[(.*)\]/);
+    if (flowInc) {
+      for (const em of flowInc[1].matchAll(/\{([^}]*)\}/g)) {
+        const entry = new Map();
+        for (const kv of em[1].matchAll(
+          /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
+        )) {
+          entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
+        }
+        if (entry.size > 0) includeLegs.push(entry);
+      }
+      continue;
+    }
+    if (!/^\s*include:\s*$/.test(lines[i])) continue;
+    const ii = indentOf(lines[i]);
+    let cur = null;
+    for (let j = i + 1; j < lines.length && j < to; j += 1) {
+      if (lines[j].trim() === '') continue;
+      if (indentOf(lines[j]) <= ii) break;
+      const flowEntry = lines[j].match(/^\s*-\s*\{([^}]*)\}\s*$/);
+      if (flowEntry) {
+        const entry = new Map();
+        for (const kv of flowEntry[1].matchAll(
+          /([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|([^\s,}]+))/g,
+        )) {
+          entry.set(kv[1], kv[2] ?? kv[3] ?? kv[4]);
+        }
+        if (entry.size > 0) includeLegs.push(entry);
+        cur = null;
+        continue;
+      }
+      const dash = lines[j].match(
+        /^\s*-\s+([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
+      );
+      const member = lines[j].match(
+        /^\s*([A-Za-z_][\w-]*):\s*(?:"([^"]*)"|'([^']*)'|(\S+))\s*$/,
+      );
+      if (dash) {
+        cur = new Map();
+        includeLegs.push(cur);
+        cur.set(dash[1], dash[2] ?? dash[3] ?? dash[4]);
+      } else if (member && cur) {
+        cur.set(member[1], member[2] ?? member[3] ?? member[4]);
+      }
+    }
+  }
+  if (legsOnly) return includeLegs;
   for (const entry of includeLegs) {
     if (!entry.has(key)) continue;
     if (
@@ -4577,9 +4637,8 @@ function callerSuppliedInputs(key) {
         if (indentOf(ls[j]) !== ui) continue;
         // A FLOW `with: { dir: apps/agent }` is the same input, and only the
         // block spelling was read — so a required input resolved to nothing
-        // and the callee's bare deploy passed (#1995 r22). Safe to tie to this
-        // `uses:` because it sits at the job key's own indent inside the job
-        // that carries it, which is the same anchoring the block form uses.
+        // and the callee's bare deploy passed (#1995 r22). Tied to this
+        // `uses:` by the same indent anchoring the block form uses.
         const flowWith = ls[j].match(/^\s*with:\s*\{(.*)\}\s*$/);
         if (flowWith) {
           const fm = flowWith[1].match(

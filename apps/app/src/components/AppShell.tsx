@@ -38,9 +38,11 @@ import { useActiveChain } from '../chain/useActiveChain';
 import { LiveChainSync } from '../chain/LiveChainSync';
 import { IndexerPushSync } from '../chain/IndexerPushSync';
 import { ReceiptSyncListener } from '../chain/ReceiptSyncListener';
+import { EraseSyncListener } from './EraseSyncListener';
 import { ConnectButton } from './ConnectButton';
 import { NotificationBell } from './NotificationBell';
 import { EmptyState } from './EmptyState';
+import { LegalGate } from './LegalGate';
 import { DiagnosticsDrawer } from './DiagnosticsDrawer';
 import { NetworkBanner } from './NetworkBanner';
 import { SeoMeta } from './SeoMeta';
@@ -204,6 +206,9 @@ export function AppShell() {
     '/nft',
     '/settings',
     '/help',
+    // Reached from Settings rather than the sheet, but the rule is the
+    // same: no tab of its own, so More carries it (Codex #2003 r6 P3).
+    '/data-rights',
   ].some((prefix) => pathname.startsWith(prefix));
 
   return (
@@ -222,6 +227,9 @@ export function AppShell() {
       <LiveChainSync />
       <IndexerPushSync />
       <ReceiptSyncListener />
+      {/* #1960 — another tab's erasure has to reach this one's
+          per-context data; see EraseSyncListener. */}
+      <EraseSyncListener />
       <header className="shell-topbar">
         <NavLink to="/" className="shell-brand" style={{ textDecoration: 'none' }}>
           <span className="brand-mark" aria-hidden>
@@ -317,10 +325,25 @@ export function AppShell() {
               route; the fallback reuses the spinning empty state so a
               chunk fetch reads as "loading" inside the already-painted
               shell, never a blank panel. */}
+          {/* #1961 — the Terms-of-Service gate wraps the routed
+              content, INSIDE the error boundary and the shell chrome so
+              a gated user keeps the nav, the network banner and the
+              support drawer. It passes an unconnected visitor straight
+              through, so browsing while disconnected is unaffected; it
+              only ever holds a CONNECTED wallet, which is the only
+              party the terms can apply to.
+
+              An earlier revision of this comment also claimed the
+              language picker, which was false: that control lives only
+              on `/settings`, which is inside the gate (review round 3).
+              The gate card now renders its own picker rather than the
+              comment asserting one that was not reachable. */}
           <ErrorBoundary resetKey={pathname + search}>
-            <Suspense fallback={<EmptyState icon={LoaderCircle} title={copy.chrome.loading} />}>
-              <Outlet />
-            </Suspense>
+            <LegalGate>
+              <Suspense fallback={<EmptyState icon={LoaderCircle} title={copy.chrome.loading} />}>
+                <Outlet />
+              </Suspense>
+            </LegalGate>
           </ErrorBoundary>
         </main>
       </div>

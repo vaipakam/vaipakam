@@ -88,6 +88,10 @@
       "activity": {
         "title": "Activité — Vaipakam"
       },
+      "dataRights": {
+        "title": "Vos données — Vaipakam",
+        "description": "Téléchargez ou effacez les données que l’application Vaipakam conserve dans ce navigateur."
+      },
       "settings": {
         "title": "Paramètres — Vaipakam"
       },
@@ -191,6 +195,53 @@
       "phasePermit": "Signature de la permission… ({{c}} sur {{t}}) — gratuit, sans gas",
       "phaseSend": "Soumission… ({{c}} sur {{t}})"
     },
+    "dataRights": {
+      "title": "Vos données",
+      "subtitle": "Ce que cette application conserve dans votre navigateur, et comment en obtenir une copie ou l’effacer.",
+      "downloadTitle": "Télécharger une copie",
+      "downloadBody": "Enregistre dans un seul fichier tout ce que cette application a stocké dans ce navigateur, à conserver ou à consulter : vos préférences d’affichage, vos réglages d’alertes, les notifications déjà vues et les repères de ce que vous avez commencé sans le terminer.",
+      "downloadButton": "Télécharger mes données",
+      "downloadDone": "Enregistré",
+      "eraseTitle": "L’effacer de ce navigateur",
+      "eraseBody": "Supprime le tout de cet appareil. Vos préférences d’affichage reviennent à leurs valeurs par défaut et ce qui était en cours perdra son repère local.",
+      "eraseButton": "Effacer mes données",
+      "eraseConfirm": "Oui, effacer",
+      "eraseCancel": "Annuler",
+      "eraseConfirmPrompt": "Cette action est irréversible. Téléchargez une copie d’abord si vous souhaitez en garder une.",
+      "eraseDone": "{{count}} éléments enregistrés ont été effacés. Il a également été demandé aux autres onglets que vous avez ouverts d’effacer les leurs.",
+      "eraseNothing": "Il n’y avait rien d’enregistré à effacer dans ce navigateur.",
+      "erasePartial": "{{removed}} éléments ont été effacés, mais {{left}} n’ont pas pu être supprimés. Effacer les données du site depuis les réglages de votre navigateur supprimera le reste.",
+      "eraseBlocked": "Ce navigateur n’a pas autorisé l’application à vider son stockage, donc rien n’a été supprimé. Les fenêtres de navigation privée et les réglages de confidentialité stricts peuvent produire cet effet — effacer les données du site depuis les réglages de votre navigateur fonctionnera.",
+      "holdingTitle": "Ce qui est enregistré actuellement",
+      "holdingCount": "{{count}} éléments",
+      "holdingNone": "Rien n’est enregistré dans ce navigateur pour le moment.",
+      "holdingUnreadable": "Ce navigateur n’autorise pas l’application à lire son propre stockage, nous ne pouvons donc pas vous montrer ce qu’il contient. Les fenêtres de navigation privée et les réglages de confidentialité stricts font cela. Effacer les données du site depuis les réglages de votre navigateur le supprimera quand même.",
+      "scopeTitle": "Ce que cela ne couvre pas",
+      "scopeChain": "Tout ce qui se trouve sur la blockchain. Les transactions que vous avez signées y résident, pas dans votre navigateur, elles ne figurent donc pas dans ce téléchargement — mais elles sont publiques et vous pouvez les consulter vous-même sur n’importe quel explorateur de blocs. Ce que personne ne peut faire, Vaipakam compris, c’est les effacer. Votre adresse de portefeuille est la seule exception : là où vous avez enregistré des réglages par portefeuille, elle apparaît dans les noms des clés stockées, elle figure donc bien dans les données de votre navigateur et dans le téléchargement — effacer ici supprime ces copies locales, jamais rien sur la chaîne.",
+      "scopeAlerts": "Les alertes. Si vous avez lié Telegram, cette connexion est détenue par le service d’alertes, pas par votre navigateur. La dissocier dans les Réglages supprime la connexion Telegram elle-même ; vos préférences d’alertes restent sur ce service au cas où vous la relieriez. Écrivez à support@vaipakam.com pour les faire supprimer aussi.",
+      "scopeDiagnostics": "Les rapports d'erreur conservés par notre service de support. Ils sont séparés de votre navigateur, l'effacement local ci-dessus ne les atteint donc pas — la section « rapports d'erreur » de cette page envoie pour eux une demande d'effacement signée, et écrire à support@vaipakam.com fonctionne aussi.",
+      "scopeTabs": "Les autres onglets, s’agissant du téléchargement. Une petite partie des données appartient à chaque onglet séparément : le téléchargement couvre donc l’onglet où vous êtes — l’effacement, lui, atteint les autres. Téléchargez depuis chaque onglet si vous voulez l’ensemble.",
+      "scopeSite": "Le site principal vaipakam.com. Il conserve son propre stockage distinct, avec ses propres commandes sur ce site.",
+      "scopeCookies": "Deux cookies de préférences sur le domaine partagé se trouvent dans ce navigateur : le téléchargement les inclut et l’effacement les supprime. L’un est votre langue, que les deux sites lisent — c’est ainsi qu’une langue choisie sur un site vous suit sur l’autre. L’autre est le thème propre au site principal ; cette application ne l’utilise jamais, et votre thème ici est enregistré séparément, sans être partagé. Effacer réinitialise entièrement cette application mais pas vaipakam.com : le site principal garde ses propres copies de ses préférences et les restaurera, cookies compris, lors de votre prochaine visite — les supprimer relève de ses propres contrôles de données.",
+      "diagTitle": "Effacer les rapports d'erreur conservés par le support",
+      "diagBody": "Quand quelque chose se passe mal dans l'application, un rapport d'erreur peut être capturé et conservé par notre service de support pour aider à corriger le problème. Ces enregistrements vivent sur ce service, pas dans votre navigateur, et vous pouvez demander d'ici l'effacement de ceux associés à votre portefeuille.",
+      "diagConnect": "Connectez le portefeuille dont vous voulez effacer les enregistrements. La demande est signée par ce portefeuille — cette signature est ce qui prouve au service que la demande vient bien de vous.",
+      "diagNotConfigured": "Cette version n'est pas reliée au service de support, la demande signée ne peut donc pas être envoyée d'ici. Écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille.",
+      "diagEraseButton": "Effacer mes rapports d'erreur",
+      "diagStatusButton": "Vérifier les enregistrements conservés",
+      "diagBusy": "En attente de votre portefeuille…",
+      "diagSignNote": "Prouver que le portefeuille est le vôtre est une signature gratuite : ce n'est pas une transaction et cela ne coûte aucun gas.",
+      "diagProcessed": "Votre demande d'effacement a été traitée.",
+      "diagUniformNote": "La confirmation est délibérément identique pour tous les portefeuilles : elle ne dit pas si des enregistrements existaient, de sorte qu'on ne peut rien en déduire sur les vôtres. Là où la loi impose de conserver certains enregistrements, la vérification ci-dessous ne le signale que lorsque la loi permet de le dire.",
+      "diagStatusClear": "Aucun enregistrement conservé n’est signalé pour ce portefeuille.",
+      "diagRetainedLabel": "Le service signale que certains enregistrements ont été conservés :",
+      "diagUnavailable": "Le service de support ne peut pas traiter les demandes d'effacement pour le moment. Réessayez plus tard, ou écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille.",
+      "diagError": "La demande n'a pas pu aboutir, et il est possible que rien n'ait été effacé. Réessayez dans un instant.",
+      "diagExpired": "La demande signée a expiré avant que le service ne l’accepte : aucun enregistrement n’a donc été consulté ni effacé. Réessayez en approuvant l’invite du portefeuille sans tarder ; si cela se reproduit, l’horloge de cet appareil est peut-être mal réglée.",
+      "diagVerifyUnavailable": "Le service d’assistance n’a pas pu vérifier la signature de votre portefeuille pour le moment : le réseau sur lequel vit le compte de votre portefeuille n’était pas joignable depuis le service. Cela ne signifie pas que la signature était incorrecte. Réessayez dans un moment, ou écrivez à support@vaipakam.com et nous traiterons une demande d’effacement pour votre portefeuille.",
+      "diagProcessedChainOnly": "Votre demande d’effacement a été traitée uniquement pour les enregistrements de {{network}}. La signature d’un portefeuille à compte intelligent n’est vérifiée que sur un réseau à la fois : les enregistrements capturés sur d’autres réseaux ne sont donc pas couverts — passez sur un autre réseau et répétez la demande, ou écrivez à support@vaipakam.com et nous la traiterons pour votre portefeuille partout.",
+      "diagProcessedChainUnknown": "Votre demande d’effacement a été traitée uniquement pour les enregistrements d’un seul réseau — celui qui a vérifié la signature de votre portefeuille. La signature d’un portefeuille à compte intelligent n’est vérifiée que sur un réseau à la fois : les enregistrements capturés sur d’autres réseaux ne sont donc pas couverts — changez de réseau et répétez la demande, ou écrivez à support@vaipakam.com et nous la traiterons pour votre portefeuille partout."
+    },
     "killSwitch": {
       "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."
     },
@@ -218,7 +269,7 @@
       "linked": "Telegram lié — les alertes pour ce portefeuille vont dans votre chat.",
       "unlink": "Dissocier",
       "unlinkElsewhereTitle": "Vous avez lié ce portefeuille sur un autre appareil ?",
-      "unlinkElsewhereBody": "Son lien Telegram vit sur notre serveur, pas seulement dans ce navigateur. Déconnectez-le ici — cela arrête les messages partout.",
+      "unlinkElsewhereBody": "Son lien Telegram vit sur notre serveur, pas seulement dans ce navigateur. Déconnectez-le ici — avec un portefeuille ordinaire, cela arrête les messages partout ; la signature d’un portefeuille de compte intelligent les arrête pour le réseau qu’elle nomme.",
       "unlinkElsewhere": "Dissocier ce portefeuille",
       "unlinked": "Dissocié. Plus aucun message Telegram pour ce portefeuille.",
       "toggleRepayDue": "M'envoyer un message avant l'échéance d'un paiement d'intérêts",
@@ -233,7 +284,8 @@
       "pushEnable": "Activer la livraison Push",
       "pushEnabled": "La livraison Push est activée pour ce portefeuille.",
       "pushButton": "Ouvrir le canal Push",
-      "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres."
+      "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres.",
+      "unlinkedChainOnly": "Dissocié pour {{network}}. Un portefeuille à compte intelligent se déconnecte réseau par réseau — si ce portefeuille est lié sur d’autres réseaux, dissociez chacun depuis ce réseau avec sa propre signature."
     },
     "notifications": {
       "bellLabel": "Notifications",
@@ -1873,7 +1925,9 @@
         "vaultUpgradeRequired": "L’une des parties de cette opération utilise une ancienne version du vault et doit la mettre à jour avant de pouvoir négocier. Rien n’a été envoyé.",
         "selfTrade": "C’est votre propre offre, vous ne pouvez donc pas l’accepter. Annulez-la si vous voulez la retirer du carnet.",
         "unknown": "Le protocole n’accepte pas cette offre pour le moment. Rien n’a été envoyé — actualisez et réessayez, ou revenez un peu plus tard."
-      }
+      },
+      "termsNotAccepted": "Vous devez accepter les conditions de Vaipakam avant de faire cela. Ouvrez la page Accueil et la demande vous sera faite une seule fois ; rembourser, réclamer et retirer continuent de fonctionner dans tous les cas.",
+      "termsCheckUnavailable": "Nous n’avons pas pu confirmer à l’instant si les conditions de Vaipakam s’appliquent à votre portefeuille — patientez un instant et réessayez."
     },
     "fees": {
       "borrowerLIF": "Vaipakam facture des frais d’initialisation de prêt de {{pct}} sur le montant emprunté.",
@@ -2242,7 +2296,8 @@
         "vpfiSub": "Optionnel — réduire les frais du protocole en détenant VPFI",
         "activitySub": "Tout ce que votre wallet a fait sur Vaipakam",
         "riskAccessSub": "Choisissez le niveau de risque des actifs de vos opérations",
-        "helpSub": "Réponses en langage clair et infos de build"
+        "helpSub": "Réponses en langage clair et infos de build",
+        "dataRightsSub": "Téléchargez ou effacez ce que cette application conserve dans votre navigateur"
       }
     },
     "common": {
@@ -2272,6 +2327,24 @@
       "copyAria": "Copier l'adresse {{address}}",
       "viewAria": "Voir {{address}} dans l'explorateur de blocs",
       "copied": "Adresse copiée"
+    },
+    "legalGate": {
+      "verifying": "Vérification que les conditions s’appliquent à votre portefeuille…",
+      "readErrorTitle": "Impossible de vérifier les conditions",
+      "readErrorBody": "Nous n’avons pas pu joindre le réseau pour savoir si vous devez accepter les conditions de Vaipakam ; l’application reste donc fermée plutôt que de le supposer. Ni votre portefeuille ni vos positions ne sont en cause — réessayez dans un instant.",
+      "retry": "Réessayer",
+      "loadFailedTitle": "Impossible de charger la vérification des conditions",
+      "loadFailedBody": "Une partie de l’application ne s’est pas chargée, nous ne pouvons donc pas savoir si vous devez accepter les conditions de Vaipakam — elle reste fermée plutôt que de le supposer. Recharger la page suffit généralement. Rembourser, réclamer et retirer continuent de fonctionner dans tous les cas.",
+      "reload": "Recharger la page",
+      "title": "Acceptez les conditions pour continuer",
+      "body": "Les opérateurs de Vaipakam ont mis en vigueur une version des conditions. L’acceptation envoie une transaction unique qui enregistre la version acceptée : votre portefeuille vous demandera de la confirmer et des frais de réseau modestes s’appliquent. Vous ne serez pas sollicité de nouveau, sauf si les conditions changent — ou si vous passez à un autre réseau, chaque réseau conservant son propre enregistrement.",
+      "currentVersion": "Version en vigueur",
+      "contentHash": "Empreinte du contenu",
+      "readTerms": "Lire les Conditions",
+      "privacyPolicy": "Politique de confidentialité",
+      "signAccept": "Accepter et continuer",
+      "signing": "En attente de votre portefeuille…",
+      "footnote": "Votre acceptation est enregistrée sur la chaîne face à la version et à l’empreinte exactes affichées ci-dessus, de sorte que ce que vous avez accepté reste vérifiable par la suite. Rembourser, réclamer et retirer ne sont jamais bloqués par ce contrôle."
     }
   },
   "contractError": {

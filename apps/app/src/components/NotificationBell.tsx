@@ -13,6 +13,7 @@
  * a session snapshot keeps the "new" dots visible until the panel closes.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEraseEpoch } from '../lib/useEraseEpoch';
 import { Link } from 'react-router-dom';
 import {
   AlarmClock,
@@ -92,12 +93,19 @@ export function NotificationBell() {
   // subscribe half of the rule's own remit, not derived render output.
   // A `key` on the parent would express the reset but would also unmount
   // the open panel and the feed query on every chain switch.
+  // ...and on a data-rights erasure (#1960 review round 2 P2). The
+  // cursor is held in state after its one read, so clearing
+  // `app.notif.lastseen.*` left the bell showing notifications as read
+  // on the strength of a record the user had just been told was erased.
+  // The epoch is simply another reason to re-read, using the path that
+  // already exists.
+  const eraseEpoch = useEraseEpoch();
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLastSeen(address ? loadLastSeen(readChain.chainId, address) : null);
     setOpen(false);
     seenAtOpen.current = null;
-  }, [readChain.chainId, address]);
+  }, [readChain.chainId, address, eraseEpoch]);
 
   // The `?? []` fallback is what makes this need a memo (#1520): react-query
   // hands back a stable `data` between renders, but a fresh literal every

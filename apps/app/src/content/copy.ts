@@ -132,6 +132,14 @@ const copySource = {
     claims: { title: 'Claims — Vaipakam' },
     vault: { title: 'My vault — Vaipakam' },
     activity: { title: 'Activity — Vaipakam' },
+    // #1960 — noindex like the other per-user surfaces. Without a row
+    // here the route falls through to `notFound`, so a working page
+    // titles itself "Page not found".
+    dataRights: {
+      title: 'Your data — Vaipakam',
+      description:
+        'Download or erase the data the Vaipakam app keeps in this browser.',
+    },
     settings: { title: 'Settings — Vaipakam' },
     riskAccess: { title: 'Risk access — Vaipakam' },
     recover: { title: 'Recover stuck tokens — Vaipakam' },
@@ -278,6 +286,222 @@ const copySource = {
     ),
     phaseSend: tmpl(`Submitting… ({{c}} of {{t}})`, ['c', 't']),
   },
+  // #1961 — the Terms-of-Service route gate. The contracts delegate
+  // this enforcement to the client, so this copy is the only place a
+  // user is ever told a ToS applies to them.
+  legalGate: {
+    verifying: 'Checking whether the terms apply to your wallet\u2026',
+    readErrorTitle: 'Couldn\u2019t check the terms',
+    readErrorBody:
+      'We couldn\u2019t reach the network to find out whether you need to accept Vaipakam\u2019s terms, so the app stays closed rather than guessing. Nothing is wrong with your wallet or your positions \u2014 try again in a moment.',
+    retry: 'Try again',
+    // Review round 12 P2 — distinct from `verifying`, because a
+    // chunk that failed to load is not a check in progress and
+    // must not be reported as one: the pending card offers no way
+    // out, and React caches a resolved lazy payload for the life
+    // of the page, so without a reload the user is stuck there.
+    loadFailedTitle: 'Couldn\u2019t load the terms check',
+    loadFailedBody:
+      'Part of the app didn\u2019t load, so we can\u2019t tell whether you need to accept Vaipakam\u2019s terms \u2014 it stays closed rather than guessing. Reloading the page usually fixes it. Repaying, claiming and withdrawing keep working either way.',
+    reload: 'Reload the page',
+    title: 'Accept the terms to continue',
+    body:
+      'Vaipakam\u2019s operators have put a version of the terms in force. Accepting sends a one-off transaction that records which version you agreed to, so your wallet will ask you to confirm it and it costs a small network fee. You won\u2019t be asked again unless the terms change \u2014 or unless you switch to another network, since each network keeps its own record.',
+    currentVersion: 'Version in force',
+    contentHash: 'Content fingerprint',
+    readTerms: 'Read the Terms',
+    privacyPolicy: 'Privacy Policy',
+    signAccept: 'Accept and continue',
+    signing: 'Waiting for your wallet\u2026',
+    footnote:
+      'Your acceptance is recorded on-chain against the exact version and fingerprint shown above, so what you agreed to stays checkable later. Repaying, claiming and withdrawing are never blocked by this.',
+  },
+  /**
+   * Data Rights (#1960) — the connected app's own export and local
+   * erasure controls.
+   *
+   * Deliberately explicit about SCOPE. The single most likely way this
+   * page misleads someone is by letting them believe an erase reaches
+   * further than it does: it clears this browser, on this device. It
+   * cannot touch the blockchain, the alerts service, or the store
+   * belonging to vaipakam.com. Saying so on the page is not caution
+   * for its own sake — a data-rights control that overstates itself is
+   * a false assurance about a legal right.
+   */
+  dataRights: {
+    title: 'Your data',
+    subtitle:
+      'What this app keeps in your browser, and how to take a copy of it or remove it.',
+    downloadTitle: 'Download a copy',
+    downloadBody:
+      'Saves everything this app has stored in this browser as a single file you can keep or read: your display preferences, your alert settings, which notifications you have seen, and markers for anything you have started but not finished.',
+    downloadButton: 'Download my data',
+    downloadDone: 'Saved',
+    eraseTitle: 'Erase it from this browser',
+    /* Review round 3 P2 — this used to promise you would "be asked
+       about cookies and language again". Neither happens: the cookie
+       banner belongs to vaipakam.com and its choice lives on that
+       origin, which this app cannot reach, and the language is reset
+       directly rather than re-asked. Promising a prompt that never
+       arrives is the same defect as promising an erasure that does not
+       reach, and a user expecting to revisit consent here would have
+       kept their old choice believing otherwise. */
+    eraseBody:
+      'Removes all of it from this device. Your display preferences go back to their defaults, and anything you had part-way through will lose its local marker.',
+    eraseButton: 'Erase my data',
+    eraseConfirm: 'Yes, erase it',
+    eraseCancel: 'Cancel',
+    eraseConfirmPrompt:
+      'This cannot be undone. Download a copy first if you want to keep one.',
+    /** Counts are shown rather than a bare "done" — see `eraseMyData`
+     *  for why the three outcomes must stay distinguishable. */
+    /* Review round 3 P2 — "from this browser" under-reported whenever
+       another tab cleared its own session data on the broadcast, since
+       the count is only what THIS tab removed. The reach is browser-
+       wide; the number is not, so the sentence says both rather than
+       letting one stand for the other. */
+    eraseDone: tmpl(
+      'Erased {{count}} stored items. Any other tabs you have open have been told to clear theirs as well.',
+      ['count'],
+    ),
+    eraseNothing: 'There was nothing stored in this browser to erase.',
+    /* A PARTIAL clear is possible: the erase skips a key that throws
+       and keeps going, so some can go while others stay. Reporting
+       that as a plain success would overstate it on the one page that
+       must not. */
+    erasePartial: tmpl(
+      'Erased {{removed}} items, but {{left}} could not be removed. Clearing site data through your browser’s own settings will remove the rest.',
+      ['removed', 'left'],
+    ),
+    eraseBlocked:
+      'This browser would not let the app clear its storage, so nothing was removed. Private-browsing windows and locked-down privacy settings can both do this — clearing site data through your browser’s own settings will work.',
+    holdingTitle: 'What is stored right now',
+    holdingCount: tmpl('{{count}} items', ['count']),
+    holdingNone: 'Nothing is stored in this browser at the moment.',
+    /* A refusal to READ, distinct from an empty store — otherwise the
+       page tells somebody their storage is empty when it simply could
+       not look. */
+    holdingUnreadable:
+      'This browser will not let the app read its own storage, so we cannot show you what is there. Private-browsing windows and strict privacy settings do this. Clearing site data through your browser’s own settings will still remove it.',
+    scopeTitle: 'What this does not cover',
+    /* Review round 1 P2 — the earlier wording said nobody can "export
+       or erase" on-chain data. Erasure is genuinely impossible; export
+       is not, since anyone can read the chain through a block
+       explorer. On a file that IS an access request, understating what
+       the user can obtain is its own misstatement.
+       Review round 5 P2 — and the round-1 rewrite over-corrected the
+       other half: it claimed the wallet ADDRESS is not in the file,
+       when per-wallet settings put the full address in the stored key
+       names. Public on the chain and absent from this browser are
+       different facts; the transactions are both, the address is only
+       the first. */
+    scopeChain:
+      'Anything on the blockchain. The transactions you have signed live there, not in your browser, so they are not in this download — but they are public, and you can look them up yourself on any block explorer. What nobody can do, Vaipakam included, is erase them. Your wallet address is the one exception: where you have saved per-wallet settings it appears in the stored key names, so it is in your browser’s data and in the download — erasing here removes those local copies, never anything on the chain.',
+    /* Review round 1 P1 — this said "unlink to remove it", which was
+       false in the same way the Privacy Policy's erasure sentence is:
+       the agent's unlink only clears the Telegram chat id, keeping the
+       row, thresholds, opt-ins, wallet, chain and locale for a future
+       relink. Claiming a control erases more than it does is the exact
+       defect this page is built to avoid, and I wrote it. */
+    scopeAlerts:
+      'Alerts. If you linked Telegram, that connection is held by the alerts service, not by your browser. Unlinking in Settings removes the Telegram connection itself; your alert preferences stay on that service so they are there if you link again. Email support@vaipakam.com to have those removed too.',
+    /* #2002 — the promised in-app signed erasure now exists (the card
+       above), so this line points UP at it rather than at email. The
+       email route stays named: it works, and it is the only route in
+       a build with no support-service connection. */
+    scopeDiagnostics:
+      'Error reports kept by our support service. Those are separate from your browser, so the local erase above does not reach them — the "error reports" section on this page sends a signed erasure request for them, and emailing support@vaipakam.com works as well.',
+    /* #2002 — the signed server-side erasure card. The service's
+       responses are DELIBERATELY uniform (a legal hold — possibly one
+       the service is forbidden to mention — must be indistinguishable
+       from ordinary success), so this copy must never promise the
+       user knowledge the service refuses to emit: "processed" is not
+       "deleted", and "no retained records are REPORTED" is not
+       "nothing is retained". */
+    diagTitle: 'Erase the error reports support keeps',
+    diagBody:
+      'When something goes wrong in the app, an error report can be captured and kept by our support service to help fix it. Those records live on that service, not in your browser, and you can have the ones associated with your wallet erased from here.',
+    diagConnect:
+      'Connect the wallet whose records you want erased. The request is signed by that wallet — that signature is how the service knows the request really comes from you.',
+    /* #2008 round 1 P2 — the email fallback must not promise more
+       than the signed flow can: a legal hold retains records however
+       the request arrives, so both routes say a request is PROCESSED,
+       never that removal is guaranteed. */
+    diagNotConfigured:
+      'This build is not connected to the support service, so the signed request cannot be sent from here. Email support@vaipakam.com and we will process an erasure request for your wallet.',
+    /* #2009 — the service verifies smart-account signatures
+       on-chain (ERC-1271/6492), so every account type gets the
+       signature controls and the old detection-and-email-route
+       messages are gone. This message covers the one state that
+       replaced them: the service could not REACH the account's
+       chain to verify, which is neither "invalid" nor a generic
+       failure — retrying immediately cannot help. */
+    diagVerifyUnavailable:
+      'The support service could not verify your wallet\u2019s signature right now \u2014 the network your wallet account lives on was not reachable from the service. This does not mean the signature was wrong. Try again in a little while, or email support@vaipakam.com and we will process an erasure request for your wallet.',
+    /* #2008 rounds 3–5 — the signature stays valid for ten minutes
+       from the moment the prompt opens. This one message covers BOTH
+       expiry routes honestly: a late approval held back before
+       sending, and a sent request the service itself rejected as
+       stale (a skewed device clock) — so it claims neither "nothing
+       was sent" nor "you were slow", only what both routes share:
+       the request expired unaccepted and no records were touched. */
+    diagExpired:
+      'The signed request expired before the service accepted it, so no records were checked or erased. Try again, approving the wallet prompt promptly — if this keeps happening, this device’s clock may be set wrong.',
+    diagEraseButton: 'Erase my error reports',
+    diagStatusButton: 'Check for retained records',
+    diagBusy: 'Waiting for your wallet…',
+    diagSignNote:
+      'Proving the wallet is yours is a free signature — not a transaction, and it costs no gas.',
+    diagProcessed: 'Your erasure request was processed.',
+    /* #2013 rounds 5–6 — a smart account's signature is approved by
+       the account contract on ONE network, so the service scopes the
+       erasure to that network's records and says so, naming the
+       chain in its response. The confirmation NAMES that network —
+       never "the network you are connected to", which may already be
+       a different one by the time it renders. The Unknown variant
+       covers a service response that named no chain the app can
+       describe: still honest about the one-network scope, just
+       without the name. */
+    diagProcessedChainOnly: tmpl(
+      'Your erasure request was processed for records from {{network}} only. A smart-account wallet’s signature is verified on one network at a time, so records captured on other networks are not covered — switch to another network and repeat the request there, or email support@vaipakam.com and we will process it for your wallet everywhere.',
+      ['network'],
+    ),
+    diagProcessedChainUnknown:
+      'Your erasure request was processed for one network’s records only — the network that verified your wallet’s signature. A smart-account wallet’s signature is verified on one network at a time, so records captured on other networks are not covered — switch networks and repeat the request there, or email support@vaipakam.com and we will process it for your wallet everywhere.',
+    diagUniformNote:
+      'The confirmation is deliberately the same for every wallet: it does not say whether any records existed, so nothing about your records can be read from it. Where the law requires some records to be kept, the check below reports that only when the law allows saying so.',
+    diagStatusClear: 'No retained records are reported for this wallet.',
+    diagRetainedLabel: 'The service reports that some records were retained:',
+    diagUnavailable:
+      'The support service cannot process erasure requests right now. Try again later, or email support@vaipakam.com and we will process an erasure request for your wallet.',
+    diagError:
+      'The request could not be completed, and nothing may have been erased. Try again in a moment.',
+    /* Review round 2 P2 — the export reads only THIS tab's session
+       data, because `sessionStorage` belongs to one browsing context.
+       The erasure now reaches other tabs by broadcast; the export
+       cannot without waiting on tabs that may never answer, so the
+       limit is stated rather than glossed. */
+    scopeTabs:
+      'Other tabs, when it comes to the download. A small amount of data belongs to each tab on its own, so a download covers the tab you are on — erasing still clears the others. Download from each tab if you want the full picture.',
+    scopeSite:
+      'The main vaipakam.com site. It keeps its own separate store, with its own controls on that site.',
+    /* Three rounds of review each removed one false claim from this
+       sentence, and the survivors all have to hold at once. Round 9
+       P2: only the LANGUAGE is shared — the theme cookie is the main
+       site's own preference, never read or written by this app, whose
+       theme lives separately under its own key. Round 10 P2: removing
+       the cookies resets NEITHER preference on the main site — it
+       keeps origin-local copies (theme falls back to its own
+       localStorage; the i18n detector is localStorage-first, the
+       cookie only a seed) and recreates the cookies on the next
+       visit. Round 11 P2: the round-10 rewrite regrouped the two as
+       "choices that follow you between sites", silently re-making the
+       round-9 error. So: two cookies, two different relationships,
+       one promise — disclosure and removal here, nothing about the
+       main site, whose own controls `scopeSite` above points at. */
+    scopeCookies:
+      'Two preference cookies on the shared domain are in this browser, so the download includes them and erasing removes them. One is your language, which both sites read — that is how a language chosen on one site follows you to the other. The other is the main site’s own theme; this app never uses it, and your theme here is stored separately, not shared. Erasing fully resets this app but not vaipakam.com: the main site keeps its own copies of its preferences and will restore them, cookies included, on your next visit — removing those is what its own data controls are for.',
+  },
   killSwitch: {
     disabled:
       'This action is switched off right now — the operators have paused it as a precaution while something is looked into. Anything already yours is unaffected: repayments, claims, and withdrawals all stay open.',
@@ -324,9 +548,21 @@ const copySource = {
     // UX-043 — a clear labelled action, not an ambiguous centered link.
     unlinkElsewhereTitle: 'Linked this wallet on another device?',
     unlinkElsewhereBody:
-      'Its Telegram link lives on our server, not just this browser. Disconnect it here — it stops messages everywhere.',
+      'Its Telegram link lives on our server, not just this browser. Disconnect it here — with an ordinary wallet that stops messages everywhere; a smart-account wallet\u2019s signature stops them for the network it names.',
     unlinkElsewhere: 'Unlink this wallet',
     unlinked: 'Unlinked. No more Telegram messages for this wallet.',
+    /* #2013 r4 — a smart account's chain-verified signature carries
+       authority only for the network it names (its contract can have
+       different controllers elsewhere), so the service clears that
+       network alone and says so; the confirmation must not announce
+       a wallet-wide disconnect that did not happen. */
+    unlinkedChainOnly: tmpl(
+      // Names the network the unlink covered (#2013 r6) \u2014 a
+      // completion can land after a network switch, so "this
+      // network" could describe the wrong one.
+      'Unlinked for {{network}}. A smart-account wallet is disconnected per network \u2014 if this wallet is linked on other networks, unlink each one from there with its own signature.',
+      ['network'],
+    ),
     toggleRepayDue: 'Message me before an interest payment comes due',
     toggleRisky: 'Message me if my loan gets risky',
     riskyOffNote:
@@ -3378,6 +3614,26 @@ const copySource = {
   },
 
   errors: {
+    // #1961 review round 2 — refused at the write, not just at the route.
+    // A user can reach a page whose exit controls are exempt and still
+    // press something that is not an exit; this says why, in the terms
+    // the gate itself uses.
+    // Not knowing is not refusing. Covers every state short of a fresh
+    // successful answer: never read, still reading, read failed, or too
+    // old to trust. Saying "you need to accept the terms" in any of
+    // them tells a user they declined something they may well have
+    // already accepted (review round 6).
+    termsCheckUnavailable:
+      'We couldn\u2019t confirm whether Vaipakam\u2019s terms apply to your wallet just now \u2014 give it a moment and try again.',
+    // Review round 10 P2: names a GATED destination, not "any other
+    // page". Most of the pages a refused user is standing on are
+    // exempt \u2014 settings, VPFI, desk, positions, claims, vault \u2014 and
+    // exempt pages deliberately never show the prompt, so the old
+    // wording could send somebody between four of them and back to the
+    // same refusal. Home is gated, so it is the one instruction that
+    // always works.
+    termsNotAccepted:
+      'You need to accept Vaipakam\u2019s terms before doing this. Open the Home page and you\u2019ll be asked once \u2014 repaying, claiming and withdrawing keep working either way.',
     // F-20260703-005 (#988) — say HOW MUCH more whenever the caller can
     // compute the shortfall; the amount-less form is the fallback for
     // sites that can't (e.g. unknown decimals).
@@ -4087,6 +4343,7 @@ const copySource = {
       activitySub: 'Everything your wallet has done on Vaipakam',
       riskAccessSub: 'Choose how risky the assets in your deals may be',
       helpSub: 'Plain-language answers and build info',
+      dataRightsSub: 'Download or erase what this app stores in your browser',
     },
   },
   common: {
