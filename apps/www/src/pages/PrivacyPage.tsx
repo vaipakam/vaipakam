@@ -7,10 +7,16 @@ import { usePageMeta } from '../lib/usePageMeta';
 import './LegalPage.css';
 
 /**
- * Public Privacy Policy page — mirrors `docs/PrivacyPolicy.md`. Unlike
- * the Terms page, this content is NOT on-chain-hashed; governance can
- * update it without a protocol tx. The Privacy Policy's version bump
- * is tracked in the `.md` file's header, not on-chain.
+ * Public Privacy Policy page — mirrors `docs/Terms/PrivacyPolicy.md`.
+ * Unlike the Terms page, this content is NOT on-chain-hashed;
+ * governance can update it without a protocol tx. The Privacy Policy's
+ * version bump is tracked in the `.md` file's header, not on-chain.
+ *
+ * The mirror is maintained BY HAND — no guard compares this page with
+ * the canonical Markdown (unlike the Terms pages, which are frozen
+ * byte-copies checked by `check-terms-canonical-hash`). Edit both, in
+ * the same commit, and keep the version/effective line in step with
+ * the `.md` header.
  */
 export default function PrivacyPage() {
   usePageMeta({
@@ -25,9 +31,9 @@ export default function PrivacyPage() {
         <header>
           <h1>Vaipakam Privacy Policy</h1>
           <div className="legal-meta">
-            <span>Version 3</span>
+            <span>Version 4</span>
             <span>·</span>
-            <span>Effective 2026-07-06</span>
+            <span>Effective 2026-08-30</span>
           </div>
         </header>
 
@@ -48,45 +54,57 @@ export default function PrivacyPage() {
           </p>
 
           <p>
-            <strong>Diagnostics telemetry (wallet-keyed).</strong> When
-            you use the app, we collect a small journey log keyed to
-            your connected wallet address. It contains timestamps,
-            which screen or flow you were in, and error messages
-            (truncated, with wallet addresses shortened). It is stored
-            in your browser's local storage by default. If you open a
-            support report from the Diagnostics drawer, a copy is
-            attached to that report. We do NOT send your IP,
-            user-agent, or browsing history.
+            <strong>Diagnostics — on your device only.</strong> When
+            something in the app fails, the app keeps a record of the
+            most recent error — the error message, the component trace
+            where it has one, the page you were on, and a timestamp —
+            in your browser's session storage. It is a single slot, not
+            a running log of your activity, it is not keyed to your
+            wallet, and it is discarded when you close the tab. It
+            never leaves your device on its own. If you open a support
+            report from the Diagnostics drawer, the app pre-fills a
+            GitHub issue in your browser containing exactly what the
+            drawer showed you — page, network, connection status,
+            build, and that last error — with any wallet address
+            shortened to <code>0x1234…abcd</code> and the error text
+            length-capped. Whether to submit it is your choice. We do
+            NOT send your IP, user-agent, or browsing history.
           </p>
 
           <p>
-            <strong>Server-side error capture.</strong> Every UI error
-            (e.g. a transaction reverts, an oracle read fails) is
-            recorded server-side at a Cloudflare Worker endpoint with
-            a per-event UUID. The record carries: the redacted wallet
-            (<code>0x…abcd</code>), the error type / name / selector
-            and the technical error message (truncated, and free of
-            anything you typed), which screen / flow / step you were
-            in, your chain id, interface locale, theme, viewport size,
-            and the app version. <strong>Not</strong> recorded: full
-            wallet address, browser user-agent string, IP address (beyond
-            transient rate-limiting), localStorage contents, cookies,
-            or any free-form text you typed. The same UUID surfaces
-            in any GitHub issue you choose to file, so support can
-            cross-reference an external report against a real session
-            on our side. Records are pruned after 90 days. The legal
-            basis is "legitimate interest" (security, fraud prevention,
-            and improving service reliability) under GDPR Art 6(1)(f).
-            You can have the error-diagnostics records associated with
-            your wallet erased at any time, directly and without a
-            support ticket, by signing an erasure request with that
-            wallet in the app. To make this possible we store a
-            one-way keyed hash of your wallet address alongside each
-            record; your full address is used only momentarily to
-            compute that hash and is never stored. In rare cases where
-            the law requires us to retain specific records, automated
-            erasure will skip them; where the law permits, we will tell
-            you so.
+            <strong>
+              Error records on our servers — not currently collected.
+            </strong>{' '}
+            An earlier version of the app sent a record of each UI
+            error to a Cloudflare Worker endpoint.{' '}
+            <strong>The current app does not.</strong> No error record
+            is transmitted from the app to us, so no data of this kind
+            is being created about you today. The description below is
+            kept because it governs any records created before this
+            changed, and because it must be accurate again before such
+            capture is reinstated. Where such a record exists it
+            carries: the redacted wallet (<code>0x…abcd</code>), the
+            error type / name / selector and the technical error
+            message (truncated, and free of anything you typed), which
+            screen / flow / step you were in, your chain id, interface
+            locale, theme, viewport size, and the app version.{' '}
+            <strong>Not</strong> recorded: full wallet address, browser
+            user-agent string, IP address (beyond transient
+            rate-limiting), localStorage contents, cookies, or any
+            free-form text you typed. Records are pruned after 90 days.
+            The legal basis is "legitimate interest" (security, fraud
+            prevention, and improving service reliability) under GDPR
+            Art 6(1)(f). Your erasure control is live regardless of the
+            pause: you can have the error-diagnostics records
+            associated with your wallet erased at any time, directly
+            and without a support ticket, by signing an erasure request
+            with that wallet in the app. To make this possible a
+            one-way keyed hash of your wallet address is stored
+            alongside each record; your full address is used only
+            momentarily to compute that hash and is never stored. In
+            rare cases where the law requires us to retain specific
+            records, automated erasure will skip them; where the law
+            permits, we will tell you so.
           </p>
 
           <p>
@@ -240,18 +258,25 @@ export default function PrivacyPage() {
           <ul>
             <li>
               <strong>Right to access.</strong> Use the "Download my
-              data" button in the app's Diagnostics drawer to export
-              everything the frontend has collected about your
-              session, keyed to your wallet.
+              data" control on the app's Data Rights page to export
+              what the app holds in this browser. It is per-origin
+              browser storage, not a wallet-keyed profile: we do not
+              assemble one.
             </li>
             <li>
               <strong>Right to erasure.</strong> Use the "Delete my
-              data" button in the Diagnostics drawer. It clears every
-              wallet-keyed journey-log entry and local-storage
-              artefact on your device. Note: on-chain transactions
-              are public and immutable — we have no power to erase
-              them. If you want on-chain deletion, that's a wallet /
-              chain-level question, not a data-processor one.
+              data" control on the same page. It clears the app's
+              browser-storage entries on this device. Two limits
+              stated plainly, because a control that overstates itself
+              is worse than none. On-chain transactions are public and
+              immutable — we have no power to erase them, and that is
+              a wallet / chain-level question rather than a
+              data-processor one. And browser storage is per-origin:
+              clearing it here does not reset the marketing site,
+              which keeps its own copies of your language and theme
+              preferences. Erasing the error-diagnostics records held
+              on our servers is a separate, signed request — see
+              "Error records on our servers".
             </li>
             <li>
               <strong>Right to object.</strong> You can revoke
@@ -292,16 +317,18 @@ export default function PrivacyPage() {
           <h2>Data retention</h2>
           <ul>
             <li>
-              Journey-log telemetry: kept in your browser's local
-              storage. A slice leaves your browser only when you
-              explicitly attach it to a support report. (Separately,
-              a single error record — not a journey-log slice — is
-              sent server-side on each error; see "Server-side error
-              capture".)
+              Device diagnostics: the most recent error is kept in
+              your browser's session storage and is discarded when you
+              close the tab. It leaves your browser only if you choose
+              to submit the pre-filled support report the Diagnostics
+              drawer builds.
             </li>
             <li>
-              Server-side error records: pruned 90 days after
-              capture.
+              Server-side error records: none are being created — the
+              current app sends none (see "Error records on our
+              servers"). Any record created before that changed is
+              pruned 90 days after its capture, and can be erased
+              sooner on your signed request.
             </li>
             <li>
               Alert subscriptions: unlinking removes the Telegram
