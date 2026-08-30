@@ -1831,14 +1831,18 @@ navigable. Give redirects a bounded life rather than leaving them
 forever. Prototype hosts with no audience (`alpha.vaipakam.com`,
 `alpha01.vaipakam.com`) can just be deleted.
 
-Two user-facing capabilities have no counterpart on the successor and
-must be built before users are moved across, not after: the Terms-of-
-Service gate (#1961 — the contracts delegate that enforcement to the
-client, so its absence means a configured ToS applies to nobody) and the
-Data Rights export/erase controls (#1960 — the marketing site's copy
-cannot substitute, because browser storage is same-origin). Both are
-listed as blockers beside the cutover switch in
-`apps/www/src/lib/appUrl.ts`.
+One user-facing capability still has no counterpart on the successor and
+must be built before users are moved across, not after: the Data Rights
+export/erase controls (#1960 — the marketing site's copy cannot
+substitute, because browser storage is same-origin). It is listed as a
+blocker beside the cutover switch in `apps/www/src/lib/appUrl.ts`.
+
+The Terms-of-Service gate (#1961) WAS the other one and is now built:
+`apps/app` gates its routed surfaces on the in-force ToS version and
+fails closed on a pending or failed read. It is inert while
+`currentTosVersion` is 0, so nothing changes for users until governance
+installs a version — which is exactly the state the cutover needed,
+since without it a configured ToS would have applied to nobody.
 
 Before retiring ANY origin, check what still depends on it. At minimum:
 `FRONTEND_ORIGIN` in `apps/agent/wrangler.jsonc` (an origin dropped
@@ -2320,10 +2324,11 @@ describing this; keep them in sync if you change the schema.
 > Following the steps below would **create `vaipakam-lz-alerts-db`** — a
 > database the operator is in the middle of deleting — and, more to the
 > point, would DEPLOY the retired Worker, which is what consumes a cron
-> slot. (Creating a D1 database consumes none.) That freed slot is
-> currently **spare**: `ops/mesh-watcher` is its intended occupant but is
-> code-complete and undeployed, so the account sits at 4 of 5 with one
-> available (see that Worker's README for its setup).
+> trigger. (Creating a D1 database consumes none.) `ops/mesh-watcher` is
+> the intended occupant of the trigger this one freed, and is
+> code-complete but undeployed — see that Worker's README for its setup,
+> and [`CloudflareCronSlots.md`](CloudflareCronSlots.md) for whether the
+> budget currently has room for it.
 >
 > **The source tree is GONE** — `ops/lz-watcher/` was removed in #1440.
 > Review established that no config edit can make a source tree

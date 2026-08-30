@@ -72,6 +72,14 @@ interface UsePageMetaInput {
    *  path consolidates every variant onto the one advertised URL
    *  (Codex #1309 r5). */
   canonicalPath?: string;
+  /** Emit `<meta name="robots" content="noindex">` for the page
+   *  mount (#1998 / #2010 r1): version-pinned Terms archives
+   *  duplicate `/terms`'s content, and absence from the sitemap
+   *  alone does not stop a crawler that follows on-page links from
+   *  indexing a self-canonicalizing duplicate. Torn down on unmount
+   *  (like the canonical, unlike title/description) — a leaked
+   *  noindex on the NEXT page would silently de-index it. */
+  robots?: 'noindex';
 }
 
 /** Open Graph + Twitter Card tags maintained alongside the basics.
@@ -102,6 +110,7 @@ export function usePageMeta({
   titleKey,
   descriptionKey,
   canonicalPath,
+  robots,
 }: UsePageMetaInput) {
   const { t, i18n } = useTranslation();
   const location = useLocation();
@@ -169,6 +178,28 @@ export function usePageMeta({
       el.content = tag.content;
     }
 
+    // <meta name="robots"> — only when the page asks for it, and
+    // marked so the teardown below removes exactly what this hook
+    // wrote. Upserted (not blindly appended) so a fast route change
+    // between two noindex pages keeps one tag.
+    let robotsTag = document.querySelector(
+      'meta[name="robots"][data-page-meta="1"]',
+    ) as HTMLMetaElement | null;
+    if (robots) {
+      if (!robotsTag) {
+        robotsTag = document.createElement('meta');
+        robotsTag.name = 'robots';
+        robotsTag.dataset.pageMeta = '1';
+        document.head.appendChild(robotsTag);
+      }
+      robotsTag.content = robots;
+    } else if (robotsTag && robotsTag.parentNode) {
+      // This mount does not want a directive; remove a predecessor's
+      // leftover rather than letting it de-index this page.
+      robotsTag.parentNode.removeChild(robotsTag);
+      robotsTag = null;
+    }
+
     return () => {
       // Tear down ONLY the canonical on unmount — leaving the title
       // and description in place avoids a flash of empty/old values
@@ -176,10 +207,15 @@ export function usePageMeta({
       // overwrites both. The canonical IS torn down because every
       // page has its own absolute URL — leaving the previous one
       // mounted while a new page paints would briefly tell crawlers
-      // the wrong canonical.
+      // the wrong canonical. The robots directive is torn down for
+      // the same reason, in the failure-costlier direction: a leaked
+      // noindex would silently de-index whatever page mounts next.
       if (canonicalTag && canonicalTag.parentNode) {
         canonicalTag.parentNode.removeChild(canonicalTag);
       }
+      if (robotsTag && robotsTag.parentNode) {
+        robotsTag.parentNode.removeChild(robotsTag);
+      }
     };
-  }, [t, titleKey, descriptionKey, canonicalPath, location.pathname, i18n.language]);
+  }, [t, titleKey, descriptionKey, canonicalPath, robots, location.pathname, i18n.language]);
 }

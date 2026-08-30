@@ -422,7 +422,7 @@ const EXCLUDED_PREFIXES = [
  *                count is a known debt, not an endorsement.
  */
 const PINNED = new Map([
-  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "e55d0810dc5d"]],
+  [".github/scripts/README.md", [2, "TOOLING — documents this gate and quotes the dead names as examples", "fdcbec2821b2"]],
   [".github/scripts/check-excision-residue.selftest.mjs", [28, "EXPECTED — this file's fixtures embed the retired names ON PURPOSE, because a gate for those names cannot be tested without them. Movement here means a fixture was added or changed, not that residue re-entered the product. Read the diff before raising it.", "39d667741801"]],
   ["AGENTS.md", [1, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "79390720e2fe"]],
   ["CLAUDE.md", [13, "UNTRIAGED (#1728) — admitted by a widened scope; classify on first movement", "3edc0988a8d9"]],

@@ -119,16 +119,25 @@ jobs:
           # per-item reads, a failure the pass itself reports as success.
           # The one Worker holding KEEPER_PRIVATE_KEY is not where an
           # unrun test suite belongs.
-          # The var-preservation invariant (apps/keeper/test/workerKeepVars.test.ts)
-          # asserts `keep_vars` for FIVE Workers, two of which — apps/agent and
-          # the two ops Workers — no rule above brings into this job. So an
-          # agent-only or ops-only PR could delete the key with the invariant
-          # never running, and that invariant is now what carries the whole
-          # var-preservation property (#1995). Their CONFIGS are listed rather
-          # than their directories: the key can only be lost by editing one of
-          # these files, and widening to the whole directory would run the app,
-          # indexer and keeper suites for every unrelated agent or ops change.
-          DEFI_RE='^(apps/(app|indexer|keeper)/|apps/agent/wrangler\.jsonc$|ops/(mesh-watcher|offchain-data-warm)/wrangler\.jsonc$|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
+          # apps/agent joined post-#1962 — the LAST Worker in that state,
+          # and not a quiet one: it holds PUSH_CHANNEL_PK (a real signing
+          # key), owns the Telegram link handshake, the diagnostics
+          # erasure and legal-hold paths, and the ERC-1271/6492 signature
+          # verification every signed endpoint now routes through. Being
+          # outside this detector meant an agent-only PR did not even
+          # TRIGGER the workflow, so the gap was two-layered.
+          # The two ops Workers are here for a DIFFERENT reason and so are
+          # listed differently: the var-preservation invariant
+          # (apps/keeper/test/workerKeepVars.test.ts) asserts `keep_vars` for
+          # five Workers, and that invariant is what carries the whole
+          # property since #1995. apps/agent is covered by its directory rule
+          # above; the ops Workers have no rule here at all, so their CONFIGS
+          # are named — the key can only be lost by editing one of those
+          # files, and gating on the whole directory would run the app,
+          # indexer, keeper and agent suites for every unrelated ops change.
+          # A companion unconditional job in ci.yml runs the same invariant
+          # with no filter; this one additionally brings in the richer suite.
+          DEFI_RE='^(apps/(app|indexer|keeper|agent)/|ops/(mesh-watcher|offchain-data-warm)/wrangler\.jsonc$|packages/(lib|contracts|ui|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else
@@ -195,3 +204,19 @@ jobs:
       # little if the guard itself never runs.
       - name: Run @vaipakam/keeper vitest
         run: pnpm --filter @vaipakam/keeper test
+
+      # apps/agent's suite (#1962) — the last Worker whose tests ran in no
+      # workflow at all, and the one with the largest blast radius: it
+      # holds PUSH_CHANNEL_PK, issues and revokes the Telegram link, and
+      # serves the diagnostics-erasure and legal-hold endpoints. Much of
+      # what its suite pins cannot be caught by a typecheck because the
+      # types are identical either way — that a status check's response is
+      # BYTE-IDENTICAL whether or not a gagged legal hold retained the
+      # records, that each action's signed message is distinct so a
+      # signature cannot cross actions, that an unreachable chain reads as
+      # "cannot verify" rather than "invalid signature", and that a
+      # chain-scoped authority erases only its own chain's rows. Those are
+      # privacy and authorization invariants; a green typecheck says
+      # nothing about any of them.
+      - name: Run @vaipakam/agent vitest
+        run: pnpm --filter @vaipakam/agent test

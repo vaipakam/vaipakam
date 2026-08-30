@@ -87,22 +87,30 @@ export default function DataRights() {
       </div>
 
       {/* The Diagnostics drawer's "export journey log" affordance lived
-          on the connected app — every chain-write step emits a journey
-          event that surfaces in support exports. This marketing surface
-          has no on-chain interactions and therefore no journey buffer,
-          so the card is intentionally absent here.
+          on the RETIRED `apps/defi`, where every chain-write step
+          emitted a journey event that surfaced in support exports.
+          This marketing surface has no on-chain interactions and
+          therefore no journey buffer, so the card is intentionally
+          absent here.
 
-          GAP (#1960): the connected app no longer offers a counterpart.
-          `apps/app` defines no `/data-rights` route, and the export /
-          erase controls on THIS page cannot stand in for one — they run
-          on this origin, and same-origin isolation means they can
+          The successor app has no journey buffer either, and that is a
+          recorded decision rather than an omission: `apps/app` replaced
+          the ring buffer with a one-slot last-error sink
+          (`src/diagnostics/lastError.ts`) because the product needs
+          "what just broke" attached to a support report, not a forensic
+          timeline. So there is no journey log to export there.
+
+          #1960 CLOSED the other half of that gap. `apps/app` now serves
+          its own `/data-rights` route with export and local-erasure
+          controls over the state it actually stores. The controls on
+          THIS page still do not stand in for it and never could — they
+          run on this origin, and same-origin isolation means they can
           neither read nor clear storage belonging to the app's origin.
-          The app does keep per-origin state there (preferences, alert
-          settings, notification cursors, pending transactions,
-          diagnostics), so until that route is ported the user has no
-          in-product way to export or erase it. Do not reword this into
-          a claim that the connected app "keeps" the export; an earlier
-          version of this comment said exactly that and it was false. */}
+          Two origins, two stores, two pages, by necessity.
+
+          Do not reword this into a claim that either page covers the
+          other's storage: an earlier version said the connected app
+          "keeps" this export and it was false. */}
 
       <div
         className="card"

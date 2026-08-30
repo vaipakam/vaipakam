@@ -53,6 +53,14 @@ export function HreflangAlternates() {
     // localized page leaves no stale set behind).
     if (EN_ONLY_PATHS.includes(stripped.replace(/\/+$/, '') || '/')) return;
 
+    // Version-pinned Terms routes (#1998 / #2010 r6): these carry
+    // robots noindex (meta + X-Robots-Tag) as unadvertised archives —
+    // emitting rel="alternate" links for them would simultaneously
+    // ADVERTISE every locale variant of a page we tell crawlers not
+    // to index, a contradictory signal. The same suppression covers
+    // the not-published explainer slugs, which are noindexed too.
+    if (/^\/terms\/[^/]+\/?$/.test(stripped)) return;
+
     // One alternate per **translated** locale, pointing at the same
     // page in that locale. Placeholder locales (recognised by URL
     // routing but without a translation bundle) are excluded — listing

@@ -24,10 +24,13 @@
  * EIP-191 `personal_sign` signature over a fixed, human-readable
  * message (see {@link buildErasureMessage}) that names the wallet
  * and an `issuedAt` timestamp. The Worker reconstructs the exact
- * message from the request body, recovers the signing address, and
- * requires it to equal the claimed wallet. The timestamp bounds
- * replay to a short window. The signature is not a transaction and
- * costs the user no gas.
+ * message from the request body and verifies the wallet authorised
+ * it — plain ECDSA recovery for an ordinary wallet, ERC-1271/6492
+ * against a configured chain's RPC for a smart account (#2009; see
+ * `walletSigVerify.ts`, including how the chain to verify on is
+ * chosen for this chain-field-less message format). The timestamp
+ * bounds replay to a short window. The signature is not a
+ * transaction and costs the user no gas.
  *
  * ── Why a keyed hash is the deletion key ─────────────────────────
  *
@@ -60,9 +63,21 @@
  */
 
 import { recoverMessageAddress, type Hex } from 'viem';
+import {
+  ERASURE_SIGNATURE_MAX_AGE_SECONDS,
+  buildErasureMessage,
+  buildErasureStatusMessage,
+} from '@vaipakam/lib/erasureMessage';
 import type { Env } from './env';
 import { isHexAddress, walletHash } from './diagHash';
 import { isProtocolAdmin, type AdminVerifier } from './diagAdminAuth';
+import {
+  chainVerifyGate,
+  isValidSignatureShape,
+  verifyOnChain,
+  verifyWalletSignature,
+  type ChainSigChecker,
+} from './walletSigVerify';
 import {
   sha256Hex,
   storeLegalDocument,
@@ -76,11 +91,19 @@ import {
  * older (or further in the future) than this is rejected. Erasure
  * is idempotent so replay is not dangerous, but bounding the window
  * limits how long a leaked signature stays usable against the
- * status endpoint.
+ * status endpoint. The value lives in `@vaipakam/lib` (#2008 round 3
+ * P2) so the client can refuse to send a request it already knows
+ * is stale instead of collecting a signature that can only fail.
  */
-const SIGNATURE_MAX_AGE_SECONDS = 10 * 60;
+const SIGNATURE_MAX_AGE_SECONDS = ERASURE_SIGNATURE_MAX_AGE_SECONDS;
 
-/** EIP-191 `personal_sign` signature: `0x` + 65 bytes = 132 chars. */
+/** EIP-191 `personal_sign` signature: `0x` + 65 bytes = 132 chars.
+ *  Used ONLY by the ADMIN legal-hold path now (#2009): that flow
+ *  derives the caller's identity FROM ECDSA recovery (there is no
+ *  claimed wallet to run ERC-1271 against — the recovered signer is
+ *  checked for ADMIN_ROLE), so it is structurally EOA-only, which
+ *  matches the admin reality. The USER endpoints accept smart-account
+ *  signatures via `walletSigVerify` and its wider shape check. */
 const SIGNATURE_RE = /^0x[0-9a-fA-F]{130}$/;
 
 /**
@@ -98,35 +121,14 @@ const DEFAULT_DISCLOSURE_NOTE =
 // ─── Canonical signed message ──────────────────────────────────────
 
 /**
- * Build the exact message a user signs to authorise erasure /
- * status. This string MUST be byte-identical between the wallet
- * prompt the frontend shows and the reconstruction here, or
- * signature recovery yields a different address and the request is
- * rejected. The wallet is lower-cased so a checksummed and an
- * all-lowercase spelling of the same address produce the same
- * message.
- *
- * NOTE: when the frontend erasure UI is built (follow-up), this
- * builder should move to `packages/lib` so both sides import one
- * source of truth — the same single-source discipline the repo
- * applies to ABIs. Until then the format is frozen here and
- * mirrored in the PIA doc.
- *
- * @param wallet   Full EVM address (validated by the caller).
- * @param issuedAt Unix seconds the request was signed at.
+ * The signed message builder now lives in `@vaipakam/lib` (#2002):
+ * the day the frontend erasure UI was built, the note this file
+ * carried since T-075 came due — the wallet prompt the connected app
+ * shows and the reconstruction here MUST be byte-identical, and one
+ * imported source of truth is how that stays true. Re-exported so
+ * this module's public surface (and its tests) are unchanged.
  */
-export function buildErasureMessage(wallet: string, issuedAt: number): string {
-  return [
-    'Vaipakam — Erase my error-diagnostics records',
-    '',
-    'I request erasure of the server-side error-capture records',
-    'associated with the wallet below. Signing this message proves',
-    'ownership of the wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
+export { buildErasureMessage, buildErasureStatusMessage };
 
 // ─── Request parsing + signature verification ──────────────────────
 
@@ -134,6 +136,14 @@ interface SignedRequest {
   wallet: string;
   issuedAt: number;
   signature: string;
+  /** Optional, UNSIGNED chain hint (#2009): the frozen message
+   *  formats carry no chain field (records are keyed by wallet
+   *  across chains), so a smart-account caller may name the chain
+   *  its account contract lives on for ERC-1271 verification.
+   *  Omitted → every configured chain is tried. Selects only WHERE
+   *  verification runs, never what it proves — see
+   *  `walletSigVerify`'s header. */
+  chainId?: number;
 }
 
 type ParseResult =
@@ -156,8 +166,16 @@ function parseSignedRequest(body: unknown): ParseResult {
   ) {
     return { ok: false, reason: 'issuedAt must be a positive unix-seconds number' };
   }
-  if (typeof b.signature !== 'string' || !SIGNATURE_RE.test(b.signature)) {
-    return { ok: false, reason: 'signature must be a 65-byte hex string' };
+  if (!isValidSignatureShape(b.signature)) {
+    return { ok: false, reason: 'signature must be 0x-prefixed hex' };
+  }
+  if (
+    b.chainId !== undefined &&
+    (typeof b.chainId !== 'number' ||
+      !Number.isInteger(b.chainId) ||
+      b.chainId <= 0)
+  ) {
+    return { ok: false, reason: 'chainId, when present, must be a positive integer' };
   }
   return {
     ok: true,
@@ -165,12 +183,14 @@ function parseSignedRequest(body: unknown): ParseResult {
       wallet: b.wallet,
       issuedAt: Math.floor(b.issuedAt),
       signature: b.signature,
+      chainId: b.chainId as number | undefined,
     },
   };
 }
 
 type VerifyResult =
-  | { ok: true }
+  | { ok: true; via: 'ecdsa' }
+  | { ok: true; via: 'chain'; chainId: number }
   | { ok: false; status: number; reason: string };
 
 /**
@@ -180,26 +200,56 @@ type VerifyResult =
 async function verifySignedRequest(
   req: SignedRequest,
   nowSeconds: number,
+  // The message is PER OPERATION (#2008 round 2 P1): with both
+  // endpoints verifying the same bytes, every status signature was
+  // also a valid erasure capability for the whole replay window —
+  // replaying a status body against /diag/erasure deleted records
+  // the user only asked to LOOK at. Each handler passes its own
+  // builder, so a signature authorises exactly the operation whose
+  // words the user saw.
+  buildMessage: (wallet: string, issuedAt: number) => string,
+  env: Env,
+  checker: ChainSigChecker = verifyOnChain,
+  // The chain path's per-IP rate gate (#2013) — handlers pass
+  // `chainVerifyGate(env, request)`.
+  chainPathAllowed?: () => Promise<boolean>,
 ): Promise<VerifyResult> {
   if (Math.abs(nowSeconds - req.issuedAt) > SIGNATURE_MAX_AGE_SECONDS) {
     return { ok: false, status: 400, reason: 'request timestamp is stale' };
   }
-  const message = buildErasureMessage(req.wallet, req.issuedAt);
-  let recovered: string;
-  try {
-    recovered = await recoverMessageAddress({
-      message,
-      signature: req.signature as Hex,
-    });
-  } catch {
-    // A structurally-valid-looking hex string that isn't a real
-    // signature lands here.
-    return { ok: false, status: 400, reason: 'signature is not recoverable' };
+  const message = buildMessage(req.wallet, req.issuedAt);
+  // Plain ECDSA for an ordinary wallet, ERC-1271/6492 against a
+  // configured chain for a smart account (#2009) — the shared
+  // verifier decides; the optional unsigned chainId hint only picks
+  // WHERE the on-chain check runs.
+  const verdict = await verifyWalletSignature(
+    env,
+    req.wallet,
+    message,
+    req.signature,
+    req.chainId,
+    checker,
+    chainPathAllowed,
+  );
+  if (verdict.ok) return verdict;
+  if (verdict.reason === 'limited') {
+    return {
+      ok: false,
+      status: 429,
+      reason: 'too many verification attempts — try again shortly',
+    };
   }
-  if (recovered.toLowerCase() !== req.wallet.toLowerCase()) {
-    return { ok: false, status: 400, reason: 'signature does not match wallet' };
-  }
-  return { ok: true };
+  return verdict.reason === 'unavailable'
+    ? {
+        ok: false,
+        status: 503,
+        // Honest, not gag-relevant (same class as the malformed-4xx
+        // family): a smart account this Worker cannot reach a chain
+        // for is unverifiable, not invalid — a mismatch verdict here
+        // would send the user into a retry loop that cannot succeed.
+        reason: 'signature verification temporarily unavailable',
+      }
+    : { ok: false, status: 400, reason: 'signature does not match wallet' };
 }
 
 // ─── D1 helpers ────────────────────────────────────────────────────
@@ -237,6 +287,7 @@ export async function handleDiagErasure(
   req: Request,
   env: Env,
   corsOrigin: string,
+  sigChecker: ChainSigChecker = verifyOnChain,
 ): Promise<Response> {
   // The keyed hash is the deletion key — without the HMAC secret the
   // feature cannot function. This is a config error, not a retention
@@ -257,7 +308,14 @@ export async function handleDiagErasure(
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedRequest(parsed.req, nowSeconds);
+  const verified = await verifySignedRequest(
+    parsed.req,
+    nowSeconds,
+    buildErasureMessage,
+    env,
+    sigChecker,
+    chainVerifyGate(env, req),
+  );
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },
@@ -270,17 +328,50 @@ export async function handleDiagErasure(
   const hold = await getLegalHold(env.DB, hash);
 
   // Legal hold present → retain everything for this wallet-hash.
-  // Hold absent → delete every row keyed to this wallet-hash.
-  // Either way the response below is identical.
+  // Hold absent → delete the rows the signer's AUTHORITY covers
+  // (#2013 round 5 P1, the same divergent-controller doctrine as the
+  // Telegram unlink): an ECDSA key is the wallet's universal
+  // controller and erases every chain's rows; a smart account's
+  // contract approval proves authority only for the chain that
+  // confirmed it, so it erases that chain's rows alone — chain X's
+  // controller must not destroy records belonging to chain Y's.
+  // Rows captured with a NULL chain_id are likewise outside a
+  // chain-scoped authority's reach (nothing ties them to the chain
+  // that vouched) and wait for the universal key or support. Either
+  // way the response below is identical.
   if (!hold) {
-    await env.DB
-      .prepare(`DELETE FROM diag_errors WHERE wallet_hash = ?`)
-      .bind(hash)
-      .run();
+    if (verified.via === 'chain') {
+      await env.DB
+        .prepare(
+          `DELETE FROM diag_errors WHERE wallet_hash = ? AND chain_id = ?`,
+        )
+        .bind(hash, verified.chainId)
+        .run();
+    } else {
+      await env.DB
+        .prepare(`DELETE FROM diag_errors WHERE wallet_hash = ?`)
+        .bind(hash)
+        .run();
+    }
   }
 
-  // INVARIANT 1: uniform response, no branching, no row counts.
-  return json({ status: 'processed' }, 200, corsOrigin);
+  // INVARIANT 1: uniform response, no branching on RETENTION state,
+  // no row counts. `scope` — and, on the chain scope, WHICH chain —
+  // is a function of the SIGNATURE VERDICT alone (#2013 r5+r6) —
+  // identical for the held and unheld cases, so it reveals nothing
+  // the caller did not already know — and lets the app confirm
+  // honestly that a chain-verified authority's request covered one
+  // NAMED chain's records rather than the wallet's: the wallet may
+  // sit on a different chain by the time the confirmation renders,
+  // so "the network you are connected to" is not a claim the client
+  // can safely make on its own (round 6 P2).
+  return json(
+    verified.via === 'chain'
+      ? { status: 'processed', scope: 'chain', chainId: verified.chainId }
+      : { status: 'processed', scope: 'wallet' },
+    200,
+    corsOrigin,
+  );
 }
 
 // ─── Endpoint: POST /diag/erasure/status ───────────────────────────
@@ -298,6 +389,7 @@ export async function handleDiagErasureStatus(
   req: Request,
   env: Env,
   corsOrigin: string,
+  sigChecker: ChainSigChecker = verifyOnChain,
 ): Promise<Response> {
   if (!env.DIAG_WALLET_HMAC_KEY) {
     return json({ error: 'erasure_not_configured' }, 503, corsOrigin);
@@ -315,7 +407,14 @@ export async function handleDiagErasureStatus(
   }
 
   const nowSeconds = Math.floor(Date.now() / 1000);
-  const verified = await verifySignedRequest(parsed.req, nowSeconds);
+  const verified = await verifySignedRequest(
+    parsed.req,
+    nowSeconds,
+    buildErasureStatusMessage,
+    env,
+    sigChecker,
+    chainVerifyGate(env, req),
+  );
   if (!verified.ok) {
     return json(
       { error: 'verification_failed', reason: verified.reason },
@@ -325,6 +424,11 @@ export async function handleDiagErasureStatus(
   }
 
   const hash = await walletHash(parsed.req.wallet, env.DIAG_WALLET_HMAC_KEY);
+  // Disclosure stays ADDRESS-scoped even for a chain-verified signer
+  // (#2013 r5): holds carry no per-chain state, and an operator's
+  // enabled disclosure for this wallet necessarily covers the
+  // requester's chain slice of it. Narrowing the answer by chain
+  // would invent a hold granularity the service does not have.
   const hold = await getLegalHold(env.DB, hash);
 
   if (hold && hold.disclosure_allowed === 1) {

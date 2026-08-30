@@ -88,6 +88,10 @@
       "activity": {
         "title": "Actividad — Vaipakam"
       },
+      "dataRights": {
+        "title": "Tus datos — Vaipakam",
+        "description": "Descarga o borra los datos que la aplicación Vaipakam guarda en este navegador."
+      },
       "settings": {
         "title": "Configuración — Vaipakam"
       },
@@ -191,6 +195,53 @@
       "phasePermit": "Firmando el permiso… ({{c}} de {{t}}) — gratis, sin gas",
       "phaseSend": "Enviando… ({{c}} de {{t}})"
     },
+    "dataRights": {
+      "title": "Tus datos",
+      "subtitle": "Lo que esta aplicación guarda en tu navegador, y cómo obtener una copia o eliminarlo.",
+      "downloadTitle": "Descargar una copia",
+      "downloadBody": "Guarda en un solo archivo todo lo que esta aplicación ha almacenado en este navegador, para que lo conserves o lo leas: tus preferencias de visualización, tus ajustes de alertas, qué notificaciones has visto y marcadores de lo que hayas empezado y no terminado.",
+      "downloadButton": "Descargar mis datos",
+      "downloadDone": "Guardado",
+      "eraseTitle": "Borrarlo de este navegador",
+      "eraseBody": "Lo elimina todo de este dispositivo. Tus preferencias de visualización vuelven a sus valores por defecto y lo que tuvieras a medias perderá su marcador local.",
+      "eraseButton": "Borrar mis datos",
+      "eraseConfirm": "Sí, bórralo",
+      "eraseCancel": "Cancelar",
+      "eraseConfirmPrompt": "Esto no se puede deshacer. Descarga una copia antes si quieres conservarla.",
+      "eraseDone": "Se borraron {{count}} elementos almacenados. También se ha pedido a las demás pestañas que tengas abiertas que borren los suyos.",
+      "eraseNothing": "No había nada almacenado en este navegador para borrar.",
+      "erasePartial": "Se borraron {{removed}} elementos, pero {{left}} no se pudieron eliminar. Borrar los datos del sitio desde los ajustes de tu navegador eliminará el resto.",
+      "eraseBlocked": "Este navegador no ha permitido que la aplicación borre su almacenamiento, así que no se eliminó nada. Las ventanas de navegación privada y los ajustes de privacidad restrictivos pueden provocarlo; borrar los datos del sitio desde los ajustes de tu navegador sí funcionará.",
+      "holdingTitle": "Qué hay almacenado ahora mismo",
+      "holdingCount": "{{count}} elementos",
+      "holdingNone": "Ahora mismo no hay nada almacenado en este navegador.",
+      "holdingUnreadable": "Este navegador no permite que la aplicación lea su propio almacenamiento, así que no podemos mostrarte lo que hay. Las ventanas de navegación privada y los ajustes de privacidad estrictos hacen esto. Borrar los datos del sitio desde los ajustes de tu navegador seguirá eliminándolo.",
+      "scopeTitle": "Qué no cubre esto",
+      "scopeChain": "Cualquier cosa en la cadena de bloques. Las transacciones que has firmado viven allí, no en tu navegador, así que no están en esta descarga — pero son públicas y puedes consultarlas tú mismo en cualquier explorador de bloques. Lo que nadie puede hacer, Vaipakam incluido, es borrarlas. Tu dirección de billetera es la única excepción: donde has guardado ajustes por billetera, aparece en los nombres de las claves almacenadas, así que sí está en los datos de tu navegador y en la descarga — borrar aquí elimina esas copias locales, nunca nada en la cadena.",
+      "scopeAlerts": "Alertas. Si vinculaste Telegram, esa conexión la guarda el servicio de alertas, no tu navegador. Desvincular en Ajustes elimina la conexión de Telegram en sí; tus preferencias de alertas permanecen en ese servicio por si vuelves a vincularlo. Escribe a support@vaipakam.com para que también se eliminen.",
+      "scopeDiagnostics": "Los informes de error que guarda nuestro servicio de soporte. Están separados de su navegador, así que el borrado local de arriba no los alcanza: la sección de «informes de error» de esta página envía una solicitud de borrado firmada para ellos, y escribir a support@vaipakam.com también funciona.",
+      "scopeTabs": "Otras pestañas, en lo que respecta a la descarga. Una pequeña parte de los datos pertenece a cada pestaña por separado, así que la descarga cubre la pestaña en la que estás; el borrado sí limpia las demás. Descarga desde cada pestaña si quieres el panorama completo.",
+      "scopeSite": "El sitio principal vaipakam.com. Mantiene su propio almacén separado, con sus propios controles en ese sitio.",
+      "scopeCookies": "Dos cookies de preferencias en el dominio compartido están en este navegador, así que la descarga las incluye y borrar las elimina. Una es tu idioma, que ambos sitios leen — así es como un idioma elegido en un sitio te sigue al otro. La otra es el tema propio del sitio principal; esta aplicación nunca la usa, y tu tema aquí se guarda por separado, sin compartirse. Borrar restablece por completo esta aplicación pero no vaipakam.com: el sitio principal conserva sus propias copias de sus preferencias y las restaurará, cookies incluidas, en tu próxima visita — eliminarlas es tarea de sus propios controles de datos.",
+      "diagTitle": "Borrar los informes de error que guarda soporte",
+      "diagBody": "Cuando algo falla en la aplicación, puede capturarse un informe de error que nuestro servicio de soporte guarda para ayudar a corregirlo. Esos registros viven en ese servicio, no en su navegador, y desde aquí puede pedir que se borren los asociados a su monedero.",
+      "diagConnect": "Conecte el monedero cuyos registros quiere borrar. La solicitud se firma con ese monedero: esa firma es la prueba para el servicio de que la solicitud realmente viene de usted.",
+      "diagNotConfigured": "Esta versión no está conectada al servicio de soporte, así que la solicitud firmada no puede enviarse desde aquí. Escriba a support@vaipakam.com y tramitaremos una solicitud de borrado para su monedero.",
+      "diagEraseButton": "Borrar mis informes de error",
+      "diagStatusButton": "Comprobar registros retenidos",
+      "diagBusy": "Esperando su monedero…",
+      "diagSignNote": "Demostrar que el monedero es suyo es una firma gratuita: no es una transacción y no cuesta gas.",
+      "diagProcessed": "Su solicitud de borrado fue procesada.",
+      "diagUniformNote": "La confirmación es deliberadamente igual para todos los monederos: no dice si existía algún registro, de modo que de ella no puede deducirse nada sobre sus registros. Cuando la ley exige conservar algún registro, la comprobación de abajo lo indica solo cuando la ley permite decirlo.",
+      "diagStatusClear": "No se informa de registros retenidos para este monedero.",
+      "diagRetainedLabel": "El servicio informa de que algunos registros fueron retenidos:",
+      "diagUnavailable": "El servicio de soporte no puede procesar solicitudes de borrado en este momento. Inténtelo más tarde, o escriba a support@vaipakam.com y tramitaremos una solicitud de borrado para su monedero.",
+      "diagError": "La solicitud no pudo completarse y es posible que no se haya borrado nada. Inténtelo de nuevo en un momento.",
+      "diagExpired": "La solicitud firmada caducó antes de que el servicio la aceptara, así que no se consultó ni se borró ningún registro. Inténtelo de nuevo y apruebe la ventana del monedero sin demora; si esto se repite, puede que el reloj de este dispositivo esté mal ajustado.",
+      "diagVerifyUnavailable": "El servicio de soporte no pudo verificar la firma de su monedero en este momento: la red en la que vive la cuenta de su monedero no era accesible desde el servicio. Esto no significa que la firma fuera incorrecta. Inténtelo de nuevo dentro de un rato, o escriba a support@vaipakam.com y tramitaremos una solicitud de borrado para su monedero.",
+      "diagProcessedChainOnly": "Tu solicitud de borrado se procesó únicamente para los registros de {{network}}. La firma de un monedero de cuenta inteligente se verifica en una sola red a la vez, por lo que los registros capturados en otras redes no quedan cubiertos: cambia a otra red y repite la solicitud allí, o escribe a support@vaipakam.com y la procesaremos para tu monedero en todas partes.",
+      "diagProcessedChainUnknown": "Tu solicitud de borrado se procesó únicamente para los registros de una red: la red que verificó la firma de tu monedero. La firma de un monedero de cuenta inteligente se verifica en una sola red a la vez, por lo que los registros capturados en otras redes no quedan cubiertos: cambia de red y repite la solicitud allí, o escribe a support@vaipakam.com y la procesaremos para tu monedero en todas partes."
+    },
     "killSwitch": {
       "disabled": "Esta acción está desactivada ahora mismo — los operadores la pausaron por precaución mientras revisan algo. Lo que ya es tuyo no se ve afectado: pagos, reclamos y retiros siguen abiertos."
     },
@@ -218,7 +269,7 @@
       "linked": "Telegram vinculado — las alertas para esta billetera van a tu chat.",
       "unlink": "Desvincular",
       "unlinkElsewhereTitle": "¿Vinculaste esta billetera en otro dispositivo?",
-      "unlinkElsewhereBody": "Su vínculo de Telegram vive en nuestro servidor, no solo en este navegador. Desconéctalo aquí — detiene los mensajes en todas partes.",
+      "unlinkElsewhereBody": "Su vínculo de Telegram vive en nuestro servidor, no solo en este navegador. Desconéctelo aquí: con un monedero ordinario eso detiene los mensajes en todas partes; la firma de un monedero de cuenta inteligente los detiene para la red que nombra.",
       "unlinkElsewhere": "Desvincular esta billetera",
       "unlinked": "Desvinculada. No habrá más mensajes de Telegram para esta billetera.",
       "toggleRepayDue": "Avísame antes de que venza un pago de intereses",
@@ -233,7 +284,8 @@
       "pushEnable": "Activar entrega Push",
       "pushEnabled": "La entrega Push está activa para esta billetera.",
       "pushButton": "Abrir el canal Push",
-      "loanNudge": "¿Quieres un aviso de Telegram si este préstamo se vuelve riesgoso? Configura alertas en Configuración."
+      "loanNudge": "¿Quieres un aviso de Telegram si este préstamo se vuelve riesgoso? Configura alertas en Configuración.",
+      "unlinkedChainOnly": "Desvinculado para {{network}}. Un monedero de cuenta inteligente se desconecta por red — si este monedero está vinculado en otras redes, desvincule cada una desde allí con su propia firma."
     },
     "notifications": {
       "bellLabel": "Notificaciones",
@@ -1873,7 +1925,9 @@
         "vaultUpgradeRequired": "Una de las partes de esta operación usa una versión antigua del vault y necesita actualizarla antes de poder operar. No se ha enviado nada.",
         "selfTrade": "Esta es tu propia oferta, así que no puedes aceptarla. Cancélala si quieres retirarla del libro.",
         "unknown": "El protocolo no acepta esta oferta en este momento. No se ha enviado nada: actualiza e inténtalo de nuevo, o vuelve dentro de un rato."
-      }
+      },
+      "termsNotAccepted": "Necesitas aceptar las condiciones de Vaipakam antes de hacer esto. Abre la página de Inicio y se te pedirá una sola vez; devolver, reclamar y retirar siguen funcionando igualmente.",
+      "termsCheckUnavailable": "No hemos podido confirmar ahora mismo si las condiciones de Vaipakam se aplican a tu cartera: espera un momento e inténtalo de nuevo."
     },
     "fees": {
       "borrowerLIF": "Vaipakam cobra una comisión de iniciación de préstamo de {{pct}} sobre el importe prestado.",
@@ -2242,7 +2296,8 @@
         "vpfiSub": "Opcional — reducir comisiones del protocolo manteniendo VPFI",
         "activitySub": "Todo lo que tu billetera ha hecho en Vaipakam",
         "riskAccessSub": "Elige qué tan arriesgados pueden ser los activos de tus operaciones",
-        "helpSub": "Respuestas en lenguaje claro e info de build"
+        "helpSub": "Respuestas en lenguaje claro e info de build",
+        "dataRightsSub": "Descarga o borra lo que esta aplicación guarda en tu navegador"
       }
     },
     "common": {
@@ -2272,6 +2327,24 @@
       "copyAria": "Copiar dirección {{address}}",
       "viewAria": "Ver {{address}} en el explorador de bloques",
       "copied": "Dirección copiada"
+    },
+    "legalGate": {
+      "verifying": "Comprobando si las condiciones se aplican a tu cartera…",
+      "readErrorTitle": "No se han podido comprobar las condiciones",
+      "readErrorBody": "No hemos podido conectar con la red para saber si necesitas aceptar las condiciones de Vaipakam, así que la aplicación permanece cerrada en lugar de suponerlo. No pasa nada con tu cartera ni con tus posiciones: inténtalo de nuevo en un momento.",
+      "retry": "Reintentar",
+      "loadFailedTitle": "No se pudo cargar la comprobación de las condiciones",
+      "loadFailedBody": "Una parte de la aplicación no se cargó, así que no podemos saber si necesitas aceptar las condiciones de Vaipakam; permanece cerrada en lugar de suponerlo. Recargar la página suele solucionarlo. Devolver, reclamar y retirar siguen funcionando igualmente.",
+      "reload": "Recargar la página",
+      "title": "Acepta las condiciones para continuar",
+      "body": "Los operadores de Vaipakam han puesto en vigor una versión de las condiciones. Aceptar envía una transacción única que registra qué versión aceptaste, así que tu cartera te pedirá confirmarla y tiene una pequeña comisión de red. No se te volverá a preguntar salvo que las condiciones cambien, o que cambies a otra red, ya que cada red guarda su propio registro.",
+      "currentVersion": "Versión en vigor",
+      "contentHash": "Huella del contenido",
+      "readTerms": "Leer las Condiciones",
+      "privacyPolicy": "Política de Privacidad",
+      "signAccept": "Aceptar y continuar",
+      "signing": "Esperando a tu cartera…",
+      "footnote": "Tu aceptación queda registrada en la cadena frente a la versión y la huella exactas que se muestran arriba, de modo que lo que aceptaste sigue siendo comprobable más adelante. Devolver, reclamar y retirar nunca quedan bloqueados por esto."
     }
   },
   "contractError": {

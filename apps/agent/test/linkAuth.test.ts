@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
+import type { Env } from '../src/env';
+import type { ChainSigChecker } from '../src/walletSigVerify';
 import {
   buildDueDateOptOutMessage,
   buildTelegramLinkMessage,
@@ -21,6 +23,21 @@ const ACCOUNT_B: PrivateKeyAccount = privateKeyToAccount(
 
 const CHAIN_ID = 84532;
 const NOW = 1_750_000_000;
+
+/** Fast-path cases need no chains; a checker that throws proves the
+ *  chain is never consulted for a valid plain-ECDSA signature. */
+const EMPTY_ENV = {} as Env;
+const NEVER: ChainSigChecker = async () => {
+  throw new Error('unexpected chain consult');
+};
+/** Negative cases must reach a DEFINITIVE no (#2009): a 65-byte
+ *  signature by the wrong key is not a mismatch until a configured
+ *  chain denies it — it could be a smart account's owner-key
+ *  signature. Base Sepolia is in the consolidated deployments, so
+ *  getChainConfigs keeps it. */
+const CHAIN_ENV = { RPC_BASE_SEPOLIA: 'http://rpc.test' } as Env;
+const DENY: ChainSigChecker = async () => false;
+const CONFIRM: ChainSigChecker = async () => true;
 
 async function signedBody(
   account: PrivateKeyAccount,
@@ -70,7 +87,7 @@ describe('verifySignedLinkRequest', () => {
         await signedBody(ACCOUNT_A, spelling, NOW),
       );
       if (!parsed.ok) throw new Error('parse failed');
-      const v = await verifySignedLinkRequest(parsed.req, NOW);
+      const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, 'link', NEVER);
       expect(v.ok).toBe(true);
     }
   });
@@ -81,7 +98,7 @@ describe('verifySignedLinkRequest', () => {
       await signedBody(ACCOUNT_B, ACCOUNT_A.address, NOW),
     );
     if (!parsed.ok) throw new Error('parse failed');
-    const v = await verifySignedLinkRequest(parsed.req, NOW);
+    const v = await verifySignedLinkRequest(parsed.req, NOW, CHAIN_ENV, 'link', DENY);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.reason).toContain('does not match');
   });
@@ -92,7 +109,7 @@ describe('verifySignedLinkRequest', () => {
       await signedBody(ACCOUNT_A, ACCOUNT_A.address, issuedAt),
     );
     if (!parsed.ok) throw new Error('parse failed');
-    const v = await verifySignedLinkRequest(parsed.req, NOW);
+    const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV);
     expect(v.ok).toBe(false);
     if (!v.ok) expect(v.reason).toContain('stale');
   });
@@ -108,7 +125,7 @@ describe('verifySignedLinkRequest', () => {
       signature,
     });
     if (!parsed.ok) throw new Error('parse failed');
-    const v = await verifySignedLinkRequest(parsed.req, NOW, 'unlink');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, 'unlink', NEVER);
     expect(v.ok).toBe(true);
   });
 
@@ -123,7 +140,7 @@ describe('verifySignedLinkRequest', () => {
       signature,
     });
     if (!parsed.ok) throw new Error('parse failed');
-    const v = await verifySignedLinkRequest(parsed.req, NOW, 'mute-duedate');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, 'mute-duedate', NEVER);
     expect(v.ok).toBe(true);
   });
 
@@ -138,7 +155,7 @@ describe('verifySignedLinkRequest', () => {
       signature,
     });
     if (!parsed.ok) throw new Error('parse failed');
-    const v = await verifySignedLinkRequest(parsed.req, NOW, 'test-alert');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, 'test-alert', NEVER);
     expect(v.ok).toBe(true);
   });
 
@@ -173,7 +190,7 @@ describe('verifySignedLinkRequest', () => {
         signature,
       });
       if (!parsed.ok) throw new Error('parse failed');
-      const v = await verifySignedLinkRequest(parsed.req, NOW, action);
+      const v = await verifySignedLinkRequest(parsed.req, NOW, CHAIN_ENV, action, DENY);
       expect(v.ok).toBe(false);
     }
   });
@@ -191,7 +208,60 @@ describe('verifySignedLinkRequest', () => {
       signature,
     });
     if (!parsed.ok) throw new Error('parse failed');
-    const v = await verifySignedLinkRequest(parsed.req, NOW);
+    const v = await verifySignedLinkRequest(parsed.req, NOW, CHAIN_ENV, 'link', DENY);
     expect(v.ok).toBe(false);
+  });
+
+  it('accepts a smart-account signature the signed chain confirms (#2009)', async () => {
+    // The owner key differs from the wallet address (a Safe at A
+    // owned by B) — recovery mismatches, ERC-1271 on the SIGNED
+    // chain_id confirms.
+    const signature = await ACCOUNT_B.signMessage({
+      message: buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+    });
+    const parsed = parseSignedLinkRequest({
+      wallet: ACCOUNT_A.address,
+      chain_id: CHAIN_ID,
+      issuedAt: NOW,
+      signature,
+    });
+    if (!parsed.ok) throw new Error('parse failed');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, CHAIN_ENV, 'link', CONFIRM);
+    expect(v.ok).toBe(true);
+    // The verdict carries HOW it verified (#2013 r3): chain-scoped
+    // contract approval, which the unlink handler must not spend on
+    // wallet-wide effects.
+    if (v.ok) expect(v.via).toBe('chain');
+  });
+
+  it("an ECDSA owner's verdict is via 'ecdsa' — universal authority (#2013 r3)", async () => {
+    const parsed = parseSignedLinkRequest(
+      await signedBody(ACCOUNT_A, ACCOUNT_A.address, NOW),
+    );
+    if (!parsed.ok) throw new Error('parse failed');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV, 'link', NEVER);
+    expect(v.ok).toBe(true);
+    if (v.ok) expect(v.via).toBe('ecdsa');
+  });
+
+  it('an unverifiable signature is 503 UNAVAILABLE, never a 401 mismatch (#2009)', async () => {
+    // The signed chain has no configured RPC here — the Worker
+    // cannot check, and must not call the signature invalid.
+    const signature = await ACCOUNT_B.signMessage({
+      message: buildTelegramLinkMessage(ACCOUNT_A.address, CHAIN_ID, NOW),
+    });
+    const parsed = parseSignedLinkRequest({
+      wallet: ACCOUNT_A.address,
+      chain_id: CHAIN_ID,
+      issuedAt: NOW,
+      signature,
+    });
+    if (!parsed.ok) throw new Error('parse failed');
+    const v = await verifySignedLinkRequest(parsed.req, NOW, EMPTY_ENV);
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.status).toBe(503);
+      expect(v.reason).toContain('unavailable');
+    }
   });
 });

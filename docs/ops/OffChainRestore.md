@@ -287,11 +287,41 @@ then deploy.
    >   provisioning values (`daysFromHidingToDeleting: 1`). During a
    >   compromise that can silently collapse the hidden-version window
    >   §2 depends on to about a day — deleting the genuine versions you
-   >   are about to go looking for (#1450 r28). Create the two
-   >   replacement scoped keys with the same capability sets
-   >   (write-only: `listBuckets` + `writeFiles`; read-only:
-   >   `listBuckets` + `listFiles` + `readFiles`), delete the old
-   >   ones, and leave the bucket's lifecycle rules untouched. Then
+   >   are about to go looking for (#1450 r28).
+   >
+   >   **ENUMERATE THE KEYS FIRST — there is more than one write key, and
+   >   "the two replacement keys" is not the whole job while #1977 is
+   >   open.** `vaipakam-offchain-data-archive`, the un-retired predecessor
+   >   Worker, holds its OWN `writeFiles` key and its own copy of
+   >   `BACKUP_ENCRYPTION_KEY`. Rotating only the warm Worker's pair leaves
+   >   that key valid, so the attacker can keep uploading new archive
+   >   versions **after the procedure believes the window is closed** —
+   >   which is the one outcome this step exists to prevent. List every
+   >   application key on the account (`b2 key list`, or the console's App
+   >   Keys page) and account for each one before you delete anything;
+   >   `docs/ops/CloudflareCronSlots.md` names which Workers exist, and
+   >   #1977 tracks the retirement that will make this a single pair again.
+   >
+   >   Then create replacement scoped keys **only for Workers running in the
+   >   NEW account** — the same capability sets (write-only: `listBuckets` +
+   >   `writeFiles`; read-only: `listBuckets` + `listFiles` + `readFiles`) —
+   >   and delete **every** old key you enumerated.
+   >
+   >   **`vaipakam-offchain-data-archive` gets NO replacement key in this
+   >   branch.** Revoke its key and stop. It has no source in this
+   >   repository, so it can only be running in the account you are
+   >   escaping — and issuing it fresh `writeFiles` credentials puts a
+   >   working write key inside the compromised account, where the same
+   >   attacker who took Workers Edit can read it and resume poisoning the
+   >   archive bucket the moment you finish revoking the old one. That
+   >   defeats the rotate-first containment this whole step exists for.
+   >
+   >   An earlier revision of this line said its replacement was "needed
+   >   only if that Worker is still running", which reads as a condition to
+   >   evaluate and answers YES on the compromise branch — the one branch
+   >   where the answer must be no. Deploy credentials only to Workers in
+   >   the fresh account (Codex #1978 r28). Leave
+   >   the bucket's lifecycle rules untouched. Then
    >   treat the archive history as
    >   **attacker-WRITABLE, not merely readable** — see the archive-
    >   selection warning in §2, which changes how you pick an archive. Do
@@ -771,19 +801,103 @@ then deploy.
 > reused shell it may still hold a stale value and list the wrong bucket.
 >
 > ```bash
-> # Newest first; use whichever lists your date.
-> B2_BUCKET=vaipakam-offchain-data-warm      # after the switchover
-> # B2_BUCKET=vaipakam-offchain-data-archive # before it, or for older nights
+> # Use the FIRST line. Uncomment the second only as the fallback described
+> # below. Do NOT pick by "whichever lists your date" — both Workers are
+> # scheduled, so that rule no longer discriminates. What each bucket
+> # actually holds is established by the listing, never by this comment.
+> B2_BUCKET=vaipakam-offchain-data-warm      # supported path — start here
+> # B2_BUCKET=vaipakam-offchain-data-archive # fallback, and for older nights
 > ```
 >
 > **The backup service was renamed and a bucket cannot be renamed**, so the
 > replacement was created new and the old `vaipakam-offchain-data-archive`
-> stays live until the replacement has completed a run. Until then the
-> usable archives are in the OLD bucket and the new one is empty or absent.
+> stays live until the replacement has completed a run.
 >
-> So **an empty listing is not "no backups exist"** — re-run against the
-> other bucket before concluding anything. The two never both hold a given
-> night, so whichever lists your date is the one to restore from.
+> **Both Workers are still SCHEDULED, on the same minute** — verified
+> against the account 2026-08-27 (#1977). The old Worker was never retired:
+> it is armed on `17 3 * * *` exactly as the replacement is, with its own B2
+> credentials and its own copy of `BACKUP_ENCRYPTION_KEY`.
+>
+> **Scheduled is not the same as uploaded.** The account check reads trigger
+> configuration; it says nothing about whether a given night's object exists.
+> A run can be armed and still produce nothing — the replacement's own
+> preflight aborts the invocation when a secret is missing. So do not assume
+> either bucket holds a particular night: **the listing is what establishes
+> which archives exist**, and it is the only thing that does.
+>
+> What the account state does establish is that the old rule is dead. An
+> earlier version of this box said "the two never both hold a given night, so
+> whichever lists your date is the one to restore from"; with both Workers
+> scheduled, that no longer discriminates, whatever each bucket turns out to
+> contain.
+>
+> While both are armed. **The two SELECTION rules — prefer, and fall back —
+> are for an ordinary restore only**; after a compromise use the box that
+> follows this one, and read the carve-out under the fallback bullet first.
+> The last two bullets apply on BOTH paths, and the credentials one applies
+> most sharply on the compromise path — it is the bullet that tells you the
+> next box is reasoning about one attacker-writable bucket when there are
+> two. An earlier revision of this sentence disclaimed "the rules below" as
+> a block, which voided that warning on the only path it was written for.
+>
+> - **Prefer `vaipakam-offchain-data-warm`** — the replacement is the
+>   supported path, and its Worker is the one whose source is in this
+>   repository (`ops/offchain-data-warm`). The old Worker's source is not
+>   in the tree at all, so nothing here describes what it writes today.
+> - **Fall back to `vaipakam-offchain-data-archive`** if the warm bucket
+>   does not list your date **or lists it and the object fails
+>   verification** — checksum, length or decryption. Both are fallback
+>   conditions, and both are findings for the incident record. An earlier
+>   revision allowed only the missing-listing case, which would have sent a
+>   restore backwards through the warm bucket's older nights while an
+>   independently written copy of the night you actually want sat in the
+>   other bucket — **if one was written**. Both Workers being scheduled is
+>   why such a copy *may* exist; it is not evidence that it does, and this
+>   sentence previously said it was. **List the archive bucket for your date
+>   and verify the object before treating this as a fallback at all**: a
+>   run can be armed and still upload nothing, which the box above states
+>   and this bullet contradicted. If the archive bucket does not list your
+>   date either, you have two failed sources and an incident finding, not a
+>   fallback.
+>
+>   **After a compromise, this trigger is suspended — but the other bucket is
+>   not off-limits.** The distinction is what you are reacting to:
+>
+>   - **A verification failure is NOT a reason to reach for the other
+>     bucket.** That is the reflex the next box exists to forbid, wearing a
+>     different hat: the old Worker holds a `writeFiles` key and its own copy
+>     of `BACKUP_ENCRYPTION_KEY`, so an object it serves can verify perfectly
+>     and still be theirs. "This one failed, try the other" selects on
+>     verifiability, and verification proves integrity, not provenance.
+>   - **A copy whose OWN version timestamp predates the compromise window is
+>     a legitimate candidate, from either bucket.** That is not the reflex —
+>     it is the next box's step 2 applied to a second set of versions, and
+>     the rule there is already "every object uploaded at or after the
+>     boundary is attacker-controlled", which says nothing about which bucket
+>     it sits in. Capture its file ID from a `--versions` listing and
+>     download by ID, exactly as you would in the warm bucket.
+>
+>   So: a corrupt pre-window warm object does not force you backwards through
+>   older nights if the archive bucket independently wrote that same night and
+>   that copy is itself pre-window. Refusing it would trade a night of data
+>   for no security gain — the object is admissible on the *same* test the
+>   warm one passed. An earlier revision of this carve-out forbade the other
+>   bucket outright, which read the "suspend the fallback" rule as "the other
+>   bucket is untrusted"; those are different claims, and only the first is
+>   true.
+>
+>   This carve-out was missing when the verification-failure condition was
+>   first added, and the omission has a shape worth naming: the fallback was
+>   written against the ordinary path, where the other bucket is a spare
+>   copy, and never re-read against the adversarial path three paragraphs
+>   below, where the same bucket is an attacker's write target. One
+>   sentence, two paths, opposite meanings.
+> - **An empty listing in ONE bucket is still not "no backups exist"** —
+>   that part stands. Re-run against the other before concluding anything.
+> - The compromise reasoning further down assumes ONE holder of a
+>   `writeFiles` B2 key and one copy of the encryption key. **There are
+>   two.** Treat the old Worker's credentials as in scope for any
+>   rotation.
 >
 > Delete this box once the old bucket is retired: at that point there is one
 > answer, and offering a choice becomes a hazard of its own.
@@ -811,6 +925,25 @@ then deploy.
 >
 > So for a compromise, select by **time, not by recency**:
 >
+> 0. **There are TWO write-capable buckets, not one**, while #1977 is open —
+>    see the box above. Steps 1, 2 and 4 apply to both: two `writeFiles` keys
+>    to rotate, one compromise window governing both, and two sets of
+>    versions to list — a forgery can sit in either.
+>
+>    Two things here do **not** simply double, and assuming they do is the
+>    trap:
+>
+>    - **Step 5's retention numbers describe the WARM bucket only.** They
+>      were read off `vaipakam-offchain-data-warm`; the old Worker's source
+>      is not in this repository, and nothing here has ever established the
+>      archive bucket's lifecycle rules. Its version-retention reach is
+>      **unknown** — read it off that bucket with `b2_list_buckets` before
+>      relying on a pre-window version having survived there, and do not
+>      carry the ~29-day daily figure across. A bucket nobody configured
+>      from this tree may retain for a day.
+>    - **The ordinary-restore fallback is SUSPENDED, not doubled** — that is
+>      the box above's carve-out, and the one rule here that inverts rather
+>      than widening.
 > 1. **Rotate the B2 keys first** (§1 step 6) so nothing new can land
 >    mid-restore.
 > 2. **Establish the earliest possible compromise time** — first unexplained
@@ -1510,8 +1643,20 @@ caught at the cheapest stage.
       to act on. Supply the context explicitly: `--cwd apps/keeper` or
       `--name vaipakam-keeper` do the same job as the `cd`.
    2. A trigger-aware readback shows **no** schedule — the `/schedules`
-      query later in this step, expected to return an EMPTY `result`. Empty
-      is the pass condition here; it is the failure condition in branch B.
+      query later in this step, expected to return an **empty
+      `result.schedules` ARRAY**, not an empty `result`. That endpoint
+      always returns `result` as an object, `{"schedules": []}` when
+      nothing is armed, so "empty `result`" describes a response shape the
+      API does not produce — an operator checking for it during a recovery
+      would read the correct held state as a broken deployment and go
+      looking for a fault that is not there. An empty array is the pass
+      condition here; a non-empty one is what branch B requires instead.
+
+      Branch B's step 5 already said this, and said that an earlier
+      revision of ITS line had the same error. The correction was made once
+      and applied to one of the two branches that carry the same readback —
+      which is the shape #1977 is about, in the runbook rather than in a
+      count.
    3. The hold is recorded in the restore log, naming #1896, together with
       the checks deferred by it: every step-4 flag confirmation, and the
       Push-rotation check in `docs/ops/IncidentRunbook.md` step 6 if
@@ -1549,26 +1694,162 @@ caught at the cheapest stage.
       commit it** — an edit living only in your checkout leaves `[]` on the
       branch, and the next clean-checkout deploy re-unschedules the keeper
       after this procedure has declared success.
-   3. Confirm a cron slot is free (cap is five per account; the keeper's is
-      reserved, not spare).
+   3. Confirm a cron trigger is free on the FRESH account — cap is five per
+      account. Check the ACCOUNT, not a comment.
+
+      **Do NOT run `check-cron-slots.mjs --live` here.** That compares an
+      account against `CloudflareCronSlots.md`, and the authority describes
+      the OLD account. On the fresh account the comparison cannot pass and
+      says nothing about capacity: `vaipakam-offchain-data-archive` has no
+      source in this repository and is never deployed here at all, and
+      `vaipakam-offchain-data-warm` is deliberately deferred to §7b. Both
+      would be reported `INVENTORY ONLY` and the command would exit non-zero
+      however much room the account has — so branch B could never clear its
+      own prerequisite. Reconciling the authority is a §7b-or-later job, once
+      the fresh account is the real one.
+
+      What this step needs is the raw count, so ask for that directly:
+
+      **Re-read the token first.** The prerequisites `unset CF_API_TOKEN`
+      after their account check, so following branch B in order arrives here
+      with the variable gone: under the `set -u` this block enables, the very
+      first `cf` call aborts. That is a failure of the *procedure*, not of the
+      account, and an operator reads it as the latter. Codex #1978 r41 found
+      the same defect at §7b and the re-prompt was added there; this is the
+      earlier of the two uses and it was missed — the sweep fixed the instance
+      it was shown rather than every site the `unset` governs.
+
+      ```bash
+      read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
+      ```
+
+      ```bash
+      ( set -euo pipefail
+        # Token on STDIN, never in argv (Codex #1978 r40) — the rule this
+        # runbook already states for its other Cloudflare reads. `-H` puts the
+        # restore-scoped token in `/proc/<pid>/cmdline`, which is world-readable,
+        # for the lifetime of every request in the loop below; `-K -` puts it in
+        # the config curl reads from stdin. `fail`, `silent` and `show-error`
+        # are the config spellings of `-f`, `-s` and `-S`, so the fail-closed
+        # behaviour described under this block is unchanged.
+        cf() {
+          printf 'url = "%s"\nheader = "Authorization: Bearer %s"\nfail\nsilent\nshow-error\n' \
+            "$1" "$CF_API_TOKEN" | curl -K -
+        }
+        api="https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID"
+        ok() { jq -e 'if .success then . else error("Cloudflare reported failure") end'; }
+
+        # CAPTURE FIRST. `for x in $(...)` swallows the substitution's status
+        # even under `set -e`, so a failed read would fall through the loop and
+        # print a count of zero.
+        scripts=$(cf "$api/workers/scripts?per_page=100" | ok | jq -r '.result[].id') \
+          || { echo "FAILED to read the account's Workers - do NOT treat this as capacity" >&2; exit 1; }
+
+        used=0
+        for s in $scripts; do
+          n=$(cf "$api/workers/scripts/$s/schedules" | ok | jq -r '(.result.schedules // []) | length') \
+            || { echo "FAILED to read schedules for $s" >&2; exit 1; }
+          [ "$n" -gt 0 ] && echo "$s: $n" >&2
+          used=$(( used + n ))
+        done
+        echo "triggers in use: $used of 5" )
+      ```
+
+      The keeper needs one of the five. If `used` is already 5, stop and free
+      one before deploying — a deploy over the cap fails with error 10072 and
+      leaves the keeper unscheduled.
+
+      **This has to FAIL CLOSED, which is why it is not a one-liner** (Codex
+      #1978 r35). An expired token, a wrong account id, or any Cloudflare
+      error makes `.result` null; a plain `curl -sS | jq -r` then prints
+      nothing, the loop body never runs, and a count of `0` is reported —
+      telling the operator every trigger is free at precisely the moment the
+      read failed. `fail` in curl's config (the `-f` of the argv form) turns an
+      HTTP error into a non-zero exit,
+      `jq -e` on `.success` catches an API-level failure that still returned
+      200, and `set -euo pipefail` makes either abort the subshell instead of
+      falling through to a reassuring number.
+
+      **`set -e` alone is not enough, which is why the list is captured into a
+      variable first** (Codex #1978 r36). Bash does not apply `errexit` to a
+      command substitution used as a `for` word list: written as
+      `for s in $(cf ... | jq ...)`, a failed read expands to nothing, the loop
+      body never runs, and the subshell reports `triggers in use: 0 of 5` and
+      exits 0. Verified by reproducing exactly that. Assigning to `scripts`
+      first makes the failure the assignment's, where `||` can catch it.
+
+      **Keep `CF_API_TOKEN` set from the prompt above until the end of this
+      section, then `unset` it.** The schedule readback in step 5 expands the
+      same variable and made the same assumption; a re-prompt placed *after*
+      the command that needs it — which is what this parenthetical used to be
+      — cannot help an operator whose shell has already aborted.
    4. Deploy from the keeper's directory, with the flag — the command shown
       in branch A above.
    5. Read the schedule back trigger-aware — the `/schedules` query below.
-      Here a NON-empty `result` is the pass condition.
-   6. Allow the propagation window (Cloudflare documents up to 15 minutes).
-   7. **Validate the still-disarmed passes first**, across every cadence they
+      **A non-empty `result.schedules` ARRAY is the pass condition**, not a
+      non-empty `result`. That endpoint always returns `result` as an object
+      — `{"schedules": []}` when nothing is armed — so "non-empty result" is
+      true of the exact missing-trigger state this step exists to reject. An
+      earlier revision of this line said `result`, and the detailed check
+      further down was already correct.
+   6. **Update the authority, in the same sitting.** Arming the keeper
+      converts its reservation into a live trigger, and
+      [`CloudflareCronSlots.md`](CloudflareCronSlots.md) still describes the
+      state before that. Move the keeper row to `live` with its schedule,
+      change "Live right now" to match, switch the "Committed" label from
+      `**Committed, live plus the keeper's reserve:**` to
+      `**Committed, live only:**` — the checker recognises exactly those two
+      forms and requires the one matching the table — and refresh the
+      `Verified:` stamp. **Then COMMIT those edits**, for the reason step
+      2 gives about the schedule: a working-tree change that passes `--live`
+      and is never committed leaves the branch carrying the pre-re-arm
+      inventory, so the next clean checkout restores exactly the staleness
+      this step exists to prevent.
+
+      This step is easy to skip and hard to notice skipped: the conversion
+      leaves the derived totals unchanged, so the offline CI check keeps
+      passing on a file that is now wrong about which Workers are live. Only
+      `--live` sees it, and nothing runs `--live` on a schedule.
+
+      **So run it here, on the existing-account path, before you commit the
+      stamp** (Codex #1978 r47). The paragraph above says only `--live` can
+      catch this and the step never asked anyone to run it — a stamp is a
+      claim that the file was checked against the account, and refreshing one
+      without checking is the defect this whole document is about, performed
+      by the procedure that exists to prevent it. It also catches a row that
+      went stale elsewhere while nobody was looking, which is the only
+      opportunity anything has to notice.
+
+      ```bash
+      read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
+      CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
+        node .github/scripts/check-cron-slots.mjs --live
+      unset CF_API_TOKEN
+      ```
+
+      **On the fresh-account branch, do the edit here and the `--live`
+      confirmation in §7b** (Codex #1978 r35). Step 3 explains why `--live`
+      cannot pass against the fresh account before then: the authority still
+      describes the old one, and lists Workers that are not deployed here yet.
+      Requiring the confirmation at this point would make this step
+      impossible to complete rather than merely tedious — the bookkeeping is
+      still owed now, but the account-versus-file check has to wait until the
+      account is complete.
+
+   7. Allow the propagation window (Cloudflare documents up to 15 minutes).
+   8. **Validate the still-disarmed passes first**, across every cadence they
       run at — a full 15-minute cycle for `preGraceWatcher`, the 00:00–00:09
       UTC window for `dailyOracleSnapshot` — checking the `chains resolved:
       N — …` line on every tick you accept, and rejecting any tick that logs
       `console.error` at all. Roll back here if it still reports
       `exceededCpu`; nothing is armed, so it costs nothing.
-   8. **Only now arm** — `KEEPER_ENABLED` to `true`, per the command block
+   9. **Only now arm** — `KEEPER_ENABLED` to `true`, per the command block
       further down this step.
-   9. Validate the gated passes, again across every cadence, including one
+  10. Validate the gated passes, again across every cadence, including one
       full 5-minute cycle for `rewardBudgetRemit`.
-   10. Clear the checks branch A deferred — step 4's flag confirmations, and
-       the Push-rotation check if `PUSH_CHANNEL_PK` was rotated during the
-       hold.
+  11. Clear the checks branch A deferred — step 4's flag confirmations, and
+      the Push-rotation check if `PUSH_CHANNEL_PK` was rotated during the
+      hold.
 
    The rest of this step is the restore-specific detail those numbered items
    refer to.
@@ -1589,7 +1870,7 @@ caught at the cheapest stage.
    They are restored **the way they are held** — `wrangler secret put`, not
    `--var` and not the committed `vars` block. The commands are below, at
    **their two different points in the order**: the disarm is branch B step
-   1, the arm is branch B step 8, and the schedule restore sits between
+   1, the arm is branch B step 9, and the schedule restore sits between
    them. They are printed in that order here deliberately — an earlier
    revision printed the arm first, and reading straight down it armed the
    Worker before any tick had been observed.
@@ -1618,7 +1899,7 @@ caught at the cheapest stage.
      wrangler deployments list | head )
    ```
 
-   **Branch B step 8 — arming — is NOT here.** Its command block sits at the
+   **Branch B step 9 — arming — is NOT here.** Its command block sits at the
    very end of step 4, after the disarmed tail-validation, because that is
    the earliest point at which it is safe to run. An earlier revision printed
    it here with a warning attached and the arming happened anyway: an
@@ -1787,7 +2068,7 @@ caught at the cheapest stage.
    > `KEEPER_ENABLED off (explicitly disabled)`. Those skips are the expected
    > state, not a fault to repair — "fixing" them here arms the fund-moving
    > passes before the CPU and cadence validation has finished, which is
-   > exactly what the branch B step 8 block at the end of this step exists to
+   > exactly what the branch B step 9 block at the end of this step exists to
    > prevent. **Leave `KEEPER_ENABLED` alone until you reach that block.**
    > Every OTHER skipped binding named below is still worth repairing now.
 
@@ -1900,7 +2181,7 @@ caught at the cheapest stage.
    Only after that is a tail useful, and then only as positive
    confirmation: watch for a pass you expect to have work to do.
 
-   #### Branch B step 8 — arm. This is the earliest safe point.
+   #### Branch B step 9 — arm. This is the earliest safe point.
 
    Only reachable if you came through branch B (the #1896 hold has lifted).
    Everything above has run with `KEEPER_ENABLED` at `false`, which is what
@@ -1908,7 +2189,7 @@ caught at the cheapest stage.
    while the Worker was proved to survive a production tick.
 
    Before running this, confirm all of the following from the ticks you just
-   watched — this is branch B step 7, and it is the gate on the command
+   watched — this is branch B step 8, and it is the gate on the command
    below:
 
    - Every tick ended `ok`, never `exceededCpu`.
@@ -1923,6 +2204,19 @@ caught at the cheapest stage.
    that**, and redeploy. Nothing is armed yet, so the rollback costs nothing
    — which is precisely why it belongs before this command and not after.
 
+   **Roll the authority back with it.** Step 6 already moved the keeper row
+   to `live` and switched the summary to `Committed, live only`; a rollback
+   that leaves those in place puts
+   [`CloudflareCronSlots.md`](CloudflareCronSlots.md) back into exactly the
+   stale state step 6 was added to prevent — and the offline check stays
+   green through it, because the conversion does not move the derived totals
+   in either direction. Restore the row to `reserved`, the label to
+   `Committed, live plus the keeper's reserve`, refresh the stamp, re-run
+   `--live`, and commit — **except on the fresh-account branch, where the
+   `--live` confirmation waits for §7b for the reason step 3 gives.** The
+   file edit and the commit are owed either way; only the account-versus-file
+   check is deferred.
+
    ```bash
    ( cd apps/keeper
      wrangler secret put KEEPER_ENABLED )     # prompts; enter: true
@@ -1931,10 +2225,38 @@ caught at the cheapest stage.
    Set `REWARD_REMIT_ENABLED` / `REWARD_COMMIT_ENABLED` the same way and at
    this same point, and only if they were on before.
 
-   Then do branch B step 9: validate the now-armed gated passes across every
+   Then do branch B step 10: validate the now-armed gated passes across every
    cadence they run at, including one full 5-minute cycle for
-   `rewardBudgetRemit`. Finally, branch B step 10 — clear the checks branch A
-   deferred.
+   `rewardBudgetRemit`.
+
+   **IF STEP 10 FAILS, ROLL BACK BOTH HALVES — and note this rollback is
+   NOT the one above.** That one covers the still-disarmed validation
+   *before* the arming command, where nothing is live and the rollback costs
+   nothing. Past this point the fund-moving passes are genuinely armed, so
+   the order matters and the schedule alone is not enough:
+
+   1. `KEEPER_ENABLED` back to `false` **first** — it is what gates the six
+      fund-moving passes, and it takes effect without waiting for a
+      schedule change to propagate.
+   2. Then restore `"crons": []`, **commit that**, and redeploy
+      `( cd apps/keeper && wrangler deploy --keep-vars )` — same directory
+      scoping and same flag as before, and both matter more here, not less:
+      a bare root deploy would redeploy an unrelated Worker and leave this
+      one armed and failing.
+   3. Then roll the authority back exactly as the pre-arm rollback above
+      describes — row to `reserved`, label to `Committed, live plus the
+      keeper's reserve`, refresh the stamp, re-run `--live`, commit —
+      including its fresh-account caveat: before §7b the edit and the commit
+      still happen, the `--live` confirmation does not.
+
+   `apps/keeper/wrangler.jsonc` has carried this post-arm rollback all
+   along; this runbook did not, so an operator following the canonical
+   restore path could fail validation and leave the fund-moving passes
+   armed. Same defect as the missing authority refresh two steps up, in the
+   opposite direction — that time the runbook had it and the config did
+   not.
+
+   Finally, branch B step 11 — clear the checks branch A deferred.
 
 ---
 
@@ -1972,6 +2294,64 @@ The run should produce a fresh archive plus a green Telegram alert. It is
 safe to trigger here precisely because §§4–5 have already restored the
 data — the archive it writes is of the RESTORED account, not an empty one.
 
+### Finally, reconcile the cron-slot authority
+
+§6 makes the authority's keeper edit but explicitly defers the
+account-versus-file confirmation. This is where it lands, and the ordering is
+load-bearing: `--live` compares every row the file calls live against the
+schedules the account actually holds, and `vaipakam-offchain-data-warm` only
+acquires its trigger at the `npm run deploy` above. Run earlier — as an
+in-between revision of this runbook did (Codex #1978 r37) — and the warm Worker
+is committed-but-not-live, so the check exits non-zero on the restore's own
+incompleteness and reads as a failure of the thing it is confirming.
+
+Skip it and a successful restore ends with
+[`CloudflareCronSlots.md`](CloudflareCronSlots.md) still listing a live
+`vaipakam-offchain-data-archive` that exists only in the abandoned account —
+the authority then over-states occupancy and misdirects the next deploy, which
+is #1977 again by a different route.
+
+1. Remove the `vaipakam-offchain-data-archive` row: on the fresh account that
+   Worker does not exist, and it has no source in this repository to restore
+   it from.
+2. Re-derive **all three summary lines** — "Live right now", the `Committed`
+   label, **and "Genuinely spare"** — from the rows that remain, and refresh
+   the `Verified:` stamp.
+
+   **The spare line is the one this step used to omit, and omitting it fails
+   the very next command** (Codex #1978 r42). Dropping the archive row after
+   the keeper has consumed its reservation takes committed from five to four,
+   so spare must go from `0` to `1`; `checkSummary` derives spare as
+   `5 − committed` and rejects the stale `0`, so step 3's `--live` exits
+   non-zero and the reconciliation cannot complete. The three lines are one
+   derivation and have to be re-done together — which is exactly what the
+   authority says about itself, in the sentence explaining why the summary is
+   pinned to the table.
+3. Re-read the token first. Branch B runs `unset CF_API_TOKEN` at the end of
+   its keeper-settings readback, which is far above this point, so following
+   the runbook in order arrives here with the variable GONE — under the
+   `set -u` these blocks use that aborts, and without it `--live` receives an
+   empty credential and reports missing credentials. Either way the operator
+   reads a failure of the gate rather than the reconciliation it was asked for
+   (Codex #1978 r40).
+
+   ```bash
+   read -rsp 'Cloudflare API token: ' CF_API_TOKEN; echo
+   CLOUDFLARE_ACCOUNT_ID="$CF_ACCOUNT_ID" CLOUDFLARE_API_TOKEN="$CF_API_TOKEN" \
+     node .github/scripts/check-cron-slots.mjs --live
+   unset CF_API_TOKEN
+   ```
+
+   The token goes to the gate through the ENVIRONMENT, which is
+   `/proc/<pid>/environ` and readable only by its owner — unlike argv. That is
+   why this one does not need the `curl -K -` form the HTTP reads above use.
+   `unset` afterwards, per the same rule.
+
+   Now that the account is complete, this is the check that was impossible
+   earlier.
+4. **Commit it.** An uncommitted reconciliation leaves the branch carrying the
+   old-account inventory, which is the staleness the whole exercise removes.
+
 Confirm one clean nightly before considering the restore complete — the
 first successful unattended run is the evidence that the whole pipeline,
 not just the Worker, came back.
@@ -1981,25 +2361,114 @@ not just the Worker, came back.
 Not part of an emergency restore, but documented here because the
 two procedures share the offline-key handling discipline.
 
+> ⚠️ **WHILE #1977 IS OPEN, THIS PROCEDURE IS WRITTEN FOR THE WRONG
+> NUMBER OF WORKERS.** It says "the archive Worker" and flips one secret;
+> there are **two** Workers scheduled, each holding its **own copy of
+> `BACKUP_ENCRYPTION_KEY`** and writing to its **own bucket** — see §2's
+> selection box and `docs/ops/CloudflareCronSlots.md`.
+>
+> Run as written, it pauses one Worker, migrates one bucket, flips one
+> secret, and then **destroys the old key at step 6**. The Worker that was
+> not migrated keeps producing OLD-key ciphertext throughout, and the
+> predecessor bucket's entire retained history becomes **permanently
+> undecryptable** — including the copies §2 now names as a restore
+> fallback. That is the same failure step 1 already guards against for a
+> single Worker's late write, at the scale of a whole bucket.
+>
+> **Either retire `vaipakam-offchain-data-archive` first (#1977 carries
+> the sequence, and this is the strongest argument for doing it), or run
+> every step below against BOTH Workers and BOTH buckets**: pause both in
+> step 1, enumerate and re-encrypt both in steps 2–3, `wrangler secret
+> put` on both in step 4, and sweep both in step 6.
+>
+> This is separate from §1's compromise-time B2 **credential** rotation,
+> which has its own two-Worker warning. Different keys, different step,
+> same root cause — delete this box when the predecessor is retired.
+
 1. Generate a NEW key locally:
 
    ```bash
    openssl rand -hex 32 > /tmp/new-backup-key
    ```
 
-   Then **pause the archive Worker's schedule before enumerating** —
+   Then **pause the archive Worker's schedule before enumerating**
+   (**both Workers' schedules** while #1977 is open — see the box above) —
    disable the cron from the CF dashboard (Worker → Settings →
    Triggers) and note the time. If the rotation spans 03:17 UTC with
    the cron live, the Worker uploads a fresh OLD-key archive *after*
    your enumeration; steps 4–6 then switch the key, validate only
    new-key output, and destroy the old key — leaving that late
    archive (and its monthly/yearly siblings on a boundary date)
-   permanently undecryptable (#1450 r31). Re-enable the cron after
-   step 4; step 5's green nightly needs it back on.
+   permanently undecryptable (#1450 r31). Re-enable **both crons** after
+   step 4 — the singular "the cron" here was the same one-Worker assumption
+   this box exists to correct, and it is worse than the others: step 5
+   requires a fresh archive from EVERY Worker, so leaving the predecessor
+   disabled stalls the rotation outright, and skipping that validation
+   instead leaves the fallback bucket silently receiving nothing (Codex
+   #1978 r42). If the predecessor was retired before you started — the #1977
+   sequence — there is one cron and this reads as written.
+
+   **A dashboard pause does not survive a deploy — make the warm Worker's
+   pause durable in its config.** `ops/offchain-data-warm/wrangler.jsonc`
+   commits `"crons": ["17 3 * * *"]`, and a deploy republishes whatever that
+   file says. Any `wrangler deploy` of that Worker between here and step 4 —
+   somebody else's unrelated change, a CI deploy, your own step-4 command run
+   early — silently re-arms the old-key writer AFTER steps 2–3 fixed the set
+   of objects to migrate. The archive it then writes at 03:17 is old-key
+   ciphertext nobody enumerated, and step 6 destroys the key that could read
+   it. That is the #1450 r31 failure this pause exists to prevent, arriving
+   through the door the dashboard does not close.
+
+   So commit `"crons": []` in that file and deploy it, the way
+   `apps/keeper/wrangler.jsonc` already holds an empty schedule for its own
+   hold, and restore the committed schedule in step 4. Note the asymmetry
+   while #1977 is open: `vaipakam-offchain-data-archive` has no config in this
+   repository — that is the whole reason #1977 exists — so nothing here can
+   redeploy it and the dashboard pause is the only lever it has. One Worker
+   needs the config change; the other cannot have one.
+
+   **Update the authority in the same sitting as the pause, before you begin
+   step 2.** Disabling a cron removes a trigger from the account, so
+   `docs/ops/CloudflareCronSlots.md` — the only place the count lives — now
+   describes an account that no longer exists, and
+   `node .github/scripts/check-cron-slots.mjs --live` fails for as long as the
+   window lasts. That window is not short: step 2 enumerates every retained
+   object across three tiers and both buckets, and step 3 decrypts,
+   re-encrypts and re-verifies each one. Another operator reading the
+   inventory during it would be told two Workers are armed that are not.
+
+   For each Worker you paused: set its Schedule cell to `*(none)*`, set its
+   Status to `reserved — paused for the encryption-key rotation, re-armed at
+   step 4`, re-derive the three summary lines from the table, and re-stamp
+   `Verified:` with the time you paused. Do not carry the numbers over from
+   the old summary — derive them, which is what the gate checks.
+
+   **Commit and push that, together with the `"crons": []` change above.** An
+   edit sitting in your checkout is not the authority; the authority is what
+   the shared repository says, and that is what another operator reads. If the
+   rotation then aborts in the paused state this section explicitly supports,
+   an uncommitted correction leaves the repository telling everyone else both
+   Workers are live for as long as the pause lasts — which is the stale
+   inventory #1977 is about, now produced by the procedure written to prevent
+   it. The same applies in reverse at step 4: the restoration is committed and
+   pushed too, not left local.
+
+   **If the rotation aborts, the document follows the account, not the plan.**
+   Stopping with the crons still paused is the safe stopping point — a paused
+   Worker cannot write old-key ciphertext — so if you stop there, leave the
+   rows reserved and record in the restore log that the pause is outstanding
+   and why. Restore the rows only when the crons are actually back. Reverting
+   the document because the procedure was abandoned, while the schedules stay
+   off, manufactures exactly the stale inventory #1977 is about, and does it
+   deliberately.
 
 2. Enumerate and download **every retained ciphertext across all
    three tiers** — `archives/` (daily), `archives-monthly/`, and
-   `archives-yearly/` — to a local workstation. The backup writer
+   `archives-yearly/` — to a local workstation, **in EACH bucket while
+   #1977 is open**. This step names tiers and not buckets, which reads as
+   complete until you notice it never says where; an operator who has just
+   come from §2 has been told to prefer the warm bucket, and would
+   reasonably enumerate only that one. Three tiers times two buckets. The backup writer
    populates all three (`backup.ts`), and the yearly tier is
    retained indefinitely: any object skipped here is **permanently
    undecryptable** the moment step 6 destroys the old key. An
@@ -2022,10 +2491,69 @@ two procedures share the offline-key handling discipline.
    sweep needs the set to tell your own re-uploads apart from a
    genuine late Worker write.
 4. `wrangler secret put BACKUP_ENCRYPTION_KEY` on
-   `vaipakam-offchain-data-warm` to flip the Worker to the new key.
+   `vaipakam-offchain-data-warm` to flip the Worker to the new key —
+   **and on `vaipakam-offchain-data-archive` too, for as long as that Worker
+   still exists.** A Worker left on the old key keeps writing ciphertext that
+   step 6 is about to make undecryptable; naming only the warm Worker here
+   is what makes that easy to miss, since every other step reads as
+   generic.
+
+   ```bash
+   ( cd ops/offchain-data-warm && wrangler secret put BACKUP_ENCRYPTION_KEY )
+   wrangler secret put BACKUP_ENCRYPTION_KEY --name vaipakam-offchain-data-archive
+   ```
+
+   **The `--name` on the second is not optional** (Codex #1978 r33). The
+   predecessor has no Wrangler config in this repository — that is the whole
+   reason #1977 exists — so there is no directory to run it from. Without
+   `--name`, Wrangler takes the Worker from the config it finds: run from
+   `ops/offchain-data-warm` it silently rotates the WARM Worker a second time
+   and reports success, leaving the predecessor on the old key; run from the
+   repository root it finds no config at all.
+
+   **Re-enable both schedules now, and restore the authority in the same
+   sitting.** Put `"crons": ["17 3 * * *"]` back in
+   `ops/offchain-data-warm/wrangler.jsonc` and deploy it — that is the warm
+   Worker's re-arm, since step 1 made its pause durable in the config, and a
+   dashboard toggle alone would be undone by the next deploy. Re-enable the
+   archive Worker's cron from the dashboard, which is the only lever it has.
+   Then put each Worker's schedule back in its Schedule cell in the authority,
+   set its Status back to `live`, re-derive the three summary lines, re-stamp
+   `Verified:`, and **commit and push both changes**. Step 1 took the rows
+   down; this is where they come back. Doing it here rather than "at the end" matters because step 5 waits
+   a full nightly cycle plus a weekly healthcheck: leaving the document
+   describing paused Workers across that wait is a stale inventory lasting
+   days, and it is the state in which someone else deploys a Worker into what
+   the summary reports as spare capacity.
+
+   Deliberately NOT "while it is still scheduled" (Codex #1978 r24): step 1
+   disabled BOTH schedules and step 1's own note says to re-enable only after
+   this step. So at this point neither Worker is scheduled, and an operator
+   reading "while it is still scheduled" as a precondition would either skip
+   the archive Worker's secret — the exact omission this sentence exists to
+   prevent — or re-arm it early to satisfy the wording, putting it back to
+   writing old-key ciphertext before its key has changed. Both of my own
+   edits landed in the same commit; the pause instruction and the wording
+   that contradicts it were written minutes apart.
 5. Wait for one full nightly cycle + one weekly healthcheck. Both
    should land green on the new key.
-6. **Sweep for stragglers before retiring anything**: list every
+
+   **Then DECRYPT fresh output from every Worker and every bucket with the
+   retained offline new key, before step 6 destroys the old one** (Codex
+   #1978 r28). A green run is not proof the key is right: a mistyped but
+   valid 64-hex secret lets a Worker encrypt and upload successfully, and
+   its own in-Worker verification uses that same mistyped value, so it
+   agrees with itself. The warm Worker's weekly healthcheck reads only the
+   warm bucket, so nothing at all examines the predecessor's output while
+   #1977 is open — its bucket, the one §2 now names as a restore fallback,
+   can quietly fill with ciphertext no retained key opens.
+   Pull one archive written after step 4 from each bucket and decrypt it
+   OFFLINE with the new key you hold. Only that proves the secret each
+   Worker received is the secret you kept.
+6. **Sweep for stragglers before retiring anything — in EVERY bucket you
+   paused in step 1.** The old key is destroyed at the end of this step, so
+   a bucket left unswept is a bucket whose stragglers become permanently
+   undecryptable with no further warning. List every
    object uploaded between the step-1 pause time and the step-4 key
    switch (the `--long` listing carries upload timestamps), then
    **subtract the file ids step 3 recorded** — step 3's own

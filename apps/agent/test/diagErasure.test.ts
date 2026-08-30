@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { privateKeyToAccount, type PrivateKeyAccount } from 'viem/accounts';
 import {
   buildErasureMessage,
+  buildErasureStatusMessage,
   buildLegalHoldMessage,
   handleDiagErasure,
   handleDiagErasureStatus,
@@ -33,6 +34,7 @@ const ACCOUNT_B: PrivateKeyAccount = privateKeyToAccount(
 interface ErrorRow {
   id: string;
   wallet_hash: string | null;
+  chain_id?: number | null;
 }
 interface HoldRow {
   wallet_hash: string;
@@ -89,7 +91,16 @@ class FakeStmt {
     const s = this.sql;
     if (s.includes('DELETE FROM diag_errors')) {
       const wh = this.args[0] as string;
-      this.db.errors = this.db.errors.filter((e) => e.wallet_hash !== wh);
+      if (s.includes('chain_id')) {
+        // #2013 r5 — the chain-scoped erase a contract-verified
+        // signer is limited to.
+        const chain = this.args[1] as number;
+        this.db.errors = this.db.errors.filter(
+          (e) => !(e.wallet_hash === wh && e.chain_id === chain),
+        );
+      } else {
+        this.db.errors = this.db.errors.filter((e) => e.wallet_hash !== wh);
+      }
       return;
     }
     if (s.includes('INSERT INTO diag_legal_holds')) {
@@ -162,6 +173,16 @@ class FakeR2 {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────
+
+/** #2009 — a definitive chain denial for tests whose wrong-message
+ *  or wrong-key signatures must land as a 400 MISMATCH: without a
+ *  configured chain answering, an unrecoverable-or-mismatched
+ *  signature is honestly 503 "cannot check" (it could be a smart
+ *  account), which is not what these tests assert. The env carries
+ *  one configured chain and the checker denies. */
+const DENY_CHAIN = async () => false;
+const withChain = (env: Env): Env =>
+  ({ ...env, RPC_BASE_SEPOLIA: 'http://rpc.test' }) as Env;
 
 function makeEnv(
   db: FakeD1,
@@ -263,6 +284,20 @@ async function signedBody(
   return { wallet, issuedAt, signature };
 }
 
+/** The STATUS counterpart (#2008 round 2 P1) — signs the status
+ *  message, which the status endpoint verifies; the erasure message
+ *  is a different frozen format so one signature can never authorise
+ *  the other. */
+async function signedStatusBody(
+  account: PrivateKeyAccount,
+  issuedAt: number = nowSec(),
+): Promise<{ wallet: string; issuedAt: number; signature: string }> {
+  const wallet = account.address;
+  const message = buildErasureStatusMessage(wallet, issuedAt);
+  const signature = await account.signMessage({ message });
+  return { wallet, issuedAt, signature };
+}
+
 function post(path: string, body: unknown, headers: Record<string, string> = {}): Request {
   return new Request('https://agent.test' + path, {
     method: 'POST',
@@ -272,10 +307,19 @@ function post(path: string, body: unknown, headers: Record<string, string> = {})
 }
 
 /** Seed N error rows for an address; returns the address's hash. */
-async function seedErrors(db: FakeD1, address: string, count: number): Promise<string> {
+async function seedErrors(
+  db: FakeD1,
+  address: string,
+  count: number,
+  chainId: number | null = null,
+): Promise<string> {
   const hash = await walletHash(address, HMAC_KEY);
   for (let i = 0; i < count; i++) {
-    db.errors.push({ id: `${address}-${i}`, wallet_hash: hash });
+    db.errors.push({
+      id: `${address}-${chainId ?? 'x'}-${i}`,
+      wallet_hash: hash,
+      chain_id: chainId,
+    });
   }
   return hash;
 }
@@ -327,7 +371,9 @@ describe('handleDiagErasure', () => {
     );
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ status: 'processed' });
+    // scope names the SIGNATURE's authority (ECDSA = wallet-wide) —
+    // it branches only on signature type, never on what was held.
+    expect(await res.json()).toEqual({ status: 'processed', scope: 'wallet' });
     // A's rows gone, B's untouched.
     expect(db.errors.filter((e) => e.id.startsWith(ACCOUNT_A.address))).toHaveLength(0);
     expect(db.errors.filter((e) => e.id.startsWith(ACCOUNT_B.address))).toHaveLength(2);
@@ -375,7 +421,80 @@ describe('handleDiagErasure', () => {
       CORS,
     );
     expect(res.status).toBe(400);
-    expect((await res.json() as { error: string }).error).toBe('verification_failed');
+    const staleBody = await res.json() as { error: string; reason: string };
+    expect(staleBody.error).toBe('verification_failed');
+    // The app's client maps THIS exact body to its "expired" outcome
+    // (#2008 round 4 P2) — rewording the reason silently downgrades
+    // that mapping to the generic failure.
+    expect(staleBody.reason).toBe('request timestamp is stale');
+  });
+
+  it('rate-limits the chain path with 429 — the fast path stays free (#2013)', async () => {
+    // A refused SIG_VERIFY_RATELIMIT budget turns a chain-path
+    // request into a 429; a valid plain-ECDSA request never touches
+    // the budget and still succeeds under the same refused limiter.
+    const refuse = {
+      limit: async () => ({ success: false }),
+    } as unknown as Env['SIG_VERIFY_RATELIMIT'];
+    const envLimited = withChain(
+      makeEnv(db, { SIG_VERIFY_RATELIMIT: refuse }),
+    );
+    const chainPath = await handleDiagErasure(
+      post('/diag/erasure', {
+        wallet: ACCOUNT_A.address,
+        issuedAt: nowSec(),
+        signature: '0x' + 'ab'.repeat(700), // 6492-shaped → chain path
+      }),
+      envLimited,
+      CORS,
+      DENY_CHAIN,
+    );
+    expect(chainPath.status).toBe(429);
+    const fastPath = await handleDiagErasure(
+      post('/diag/erasure', await signedBody(ACCOUNT_A)),
+      envLimited,
+      CORS,
+      DENY_CHAIN,
+    );
+    expect(fastPath.status).toBe(200);
+  });
+
+  it('a chain-verified authority erases ONLY the confirming chain (#2013 r5)', async () => {
+    // The divergent-controller doctrine, applied to erasure: chain
+    // 84532's contract approval must not destroy rows captured on
+    // 421614 (another controller's records) or rows with no chain
+    // attribution at all.
+    const hash = await seedErrors(db, ACCOUNT_A.address, 2, 84532);
+    await seedErrors(db, ACCOUNT_A.address, 2, 421614);
+    await seedErrors(db, ACCOUNT_A.address, 1, null);
+    const res = await handleDiagErasure(
+      post('/diag/erasure', {
+        wallet: ACCOUNT_A.address,
+        issuedAt: nowSec(),
+        signature: '0x' + 'ab'.repeat(700), // 6492-shaped → chain path
+        chainId: 84532,
+      }),
+      withChain(makeEnv(db)),
+      CORS,
+      async () => true, // the chain confirms the smart account
+    );
+    expect(res.status).toBe(200);
+    // The response names its SCOPE — branching only on signature
+    // type, never on what the database held — so the client's
+    // confirmation cannot claim chains this authority never covered.
+    expect(await res.json()).toEqual({
+      status: 'processed',
+      scope: 'chain',
+      // Names the CONFIRMING chain (#2013 r6): the client must not
+      // describe the scope as "the network you are connected to" —
+      // the wallet can switch chains before the confirmation renders.
+      chainId: 84532,
+    });
+    // The uniform response never says what happened; the database
+    // shows the scope: 84532's rows gone, everything else intact.
+    const remaining = db.errors.filter((e) => e.wallet_hash === hash);
+    expect(remaining).toHaveLength(3);
+    expect(remaining.every((e) => e.chain_id !== 84532)).toBe(true);
   });
 
   it('rejects a signature that recovers to a different wallet with 400', async () => {
@@ -383,8 +502,9 @@ describe('handleDiagErasure', () => {
     const body = await signedBody(ACCOUNT_A, nowSec(), ACCOUNT_B.address);
     const res = await handleDiagErasure(
       post('/diag/erasure', body),
-      makeEnv(db),
+      withChain(makeEnv(db)),
       CORS,
+      DENY_CHAIN,
     );
     expect(res.status).toBe(400);
   });
@@ -396,8 +516,9 @@ describe('handleDiagErasure', () => {
         issuedAt: nowSec(),
         signature: '0x' + 'ab'.repeat(65),
       }),
-      makeEnv(db),
+      withChain(makeEnv(db)),
       CORS,
+      DENY_CHAIN,
     );
     expect(res.status).toBe(400);
   });
@@ -422,7 +543,7 @@ describe('handleDiagErasureStatus', () => {
 
   it('returns the uniform payload when there is no hold', async () => {
     const res = await handleDiagErasureStatus(
-      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      post('/diag/erasure/status', await signedStatusBody(ACCOUNT_A)),
       makeEnv(db),
       CORS,
     );
@@ -441,7 +562,7 @@ describe('handleDiagErasureStatus', () => {
       updated_at: nowSec(),
     });
     const res = await handleDiagErasureStatus(
-      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      post('/diag/erasure/status', await signedStatusBody(ACCOUNT_A)),
       makeEnv(db),
       CORS,
     );
@@ -459,7 +580,7 @@ describe('handleDiagErasureStatus', () => {
       updated_at: nowSec(),
     });
     const res = await handleDiagErasureStatus(
-      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      post('/diag/erasure/status', await signedStatusBody(ACCOUNT_A)),
       makeEnv(db),
       CORS,
     );
@@ -480,7 +601,7 @@ describe('handleDiagErasureStatus', () => {
       updated_at: nowSec(),
     });
     const res = await handleDiagErasureStatus(
-      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      post('/diag/erasure/status', await signedStatusBody(ACCOUNT_A)),
       makeEnv(db),
       CORS,
     );
@@ -494,6 +615,38 @@ describe('handleDiagErasureStatus', () => {
 //
 // ACCOUNT_A is the protocol admin (the request signer + the address
 // the injected verifier authorises). ACCOUNT_B is the held user.
+
+
+describe('per-operation signatures (#2008 round 2 P1)', () => {
+  let db: FakeD1;
+  beforeEach(() => {
+    db = new FakeD1();
+  });
+
+  it('the status endpoint rejects an ERASURE-signed body', async () => {
+    const res = await handleDiagErasureStatus(
+      post('/diag/erasure/status', await signedBody(ACCOUNT_A)),
+      withChain(makeEnv(db)),
+      CORS,
+      DENY_CHAIN,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('the erasure endpoint rejects a STATUS-signed body — a look can never delete', async () => {
+    const hash = await seedErrors(db, ACCOUNT_A.address, 3);
+    const res = await handleDiagErasure(
+      post('/diag/erasure', await signedStatusBody(ACCOUNT_A)),
+      withChain(makeEnv(db)),
+      CORS,
+      DENY_CHAIN,
+    );
+    expect(res.status).toBe(400);
+    // The records the replayed status signature tried to reach are
+    // untouched.
+    expect(db.errors.filter((e) => e.wallet_hash === hash)).toHaveLength(3);
+  });
+});
 
 describe('handleDiagLegalHold', () => {
   let db: FakeD1;

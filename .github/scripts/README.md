@@ -1,7 +1,16 @@
-# Docs path gate
+# Prose gates
 
-**Two** blocking gates live here. Both exist for the same reason — prose has
-no compiler, so a rename or a removal leaves behind text that nothing checks.
+The blocking gates in this directory are the ones listed below — **the list is
+the count**; there is deliberately no number in this sentence to keep in sync
+with it. An earlier revision opened "**Two** blocking gates live here", and
+adding the third made that wrong in the same commit, in the handbook whose
+whole subject is prose nothing re-checks. `check-cron-slots.mjs` exists because
+one number was restated in ten places and all ten were wrong together (#1977);
+finding its own count stale here, one gate later, is the argument for the gate
+rather than a footnote to it.
+
+They exist for the same reason — prose has no compiler, so a rename, a removal,
+or a copied number leaves behind text that nothing checks.
 
 1. **No operator runbook may cite a directory that no longer exists** —
    `docs-citations.mjs` + `check-docs-paths.mjs` (below).
@@ -18,8 +27,26 @@ no compiler, so a rename or a removal leaves behind text that nothing checks.
    live, or re-pin if it is a deliberate retraction note. Run it with
    `node .github/scripts/check-excision-residue.mjs`, and regenerate the ledger
    with `--write-pins` (which keeps existing reasons — review the diff, and
-   treat any reason still reading `UNTRIAGED` as unread). Both gates run in
-   `release-notes-drift.yml`.
+   treat any reason still reading `UNTRIAGED` as unread).
+3. **No file outside the authority may restate how many of the account's five
+   Cloudflare cron triggers are spoken for** — `check-cron-slots.mjs`. The one
+   place that states it is [`docs/ops/CloudflareCronSlots.md`](../../docs/ops/CloudflareCronSlots.md),
+   which carries the timestamp it was last read from the account. Stating the
+   CAP is fine and deliberately permitted; stating the OCCUPANCY is what
+   fires. It has three modes:
+
+   ```bash
+   node .github/scripts/check-cron-slots.mjs             # offline: the scan + the authority's self-consistency
+   node .github/scripts/check-cron-slots.mjs --selftest   # the gate's own fixtures
+   node .github/scripts/check-cron-slots.mjs --live       # diff the inventory against the ACCOUNT
+   ```
+
+   CI runs the first two. `--live` needs `CLOUDFLARE_API_TOKEN` +
+   `CLOUDFLARE_ACCOUNT_ID` (Workers Scripts read; it makes no writes) and is
+   the **only** mode that can tell whether the inventory is current — a green
+   offline run means "nobody re-copied the count", not "the count is right".
+
+All of these run in `release-notes-drift.yml`.
 
 The path checker is two files, both small:
 

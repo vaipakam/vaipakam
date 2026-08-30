@@ -132,6 +132,33 @@ jobs:
           node .github/scripts/check-docs-paths.mjs
           echo "Docs path gate OK." >> "$GITHUB_STEP_SUMMARY"
 
+      # Cron-slot gate (#1977). Same shape and the same reason as the two
+      # gates around it: a fact about live infrastructure gets copied into
+      # prose, and prose has no compiler. This one bans RESTATING how many of
+      # the account's 5 cron triggers are spoken for, because every copy of
+      # that count agreed with the others and they were wrong together — none
+      # of them could see a Worker that has no source in this tree. (How many
+      # copies is enumerated in the release-note fragment; restating the
+      # number here is the same defect this step bans, and an earlier revision
+      # of this comment said "seven" while the authority said ten.)
+      #
+      # Offline only. The `--live` half diffs the committed inventory against
+      # the Cloudflare account, and CI has no account credentials; an operator
+      # runs it from `docs/ops/CloudflareCronSlots.md`. So a green step here
+      # means "nobody re-copied the count", NOT "the inventory is current" —
+      # two different claims, and only the first is checkable without a token.
+      #
+      # Fixtures first, for the reason the excision selftest gives: the rule's
+      # value is the line it draws between the CAP (allowed — the replacement
+      # sentence needs it) and the OCCUPANCY (banned), and a line drawn in
+      # regexes is not self-evident from reading them.
+      - name: Cron-slot gate (restated trigger occupancy)
+        run: |
+          set -euo pipefail
+          node .github/scripts/check-cron-slots.mjs --selftest
+          node .github/scripts/check-cron-slots.mjs
+          echo "Cron-slot gate + selftest OK." >> "$GITHUB_STEP_SUMMARY"
+
       # Release-note assembler tests. The assembler decides which pending
       # fragments belong to the day being assembled, and gets that decision
       # from git history — both halves fail SILENTLY when wrong, producing a

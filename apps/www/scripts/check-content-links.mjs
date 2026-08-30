@@ -63,6 +63,44 @@ const CANONICAL_SOURCE = {
     'docs/ops/AdminConfigurableKnobsAndSwitches.md',
 };
 
+/**
+ * The frozen Terms sources are PUBLISHED markdown too (#2010 round 2):
+ * `TermsPage` renders `src/pages/terms/v<N>.md` at `/terms/v<N>`, so a
+ * relative target in one resolves against that route and hands the
+ * reader the app shell — the exact failure this guard exists for, and
+ * one that must be caught BEFORE a version is published, because a
+ * published frozen file is immutable and a relative link inside it
+ * could never be fixed. The canonical `docs/Terms/TermsOfService.md`
+ * is checked alongside so the fix lands in the source that gets
+ * frozen, not in a copy.
+ */
+const TERMS_FROZEN_ROOT = path.join(APP_ROOT, 'src', 'pages', 'terms');
+const TERMS_CANONICAL = path.join(
+  REPO_ROOT,
+  'docs',
+  'Terms',
+  'TermsOfService.md',
+);
+
+function collectTermsMarkdown() {
+  const out = [];
+  if (fs.existsSync(TERMS_FROZEN_ROOT)) {
+    for (const entry of fs.readdirSync(TERMS_FROZEN_ROOT)) {
+      if (/^v\d+\.md$/.test(entry)) out.push(path.join(TERMS_FROZEN_ROOT, entry));
+    }
+  }
+  if (fs.existsSync(TERMS_CANONICAL)) out.push(TERMS_CANONICAL);
+  if (out.length === 0) {
+    // Same shape as the zero-content guard below: a moved directory
+    // must not read as "no findings" forever.
+    console.error(
+      `check-content-links: found no Terms markdown under ${TERMS_FROZEN_ROOT} or at ${TERMS_CANONICAL}`,
+    );
+    process.exit(1);
+  }
+  return out;
+}
+
 /** Recursively collect every markdown file under `dir`. */
 function collectMarkdown(dir) {
   const out = [];
@@ -92,7 +130,7 @@ if (!fs.existsSync(CONTENT_ROOT)) {
   process.exit(1);
 }
 
-const files = collectMarkdown(CONTENT_ROOT).sort();
+const files = [...collectMarkdown(CONTENT_ROOT), ...collectTermsMarkdown()].sort();
 if (files.length === 0) {
   // A silent zero-file pass would let a moved content directory read as
   // "no relative links found" forever.

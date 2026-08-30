@@ -10,9 +10,7 @@
  * stopPropagation is belt-and-braces for custom handlers up-tree.
  */
 import { copy } from '../content/copy';
-
-/** The marketing site's Terms of Service route (apps/www). */
-const TERMS_URL = 'https://vaipakam.com/terms';
+import { LEGAL_URLS } from '../lib/legalUrls';
 
 export function ConsentLabel() {
   const stop = (e: React.MouseEvent) => e.stopPropagation();
@@ -23,7 +21,7 @@ export function ConsentLabel() {
         {copy.consentParts.risk}
       </a>
       {copy.consentParts.mid}
-      <a href={TERMS_URL} target="_blank" rel="noopener noreferrer" onClick={stop}>
+      <a href={LEGAL_URLS.terms} target="_blank" rel="noopener noreferrer" onClick={stop}>
         {copy.consentParts.terms}
       </a>
       {copy.consentParts.suffix}

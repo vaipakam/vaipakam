@@ -169,17 +169,20 @@ export default {
    *    cron wall-time and serializing failure modes).
    *
    * Why one cron at all: free-plan account cap of 5 cron triggers
-   * across the org. apps/{agent,indexer} plus this Worker occupy 3
-   * today — apps/keeper's schedule is empty since #1896, and that slot
-   * is reserved for its return rather than being spare. Counting it as
-   * occupied, 4 are taken; the fifth is reserved for ops/mesh-watcher,
-   * which is code-complete but UNDEPLOYED and therefore holds no slot
-   * yet.
-   * Splitting backup + healthcheck into two crons would consume that
-   * spare and leave mesh-watcher unable to deploy — CF API rejects the
-   * sixth trigger with 10072.
+   * across the org, of which this Worker takes one. Splitting backup +
+   * healthcheck into two crons would take a second, and CF rejects the
+   * trigger that goes past the cap with API error 10072 — at deploy
+   * time, for whichever Worker happens to be deploying rather than for
+   * whoever spent the budget.
+   *
+   * What the budget holds today is in `docs/ops/CloudflareCronSlots.md`
+   * and deliberately not here: the count this comment used to carry was
+   * wrong for months because it could only see Workers that have source
+   * in this tree, and one of them does not (#1977).
+   *
    * Split back into two crons if/when the account upgrades to
-   * Workers Paid ($5/mo, removes the cap).
+   * Workers Paid ($5/mo, which raises the cap to 250 rather than
+   * removing it).
    */
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     // Preflight: validate every required secret exists BEFORE any

@@ -479,6 +479,14 @@ export function ObligationTransferFlow({
         // (#1529 review).
         const needed = liveCost.total + pad;
         approvalToken = liveLoan.principalAsset;
+      // #1961 review round 11 P1 — NO Terms preflight here any more.
+      // I added one on the belief that this flow's Diamond write was
+      // not an exit. It is: `transferObligationViaOffer` hands the
+      // caller's obligation to a replacement borrower who has already
+      // offered to take it, and leaves the caller with nothing. It is
+      // on the allowlist now, so a preflight here would refuse a write
+      // `useDiamondWrite` goes on to permit — a gate contradicting
+      // itself, and in the direction that strands a held borrower.
         await ensureAllowance({
           publicClient,
           walletClient,

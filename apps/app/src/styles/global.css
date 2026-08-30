@@ -2266,3 +2266,84 @@ a.item-row:hover {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
+
+/* #1961 — Terms-of-Service route gate. Deliberately plain: it reuses
+   `.card`, `.btn` and `.banner` so it inherits the app's theme tokens
+   rather than carrying a second visual language for a screen almost
+   nobody sees. Centred and width-capped because it replaces the whole
+   routed panel, not a card within one. */
+.legal-gate {
+  display: flex;
+  justify-content: center;
+  padding: 24px 0;
+}
+
+.legal-gate-card {
+  max-width: 560px;
+  width: 100%;
+}
+
+.legal-gate-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.legal-gate-body {
+  color: var(--text-muted);
+  margin: 8px 0 0;
+}
+
+.legal-gate-detail {
+  margin: 16px 0 0;
+  display: grid;
+  gap: 6px;
+}
+
+.legal-gate-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.legal-gate-row dt {
+  color: var(--text-muted);
+}
+
+.legal-gate-row dd {
+  margin: 0;
+}
+
+.legal-gate-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin: 16px 0 0;
+}
+
+.legal-gate-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legal-gate-actions {
+  margin: 16px 0 0;
+}
+
+.legal-gate-footnote {
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  margin: 12px 0 0;
+}
+
+/* #1961 review round 3 — the language control inside the Terms gate.
+   Separated from the footnote above it because it is an action, not
+   more prose. */
+.legal-gate-language {
+  margin: 16px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}

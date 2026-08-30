@@ -106,12 +106,31 @@ it.
 | `POST /diag/legal-hold` | Admin wallet signature → on-chain `ADMIN_ROLE` | Protocol-admin only: `place` / `lift` a hold, or `set-disclosure` to toggle the per-wallet flag. A `place` is `multipart/form-data` and **must** carry the authorising document (§4.5). Every action is appended to `diag_legal_hold_audit`. |
 
 **Signature scheme.** No accounts — wallet ownership is proven by an
-EIP-191 `personal_sign` over a fixed, human-readable message (see
-`buildErasureMessage`) naming the wallet and an `issuedAt` unix
-timestamp. The Worker reconstructs the exact message, recovers the
-signer (viem `recoverMessageAddress`), and requires it to equal the
-claimed wallet. `issuedAt` must be within a 10-minute window. The
-signature is not a transaction and costs no gas.
+EIP-191 `personal_sign` over a fixed, human-readable message naming
+the wallet and an `issuedAt` unix timestamp. **The message is
+per-operation** (#2008): `/diag/erasure` verifies
+`buildErasureMessage` and `/diag/erasure/status` verifies the
+distinct `buildErasureStatusMessage` — two frozen formats, so the
+signature a user gave to LOOK at their records can never be replayed
+against the erasure endpoint as authority to DELETE them. Any client
+implementing the status endpoint must sign the status message; the
+erasure message gets a 400 there, by design. The Worker reconstructs
+the exact bytes of the matching message and verifies the wallet
+authorised them — plain ECDSA recovery for an ordinary wallet, and
+since #2009 ERC-1271/ERC-6492 verification against a configured
+chain's RPC for a smart-contract account (deployed or
+counterfactual; `walletSigVerify.ts`, shared with the alerts-family
+endpoints). The frozen messages carry no chain field, so a request
+may name the account's chain in the UNSIGNED body — the hint only
+selects WHERE verification runs, never what it proves — and with no
+hint every configured chain is tried. Three verdicts, kept distinct:
+verified; definitively denied; and CANNOT-CHECK (503) when no chain
+could answer, because calling an unverifiable signature "invalid"
+sends a smart-account user into a retry loop that cannot succeed.
+`issuedAt` must be within a 10-minute window
+(`ERASURE_SIGNATURE_MAX_AGE_SECONDS`, shared with clients so they
+can refuse to send a signature that can only fail). The signature is
+not a transaction and costs no gas.
 
 **Legal-hold admin auth (no shared secret).** `/diag/legal-hold`
 uses the *same* signed-request mechanism, but the bound message is
@@ -129,11 +148,13 @@ for "who is an admin". The endpoint is naturally inert before
 deploy: with no RPC / deployment configured, the on-chain check
 finds no admin and every call is 403.
 
-> When the frontend erasure UI is built (see §8), `buildErasureMessage`
-> should move to `packages/lib` so frontend + Worker import one
-> source of truth — the same single-source discipline the repo
-> applies to ABIs. Until then the format is frozen in `diagErasure.ts`
-> and reproduced in §6.
+> The frontend erasure UI shipped with #2008 (see §8), and both user
+> message builders moved to `packages/lib/src/erasureMessage.ts` at
+> that point — frontend + Worker import the ONE source of truth, the
+> same single-source discipline the repo applies to ABIs, and the
+> lib's test pins both byte sequences verbatim. `buildLegalHoldMessage`
+> (admin-only, no frontend consumer yet) remains frozen in
+> `diagErasure.ts` until the legal-hold panel is built.
 
 ### 4.4 The two gag-order-safe invariants
 
@@ -289,10 +310,14 @@ gates on `VITE_DIAG_RECORD_ENABLED`.
 > surface as well as the panel. (`apps/www` hosts only the read-only
 > `/protocol-console/docs` reference page.)
 
-- **Frontend erasure UI** — a "Erase my diagnostics records" action
-  (likely in the Diagnostics Drawer / Privacy settings) that prompts
-  the wallet signature and calls the endpoint. Move
-  `buildErasureMessage` to `packages/lib` at that point.
+- **Frontend erasure UI** — ✅ **shipped** (#2002 / PR #2008): the
+  `DiagErasureCard` on the Data-rights page prompts the wallet
+  signature and calls both signed endpoints. `buildErasureMessage`
+  and `buildErasureStatusMessage` moved to
+  `packages/lib/src/erasureMessage.ts` as part of that change.
+  Smart-contract-wallet (ERC-1271/6492) verification shipped with
+  #2009 — see the signature-scheme paragraph in §4.3; the interim
+  bytecode-detection shim the card carried is gone.
 - **Protocol-console legal-hold UI** — a panel in the interactive
   protocol console (admin-only, behind `useIsProtocolAdmin`) for the
   place / lift / set-disclosure actions: a file picker for the order
@@ -300,7 +325,7 @@ gates on `VITE_DIAG_RECORD_ENABLED`.
   to `/diag/legal-hold`, and showing the returned `legalDocRef` /
   `legalDocSha256`. The Worker side (this change) is the foundation;
   this panel is the paired next task. Move `buildLegalHoldMessage`
-  to `packages/lib` alongside `buildErasureMessage` at that point.
+  to `packages/lib` alongside the erasure builders at that point.
 - **Per-record hold granularity** — holds are currently per
   wallet-hash (all of a wallet's records). Finer granularity, if a
   real order ever needs it, is a later change.

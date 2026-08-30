@@ -190,6 +190,17 @@ export function isSupportedChain(chainId: number | undefined): boolean {
   return chainId !== undefined && BY_ID.has(chainId);
 }
 
+/** Display name for ANY chain the app can describe — deliberately
+ *  NOT deployment-gated like `getSupportedChain` (#2013 round 6): the
+ *  support service verifies smart-account signatures on whatever
+ *  chain the account lives on, deployment or not, and a confirmation
+ *  naming that chain must be able to name e.g. Ethereum during the
+ *  testnet phase. Null for a chain the catalog has no entry for. */
+export function chainDisplayName(chainId: number | undefined): string | null {
+  if (chainId === undefined) return null;
+  return CHAIN_META.find((m) => m.chainId === chainId)?.name ?? null;
+}
+
 /** Where reads land when the wallet is disconnected or on an
  *  unsupported network: env override first, else the first supported
  *  mainnet, else the first supported chain (testnet phase). */

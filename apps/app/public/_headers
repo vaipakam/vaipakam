@@ -109,6 +109,10 @@
   X-Robots-Tag: noindex
 /activity/*
   X-Robots-Tag: noindex
+/data-rights
+  X-Robots-Tag: noindex
+/data-rights/*
+  X-Robots-Tag: noindex
 /settings
   X-Robots-Tag: noindex
 /settings/*

@@ -11,11 +11,12 @@
  * state the victim never asked for. The link request therefore
  * carries an EIP-191 `personal_sign` signature over the fixed
  * human-readable message below, naming the wallet, the chain and an
- * `issuedAt` timestamp; the Worker reconstructs the exact message,
- * recovers the signing address, and requires it to equal the claimed
- * wallet. Same pattern (and same replay window / same EOA-recovery
- * tradeoff — ERC-1271 smart-account support is a shared follow-up) as
- * the diagnostics-erasure endpoints in `diagErasure.ts`.
+ * `issuedAt` timestamp; the Worker reconstructs the exact message and
+ * verifies the wallet authorised it — plain ECDSA recovery for an
+ * ordinary wallet, ERC-1271/6492 against the signed `chain_id`'s RPC
+ * for a smart account (#2009, via the shared `walletSigVerify`
+ * module). Same pattern and same replay window as the
+ * diagnostics-erasure endpoints in `diagErasure.ts`.
  *
  * `/unlink/telegram` requires the same proof over its own action-
  * scoped message (round 5): a spoofed-Origin caller could otherwise
@@ -30,120 +31,38 @@
  * body-trusted — see the note on the handler in `index.ts`.
  */
 
-import { recoverMessageAddress, type Hex } from 'viem';
+import type { Env } from './env';
+import {
+  LINK_SIGNATURE_MAX_AGE_SECONDS,
+  buildDueDateOptOutMessage,
+  buildTelegramLinkMessage,
+  buildTelegramTestMessage,
+  buildTelegramUnlinkMessage,
+} from '@vaipakam/lib/alertsMessage';
+import {
+  isValidSignatureShape,
+  verifyOnChain,
+  verifyWalletSignature,
+  type ChainSigChecker,
+} from './walletSigVerify';
 
-/** Replay window — a signed link request older (or further in the
- *  future) than this is rejected. Mirrors the erasure endpoints. */
-export const LINK_SIGNATURE_MAX_AGE_SECONDS = 10 * 60;
-
-/** EIP-191 `personal_sign` signature: `0x` + 65 bytes = 132 chars. */
-const SIGNATURE_RE = /^0x[0-9a-fA-F]{130}$/;
+/* The four signed messages + their replay window live in
+ * `@vaipakam/lib/alertsMessage` (#2014), the ONE source both this
+ * Worker and the connected app import — the erasure family's
+ * discipline, applied here. They were duplicated byte-for-byte in
+ * `apps/app/src/data/alerts.ts`, held identical only by comments;
+ * a one-sided edit rejected every affected signed request in
+ * production with nothing catching it before deploy. Re-exported so
+ * this module's existing surface (and its tests) are unchanged. */
+export {
+  LINK_SIGNATURE_MAX_AGE_SECONDS,
+  buildDueDateOptOutMessage,
+  buildTelegramLinkMessage,
+  buildTelegramTestMessage,
+  buildTelegramUnlinkMessage,
+};
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
-
-/**
- * Build the exact message a user signs to authorise linking Telegram
- * delivery for their wallet. This string MUST be byte-identical
- * between the wallet prompt the frontends show (`apps/app`
- * `data/alerts.ts`, `apps/app` `components/AlertsCard.tsx`) and the
- * reconstruction here, or signature recovery yields a different
- * address and the request is rejected. The wallet is lower-cased so a
- * checksummed and an all-lowercase spelling produce the same message.
- */
-export function buildTelegramLinkMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Link Telegram alerts',
-    '',
-    'I authorise Telegram alert delivery for the wallet below to the',
-    'chat that completes this link code. Signing this message proves',
-    'ownership of the wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
-/**
- * The unlink counterpart — deliberately a DIFFERENT headline and body
- * from the link message, so a signature captured for one action can
- * never authorise the other. Mirrored byte-for-byte by the frontends,
- * same as the link message.
- */
-export function buildTelegramUnlinkMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Unlink Telegram alerts',
-    '',
-    'I request that Telegram alert delivery for the wallet below be',
-    'disconnected everywhere. Signing this message proves ownership',
-    'of the wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
-/**
- * The due-date-mute counterpart — required when a `/thresholds` write
- * sets `notify_maturity_approaching` to false, since that silences
- * both due-date warning lanes (agent reminder + keeper pre-grace).
- * Mirrored byte-for-byte by the frontends like the other two.
- */
-export function buildDueDateOptOutMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Mute due-date payment reminders',
-    '',
-    'I request that payment due-date reminders for the wallet below',
-    'be switched off. Signing this message proves ownership of the',
-    'wallet. It is not a transaction and costs no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
-
-/**
- * The test-alert counterpart (UX-012) — signed before the Worker
- * pushes a one-off "your alerts are working" message to the linked
- * chat. Distinct headline / body from the other three so a captured
- * signature can never cross actions. Sending a Telegram message to a
- * wallet's chat is an outbound side-effect, so it gets the same
- * ownership proof as link / unlink: without it a spoofed-Origin caller
- * who knows a linked wallet's (public) address could spam that user's
- * Telegram with test messages.
- */
-export function buildTelegramTestMessage(
-  wallet: string,
-  chainId: number,
-  issuedAt: number,
-): string {
-  return [
-    'Vaipakam — Send a test alert',
-    '',
-    'I request one test alert be sent to the Telegram chat linked to',
-    'the wallet below, to confirm delivery works. Signing this message',
-    'proves ownership of the wallet. It is not a transaction and costs',
-    'no gas.',
-    '',
-    `Wallet: ${wallet.toLowerCase()}`,
-    `Chain id: ${chainId}`,
-    `Issued at (unix): ${issuedAt}`,
-  ].join('\n');
-}
 
 export type AlertAuthAction = 'link' | 'unlink' | 'mute-duedate' | 'test-alert';
 
@@ -187,8 +106,11 @@ export function parseSignedLinkRequest(body: unknown): LinkParseResult {
   ) {
     return { ok: false, reason: 'issuedAt must be a positive unix-seconds number' };
   }
-  if (typeof b.signature !== 'string' || !SIGNATURE_RE.test(b.signature)) {
-    return { ok: false, reason: 'signature must be a 65-byte hex string' };
+  // No longer fixed at 65 bytes (#2009): an ERC-6492 wrapper from a
+  // counterfactual smart account is far longer. Shape + cap only —
+  // whether it VERIFIES is the next step's question.
+  if (!isValidSignatureShape(b.signature)) {
+    return { ok: false, reason: 'signature must be 0x-prefixed hex' };
   }
   return {
     ok: true,
@@ -202,17 +124,35 @@ export function parseSignedLinkRequest(body: unknown): LinkParseResult {
 }
 
 export type LinkVerifyResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /** How the signature verified (#2013 round 3 P1) — 'ecdsa' is
+       *  the wallet's universal key, 'chain' is a contract's
+       *  approval on the SIGNED chain only. The unlink handler
+       *  scopes its effect on this: chain-verified authority must
+       *  not clear other chains' rows, whose contracts may have
+       *  different controllers. */
+      via: 'ecdsa' | 'chain';
+    }
   | { ok: false; status: number; reason: string };
 
 /**
  * Verify a parsed signed link request: the timestamp is inside the
- * replay window AND the signature recovers to the claimed wallet.
+ * replay window AND the wallet authorised the action-scoped message —
+ * plain ECDSA for an ordinary wallet, ERC-1271/6492 against the
+ * signed `chain_id`'s configured RPC for a smart account (#2009).
+ * The chain to verify on comes from INSIDE the signed message, so a
+ * caller cannot steer verification to a chain the signer never named.
  */
 export async function verifySignedLinkRequest(
   req: SignedLinkRequest,
   nowSeconds: number,
+  env: Env,
   action: AlertAuthAction = 'link',
+  checker: ChainSigChecker = verifyOnChain,
+  // The chain path's per-IP rate gate (#2013) — handlers pass
+  // `chainVerifyGate(env, request)`.
+  chainPathAllowed?: () => Promise<boolean>,
 ): Promise<LinkVerifyResult> {
   if (Math.abs(nowSeconds - req.issuedAt) > LINK_SIGNATURE_MAX_AGE_SECONDS) {
     return { ok: false, status: 400, reason: 'request timestamp is stale' };
@@ -222,19 +162,31 @@ export async function verifySignedLinkRequest(
     req.chain_id,
     req.issuedAt,
   );
-  let recovered: string;
-  try {
-    recovered = await recoverMessageAddress({
-      message,
-      signature: req.signature as Hex,
-    });
-  } catch {
-    // A structurally-valid-looking hex string that isn't a real
-    // signature lands here.
-    return { ok: false, status: 400, reason: 'signature is not recoverable' };
+  const verdict = await verifyWalletSignature(
+    env,
+    req.wallet,
+    message,
+    req.signature,
+    req.chain_id,
+    checker,
+    chainPathAllowed,
+  );
+  if (verdict.ok) return { ok: true, via: verdict.via };
+  if (verdict.reason === 'limited') {
+    return {
+      ok: false,
+      status: 429,
+      reason: 'too many verification attempts — try again shortly',
+    };
   }
-  if (recovered.toLowerCase() !== req.wallet.toLowerCase()) {
-    return { ok: false, status: 401, reason: 'signature does not match wallet' };
-  }
-  return { ok: true };
+  return verdict.reason === 'unavailable'
+    ? {
+        ok: false,
+        status: 503,
+        // Honest, not gag-relevant (see walletSigVerify's header): a
+        // smart account on a chain this Worker cannot reach — or has
+        // no RPC configured for — is unverifiable, not invalid.
+        reason: 'signature verification temporarily unavailable',
+      }
+    : { ok: false, status: 401, reason: 'signature does not match wallet' };
 }

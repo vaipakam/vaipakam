@@ -26,6 +26,12 @@ interface ThemeContextValue {
   preference: ThemePreference;
   resolved: ResolvedTheme;
   setPreference: (p: ThemePreference) => void;
+  /** Return to the default WITHOUT writing storage (#1960 review round
+   *  1 P2). The data-rights erasure needs the live UI to follow the
+   *  storage it just cleared; calling `setPreference` would do that and
+   *  immediately re-persist the key, undoing the erasure it was called
+   *  to complete. */
+  resetToDefault: () => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -74,9 +80,12 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // State only — deliberately no write. See `resetToDefault` above.
+  const resetToDefault = useCallback(() => setPreferenceState('system'), []);
+
   const value = useMemo(
-    () => ({ preference, resolved, setPreference }),
-    [preference, resolved, setPreference],
+    () => ({ preference, resolved, setPreference, resetToDefault }),
+    [preference, resolved, setPreference, resetToDefault],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

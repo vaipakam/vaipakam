@@ -203,6 +203,11 @@ interface BaseEnv {
   // support requests arrive at human cadence; the binding is an
   // abuse safety net for the shared D1 + ops-Telegram notify.
   SUPPORT_TICKET_RATELIMIT?: RateLimitBinding;
+  /** #2013 — meters the signature-verification CHAIN PATH (ERC-1271/
+   *  6492 checks spend RPC subrequests on unauthenticated bodies;
+   *  the ECDSA fast path stays free). Per client IP, consumed via
+   *  `chainVerifyGate` in walletSigVerify.ts. */
+  SIG_VERIFY_RATELIMIT?: RateLimitBinding;
 
   // #1040 phase 1 — ops-INTERNAL Telegram bot for the new-ticket
   // notify (two-bot policy: the operator reads this alert, so it
@@ -440,6 +445,7 @@ export async function resolveEnv(raw: WorkerEnv): Promise<Env> {
     OPENSEA_OFFERS_UPSTREAM_RATELIMIT: raw.OPENSEA_OFFERS_UPSTREAM_RATELIMIT,
     OPENSEA_SIGNED_OFFER_RATELIMIT: raw.OPENSEA_SIGNED_OFFER_RATELIMIT,
     SUPPORT_TICKET_RATELIMIT: raw.SUPPORT_TICKET_RATELIMIT,
+    SIG_VERIFY_RATELIMIT: raw.SIG_VERIFY_RATELIMIT,
     TG_OPS_BOT_TOKEN: raw.TG_OPS_BOT_TOKEN,
     TG_OPS_CHAT_ID: raw.TG_OPS_CHAT_ID,
     DIAG_SAMPLE_RATE: raw.DIAG_SAMPLE_RATE,
@@ -478,19 +484,20 @@ export interface ChainConfig {
   diamond: string;
 }
 
-/**
- * Resolve chain configs from env + the consolidated deployments
- * JSON. Same shape as apps/{keeper,indexer} versions.
- *
- * #1651 — this said the meta table covers "every chain with a Diamond
- * OR a VPFIBuyAdapter". There is no adapter since #687-A, and the set
- * was never derived from one: a row survives only if BOTH its RPC
- * secret is set AND `getDeployment` returns a record, so the result is
- * Diamond-driven and self-limiting. Listing a chain here that has
- * neither is inert, which is why `RPC_ZKEVM` can sit in the table while
- * being deliberately never set.
- */
-export function getChainConfigs(env: Env): ChainConfig[] {
+/** A chain the Worker can TALK to — an RPC binding and nothing more.
+ *  Deliberately not gated on a protocol deployment (#2013 round 6
+ *  P2): signature verification against a smart account's contract
+ *  needs only an RPC (the universal validator is deployless), and a
+ *  Safe on a chain Vaipakam has not deployed to is still a real
+ *  signer whose requests must be checkable. */
+export interface RpcChain {
+  id: number;
+  name: string;
+  rpc: string;
+}
+
+/** Every chain with an RPC binding set, deployment or not. */
+export function getRpcChains(env: Env): RpcChain[] {
   const meta: { id: number; name: string; rpc: string | undefined }[] = [
     // Mainnets — included once both the deployment artifact and the
     // matching RPC secret land.
@@ -509,17 +516,34 @@ export function getChainConfigs(env: Env): ChainConfig[] {
     { id: 80002, name: 'Polygon Amoy', rpc: env.RPC_POLYGON_AMOY },
     { id: 97, name: 'BNB Testnet', rpc: env.RPC_BNB_TESTNET },
   ];
-  const out: ChainConfig[] = [];
+  const out: RpcChain[] = [];
   for (const m of meta) {
     if (!m.rpc) continue;
-    const dep = getDeployment(m.id);
+    out.push({ id: m.id, name: m.name, rpc: m.rpc });
+  }
+  return out;
+}
+
+/**
+ * Resolve chain configs from env + the consolidated deployments
+ * JSON. Same shape as apps/{keeper,indexer} versions.
+ *
+ * #1651 — this said the meta table covers "every chain with a Diamond
+ * OR a VPFIBuyAdapter". There is no adapter since #687-A, and the set
+ * was never derived from one: a row survives only if BOTH its RPC
+ * secret is set AND `getDeployment` returns a record, so the result is
+ * Diamond-driven and self-limiting. Listing a chain here that has
+ * neither is inert, which is why `RPC_ZKEVM` can sit in the table while
+ * being deliberately never set. (Since #2013 round 6 the RPC half
+ * lives in `getRpcChains` above — this keeps the deployment gate for
+ * the callers that read the Diamond.)
+ */
+export function getChainConfigs(env: Env): ChainConfig[] {
+  const out: ChainConfig[] = [];
+  for (const c of getRpcChains(env)) {
+    const dep = getDeployment(c.id);
     if (!dep) continue;
-    out.push({
-      id: m.id,
-      name: m.name,
-      rpc: m.rpc,
-      diamond: dep.diamond,
-    });
+    out.push({ ...c, diamond: dep.diamond });
   }
   return out;
 }

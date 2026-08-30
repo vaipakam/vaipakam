@@ -318,7 +318,26 @@ Privacy and consent requirements:
 Legal and data-rights requirements:
 
 - `/terms` and `/privacy` must be public routes that do not require wallet connection
-- the Terms page should mirror the source-of-truth text from `docs/TermsOfService.md`
+- the Terms page must render the canonical Terms document itself — the exact
+  bytes the published fingerprint covers — never a hand-maintained
+  transcription of it, which can drift from the text it claims to mirror
+- every published Terms version must stay readable, unchanged forever, at its
+  own permanent version-pinned address, with the latest published version
+  also served at the unversioned Terms address; an older version identifies
+  itself as having a newer published successor and points at it — phrased by
+  publication order, not by which version is in force, since during a rollout
+  the version being accepted lags the latest published one — and each version
+  publishes a fingerprint of its canonical source so the text can be checked
+  against the version-and-fingerprint pair the connected app's acceptance
+  prompt shows
+- a version-pinned Terms address for a version the site has not published
+  must explain that honestly (naming the versions that are available, and
+  telling a reader sent by the acceptance prompt not to accept text they
+  cannot read) rather than showing an error page or, worse, a different
+  version's text
+- version-pinned archive addresses must not be advertised or indexed as
+  independent pages — they duplicate the Terms content, and search results
+  should carry the one unversioned address
 - Terms, Privacy, Risk Disclosures, and User Guide pages should use locale-aware content where available and show a clear English-only notice when the legally binding or guide content is still available only in English for the active locale
 - Risk Disclosures may show a translated helper panel beside the English source text, but the UI must identify the English text as the controlling version
 - Risk Disclosures should stay compact and legally focused; detailed liquidation mechanics belong in the Advanced User Guide and FAQ, with a prominent "Learn how liquidation actually works" link from the disclosure surface

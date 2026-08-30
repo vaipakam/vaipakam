@@ -21,9 +21,12 @@ import { useMemo, useState } from 'react';
 import { BellRing } from 'lucide-react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { useMode } from '../app/ModeContext';
+import { chainDisplayName } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
+import { useTermsBlockNonExitWrites } from '../contracts/diamond';
 import {
+  addsAlertOptIn,
   alertsConfigured,
   bandsValid,
   issueTelegramLink,
@@ -40,6 +43,7 @@ import {
 export function AlertsCard() {
   const { address } = useAccount();
   const { signMessageAsync } = useSignMessage();
+  const termsVerdict = useTermsBlockNonExitWrites();
   const { readChain } = useActiveChain();
   const { isAdvanced } = useMode();
   const chainId = readChain.chainId;
@@ -66,8 +70,51 @@ export function AlertsCard() {
   const configured = alertsConfigured();
   const pushUrl = pushChannelUrl();
 
-  async function persist(next: AlertPrefs, opts?: { dueDateChanged?: boolean }) {
-    if (!address) return;
+
+  /**
+   * #1961 review round 8 P1 — enrolment is gated, opting out is not.
+   *
+   * `/settings` is exempt so a held user can revoke a token allowance,
+   * which also exposed every control on this card. None of them reaches
+   * `useDiamondWrite` — linking signs and posts to the agent, saving
+   * writes the agent's threshold record — so the write gate cannot see
+   * them, and neither the agent nor the indexer carries a Terms check.
+   *
+   * The direction decides: turning something ON, or linking a channel,
+   * is enrolment and waits for acceptance. Turning something OFF, or
+   * unlinking, is an opt-out and must always work — the same rule as
+   * keeper and fee-consent revocation, applied to a surface that never
+   * touches the chain.
+   */
+  function termsBlockEnrolment(): string | null {
+    const v = termsVerdict();
+    if (v === 'ok') return null;
+    return v === 'unknown'
+      ? copy.errors.termsCheckUnavailable
+      : copy.errors.termsNotAccepted;
+  }
+
+  async function persist(
+    next: AlertPrefs,
+    opts?: { dueDateChanged?: boolean; bandsChanged?: boolean },
+  ) {
+    // `prefs` is the direction baseline and is required, not optional —
+    // every caller below is inside the branch that renders only once it
+    // is loaded, and the guard makes that reachability explicit rather
+    // than papering over it with a nullable comparison.
+    if (!address || !prefs) return;
+    // Only an ENROLMENT is held — a save that ADDS an opt-in. Turning
+    // one off, or tuning bands, goes through whatever the Terms say.
+    // The direction is compared per field against what is stored now;
+    // see `addsAlertOptIn` for why the round-8 "is anything still on
+    // afterwards" test was the wrong question.
+    if (addsAlertOptIn(prefs, next)) {
+      const blocked = termsBlockEnrolment();
+      if (blocked) {
+        setError(blocked);
+        return;
+      }
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -78,8 +125,13 @@ export function AlertsCard() {
       // device's defaults must not undo an opt-out made elsewhere).
       // Switching the reminder OFF additionally signs an ownership
       // proof; the agent refuses unsigned opt-outs.
+      // bandsChanged mirrors it for the risky lane (#2000): the bands
+      // carry that lane's state, so they are sent only when this save
+      // is the user touching the toggle or the advanced numbers — any
+      // other save omits them and the agent preserves what is stored.
       await saveAlertPrefs(address, chainId, next, {
         dueDateChanged: opts?.dueDateChanged,
+        bandsChanged: opts?.bandsChanged,
         signMessage: (message) => signMessageAsync({ message }),
       });
       storeAlertPrefs(chainId, address, next);
@@ -93,6 +145,11 @@ export function AlertsCard() {
   }
 
   async function startLink() {
+    const blockedLink = termsBlockEnrolment();
+    if (blockedLink) {
+      setError(blockedLink);
+      return;
+    }
     if (!address) return;
     setBusy(true);
     setError(null);
@@ -165,19 +222,29 @@ export function AlertsCard() {
 
   async function doUnlink() {
     if (!address || !prefs) return;
+    // Captured at the click (#2013 r6): the completion can land after
+    // a network switch, and the chain-scoped notice must name the
+    // network the unlink actually covered — never "this network".
+    const forChain = chainId;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       // Signed like linking — otherwise anyone could silently switch
       // off another wallet's risk alerts.
-      await unlinkTelegram(address, chainId, (message) =>
+      const scope = await unlinkTelegram(address, forChain, (message) =>
         signMessageAsync({ message }),
       );
       const next = { ...prefs, telegramLinked: false };
-      storeAlertPrefs(chainId, address, next);
+      storeAlertPrefs(forChain, address, next);
       setPrefs(next);
-      setNotice(copy.alerts.unlinked);
+      setNotice(
+        scope === 'chain'
+          ? copy.alerts.unlinkedChainOnly(
+              chainDisplayName(forChain) ?? String(forChain),
+            )
+          : copy.alerts.unlinked,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -311,7 +378,12 @@ export function AlertsCard() {
               type="checkbox"
               checked={prefs.risky}
               disabled={busy}
-              onChange={(e) => void persist({ ...prefs, risky: e.target.checked })}
+              onChange={(e) =>
+                void persist(
+                  { ...prefs, risky: e.target.checked },
+                  { bandsChanged: true },
+                )
+              }
               style={{ marginTop: 3 }}
             />
             <span style={{ flex: 1 }}>
@@ -333,7 +405,7 @@ export function AlertsCard() {
               key={scope}
               prefs={prefs}
               busy={busy}
-              onSave={(b) => void persist({ ...prefs, ...b })}
+              onSave={(b) => void persist({ ...prefs, ...b }, { bandsChanged: true })}
             />
           ) : null}
 

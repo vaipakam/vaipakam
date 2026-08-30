@@ -139,6 +139,15 @@ function pageRoutes(): ReactElement {
       <Route path="buy-vpfi" element={<LegacyVpfiRedirect />} />
       <Route path="discord" element={<DiscordPage />} />
       <Route path="terms" element={<TermsPage />} />
+      {/* #1998: version-pinned Terms. `TermsPage` parses the slug
+          against its version registry — `v<N>` renders that version
+          frozen forever (the acceptance gate links here), anything
+          else renders an honest "not published" explainer rather
+          than a silent 404. Deliberately NOT in seo-routes.mjs:
+          pinned archives would index as duplicates of /terms, and
+          per that registry's header, absence IS the indexing
+          decision. */}
+      <Route path="terms/:versionSlug" element={<TermsPage />} />
       <Route path="privacy" element={<PrivacyPage />} />
       <Route path="data-rights" element={<PublicDataRights />} />
       <Route path="help/overview" element={<Overview />} />
