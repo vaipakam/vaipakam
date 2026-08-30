@@ -104,6 +104,46 @@ describe('extractRevertData', () => {
     expect(extractRevertData({ data: '0xabcdefg' })).toBeUndefined();
   });
 
+  // #2017 round 3 P2: the message scan accepts ONLY a bare 4-byte
+  // selector or a selector plus whole 32-byte words, precisely so an
+  // address or a tx hash mentioned in the message is not mistaken for a
+  // revert selector by its first four bytes (the old `slice(0, 10)`
+  // trap). Only the accepting half was covered; a reverted length check
+  // would have shown friendly copy for whatever error those four bytes
+  // happened to collide with.
+  it('rejects an address or tx hash embedded in the message', () => {
+    const address = '0x' + '1a'.repeat(20); // 40 hex chars
+    const txHash = '0x' + 'bc'.repeat(32); // 64 hex chars
+    expect(
+      extractRevertData({ message: `reverted while calling ${address}` }),
+    ).toBeUndefined();
+    expect(extractRevertData({ message: `see tx ${txHash}` })).toBeUndefined();
+    // A real selector alongside them is still found.
+    expect(
+      extractRevertData({ message: `tx ${txHash} from ${address}: ${SEL_HF_TOO_LOW}` }),
+    ).toBe(SEL_HF_TOO_LOW);
+  });
+
+  // #2017 round 3 P2: every other cause-chain case is short and acyclic,
+  // so removing the `depth < 6` bound left them all green while a
+  // malformed provider error with a CYCLIC cause graph looped forever.
+  // Both halves of the bound are pinned here: data past the sixth node is
+  // not reached, and a self-referential graph terminates. (Without the
+  // guard the second case does not fail — it hangs, surfacing as this
+  // test's timeout.)
+  it('stops walking the cause chain at the depth bound', () => {
+    const deep = {
+      cause: {
+        cause: { cause: { cause: { cause: { cause: { cause: { data: SEL_HF_TOO_LOW } } } } } },
+      },
+    };
+    expect(extractRevertData(deep)).toBeUndefined();
+
+    const cyclic: Record<string, unknown> = { message: 'no revert bytes here' };
+    cyclic.cause = cyclic;
+    expect(extractRevertData(cyclic)).toBeUndefined();
+  });
+
   // #1094 Codex: viem wraps the real revert several causes deep — the top
   // object has no `data`, a nested cause does.
   it('walks the viem cause chain for revert data', () => {
@@ -320,6 +360,28 @@ describe('decodeContractError', () => {
     // local tables do not know. The selector proves a real revert was
     // decoded, so the misleading rewrite must be suppressed even though
     // there is no friendly copy to show instead.
+    // #2017 round 3 P2: precedence and the gas heuristic were exercised
+    // separately, so nothing pinned their interaction. The rewrite tests
+    // `base`, which resolves through the chain first — a wallet whose
+    // wrapper `message` carries the gas phrase while `reason` names the
+    // real cause must keep the reason, not have it replaced by the
+    // generic estimate warning.
+    it('keeps a higher-priority reason instead of rewriting the message', () => {
+      expect(
+        decodeContractError({
+          reason: 'Deadline exceeded',
+          message: 'exceeds max transaction gas limit',
+        }),
+      ).toBe('Deadline exceeded');
+      // Same for shortMessage outranking the message field.
+      expect(
+        decodeContractError({
+          shortMessage: 'nonce too low',
+          message: 'exceeds max gas limit',
+        }),
+      ).toBe('nonce too low');
+    });
+
     it('suppresses the rewrite for an UNKNOWN selector too — the guard itself', () => {
       const msg = decodeContractError({
         message: 'execution reverted: exceeds max transaction gas limit',
@@ -479,6 +541,20 @@ describe('friendlyContractError', () => {
     // Identical to what the write-path decoder surfaces for that selector,
     // so the dry-run footer and the submit banner speak one voice.
     expect(viaSelector).toBe(decodeContractError({ data: SEL_HF_TOO_LOW }));
+  });
+
+  // #2017 round 3 P2: the only both-fields case uses a selector that
+  // already carries curated copy, so the name arm was never load-bearing.
+  // After an ABI signature change a caller can hold a newly UNKNOWN
+  // selector beside a still-stable decoded name — the curated copy must
+  // survive on the name rather than degrade to a humanized string.
+  it('falls back to the NAME when the selector is unknown', () => {
+    expect(
+      friendlyContractError({
+        name: 'MaxLendingAboveCeiling',
+        selector: '0x11223344',
+      }),
+    ).toMatch(/collateral is too low/i);
   });
 
   it('lets the SELECTOR win when a conflicting name is supplied', () => {
