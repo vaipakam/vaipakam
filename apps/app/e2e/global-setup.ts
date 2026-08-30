@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ANVIL_URL,
   assertForkUsable,
+  childHasExited,
   isForkUnusableError,
   waitForAnvil,
 } from './lib/anvil';
@@ -178,8 +179,23 @@ export default async function globalSetup(): Promise<void> {
         break;
       }
       // Only the fork-backend class is retried. Anything else is a real
-      // failure and must not be laundered into a flake.
-      if (!isForkUnusableError(forkError)) throw forkError;
+      // failure and must not be laundered into a flake — but the child
+      // may have DIED producing it (an ECONNREFUSED from this very read
+      // is how that looks), and a dead child's PID must come out of the
+      // file before anything throws: teardown kills every recorded PID
+      // and the OS can reassign a number that stays there. A child still
+      // running must stay recorded so teardown can kill it, which is why
+      // this asks rather than assuming either way (#2019 round 1 P2).
+      if (!isForkUnusableError(forkError)) {
+        if (childHasExited(anvil)) {
+          const goneIdx = anvil.pid ? pids.indexOf(anvil.pid) : -1;
+          if (goneIdx !== -1) {
+            pids.splice(goneIdx, 1);
+            fs.writeFileSync(PIDS_FILE, JSON.stringify(pids));
+          }
+        }
+        throw forkError;
+      }
       // Unlike the exit-before-ready path, THIS child is alive — kill it
       // before the port check below, and drop its PID once it is gone so
       // teardown cannot later kill a reassigned number.

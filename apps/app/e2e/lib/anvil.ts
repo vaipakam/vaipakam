@@ -135,6 +135,25 @@ export async function assertForkUsable(
   }
 }
 
+/**
+ * Has the spawned anvil already exited? (#2019 round 1 P2.)
+ *
+ * The answer decides whether its PID stays in `pids.json` for teardown
+ * to kill, and getting it wrong in the "already dead" direction means
+ * signalling a number the OS may have REASSIGNED to an unrelated
+ * process. So it errs deliberately toward "still running": Node sets
+ * these fields when it processes the exit event, and a process that has
+ * died without that event yet reads as running here — teardown then
+ * signals a stale PID and catches ESRCH, which is the harmless outcome.
+ * The opposite mistake is not harmless.
+ */
+export function childHasExited(child: {
+  exitCode: number | null;
+  signalCode: NodeJS.Signals | null;
+}): boolean {
+  return child.exitCode !== null || child.signalCode !== null;
+}
+
 /** Wait until anvil answers with the expected fork chain id. */
 export async function waitForAnvil(timeoutMs = 60_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
