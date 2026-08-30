@@ -287,7 +287,13 @@ const DECL_PREFIX = String.raw`(?:(?:export|declare|typeset|local|readonly)\s+(?
 // scanned on its own, scopeless (#1995 r21). Its alternative REQUIRES one of
 // the Windows extensions, which is what keeps the optional launcher prefix
 // from re-opening the width problem above: no bare word can match it.
-const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+)*\s+)?(?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))`;
+//
+// A NODE-launched helper is the third family: `node ../../deploy.mjs`, whose
+// `spawnSync('wrangler', ['deploy'])` inherits the caller's directory exactly
+// as a shell helper's does (#1995 r22). BOTH the launcher word and a script
+// extension are required — that is what keeps it away from the r20 width
+// problem, since a bare `./x.ts` still matches nothing here.
+const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+)*\s+)?(?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1)|(?:node|bun|tsx)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts))`;
 
 /** Collapse a captured word to what the shell would hand the command. */
 function dequote(w) {
@@ -3133,9 +3139,33 @@ function stripYamlProps(v) {
   return v.replace(/^(?:[&*][\w-]+\s+|!!?[\w:.-]*\s+)+/, '');
 }
 
+/**
+ * `ctx['key']` is `ctx.key`. Actions accepts both spellings for every context,
+ * and SEVEN matchers in this file recognise only the dot form — so an indexed
+ * reference fell through to the unknown-expression rule, which blanks the whole
+ * value, and a step running from a protected directory scoped nothing
+ * (#1995 r22).
+ *
+ * Done as a NORMALISATION at each reader's entry rather than by widening seven
+ * patterns: one rule, in one place, and the alternative is seven chances to
+ * write it differently — which is precisely how the three `run:` ingest points
+ * drifted apart earlier in this PR.
+ *
+ * Only the contexts this file resolves, and only a literal key: `matrix[x]`
+ * names a key computed at runtime, which is not answerable from the text.
+ */
+function normalizeCtxRefs(text) {
+  if (!text || !text.includes('[')) return text;
+  return text.replace(
+    /(\$\{\{\s*(?:env|matrix|inputs|github|vars|secrets|needs|steps|inputs)\s*)\[\s*(?:"([A-Za-z_][\w-]*)"|'([A-Za-z_][\w-]*)')\s*\]/g,
+    (_m, head, dq, sq) => `${head}.${dq ?? sq}`,
+  );
+}
+
 function expandActionsEnv(body, envMap) {
-  if (!envMap || envMap.size === 0 || !/\$\{\{/.test(body)) return body;
-  return body.replace(
+  const src = normalizeCtxRefs(body);
+  if (!envMap || envMap.size === 0 || !/\$\{\{/.test(src)) return src;
+  return src.replace(
     /\$\{\{\s*env\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g,
     (m0, n) => envMap.get(n) ?? m0,
   );
@@ -3993,7 +4023,9 @@ function defaultShellFor(lines, runIdx) {
   return null;
 }
 
-function matrixShellValues(lines, runIdx, raw) {
+function matrixShellValues(lines, runIdx, rawIn) {
+  // Indexed spelling too (#1995 r22).
+  const raw = normalizeCtxRefs(rawIn);
   const mm = raw.match(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/);
   if (!mm) return [];
   const key = mm[1];
@@ -4375,6 +4407,7 @@ function matrixValuesFor(lines, runIdx, key, shellAxisKey) {
  * the product is capped the way `resolveExpression`'s is.
  */
 function expandMatrixVariants(lines, runIdx, body) {
+  body = normalizeCtxRefs(body);
   if (!/\$\{\{\s*matrix\./.test(body)) return null;
   const keys = [
     ...new Set(
@@ -4474,7 +4507,7 @@ function callerSuppliedInputs(key) {
             new RegExp(`^\\s*${key}:\\s*(?:"([^"]*)"|'([^']*)'|(\\S.*?))\\s*$`),
           );
           if (!kv) continue;
-          const rawVal = (kv[1] ?? kv[2] ?? kv[3]).replace(/\s+#.*$/, '').trim();
+          const rawVal = normalizeCtxRefs((kv[1] ?? kv[2] ?? kv[3]).replace(/\s+#.*$/, '').trim());
           const expr = rawVal.match(/^\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}$/);
           if (expr) vals.push(...matrixValuesFor(ls, i, expr[1], null));
           else if (!/\$\{\{/.test(rawVal)) vals.push(rawVal);
@@ -4521,7 +4554,7 @@ function workingDirFor(lines, runIdx, legShellFilter = true, rawValue = null) {
     runIdx,
     /^\s*(?:-\s+)?shell:\s*(?:"([^"]*)"|'([^']*)'|(\$\{\{[^}]*\}\}|\S+))/,
   );
-  const shellRaw = shellM ? (shellM[1] ?? shellM[2] ?? shellM[3] ?? '').trim() : null;
+  const shellRaw = shellM ? normalizeCtxRefs((shellM[1] ?? shellM[2] ?? shellM[3] ?? '').trim()) : null;
   const shellAxisKey = legShellFilter
     ? (shellRaw?.match(/\$\{\{\s*matrix\.([A-Za-z_][\w-]*)\s*\}\}/)?.[1] ?? null)
     : null;
@@ -4721,7 +4754,8 @@ function workingDirFor(lines, runIdx, legShellFilter = true, rawValue = null) {
    * name, which is what recorded it as one before r11.
    */
   const resolveExpression = (rawIn) => {
-    let raw = rawIn;
+    // Indexed spelling too (#1995 r22).
+    let raw = normalizeCtxRefs(rawIn);
     const found = [...raw.matchAll(/\$\{\{\s*(env|matrix|inputs)\.([A-Za-z_][\w-]*)\s*\}\}/g)];
     if (!/\$\{\{/.test(raw)) return raw;
     const axes = found.map((m) => ({
@@ -5736,13 +5770,18 @@ for (const file of walk(REPO_ROOT)) {
           !dir &&
           runWord.match(
             new RegExp(
-              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1)))(?:\s|$)`,
+              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))|(?:node|bun|tsx)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts)))(?:\s|$)`,
             ),
           );
         if (execHelper) {
           // A Windows path names the same file with the other separator, and
           // `resolveDir` speaks `/`.
-          const target = (execHelper[1] ?? execHelper[2] ?? execHelper[3]).replace(/\\/g, '/');
+          const target = (
+            execHelper[1] ??
+            execHelper[2] ??
+            execHelper[3] ??
+            execHelper[4]
+          ).replace(/\\/g, '/');
           deferred.push(
             ...sourcedDeploys(resolveDir(input[0]?.cwd ?? '', target, shellVars)),
           );

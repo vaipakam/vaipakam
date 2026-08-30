@@ -119,6 +119,32 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
     expect(cfg.vars, `${dir} has no "vars" block`).toBeTypeOf('object');
   });
 
+  it('CI actually runs this suite when any listed config changes', () => {
+    // The assertions above only protect anything if they RUN. The job that
+    // runs them is path-gated, and that gate listed `apps/(app|indexer|keeper)`
+    // — so an agent-only or ops-only PR could delete `keep_vars` with this
+    // file never executing (#1995 r22). The invariant now carries the whole
+    // var-preservation property, so a gate that skips it is a hole in the
+    // property itself.
+    //
+    // Asserted against the workflow's own regex rather than restated here:
+    // a copy would drift, and the failure mode is silence.
+    const wf = readFileSync(join(REPO_ROOT, '.github/workflows/app-vitest.yml'), 'utf8');
+    const line = wf.split('\n').find((l) => l.trim().startsWith('DEFI_RE='));
+    expect(line, 'DEFI_RE not found in app-vitest.yml').toBeTruthy();
+    const pattern = /DEFI_RE='(.*)'\s*$/.exec(line as string)?.[1];
+    expect(pattern, 'DEFI_RE is not single-quoted as expected').toBeTruthy();
+    const re = new RegExp(pattern as string);
+    for (const dir of VAR_CARRYING_WORKERS) {
+      expect(
+        re.test(`${dir}/wrangler.jsonc`),
+        `${dir}/wrangler.jsonc does not trigger the vitest job, so removing its keep_vars would go unchecked`,
+      ).toBe(true);
+    }
+    // …and the test file itself, so editing the invariant runs it.
+    expect(re.test('apps/keeper/test/workerKeepVars.test.ts')).toBe(true);
+  });
+
   it('the comment strip does not truncate a value containing //', () => {
     // The parser above is what every assertion here depends on, so its one
     // non-obvious rule gets a case of its own: a `//` inside a string is data.
