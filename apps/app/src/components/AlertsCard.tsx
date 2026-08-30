@@ -21,6 +21,7 @@ import { useMemo, useState } from 'react';
 import { BellRing } from 'lucide-react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { useMode } from '../app/ModeContext';
+import { chainDisplayName } from '../chain/chains';
 import { useActiveChain } from '../chain/useActiveChain';
 import { copy } from '../content/copy';
 import { useTermsBlockNonExitWrites } from '../contracts/diamond';
@@ -221,19 +222,29 @@ export function AlertsCard() {
 
   async function doUnlink() {
     if (!address || !prefs) return;
+    // Captured at the click (#2013 r6): the completion can land after
+    // a network switch, and the chain-scoped notice must name the
+    // network the unlink actually covered — never "this network".
+    const forChain = chainId;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
       // Signed like linking — otherwise anyone could silently switch
       // off another wallet's risk alerts.
-      await unlinkTelegram(address, chainId, (message) =>
+      const scope = await unlinkTelegram(address, forChain, (message) =>
         signMessageAsync({ message }),
       );
       const next = { ...prefs, telegramLinked: false };
-      storeAlertPrefs(chainId, address, next);
+      storeAlertPrefs(forChain, address, next);
       setPrefs(next);
-      setNotice(copy.alerts.unlinked);
+      setNotice(
+        scope === 'chain'
+          ? copy.alerts.unlinkedChainOnly(
+              chainDisplayName(forChain) ?? String(forChain),
+            )
+          : copy.alerts.unlinked,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

@@ -464,7 +464,11 @@ Thin-market honesty rules apply.
 - Alerts are optional and outcome-oriented.
 - Users may link an external delivery channel for repayment and risk reminders.
 - Link, unlink, and preference changes that affect delivery require proof of
-  wallet ownership.
+  wallet ownership. Ownership proven by one network's account contract (a
+  smart-account wallet) counts for that network alone: an unlink under such
+  proof disconnects that network's alerts only, and the confirmation says
+  so — an ordinary wallet's signature proves its keyholder everywhere and
+  unlinks the wallet everywhere.
 - Stored alert data is described plainly before linking.
 - Turning off important reminders is explicit and cannot happen merely because
   the user opens the card from another device.
@@ -741,12 +745,25 @@ Thin-market honesty rules apply.
   the first is knowable. The erase and the check each sign THEIR OWN words —
   what a user signs to look at their records can never be replayed as
   authority to delete them. A build with no support-service connection says
-  the control cannot be used from there and names the e-mail route instead;
-  a wallet whose signatures the service cannot verify (a smart-contract
-  account) is told so and given the same working route, rather than a prompt
-  that could only fail. The e-mail route promises what the signed route
-  promises — that a request will be processed — never an unconditional
-  removal the retention rules cannot always satisfy.
+  the control cannot be used from there and names the e-mail route instead.
+  Smart-contract wallet accounts (a Safe, a smart wallet — deployed or not
+  yet deployed) can use the signed controls like any other wallet: the
+  service verifies their signatures against the network the account lives
+  on. When that network cannot be reached for verification, the user is told
+  the signature could not be CHECKED — never that it was wrong — with the
+  e-mail route as the alternative, since an immediate retry cannot help.
+  Authority a network's account contract approved reaches only that
+  network's records: such an account can be controlled by different parties
+  on different networks, so an erasure it signs covers the records captured
+  on the approving network, and the confirmation says so plainly — pointing
+  at a network switch, or the e-mail route, for the rest. An ordinary
+  wallet's signature proves its one keyholder everywhere, so its erasure
+  keeps the wallet-wide scope. The retention check's answer stays
+  wallet-wide in both cases, because retention has no per-network shape to
+  narrow to. The
+  e-mail route promises what the signed route promises — that a request will
+  be processed — never an unconditional removal the retention rules cannot
+  always satisfy.
 - **Every live preference the erasure covers is visibly reset**, not merely
   cleared from storage: the theme, the interface mode, the display language,
   and the record of which notifications have been seen. A page that reports

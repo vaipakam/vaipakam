@@ -237,9 +237,10 @@
       "diagRetainedLabel": "Le service signale que certains enregistrements ont été conservés :",
       "diagUnavailable": "Le service de support ne peut pas traiter les demandes d'effacement pour le moment. Réessayez plus tard, ou écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille.",
       "diagError": "La demande n'a pas pu aboutir, et il est possible que rien n'ait été effacé. Réessayez dans un instant.",
-      "diagContractWallet": "Ce portefeuille est un compte de contrat intelligent, et le service de support ne peut pas encore vérifier ses signatures. Écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille.",
-      "diagUninspectable": "Ce portefeuille est connecté à un réseau que cette application ne peut pas inspecter d'ici, nous ne pouvons donc pas savoir si le service de support peut vérifier ses signatures. Écrivez à support@vaipakam.com et nous traiterons une demande d'effacement pour votre portefeuille — ou passez à un réseau pris en charge et réessayez.",
-      "diagExpired": "La demande signée a expiré avant que le service ne l’accepte : aucun enregistrement n’a donc été consulté ni effacé. Réessayez en approuvant l’invite du portefeuille sans tarder ; si cela se reproduit, l’horloge de cet appareil est peut-être mal réglée."
+      "diagExpired": "La demande signée a expiré avant que le service ne l’accepte : aucun enregistrement n’a donc été consulté ni effacé. Réessayez en approuvant l’invite du portefeuille sans tarder ; si cela se reproduit, l’horloge de cet appareil est peut-être mal réglée.",
+      "diagVerifyUnavailable": "Le service d’assistance n’a pas pu vérifier la signature de votre portefeuille pour le moment : le réseau sur lequel vit le compte de votre portefeuille n’était pas joignable depuis le service. Cela ne signifie pas que la signature était incorrecte. Réessayez dans un moment, ou écrivez à support@vaipakam.com et nous traiterons une demande d’effacement pour votre portefeuille.",
+      "diagProcessedChainOnly": "Votre demande d’effacement a été traitée uniquement pour les enregistrements de {{network}}. La signature d’un portefeuille à compte intelligent n’est vérifiée que sur un réseau à la fois : les enregistrements capturés sur d’autres réseaux ne sont donc pas couverts — passez sur un autre réseau et répétez la demande, ou écrivez à support@vaipakam.com et nous la traiterons pour votre portefeuille partout.",
+      "diagProcessedChainUnknown": "Votre demande d’effacement a été traitée uniquement pour les enregistrements d’un seul réseau — celui qui a vérifié la signature de votre portefeuille. La signature d’un portefeuille à compte intelligent n’est vérifiée que sur un réseau à la fois : les enregistrements capturés sur d’autres réseaux ne sont donc pas couverts — changez de réseau et répétez la demande, ou écrivez à support@vaipakam.com et nous la traiterons pour votre portefeuille partout."
     },
     "killSwitch": {
       "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."
@@ -268,7 +269,7 @@
       "linked": "Telegram lié — les alertes pour ce portefeuille vont dans votre chat.",
       "unlink": "Dissocier",
       "unlinkElsewhereTitle": "Vous avez lié ce portefeuille sur un autre appareil ?",
-      "unlinkElsewhereBody": "Son lien Telegram vit sur notre serveur, pas seulement dans ce navigateur. Déconnectez-le ici — cela arrête les messages partout.",
+      "unlinkElsewhereBody": "Son lien Telegram vit sur notre serveur, pas seulement dans ce navigateur. Déconnectez-le ici — avec un portefeuille ordinaire, cela arrête les messages partout ; la signature d’un portefeuille de compte intelligent les arrête pour le réseau qu’elle nomme.",
       "unlinkElsewhere": "Dissocier ce portefeuille",
       "unlinked": "Dissocié. Plus aucun message Telegram pour ce portefeuille.",
       "toggleRepayDue": "M'envoyer un message avant l'échéance d'un paiement d'intérêts",
@@ -283,7 +284,8 @@
       "pushEnable": "Activer la livraison Push",
       "pushEnabled": "La livraison Push est activée pour ce portefeuille.",
       "pushButton": "Ouvrir le canal Push",
-      "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres."
+      "loanNudge": "Vous voulez un avertissement Telegram si ce prêt devient risqué ? Configurez les alertes dans les Paramètres.",
+      "unlinkedChainOnly": "Dissocié pour {{network}}. Un portefeuille à compte intelligent se déconnecte réseau par réseau — si ce portefeuille est lié sur d’autres réseaux, dissociez chacun depuis ce réseau avec sa propre signature."
     },
     "notifications": {
       "bellLabel": "Notifications",

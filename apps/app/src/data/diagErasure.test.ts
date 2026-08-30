@@ -49,11 +49,11 @@ describe('requestDiagErasure', () => {
       () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
     );
     let signed = '';
-    const outcome = await requestDiagErasure(WALLET, async (message) => {
+    const res = await requestDiagErasure(WALLET, async (message) => {
       signed = message;
       return SIG;
     });
-    expect(outcome).toBe('processed');
+    expect(res.outcome).toBe('processed');
     expect(calls[0]!.path).toBe('/diag/erasure');
     const body = calls[0]!.body;
     // The message the wallet was shown is byte-identical to what the
@@ -63,15 +63,55 @@ describe('requestDiagErasure', () => {
     expect(body.signature).toBe(SIG);
   });
 
+  it('maps a chain-scoped processed response to its own honest outcome (#2013 r5)', async () => {
+    // A chain-verified smart-account signature authorizes ONE chain,
+    // and the service says so with `scope: 'chain'` — the client must
+    // surface that as the scoped confirmation, never the wallet-wide
+    // one. A missing/other scope stays the uniform wallet answer.
+    stubAgent(
+      () =>
+        new Response(
+          JSON.stringify({ status: 'processed', scope: 'chain', chainId: 84532 }),
+          { status: 200 },
+        ),
+    );
+    // The confirming chain is the SERVICE's echo (#2013 r6) — the
+    // banner names it, so the confirmation stays true even after the
+    // wallet switches networks.
+    expect(await requestDiagErasure(WALLET, async () => SIG)).toEqual({
+      outcome: 'processedChainOnly',
+      chainId: 84532,
+    });
+    // A chain-scoped answer that names no usable chain still reports
+    // the honest scope — with a null chain for the nameless banner.
+    stubAgent(
+      () =>
+        new Response(JSON.stringify({ status: 'processed', scope: 'chain' }), {
+          status: 200,
+        }),
+    );
+    expect(await requestDiagErasure(WALLET, async () => SIG)).toEqual({
+      outcome: 'processedChainOnly',
+      chainId: null,
+    });
+    stubAgent(
+      () =>
+        new Response(JSON.stringify({ status: 'processed', scope: 'wallet' }), {
+          status: 200,
+        }),
+    );
+    expect((await requestDiagErasure(WALLET, async () => SIG)).outcome).toBe('processed');
+  });
+
   it('rejects a malformed 2xx — only the service’s own payload confirms', async () => {
     // #2008 round 1 P1: a 204, or a fallback page from an
     // intermediary, is not the erasure handler's acknowledgement —
     // reporting it as processed would falsely confirm a legal-right
     // request the service never saw.
     stubAgent(() => new Response(null, { status: 204 }));
-    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('error');
+    expect((await requestDiagErasure(WALLET, async () => SIG)).outcome).toBe('error');
     stubAgent(() => new Response('<html>gateway</html>', { status: 200 }));
-    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('error');
+    expect((await requestDiagErasure(WALLET, async () => SIG)).outcome).toBe('error');
   });
 
   it('maps the unconfigured-service 503 to its own honest outcome', async () => {
@@ -81,12 +121,12 @@ describe('requestDiagErasure', () => {
           status: 503,
         }),
     );
-    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('unavailable');
+    expect((await requestDiagErasure(WALLET, async () => SIG)).outcome).toBe('unavailable');
   });
 
   it('maps any other failure to error', async () => {
     stubAgent(() => new Response('{}', { status: 500 }));
-    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('error');
+    expect((await requestDiagErasure(WALLET, async () => SIG)).outcome).toBe('error');
   });
 
   it('reports EXPIRED — and sends nothing — when approval outlives the window', async () => {
@@ -99,12 +139,12 @@ describe('requestDiagErasure', () => {
       const calls = stubAgent(
         () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
       );
-      const outcome = await requestDiagErasure(WALLET, async () => {
+      const res = await requestDiagErasure(WALLET, async () => {
         // The user takes eleven minutes to approve.
         vi.setSystemTime(Date.now() + 11 * 60 * 1000);
         return SIG;
       });
-      expect(outcome).toBe('expired');
+      expect(res.outcome).toBe('expired');
       expect(calls).toHaveLength(0);
     } finally {
       vi.useRealTimers();
@@ -121,17 +161,53 @@ describe('requestDiagErasure', () => {
       const calls = stubAgent(
         () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
       );
-      const outcome = await requestDiagErasure(WALLET, async () => {
+      const res = await requestDiagErasure(WALLET, async () => {
         // 9m45s: 15 seconds of nominal validity left — less than the
         // reserved margin.
         vi.setSystemTime(Date.now() + (9 * 60 + 45) * 1000);
         return SIG;
       });
-      expect(outcome).toBe('expired');
+      expect(res.outcome).toBe('expired');
       expect(calls).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('carries the wallet chain as an UNSIGNED verification hint (#2009)', async () => {
+    // The frozen message has no chain field; the connected chain
+    // rides in the body so the service knows where a smart account's
+    // contract lives for ERC-1271 verification. Omitted when the
+    // wallet reports none.
+    let calls = stubAgent(
+      () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
+    );
+    await requestDiagErasure(WALLET, async () => SIG, 84532);
+    expect(calls[0]!.body.chainId).toBe(84532);
+    calls = stubAgent(
+      () => new Response(JSON.stringify({ status: 'processed' }), { status: 200 }),
+    );
+    await requestDiagErasure(WALLET, async () => SIG);
+    expect('chainId' in calls[0]!.body).toBe(false);
+  });
+
+  it('maps the service’s cannot-verify 503 to unverifiable — not invalid, not generic (#2009)', async () => {
+    stubAgent(
+      () =>
+        new Response(
+          JSON.stringify({
+            error: 'verification_failed',
+            reason: 'signature verification temporarily unavailable',
+          }),
+          { status: 503 },
+        ),
+    );
+    expect((await requestDiagErasure(WALLET, async () => SIG, 84532)).outcome).toBe(
+      'unverifiable',
+    );
+    expect(await requestDiagErasureStatus(WALLET, async () => SIG, 84532)).toEqual({
+      status: 'unverifiable',
+    });
   });
 
   it('maps the WORKER’s stale rejection to expired — skew no margin can cover', async () => {
@@ -149,7 +225,7 @@ describe('requestDiagErasure', () => {
           { status: 400 },
         ),
     );
-    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('expired');
+    expect((await requestDiagErasure(WALLET, async () => SIG)).outcome).toBe('expired');
     expect(await requestDiagErasureStatus(WALLET, async () => SIG)).toEqual({
       status: 'expired',
     });
@@ -165,7 +241,7 @@ describe('requestDiagErasure', () => {
           { status: 400 },
         ),
     );
-    expect(await requestDiagErasure(WALLET, async () => SIG)).toBe('error');
+    expect((await requestDiagErasure(WALLET, async () => SIG)).outcome).toBe('error');
   });
 });
 

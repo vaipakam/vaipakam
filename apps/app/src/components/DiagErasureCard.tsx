@@ -21,8 +21,8 @@
  */
 import { useRef, useState } from 'react';
 import { FileX2, ShieldCheck } from 'lucide-react';
-import { useAccount, usePublicClient, useSignMessage } from 'wagmi';
-import { useQuery } from '@tanstack/react-query';
+import { useAccount, useSignMessage } from 'wagmi';
+import { chainDisplayName } from '../chain/chains';
 import { copy } from '../content/copy';
 import {
   diagErasureConfigured,
@@ -34,19 +34,25 @@ import { isUserRejection } from '../lib/errors';
 
 type CardResult =
   | { kind: 'erased' }
+  // The chain the SERVICE confirmed (#2013 r6) — its own echo, never
+  // the wallet's current chain: the confirmation must name the
+  // network it actually covered, because the wallet may sit on a
+  // different one by the time this renders. Null when the service
+  // named none; the banner then describes the scope without a name.
+  | { kind: 'erasedChainOnly'; chainId: number | null }
   | { kind: 'status'; status: DiagErasureStatus }
   | { kind: 'unavailable' }
   | { kind: 'expired' }
+  | { kind: 'unverifiable' }
   | { kind: 'error' };
 
 export function DiagErasureCard() {
   // The wallet's ACTUAL chain, not the app's read chain (#2008 round
-  // 3 P2): `useActiveChain` substitutes the default chain on an
-  // unsupported network, and a Safe deployed only elsewhere would
-  // then read code-less here — signature controls offered to an
-  // account the service must reject.
+  // 3 P2, repurposed by #2009): `useActiveChain` substitutes the
+  // default chain on an unsupported network, and a smart account
+  // lives on ITS chain — this id travels with each request as the
+  // service's ERC-1271 verification hint.
   const { address, chainId: walletChainId } = useAccount();
-  const publicClient = usePublicClient({ chainId: walletChainId });
   const { signMessageAsync } = useSignMessage();
   // ALL per-operation state is keyed BY WALLET (#2008 rounds 1–3
   // converged here in round 5). A signature prompt has no timeout —
@@ -83,41 +89,17 @@ export function DiagErasureCard() {
   const shown = (address && results.get(address)) || null;
   const busy = address !== undefined && pendingRuns.has(address);
 
-  // Smart-contract accounts (a Safe, a deployed smart wallet) sign
-  // via ERC-1271/6492, which the service cannot verify yet — it
-  // recovers a plain ECDSA signer and requires it to equal the
-  // wallet — so their requests always end in the generic failure
-  // (#2008 round 2 P2). Detect the DEPLOYED case by bytecode ON THE
-  // WALLET'S OWN CHAIN, and be conservative where that chain cannot
-  // be inspected (round 3 P2): a wallet on a network this app has no
-  // client for gets the working email route rather than a prompt we
-  // cannot vouch for. Only a CONFIRMED ordinary account is offered
-  // the signature controls. An UNDEPLOYED counterfactual smart
-  // wallet has no bytecode to detect and still lands in the generic
-  // failure — that residual, and real ERC-1271 verification across
-  // every signed endpoint, is tracked as #2009.
-  const accountKind = useQuery({
-    queryKey: ['diagErasure', 'accountKind', walletChainId ?? null, address ?? null],
-    enabled: Boolean(configured && address),
-    staleTime: Infinity,
-    retry: false,
-    queryFn: async (): Promise<'eoa' | 'contract' | 'uninspectable'> => {
-      if (!publicClient) return 'uninspectable';
-      try {
-        const code = await publicClient.getCode({ address: address! });
-        return code && code !== '0x' ? 'contract' : 'eoa';
-      } catch {
-        return 'uninspectable';
-      }
-    },
-  });
-
   async function run(kind: 'erase' | 'status') {
     if (!address) return;
     // Captured at the moment of the click — the completion below may
     // run after a wallet switch, and everything it touches is keyed
-    // to the wallet it answers FOR.
+    // to the wallet it answers FOR. The chain travels with it as the
+    // service's ERC-1271 verification hint (#2009): the service now
+    // verifies smart-account signatures on-chain, so the bytecode
+    // detection shim this card carried (#2008 rounds 2–3) is gone —
+    // every account type gets the signature controls.
     const forWallet = address;
+    const forChain = walletChainId;
     const runId = ++runSeqRef.current;
     latestRunRef.current.set(forWallet, runId);
     // Publish and clear ONLY while this run is still THIS WALLET's
@@ -138,30 +120,40 @@ export function DiagErasureCard() {
     });
     try {
       if (kind === 'erase') {
-        const outcome = await requestDiagErasure(forWallet, (message) =>
-          signMessageAsync({ message }),
+        const res = await requestDiagErasure(
+          forWallet,
+          (message) => signMessageAsync({ message }),
+          forChain,
         );
         publish(
-          outcome === 'processed'
+          res.outcome === 'processed'
             ? { kind: 'erased' }
-            : outcome === 'unavailable'
-              ? { kind: 'unavailable' }
-              : outcome === 'expired'
-                ? { kind: 'expired' }
-                : { kind: 'error' },
+            : res.outcome === 'processedChainOnly'
+              ? { kind: 'erasedChainOnly', chainId: res.chainId }
+              : res.outcome === 'unavailable'
+                ? { kind: 'unavailable' }
+                : res.outcome === 'expired'
+                  ? { kind: 'expired' }
+                  : res.outcome === 'unverifiable'
+                    ? { kind: 'unverifiable' }
+                    : { kind: 'error' },
         );
       } else {
-        const status = await requestDiagErasureStatus(forWallet, (message) =>
-          signMessageAsync({ message }),
+        const status = await requestDiagErasureStatus(
+          forWallet,
+          (message) => signMessageAsync({ message }),
+          forChain,
         );
         publish(
           status.status === 'unavailable'
             ? { kind: 'unavailable' }
             : status.status === 'expired'
               ? { kind: 'expired' }
-              : status.status === 'error'
-                ? { kind: 'error' }
-                : { kind: 'status', status },
+              : status.status === 'unverifiable'
+                ? { kind: 'unverifiable' }
+                : status.status === 'error'
+                  ? { kind: 'error' }
+                  : { kind: 'status', status },
         );
       }
     } catch (e) {
@@ -190,17 +182,24 @@ export function DiagErasureCard() {
         <p className="muted">{copy.dataRights.diagNotConfigured}</p>
       ) : !address ? (
         <p className="muted">{copy.dataRights.diagConnect}</p>
-      ) : accountKind.data === 'contract' ? (
-        <p className="muted">{copy.dataRights.diagContractWallet}</p>
-      ) : accountKind.data === 'uninspectable' || accountKind.isError ? (
-        <p className="muted">{copy.dataRights.diagUninspectable}</p>
-      ) : accountKind.data !== 'eoa' ? (
-        <p className="muted">{copy.dataRights.diagBusy}</p>
       ) : (
         <>
           {shown?.kind === 'erased' ? (
             <div className="banner banner-success" role="status">
               {copy.dataRights.diagProcessed}
+            </div>
+          ) : null}
+          {shown?.kind === 'erasedChainOnly' ? (
+            <div className="banner banner-success" role="status">
+              {/* Names the chain the SERVICE confirmed — never "the
+                  network you are connected to", which may already be
+                  a different one (#2013 r6). */}
+              {(() => {
+                const network = chainDisplayName(shown.chainId ?? undefined);
+                return network
+                  ? copy.dataRights.diagProcessedChainOnly(network)
+                  : copy.dataRights.diagProcessedChainUnknown;
+              })()}
             </div>
           ) : null}
           {shown?.kind === 'status' ? (
@@ -233,6 +232,11 @@ export function DiagErasureCard() {
           {shown?.kind === 'expired' ? (
             <div className="banner" role="alert">
               {copy.dataRights.diagExpired}
+            </div>
+          ) : null}
+          {shown?.kind === 'unverifiable' ? (
+            <div className="banner" role="alert">
+              {copy.dataRights.diagVerifyUnavailable}
             </div>
           ) : null}
           {shown?.kind === 'error' ? (

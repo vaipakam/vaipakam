@@ -13,6 +13,7 @@ import {
   FLOOR_BANDS,
   addsAlertOptIn,
   saveAlertPrefs,
+  unlinkTelegram,
   type AlertPrefs,
 } from './alerts';
 
@@ -187,5 +188,44 @@ describe('saveAlertPrefs wire shape (#2000)', () => {
     // The retry keeps the rest of the body intact — the opt-in flag
     // still travels.
     expect(bodies[1]!.notify_maturity_approaching).toBe(true);
+  });
+});
+
+describe('unlinkTelegram scope (#2013 r4)', () => {
+  // A smart account's chain-verified signature buys a chain-scoped
+  // clear; an ordinary key's buys the wallet-wide one. The service
+  // reports which applied, and the confirmation the card shows must
+  // match — so this mapping is load-bearing for not announcing a
+  // wallet-wide disconnect that did not happen.
+  const WALLET = '0x1DAefA360ED370285f003Fa2d92DB75628088282' as const;
+
+  function stubUnlink(body: unknown) {
+    vi.stubEnv('VITE_AGENT_ORIGIN', 'https://agent.test');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })),
+    );
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("maps the service's scope through, defaulting a pre-scope agent to wallet-wide", async () => {
+    stubUnlink({ ok: true, scope: 'chain' });
+    expect(await unlinkTelegram(WALLET, 84532, async () => `0x${'ab'.repeat(65)}`)).toBe(
+      'chain',
+    );
+    stubUnlink({ ok: true, scope: 'wallet' });
+    expect(await unlinkTelegram(WALLET, 84532, async () => `0x${'ab'.repeat(65)}`)).toBe(
+      'wallet',
+    );
+    // An agent from before the scoped response: the old behaviour
+    // WAS wallet-wide, so that is what the confirmation must say.
+    stubUnlink({ ok: true });
+    expect(await unlinkTelegram(WALLET, 84532, async () => `0x${'ab'.repeat(65)}`)).toBe(
+      'wallet',
+    );
   });
 });

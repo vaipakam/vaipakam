@@ -429,17 +429,15 @@ const copySource = {
        never that removal is guaranteed. */
     diagNotConfigured:
       'This build is not connected to the support service, so the signed request cannot be sent from here. Email support@vaipakam.com and we will process an erasure request for your wallet.',
-    /* #2008 round 2 P2 — a smart-contract account (a Safe, a
-       deployed smart wallet) signs via ERC-1271, which the service
-       cannot verify yet; prompting would collect a signature that can
-       only fail. The working route is offered instead. */
-    diagContractWallet:
-      'This wallet is a smart-contract account, and the support service cannot verify its signatures yet. Email support@vaipakam.com and we will process an erasure request for your wallet.',
-    /* #2008 round 3 P2 — the wallet's own chain may be one this app
-       has no client for; a wallet we cannot vouch for gets the
-       working route, not a prompt that may only fail. */
-    diagUninspectable:
-      'This wallet is connected to a network this app cannot inspect from here, so we cannot tell whether the support service can verify its signatures. Email support@vaipakam.com and we will process an erasure request for your wallet — or switch to a supported network and try again.',
+    /* #2009 — the service verifies smart-account signatures
+       on-chain (ERC-1271/6492), so every account type gets the
+       signature controls and the old detection-and-email-route
+       messages are gone. This message covers the one state that
+       replaced them: the service could not REACH the account's
+       chain to verify, which is neither "invalid" nor a generic
+       failure — retrying immediately cannot help. */
+    diagVerifyUnavailable:
+      'The support service could not verify your wallet\u2019s signature right now \u2014 the network your wallet account lives on was not reachable from the service. This does not mean the signature was wrong. Try again in a little while, or email support@vaipakam.com and we will process an erasure request for your wallet.',
     /* #2008 rounds 3–5 — the signature stays valid for ten minutes
        from the moment the prompt opens. This one message covers BOTH
        expiry routes honestly: a late approval held back before
@@ -455,6 +453,21 @@ const copySource = {
     diagSignNote:
       'Proving the wallet is yours is a free signature — not a transaction, and it costs no gas.',
     diagProcessed: 'Your erasure request was processed.',
+    /* #2013 rounds 5–6 — a smart account's signature is approved by
+       the account contract on ONE network, so the service scopes the
+       erasure to that network's records and says so, naming the
+       chain in its response. The confirmation NAMES that network —
+       never "the network you are connected to", which may already be
+       a different one by the time it renders. The Unknown variant
+       covers a service response that named no chain the app can
+       describe: still honest about the one-network scope, just
+       without the name. */
+    diagProcessedChainOnly: tmpl(
+      'Your erasure request was processed for records from {{network}} only. A smart-account wallet’s signature is verified on one network at a time, so records captured on other networks are not covered — switch to another network and repeat the request there, or email support@vaipakam.com and we will process it for your wallet everywhere.',
+      ['network'],
+    ),
+    diagProcessedChainUnknown:
+      'Your erasure request was processed for one network’s records only — the network that verified your wallet’s signature. A smart-account wallet’s signature is verified on one network at a time, so records captured on other networks are not covered — switch networks and repeat the request there, or email support@vaipakam.com and we will process it for your wallet everywhere.',
     diagUniformNote:
       'The confirmation is deliberately the same for every wallet: it does not say whether any records existed, so nothing about your records can be read from it. Where the law requires some records to be kept, the check below reports that only when the law allows saying so.',
     diagStatusClear: 'No retained records are reported for this wallet.',
@@ -535,9 +548,21 @@ const copySource = {
     // UX-043 — a clear labelled action, not an ambiguous centered link.
     unlinkElsewhereTitle: 'Linked this wallet on another device?',
     unlinkElsewhereBody:
-      'Its Telegram link lives on our server, not just this browser. Disconnect it here — it stops messages everywhere.',
+      'Its Telegram link lives on our server, not just this browser. Disconnect it here — with an ordinary wallet that stops messages everywhere; a smart-account wallet\u2019s signature stops them for the network it names.',
     unlinkElsewhere: 'Unlink this wallet',
     unlinked: 'Unlinked. No more Telegram messages for this wallet.',
+    /* #2013 r4 — a smart account's chain-verified signature carries
+       authority only for the network it names (its contract can have
+       different controllers elsewhere), so the service clears that
+       network alone and says so; the confirmation must not announce
+       a wallet-wide disconnect that did not happen. */
+    unlinkedChainOnly: tmpl(
+      // Names the network the unlink covered (#2013 r6) \u2014 a
+      // completion can land after a network switch, so "this
+      // network" could describe the wrong one.
+      'Unlinked for {{network}}. A smart-account wallet is disconnected per network \u2014 if this wallet is linked on other networks, unlink each one from there with its own signature.',
+      ['network'],
+    ),
     toggleRepayDue: 'Message me before an interest payment comes due',
     toggleRisky: 'Message me if my loan gets risky',
     riskyOffNote:
