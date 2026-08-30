@@ -21,6 +21,7 @@ import {
   extractRevertData,
   extractRevertSelector,
   namedRevertSelector,
+  extractRevertName,
   friendlyContractError,
   humanizeErrorName,
   KNOWN_ERROR_SELECTORS,
@@ -111,6 +112,27 @@ describe('extractRevertData', () => {
   // trap). Only the accepting half was covered; a reverted length check
   // would have shown friendly copy for whatever error those four bytes
   // happened to collide with.
+  // #2017 round 4 P2: `revertDataFromNode` has TWO message acceptance
+  // branches — a bare 4-byte selector, and a selector followed by whole
+  // 32-byte ABI words. Only the bare one was exercised (the rejection
+  // cases below cover invalid lengths, not this branch), so dropping the
+  // multiple-of-64 arm would strand every revert whose wallet embeds the
+  // full encoded payload in the message.
+  it('accepts a selector plus ABI-encoded words from the message', () => {
+    const oneWord = SEL_HF_TOO_LOW + '11'.repeat(32);
+    const twoWords = SEL_HF_TOO_LOW + '22'.repeat(64);
+    expect(extractRevertData({ message: `execution reverted ${oneWord}` })).toBe(
+      oneWord,
+    );
+    expect(extractRevertData({ message: `execution reverted ${twoWords}` })).toBe(
+      twoWords,
+    );
+    // A partial trailing word is not a valid payload and is rejected.
+    expect(
+      extractRevertData({ message: `execution reverted ${SEL_HF_TOO_LOW}${'33'.repeat(20)}` }),
+    ).toBeUndefined();
+  });
+
   it('rejects an address or tx hash embedded in the message', () => {
     const address = '0x' + '1a'.repeat(20); // 40 hex chars
     const txHash = '0x' + 'bc'.repeat(32); // 64 hex chars
@@ -131,17 +153,41 @@ describe('extractRevertData', () => {
   // not reached, and a self-referential graph terminates. (Without the
   // guard the second case does not fail — it hangs, surfacing as this
   // test's timeout.)
-  it('stops walking the cause chain at the depth bound', () => {
-    const deep = {
-      cause: {
-        cause: { cause: { cause: { cause: { cause: { cause: { data: SEL_HF_TOO_LOW } } } } } },
-      },
-    };
-    expect(extractRevertData(deep)).toBeUndefined();
+  // Built rather than hand-nested (#2017 round 4 P2): the first attempt
+  // hand-wrote seven `cause` links, putting its payload on the EIGHTH
+  // node, so raising the bound from 6 to 7 would still have passed. The
+  // boundary is only pinned by a pair — the last node that IS visited and
+  // the first that is NOT — so `atNode(n, leaf)` places a payload exactly
+  // n nodes deep and both sides are asserted.
+  const atNode = (n: number, leaf: Record<string, unknown>): unknown => {
+    let node: Record<string, unknown> = leaf;
+    for (let i = 1; i < n; i++) node = { cause: node };
+    return node;
+  };
+
+  it('walks exactly six nodes of the cause chain — both sides of the bound', () => {
+    // Node 6 is the last one the loop reaches (depth 0..5).
+    expect(extractRevertData(atNode(6, { data: SEL_HF_TOO_LOW }))).toBe(SEL_HF_TOO_LOW);
+    // Node 7 is one past it: raising the bound would break this.
+    expect(extractRevertData(atNode(7, { data: SEL_HF_TOO_LOW }))).toBeUndefined();
 
     const cyclic: Record<string, unknown> = { message: 'no revert bytes here' };
     cyclic.cause = cyclic;
     expect(extractRevertData(cyclic)).toBeUndefined();
+  });
+
+  // #2017 round 4 P2: `extractRevertName` runs its OWN independent walk
+  // with its own bound, which `decodeContractError` invokes right after
+  // the data walk — pinning one says nothing about the other, and a
+  // cyclic graph reaches this loop too.
+  it('bounds the revert-NAME walk independently, on the same two sides', () => {
+    const leaf = { revert: { name: 'MaxLendingAboveCeiling' } };
+    expect(extractRevertName(atNode(6, leaf))).toBe('MaxLendingAboveCeiling');
+    expect(extractRevertName(atNode(7, leaf))).toBeUndefined();
+
+    const cyclic: Record<string, unknown> = { revert: { name: 'Error' } };
+    cyclic.cause = cyclic;
+    expect(extractRevertName(cyclic)).toBeUndefined();
   });
 
   // #1094 Codex: viem wraps the real revert several causes deep — the top
