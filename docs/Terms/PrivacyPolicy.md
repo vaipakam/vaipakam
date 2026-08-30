@@ -15,24 +15,30 @@ visible on-chain to everyone. Nothing we can do (or not do) changes
 that. We do not store a separate copy of this data.
 
 **Diagnostics — on your device only.** Two kinds of failure are
-recorded: a screen that crashes, and a transaction you submit that
-fails. For those, the app keeps a record of the most recent one — the
-error message, the component trace where it has one, the page you were
-on, and a timestamp — in your browser's session storage. Ordinary
-read, network and validation failures are not recorded. It is a single
-slot, not a running log of your activity, it is not keyed to your
-wallet, and it is discarded when you close the tab. It never leaves
-your device on its own.
+recorded: a screen that crashes, and a write action that fails. The
+second is broader than sent transactions — signing and posting a
+gasless offer is recorded the same way, including when it fails before
+anything reaches the chain. Ordinary read, network and validation
+failures are not recorded. For the failures that are, the app keeps a
+record of the most recent one — the error message, the component trace
+where it has one, the page you were on, and a timestamp — in your
+browser's session storage. It is a single slot, not a running log of
+your activity, it is not keyed to your wallet, and it is discarded when
+you close the tab. It never leaves your device on its own.
 
-If you open a support report from the Diagnostics drawer, the app
-pre-fills a GitHub issue in your browser — page, network, connection
-status, build, and that last error — with any wallet address shortened
-to `0x1234…abcd`. Read it before you submit, because it can carry more
-than the drawer previewed: the drawer shows the first 300 characters
-of the error message and no component trace, while the report carries
-up to 1,200 characters of error text and up to 1,000 characters of
-trace. Whether to submit is your choice. We do NOT send your IP,
-user-agent, or browsing history.
+The Diagnostics drawer can build a support report from it: a GitHub
+issue, pre-filled and opened in a new tab. **Opening it sends those
+details to GitHub.** They travel inside the link, so they reach GitHub
+at the moment the form opens — whether or not you go on to submit the
+issue, and whether or not you close the tab. What you control is
+whether an issue is filed, not whether GitHub receives the details.
+
+Read the form before opening it if that matters to you, and note it
+can carry more than the drawer previewed: the drawer shows the first
+300 characters of the error message and no component trace, while the
+report carries up to 1,200 characters of error text and up to 1,000
+characters of trace. Any wallet address is shortened to `0x1234…abcd`
+first. We do NOT send your IP, user-agent, or browsing history.
 
 **Error records on our servers — no automatic capture.** An earlier
 version of the app sent a record of each UI error to a Cloudflare
@@ -165,10 +171,14 @@ are only meaningful to the extent we hold data about you.
   picture. What it exports is browser storage, not a wallet-keyed
   profile: we do not assemble one.
 - **Right to erasure.** Use the "Delete my data" control on the same
-  page. It clears the app's local and session storage on this device,
-  and it also expires the shared `vaipakam.com` preference cookies
-  (language and theme), which are not per-origin. Three limits stated
-  plainly, because a control that overstates itself is worse than none.
+  page. It clears the app's local storage for that site, the session
+  storage in the tab you run it from, and the shared `vaipakam.com`
+  preference cookies (language and theme), which are not per-origin. It
+  also asks any other open tabs to clear their own session storage; a
+  tab that cannot hear that request — an older build, or a browser
+  without the messaging feature it uses — keeps its session data until
+  you close it. Three further limits, stated plainly because a control
+  that overstates itself is worse than none.
   First, on-chain transactions are public and immutable — we have no
   power to erase them, and that is a wallet / chain-level question
   rather than a data-processor one. Second, the app's own local and
@@ -205,9 +215,10 @@ inherently handle.
 
 - Device diagnostics: the most recent error is kept in your
   browser's session storage and is discarded when you close the tab.
-  It leaves your browser only by an action you take — submitting the
-  pre-filled GitHub report the Diagnostics drawer builds, or sending a
-  support ticket with the attach box ticked.
+  It leaves your browser only by an action you take — opening the
+  pre-filled GitHub report the Diagnostics drawer builds (which sends
+  it to GitHub at that moment), or sending a support ticket with the
+  attach box ticked.
 - Server-side error records: none are being created — the current
   app sends none (see "Error records on our servers"). Any record
   created before that changed is pruned 90 days after its capture,

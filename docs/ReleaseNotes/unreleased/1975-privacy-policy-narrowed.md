@@ -59,6 +59,21 @@ error text and 1,000 of trace, so the policy now tells the user to read
 it before submitting. And the export is not browser-wide, because a
 little data is per-tab — the app's own in-product copy already said so.
 
+A second review round found three more, one of which changes what the
+policy tells users about a moment that matters. The support report is a
+GitHub issue opened through a pre-filled link, and the diagnostics travel
+inside that link — so they reach GitHub when the form opens, not when the
+issue is submitted. The policy had said the data left only on submission,
+which misstated both the timing and the recipient; a user could read the
+form, close the tab, and reasonably believe nothing had been sent. It now
+says plainly that opening the form sends the details, and that the
+remaining choice is whether to file an issue rather than whether GitHub
+receives them. The other two: the local record covers write failures
+generally, including a gasless offer that fails before anything reaches
+the chain, not only submitted transactions; and cross-tab erasure is a
+best-effort announcement, so a tab that cannot hear it keeps its own
+session data until it closes.
+
 Both halves of the hand-maintained mirror move together — the canonical
 policy document and the published page — and the policy goes to version 4
 with today's effective date, since what it claims about collection has
