@@ -77,13 +77,26 @@
  * `run deploy` form). That deliberately includes prose — see `ALLOWED` below
  * for why the burden is inverted rather than inferred.
  */
-import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 
 // `CHECK_DEPLOY_ROOT` exists so the test suite can point this at a fixture
 // tree instead of appending to real repo files. An earlier throwaway harness
 // did mutate the repo and its cleanup reverted a real fix mid-run; scanning a
 // temp directory removes that whole class of accident.
+import { parseJsonc } from './lib/jsonc.mjs';
+
+/** Collapse `.`, `..` and repeated separators in a repo-relative path. */
+function normalizeRel(p) {
+  const out = [];
+  for (const part of p.split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..' && out.length > 0 && out[out.length - 1] !== '..') out.pop();
+    else out.push(part);
+  }
+  return out.join('/');
+}
+
 const REPO_ROOT = (
   process.env.CHECK_DEPLOY_ROOT ??
   new URL('../../../', import.meta.url).pathname
@@ -1252,55 +1265,13 @@ function isHelpInvocation(cmd) {
  * comment styles those formats use.
  */
 /**
- * …and STRINGS are not comments. The regex form deleted from a `//` inside a
- * string value — `"note": "operator says // keep this"` — which truncated the
- * text mid-string, left the JSON unparseable, and failed a legitimate scoped
- * upload whose config really does set the flag (#1995 r21). A false red.
- *
- * A scanner rather than a cleverer regex: "am I inside a string" is state, and
- * the whitespace requirement before `//` and `#` is kept exactly as it was, so
- * nothing OUTSIDE a string changes verdict.
+ * `cmdCwd` is the directory the command RUNS in, as the walk models it, and is
+ * used only to resolve an explicitly selected `--config`. Wrangler resolves
+ * that path against the process cwd, so reading it relative to the target
+ * Worker's directory could bless an upload through a DIFFERENT file than the
+ * one selected (#1995 r22).
  */
-function withoutComments(text) {
-  let out = '';
-  let quote = null;
-  let i = 0;
-  const atBoundary = () => out === '' || /\s/.test(out[out.length - 1]);
-  while (i < text.length) {
-    const ch = text[i];
-    if (quote) {
-      if (ch === '\\') {
-        out += ch + (text[i + 1] ?? '');
-        i += 2;
-        continue;
-      }
-      if (ch === quote) quote = null;
-      out += ch;
-      i += 1;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      out += ch;
-      i += 1;
-      continue;
-    }
-    if (ch === '/' && text[i + 1] === '*') {
-      const end = text.indexOf('*/', i + 2);
-      i = end === -1 ? text.length : end + 2;
-      continue;
-    }
-    if (((ch === '/' && text[i + 1] === '/') || ch === '#') && atBoundary()) {
-      while (i < text.length && text[i] !== '\n') i += 1;
-      continue;
-    }
-    out += ch;
-    i += 1;
-  }
-  return out;
-}
-
-function commandIsSafe(cmd, scopeHint = null) {
+function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
   if (isHelpInvocation(cmd)) return true;
   // `run deploy` gets the same option-value strip the flags do: it was a raw
   // substring test, so `--message="run deploy"` blessed a bare deploy that
@@ -1406,7 +1377,7 @@ function commandIsSafe(cmd, scopeHint = null) {
         return false;
       }
       try {
-        const cfg = JSON.parse(withoutComments(text).replace(/,\s*([}\]])/g, '$1'));
+        const cfg = parseJsonc(text);
         return cfg !== null && typeof cfg === 'object' && cfg.keep_vars === true;
       } catch {
         return false;
@@ -1414,12 +1385,36 @@ function commandIsSafe(cmd, scopeHint = null) {
     };
     for (const sc of target ? [target] : SCOPED) {
       for (const name of cfgNames) {
-        // A selection already spelled from the repo root reads as written;
-        // otherwise it is relative to the worker directory the command runs in.
-        const path = name.startsWith(`${sc.dir}/`)
+        // Resolved AS WRANGLER RESOLVES IT: an explicitly selected config is
+        // relative to the command's own working directory. Reading it under
+        // the target Worker's directory meant a repo-root
+        // `--config configs/agent.jsonc` was answered by
+        // `apps/agent/configs/agent.jsonc` — a different file, which could
+        // say `true` while the selected one says `false` (#1995 r22).
+        //
+        // The Worker directory stays as a FALLBACK, taken only when the
+        // cwd-resolved path names nothing on disk. The modelled cwd is a guess
+        // when no `cd` was seen — the walk deliberately does not assume a
+        // script's own directory — so an unresolvable selection should not
+        // become a false red. Where the finding's harm lives, the cwd-resolved
+        // file DOES exist, so the fallback never runs and the wrong file
+        // cannot answer.
+        // ONLY an explicitly selected config resolves against the cwd. The
+        // DEFAULT names belong to the Worker being deployed and are read under
+        // its directory — `cd apps/keeper` then
+        // `env --chdir ../agent wrangler versions upload` deploys the AGENT,
+        // and resolving `wrangler.jsonc` against the shell's cwd let the
+        // KEEPER's config answer for it. That is the r16 wrong-worker defect
+        // returning by another door, and its standing control caught it.
+        const underWorker = name.startsWith(`${sc.dir}/`)
           ? `${REPO_ROOT}/${name}`
           : `${REPO_ROOT}/${sc.dir}/${name}`;
-        if (keepVarsEnabled(path)) return true;
+        const candidates =
+          cfgName === null
+            ? [underWorker]
+            : [`${REPO_ROOT}/${normalizeRel(`${cmdCwd}/${name}`)}`, underWorker];
+        const chosen = candidates.find((c) => existsSync(c)) ?? candidates[0];
+        if (keepVarsEnabled(chosen)) return true;
       }
     }
   }
@@ -6063,9 +6058,12 @@ for (const file of walk(REPO_ROOT)) {
             SCOPED.find((sc) => rel.startsWith(`${sc.dir}/`)) ??
             null;
         const aliased = resolveRunAlias(seg, aliasContext(input, rel));
+        // The modelled cwd, so an explicitly selected `--config` resolves the
+        // way wrangler resolves it.
+        const cmdCwd = input.map((st) => st.cwd).find(Boolean) ?? '';
         if (
-          commandIsSafe(aliased ?? seg, safeHint) ||
-          (aliased === null && commandIsSafe(expandCommandVars(seg, fileVars), safeHint))
+          commandIsSafe(aliased ?? seg, safeHint, cmdCwd) ||
+          (aliased === null && commandIsSafe(expandCommandVars(seg, fileVars), safeHint, cmdCwd))
         ) {
           continue;
         }

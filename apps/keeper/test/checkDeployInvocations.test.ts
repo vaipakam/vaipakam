@@ -5920,3 +5920,63 @@ describe('check-deploy-invocations — configured preservation (#1995 root fix)'
     expect(r.out).toContain('apps/agent');
   });
 });
+
+describe('check-deploy-invocations — #1995 r22 (config reading)', () => {
+  const PKG = '{"name":"@vaipakam/agent"}\n';
+
+  it('an ADJACENT JSONC comment does not hide the setting', () => {
+    // `{"keep_vars": true}// preserve this setting` is valid JSONC and
+    // wrangler accepts it. Requiring whitespace before `//` left the config
+    // unparseable, so a legitimate upload was reported — a false red.
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}// preserve this setting\n');
+    expect(runWith('x.sh', 'cd apps/agent\nwrangler versions upload\n').ok).toBe(true);
+  });
+
+  it('but a // inside a string is data, not a comment', () => {
+    // The inverse: the strip must not truncate a URL and leave the config
+    // unparseable, which would read as "no keep_vars" — the wrong failure.
+    seed('apps/agent/package.json', PKG);
+    seed(
+      'apps/agent/wrangler.jsonc',
+      '{"docs": "https://example.test/keep", "keep_vars": true}\n',
+    );
+    expect(runWith('x.sh', 'cd apps/agent\nwrangler versions upload\n').ok).toBe(true);
+  });
+
+  it('an explicitly selected config resolves from the COMMAND cwd', () => {
+    // Wrangler resolves `--config` against the process cwd. Reading it under
+    // the target Worker's directory let a different file answer: here the
+    // selected root config says false while the Worker-relative one says true.
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/configs/agent.jsonc', '{"keep_vars": true}\n');
+    seed('configs/agent.jsonc', '{"keep_vars": false}\n');
+    const r = runWith(
+      'x.sh',
+      'wrangler versions upload --name vaipakam-agent --config configs/agent.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('and still resolves correctly when the command really is in the worker dir', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/configs/agent.jsonc', '{"keep_vars": true}\n');
+    expect(
+      runWith('x.sh', 'cd apps/agent\nwrangler versions upload --config configs/agent.jsonc\n').ok,
+    ).toBe(true);
+  });
+
+  it('the DEFAULT config names still belong to the worker being deployed', () => {
+    // The cwd rule is for explicit selections only. `cd apps/keeper` then
+    // `env --chdir ../agent` deploys the AGENT, and resolving the default
+    // `wrangler.jsonc` against the shell's cwd let the KEEPER's config answer
+    // — the r16 wrong-worker defect by another door, caught by its control.
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/wrangler.jsonc', '{"name":"vaipakam-agent"}\n');
+    seed('apps/keeper/package.json', '{"name":"@vaipakam/keeper"}\n');
+    seed('apps/keeper/wrangler.jsonc', '{"keep_vars": true}\n');
+    const r = runWith('x.sh', 'cd apps/keeper\nenv --chdir ../agent wrangler versions upload\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+});

@@ -1104,6 +1104,45 @@ jobs:
       - name: Every binding and command names the same shared database
         run: node apps/indexer/scripts/check-d1-name-consistency.mjs
 
+  # -------------------------------------------------------------------
+  # worker-keep-vars — the SECOND deliberately un-path-gated job, for the
+  # same reason as the one above.
+  #
+  # Every Worker holding operator-managed vars must declare `keep_vars:
+  # true`, or an ordinary deploy DELETES those vars — for the keeper the
+  # liquidation thresholds, for the agent recipient-token validation. The
+  # Workers it covers span `apps/agent`, `apps/keeper`, `apps/indexer` and
+  # both `ops/*` Workers, while the only job running the keeper's Vitest
+  # suite is path-gated to `apps/(app|indexer|keeper)`. So an agent-only or
+  # ops-only change could remove the key with the invariant skipped — which
+  # is exactly the change it exists to catch (Codex #1995 r22).
+  #
+  # This is the BOUNDED half of the #1995 defence. The tree-wide
+  # `check-deploy-invocations` guard asks whether any command anywhere would
+  # deploy without preserving vars, which is an open-ended search over every
+  # way a deploy can be spelled; this asks whether any Worker could lose its
+  # vars at all, which is five files.
+  #
+  # The script imports only node builtins, so this needs no install step.
+  worker-keep-vars:
+    name: worker keep_vars (unconditional)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+
+      - name: Every var-carrying Worker preserves its dashboard vars
+        run: node apps/keeper/scripts/check-keep-vars.mjs
+
   offchain-data-warm:
     name: ops/offchain-data-warm (typecheck + tests)
     needs: detect-changes

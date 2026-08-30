@@ -1,133 +1,66 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
- * Every Worker that carries plain-text `vars` declares `keep_vars: true`.
+ * The keep_vars invariant, exercised through the SAME script CI runs.
  *
- * WHY THIS TEST EXISTS, and why it is small.
+ * `scripts/check-keep-vars.mjs` is the one implementation — the rationale for
+ * the invariant lives in its header. This suite does not restate the rule; it
+ * proves the script accepts the tree as it stands and REJECTS the tree with
+ * the key removed, which is the part a passing check cannot demonstrate about
+ * itself.
  *
- * Wrangler treats the config file as the source of truth for environment
- * configuration: on deploy it DELETES the vars that are not in the file before
- * setting the ones that are. Any value managed only in the Cloudflare
- * dashboard is therefore wiped by an ordinary `wrangler deploy` — for the
- * keeper that is `HF_SCALE`, the `LIQ_*` confidence thresholds,
- * `SPLIT_MIN_IMPROVEMENT_BPS` and `PARTIAL_LIQ_MIN_HF_BPS`, i.e. liquidation
- * behaviour silently reverting to defaults; for the agent it is
- * `RECIPIENT_VALIDATING_TOKENS` and `OPENSEA_OFFERS_MAX_PAGES`.
- *
- * The original defence was to require `--keep-vars` on every invocation, and
- * `scripts/check-deploy-invocations.mjs` searches the whole tree for deploys
- * that lack it. That predicate is unbounded: a deploy can be spelled through a
- * package script, a manifest alias, a Makefile variable, a sourced helper, a
- * shell function, an alias, a matrix expression, a reusable-workflow input, a
- * Windows shim, `eval`, or an Actions marketplace action — and #1995 answered
- * 242 review findings enumerating them without reaching the end.
- *
- * `keep_vars` asks the bounded question instead. It is the field wrangler
- * itself consults on BOTH paths (`props.keepVars || config.keep_vars` for
- * deploy; the handler passes `config.keep_vars` for `versions upload`), so
- * declaring it makes every spelling safe at once — including the ones nobody
- * has written yet. What was an open-ended search becomes this file: one
- * assertion per Worker.
- *
- * The scanner is kept as defence in depth and now activates exactly when this
- * invariant is broken — remove the key and it resumes reporting every bare
- * deploy for that package.
- *
- * A Worker with no `vars` at all (`apps/app`, `apps/www`) has nothing to
- * preserve and is deliberately not listed; adding one would state a
- * requirement the Worker does not have.
+ * Two runners on purpose. CI runs the script unconditionally, because the
+ * Workers it covers span `apps/` and `ops/` while the job running this suite
+ * is path-gated to `apps/(app|indexer|keeper)` — an agent-only or ops-only
+ * change would otherwise skip the invariant (Codex #1995 r22). This suite is
+ * the fast local feedback, and it must not become a second implementation.
  */
 const REPO_ROOT = new URL('../../../', import.meta.url).pathname.replace(/\/$/, '');
+const SCRIPT = join(REPO_ROOT, 'apps/keeper/scripts/check-keep-vars.mjs');
 
-/** Workers whose config declares plain-text `vars`, so a deploy can wipe them. */
-const VAR_CARRYING_WORKERS = [
-  'apps/agent',
-  'apps/keeper',
-  'apps/indexer',
-  'ops/mesh-watcher',
-  'ops/offchain-data-warm',
-];
-
-/**
- * Strip JSONC comments without firing inside a string.
- *
- * A `//` in a URL is not a comment, and treating it as one truncates the value
- * and can make a valid config unparseable — which this test would then report
- * as a missing key, i.e. the wrong failure.
- */
-function stripJsonComments(raw: string): string {
-  let out = '';
-  let inString = false;
-  let quote = '';
-  for (let i = 0; i < raw.length; i += 1) {
-    const c = raw[i];
-    const next = raw[i + 1];
-    if (inString) {
-      out += c;
-      if (c === '\\') {
-        out += next ?? '';
-        i += 1;
-      } else if (c === quote) {
-        inString = false;
-      }
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      inString = true;
-      quote = c;
-      out += c;
-      continue;
-    }
-    if (c === '/' && next === '/') {
-      while (i < raw.length && raw[i] !== '\n') i += 1;
-      out += '\n';
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      i += 2;
-      while (i < raw.length && !(raw[i] === '*' && raw[i + 1] === '/')) i += 1;
-      i += 1;
-      continue;
-    }
-    out += c;
+function runCheck(): { ok: boolean; out: string } {
+  try {
+    return { ok: true, out: execFileSync('node', [SCRIPT], { encoding: 'utf8' }) };
+  } catch (err) {
+    const e = err as { stdout?: string; stderr?: string };
+    return { ok: false, out: `${e.stdout ?? ''}${e.stderr ?? ''}` };
   }
-  return out;
-}
-
-function readJsonc(relPath: string): Record<string, unknown> {
-  const raw = readFileSync(join(REPO_ROOT, relPath), 'utf8');
-  return JSON.parse(stripJsonComments(raw).replace(/,(\s*[}\]])/g, '$1')) as Record<
-    string,
-    unknown
-  >;
 }
 
 describe('worker configs preserve dashboard vars at the source (#1995)', () => {
-  it.each(VAR_CARRYING_WORKERS)('%s declares keep_vars: true', (dir) => {
-    const cfg = readJsonc(`${dir}/wrangler.jsonc`);
-    expect(cfg.keep_vars).toBe(true);
+  it('passes on the tree as committed', () => {
+    const r = runCheck();
+    expect(r.ok, r.out).toBe(true);
+    expect(r.out).toContain('preserve their dashboard-managed vars');
   });
 
-  it.each(VAR_CARRYING_WORKERS)('%s actually carries vars, so the rule applies', (dir) => {
-    // Pins the LIST as well as the key. If a Worker's `vars` block is removed
-    // this fails, prompting a decision — drop it from the list, or find out
-    // why the block went away — rather than leaving an assertion that passes
-    // for a Worker the rule no longer describes.
-    const cfg = readJsonc(`${dir}/wrangler.jsonc`);
-    expect(cfg.vars, `${dir} has no "vars" block`).toBeTypeOf('object');
-  });
-
-  it('the comment strip does not truncate a value containing //', () => {
-    // The parser above is what every assertion here depends on, so its one
-    // non-obvious rule gets a case of its own: a `//` inside a string is data.
-    const parsed = JSON.parse(
-      stripJsonComments(
-        '{\n  // real comment\n  "a": "https://x.example/y", // trailing\n  "b": 1,\n}\n',
-      ).replace(/,(\s*[}\]])/g, '$1'),
-    );
-    expect(parsed.a).toBe('https://x.example/y');
-    expect(parsed.b).toBe(1);
+  it.each([
+    'apps/agent',
+    'apps/keeper',
+    'apps/indexer',
+    'ops/mesh-watcher',
+    'ops/offchain-data-warm',
+  ])('fails when %s loses the declaration', (dir) => {
+    // The check RUNS ON ITS OWN CASE, once per Worker: a check that only ever
+    // passes proves nothing about the Worker it names. The config is restored
+    // in `finally`, and the assertion is made after restoring so a failure
+    // cannot leave the tree edited.
+    const path = join(REPO_ROOT, dir, 'wrangler.jsonc');
+    const original = readFileSync(path, 'utf8');
+    let result: { ok: boolean; out: string };
+    try {
+      const mutated = original.replace(/^\s*"keep_vars":\s*true,\s*$/m, '');
+      expect(mutated, `${dir}: mutation did not change the file`).not.toBe(original);
+      writeFileSync(path, mutated);
+      result = runCheck();
+    } finally {
+      writeFileSync(path, original);
+    }
+    expect(readFileSync(path, 'utf8')).toBe(original);
+    expect(result.ok, `${dir}: removing keep_vars did not fail the check`).toBe(false);
+    expect(result.out).toContain(dir);
   });
 });
