@@ -214,26 +214,70 @@ for (const meta of TERMS_VERSION_METAS) {
         `checked once it is added`,
     );
   }
+  // The bytes must decode as STRICT UTF-8 (#2010 round 7 P2): the
+  // registry hash and the git blob cover raw bytes, but Vite's `?raw`
+  // loader decodes UTF-8 and substitutes U+FFFD for invalid
+  // sequences before ReactMarkdown renders — so a stray Windows-1252
+  // byte would pass every byte-level check here while the pinned
+  // page displays text DIFFERENT from the bytes whose fingerprint
+  // governance records. Fatal decoding makes that divergence
+  // impossible: what hashes is what renders.
+  let text: string;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    fail(
+      `v${meta.version}: ${frozenPath} is not valid UTF-8 — the page's raw ` +
+        `loader would substitute U+FFFD and render text different from the ` +
+        `bytes this registry fingerprints. Fix the encoding before publishing`,
+    );
+    continue;
+  }
   // (5) The document's own header must agree with the registry — a
   // byte-perfect copy of the WRONG version's text hashes fine, and a
   // page that says "Version 1" while the gate asks for version 2
-  // defeats the whole point of the pinned route.
-  const text = bytes.toString('utf8');
-  const headerVersion = /^\*\*Version:\*\*\s+(\d+)\s*$/m.exec(text);
-  const headerEffective = /^\*\*Effective:\*\*\s+(\S+)\s*$/m.exec(text);
+  // defeats the whole point of the pinned route. The metadata is
+  // required AT ITS RENDERED POSITION — the block directly under the
+  // document title — and to be unique in the document (#2010 round 7
+  // P2): an unanchored multiline search would accept a matching line
+  // anywhere, e.g. inside a fenced example, while the real header
+  // still displayed a different version or date.
+  const lines = text.split('\n');
+  const versionRe = /^\*\*Version:\*\*\s+(\d+)\s*$/;
+  const effectiveRe = /^\*\*Effective:\*\*\s+(\S+)\s*$/;
+  const headerVersion = lines[2] !== undefined ? versionRe.exec(lines[2]) : null;
+  const headerEffective =
+    lines[3] !== undefined ? effectiveRe.exec(lines[3]) : null;
+  if (!lines[0]?.startsWith('# ') || lines[1] !== '') {
+    fail(
+      `v${meta.version}: the document must open with its "# " title and a ` +
+        `blank line, followed by the Version/Effective header block`,
+    );
+  }
   if (!headerVersion || Number(headerVersion[1]) !== meta.version) {
     fail(
-      `v${meta.version}: the frozen source's own "**Version:**" header is ` +
-        `${headerVersion ? headerVersion[1] : 'missing'} — it must state ` +
-        `${meta.version}, the version its pinned route and registry entry ` +
-        `identify it as`,
+      `v${meta.version}: the "**Version:**" line directly under the title is ` +
+        `${headerVersion ? headerVersion[1] : 'missing or misplaced'} — it ` +
+        `must state ${meta.version}, the version its pinned route and ` +
+        `registry entry identify it as`,
     );
   }
   if (!headerEffective || headerEffective[1] !== meta.effective) {
     fail(
-      `v${meta.version}: the frozen source's own "**Effective:**" header is ` +
-        `${headerEffective ? headerEffective[1] : 'missing'} — it must state ` +
-        `${meta.effective}, the date its registry entry advertises`,
+      `v${meta.version}: the "**Effective:**" line directly under the title ` +
+        `is ${headerEffective ? headerEffective[1] : 'missing or misplaced'} ` +
+        `— it must state ${meta.effective}, the date its registry entry ` +
+        `advertises`,
+    );
+  }
+  const versionLines = lines.filter((l) => versionRe.test(l)).length;
+  const effectiveLines = lines.filter((l) => effectiveRe.test(l)).length;
+  if (versionLines !== 1 || effectiveLines !== 1) {
+    fail(
+      `v${meta.version}: found ${versionLines} "**Version:**" and ` +
+        `${effectiveLines} "**Effective:**" line(s) — exactly one of each is ` +
+        `allowed, in the header block, so no stray or example line can be ` +
+        `mistaken for the document's identity`,
     );
   }
   const computed = keccak256(bytes);
