@@ -31,6 +31,7 @@ import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
   eraseMyData,
+  inspectErasableData,
   inspectMyData,
   isAppStorageKey,
   type EraseResult,
@@ -140,13 +141,19 @@ export function DataRights() {
   // snapshot, so the count, the refusal state and the downloadable
   // payload all describe the same moment.
   const snapshot = inspectMyData();
-  const stored = snapshot.count;
+  // The count offered BEFORE confirming comes from the erasure inventory, not
+  // the export one (round 2 P2). They differ now, so a browser holding only
+  // connector records would otherwise be told nothing is stored and then have
+  // those records erased on confirm. The payload below still comes from the
+  // export snapshot — it is what the download would contain.
+  const erasable = inspectErasableData();
+  const stored = erasable.count;
   // Review round 1 P1: "could not read" is not "nothing is here". With
   // them collapsed, a browser refusing to be read told the user their
   // storage was empty — the refusal message below unreachable in the
   // one case it was written for. (The buttons that gating disabled
   // then are un-gated entirely as of round 8.)
-  const refused = snapshot.refused;
+  const refused = snapshot.refused || erasable.refused;
   // What this render is showing, recorded for the poll above to
   // compare against — an every-render effect rather than a render-time
   // ref write, which the refs rule forbids.
@@ -181,7 +188,11 @@ export function DataRights() {
     const erased = eraseMyData();
     // Measured immediately, once, and kept with the result — see the
     // state declaration for why this is not recomputed later.
-    const after = inspectMyData();
+    // The ERASURE inventory, not the export one (#1862 round 1 P1): a
+    // connector key that refused removal, or that a live connector wrote
+    // straight back, is invisible to the export scan — so the page would
+    // report a clean success over storage that is still there.
+    const after = inspectErasableData();
     setResult({ ...erased, remaining: after.count, refusedAfter: after.refused });
     setConfirming(false);
     // The other two reset AFTER, through setters that do not persist:

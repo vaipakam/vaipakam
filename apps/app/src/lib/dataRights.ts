@@ -80,10 +80,81 @@ export const PREFERENCE_COOKIES: readonly string[] = [
   'vaipakam_theme',
 ];
 
-/** True when `key` is one this app is responsible for. */
+/**
+ * Namespaces a DEPENDENCY writes on this app's behalf (#1862).
+ *
+ * `eraseMyData` used to clear only the prefixes above, so "Delete my data"
+ * reported success while wallet-connection state stayed behind and a reload
+ * could reconnect the same wallet. That is wallet-linked data surviving a
+ * right-to-erasure control, which is the failure this page exists to prevent.
+ *
+ * None of these is discoverable by scanning `src/` — the app never writes
+ * them; the connectors configured in `chain/wagmi.ts` do. Each entry records
+ * how it was established, because "found in a dependency's bundle" and
+ * "verified from the code that composes the key" are different strengths of
+ * evidence and the next person should not have to guess which they inherited:
+ *
+ *  - `wagmi.`        VERIFIED. `@wagmi/core`'s `createStorage` defaults to
+ *                    `key: prefix = 'wagmi'` and composes every key as
+ *                    `${prefix}.${key}`; `createConfig` is called with no
+ *                    `storage` override, so the default applies.
+ *  - `wc@2:`         From the built `@walletconnect/core` bundle. Its full
+ *                    keys are assembled at runtime, so only this stem is
+ *                    observable statically.
+ *  - `CBWSDK`        From the built `@coinbase/wallet-sdk` bundle. The same
+ *                    package also persists `cbwsdk.store` in LOWER case, which
+ *                    an exact match missed entirely (round 3 P1) — hence the
+ *                    case-folded comparison below rather than two entries.
+ *  - `-walletlink:`  Same package, WalletLink transport.
+ *
+ * Matching is by SUBSTRING rather than prefix, deliberately. Three of the four
+ * key shapes could not be confirmed statically, and on an origin this app has
+ * to itself an erasure that removes slightly too much is a far better failure
+ * than one that leaves an account connected. It is still a wider net than the
+ * evidence strictly supports, which is the honest reason the registry work in
+ * #1862 wants a runtime check — connect each wallet type, diff `localStorage`
+ * before and after — rather than more reading of `node_modules`.
+ */
+export const THIRD_PARTY_STORAGE_MARKERS: readonly string[] = [
+  'wagmi.',
+  'wc@2:',
+  'CBWSDK',
+  '-walletlink:',
+];
+
+/** True when `key` is one this app itself writes. */
 export function isAppStorageKey(key: string | null | undefined): boolean {
   if (!key) return false;
   return STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+/**
+ * True when an erasure must remove `key` — this app's own, plus the
+ * connector namespaces it causes to exist.
+ *
+ * DELIBERATELY WIDER THAN THE EXPORT. `collectMyData` still uses
+ * `isAppStorageKey`, so a portability file contains what this app stored and
+ * not a connector's session material: exporting WalletConnect session state
+ * into a file the user downloads and may forward is a hazard the right of
+ * access does not require, while leaving it in place defeats the right to
+ * erasure. The two rights want different sets, so they get different
+ * predicates rather than one shared list bent to serve both.
+ */
+export function isErasableStorageKey(key: string | null | undefined): boolean {
+  if (!key) return false;
+  if (isAppStorageKey(key)) return true;
+  // CASE-INSENSITIVE (round 3 P1). The markers were matched exactly, and
+  // `@coinbase/wallet-sdk@4.3.6` persists `cbwsdk.store` in lower case while
+  // the marker recorded here was `CBWSDK` — so the store holding that
+  // connector's keys, account state and spend permissions was skipped by both
+  // the deletion and the count, and the page reported a clean success over it.
+  // Casing is not a property worth being strict about when the cost of a miss
+  // is an account surviving an erasure, so the comparison folds case rather
+  // than the list gaining a second spelling of the same name.
+  const lower = key.toLowerCase();
+  return THIRD_PARTY_STORAGE_MARKERS.some((marker) =>
+    lower.includes(marker.toLowerCase()),
+  );
 }
 
 export interface DataRightsExport {
@@ -374,6 +445,64 @@ export function countMyData(): number {
   return inspectMyData().count;
 }
 
+/** Count what an erasure would remove from one store, preserving WHY it
+ *  came back empty — the same distinction `collect` makes. */
+function countErasable(storage: Storage | null): { count: number; refused: boolean } {
+  if (!storage) return { count: 0, refused: true };
+  let count = 0;
+  try {
+    for (let i = 0; i < storage.length; i += 1) {
+      if (isErasableStorageKey(storage.key(i))) count += 1;
+    }
+  } catch {
+    return { count, refused: true };
+  }
+  return { count, refused: false };
+}
+
+/**
+ * What an erasure would remove, counted over the ERASURE set (#1862).
+ *
+ * Separate from `inspectMyData().count`, which counts the EXPORT set, and the
+ * separation is the point. Reusing the export count here meant connector keys
+ * were invisible to both the "N items will be removed" figure the user sees
+ * before confirming and the `remaining` figure checked afterwards — so a
+ * connector key that refused removal, or that a live connector wrote straight
+ * back, left the page reporting a clean success or "nothing was stored". A
+ * verification that cannot see what the erasure targets is not a verification,
+ * and on this page a false success is the failure mode that matters.
+ */
+export function inspectErasableData(): { count: number; refused: boolean } {
+  const sessionStore = safeStorage('sessionStorage');
+  const local = countErasable(safeStorage('localStorage'));
+  const session = countErasable(sessionStore);
+  const cookies = readCookies();
+  // The in-memory last-error slot counts exactly as it does in
+  // `eraseMyData` (round 5 P2). That function already documents the
+  // invariant — the count shown before confirming and the count reported
+  // after must agree in every state — and it was established by an earlier
+  // round for the export path. I added this inventory without carrying the
+  // rule across, so a record held only in memory, or one differing from the
+  // stored copy, made the page offer "0 items" and then report one removed.
+  let storedLastError: unknown;
+  try {
+    const raw = sessionStore?.getItem(LAST_ERROR_KEY);
+    if (raw != null) storedLastError = decodeStored(raw);
+  } catch {
+    // Unreadable reads as absent — the same answer the other two paths give
+    // in this state, which is what keeps the three counts equal.
+  }
+  const liveHolding = liveLastErrorEntry(storedLastError, readLastError());
+  return {
+    count:
+      local.count +
+      session.count +
+      Object.keys(cookies.data).length +
+      (liveHolding ? 1 : 0),
+    refused: local.refused || session.refused || cookies.refused,
+  };
+}
+
 function clearStorage(storage: Storage | null): number {
   if (!storage) return 0;
   let removed = 0;
@@ -381,7 +510,10 @@ function clearStorage(storage: Storage | null): number {
     const keys: string[] = [];
     for (let i = 0; i < storage.length; i += 1) {
       const key = storage.key(i);
-      if (isAppStorageKey(key)) keys.push(key as string);
+      // The ERASURE predicate, not the export one (#1862): connector
+      // namespaces must go, without their contents entering a portability
+      // file.
+      if (isErasableStorageKey(key)) keys.push(key as string);
     }
     for (const key of keys) {
       try {

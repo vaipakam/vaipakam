@@ -711,9 +711,27 @@ Thin-market honesty rules apply.
   windows and restrictive privacy settings do this, and reporting it as done
   would be a false assurance about a legal right. The user is pointed at the
   browser's own controls, which work.
-- Erasure covers what this app stored and nothing else. State belonging to a
-  wallet connector or another tool is left untouched: removing it would
-  disconnect the user as a side effect of exercising a data right.
+- Erasure covers what this app stored, and also the browser storage its wallet
+  connectors keep on the app's behalf. That reverses an earlier intent recorded
+  here — that connector state was left untouched so a data right would not
+  disconnect anyone — because leaving it made the control report success while
+  a reload could restore the same connected wallet, and a right to erasure that
+  does not erase is the more serious of the two failures.
+- What the erasure requires is the REMOVAL OF THOSE RECORDS, not the ending of
+  a session. It does not disconnect anyone: an earlier draft of this bullet
+  said the disconnection was an intended consequence, which asserted a
+  behaviour the synchronous storage cleanup does not perform for any wallet.
+  The requirement is bounded by what the erasure actually reaches today:
+  storage the browser exposes to this origin. Session material that a connector
+  holds elsewhere — WalletConnect keeps its live session in IndexedDB rather
+  than local storage, as does the Coinbase smart-wallet key — is NOT cleared,
+  and the in-memory connection in the current tab is not dropped. Reload is
+  NOT the boundary either: the app reconnects on load, and a wallet that still
+  treats this site as authorised — a browser extension, or the Safe the app is
+  embedded in — reconnects regardless of what was deleted here, because the
+  authorisation lives outside this origin's storage. So erasure removes stored
+  records and does not, on its own, end a session. The page must not claim
+  otherwise while that is true.
 - The page states its limits as prominently as its controls, and each is
   stated at its true extent. It does not reach on-chain data — which is public,
   so the user can look it up themselves, and permanent, so nobody can erase it.
@@ -769,6 +787,19 @@ Thin-market honesty rules apply.
   and the record of which notifications have been seen. A page that reports
   preferences returned to their defaults while the app keeps showing them is
   making a claim the user can see is untrue.
+- **The erasure reaches storage the app causes to exist but does not itself
+  write**, specifically the wallet connection. A deletion that leaves the
+  connection in place lets the next page load reconnect the same account, which
+  is wallet-linked state surviving a deletion the user was told had happened —
+  and the app's own storage names are no guide to it, because the wallet
+  libraries choose their own. The intent is that a user who deletes is
+  disconnected.
+- **The download and the deletion deliberately cover different sets.** A
+  download is a file the person keeps and may pass on, and wallet session
+  material does not belong in one; the same material left on the device is what
+  makes a deletion incomplete. So the download carries what this app stored
+  about the user, and the deletion reaches further. Where the two differ, the
+  page says which it is describing.
 - Two shared-domain preference cookies are part of what this browser holds,
   so the download includes them and an erasure removes them — and they differ
   in kind, which the page states rather than blurs. The language is genuinely
