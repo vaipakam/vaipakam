@@ -41,10 +41,17 @@ decide, by appearance alone, whether a piece of text was the shortener's own
 work or something the user had written. That is a question about text someone
 else controls, and each answer was defeated by a slightly different way of
 writing the same thing. Doing the two steps in the other order means the
-question never arises. Two things are given up for that, both at the very end
-of a message that is already being cut short: an address finishing exactly at
-the cut is dropped rather than shortened, and a line of pure hexadecimal can
-lose its last few dozen characters.
+question never arises. How far back that step reaches cannot be fixed in advance, which took one
+more correction to see: a limit of a few dozen characters was set by how long
+an address is, but an address written with escapes can be spelled at any
+length, so a deeply escaped final digit simply ran past the limit and left the
+rest of the account behind it. The step now goes back as far as the run of
+address-like characters goes, and stops at the first character an address
+cannot contain — a space, a newline, a colon — which ordinary text supplies
+constantly. Two things are given up for that, both at the very end of a
+message that is already being cut short: an address finishing exactly at the
+cut is dropped rather than shortened, and a passage made of nothing but
+address characters loses the whole run.
 
 There are two situations the shortener cannot fully account for: a message
 too large to read in full, and escapes nested too deeply to unwrap within a

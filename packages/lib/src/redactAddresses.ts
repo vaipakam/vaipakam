@@ -246,14 +246,6 @@ function decodeToFixpoint(text: string): {
  */
 export const MAX_MAPPED_INPUT = 64 * 1024;
 
-/**
- * How far back from the cut the safe-truncation scan may reach.
- *
- * An address is 42 characters, so one straddling the cut has at most 41 inside
- * it. 48 covers that with margin while bounding what a hex-heavy log can lose.
- */
-const BOUNDARY_WINDOW = 48;
-
 /** Characters an address can be spelled with, escapes included. */
 const ADDRESS_CHAR_RE = /[0-9a-fA-FxX%]/;
 
@@ -278,15 +270,29 @@ const ADDRESS_CHAR_RE = /[0-9a-fA-FxX%]/;
  * needs no judgement about who wrote it. Shortening then runs on text whose end
  * cannot bisect an address, and there is no repair pass at all.
  *
- * The cost, stated because it is real: a COMPLETE address ending exactly at the
- * cut is now dropped rather than shortened, and a hex-heavy log can lose up to
- * 48 characters at the boundary. Both are over-redaction at the tail of a
- * message already being truncated, which is the correct side to err on.
+ * THE SCAN IS NOT WINDOWED (r13 P1). It was, at 48 characters, on the
+ * arithmetic that an address is 42 so one straddling the cut has at most 41
+ * inside. That counts the address, not its SPELLING: percent-encoding makes a
+ * single nibble arbitrarily long, so a 30-level encoded digit ran past the
+ * window, the scan stopped inside the run at the floor, and 38 literal digits
+ * stayed behind it with their EIP-55 casing. A bound expressed in the units of
+ * the plaintext cannot bound the encoded form.
+ *
+ * So the scan walks the whole run. It stays linear — each character is tested
+ * once — and it terminates at the first character an address cannot be spelled
+ * with, which ordinary prose supplies constantly (a space, a newline, a colon).
+ *
+ * The cost, stated because it is real and is now unbounded rather than capped
+ * at 48: a COMPLETE address ending exactly at the cut is dropped rather than
+ * shortened, and text whose tail is one unbroken run of hex, `x` and `%` loses
+ * that entire run — in the pathological limit, a 64 KB message containing no
+ * other character keeps nothing. That is over-redaction at the tail of a
+ * message already being truncated, and it is the side to err on: the
+ * alternative is publishing the front of an account.
  */
 function truncateAtSafeBoundary(sliced: string): string {
-  const floor = Math.max(0, sliced.length - BOUNDARY_WINDOW);
   let cut = sliced.length;
-  while (cut > floor && ADDRESS_CHAR_RE.test(sliced[cut - 1]!)) cut -= 1;
+  while (cut > 0 && ADDRESS_CHAR_RE.test(sliced[cut - 1]!)) cut -= 1;
   return sliced.slice(0, cut);
 }
 

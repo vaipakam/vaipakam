@@ -357,6 +357,40 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     });
   }
 
+  it('drops a bisected address whose encoded tail outruns any fixed window', () => {
+    // Codex r13 P1. The scan was windowed at 48 on the arithmetic that an
+    // address is 42 characters. That counts the address, not its SPELLING:
+    // percent-encoding makes one nibble arbitrarily long, so a 30-level
+    // encoded digit ran past the window, the scan stopped inside the run, and
+    // 38 literal digits stayed behind it — with EIP-55 casing.
+    //
+    // A bound expressed in the units of the plaintext cannot bound the encoded
+    // form, so there is no window: the scan walks the whole run.
+    let nibble = '%32';
+    for (let i = 0; i < 30; i++) nibble = nibble.replaceAll('%', '%25');
+    const literalPart = CHECKSUMMED.slice(0, 39);
+    const input = `${'q'.repeat(MAX_MAPPED_INPUT - 39 - 49)}${literalPart}${nibble}${beyondTheCut}`;
+    const out = redactText(input);
+    expect(out).not.toContain(literalPart);
+    expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
+  });
+
+  it('drops the whole trailing run when the text is nothing but address characters', () => {
+    // The stated, unbounded cost of an unwindowed scan, pinned as a decision:
+    // a message whose tail is one unbroken run of hex/`x`/`%` loses that run
+    // entirely. Over-redaction at the tail of an already-truncated message,
+    // and the correct side of publishing the front of an account.
+    const out = redactText('a'.repeat(MAX_MAPPED_INPUT * 2));
+    expect(out).toBe('…');
+  });
+
+  it('stops at the first character an address cannot be spelled with', () => {
+    // Which is what keeps the unwindowed scan from eating ordinary prose:
+    // a space ends the run, so everything before it survives.
+    const out = redactText(`${'w'.repeat(MAX_MAPPED_INPUT - 10)}word ${'a'.repeat(MAX_MAPPED_INPUT)}`);
+    expect(out).toContain('word ');
+  });
+
   it('drops a bisected address whose head is escaped', () => {
     const out = redactText(cutAfter(`%20${CHECKSUMMED.slice(0, 20)}`));
     expect(out).not.toContain(CHECKSUMMED.slice(2, 20));
