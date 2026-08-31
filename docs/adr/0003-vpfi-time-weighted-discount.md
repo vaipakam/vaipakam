@@ -1,7 +1,44 @@
 # ADR-0003: Time-weighted accumulator for VPFI fee discounts
 
-**Status:** Accepted — **borrower half superseded by #1352** (2026-07-20)
+**Status:** Accepted — **borrower half superseded by #1352** (2026-07-20);
+**loan-window averaging superseded by T-087 Sub 1.B** (recorded #1981,
+2026-08-31)
 **Date:** 2026-04-23 (Phase 5 implementation date; ADR backfilled 2026-05-20)
+
+> **Supersession note (T-087 Sub 1.B, recorded in #1981).** The core
+> decision this ADR records — that a discount must not be sampled from a
+> spot balance — still stands. What no longer holds is the **mechanism**:
+> the per-loan averaging described below, anchored at origination and
+> averaged across each loan's own lifetime, was removed. Fee application
+> now resolves the party's effective tier at the moment the fee is
+> charged, and the anti-gaming property lives in how that tier is
+> derived — a minimum staked duration, a recency-weighted average over a
+> trailing window (governance-bounded 14–30 days, default 30, floored at
+> the day the current stake began), and a clamp to the lowest tier
+> reached in that history. The per-loan anchors (`lenderDiscountAccAtInit`,
+> `borrowerDiscountAccAtInit`) survive only as storage slots — nothing
+> writes them and nothing reads them, so every loan opened since carries
+> zero there.
+>
+> Against the vector this ADR was written for — a top-up shortly before
+> settlement — the replacement is **stricter**, not a relaxation: an
+> average over a loan can be pulled up by a late top-up, whereas a
+> minimum over the history cannot, and the daily minimum is recorded so a
+> same-day dip counts.
+>
+> It is **not** stricter in every respect, and this note asserted that it
+> was until #1981 r2. The lowest-tier history is capped at the ring
+> buffer's 30 days, so a long loan's early low-tier period rolls out of
+> it, where the loan-lifetime average this ADR chose retained it for the
+> whole term: on a 100-day loan with 70 low-tier days followed by 30
+> high-tier days, today's rule can resolve the high tier and the recorded
+> one could not. Stronger defence, shorter memory — the trade is stated
+> here rather than elided, since this ADR is where someone would come to
+> weigh restoring the original design.
+>
+> This ADR is left otherwise unedited: it is the record of a decision as
+> it was taken. The current behaviour is described in the whitepaper
+> §12.4 and in `CLAUDE.md`'s VPFI fee-discount section.
 
 > **Supersession note (#1352, rev-8 fee freeze).** The decision recorded
 > here — that a discount must be time-weighted rather than sampled at a

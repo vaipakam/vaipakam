@@ -260,11 +260,23 @@ discount मिलता है:
 | `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
 | `{liveValue:tier4Min}` से ऊपर | `{liveValue:tier4DiscountBps}`% |
 
-Discounts lender और borrower दोनों fees पर लागू होते हैं। Discount
-**loan की पूरी life में time-weighted** होता है, इसलिए loan end होने
-से ठीक पहले top up करके calculation game नहीं की जा सकती — discount
-आपको उसी अनुपात में मिलता है जितने समय तक आपने सच में उस tier को hold
-किया।
+Discounts lender और borrower दोनों fees पर लागू होते हैं। आपका tier
+**हाल की एक window में — ज़्यादा से ज़्यादा 30 दिन, और आपका मौजूदा
+holding जिस दिन से शुरू हुई उसी से गिनी हुई — आपने जो hold किया, उसका
+time-weighted average** होता है। फिर उसे **उस holding के शुरू होने के
+बाद से आप जिस सबसे नीचे के tier तक गिरे, वहीं तक घटा दिया जाता है** —
+यह पीछे 30 दिन तक देखता है, गिरावट तब भी गिनी जाती है जब आप उसी दिन
+दोबारा top up कर लें, और यह look-back ऊपर वाली averaging window से अलग
+अपना history है। जब तक आप **लगातार** शून्य से ऊपर का balance कम-से-कम
+तय दिनों तक hold नहीं करते, तब तक कोई discount मिलता ही नहीं; balance
+शून्य होते ही वह घड़ी फिर से शुरू हो जाती है। window और वह minimum,
+दोनों protocol की settings हैं।
+
+इसलिए loan end होने से ठीक पहले top up करने से कोई फ़ायदा नहीं। ध्यान
+दीजिए कि काम कौन सा नियम करता है: अगर आप पहले से hold कर रहे हैं तो
+minimum period पहले ही पूरा हो चुका है और वह रास्ता नहीं रोकता — यह
+सबसे नीचे के tier वाला नियम है जो आपकी rate को उसी पर रखता है जो आपने
+सच में बनाए रखी।
 
 ### 2. Platform interaction rewards
 

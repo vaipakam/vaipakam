@@ -90,14 +90,41 @@ Tier ladder:
 | 3    | ≥ `{liveValue:tier3Min}`                | `{liveValue:tier3DiscountBps}`%   |
 | 4    | > `{liveValue:tier4Min}`                | `{liveValue:tier4DiscountBps}`%   |
 
-Tier は、VPFI を deposit または withdraw した瞬間の
-**post-change** vault balance に対して calculate され、その後
-各 loan の全期間にわたって time-weighted されます。引き出し は、
-あなたの open loans すべてに対して、新しい (低い) balance を
-使って rate を即座に re-stamp します — 古い (高い) tier が残る
-grace window はありません。これにより、loan 終了直前に VPFI を
-top up して full-tier discount を取り、数秒後に withdraw する
-exploit pattern を防ぎます。
+Tier は、VPFI を deposit または withdraw した瞬間の **post-change**
+vault balance に対して calculate されます。実際に charge される rate
+は settlement 時点のあなたの tier から決まり、各 loan 固有の期間に
+ついて別途 average を取ることはありません。守りになっているのは tier
+そのものです。最長 30 日の直近 window — protocol の設定で、現在の
+holding が始まった日から数え、直近の日ほど重く扱われます — における
+日次 balance の time-weighted average を取り、その average をさらに、
+その holding が始まって以降に一度でも下がった最も低い tier まで
+引き下げます。こちらは最大 30 日さかのぼります。
+
+**この二つの遡り方は別物で、たいてい後者のほうが長くなります。**
+averaging window は設定可能で 30 日より短くもできますが、最も低い
+tier の遡りはそれに連動せず、現在の holding 全体（上限 30 日）に
+及びます。したがって averaging window を 14 日にしても、20 日前の
+下落は average の外にありながら依然として tier を押し下げます。
+
+ゼロより大きい balance を **連続して** 最低日数だけ hold するまで、
+tier はまったくのゼロです。これも protocol の設定です。この日数は
+balance がゼロから正に変わったときに始まり、再びゼロに戻ったときだけ
+数え直しになります。既存の holding に積み増しても reset されません。
+
+そのため withdraw は、あなたの open loans すべてに即座に効きます —
+古い (高い) tier が残る grace window はありません。これにより、loan
+終了直前に VPFI を top up して full-tier discount を取り、数秒後に
+withdraw する exploit pattern を防ぎます。どの rule が防いでいるかに
+注意してください。長く hold している人は最低保有期間をすでに満たして
+いるので、仕事をしているのは最も低い tier の rule です。average には
+それができません。average は遅い top up で引き上げられますが、最小値
+は引き上げられないからです。
+
+その特定の pattern に対しては、現在の rule のほうが強力です。ただし
+**あらゆる面で** 厳しいわけではありません。最も低い tier の遡りは
+最大 30 日までなので、長い loan の初期の低 tier 期間はやがて履歴から
+外れます。loan 全体にわたる average ならそれを保持していました。今回
+の変更は短時間の top up への防御を強め、記憶を短くしたのです。
 
 **これは lender yield fee についての説明です。** 借り手の開始手数料の
 レートは loan の accept 時に一度だけ読み取られ、その後は withdraw も

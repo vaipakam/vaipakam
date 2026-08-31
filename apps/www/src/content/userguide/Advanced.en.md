@@ -93,12 +93,43 @@ Tier ladder:
 
 Tier is computed against your **post-change** vault balance the
 moment you deposit or withdraw VPFI. **For the lender yield fee**
-it is then time-weighted across each loan's lifetime: an unstake
-re-stamps the rate at the new lower balance immediately for every
-open loan you're on, with no grace window where your old (higher)
-tier still applies. This closes the gaming pattern where a user
-could top up VPFI just before a loan ends, capture the full-tier
-discount, and withdraw seconds later.
+the rate that is actually charged is resolved at settlement from
+your tier at that moment — there is no separate average taken over
+each loan's own lifetime. Your tier itself is the guard: it is a
+time-weighted average of your daily balance over a recent window of
+up to 30 days — a protocol setting, counted from the day your
+current holding began, weighting the most recent days more heavily.
+That average is then held down to the lowest tier you fell to at any
+point since your holding began, looking back up to 30 days.
+
+**Those are two separate look-backs, and the second is usually the
+longer one.** The averaging window is configurable and can be set
+shorter than 30 days; the lowest-tier look-back is not tied to it —
+it spans your whole current holding, capped at 30 days. So with a
+14-day averaging window, a dip 20 days ago still holds your tier
+down even though it falls outside the average.
+
+Your tier is zero altogether until you have held a non-zero balance
+**continuously** for a minimum number of days, also a protocol
+setting. That clock starts when your balance goes from zero to
+positive and restarts only if it returns to zero — topping up an
+existing holding does not restart it.
+
+An unstake therefore bites immediately across every open loan
+you're on, with no grace window where your old (higher) tier still
+applies. This closes the gaming pattern where a user could top up
+VPFI just before a loan ends, capture the full-tier discount, and
+withdraw seconds later. Note which rule closes it: a long-standing
+holder has already satisfied the minimum period, so the work is done
+by the lowest-tier rule, which an average could not do — an average
+can be pulled up by a late top-up, a minimum cannot.
+
+Against that specific pattern the current rule is the stronger of
+the two. It is **not** stronger in every respect: because the
+lowest-tier look-back reaches back at most 30 days, a long loan's
+early low-tier months eventually stop counting, where an average
+across the loan's whole life would have kept them in. The change
+tightened the brief-top-up defence and shortened the memory.
 
 **The borrower's initiation-fee rate is read once, when the loan
 is accepted**, so nothing you do afterwards moves it — neither a
@@ -2081,9 +2112,17 @@ During this aging window:
 
 ### Time-weighted, not snapshot
 
-Your effective tier is averaged across a rolling 30-day
-window, with the LAST 7 days weighted 3× and the previous
-23 days weighted 1×. This means:
+Your effective tier is averaged across a rolling window —
+currently 30 days, a governance setting the protocol bounds
+to 14–30 — with the LAST 7 days weighted 3× and the earlier
+days weighted 1× (both of those are settings too, bounded
+1–10 for the weight). The window never reaches back past the
+day your current **continuous holding** began — the day your
+balance first went above zero and stayed there — so a recent
+depositor is not diluted by days they held nothing. Note that
+adding to a holding you already have does NOT move that day:
+the window keeps your pre-top-up days, which is why a top-up
+does not immediately lift your tier. This means:
 
 - The most recent week dominates — recent behaviour matters.
 - A "top-up right before a loan settles" doesn't immediately

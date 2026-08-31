@@ -85,12 +85,40 @@ Tier ladder:
 | 4    | > `{liveValue:tier4Min}`                | `{liveValue:tier4DiscountBps}`%   |
 
 Tier는 VPFI를 deposit하거나 withdraw하는 순간의 **post-change** vault
-balance를 기준으로 calculate되고, 각 loan의 전체 기간에 대해
-time-weighted 처리됩니다. 인출는 내가 관여하는 모든 open loans에
-대해 새로운 (낮은) balance로 rate를 즉시 re-stamp합니다 — 이전 (높은)
-tier가 계속 적용되는 grace window는 없습니다. 이는 loan 종료 직전에
-VPFI를 top up해 full-tier discount를 받고 몇 초 뒤 withdraw하는 exploit
-pattern을 막습니다.
+balance를 기준으로 calculate됩니다. 실제로 부과되는 rate는 settlement
+시점의 tier에서 결정되며, 각 loan의 자체 기간에 대해 별도의 average를
+내지 않습니다. 방어 장치는 tier 자체입니다. tier는 최대 30일의 최근
+window — protocol 설정이며, 현재 holding이 시작된 날부터 세고, 최근
+날짜에 더 큰 가중치를 둡니다 — 동안의 일별 balance에 대한
+time-weighted average이고, 그 average는 다시 그 holding이 시작된 이후
+한 번이라도 내려간 가장 낮은 tier까지 끌어내려집니다. 이쪽은 최대
+30일을 거슬러 봅니다.
+
+**이 둘은 서로 다른 look-back이며, 보통 뒤쪽이 더 깁니다.** averaging
+window는 설정 가능하고 30일보다 짧게 둘 수도 있지만, 가장 낮은 tier의
+look-back은 거기에 묶여 있지 않고 현재 holding 전체(최대 30일)에
+걸칩니다. 따라서 averaging window가 14일이어도, 20일 전의 하락은
+average 밖에 있으면서 여전히 tier를 눌러 둡니다.
+
+0보다 큰 balance를 **끊김 없이** 최소 일수 동안 hold하기 전까지 tier는
+완전히 0이며, 이 역시 protocol 설정입니다. 이 기간은 balance가 0에서
+양수로 바뀔 때 시작되고, 다시 0이 될 때만 처음부터 다시 셉니다. 이미
+가지고 있던 holding에 더 넣는 것으로는 초기화되지 않습니다.
+
+그래서 withdraw는 내가 관여하는 모든 open loans에 즉시 영향을 미칩니다
+— 이전 (높은) tier가 계속 적용되는 grace window는 없습니다. 이는 loan
+종료 직전에 VPFI를 top up해 full-tier discount를 받고 몇 초 뒤
+withdraw하는 exploit pattern을 막습니다. 어떤 규칙이 막는지 보십시오.
+오래 hold해 온 사람은 최소 보유 기간을 이미 충족했으므로, 일을 하는
+것은 가장 낮은 tier 규칙입니다. average로는 할 수 없는 일입니다.
+average는 늦은 top up으로 끌어올릴 수 있지만 최솟값은 그럴 수 없기
+때문입니다.
+
+그 특정 pattern에 대해서는 현재 규칙이 둘 중 더 강합니다. 다만 **모든
+면에서** 더 엄격한 것은 아닙니다. 가장 낮은 tier의 look-back이 최대
+30일까지만 거슬러 가므로, 긴 loan의 초기 낮은 tier 기간은 결국 계산에서
+빠지지만, loan 전체에 걸친 average였다면 그대로 남았을 것입니다. 이번
+변경은 짧은 top up에 대한 방어를 강화하고 기억을 짧게 만들었습니다.
 
 **위 내용은 lender yield fee에 대한 것입니다.** 차입자의 개시 수수료율은
 loan이 accept될 때 한 번만 읽히며, 이후 withdraw나 top up으로 바뀌지 않습니다.

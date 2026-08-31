@@ -712,19 +712,109 @@ reasons.
 > (yield-fee discount) is unaffected and current. See #1352, #1555.
 
 Both sides of the VPFI fee discount (lender yield-fee + borrower Loan
-Initiation Fee) are **time-weighted** across a loan's lifetime and
-**not** a point-in-time tier lookup. The lender discount reduces the
-yield-fee treasury haircut at settlement; the borrower discount is
-delivered as a VPFI **rebate** paid out alongside `claimAsBorrower`.
+Initiation Fee) are **not** a point-in-time tier lookup — but the
+time-weighting is in the **TIER**, not in a per-loan average.
+**There is no averaging over a loan's own window; T-087 Sub 1.B
+removed it** (#1981, owner decision 2026-08-31: the code is the
+intended behaviour, the docs were stale). The lender discount reduces
+the yield-fee treasury haircut at settlement; the borrower discount is
+delivered as a VPFI **rebate** paid out alongside `claimAsBorrower` on
+the grandfathered peg-custody path (see the scope banner above).
 
-**Time-weighted accumulator (`LibVPFIDiscount.rollupUserDiscount`)**:
-re-stamps the BPS at the **post-mutation** vault VPFI balance on
-every change, so an unstake takes effect immediately for every open
-loan's average. Pre-Phase-5 code stamped at pre-mutation balance,
-which let a user keep a high-tier stamp after dropping to tier 0
-until the next balance change — gaming vector. Always call rollup at
-mutation sites passing the post-mutation balance; read-only snapshots
-pass the live balance.
+**What actually resolves a discount —
+`VPFIDiscountAccumulatorFacet.effectiveTierAndBps`**, three gates, all
+of which must pass:
+
+1. **Minimum staked duration.** Zero tier until the CURRENT stake has
+   been held `cfgTwaMinStakedDaysEffective()` days (`setTwaMinStakedDays`,
+   bounded **2–14**, default **3**). `_maintainStakerLifecycle` stamps
+   `currentStakeStartSec` only on a **zero→positive** transition and
+   clears it only on **positive→zero**, so this is CONTINUOUS NON-ZERO
+   TENURE — a top-up by an existing holder does not restart the clock,
+   and therefore this gate does NOT block a top-up before settlement.
+   Step 3 is what does. Do not describe this gate as tenure of the
+   current *balance* (#1981 r1 P2).
+2. **Recency-weighted TWA** (`_computeTwa` over `s.dayBalances.dayClose`)
+   → `rawTier`. The window is `cfgTwaWindowDaysEffective()`
+   (`setTwaWindowDays`, bounded **14–30**, default **30** — the upper
+   bound IS the ring buffer's 30 slots), and the last
+   `cfgTwaRecentDaysEffective()` days (default 7) carry
+   `cfgTwaRecentWeightEffective()`× weight (default 3, bounded 1–10).
+   **The scan floor is raised to `currentStakeStartDayId`**, so
+   pre-stake days never dilute a new staker's average.
+3. **Min-tier-over-history clamp** (`_computeRingBufferMinTier`, over
+   each day's `dayMin`, so a same-day dip counts) →
+   `effTier = min(rawTier, minOverHistory)`. Note it uses a DIFFERENT
+   knob and the OPPOSITE floor rule from step 2: the window is
+   `minDays`, but it is WIDENED down to `currentStakeStartDayId` when
+   the stake is older, then floored at `today - 29`. So in practice it
+   scans the whole life of the current stake, capped at 30 days.
+
+**Three things not to write about this**, each learned by writing them
+and being caught (#1981 rounds 1–4):
+
+1. **Not "30 days" as a fixed figure.** It is the DEFAULT and the CAP of
+   step 2's window, not the rule; step 3's is a different knob again.
+   The first pass said it flatly across twenty locale files.
+2. **Not "your current balance"** for either the gate or the window
+   floor. Both key on the CURRENT CONTINUOUS NON-ZERO HOLDING. Adding to
+   an existing holding moves neither, which is *why* a top-up does not
+   lift a tier — the opposite of what "current balance" implies.
+3. **Never let step 3 borrow step 2's window.** They read as one idea in
+   English — both recent, both 30 days at the default — so any sentence
+   that describes the average and then says "in it", "in that window" or
+   "in the same period" silently claims the wrong rule. Write them as two
+   look-backs every time, even when it costs a clause. This was corrected
+   in one surface and immediately rewritten into another **three times**
+   over four review rounds, including into the live marketing copy.
+
+Against the brief-top-up vector this is STRICTER than the loan-window
+average it replaced: an average can be pulled up by a late spike, a
+minimum cannot, and `dayMin` captures a same-day dip that a
+close-of-day read would miss. So the anti-gaming claim the old wording
+made is still true — via a different mechanism.
+
+**It is not uniformly stricter, and do not write that it is** (#1981
+r1 P2). Step 3's history is capped at 30 days, so a long loan's early
+low-tier period rolls out of it, where a loan-lifetime average kept it
+for the whole term. On a 100-day loan with 70 low-tier days then 30
+high-tier days, the current rule can resolve the high tier and the
+removed one could not. Stronger defence, shorter memory.
+
+**`rollupUserDiscount` is NOT vestigial — its consumer moved.** The
+rollup writes `dayBalances` (`dayClose` + `dayMin`), `lastUpdateDayId`
+and `currentStakeStartSec`, which is exactly what the three gates
+above read. Keep calling it at mutation sites with the
+**post-mutation** balance (pre-Phase-5 code stamped pre-mutation,
+which let a user keep a high-tier stamp after dropping to tier 0 —
+gaming vector); read-only snapshots pass the live balance.
+
+**What is DEAD, and must not be relied on** (#1981 r3 — this list said
+"still populated" / "still written" until then, which is wrong and
+worse than vague: it invites a reader to treat these as a live
+compatibility or analytics surface):
+
+- `lenderDiscountAccAtInit` / `borrowerDiscountAccAtInit` — the slots
+  are retained in the `Loan` layout but **nothing assigns them**.
+  `_snapshotLenderDiscount` / `_snapshotBorrowerDiscount` only call
+  `rollupUserDiscount`; a repo-wide search finds no write. Every loan
+  opened since T-087 Sub 1.B carries **zero** here.
+- `cumulativeDiscountBpsSeconds` — likewise **never written**.
+  `_rollupCore` updates the lifecycle fields, the day ring buffer and
+  the projected expiry, and nothing else. `VPFIDiscountFacet`'s getter
+  returns a FROZEN pre-T-087 value, not a running total; an indexer
+  plotting it is plotting stale data.
+
+An earlier version of this section said "don't bypass"
+`borrowerDiscountAccAtInit` — that invariant no longer exists.
+
+**Naming caveat**: `LibVPFIDiscount.lenderHoldTierDiscountBps` /
+`borrowerHoldTierDiscountBps` were called `lenderTimeWeightedDiscountBps`
+/ `borrowerTimeWeightedDiscountBps` until #1981. The old names claimed
+a per-loan averaging they had not performed since T-087 Sub 1.B, and
+are the likeliest reason this whole section went stale — a reader
+checking the name instead of the body would have concluded the docs
+were right.
 
 **Borrower LIF — Phase 5 flow**:
 
@@ -753,8 +843,14 @@ pass the live balance.
   `LibVPFIDiscount.settleBorrowerLifProper(loan)`.
 - Every default / liquidation terminal path MUST call
   `LibVPFIDiscount.forfeitBorrowerLif(loan)`.
-- Loan struct `borrowerDiscountAccAtInit` is snapshotted in
-  `LoanFacet._snapshotBorrowerDiscount` at loan-init; don't bypass.
+- ~~Loan struct `borrowerDiscountAccAtInit` is snapshotted in
+  `LoanFacet._snapshotBorrowerDiscount` at loan-init; don't bypass.~~
+  **Retired (#1981)** — nothing writes the anchor and no fee path reads
+  it, so this is no longer an invariant. Left struck through
+  rather than deleted because it was stated as a mainnet invariant for
+  long enough that a reader may remember it and wonder where it went.
+  Do not restore it without also restoring the loan-window averaging
+  T-087 Sub 1.B removed.
 - The diamond holds the custody VPFI until terminal; no intermediate
   transfer. A leaked `vpfiHeld` (non-zero on a Settled loan) is a bug.
 
