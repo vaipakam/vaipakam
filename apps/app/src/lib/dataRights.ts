@@ -101,7 +101,10 @@ export const PREFERENCE_COOKIES: readonly string[] = [
  *  - `wc@2:`         From the built `@walletconnect/core` bundle. Its full
  *                    keys are assembled at runtime, so only this stem is
  *                    observable statically.
- *  - `CBWSDK`        From the built `@coinbase/wallet-sdk` bundle.
+ *  - `CBWSDK`        From the built `@coinbase/wallet-sdk` bundle. The same
+ *                    package also persists `cbwsdk.store` in LOWER case, which
+ *                    an exact match missed entirely (round 3 P1) — hence the
+ *                    case-folded comparison below rather than two entries.
  *  - `-walletlink:`  Same package, WalletLink transport.
  *
  * Matching is by SUBSTRING rather than prefix, deliberately. Three of the four
@@ -140,7 +143,18 @@ export function isAppStorageKey(key: string | null | undefined): boolean {
 export function isErasableStorageKey(key: string | null | undefined): boolean {
   if (!key) return false;
   if (isAppStorageKey(key)) return true;
-  return THIRD_PARTY_STORAGE_MARKERS.some((marker) => key.includes(marker));
+  // CASE-INSENSITIVE (round 3 P1). The markers were matched exactly, and
+  // `@coinbase/wallet-sdk@4.3.6` persists `cbwsdk.store` in lower case while
+  // the marker recorded here was `CBWSDK` — so the store holding that
+  // connector's keys, account state and spend permissions was skipped by both
+  // the deletion and the count, and the page reported a clean success over it.
+  // Casing is not a property worth being strict about when the cost of a miss
+  // is an account surviving an erasure, so the comparison folds case rather
+  // than the list gaining a second spelling of the same name.
+  const lower = key.toLowerCase();
+  return THIRD_PARTY_STORAGE_MARKERS.some((marker) =>
+    lower.includes(marker.toLowerCase()),
+  );
 }
 
 export interface DataRightsExport {

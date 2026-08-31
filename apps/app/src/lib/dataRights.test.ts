@@ -61,6 +61,9 @@ const CONNECTOR_KEYS: readonly string[] = [
   'wagmi.store',
   'wagmi.recentConnectorId',
   'wc@2:core:0.3//keychain',
+  // Round 3 P1: lower case, and an exact match on the recorded `CBWSDK`
+  // marker skipped it entirely.
+  'cbwsdk.store',
   'wc@2:client:0.3//session',
   '-CBWSDK:walletUsername',
   '-walletlink:https://www.walletlink.org:session:id',
@@ -111,6 +114,7 @@ describe('erasure reaches connector storage (#1862)', () => {
       ['vaipakam-receipt-sync-ping-v1', '1'],
       ['wagmi.store', '{"state":{"connections":{}}}'],
       ['wc@2:client:0.3//session', '[]'],
+      ['cbwsdk.store', '{"keys":{}}'],
       ['-walletlink:https://www.walletlink.org:session:id', 'abc'],
       ['some-other-dapp-preference', 'keep me'],
     ]);
@@ -144,6 +148,7 @@ describe('erasure reaches connector storage (#1862)', () => {
       // The erasure removed the connector keys...
       expect(store.has('wagmi.store')).toBe(false);
       expect(store.has('wc@2:client:0.3//session')).toBe(false);
+      expect(store.has('cbwsdk.store')).toBe(false);
       expect(store.has('-walletlink:https://www.walletlink.org:session:id')).toBe(false);
       // ...and the app's own...
       expect(store.has('app.mode')).toBe(false);

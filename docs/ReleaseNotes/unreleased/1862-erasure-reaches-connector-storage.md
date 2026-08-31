@@ -10,22 +10,29 @@ would ever reveal. So the deletion passed over it and reported success.
 Four such names are now covered: the wallet-connection library's own store and
 three belonging to the two wallet transports the app offers.
 
-**What that does and does not achieve, stated precisely, because the honest
-extent is narrower than the change first appears.** The wallet-connection
-library keeps its record of which wallet you last used in ordinary browser
-storage, and that is now removed. The two wallet transports keep their live
-session somewhere this deletion does not look — a separate browser database —
-and the app's in-memory connection is not dropped either. So a person using
-those transports is still connected after deleting, and may still be connected
-after reloading. Closing that requires asking the wallet libraries themselves to
-tear down, which is a different and asynchronous piece of work, tracked as the
-remaining half of #1862 and deliberately not claimed here.
+**What that does and does not achieve differs by which wallet you use, so it is
+worth being specific rather than summarising.** The wallet-connection library's
+own record of which wallet you last used is removed for everyone. Beyond that:
 
-There is a smaller consequence that does land now and is worth expecting: for
-the wallet types whose record was removed, the app stays connected in the
-current tab and is signed out after a reload. The page does not yet say so,
-because saying it well means saying it in ten languages, and doing that against
-half the behaviour would mean writing it twice.
+- **Coinbase Wallet's browser-extension and mobile linking mode** keeps its
+  session identifier, secret and cached addresses in ordinary browser storage,
+  and those are now removed.
+- **Coinbase's smart-wallet mode** keeps its active key in a separate browser
+  database this deletion does not open, so that key survives.
+- **WalletConnect** likewise keeps its live session in that separate database,
+  so a scanned-QR session survives.
+- **A browser-extension wallet such as MetaMask** stays authorised in the
+  extension itself, which this app cannot reach at all.
+
+The app's in-memory connection is not dropped in any of those cases, so nobody
+is signed out at the moment of deleting.
+
+An earlier draft of this note promised that you would at least be signed out
+after reloading. That is not reliably true and the claim is withdrawn: the app
+reconnects on load, and a wallet that still considers this site authorised will
+simply reconnect. Closing that properly means asking the wallet libraries to
+tear down, which is a different and asynchronous piece of work tracked as the
+remaining half of #1862.
 
 Downloading and deleting no longer look at the same set, deliberately. A
 download is a file the person can keep and forward, and wallet session material
