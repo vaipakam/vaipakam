@@ -1215,8 +1215,31 @@ export function disconnectEvery<C>(
           'to report a sign-out that did not happen',
       );
     }
+    // EVERY connector is ATTEMPTED, even after one refuses (round 5 P2). A
+    // bare `await` in the loop exits on the first rejection, so a wallet that
+    // declines would leave every connector after it in the list still
+    // connected and never even asked — and those are live clients, free to
+    // write their session back into the storage the sweep is about to clear.
+    // "One wallet held on" and "one wallet held on and the rest were never
+    // tried" are very different states to leave a user in, and only the first
+    // is what the report describes.
+    const failures: unknown[] = [];
     for (const connector of targets) {
-      await disconnect({ connector });
+      try {
+        await disconnect({ connector });
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length > 0) {
+      // Still a rejection, so the caller reports "did not disconnect" — the
+      // app IS still attached to something. What changes is that everything
+      // detachable has been detached first.
+      throw new AggregateError(
+        failures,
+        `disconnectEvery: ${failures.length} of ${targets.length} connectors ` +
+          'did not disconnect',
+      );
     }
   };
 }

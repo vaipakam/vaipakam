@@ -407,11 +407,20 @@ const copySource = {
       'Your stored data was removed, but this browser would not let the app open the wallet’s session storage, so anything kept there may still be on this device. Clearing site data through your browser’s own settings will remove it.',
     eraseSessionHeld:
       'Your stored data was removed, but the wallet’s stored session could not be cleared, so it may still be on this device. Clearing site data through your browser’s own settings will remove it.',
-    /* The wallet refused to disconnect. Everything else went; the app is
-       still attached, and saying "erased" over that is the false assurance
-       this page exists to avoid. */
+    /* The wallet refused to disconnect. The app is still attached, and
+       saying "erased" over that is the false assurance this page exists to
+       avoid.
+
+       SAYS NOTHING ABOUT THE STORAGE (round 5 P2). This line is appended to
+       whichever storage outcome applies rather than replacing it — round 2
+       made it additive because a storage holdout and a wallet holdout can
+       occur together and have unrelated remedies. It kept its own opening
+       claim through that change, so the two could contradict each other in
+       the same breath: "nothing was removed" immediately followed by "Your
+       stored data was removed". An additive clause has to be silent about
+       the outcome the sentence above it just reported. */
     eraseWalletHeld:
-      'Your stored data was removed, but the wallet would not disconnect, so this site is still connected to it. Disconnect from your wallet directly, then erase again.',
+      'The wallet would not disconnect, so this site is still connected to it. Disconnect from your wallet directly, then erase again.',
     eraseBlocked:
       'This browser would not let the app clear its storage, so nothing was removed. Private-browsing windows and locked-down privacy settings can both do this — clearing site data through your browser’s own settings will work.',
     holdingTitle: 'What is stored right now',

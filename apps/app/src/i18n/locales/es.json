@@ -244,7 +244,7 @@
       "eraseWorking": "Cerrando sesión y borrando…",
       "eraseDoneDisconnected": "Se borraron {{count}} elementos almacenados y se cerró tu sesión aquí. A las demás pestañas que tengas abiertas se les ha pedido que borren las suyas y cierren sesión también.",
       "eraseSessionHeld": "Se eliminaron tus datos almacenados, pero no se pudo borrar la sesión guardada de la cartera, así que puede seguir en este dispositivo. Borrar los datos del sitio desde la configuración de tu navegador la eliminará.",
-      "eraseWalletHeld": "Se eliminaron tus datos almacenados, pero la cartera no se desconectó, así que este sitio sigue conectado a ella. Desconéctate directamente desde tu cartera y vuelve a borrar.",
+      "eraseWalletHeld": "La cartera no se desconectó, así que este sitio sigue conectado a ella. Desconéctate directamente desde tu cartera y vuelve a borrar.",
       "eraseStoresUnreadable": "Se eliminaron tus datos almacenados, pero este navegador no permitió a la app abrir el almacenamiento de sesión de la cartera, así que lo que haya allí puede seguir en este dispositivo. Borrar los datos del sitio desde la configuración de tu navegador lo eliminará."
     },
     "killSwitch": {

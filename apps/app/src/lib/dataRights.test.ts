@@ -1047,7 +1047,26 @@ describe('round 3 — the reported count, the sentinel, the wedged transaction',
     }) => {
       if (connector === 'walletConnect') throw new Error('user rejected');
     });
-    await expect(teardown()).rejects.toThrow('user rejected');
+    await expect(teardown()).rejects.toThrow(/did not disconnect/);
+  });
+
+  it('keeps going after one connector refuses, instead of stranding the rest', async () => {
+    // Round 5 P2. A bare `await` in the loop exits on the first rejection, so
+    // a wallet that declines left every connector after it still connected
+    // and never even asked — live clients, free to write their session back
+    // into the storage the sweep is about to clear. "One wallet held on" and
+    // "one wallet held on and the rest were never tried" are different states
+    // to leave a user in, and only the first is what the report describes.
+    const asked: string[] = [];
+    const teardown = disconnectEvery(
+      ['metaMask', 'walletConnect', 'coinbase'],
+      async ({ connector }) => {
+        asked.push(connector);
+        if (connector === 'metaMask') throw new Error('user rejected');
+      },
+    );
+    await expect(teardown()).rejects.toThrow(/1 of 3/);
+    expect(asked).toEqual(['metaMask', 'walletConnect', 'coinbase']);
   });
 
   it('tears down a wedged transaction when the timeout fires', async () => {
