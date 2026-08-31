@@ -1,3 +1,251 @@
+# Release Notes — 2026-08-28
+
+Three of the day's five entries are the same shape: the keeper reading less, and
+reading it in fewer round trips. The liquidity-confidence pass stops re-reading
+what cannot have changed (#1993), the per-tick RPC budget is told apart into
+scan work and action work so the two stop competing (#1992), and the
+remittance-ack pass takes its ledger window in one read instead of many (#1994).
+That is the #1896 CPU-budget problem being worked rather than waited out. The
+other two are about authority: the Terms of Service can apply to somebody again
+on the connected app, and the account's cron budget now has a single authority
+whose count is the true one rather than one of several disagreeing records.
+
+## Thread — The liquidity-confidence pass stops re-reading what cannot change (PR #1993)
+
+The keeper's liquidity-confidence pass decides, per collateral asset, whether
+real aggregator routing supports the depth tier the protocol has on file. Its
+per-tick request budget was dominated by two things that were not that
+decision.
+
+The first was the scan that finds which assets to evaluate at all: it read every
+active loan's details one at a time, sequentially, purely to collect the
+distinct collateral assets among them. Those reads are now batched. The walk
+still stops as soon as it has as many distinct assets as a tick will evaluate,
+and the batches are sized to that same cap so that a book whose loans all carry
+different collateral does not decode a pile of loan records the old loop would
+never have touched — decoding is the cost this work is about, so a batch that
+overshoots the cap would trade a smaller request count for a larger one.
+
+The second was repetition. For every asset under evaluation the pass asks the
+token for its decimals, and then does the same for each quote token it might
+route through — a value that is fixed for the life of the contract, re-read
+dozens of times a tick. It is now remembered for the duration of one chain's
+tick, with two deliberate limits. The memory is scoped to a single chain and
+discarded afterwards, because the same address is a different token on a
+different chain. And only successful reads are remembered: the decimals path
+falls back to a default when it cannot read the real value, and a remembered
+wrong default would silently distort every slippage figure derived from it for
+the rest of the tick.
+
+Oracle prices were **not** given the same treatment, and the reason is worth
+recording. An earlier draft of this change remembered them too, which would have
+saved more. But the oracle read is live rather than a snapshot of one moment,
+and a tick is not instantaneous — evaluating a couple of dozen assets means
+dozens of sequential requests to outside pricing services. Reusing an early
+asset's price against a later asset's freshly quoted one would compute a
+slippage figure across two different market moments. The consequence is
+lopsided: raising an asset's tier requires the same verdict several ticks
+running and would absorb a blip, but lowering it happens immediately by design,
+so a single stale price could lower a tier — and the tier governs how much can
+be borrowed against that asset. The saving was not worth that, so prices are
+read fresh, and a test asserts they are not cached rather than leaving it to a
+comment.
+
+Measured against the profiling fixture the pass drops from 428 requests per tick
+to 215, and its CPU from 207 ms to 150 ms.
+
+Separately, the profiling fixture could not see the decimals saving at all: it
+carried no ERC-20 interface, so every such read failed and fell back to the
+default — silently, because the pass swallows that failure without logging it.
+The fixture reported this pass as making zero errors while it failed 78 reads
+per run. It now answers those reads, which is what makes the figure above a
+like-for-like comparison.
+
+Refs #1896.
+<!-- assembled-fragment: 1896-liqconf-read-budget.md sha256=80b273f836c7078c5704f2f813995fe10720263fbbe2b77205a42e428e778704 -->
+
+## Thread — The keeper's per-tick RPC budget, told apart into scan and action (PR #1992)
+
+The keeper's CPU profiling harness could say how many RPC calls each pass made
+per tick, but not what they were for. That gap produced a wrong conclusion the
+first time the numbers were published: the liquidator's 528 calls were read as
+book-scanning work and queued for batching, when in fact the fixture answers
+every health factor below the liquidation line, so every loan it scanned was
+actionable and most of those calls were the submission path. Batching them
+would have optimised a fixture artifact.
+
+The harness now attributes every request by the contract function it called
+(or, for the non-contract ones, by its JSON-RPC method), separates the
+transaction-submission methods into a stated subtotal, and reports what was
+carried inside each batched read rather than only that a batch happened. The
+resulting per-pass breakdown answers the question the bare call count could
+not: a pass whose traffic is a paginated list plus one read per item is doing
+book scan and batching is the fix; a pass whose traffic is quotes, nonces, gas
+estimates and sends is doing per-item work, and the fix there is a bound on how
+many items it acts on per tick, or nothing at all. The action share is
+explicitly a worst case — the fixture presents a fully saturated book — while
+the scan share does not depend on that, and the runner says so in its output.
+
+Applied to the ten passes, that split named one unambiguous case. The pre-grace
+warning pass made 612 requests per tick with not one of them on a transaction
+path: three sequential reads per active loan, plus one read per offer in the
+book it consults to decide whether a borrower already has a viable
+counterparty. All of it scan. Those reads are now issued as batched
+multicalls in three stages — opt-in caps first, loan details for the loans that
+opted in, then the borrower-NFT owner for the loans actually inside the warning
+window — which is 24 requests per tick instead of 612, with the same reads
+performed and the same per-loan failure isolation. A loan whose read reverts is
+still logged and skipped rather than aborting the chain. Nothing about which
+borrowers get warned, or when, changes.
+
+The three-stage shape is deliberate rather than one flat batch: each stage's
+input is the previous stage's survivors, so reading loan details for a loan
+whose owner never opted in would trade the saved round-trips straight back.
+A test pins the traffic shape for all four of the pass's reads separately —
+a partial regression where one stage quietly falls back to per-item reads while
+the others batch is exactly what a combined count would hide.
+
+One thing surfaced while checking that guard would hold: the keeper's test
+suite ran in no CI workflow at all. The Worker is typechecked, which is what
+made the gap easy to miss — a green column on every pull request meant "it
+compiles", never "its tests pass". Two hundred and twenty-one tests had never
+executed in CI, among them the guard added earlier for exactly this class of
+defect, where multicall batching silently degrades to one request per item and
+the pass reports success either way. A guard for an invisible failure is worth
+little if the guard itself never runs. The keeper's suite now gates alongside
+the connected app's, the shared library's and the indexer's. The agent's suite
+remains in the same unrun state and stays tracked separately.
+
+Refs #1896.
+<!-- assembled-fragment: 1896-pregrace-batching-and-attribution.md sha256=40df8f0359498217da1cebb7c38ca034bf202795af3dc29965e3b470ee07a4f1 -->
+
+## Thread — The remittance-ack pass reads its ledger window in one go (PR #1994)
+
+The keeper drives the acknowledgement that finalises each cross-chain reward
+remittance. To find which remittances are still waiting, it walks a bounded
+window of the reservation ledger and asks after each one in turn — up to two
+hundred separate requests per tick, on a pass whose actual work, sending the
+acknowledgements, is a small fraction of its traffic. The window is now read in
+one request per hundred reservations. Its bounds, and the order the results are
+processed in, are unchanged.
+
+One behaviour needed preserving deliberately, and it is the reason this change
+carries a test rather than just a measurement. In the old shape a failed read
+threw, which abandoned the whole scan for that chain — so neither the frontier
+that marks "everything below here is finished" nor the rotating cursor advanced
+past a reservation whose status had never been read. A batched read does not
+throw; it hands back a per-entry failure. The obvious translation, skipping the
+failed entry and carrying on, would have quietly moved the cursor past an
+unread reservation and dropped it from the scan until the window came round
+again. So a failed entry still aborts the scan, and a test asserts that no scan
+progress is recorded when one occurs.
+
+Against the profiling fixture the pass drops from 249 requests per tick to 51.
+What remains is the acknowledgement path itself, which is already capped at five
+sends per tick — the share of the pass's traffic that is transaction submission
+rises from 8% to about half, which is the intended shape: what is left is work,
+not scanning.
+
+Refs #1896.
+<!-- assembled-fragment: 1896-remitack-scan-batching.md sha256=d4ef0a97b0bf912d5561cc6d382ba51acc5fe358ad88f9e520e610a5ac497431 -->
+
+## Connected app — the Terms of Service can apply to somebody again
+
+The connected app now asks a wallet to accept Vaipakam's Terms of
+Service when a version of them is in force, and holds the app closed
+until it does.
+
+That sounds like a feature being added. It is really a control being put
+back. The retired app had this gate; the successor was built without it,
+and the omission was not visible from either side on its own. Nothing in
+the app looked missing, and nothing on-chain looked broken — because the
+Terms requirement is one of the few rules the protocol deliberately does
+**not** enforce for itself. The contracts record who accepted which
+version and publish which version is in force, and they leave the
+blocking to the app. So an app with no gate does not degrade the
+requirement; it deletes it. Operators could have published terms,
+switched them on, and watched every wallet keep transacting without ever
+being shown them — with no error anywhere to say so.
+
+What users see depends entirely on whether terms are in force, and today
+none are. In that state nothing changes: the app behaves exactly as it
+does now, for everybody. The moment operators put a version in force,
+anyone with a wallet connected is asked once to accept it, shown the
+version and a fingerprint of the exact text, with links to read the
+Terms and the Privacy Policy before agreeing. Accepting sends one
+transaction — the wallet asks for confirmation and it costs a small
+network fee, since the record is kept on chain rather than in the app. Nobody is asked again unless the terms themselves change — and
+if they do change, the previous acceptance stops counting, which is the
+point of recording a version rather than a tick.
+
+Acceptance is recorded per network. A wallet that has accepted on one
+supported chain is asked again on another, because each deployment keeps
+its own record and the app can only read the one it is pointed at.
+
+Three deliberate choices are worth stating, because each is a place this
+kind of gate usually goes wrong.
+
+**It refuses to guess, and it says which kind of "no" it means.** If the
+app cannot reach the network to find out whether terms apply, it does
+not assume they do not. It says it could not confirm and offers to try
+again — rather than telling you to accept terms you may well have
+accepted already, which would be both untrue and impossible to act on. The tempting alternative — let people through when
+the check fails — would mean the gate stops working precisely when the
+network is flaky, which is neither rare nor hard to arrange
+deliberately.
+
+Pages that only show you something — the explainer, your own history,
+checking a position token — are never withheld either. There is nothing
+on them to withhold, and somebody trying to find out what the terms
+mean should not be met by a page that will not open.
+
+**It never blocks getting your money out, or taking back control.**
+Repaying, claiming and withdrawing are not behind this, and neither is
+anything else that reduces what you are committed to: cancelling your
+own offers and orders, adding collateral to a position under pressure,
+and withdrawing permissions you granted earlier — a keeper's authority
+over your positions, or the consent that lets fees be taken
+automatically from your vault. Handing a position over in one step to
+someone who has already offered to take it counts too — a lender being
+bought out, a borrower's obligation moving to a replacement — because
+those end the position outright, and blocking them would have left the
+slow way out open while shutting the instant one. A rule about
+accepting terms should never become a reason somebody cannot close a
+position, and it should never leave a permission running that they are
+no longer allowed to cancel.
+
+The same rule reaches the alert settings, which never touch the
+protocol at all. Signing up for reminders — linking a messaging channel,
+or switching a reminder on — waits until the terms are accepted.
+Switching one off, or unlinking, always works, and each reminder can be
+switched off on its own. That last part sounds obvious and was not: an
+earlier version of this decided by asking whether anything was still
+switched on afterwards, which meant anyone with two reminders enabled
+could not turn either one off — a rule about accepting terms leaving
+somebody unable to stop being messaged.
+
+Nor does a refusal cost anything. Where an action needs a separate
+approval step first, the terms are checked before that step, so nobody
+pays a network fee for an approval that was going to be turned down.
+Nobody is asked to pay for the same acceptance twice either: once the
+network has confirmed it, the app treats it as done even while its own
+next check is still catching up, rather than putting the prompt back in
+front of someone who has already paid. And when the app does refuse
+something, it names a page that will actually ask — the pages that stay
+open regardless of acceptance deliberately never ask, so pointing at one
+of those would have sent people in a circle.
+
+**It does not decide who has accepted.** That question is answered on
+chain, by the same contract that holds the terms, which checks both the
+version and a fingerprint of the text. Working that out in the app would
+have been a second implementation of a rule that already exists, free to
+drift from it.
+
+This clears one of the two capabilities that had to exist before users
+could be moved from the old connected app to the new one. The other, the
+Data Rights export and erase controls, is still outstanding.
+<!-- assembled-fragment: 1961-tos-gate-connected-app.md sha256=8c0a50093ad4df6085530f60cba85ad228a8f2cbad356d9b6ac177492a850718 -->
+
 ## Ops — the account's cron budget now has one authority, and the count in it is the true one
 
 Cloudflare's free plan caps the account at five cron triggers, and how many
@@ -275,3 +523,4 @@ Refs #1972, the general class this came out of — live infrastructure state
 asserted in many documents and authoritative in none. This is that issue's
 shape applied to the one fact where the drift turned out to be load-bearing
 rather than cosmetic; the hostname half of it is still open.
+<!-- assembled-fragment: 1977-cron-slot-authority.md sha256=37d8d736aab75ac15b1a4decce47a4cb90dffb0870b27dc58aac1045cc78579a -->

@@ -1,4 +1,15 @@
-## Thread — Support reports no longer leak percent-encoded wallet addresses (PR #<n>)
+# Release Notes — 2026-08-31
+
+One entry, on a promise the platform makes in two places and was keeping in
+neither reliably. A support report is a pre-filled public issue, and both the
+report builder and the Privacy Policy state that a full wallet address never
+leaves the device through one. An address arriving percent-encoded passed the
+scrubber untouched, and a single decode recovered it. The fix reaches
+considerably further than that first gap — nested encoding, budgets that fail
+closed, bounded input, and the same rule now shared with the service that
+receives support tickets rather than kept as a second, weaker copy there.
+
+## Thread — Support reports no longer leak percent-encoded wallet addresses (PR #2026)
 
 The Diagnostics drawer builds a support report as a pre-filled GitHub issue,
 and everything in it passes through an address shortener first — the module
@@ -85,3 +96,4 @@ new handling fails exactly the encoded cases and leaves the rest green, so
 the tests pin the fix without freezing the parts that were already right.
 
 Closes #2024.
+<!-- assembled-fragment: 2024-redact-encoded-addresses.md sha256=1b7b8f183880280303f769efbbecb4fbbf0774a0a94dd84538cfcb56f69de901 -->
