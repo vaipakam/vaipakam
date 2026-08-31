@@ -1533,16 +1533,15 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '') {
         return false;
       }
       if (/\.toml$/.test(path)) {
-        // ARRAY DEPTH, so a nested array item is not read as a table header —
-        // the same r16 rule the name reader carries. Reported against that
-        // reader only; applying it to one of a pair is how this file's findings
-        // keep recurring, and here the cost is declining to bless a SAFE deploy.
-        let arrayDepth = 0;
-        for (const line of text.split('\n')) {
-          if (arrayDepth === 0 && /^\s*\[/.test(line)) break;
-          if (/^\s*keep_vars\s*=\s*true\s*(?:#.*)?$/.test(line)) return true;
-          arrayDepth += tomlBracketDelta(line);
-          if (arrayDepth < 0) arrayDepth = 0;
+        // STATE-AWARE, so neither a nested array item nor the contents of a
+        // multiline string can answer. A raw line scan let a `keep_vars = true`
+        // sitting INSIDE a string body bless a destructive deploy of a
+        // protected Worker (Codex #2036 r19) — the false-green direction, and
+        // reachable through the very array shape r16 had just admitted.
+        for (const l of tomlLines(text)) {
+          if (l.isHeader) break;
+          if (l.inString) continue;
+          if (/^\s*keep_vars\s*=\s*true\s*(?:#.*)?$/.test(l.text)) return true;
         }
         return false;
       }
@@ -2759,6 +2758,50 @@ function firstArgvArray(text, before = '') {
  *
  * Quote-aware, and a `#` outside a string starts a comment.
  */
+/**
+ * Each TOML line with the state it is read in.
+ *
+ * `{ text, inString, isHeader }`. `inString` means the line STARTS inside a
+ * multiline string body, so nothing on it is a key, a header or a bracket.
+ * `isHeader` means it opens a table — which needs both that state and the array
+ * depth, since a nested array item also begins with `[`.
+ *
+ * Written when a third reader of this file needed the same state (#2036 r19).
+ * The name reader has tracked multiline bodies since r5; the preservation
+ * reader and the environment-table test were each a raw line or text scan, so a
+ * string body could supply a `keep_vars` the config does not set, and quoted
+ * prose could invent an environment table. One scan, three readers.
+ */
+function* tomlLines(text) {
+  const OPENERS = ['"""', "'''"];
+  let open = null;
+  let arrayDepth = 0;
+  for (const line of text.split('\n')) {
+    const startedInString = open !== null;
+    const isHeader = !startedInString && arrayDepth === 0 && /^\s*\[/.test(line);
+    yield { text: line, inString: startedInString, isHeader };
+    // The delimiter run for this line, escape-aware for BASIC strings only —
+    // literal strings process no escapes (r16).
+    for (let i = 0; i < line.length; i += 1) {
+      if (open === '"""' && line[i] === '\\') {
+        i += 1;
+        continue;
+      }
+      // Outside a string a `#` starts a comment; inside one it is content.
+      if (open === null && line[i] === '#') break;
+      const hit = OPENERS.find((d) => line.startsWith(d, i));
+      if (!hit) continue;
+      if (open === null) open = hit;
+      else if (open === hit) open = null;
+      i += 2;
+    }
+    if (!startedInString && open === null) {
+      arrayDepth += tomlBracketDelta(line);
+      if (arrayDepth < 0) arrayDepth = 0;
+    }
+  }
+}
+
 function tomlBracketDelta(line) {
   let delta = 0;
   let quote = null;
@@ -3163,11 +3206,110 @@ function configIsRewritten(text, cfgPath) {
  * and returning its source spelling as an environment NAME would be worse than
  * declining, since the name decides which config block is consulted.
  */
+/**
+ * Is the `CLOUDFLARE_ENV` key at `at` a real one, rather than text inside
+ * another value?
+ *
+ * A quoted element that IS EXACTLY the key (`{"CLOUDFLARE_ENV": "staging"}`)
+ * still counts. Requiring only that the key start after an opening quote was
+ * not enough: in `"CLOUDFLARE_ENV: staging"` it also does, and that string sets
+ * nothing — so the closing quote has to come straight after the key.
+ *
+ * Hoisted out of the predicate when the VALUE reader needed the same test
+ * (#2036 r19) — one reader had it and the other searched the whole call, which
+ * is what let a string that merely quotes an assignment choose the environment.
+ */
+function notInsideString(text, at) {
+  let q = null;
+  for (let i = 0; i < at; i += 1) {
+    const c = text[i];
+    if (q) {
+      if (c === '\\') i += 1;
+      else if (c === q) q = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') q = c;
+  }
+  if (q === null) return true;
+  return text[at - 1] === q && text[at + 'CLOUDFLARE_ENV'.length] === q;
+}
+
+/**
+ * The BODY of every child-process `env` option object in this text.
+ *
+ * Brace-balanced so a nested object does not end one early, and scoped to the
+ * child call's own options argument, so `{metadata: {env: {…}}}` — data the
+ * runtime ignores — is not one of them.
+ *
+ * Extracted when a second reader needed the same extent (#2036 r19). Inlined,
+ * one reader had the scoping and the other searched the whole call, which is
+ * the split this file's findings keep coming back to.
+ */
+function childEnvObjects(text) {
+  return [...text.matchAll(/(?<![\w$.])env\s*[:=]\s*\{/g)]
+    .filter((opener) => atChildOptionsDepth(text, opener.index))
+    .map((opener) => {
+      let i = opener.index + opener[0].length;
+      let depth = 1;
+      let quote = null;
+      while (i < text.length && depth > 0) {
+        const c = text[i];
+        if (quote) {
+          if (c === '\\') i += 1;
+          else if (c === quote) quote = null;
+          i += 1;
+          continue;
+        }
+        if (c === '"' || c === "'" || c === '`') quote = c;
+        else if (c === '{') depth += 1;
+        else if (c === '}') depth -= 1;
+        i += 1;
+      }
+      return text.slice(opener.index, i);
+    });
+}
+
+/**
+ * Every REAL `CLOUDFLARE_ENV` assignment in one env-object body, in order.
+ *
+ * BACKTICKS ARE A THIRD QUOTE — Node hands wrangler the literal, and this read
+ * once accepted only the two ASCII forms (#2036 r16). An INTERPOLATED template
+ * is excluded on purpose: its value is not in the source, so the opaque-`env`
+ * branch is what covers it.
+ *
+ * Each match is checked not to be sitting INSIDE another value, so a string
+ * that merely quotes an assignment is not one.
+ */
+function cloudflareEnvAssignments(body) {
+  return [
+    ...body.matchAll(
+      /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[A-Za-z_$][\w$.]*)/g,
+    ),
+  ].filter((m) => notInsideString(body, m.index + (/^["']/.test(m[0]) ? 1 : 0)));
+}
+
 function envValueFromOptions(text) {
-  const m = text.match(
-    /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`)/,
-  );
-  return m ? (m[1] ?? m[2] ?? m[3]) : null;
+  // SCOPED TO THE ENV OBJECT, and to a real assignment inside it. Searching the
+  // whole call for the first `CLOUDFLARE_ENV`-looking text let a string that
+  // merely QUOTES an assignment choose the environment — `{env: {NOTE: '\"CLOUDFLARE_ENV\":
+  // \"production\"', CLOUDFLARE_ENV: 'staging'}}` gave `production` where the child
+  // receives `staging`, and the wrong environment reads the wrong config block
+  // (Codex #2036 r19). The predicate beside it had this scoping since r12; this
+  // reader was written in r17 without it.
+  //
+  // LAST assignment wins, as the object literal does.
+  for (const body of childEnvObjects(text)) {
+    const all = cloudflareEnvAssignments(body);
+    const m = all[all.length - 1];
+    if (!m) continue;
+    const v = m[1] ?? m[2] ?? m[3];
+    // A bare identifier is a binding this scanner cannot follow. It still
+    // SELECTS an environment — the predicate says so — but it names none, and
+    // returning its source spelling would consult a config block that does not
+    // exist.
+    if (v !== undefined) return v;
+  }
+  return null;
 }
 
 /** The shell's `CLOUDFLARE_ENV`, if the walk carries one. */
@@ -3225,12 +3367,21 @@ function declaredWorkerNames(absPath, includeEnvs, envName = null) {
 
 /** Does this TOML config declare any environment table? */
 function envTablesInToml(absPath) {
+  let text;
   try {
-    return /^\s*\[\s*env\s*\./m.test(readFileSync(absPath, 'utf8'));
+    text = readFileSync(absPath, 'utf8');
   } catch {
     // Unreadable answers nothing either way; the caller has already declined.
     return false;
   }
+  // A HEADER, not text that looks like one. Matched raw, `[env.production]`
+  // quoted inside an unrelated multiline string invented an environment table,
+  // which made the read incomplete and blocked a legitimate deploy whose
+  // top-level name is authoritative (Codex #2036 r19).
+  for (const l of tomlLines(text)) {
+    if (l.isHeader && /^\s*\[\s*env\s*\./.test(l.text)) return true;
+  }
+  return false;
 }
 
 function declaredWorkerName(absPath) {
@@ -3877,20 +4028,6 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // still counts. Requiring only that the key start after an opening quote was
   // not enough: in `"CLOUDFLARE_ENV: staging"` it also does, and that string
   // sets nothing — so the closing quote has to come straight after the key.
-  const notInsideString = (text, at) => {
-    let q = null;
-    for (let i = 0; i < at; i += 1) {
-      const c = text[i];
-      if (q) {
-        if (c === '\\') i += 1;
-        else if (c === q) q = null;
-        continue;
-      }
-      if (c === '"' || c === "'" || c === '`') q = c;
-    }
-    if (q === null) return true;
-    return text[at - 1] === q && text[at + 'CLOUDFLARE_ENV'.length] === q;
-  };
   const envAssigned =
     // Shell assignment, with or without `export`.
     (() => {
@@ -3944,28 +4081,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
     // "any `env: {` in the call" still let it block an ordinary deploy (Codex
     // #2036 r12). Brace DEPTH is what separates them: JavaScript's options
     // object puts `env` one brace in, Python's `env={…}` keyword none.
-    [...rawSeg.matchAll(/(?<![\w$.])env\s*[:=]\s*\{/g)]
-      .filter((opener) => atChildOptionsDepth(rawSeg, opener.index))
-      .some((opener) => {
-      // The `env` object's own extent, brace-balanced so a nested object does
-      // not end it early.
-      let i = opener.index + opener[0].length;
-      let depth = 1;
-      let quote = null;
-      while (i < rawSeg.length && depth > 0) {
-        const c = rawSeg[i];
-        if (quote) {
-          if (c === '\\') i += 1;
-          else if (c === quote) quote = null;
-          i += 1;
-          continue;
-        }
-        if (c === '"' || c === "'" || c === '`') quote = c;
-        else if (c === '{') depth += 1;
-        else if (c === '}') depth -= 1;
-        i += 1;
-      }
-      const body = rawSeg.slice(opener.index, i);
+    childEnvObjects(rawSeg).some((body) => {
       // AN INHERITED ENVIRONMENT IS NOT AN EMPTY ONE. `{env: {...process.env}}`
       // hands the child whatever the parent carries, so a `CLOUDFLARE_ENV` in
       // the shell reaches wrangler through it — and reading "no CLOUDFLARE_ENV
@@ -3978,15 +4094,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       if (/\.{3}\s*[A-Za-z_$]|\*\*\s*[A-Za-z_$]|\bos\.environ\b/.test(body)) {
         return true;
       }
-      return [...body.matchAll(
-        // BACKTICKS ARE A THIRD QUOTE. Node hands wrangler the literal, and this
-        // predicate read only the two ASCII quote forms — one more spelling the
-        // deploy detector has always accepted and a reader beside it had not
-        // (Codex #2036 r16). An INTERPOLATED template is excluded on purpose:
-        // its value is not in the source, so it is not this literal branch's to
-        // answer, and the opaque-`env` branch below already covers it.
-        /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|`[^`$]+`|[A-Za-z_$][\w$.]*)/g,
-      )].some((mm) => notInsideString(body, mm.index + (/^["']/.test(mm[0]) ? 1 : 0)));
+      return cloudflareEnvAssignments(body).length > 0;
     }) ||
     // An `env` option this scanner CANNOT READ counts as selecting one.
     //
