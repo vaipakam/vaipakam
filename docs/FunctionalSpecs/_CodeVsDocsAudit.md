@@ -707,9 +707,13 @@ day the current stake began), and then clamps to the lowest tier held over
 that history — using each day's *minimum* balance, so a same-day dip counts. Had the correction been made from the
 issue's own summary, the docs would have been rewritten to say something
 false in the opposite direction, and the user-facing anti-gaming promise
-would have been withdrawn when it is in fact true. It holds more firmly under
-the real rule than under the old one: an average can be pulled up by a late
-top-up, a minimum cannot.
+would have been withdrawn when it is in fact true. Against that specific
+pattern it holds more firmly under the real rule than under the old one: an
+average can be pulled up by a late top-up, a minimum cannot. The replacement
+is not stricter in every respect — its history is capped at 30 days, so a long
+loan's early low-tier period rolls out of it where a loan-lifetime average
+retained it — and the first draft of this correction asserted the unqualified
+comparison, which review caught.
 
 Second, most occurrences of "time-weighted" in the tree are **correct** — the
 tier genuinely is time-weighted. Only the phrase's attachment to a *loan's

@@ -98,17 +98,38 @@ your tier at that moment — there is no separate average taken over
 each loan's own lifetime. Your tier itself is the guard: it is a
 time-weighted average of your daily balance over a recent window of
 up to 30 days — a protocol setting, counted from the day your
-current balance began, weighting the most recent days more heavily
-— then held down to the lowest tier you dropped to at any point in
-that history, and it is zero altogether until your current balance
-has been held for a minimum number of days, also a protocol setting.
+current holding began, weighting the most recent days more heavily.
+That average is then held down to the lowest tier you fell to at any
+point since your holding began, looking back up to 30 days.
+
+**Those are two separate look-backs, and the second is usually the
+longer one.** The averaging window is configurable and can be set
+shorter than 30 days; the lowest-tier look-back is not tied to it —
+it spans your whole current holding, capped at 30 days. So with a
+14-day averaging window, a dip 20 days ago still holds your tier
+down even though it falls outside the average.
+
+Your tier is zero altogether until you have held a non-zero balance
+**continuously** for a minimum number of days, also a protocol
+setting. That clock starts when your balance goes from zero to
+positive and restarts only if it returns to zero — topping up an
+existing holding does not restart it.
+
 An unstake therefore bites immediately across every open loan
 you're on, with no grace window where your old (higher) tier still
 applies. This closes the gaming pattern where a user could top up
 VPFI just before a loan ends, capture the full-tier discount, and
-withdraw seconds later — and it closes it more firmly than an
-average over the loan would, since an average can be pulled up by a
-late top-up while a minimum cannot.
+withdraw seconds later. Note which rule closes it: a long-standing
+holder has already satisfied the minimum period, so the work is done
+by the lowest-tier rule, which an average could not do — an average
+can be pulled up by a late top-up, a minimum cannot.
+
+Against that specific pattern the current rule is the stronger of
+the two. It is **not** stronger in every respect: because the
+lowest-tier look-back reaches back at most 30 days, a long loan's
+early low-tier months eventually stop counting, where an average
+across the loan's whole life would have kept them in. The change
+tightened the brief-top-up defence and shortened the memory.
 
 **The borrower's initiation-fee rate is read once, when the loan
 is accepted**, so nothing you do afterwards moves it — neither a

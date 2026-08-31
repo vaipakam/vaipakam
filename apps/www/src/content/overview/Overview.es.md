@@ -270,16 +270,22 @@ esa cadena:
 
 Los descuentos se aplican tanto a las comisiones del prestamista
 como del prestatario. Tu nivel es un **promedio ponderado en el
-tiempo de lo que has mantenido durante una ventana reciente de
-como mucho 30 días**, contada desde que empezó tu saldo actual, y
-después se **rebaja al nivel más bajo al que hayas caído en
-cualquier momento de esa ventana** — una caída cuenta aunque
-vuelvas a recargar el mismo día. No ganas ningún descuento hasta que
-hayas mantenido tu saldo actual durante un número mínimo de días,
-fijado por el protocolo. Por eso recargar justo antes de que acabe
-un préstamo no manipula el cálculo: el periodo mínimo de tenencia lo
-rechaza de entrada, y la regla del nivel más bajo mantiene tu tasa
-en lo que realmente sostuviste.
+tiempo de lo que has mantenido durante una ventana reciente de como
+mucho 30 días**, contada desde que empezó tu tenencia actual.
+Después se **rebaja al nivel más bajo al que hayas caído en
+cualquier momento desde que empezó esa tenencia**, mirando hasta 30
+días atrás — una caída cuenta aunque vuelvas a recargar el mismo
+día, y ese retroceso es un historial propio, no la ventana del
+promedio anterior. No ganas ningún descuento hasta que hayas
+mantenido un saldo distinto de cero de forma **continua** durante un
+número mínimo de días; si llega a cero, ese contador vuelve a
+empezar. La ventana y ese mínimo son ambos ajustes del protocolo.
+
+Por eso recargar justo antes de que acabe un préstamo no sirve.
+Fíjate en qué regla hace el trabajo: si llevas tiempo manteniendo el
+saldo, el periodo mínimo ya está cumplido y no estorba — es la regla
+del nivel más bajo la que mantiene tu tasa en lo que realmente
+sostuviste.
 
 ### 2. Recompensas por interacción en la plataforma
 

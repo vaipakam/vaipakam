@@ -246,13 +246,18 @@ fees가 discount됩니다.
 
 discount는 lender fees와 borrower fees 모두에 적용됩니다. 여러분의 tier는
 **최대 30일의 최근 window 동안 hold한 양의 time-weighted average**이며,
-이 window는 현재 balance가 시작된 날부터 셉니다. 여기에 다시 **그 기간 중
-한 번이라도 내려간 가장 낮은 tier까지 끌어내려집니다** — 같은 날 다시
-top up하더라도 내려갔다는 사실 자체가 반영됩니다. 또한 현재 balance를
-protocol이 정한 최소 일수 동안 hold하기 전까지는 discount가 전혀 발생하지
-않습니다. 따라서 loan이 끝나기 직전에 top up해서 calculation을 game할 수
-없습니다. 최소 보유 기간이 이를 처음부터 걸러내고, 가장 낮은 tier 규칙이
-여러분의 rate를 실제로 유지한 수준에 묶어 둡니다.
+이 window는 현재 holding이 시작된 날부터 셉니다. 여기에 다시 **그 holding이
+시작된 이후 한 번이라도 내려간 가장 낮은 tier까지 끌어내려집니다** — 최대
+30일을 거슬러 보며, 같은 날 다시 top up하더라도 내려갔다는 사실 자체가
+반영되고, 이 look-back은 위의 averaging window와는 별개의 history입니다.
+또한 0보다 큰 balance를 **끊김 없이** 최소 일수 동안 hold하기 전까지는
+discount가 전혀 발생하지 않으며, balance가 0이 되면 그 기간은 처음부터
+다시 셉니다. window와 이 최소 일수는 모두 protocol 설정입니다.
+
+따라서 loan이 끝나기 직전에 top up해도 도움이 되지 않습니다. 어떤 규칙이
+작동하는지 보십시오. 오래 hold해 온 사람은 최소 보유 기간을 이미 충족했으므로
+그것이 막아 주지는 않습니다. 여러분의 rate를 실제로 유지한 수준에 묶어 두는
+것은 가장 낮은 tier 규칙입니다.
 
 ### 2. Platform interaction rewards
 

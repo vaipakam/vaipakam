@@ -337,10 +337,16 @@ library LibVPFIDiscount {
     ///         path on Base. Returns the user's EFFECTIVE_TIER and the
     ///         BPS to apply, both already past the min-history gate and
     ///         the min-tier-over-history clamp.
-    /// @dev    Pure view; the caller MUST have invoked
-    ///         {rollupUserDiscount} first so the ring buffer reflects
-    ///         "as of now". Mirror chains read from
-    ///         `s.userTierCache[user]` instead (Sub 1.C wires that path).
+    /// @dev    Pure view. Rollup belongs at MUTATION sites, NOT immediately
+    ///         before this read: the day history is written when a balance
+    ///         moves, and `_effectiveDayClose` / `_effectiveDayMin` extend
+    ///         the last written day forward for every day since. Fee paths
+    ///         deliberately read without rolling up — a rollup here would
+    ///         put the mirror-broadcast lifecycle inside read-only fee
+    ///         resolution, which is what the T-087 note in
+    ///         {settleBorrowerLifProper} exists to prevent. Mirror chains
+    ///         read from `s.userTierCache[user]` instead (Sub 1.C wires
+    ///         that path).
     function effectiveTierAndBps(address user)
         internal
         view
@@ -444,9 +450,9 @@ library LibVPFIDiscount {
     /**
      * @notice The lender's hold-tier discount BPS for this loan, resolved
      *         from their EFFECTIVE tier at the moment of the call and
-     *         clamped to `MAX_FEE_DISCOUNT_BPS`. Callers MUST have just
-     *         invoked {rollupUserDiscount} on the lender so the day
-     *         history the tier is derived from reflects "as of now". A
+     *         clamped to `MAX_FEE_DISCOUNT_BPS`. Rollup is required at
+     *         MUTATION sites, NOT immediately before this read — see the
+     *         developer note on {effectiveTierAndBps}. A
      *         zero `loan.startTime` or a zero-duration window (loan
      *         accepted and repaid in the same block) returns 0 — no
      *         discount on degenerate loans, which matches settlement-math
@@ -459,11 +465,22 @@ library LibVPFIDiscount {
      *         went on asserting a per-loan average long after the code
      *         stopped taking one. The time-weighting is real but lives one
      *         level down, in {VPFIDiscountAccumulatorFacet.effectiveTierAndBps}:
-     *         a minimum staked duration, a TWA over the 30-day ring
-     *         buffer, and a clamp to the minimum tier observed over that
-     *         history. That combination binds TIGHTER than the loan
-     *         average it replaced — an average can be pulled up by a late
-     *         top-up, a minimum cannot.
+     *         CONTINUOUS non-zero stake tenure past
+     *         `cfgTwaMinStakedDaysEffective()`, a recency-weighted TWA over
+     *         `cfgTwaWindowDaysEffective()` days (bounded 14–30, floored at
+     *         `currentStakeStartDayId`), and a clamp to the minimum tier
+     *         observed over the stake's own history, capped at the ring
+     *         buffer's 30 days.
+     *
+     *         Two things NOT to write about that combination (#1981 r1):
+     *         the two windows are DIFFERENT — the min-tier clamp is not
+     *         bounded by the TWA window and can bind on a dip that has
+     *         already left the average — and it binds tighter than the
+     *         loan average it replaced only against the brief-top-up
+     *         vector. It is not uniformly stricter: the clamp's history
+     *         is capped at 30 days, so a long loan's early low-tier
+     *         period rolls out of it where a loan-lifetime average kept
+     *         it for the whole term.
      */
     function lenderHoldTierDiscountBps(
         LibVaipakam.Loan storage loan,
@@ -587,10 +604,10 @@ library LibVPFIDiscount {
      *         the call and clamped to `MAX_FEE_DISCOUNT_BPS`. Borrower
      *         mirror of {lenderHoldTierDiscountBps}.
      *
-     * @dev Callers MUST have just invoked {rollupUserDiscount} on the
-     *      borrower so the day history the tier is derived from reflects
-     *      "as of now". A zero `loan.startTime` or zero-duration window
-     *      returns 0.
+     * @dev Rollup is required at MUTATION sites, NOT immediately before
+     *      this read — {settleBorrowerLifProper} calls this with no
+     *      preceding rollup, deliberately and with its reason recorded.
+     *      A zero `loan.startTime` or zero-duration window returns 0.
      *
      *      NOT an average over the loan's own window — see the naming and
      *      supersession note on {lenderHoldTierDiscountBps}. The condition
@@ -748,18 +765,28 @@ library LibVPFIDiscount {
 
     /**
      * @notice Quote the VPFI required for the lender yield-fee discount on
-     *         a given interest amount. Uses the TIME-WEIGHTED average
-     *         discount BPS across the loan's lifetime — NOT the lender's
-     *         tier at the settlement moment. This defeats the "top up
-     *         just before repay" gaming vector: a lender who held VPFI
-     *         for 29 of 30 days at tier 1 and jumped to tier 4 on day 30
-     *         sees a fractional discount, not the full tier-4 rate.
+     *         a given interest amount, from the lender's EFFECTIVE tier at
+     *         the settlement moment.
      *
-     *         Prerequisite: caller MUST have just invoked
-     *         {rollupUserDiscount}(loan.lender, currentBal) so the
-     *         accumulator reflects "as of now". `tryApplyYieldFee` does
-     *         this implicitly; external callers shouldn't use
-     *         `quoteYieldFee` directly.
+     *         The previous text here said the opposite — "the TIME-WEIGHTED
+     *         average across the loan's lifetime — NOT the lender's tier at
+     *         the settlement moment" — and illustrated it with a lender who
+     *         held tier 1 for 29 of 30 days, jumped to tier 4, and "sees a
+     *         fractional discount". T-087 Sub 1.B removed that averaging;
+     *         there is no per-loan window and no fractional result. The
+     *         example was doubly misleading because the gaming vector it
+     *         described IS still defeated — by the effective tier's own
+     *         derivation (min staked duration, then a clamp to the lowest
+     *         tier over the stake's history) rather than by any per-loan
+     *         average. Under the real rule that lender is held at tier 1,
+     *         not somewhere between: a minimum is not a proportion.
+     *
+     *         `rollupUserDiscount` is NOT a prerequisite of this read.
+     *         Rollup belongs at MUTATION sites, so the day history is
+     *         written when a balance actually moves; the read then extends
+     *         the last written day forward. Settlement deliberately does
+     *         not roll up — see the T-087 note in {settleBorrowerLifProper},
+     *         which cites `PrecloseFacet`'s EIP-170 budget as the reason.
      *
      * @param loan           The loan the yield fee is settling against.
      * @param interestAmount The lender's pre-split interest in principal-
@@ -767,8 +794,11 @@ library LibVPFIDiscount {
      * @return canQuote      True iff a non-zero discount is available.
      * @return vpfiRequired  VPFI (18 dec) the lender must hold in vault
      *                       to take the discount.
-     * @return avgBps        The time-weighted average discount BPS that
-     *                       applied across the loan (0 when canQuote=false).
+     * @return avgBps        The effective discount BPS at this moment (0
+     *                       when canQuote=false). The name is a holdover
+     *                       from the removed per-loan averaging and is kept
+     *                       only because it is a named return several call
+     *                       sites bind; nothing is averaged over the loan.
      */
     function quoteYieldFee(
         LibVaipakam.Loan storage loan,

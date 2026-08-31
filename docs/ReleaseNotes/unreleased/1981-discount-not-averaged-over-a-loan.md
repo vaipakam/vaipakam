@@ -19,13 +19,29 @@ more. That average is then pushed down to the lowest tier you dropped to at any
 point in the same period, using each day's low rather than its closing figure
 — so a dip counts even if you top back up before the day ends. And none of it
 applies at all until you have held your current balance for a minimum number of
-days. Both the window and that minimum are settings the protocol can adjust
-within fixed bounds. The rate is then read at the moment a fee is charged.
+days without interruption — that clock starts when your balance first goes
+above zero and restarts only if it returns to zero, so adding to a holding you
+already have does not reset it. Both the window and that minimum are settings
+the protocol can adjust within fixed bounds. The rate is then read at the
+moment a fee is charged.
 
-That is a stricter arrangement than the one described before, not a weaker one.
-An average over a loan can be dragged upward by a large late deposit; a
-lowest-value rule cannot be dragged anywhere. Anyone who reads the corrected
-text and concludes their discount is now easier to game has read it backwards.
+The two look-backs are separate, and the second is usually the longer. The
+averaging window can be set shorter than thirty days; the lowest-tier
+look-back is not tied to it and spans your whole current holding, up to thirty
+days. So a dip can still hold your tier down after it has left the average.
+
+Against the thing both designs were guarding — a deposit made shortly before a
+loan settles — this is the stricter arrangement. An average over a loan can be
+dragged upward by a large late deposit; a lowest-value rule cannot be dragged
+anywhere. Anyone who reads the corrected text and concludes that particular
+move is now easier has read it backwards.
+
+It would be wrong to say the new rule is stricter in every way, and an earlier
+draft of this note did say so. Because the lowest-tier look-back reaches back
+at most thirty days, a long loan's early low-tier months eventually stop
+counting, where an average across the whole loan would have kept them. The
+change strengthened the defence against a late top-up and shortened the
+memory.
 
 **Where the wording was wrong, and where it was right.** Most references to
 time-weighting in the documentation are correct — the tier genuinely is

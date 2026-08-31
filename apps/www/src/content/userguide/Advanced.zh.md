@@ -83,18 +83,33 @@ Tier ladder：
 | 4    | > `{liveValue:tier4Min}`                  | `{liveValue:tier4DiscountBps}`%     |
 
 您 deposit 或 withdraw VPFI 的瞬间，tier 会按您的 **post-change**
-vault balance 计算。真正收取的费率，是在 settlement 时按您当下的
-tier 得出的；不会再针对每笔 loan 自身的存续期单独取平均。真正的
-防护在 tier 本身：它是您在最近一个不超过 30 天的窗口内日终 balance
-的时间加权平均 —— 该窗口是 protocol 的一项设置，从您当前 balance
-开始之日算起，越近的日子权重越高 —— 随后被压低到您在这段期间曾经
-跌到的最低 tier；并且在您按 protocol 规定的最少天数持有当前 balance
-之前，它一直为零。因此 withdraw 会
-立即作用于您参与的每笔 open loan — 没有让旧的 (更高) tier 继续适用
-的 grace window。这会关闭一种 exploit pattern：在 loan 即将结束时
-临时 top up VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
-而且它比按 loan 取平均关得更严：平均值会被临近的 top up 拉高，最小
-值不会。
+vault balance 计算。真正收取的费率，是在 settlement 时按您当下的 tier
+得出的；不会再针对每笔 loan 自身的存续期单独取平均。真正的防护在 tier
+本身：它是您在最近一个不超过 30 天的窗口内日终 balance 的时间加权平均
+—— 该窗口是 protocol 的一项设置，从您当前持有开始之日算起，越近的日子
+权重越高 —— 随后这个平均还会被压低到自那次持有开始以来您曾经跌到的最低
+tier，这一步最多回看 30 天。
+
+**这是两段不同的回看，通常后一段更长。** 求平均的窗口可以配置，也可以
+设成短于 30 天；最低 tier 的回看并不跟随它，而是覆盖您当前持有的全部
+时间，上限 30 天。因此即使把求平均的窗口设为 14 天，20 天前的一次下跌
+仍会压住您的 tier，尽管它完全落在平均之外。
+
+在您**不间断地**持有大于零的 balance 达到规定的最少天数之前，您的 tier
+一直为零；这同样是 protocol 的设置。这个计时在 balance 由零变正时开始，
+只有当它重新归零才会重新计时 —— 往已有的持有里追加并不会重置它。
+
+因此 withdraw 会立即作用于您参与的每笔 open loan —— 没有让旧的 (更高)
+tier 继续适用的 grace window。这会关闭一种 exploit pattern：在 loan
+即将结束时临时 top up VPFI 以拿到 full-tier discount，然后几秒钟后
+withdraw。请注意是哪条规则关闭了它：长期持有者早已满足最短持有期，真正
+起作用的是最低 tier 规则 —— 这是平均值做不到的，因为平均值会被临近的
+top up 拉高，最小值不会。
+
+针对这一特定模式，现行规则比原来的更强。但它**并非在各方面**都更严格：
+由于最低 tier 的回看最多只到 30 天，一笔长期 loan 早期的低 tier 阶段
+终究会退出这段历史，而按整笔 loan 求平均则会一直保留它们。这次改动加强了
+对短暂 top up 的防御，也缩短了记忆。
 
 **以上针对的是 lender yield fee。** Borrower 的发起费费率在 loan 被 accept 时
 读取一次，此后 withdraw 或 top up 都不会改变它。

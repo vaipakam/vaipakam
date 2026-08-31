@@ -96,26 +96,48 @@ s'applique.
 | 3    | ≥ `{liveValue:tier3Min}`               | `{liveValue:tier3DiscountBps}`%   |
 | 4    | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%   |
 
-Le tier est calculé contre ton solde d'vault **après changement**
-au moment où tu déposes ou retires du VPFI. Le taux réellement
-prélevé est résolu au règlement à partir de ton tier à cet
-instant : aucune moyenne distincte n'est prise sur la durée de vie
-de chaque prêt. C'est le tier lui-même qui protège : une moyenne
-pondérée dans le temps de ton solde quotidien sur une fenêtre
-récente d'au plus 30 jours — un réglage du protocole, comptée
-depuis le jour où ton solde actuel a commencé, les jours les plus
-récents comptant davantage — puis ramenée au palier le plus bas que
-tu as atteint sur cet historique, et nulle tant que ton solde
-actuel n'a pas été détenu pendant un nombre minimum de jours,
-également fixé par le protocole. Un
-retrait mord donc immédiatement sur chaque prêt ouvert te
-concernant — il n'y a pas de fenêtre de grâce où ton ancien tier
-(plus haut) s'applique encore. Cela ferme le schéma d'abus où un
-utilisateur pourrait recharger du VPFI juste avant la fin d'un
-prêt, capturer la remise du tier complet, et retirer quelques
-secondes plus tard — et le ferme plus solidement qu'une moyenne sur
-le prêt, car une moyenne peut être tirée vers le haut par un
-rechargement tardif, un minimum non.
+Le tier est calculé contre ton solde d'vault **après changement** au
+moment où tu déposes ou retires du VPFI. Le taux réellement prélevé est
+résolu au règlement à partir de ton tier à cet instant : aucune moyenne
+distincte n'est prise sur la durée de vie de chaque prêt. C'est le tier
+lui-même qui protège : une moyenne pondérée dans le temps de ton solde
+quotidien sur une fenêtre récente d'au plus 30 jours — un réglage du
+protocole, comptée depuis le jour où ta détention actuelle a commencé,
+les jours les plus récents comptant davantage. Cette moyenne est
+ensuite ramenée au palier le plus bas que tu as atteint depuis le début
+de cette détention, en remontant jusqu'à 30 jours.
+
+**Ce sont deux reculs distincts, et le second est généralement le plus
+long.** La fenêtre de moyenne est configurable et peut être réglée
+en dessous de 30 jours ; le recul du palier le plus bas n'y est pas
+lié — il couvre toute ta détention actuelle, plafonnée à 30 jours. Avec
+une fenêtre de 14 jours, une baisse d'il y a 20 jours abaisse donc
+encore ton palier alors qu'elle tombe entièrement hors de la moyenne.
+
+Ton tier est nul tant que tu n'as pas détenu un solde non nul **sans
+interruption** pendant un nombre minimum de jours, également un réglage
+du protocole. Ce compteur démarre quand ton solde passe de zéro à
+positif et ne repart que s'il revient à zéro : ajouter à une détention
+existante ne le réinitialise pas.
+
+Un retrait mord donc immédiatement sur chaque prêt ouvert te concernant
+— il n'y a pas de fenêtre de grâce où ton ancien tier (plus haut)
+s'applique encore. Cela ferme le schéma d'abus où un utilisateur
+pourrait recharger du VPFI juste avant la fin d'un prêt, capturer la
+remise du tier complet, et retirer quelques secondes plus tard. Note
+quelle règle le ferme : qui détient depuis longtemps a déjà satisfait
+la durée minimale, le travail est donc fait par la règle du palier le
+plus bas — ce qu'une moyenne ne pourrait pas faire, car une moyenne
+peut être tirée vers le haut par un rechargement tardif, un minimum
+non.
+
+Face à ce schéma précis, la règle actuelle est la plus forte des deux.
+Elle n'est **pas** plus stricte à tous égards : comme le recul du
+palier le plus bas ne remonte qu'à 30 jours au maximum, les premiers
+mois à palier bas d'un prêt long finissent par ne plus compter, alors
+qu'une moyenne sur toute la vie du prêt les aurait conservés. Le
+changement a renforcé la défense contre le rechargement bref et
+raccourci la mémoire.
 
 **Cela vaut pour le yield-fee du prêteur.** Le taux de l'emprunteur sur les
 frais d'initiation est lu une seule fois, à l'acceptation du prêt ; ensuite, ni

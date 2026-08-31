@@ -704,8 +704,13 @@ of which must pass:
 
 1. **Minimum staked duration.** Zero tier until the CURRENT stake has
    been held `cfgTwaMinStakedDaysEffective()` days (`setTwaMinStakedDays`,
-   bounded **2–14**, default **3**). A balance that returns to zero
-   clears `currentStakeStartSec` and restarts the clock.
+   bounded **2–14**, default **3**). `_maintainStakerLifecycle` stamps
+   `currentStakeStartSec` only on a **zero→positive** transition and
+   clears it only on **positive→zero**, so this is CONTINUOUS NON-ZERO
+   TENURE — a top-up by an existing holder does not restart the clock,
+   and therefore this gate does NOT block a top-up before settlement.
+   Step 3 is what does. Do not describe this gate as tenure of the
+   current *balance* (#1981 r1 P2).
 2. **Recency-weighted TWA** (`_computeTwa` over `s.dayBalances.dayClose`)
    → `rawTier`. The window is `cfgTwaWindowDaysEffective()`
    (`setTwaWindowDays`, bounded **14–30**, default **30** — the upper
@@ -726,11 +731,18 @@ of which must pass:
 this. It is the DEFAULT and the CAP, not the rule — #1981's first pass
 said it flatly across twenty locale files and had to correct itself.
 
-This is STRICTER than the loan-window average it replaced: an average
-can be pulled up by a late spike, a minimum cannot, and `dayMin`
-captures a same-day dip that a close-of-day read would miss. So the
-anti-gaming claim the old wording made is still true — via a different
-mechanism.
+Against the brief-top-up vector this is STRICTER than the loan-window
+average it replaced: an average can be pulled up by a late spike, a
+minimum cannot, and `dayMin` captures a same-day dip that a
+close-of-day read would miss. So the anti-gaming claim the old wording
+made is still true — via a different mechanism.
+
+**It is not uniformly stricter, and do not write that it is** (#1981
+r1 P2). Step 3's history is capped at 30 days, so a long loan's early
+low-tier period rolls out of it, where a loan-lifetime average kept it
+for the whole term. On a 100-day loan with 70 low-tier days then 30
+high-tier days, the current rule can resolve the high tier and the
+removed one could not. Stronger defence, shorter memory.
 
 **`rollupUserDiscount` is NOT vestigial — its consumer moved.** The
 rollup writes `dayBalances` (`dayClose` + `dayMin`), `lastUpdateDayId`

@@ -258,14 +258,20 @@ protocol fees on loans you participate in on that chain:
 
 Discounts apply to both lender and borrower fees. Your tier is a
 **time-weighted average of what you have held over a recent window
-of up to 30 days**, counted from when your current balance began,
-and it is then **held down to the lowest tier you dropped to at any
-point in that window** — a dip counts even if you top up again the
-same day. No discount is earned at all until you have held your
-current balance for a minimum number of days. Both the window and
-that minimum are protocol settings. So topping up just before a loan ends doesn't game the
-calculation: the minimum holding period rejects it outright, and the
-lowest-tier rule keeps your rate at what you actually sustained.
+of up to 30 days**, counted from when your current holding began.
+It is then **held down to the lowest tier you fell to at any point
+since that holding began**, looking back up to 30 days — a dip
+counts even if you top up again the same day, and that look-back is
+its own history, not the averaging window above. No discount is
+earned at all until you have held a non-zero balance **continuously**
+for a minimum number of days; letting it reach zero restarts that
+clock. Both the window and that minimum are protocol settings.
+
+So topping up just before a loan ends doesn't help. Note which rule
+does the work: if you have been holding for a while, the minimum
+period is already satisfied and does not stand in the way — it is
+the lowest-tier rule that keeps your rate at what you actually
+sustained.
 
 ### 2. Platform interaction rewards
 

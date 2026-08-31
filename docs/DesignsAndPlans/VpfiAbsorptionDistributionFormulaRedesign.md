@@ -309,7 +309,7 @@ baseFeeAsset = interestAmount * effectiveTreasuryFeeBps(loan) / BPS
 
 d_hold = 0
 if vpfiDiscountConsent[loan.lender]:
-    d_hold = lenderTimeWeightedDiscountBps(loan)  // TWA hold tier
+    d_hold = lenderHoldTierDiscountBps(loan, lender)  // hold tier, resolved now
 
 d_tariff = (loan.lenderMode == Full) ? 1000 : 0   // +10% only if lender paid C*
 d = min(d_hold + d_tariff, 5000)                  // CAP 50%
@@ -318,6 +318,33 @@ d = min(d_hold + d_tariff, 5000)                  // CAP 50%
 feeAsset = baseFeeAsset * (BPS - d) / BPS
 // tryApplyYieldFee remains dormant while peg unset
 ```
+
+> **In-place supersession note (#1981, 2026-08-31) — helper name and
+> semantics.** The `d_hold` line above read
+> `lenderTimeWeightedDiscountBps(loan)` until #1981. Two things about it
+> were stale, and this document is the *active* frozen source for
+> lender yield-fee computation — `TokenomicsTechSpec.md` and the
+> recycling completion plan both point here — so the line is corrected in
+> place rather than left for a reader to reconcile.
+>
+> The **name** is now `lenderHoldTierDiscountBps`, and it takes the
+> settling party explicitly (`lender`, the current position-NFT holder on
+> the non-consolidated secondary paths — the separate #1383 supersession
+> this document already carries), not `loan` alone.
+>
+> The **semantics** changed earlier, at T-087 Sub 1.B, and the trailing
+> comment `// TWA hold tier` is what preserved the wrong reading: there is
+> no averaging over the loan's own window. The value is the party's
+> effective tier resolved when the fee is charged. The time-weighting is
+> real but sits one level down, inside that tier — a minimum staked
+> duration, a recency-weighted average over a governance-bounded window
+> (14–30 days, default 30, floored at the day the current stake began),
+> and a clamp to the lowest tier reached over the stake's history, capped
+> at the 30-day ring buffer.
+>
+> Nothing else in the pseudocode changes: `d_hold` is still the
+> consent-gated hold slice, still summed with `d_tariff` and still capped
+> at 5000.
 
 > **IN-PLACE SUPERSESSION (2026-08-26) — the SETTLING LENDER is the CURRENT
 > position-NFT holder, not `loan.lender`.** The rev-8 pseudocode above is kept
