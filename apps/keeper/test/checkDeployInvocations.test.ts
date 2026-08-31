@@ -7106,6 +7106,76 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).not.toContain('the selected config');
   });
 
+  // ---- Codex #2036 r9 ----
+
+  it('an argv selector must occupy a WHOLE element', () => {
+    // With independent open/close quote classes the match could begin at a
+    // quote inside another argument and end on that argument's real quote, so
+    // wrangler received no `--name` at all and one was invented.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      'spawnSync("wrangler", ["versions", "upload", "--message", "note \'--name=vaipakam-www"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('an EXPORTED CLOUDFLARE_ENV selects an environment', () => {
+    // It reaches wrangler exactly as an inline assignment does. `shellVars`
+    // already carried it for every other reader; the environment predicate was
+    // the one that did not consult it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nexport CLOUDFLARE_ENV=staging\nwrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('but CLOUDFLARE_ENV inside a STRING is not the environment', () => {
+    // The quoted-text-read-as-a-selector defect a third time, now on the
+    // environment predicate. `NOTE` sets no variable, and reading it as one
+    // blocked an ordinary deploy of an unprotected Worker.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    // A MODELLED CWD is required for this to test what it claims: without one
+    // the config cannot be resolved at all and the deploy is reported as
+    // unidentifiable (the #2040 path-coverage gap), which would pass for the
+    // wrong reason.
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nspawnSync("wrangler", ["deploy", "--config", "www.jsonc"], ' +
+          '{env: {...process.env, NOTE: "CLOUDFLARE_ENV: staging"}});\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('a delimiter inside an ordinary TOML string does not open a body', () => {
+    // The r8 comment fix, one construct over: a VALUE containing `'''` opened
+    // multiline state and the real name below it was skipped.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.toml', ['note = "\'\'\'"', 'name = "vaipakam-www"', ''].join('\n'));
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(true);
+  });
+
+  it('preservation must hold in EVERY reachable working directory', () => {
+    // The scope reader has checked all reachable bases since r2; the safety
+    // read took a single cwd, so one branch's config blessed the other's — and
+    // the other branch was a genuinely unsafe deploy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('apps/www/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith(
+      'w.sh',
+      'if [ -n "$X" ]; then cd apps/www; else cd apps/agent; fi\nwrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

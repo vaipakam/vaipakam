@@ -2672,40 +2672,50 @@ function argvValue(region, spellings, before = '') {
   // backtick closes the template, and `${` inside a character class starts an
   // interpolation. Writing the quote class once, as a variable, is what keeps
   // that from being re-broken by the next edit.
-  const Q = '["\'`]';
   // An INTERPOLATED template is not a literal — ``${d}/x.jsonc`` has to stay
   // unresolved rather than be read as the text `${d}/x.jsonc`, so `$` and the
   // braces are excluded from the literal class and fall to the non-literal arm.
   const LIT = '[^"\'`${}]+';
+  // QUOTES ARE MATCHED AS A PAIR and the element is anchored to an array
+  // boundary. With independent open/close classes the match could BEGIN at a
+  // quote inside another argument and END on that argument's real quote, so
+  // `["--message", "note '--name=vaipakam-www"]` — where wrangler receives no
+  // `--name` at all — produced an authoritative target (Codex #2036 r9).
+  // Scoping the reader to the argv array in r5 was necessary and not
+  // sufficient; this boundary is the other half of the same rule.
+  const B = '(?<=[\\[,]\\s{0,80})';
   const all = [
     ...region.matchAll(
       new RegExp(
-        Q + '(?:' + spellings + ')(?:' + Q + '\\s*,\\s*(?:' + Q + '(' + LIT + ')' + Q +
-          '|([^,\\]]+?)\\s*(?=,|$))' + '|=([^"\'`]*)' + Q + ')',
+        B + '(["\'`])(?:' + spellings + ')(?:\\1\\s*,\\s*(?:(["\'`])(' + LIT + ')\\2' +
+          '|([^,\\]]+?)\\s*(?=,|$))' + '|=(' + LIT + '?)\\1)',
         'g',
       ),
     ),
   ];
   const m = all[all.length - 1];
   if (!m) return null;
+  // Group 1 is the opening quote and group 2 the value's own quote, so the
+  // value groups are 3 (literal), 4 (non-literal) and 5 (attached).
+  const [litVal, rawVal, attached] = [m[3], m[4], m[5]];
   // An attached EMPTY value (`["--name="]`) names nothing, the same rule the
   // empty `CLOUDFLARE_ENV` follows. UNFIXTURED and recorded as such: it cannot
   // change a verdict, because the mangled value `valueOf` produces from the
   // same text matches no protected Worker either. Kept as the right reading of
   // the flag, not as a demonstrated fix.
-  if (m[3] !== undefined) return m[3] === '' ? null : m[3];
+  if (attached !== undefined) return attached === '' ? null : attached;
   // A bare identifier is the host language's variable, so it is spelled as one:
   // `known()` already refuses anything still carrying a `$`, and this reaches
   // the "selector present but unresolvable" branch by the same route a shell
   // `"$CFG"` does. `true`/`false`/`null` are literals, not references.
-  if (m[2] !== undefined) {
+  if (rawVal !== undefined) {
     // ANY non-literal element, not only a bare identifier. `getConfig()` and
     // `cfgs[i]` are as unreadable as `cfg` and mean the same thing to this
     // scanner — a target was named and it cannot say what it is — but the
     // identifier-only pattern read them as NO SELECTOR, which passes (Codex
     // #2036 r5). The inversion never needed to evaluate the expression, only to
     // notice one was there.
-    const v = m[2].trim();
+    const v = rawVal.trim();
     return /^(?:true|false|null|None|undefined)$/.test(v) || v === '' ? null : `\${${v}}`;
   }
   // AN ESCAPED LITERAL IS NOT ITS RUNTIME VALUE. JavaScript decodes
@@ -2718,8 +2728,8 @@ function argvValue(region, spellings, before = '') {
   // here (JS and Python spell escapes differently), and a name decoded WRONGLY
   // is authoritative, which is worse than one declined. Worker names do not
   // contain backslashes, so this costs nothing real.
-  if (m[1].includes('\\')) return `\${${m[1]}}`;
-  return m[1];
+  if (litVal.includes('\\')) return `\${${litVal}}`;
+  return litVal;
 }
 
 function declaredWorkerName(absPath) {
@@ -2847,19 +2857,47 @@ function declaredWorkerName(absPath) {
       //
       // The comment is only stripped when the `#` is outside a string on this
       // line, which is what stops a `#` inside a value being read as one.
+      // COMMENTS AND ORDINARY STRING BODIES are both blanked before delimiters
+      // are counted. A comment mentioning `'''` was the r8 finding; a VALUE
+      // containing one — `note = "'''"` — is the same defect one construct
+      // over, and it opened multiline state so the real name below was skipped
+      // (Codex #2036 r9). Both are the false-red direction.
+      //
+      // A TRIPLE delimiter is copied through rather than treated as a
+      // single-line string opener, because it is the thing being counted.
       const uncommented = (() => {
+        let out = '';
         let q = null;
         for (let i = 0; i < line.length; i += 1) {
           const c = line[i];
           if (q) {
-            if (c === '\\') i += 1;
-            else if (c === q) q = null;
+            if (c === '\\') {
+              i += 1;
+              out += '  ';
+              continue;
+            }
+            if (c === q) {
+              out += c;
+              q = null;
+              continue;
+            }
+            out += ' ';
             continue;
           }
-          if (c === '"' || c === "'") q = c;
-          else if (c === '#') return line.slice(0, i);
+          if (line.startsWith(OPENERS[0], i) || line.startsWith(OPENERS[1], i)) {
+            out += line.slice(i, i + 3);
+            i += 2;
+            continue;
+          }
+          if (c === '"' || c === "'") {
+            q = c;
+            out += c;
+            continue;
+          }
+          if (c === '#') return out;
+          out += c;
         }
-        return line;
+        return out;
       })();
       for (const delim of OPENERS) {
         if ((uncommented.split(delim).length - 1) % 2 === 1) inMultiline = delim;
@@ -3267,6 +3305,30 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // wrangler exactly as the shell forms do, and both were trusting the
   // top-level name.
   const rawSeg = stripShellComment(seg);
+  // Occurrences INSIDE a longer string literal are not the process's
+  // environment. `{env: {…, NOTE: "CLOUDFLARE_ENV: staging"}}` sets no such
+  // variable, and reading it as one blocked an ordinary deploy (Codex #2036 r9)
+  // — the quoted-text-read-as-a-selector defect a third time, now on the
+  // environment predicate rather than on a selector.
+  //
+  // A quoted element that IS EXACTLY the key (`{"CLOUDFLARE_ENV": "staging"}`)
+  // still counts. Requiring only that the key start after an opening quote was
+  // not enough: in `"CLOUDFLARE_ENV: staging"` it also does, and that string
+  // sets nothing — so the closing quote has to come straight after the key.
+  const notInsideString = (text, at) => {
+    let q = null;
+    for (let i = 0; i < at; i += 1) {
+      const c = text[i];
+      if (q) {
+        if (c === '\\') i += 1;
+        else if (c === q) q = null;
+        continue;
+      }
+      if (c === '"' || c === "'" || c === '`') q = c;
+    }
+    if (q === null) return true;
+    return text[at - 1] === q && text[at + 'CLOUDFLARE_ENV'.length] === q;
+  };
   const envAssigned =
     // Shell assignment, with or without `export`.
     (() => {
@@ -3294,7 +3356,9 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // Options-object entry, JS or Python: `CLOUDFLARE_ENV: "staging"`,
     // `"CLOUDFLARE_ENV": "staging"`. A quoted EMPTY value is not an
     // environment, the same rule the shell form follows.
-    /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|[A-Za-z_$][\w$.]*)/.test(rawSeg) ||
+    [...rawSeg.matchAll(
+      /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|[A-Za-z_$][\w$.]*)/g,
+    )].some((mm) => notInsideString(rawSeg, mm.index + (/^["']/.test(mm[0]) ? 1 : 0))) ||
     // Argv-array `--env` / `-e`, the spelling the config selector already
     // learned two findings ago. Same shape, same blind spot.
     // Reuses the argv reader rather than a second pattern, so a COMPUTED
@@ -3302,7 +3366,13 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // identifier-only spelling read it as absent and trusted the top-level
     // name (Codex #2036 r5). Any answer at all means an environment was
     // chosen; its value is not needed, only its presence.
-    argvValue(rawSeg, '-e|--env') !== null;
+    argvValue(rawSeg, '-e|--env') !== null ||
+    // CARRIED from an earlier line. `export CLOUDFLARE_ENV=staging` on its own
+    // line reaches wrangler exactly as an inline assignment does, and this
+    // predicate looked only at the current segment (Codex #2036 r9).
+    // `shellVars` already carries statically-known assignments for every other
+    // reader here; the environment predicate was the one not consulting it.
+    (vars instanceof Map && (vars.get('CLOUDFLARE_ENV') ?? '') !== '');
   if (
     cfg !== null &&
     !nameUnresolved &&
@@ -7131,12 +7201,20 @@ for (const file of walk(REPO_ROOT)) {
             SCOPED.find((sc) => rel.startsWith(`${sc.dir}/`)) ??
             null;
         const aliased = resolveRunAlias(seg, aliasContext(input, rel));
-        // The modelled cwd, so an explicitly selected `--config` resolves the
-        // way wrangler resolves it.
-        const cmdCwd = input.map((st) => st.cwd).find(Boolean) ?? '';
+        // EVERY reachable cwd, not the first one that happens to be non-empty.
+        //
+        // The scope reader has checked all reachable bases since #2036 r2; this
+        // one took a single `cmdCwd`, so with `then cd apps/www; else cd
+        // apps/agent` one branch's config could bless the other's — and the
+        // other branch was a genuinely unsafe deploy (Codex #2036 r9). SAFE
+        // means safe on every path the shell can take, so a segment is blessed
+        // only when every reachable base blesses it.
+        const cmdCwds = [...new Set(input.map((st) => st.cwd))];
+        const safeEverywhere = (text) =>
+          cmdCwds.every((cwd) => commandIsSafe(text, safeHint, cwd));
         if (
-          commandIsSafe(aliased ?? seg, safeHint, cmdCwd) ||
-          (aliased === null && commandIsSafe(expandCommandVars(seg, fileVars), safeHint, cmdCwd))
+          safeEverywhere(aliased ?? seg) ||
+          (aliased === null && safeEverywhere(expandCommandVars(seg, fileVars)))
         ) {
           continue;
         }
