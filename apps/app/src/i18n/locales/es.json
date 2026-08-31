@@ -211,6 +211,7 @@
       "eraseDone": "Se borraron {{count}} elementos almacenados. También se ha pedido a las demás pestañas que tengas abiertas que borren los suyos.",
       "eraseNothing": "No había nada almacenado en este navegador para borrar.",
       "erasePartial": "Se borraron {{removed}} elementos, pero {{left}} no se pudieron eliminar. Borrar los datos del sitio desde los ajustes de tu navegador eliminará el resto.",
+      "erasePartlyUnverifiable": "Se borraron {{count}} elementos del almacenamiento de sesión de la cartera, pero este navegador no permitió que la aplicación comprobara después su almacenamiento normal, así que puede quedar algo. Borrar los datos del sitio desde los ajustes de tu navegador lo eliminará.",
       "eraseBlocked": "Este navegador no ha permitido que la aplicación borre su almacenamiento, así que no se eliminó nada. Las ventanas de navegación privada y los ajustes de privacidad restrictivos pueden provocarlo; borrar los datos del sitio desde los ajustes de tu navegador sí funcionará.",
       "holdingTitle": "Qué hay almacenado ahora mismo",
       "holdingCount": "{{count}} elementos",

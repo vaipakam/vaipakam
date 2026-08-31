@@ -442,6 +442,14 @@ const copySource = {
        the outcome the sentence above it just reported. */
     eraseWalletHeld:
       'The wallet would not disconnect, so this site is still connected to it. Disconnect from your wallet directly, then erase again.',
+    /* Round 14 P2: ordinary storage could not be VERIFIED, but the wallet
+       store was reachable and gave up records. `eraseBlocked` says nothing
+       was removed, which contradicts a non-zero count; this reports what was
+       removed and is separately honest about what could not be checked. */
+    erasePartlyUnverifiable: tmpl(
+      'Erased {{count}} stored items from the wallet’s session storage, but this browser would not let the app check its ordinary storage afterwards, so something may still be there. Clearing site data through your browser’s own settings will remove it.',
+      ['count'],
+    ),
     eraseBlocked:
       'This browser would not let the app clear its storage, so nothing was removed. Private-browsing windows and locked-down privacy settings can both do this — clearing site data through your browser’s own settings will work.',
     holdingTitle: 'What is stored right now',

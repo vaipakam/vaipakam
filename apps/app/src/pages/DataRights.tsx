@@ -344,6 +344,13 @@ export function DataRights() {
       // `eraseMyDataFully`. It runs FIRST, so a connector holding a
       // database open gets the chance to close it before the deletion.
       erased = await eraseMyDataFully({
+        // Same reconnect fence as the straggler callback below, for the
+        // AGGREGATE-timeout path that bypasses it (round 14 P2): several
+        // connectors can each stay inside their own bound while their
+        // sequential total crosses the outer one, so no straggler callback is
+        // registered and the library's own late cleanup is the only one that
+        // runs — unguarded until now.
+        isConnected: () => config.state.status !== 'disconnected',
         // Every live connection, not just the current one — see
         // `disconnectEvery`, which holds the loop so it is testable outside
         // this page. The page has no rendering harness, and round 2's lesson
@@ -550,7 +557,17 @@ export function DataRights() {
                   )
                 : copy.dataRights.eraseBlocked
               : result.refusedAfter
-                ? // Review round 2 P1: a store that REFUSED to be read
+                ? // Round 14 P2 — "nothing was removed" is false when the
+                  // wallet store WAS reachable and gave up records. The
+                  // ordinary storage could not be verified; that is a
+                  // different statement from nothing having happened, and
+                  // conflating them understates the erasure in the one case
+                  // where the count is the only thing the page can be sure of.
+                  erasedItemCount(result) > 0
+                  ? copy.dataRights.erasePartlyUnverifiable(
+                      erasedItemCount(result),
+                    )
+                  : // Review round 2 P1: a store that REFUSED to be read
                   // contributes nothing to the remainder, so a
                   // successful cookie removal could land here with a
                   // zero remainder and report a clean success while an

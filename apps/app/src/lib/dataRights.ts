@@ -1514,6 +1514,21 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
 
 export interface FullEraseOptions {
   /**
+   * Whether anything is connected RIGHT NOW, asked at cleanup time.
+   *
+   * Round 14 P2. The late cleanup below can run arbitrarily long after the
+   * erasure, and clearing whole wallet stores then destroys a session the
+   * user created AFTER their request. The page's per-straggler callback
+   * already declines in that case; this path is reached instead when the
+   * AGGREGATE bound expires while every individual connector stayed inside
+   * its own, so it needs the same fence and had none.
+   *
+   * Injected rather than imported, like `disconnect`, so this module stays
+   * free of the wagmi config. Absent means "cannot tell", which is treated
+   * as not connected — the pre-existing behaviour.
+   */
+  readonly isConnected?: () => boolean;
+  /**
    * Tear down the live wallet connection. Injected rather than imported so
    * this module stays free of the wagmi config — it is a pure storage
    * library, and a page that has no wallet (or a test) supplies nothing.
@@ -1636,7 +1651,11 @@ export async function eraseMyDataFully(
           // would delete records the user created AFTER the erasure. What a
           // late teardown can recreate is connector state, so that is all a
           // late cleanup has any business removing.
-            if (settledLate) {
+            // NOT IF THE USER HAS RECONNECTED SINCE (round 14 P2) — the same
+            // fence the page's straggler callback got in round 13, on the
+            // path that bypasses it. A stale connector key is a far better
+            // outcome than deleting a live session.
+            if (settledLate && !options.isConnected?.()) {
               // BOTH stores (round 10 P2). The per-connector straggler
               // callback clears the databases, and this whole-teardown path
               // did not — but they catch different timeouts. Several

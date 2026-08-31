@@ -211,6 +211,7 @@
       "eraseDone": "{{count}} gespeicherte Einträge wurden gelöscht. Ihre übrigen geöffneten Tabs wurden ebenfalls aufgefordert, ihre eigenen zu löschen.",
       "eraseNothing": "In diesem Browser war nichts gespeichert, das gelöscht werden könnte.",
       "erasePartial": "{{removed}} Einträge wurden gelöscht, {{left}} konnten jedoch nicht entfernt werden. Das Löschen der Websitedaten über die Einstellungen Ihres Browsers entfernt den Rest.",
+      "erasePartlyUnverifiable": "{{count}} gespeicherte Elemente wurden aus der Sitzungsspeicherung der Wallet gelöscht, aber dieser Browser ließ die App den gewöhnlichen Speicher danach nicht prüfen — dort kann noch etwas liegen. Das Löschen der Websitedaten in den Browsereinstellungen entfernt es.",
       "eraseBlocked": "Dieser Browser hat der App nicht erlaubt, ihren Speicher zu leeren, daher wurde nichts entfernt. Private Fenster und strenge Datenschutzeinstellungen können das bewirken — das Löschen der Websitedaten über die Einstellungen Ihres Browsers funktioniert.",
       "holdingTitle": "Was derzeit gespeichert ist",
       "holdingCount": "{{count}} Einträge",
