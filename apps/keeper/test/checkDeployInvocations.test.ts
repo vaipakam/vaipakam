@@ -6632,15 +6632,19 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('apps/agent');
   });
 
-  it('but an attached -c that is not a path is left alone', () => {
-    // The narrowing that keeps the attached form from reading `tar -czf` as a
-    // config selection. Without it that is a CI-blocking false red, because an
-    // unreadable config REPORTS under the inversion.
+  it('a deploy followed by an unrelated -czf still passes', () => {
+    // States the verdict the path-narrowing does NOT change. My first cut of
+    // this fixture carried `--keep-vars`, so it passed however the attached
+    // form behaved and pinned nothing — the mutant dropping the narrowing
+    // survived it. Rebuilt without the flag and re-run against that mutant, it
+    // still survives: `&&` splits SEGMENTS before the region is taken, so the
+    // tar flags never reach wrangler's argv text at all.
+    //
+    // So the narrowing is recorded in the source as an equivalent mutant, and
+    // this is a regression guard rather than evidence for it. Worth keeping as
+    // one: if segment splitting ever changes, this is the line that notices.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
-    expect(
-      runWith('w.sh', 'cd apps/agent\nwrangler deploy --keep-vars && tar -czf out.tgz src\n').ok,
-    ).toBe(true);
+    expect(runWith('w.sh', 'wrangler deploy && tar -czf out.tgz src\n').ok).toBe(true);
   });
 
   it('CLOUDFLARE_ENV suppresses the name answer, as --env does', () => {

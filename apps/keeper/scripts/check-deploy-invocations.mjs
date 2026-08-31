@@ -2718,13 +2718,26 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // ATTACHED SHORT FORM. yargs accepts `-cconfigs/custom.jsonc` as one word,
     // and wrangler 4.90.0 processes it — verified in the review by dry run.
     //
-    // NARROWED to something that looks like a config path, and the narrowing is
-    // load-bearing rather than cosmetic: this region is anchored at the wrangler
-    // word but still contains whatever follows it, so a bare `-c` + rest would
-    // read `tar -czf out.tgz` as selecting a config called `zf` — and under the
-    // inversion an unreadable config REPORTS, so that is a CI-blocking false red
-    // rather than a harmless misread. A path or a wrangler config extension is
-    // what distinguishes the two.
+    // NARROWED to something that looks like a config path — `tar -czf out.tgz`
+    // must not read as selecting a config called `zf`, which under the inversion
+    // would REPORT and so be a CI-blocking false red rather than a harmless
+    // misread.
+    //
+    // EQUIVALENT MUTANT on today's tree, recorded as one rather than claimed as
+    // a fix. I wrote this narrowing to stop that misread and then could not
+    // construct a case where removing it changes a verdict: `&&`, `;` and `|`
+    // all split SEGMENTS before the region is taken, so a following command's
+    // flags never reach wrangler's argv text; on the prose path the unresolved
+    // value defers to the text rather than reporting; and a `-czf` genuinely
+    // adjacent to the wrangler word IS wrangler's `-c` by its own parser, so
+    // reading it that way is right rather than wrong. The measured verdict is
+    // "no observable difference", not "verified necessary".
+    //
+    // Kept anyway, on the same reasoning as the out-of-checkout refusal below:
+    // the value is being used as a PATH, and admitting text that cannot be one
+    // is a property worth holding independently of whether the segment splitter
+    // happens to protect it today. A fixture states the verdict it does not
+    // change.
     (() => {
       const all = [
         ...wranglerRegion.matchAll(
