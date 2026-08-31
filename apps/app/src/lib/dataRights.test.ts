@@ -32,6 +32,7 @@ import {
   isDisconnectSentinelKey,
   inspectIndexedDbData,
   eraseWebStorageQuietly,
+  eraseConnectorStorageQuietly,
   disconnectEvery,
   type FullEraseResult,
 } from './dataRights';
@@ -1529,7 +1530,7 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
     }
   });
 
-  it('ABORTS the upgrade rather than creating a database it means to delete', async () => {
+  it('ABORTS the upgrade, and reads the abort as ABSENCE not refusal', async () => {
     // Round 6 P2. `open` with no version starts a version-1 creation. Letting
     // it commit and deleting afterwards leaves a window holding an empty
     // database WITHOUT the wallet library's object store — and if that
@@ -1545,26 +1546,140 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
         };
         queueMicrotask(() => {
           (req.onupgradeneeded as (() => void) | undefined)?.();
-          req.result = {
-            objectStoreNames: { contains: () => false },
-            close: () => {},
-            transaction: () => ({
-              objectStore: () => ({
-                count: () => ({ result: 0 }),
-                clear: () => {},
-              }),
-              abort: () => {},
-            }),
-          };
-          (req.onsuccess as (() => void) | undefined)?.();
+          // REAL BEHAVIOUR (round 7 P1): an aborted version-change
+          // transaction makes the OPEN REQUEST fail with `AbortError`. It
+          // does not then deliver success. The round-6 version of this stub
+          // called `onsuccess` here — written from the same wrong model as
+          // the code, so it confirmed the assumption instead of testing it,
+          // and hid a bug that would have made every absent database report
+          // as refused.
+          (req.onerror as (() => void) | undefined)?.();
         });
         return req;
       },
     };
-    await eraseIndexedDbData();
+    const erased = await eraseIndexedDbData();
     expect(aborted).toEqual(['WALLET_CONNECT_V2_INDEXED_DB', 'cbwsdk']);
+    // Absent is the state the erasure wanted, so it is a SUCCESS. Reading the
+    // abort as an error made every browser that had never held one of these
+    // databases — the ordinary case for an unused wallet — report both stores
+    // as refused and the whole erasure as incomplete.
+    expect(erased.refused).toEqual([]);
+    expect(erased.cleared).toBe(2);
+
     aborted.length = 0;
-    await inspectIndexedDbData();
+    const inventory = await inspectIndexedDbData();
     expect(aborted).toEqual(['WALLET_CONNECT_V2_INDEXED_DB', 'cbwsdk']);
+    expect(inventory).toEqual({ records: 0, refused: false });
+  });
+});
+
+describe('round 7 — stragglers, and a cleanup that must not overreach', () => {
+  const realWindow = (globalThis as Record<string, unknown>).window;
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).window = realWindow;
+  });
+
+  function fakeWindow(store: Map<string, string>) {
+    const fake: Storage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: fake,
+      sessionStorage: fake,
+      location: { origin: 'https://app.example' },
+      navigator: { userAgent: 'test' },
+      dispatchEvent: () => true,
+    };
+  }
+
+  it('waits for a straggler the per-connector bound gave up on', async () => {
+    // Round 7 P2. The bound advances the LOOP; it does not stop the wagmi
+    // action underneath, which on a late completion rewrites `wagmi.store`.
+    // The aggregate had already rejected at the bound, so every cleanup hung
+    // off it ran too early and nothing ran after the write.
+    vi.useFakeTimers();
+    try {
+      let settled = false;
+      let finish: (() => void) | undefined;
+      const teardown = disconnectEvery(
+        ['slow'],
+        () =>
+          new Promise<void>((resolve) => {
+            finish = resolve;
+          }),
+        { perConnectorTimeoutMs: 50, onAllSettled: () => (settled = true) },
+      );
+      const outcome = teardown().catch(() => 'gave up');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await outcome).toBe('gave up');
+      // Given up on, but not yet finished — so no cleanup has run.
+      expect(settled).toBe(false);
+      finish?.();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not schedule straggler cleanup when nothing was given up on', async () => {
+    // Otherwise every ordinary teardown pays for a callback with nothing to
+    // clean up after.
+    let settled = false;
+    const teardown = disconnectEvery(['fast'], async () => undefined, {
+      perConnectorTimeoutMs: 50,
+      onAllSettled: () => (settled = true),
+    });
+    await teardown();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+  });
+
+  it('still reports a refusal — the retained copy must not swallow it', async () => {
+    // Caught by an existing case the moment the retention was written wrong:
+    // attaching the swallow to the promise being AWAITED turns every refusal
+    // into a silent success and undoes the aggregation two rounds built. The
+    // swallow belongs on the retained copy only.
+    const teardown = disconnectEvery(
+      ['a', 'b'],
+      async ({ connector }) => {
+        if (connector === 'a') throw new Error('user rejected');
+      },
+      { perConnectorTimeoutMs: 50 },
+    );
+    await expect(teardown()).rejects.toThrow(/1 of 2/);
+  });
+
+  it('the DELAYED cleanup removes connector keys only', async () => {
+    // Round 7 P2. It runs seconds after the broadcast on a slow teardown, and
+    // the tab stays usable in between — so a blanket sweep would delete
+    // preferences, receipts and notification state the user created AFTER
+    // asking to be erased. Nobody requested that and nothing reports it.
+    const store = new Map<string, string>([
+      ['wagmi.store', '{}'],
+      ['wc@2:client:0.3//session', '[]'],
+      ['cbwsdk.store', '{}'],
+      // Created after the erasure, by a user still using the tab.
+      ['app.mode', 'lend'],
+      ['app.theme', 'dark'],
+      // Must survive, as everywhere else.
+      ['wagmi.metaMask.disconnected', 'true'],
+    ]);
+    fakeWindow(store);
+    eraseConnectorStorageQuietly();
+    expect(store.has('wagmi.store')).toBe(false);
+    expect(store.has('wc@2:client:0.3//session')).toBe(false);
+    expect(store.has('cbwsdk.store')).toBe(false);
+    expect(store.get('app.mode')).toBe('lend');
+    expect(store.get('app.theme')).toBe('dark');
+    expect(store.get('wagmi.metaMask.disconnected')).toBe('true');
   });
 });

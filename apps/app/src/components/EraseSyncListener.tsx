@@ -28,6 +28,7 @@ import { useAccount, useDisconnect } from 'wagmi';
 import { useTranslation } from 'react-i18next';
 import {
   disconnectEvery,
+  eraseConnectorStorageQuietly,
   erasePerTabData,
   eraseWebStorageQuietly,
 } from '../lib/dataRights';
@@ -49,7 +50,15 @@ export function EraseSyncListener() {
   // next connection rather than clearing the map — so a peer tab holding two
   // wallets dropped one, kept the other, and persisted the surviving map
   // straight back into the `wagmi.store` the sweep had just removed.
-  const { disconnect, connectors: liveConnectors } = useDisconnect();
+  //
+  // `disconnectAsync`, NOT `disconnect` (round 7 P1). The fire-and-forget
+  // `mutate` returns `void`, so wrapping it in an `async` arrow handed
+  // `disconnectEvery` an already-fulfilled promise: the loop and its cleanup
+  // finished before wagmi had disconnected anything, so the re-sweep ran
+  // BEFORE the write it exists to undo, and a rejection was invisible to the
+  // aggregation. The listener still acknowledges nothing — awaiting is about
+  // ordering its own cleanup, not about reporting.
+  const { disconnectAsync, connectors: liveConnectors } = useDisconnect();
   // #1862 Part 2 round 3 P1 — a disconnect with nothing to disconnect is NOT
   // free here. `@wagmi/core`'s action calls `config.setState` unconditionally,
   // outside the `if (connector)` branch, and the config's store is wrapped in
@@ -110,14 +119,25 @@ export function EraseSyncListener() {
           // fix a rejection no longer means nothing was written: one
           // connector can let go — persisting the store — before a later one
           // refuses and makes the whole thing reject.
-          void disconnectEvery(connectors, async (args) => disconnect(args))()
+          void disconnectEvery(connectors, disconnectAsync, {
+            // A connector the per-target bound gave up on can still complete
+            // later and write (round 7 P2) — this fires after the last one
+            // actually settles, which the `finally` below cannot wait for.
+            onAllSettled: eraseConnectorStorageQuietly,
+          })()
             .catch(() => {
               // Unacknowledged either way — there is nobody to report to. The
               // catch exists so a wallet that refuses cannot take the rest of
               // this handler down with it.
             })
             .finally(() => {
-              eraseWebStorageQuietly();
+              // CONNECTOR KEYS ONLY (round 7 P2). This runs seconds after the
+              // broadcast on a slow teardown, and the tab stays usable in
+              // between — a blanket sweep here would delete preferences,
+              // receipts or notification state the user created AFTER asking
+              // to be erased. The cleanup undoes the teardown's own write and
+              // nothing else.
+              eraseConnectorStorageQuietly();
             });
         }
         resetTheme();
@@ -146,7 +166,7 @@ export function EraseSyncListener() {
     // Only stable values. `disconnect` is react-query's `mutate`, the two
     // `resetToDefault`s are `useCallback`-wrapped, and `i18n` is the instance;
     // the two that change identity per render are read through the refs above.
-    [disconnect, resetTheme, resetMode, i18n],
+    [disconnectAsync, resetTheme, resetMode, i18n],
   );
   return null;
 }

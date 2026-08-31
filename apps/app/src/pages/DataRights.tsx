@@ -228,7 +228,14 @@ export function DataRights() {
     return () => {
       live = false;
     };
-  }, [storageTick, result]);
+    // `confirming` IS a refresh trigger (round 7 P2). IndexedDB emits no
+    // `storage` event, connector keys are filtered out of the one this page
+    // subscribes to, and the fallback poll compares COUNTS — so a wallet
+    // session added while an existing connector key kept the count steady
+    // could leave this at zero indefinitely, and the figure shown next to the
+    // confirm button is exactly where that matters. Re-reading when the user
+    // asks to confirm makes the promise fresh at the moment it is made.
+  }, [storageTick, result, confirming]);
   const stored = erasable.count + dbInventory.records;
   // Review round 1 P1: "could not read" is not "nothing is here". With
   // them collapsed, a browser refusing to be read told the user their

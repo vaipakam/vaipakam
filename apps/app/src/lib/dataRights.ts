@@ -831,7 +831,19 @@ function clearObjectStore(
         // Older engines may refuse; the delete below is then the fallback.
       }
     };
-    request.onerror = () => done(false);
+    // AN ABORTED UPGRADE ARRIVES HERE, NOT AT `onsuccess` (round 7 P1). Real
+    // IndexedDB does not deliver success after a version-change transaction is
+    // aborted: the open request fires `error` with `AbortError`. So the abort
+    // above — deliberate, and meaning "this database does not exist" — reached
+    // this handler and was reported as a REFUSAL, which on any browser where a
+    // registered database has never existed (the ordinary case for a wallet
+    // the user never connected) would have made the inventory unreadable and
+    // every erasure report both stores as held out.
+    //
+    // The round-6 test did not catch it because the STUB was written from the
+    // same wrong model — it fired `onsuccess` after the abort. A stub that
+    // encodes the author's assumption tests the assumption, not the code.
+    request.onerror = () => done(created);
     request.onsuccess = () => {
       const db = request.result;
       // The open itself can outlast the timeout. Nothing further should be
@@ -960,7 +972,10 @@ function countObjectStore(
         // Older engines may refuse; the delete below is then the fallback.
       }
     };
-    request.onerror = () => done(false);
+    // An aborted upgrade lands here with `AbortError`, not at `onsuccess` —
+    // see `clearObjectStore` for the full note. `created` means the abort was
+    // ours and the database is absent, which counts as zero records read.
+    request.onerror = () => done(created);
     request.onsuccess = () => {
       const db = request.result;
       if (settled) {
@@ -1095,6 +1110,51 @@ export function erasePerTabData(): number {
  * moment it happened and a report that revises itself later is its own kind
  * of untruth. This is about what remains on the device.
  */
+export function eraseConnectorStorageQuietly(): void {
+  // NARROW BY DESIGN (round 7 P2). The blanket sweep is right when it runs
+  // synchronously alongside the erasure and wrong when it runs SECONDS LATER,
+  // which a slow multi-connector teardown makes routine: the tab stays usable
+  // in the meantime, so the user can set a preference, take a receipt, or
+  // trigger a notification — and a delayed blanket sweep then deletes records
+  // created AFTER they asked to be erased, which nobody requested and nothing
+  // reports. A late cleanup exists to undo what the TEARDOWN wrote, so it
+  // removes only what a connector writes.
+  //
+  // The disconnect sentinel is excluded here as everywhere else, by
+  // `isErasableStorageKey` — a cleanup that removed it would re-enable the
+  // silent reconnect this PR exists to stop.
+  for (const kind of ['localStorage', 'sessionStorage'] as const) {
+    const store = safeStorage(kind);
+    if (!store) continue;
+    try {
+      const doomed: string[] = [];
+      for (let i = 0; i < store.length; i += 1) {
+        const key = store.key(i);
+        if (key && isConnectorStorageKey(key)) doomed.push(key);
+      }
+      for (const key of doomed) {
+        try {
+          store.removeItem(key);
+        } catch {
+          // One stubborn key must not stop the others.
+        }
+      }
+    } catch {
+      // Storage unavailable — nothing to undo.
+    }
+  }
+}
+
+/** True when `key` is connector-written, and therefore something a late
+ *  teardown could have re-created. Deliberately NOT the app's own keys. */
+function isConnectorStorageKey(key: string): boolean {
+  if (isDisconnectSentinelKey(key)) return false;
+  const lower = key.toLowerCase();
+  return THIRD_PARTY_STORAGE_MARKERS.some((marker) =>
+    lower.includes(marker.toLowerCase()),
+  );
+}
+
 export function eraseWebStorageQuietly(): void {
   clearStorage(safeStorage('localStorage'));
   clearStorage(safeStorage('sessionStorage'));
@@ -1234,11 +1294,32 @@ export function erasedItemCount(result: FullEraseResult): number {
  * values come from one store and normally agree; "normally agree" is not the
  * standard for a claim made to a user about a legal right.
  */
+export interface DisconnectEveryOptions {
+  /** Per-target bound. See `PER_CONNECTOR_TIMEOUT_MS`. */
+  readonly perConnectorTimeoutMs?: number;
+  /**
+   * Called once every ORIGINAL teardown has actually settled, however long
+   * that takes — including ones the per-target bound already gave up on.
+   *
+   * Round 7 P2. The bound advances the LOOP; it does not stop the wagmi
+   * action underneath, which on a late completion calls `config.setState` and
+   * rewrites `wagmi.store`. The aggregate promise had already rejected by
+   * then, so every cleanup hung off it ran at the bound and nothing ran
+   * after the write. The caller's cleanup belongs here instead: this fires
+   * once, after the last straggler, and never if none was given up on.
+   */
+  readonly onAllSettled?: () => void;
+}
+
 export function disconnectEvery<C>(
   connectors: readonly C[],
   disconnect: (args: { connector: C }) => Promise<unknown>,
-  perConnectorTimeoutMs: number = PER_CONNECTOR_TIMEOUT_MS,
+  options: DisconnectEveryOptions | number = {},
 ): () => Promise<void> {
+  const opts: DisconnectEveryOptions =
+    typeof options === 'number' ? { perConnectorTimeoutMs: options } : options;
+  const perConnectorTimeoutMs =
+    opts.perConnectorTimeoutMs ?? PER_CONNECTOR_TIMEOUT_MS;
   const targets = [...connectors];
   return async () => {
     if (targets.length === 0) {
@@ -1264,15 +1345,34 @@ export function disconnectEvery<C>(
     // exact defect the aggregation fix was for, reachable by the one failure
     // mode that fix did not cover.
     const failures: unknown[] = [];
+    // The ORIGINALS, kept so a straggler can be waited on after the loop has
+    // moved past it (round 7 P2). Discarding them meant a connector that
+    // completed at five seconds wrote `wagmi.store` with nothing left to
+    // notice — the aggregate had rejected at four.
+    const originals: Promise<unknown>[] = [];
+    let gaveUpOnAny = false;
     for (const connector of targets) {
+      const original = Promise.resolve(disconnect({ connector }));
+      // The RETAINED copy carries its own swallow so holding it cannot raise
+      // an unhandled rejection — while `original` itself keeps rejecting, so
+      // the await below still sees a refusal. Attaching the catch to the one
+      // being awaited (the first attempt at this) turned every refusal into a
+      // silent success and broke the aggregation two rounds of review had
+      // just built.
+      originals.push(original.catch(() => undefined));
       try {
-        await withTimeout(
-          Promise.resolve(disconnect({ connector })),
-          perConnectorTimeoutMs,
-        );
+        await withTimeout(original, perConnectorTimeoutMs);
       } catch (error) {
+        gaveUpOnAny = true;
         failures.push(error);
       }
+    }
+    if (gaveUpOnAny && opts.onAllSettled) {
+      // Detached on purpose: the caller is told when the last straggler has
+      // finished, and is not made to wait for it. Only when something was
+      // actually given up on — otherwise every ordinary teardown would pay
+      // for a callback with nothing to clean up.
+      void Promise.all(originals).then(() => opts.onAllSettled?.());
     }
     if (failures.length > 0) {
       // Still a rejection, so the caller reports "did not disconnect" — the
