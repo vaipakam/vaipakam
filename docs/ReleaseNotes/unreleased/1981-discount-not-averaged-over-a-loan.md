@@ -16,8 +16,10 @@ Here is what really decides your rate. Your tier is a time-weighted average of
 what you held over a recent window — at most thirty days, and never reaching
 back before your current balance began, with the latest days counting for
 more. That average is then pushed down to the lowest tier you dropped to at any
-point in the same period, using each day's low rather than its closing figure
-— so a dip counts even if you top back up before the day ends. And none of it
+point since your current holding began — a separate look-back, reaching back
+up to thirty days, not the averaging window just described — using each day's
+low rather than its closing figure, so a dip counts even if you top back up
+before the day ends. And none of it
 applies at all until you have held your current balance for a minimum number of
 days without interruption — that clock starts when your balance first goes
 above zero and restarts only if it returns to zero, so adding to a holding you

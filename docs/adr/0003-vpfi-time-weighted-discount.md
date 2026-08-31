@@ -18,10 +18,21 @@
 > reached in that history. The per-loan anchors (`lenderDiscountAccAtInit`,
 > `borrowerDiscountAccAtInit`) are still written but never read.
 >
-> That replacement is **stricter** than what this ADR chose, not a
-> relaxation: an average over a loan can be pulled up by a late top-up,
-> whereas a minimum over the history cannot, and the daily minimum is
-> recorded so a same-day dip counts.
+> Against the vector this ADR was written for — a top-up shortly before
+> settlement — the replacement is **stricter**, not a relaxation: an
+> average over a loan can be pulled up by a late top-up, whereas a
+> minimum over the history cannot, and the daily minimum is recorded so a
+> same-day dip counts.
+>
+> It is **not** stricter in every respect, and this note asserted that it
+> was until #1981 r2. The lowest-tier history is capped at the ring
+> buffer's 30 days, so a long loan's early low-tier period rolls out of
+> it, where the loan-lifetime average this ADR chose retained it for the
+> whole term: on a 100-day loan with 70 low-tier days followed by 30
+> high-tier days, today's rule can resolve the high tier and the recorded
+> one could not. Stronger defence, shorter memory — the trade is stated
+> here rather than elided, since this ADR is where someone would come to
+> weigh restoring the original design.
 >
 > This ADR is left otherwise unedited: it is the record of a decision as
 > it was taken. The current behaviour is described in the whitepaper

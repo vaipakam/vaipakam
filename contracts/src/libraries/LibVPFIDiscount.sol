@@ -952,17 +952,23 @@ library LibVPFIDiscount {
      * @notice Close out the borrower LIF custody at a proper loan
      *         settlement (repay / preclose / refinance-old-loan). Splits
      *         the held VPFI between the borrower's claimable rebate and
-     *         the treasury share based on the time-weighted average
-     *         discount BPS across the loan window.
+     *         the treasury share, sized by the borrower's EFFECTIVE
+     *         hold-tier discount at settlement — NOT, as this line said
+     *         until #1981, "the time-weighted average discount BPS across
+     *         the loan window", which T-087 Sub 1.B removed.
      *
      * @dev No-op when `vpfiHeld == 0` (the loan took the lending-asset
      *      fee path at init, so there's nothing to split). Silently does
      *      the right thing for pre-upgrade loans — they have zero anchor
      *      and zero vpfiHeld, so the helper returns without side-effects.
      *
-     *      Ordering: the caller MUST roll up the borrower's discount
-     *      accumulator before invoking this helper so the window average
-     *      reflects "as of now".
+     *      Ordering: the caller must NOT roll up before invoking this
+     *      helper. This header required the opposite until #1981 r2 —
+     *      contradicting, in the same comment block, the T-087 note 25
+     *      lines below that explains why the rollup was deliberately
+     *      dropped here (it would drag the lifecycle / nonce-bump
+     *      broadcast into settlement and breach `PrecloseFacet`'s
+     *      EIP-170 budget). Rollup belongs at mutation sites.
      *
      *      Treasury accrual is recorded for the treasury share; the
      *      rebate slice stays at the Diamond pending the borrower's
