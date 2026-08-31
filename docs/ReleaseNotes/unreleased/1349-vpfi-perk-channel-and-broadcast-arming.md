@@ -85,6 +85,22 @@ how much that chain had available. It is still subtracted from what the chain
 can be asked to fund, so the home chain can never promise the same tokens
 twice — that was always the point of counting it, and it is unchanged.
 
+The earmark is also bounded by what is actually left. It is a second call on
+one pot rather than a slice taken out of the first, so a chain whose own
+demand has already used up everything it holds now earmarks nothing instead
+of promising more than it has. An instruction that does not fit is honoured
+as far as the pot allows rather than refused outright — refusing would let a
+keeper-budget setting fail a whole day's funding, which is a far worse
+outcome than a smaller keeper budget.
+
+The monitoring that watches this accounting from outside was taught about the
+new figure in the same change. It re-derives what each chain should have
+available and raises a critical alert when its answer disagrees with the
+chain's; without being told about the earmark it would have disagreed by
+exactly that amount and reported every healthy chain as broken. It can now
+also check the earmark against the room actually left, which nothing else
+could see.
+
 Arming it required making room first. The contract that owns the reward day had
 32 bytes of deployable space left — less than a single call — so nothing could
 be added to it at all. The part that ships a finished day to other chains has

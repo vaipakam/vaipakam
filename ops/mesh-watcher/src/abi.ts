@@ -135,6 +135,16 @@ const EXPECTED_VIEWS: ReadonlyArray<{
       'releasedRemitResolved:uint256',
     ],
   },
+  // #1569 M4 C3 — the keeper-earmark draw, the THIRD subtrahend of
+  // `expectedAvail` and the subject of the `keeper-cap` check. On the
+  // aggregator facet (it reads the same per-chain books), so no separate
+  // ABI import: a missing selector here means the aggregator itself was
+  // missed by a refresh, which the gap message says.
+  {
+    name: 'getChainKeeperDraw',
+    inputs: ['uint32'],
+    outputs: ['netDraw:uint256'],
+  },
   // #1568 C2 — the repatriation ledger views, on `RepatriationFacet`.
   // Base-side: the per-chain NET draw (`expectedAvail`'s new term and the
   // §7 #6 second comparison) plus the lifetime release observability.

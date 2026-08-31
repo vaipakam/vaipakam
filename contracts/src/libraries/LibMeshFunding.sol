@@ -424,8 +424,36 @@ library LibMeshFunding {
         // cumulative.
         uint256 keeperAlloc;
         if (commitLocal != 0) {
-            keeperAlloc =
+            uint256 want =
                 (commitLocal * s.chainKeeperAllocateBps[c.chainId]) / 10_000;
+            // BOUNDED BY WHAT IS LEFT (Codex #2031 r3). The earmark is a
+            // SECOND draw on the same bucket, not a haircut on the claim
+            // commit, so it has to fit in the headroom the commit leaves —
+            // `commitLocal + keeperAlloc <= c.avail`. Without the bound a
+            // chain whose demand consumed its whole availability still
+            // derived a positive allocation on top: a 40 VPFI bucket with a
+            // 25% instruction became backing for 40 of claims PLUS 10 of
+            // keeper budget, and the mirror duly reserved both.
+            //
+            // Round 2 moved the earmark to its own ledger, which repaired
+            // the `outstanding + retired == consumed` identity and left this
+            // untouched — the identity was never the thing that would have
+            // caught an over-draw, because both halves were internally
+            // consistent at the inflated total.
+            //
+            // TRIMMED, never refused: an instruction that does not fit is
+            // honoured as far as the bucket allows and the remainder is
+            // simply not earmarked. Reverting would let a keeper-budget
+            // instruction fail a day's whole funding pass, which is a much
+            // worse failure than a smaller keeper budget.
+            //
+            // NOT carved out of `commitLocal` instead, which is the other
+            // shape this could take: the commit is what the day's CLAIMS are
+            // funded by, so taking the earmark out of it would leave the day
+            // short by exactly the earmark and move the shortfall onto
+            // claimants.
+            uint256 headroom = c.avail > commitLocal ? c.avail - commitLocal : 0;
+            keeperAlloc = want > headroom ? headroom : want;
             // The INSTRUCTION cumulative (B1's definition) — the binding
             // availability backstop `_mirrorAvailable` nets against, so a
             // chain can never be committed twice for the same tokens.

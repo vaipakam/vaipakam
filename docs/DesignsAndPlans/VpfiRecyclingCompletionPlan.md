@@ -1094,9 +1094,20 @@ mirror stored it on the day record without reading it. It is now set per
 destination by `RewardAggregatorFacet.setChainKeeperAllocateBps`
 (ADMIN + `onlyCanonical` — a mirror must not grant itself keeper budget,
 which is the card's load-bearing qualifier), carved from that chain's own
-local commit, counted into `chainConsumedRecycled` as its storage docs
-already specified, and applied on arrival into `recycleKeeperBudget`.
-Zero — the deploy default — instructs nothing.
+local commit, drawn against the chain's availability through its OWN
+ledger slot (`chainKeeperAllocDebited`), and applied on arrival into
+`recycleKeeperBudget`. Zero — the deploy default — instructs nothing.
+
+**NOT `chainConsumedRecycled`**, which an earlier revision of this line
+said and which the implementation deliberately rejects (Codex #2031 r2).
+That counter is one half of `outstanding + retired == consumed`, and only
+the claim commit enters the retirement lifecycle — so charging the earmark
+there breaks the identity on the first non-zero allocation and leaves the
+difference as phantom consumption suppressing the chain's availability.
+The counter's own storage doc names this trap for the C2 repatriation
+draw; the earmark is the same class of non-claim draw. It is also
+**bounded by the headroom the commit leaves** (r3), since it is a second
+draw on one bucket rather than a haircut on the commit.
 
 Arming it required a facet split first, and that is worth recording:
 `RewardAggregatorFacet` had **32 bytes** of EIP-170 headroom, so the ~96

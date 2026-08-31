@@ -169,23 +169,82 @@ contract MeshCommitRetirementTest is SetupTest {
     /// availability nets the earmark, so Base cannot instruct the same
     /// tokens twice. Without this the fix would be a regression dressed as
     /// one — the identity restored by simply forgetting the earmark.
+    ///
+    /// Needs HEADROOM to be visible at all: `_armAndInstruct40` gives ARB
+    /// exactly enough to fund its own demand, and an earmark is bounded by
+    /// what the commit leaves (see the over-commit test below), so on that
+    /// scaffold the armed figure is legitimately zero.
     function test_KeeperEarmarkStillDrawsDownAvailability() public {
         _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
-        _armAndInstruct40();
+        uint256 instructed = _armAndInstructWithHeadroom();
+        uint256 keeperArmed = _agg().getChainKeeperDraw(CHAIN_ARB);
+        assertGt(keeperArmed, 0, "the earmark fits in the headroom");
         (, , uint256 availArmed, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
 
-        // Re-run the identical scenario with the knob dark. The earmark is
-        // 25% of the same local commit, so an unarmed chain must retain
-        // strictly more availability than an armed one.
+        // The identical scenario with the knob dark.
         setUp();
-        _armAndInstruct40();
+        uint256 instructedDark = _armAndInstructWithHeadroom();
         (, , uint256 availDark, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
 
-        assertGt(
-            availDark,
-            availArmed,
-            "an armed earmark draws availability down; a dark one does not"
+        assertEq(instructed, instructedDark, "same commit either way");
+        assertEq(
+            availDark - availArmed,
+            keeperArmed,
+            "availability falls by exactly the earmark, and by nothing else"
         );
+    }
+
+    /// The earmark is a SECOND draw on one bucket, so it must fit in what
+    /// the claim commit leaves (Codex #2031 r3).
+    ///
+    /// `_armAndInstruct40` is the exact shape of the report: ARB's demand
+    /// consumes its whole 40 of availability. Against the pre-fix code a
+    /// 25% instruction still derived 10 on top — 40 of claims plus 10 of
+    /// keeper budget backed by 40 tokens, with the mirror dutifully
+    /// reserving both.
+    function test_KeeperEarmarkCannotOverCommitTheBucket() public {
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        uint256 instructed = _armAndInstruct40();
+
+        (uint256 reported, uint256 consumed, , ) =
+            _agg().getChainRecycledLedger(CHAIN_ARB);
+        uint256 keeper = _agg().getChainKeeperDraw(CHAIN_ARB);
+
+        // The invariant, which is the actual claim: the two draws on one
+        // bucket never exceed what the chain reported holding.
+        assertLe(
+            consumed + keeper,
+            reported,
+            "the two draws together never exceed what the chain reported"
+        );
+        // And the trim really bit. The pro-rata commit split leaves a few
+        // WEI of rounding headroom, so the bound clamps a want of ~10e18
+        // (25% of a 40e18 commit, which the pre-fix code granted in full,
+        // on top of the commit) down to that dust. Asserting the dust is
+        // zero would be asserting the rounding rather than the property;
+        // asserting it is negligible is the property.
+        assertLt(
+            keeper,
+            1e15,
+            "earmark trimmed to the headroom the commit left, not 25% on top"
+        );
+        // Trimmed, never refused: the day still funded its full commit.
+        assertApproxEqAbs(instructed, 40 ether, 1e15, "commit is untouched");
+    }
+
+    /// @dev Like `_armAndInstruct40` but reports MORE availability than the
+    ///      day's demand consumes, so an earmark has room to land. Returns
+    ///      the instructed figure.
+    function _armAndInstructWithHeadroom() internal returns (uint256 instructed) {
+        _mut().setRecycleBucketRaw(1_000_000 ether);
+        _mut().setRecycledCreditedByDayRaw(5, 700 ether);
+        _mut().setGovernorCommitArmedFromDayRaw(5);
+
+        _reportArb(5, 400 ether, 0, 0);
+        _finalize(5);
+
+        (, instructed, , ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+        assertGt(instructed, 0, "the day instructed something");
     }
 
     // ─── The reservation ledger now retires ──────────────────────────────

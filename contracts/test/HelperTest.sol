@@ -2177,7 +2177,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](31);
+        selectors = new bytes4[](32);
         // #1434 P2-w1 — the V3 broadcast heal (single-destination). The
         // lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet (EIP-170 headroom).
@@ -2253,6 +2253,8 @@ contract HelperTest {
             RewardAggregatorFacet.setChainKeeperAllocateBps.selector;
         selectors[30] =
             RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
+        selectors[31] =
+            RewardAggregatorFacet.getChainKeeperDraw.selector;
         return selectors;
     }
 

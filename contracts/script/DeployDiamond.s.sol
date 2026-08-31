@@ -2818,7 +2818,7 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](31);
+        s = new bytes4[](32);
         // The lapse-schedule setter + day-clock reads live on
         // RewardCommitmentFacet for EIP-170 reasons. #1569 then split the
         // broadcast cluster out entirely (this facet had reached 32 bytes of
@@ -2893,6 +2893,8 @@ contract DeployDiamond is Script {
             RewardAggregatorFacet.setChainKeeperAllocateBps.selector;
         s[30] =
             RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
+        s[31] =
+            RewardAggregatorFacet.getChainKeeperDraw.selector;
 
     }
 

@@ -111,6 +111,35 @@ export function repatDrawUnavailableGap(
   };
 }
 
+/**
+ * #1569 M4 C3 — the gap for an unreadable keeper-earmark draw.
+ *
+ * Same discipline as the repatriation draw above, and for the same reason
+ * (Codex #2031 r3): the keeper draw is a THIRD subtrahend of the
+ * availability formula, so a tick that cannot read it cannot re-derive
+ * availability either. Substituting zero would page a false CRITICAL on
+ * every armed chain, which is precisely the failure this watcher exists to
+ * distinguish from a real one.
+ */
+export function keeperDrawUnavailableGap(
+  chainId: number,
+  err: unknown,
+): CoverageGap {
+  const failure = classify(err, 'getChainKeeperDraw');
+  const pre1569 = isMissingSelector(err);
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'base-books-keeper',
+    detail:
+      `getChainKeeperDraw() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The draw is UNKNOWN this tick, so the availability-formula check for this chain did NOT run (substituting zero would page a false CRITICAL on any chain with an armed keeper allocation).\n\n` +
+      (pre1569
+        ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-#1569 deployment, or a partial facet refresh that dropped the RewardAggregatorFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
+        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
 /** Base's books for one chain — three views, read together. */
 async function readBaseBooks(
   canonical: ChainTarget,
@@ -170,8 +199,26 @@ async function readBaseBooks(
     gaps.push(repatDrawUnavailableGap(chainId, err));
   }
 
+  // #1569 M4 C3 — the keeper-earmark draw, read separately for exactly the
+  // reasons the repatriation draw is: a newer selector, and a Diamond
+  // missed during a refresh must cost only the checks that need it.
+  let keeperDraw: bigint | undefined;
+  try {
+    keeperDraw = await readView<bigint>(
+      canonical.client,
+      canonical.diamond,
+      'getChainKeeperDraw',
+      [chainId],
+      blockNumber,
+    );
+  } catch (err) {
+    keeperDraw = undefined;
+    gaps.push(keeperDrawUnavailableGap(chainId, err));
+  }
+
   return {
     chainId,
+    keeperDraw,
     reported: ledger[0],
     consumed: ledger[1],
     avail: ledger[2],

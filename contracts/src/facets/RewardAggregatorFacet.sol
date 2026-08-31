@@ -807,6 +807,31 @@ contract RewardAggregatorFacet is
         attributedCumulative = s.chainAttributedRecycled[chainId];
     }
 
+    /// @notice #1569 M4 C3 — the chain's keeper-earmark draw, the third
+    ///         separate term of the availability formula alongside the claim
+    ///         net and the repatriation draw.
+    /// @dev    Exposed for the SAME reason `getChainRepatriationDraw` is
+    ///         (Codex #2031 r3): `ops/mesh-watcher` re-derives availability
+    ///         off-chain and pages a CRITICAL when its figure disagrees with
+    ///         the chain's. A draw term the watcher cannot read makes a
+    ///         healthy armed chain look corrupted by exactly this amount,
+    ///         and leaves the watcher unable to check the draw's own bound.
+    ///
+    ///         Zero until `chainKeeperAllocateBps` is armed, so a
+    ///         pre-#1569 deployment reads zero and needs no special case —
+    ///         but a MISSING selector is not the same as zero, and the
+    ///         watcher must treat an unreadable view as UNKNOWN and skip,
+    ///         never as zero (a partial facet refresh leaves possibly-nonzero
+    ///         storage behind a reverting view).
+    /// @return netDraw The live earmark draw for `chainId`.
+    function getChainKeeperDraw(uint32 chainId)
+        external
+        view
+        returns (uint256 netDraw)
+    {
+        return LibVaipakam.storageSlot().chainKeeperAllocDebited[chainId];
+    }
+
     /// @notice #1222 M4 C1 (#1567) — the surplus multiple `N` changed.
     ///         `0` means the flag is dark.
     event RecycleSurplusMultipleSet(uint16 multiple);
