@@ -7465,6 +7465,21 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
+  it('a paren INSIDE an argv string is not a tuple delimiter', () => {
+    // Pairing the tuple's delimiters by position only holds if the scan knows
+    // which parens are delimiters. Counted quote-naively, the `(` inside this
+    // argument pushes a frame the tuple's real `)` then pops, so the call's own
+    // `)` closes the array instead — extending it over the options object,
+    // where `--keep-vars` is a string wrangler never receives.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/deploy.py',
+      'subprocess.run(("wrangler", "deploy", "x ("), env={"N": "--keep-vars"})\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {
