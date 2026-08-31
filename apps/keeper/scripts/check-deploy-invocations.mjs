@@ -2621,6 +2621,17 @@ function argvValue(region, spellings) {
     const v = m[2].trim();
     return /^(?:true|false|null|None|undefined)$/.test(v) || v === '' ? null : `\${${v}}`;
   }
+  // AN ESCAPED LITERAL IS NOT ITS RUNTIME VALUE. JavaScript decodes
+  // `"vaipakam\\u002dagent"` to `vaipakam-agent` before wrangler ever sees it,
+  // and comparing the SOURCE spelling made an explicit protected name read as
+  // authoritatively unprotected (Codex #2036 r6) — the same defect the TOML
+  // decoder was written for one round earlier, on the other side of the file.
+  //
+  // Treated as UNRESOLVED rather than decoded: the host language is not known
+  // here (JS and Python spell escapes differently), and a name decoded WRONGLY
+  // is authoritative, which is worse than one declined. Worker names do not
+  // contain backslashes, so this costs nothing real.
+  if (m[1].includes('\\')) return `\${${m[1]}}`;
   return m[1];
 }
 
@@ -2651,44 +2662,63 @@ function declaredWorkerName(absPath) {
     // agent-naming config read as unprotected and the deploy exited 0 (Codex
     // #2036 r4). A partially-decoded name is the failure mode the invalid-escape
     // rule above already refuses; this was the same mistake by whitespace.
-    const top = text.split(/^[^\S\n]*\[/m)[0];
-    const ml = top.match(
-      new RegExp(
-        String.raw`^[^\S\n]*(?:name|"name"|'name')\s*=\s*` +
-          String.raw`(?:"""(?:\r?\n)?([\s\S]*?)"""|'''(?:\r?\n)?([\s\S]*?)''')`,
-        'm',
-      ),
-    );
-    if (ml) {
-      // A basic multiline decodes escapes, a literal one does not — the same
-      // asymmetry the single-line forms follow, for the same TOML reason.
-      const decoded = ml[1] !== undefined ? decodeTomlBasic(ml[1]) : ml[2];
-      if (decoded !== null && decoded !== undefined) name = decoded;
-    }
-    // STRING-BODY STATE, because a line scan cannot otherwise tell a key from
-    // text that merely looks like one. A config carrying
-    // `note = '''\nname = "vaipakam-www"\n'''` above its real
-    // `name = "vaipakam-agent"` had the EMBEDDED line answer — an authoritative
-    // identity read out of somebody else's prose, and the agent deploy passed
-    // (Codex #2036 r5).
+    // ONE STATE-AWARE PASS, and it is one pass because splitting it was the bug.
     //
-    // Only the multiline delimiters need tracking: a single-line string cannot
-    // carry a newline, so it cannot hide a line from this loop.
+    // The r5 fix tracked multiline string bodies in this loop but left the
+    // multiline-NAME search as a SEPARATE pre-scan over the whole top-level
+    // text — so the pre-scan ran ahead of the state machine and read a
+    // `name = """vaipakam-www"""` sitting inside somebody else's multiline
+    // value (Codex #2036 r6). Two readers of one file, one of them stateless,
+    // is the two-halves shape this file keeps producing; the fix is a single
+    // reader that cannot get ahead of its own state.
+    const NAME_KEY = String.raw`(?:name|"name"|'name')`;
+    const OPENERS = ['"""', "'''"];
     let inMultiline = null;
-    for (const line of name === undefined ? text.split('\n') : []) {
+    let collecting = null;
+    let collected = [];
+    for (const line of text.split('\n')) {
       if (inMultiline !== null) {
-        if (line.includes(inMultiline)) inMultiline = null;
+        const at = line.indexOf(inMultiline);
+        if (at === -1) {
+          if (collecting !== null) collected.push(line);
+          continue;
+        }
+        if (collecting !== null) {
+          collected.push(line.slice(0, at));
+          const body = collected.join('\n');
+          const decoded = collecting === '"""' ? decodeTomlBasic(body) : body;
+          if (decoded !== null) name = decoded;
+          break;
+        }
+        inMultiline = null;
         continue;
       }
-      // An opener whose closer is not on the same line starts a body. Counted
-      // rather than tested, so `x = """a""" ` (opened and closed here) does not
-      // swallow the rest of the file.
-      for (const delim of ['"""', "'''"]) {
-        const n = line.split(delim).length - 1;
-        if (n % 2 === 1) inMultiline = delim;
-      }
-      if (inMultiline !== null) continue;
       if (/^\s*\[/.test(line)) break;
+      // The NAME key opening a multiline value. TOML trims a newline (LF or
+      // CRLF) immediately after the delimiter — a `\r` left on the front makes
+      // the identity partially decoded, which is treated as authoritative and
+      // is exactly the r4 defect.
+      const opens = line.match(
+        // `(.*?)\r?$` rather than `(.*)$`: JavaScript's `.` excludes `\r`, so a
+        // CRLF file left the carriage return unmatched and the whole opener
+        // failed — the r4 CRLF defect surviving into the rewrite that was meant
+        // to preserve its fix.
+        new RegExp(String.raw`^[^\S\n]*${NAME_KEY}\s*=\s*("""|''')(.*?)\r?$`),
+      );
+      if (opens) {
+        const rest = opens[2];
+        const close = rest.indexOf(opens[1]);
+        if (close !== -1) {
+          const body = rest.slice(0, close);
+          const decoded = opens[1] === '"""' ? decodeTomlBasic(body) : body;
+          if (decoded !== null) name = decoded;
+          break;
+        }
+        inMultiline = opens[1];
+        collecting = opens[1];
+        collected = rest.replace(/\r$/, '') === '' ? [] : [rest];
+        continue;
+      }
       // BOTH TOML string forms. A single-quoted literal string is as valid a
       // name as a double-quoted basic one, and accepting only the latter meant
       // a perfectly ordinary config silently declined to answer.
@@ -2719,6 +2749,12 @@ function declaredWorkerName(absPath) {
           if (decoded !== null) name = decoded;
         }
         break;
+      }
+      // Any OTHER key opening a multiline value. Delimiters are COUNTED rather
+      // than tested for presence, so a value that opens and closes on the same
+      // line (`x = """a"""`) does not swallow the rest of the file.
+      for (const delim of OPENERS) {
+        if ((line.split(delim).length - 1) % 2 === 1) inMultiline = delim;
       }
     }
   } else {
@@ -2907,7 +2943,26 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // which shell text does not have — and where it does (`wrangler deploy
   // "--name=x"`), bash really is passing that single argument, so reading it as
   // one is right.
-  const name = known(argvValue(wranglerRegion, '--name') ?? valueOf('--name'));
+  const nameRaw = argvValue(wranglerRegion, '--name') ?? valueOf('--name');
+  const name = known(nameRaw);
+  // AN UNREADABLE EXPLICIT NAME IS NOT AN ABSENT ONE. `known()` collapses the
+  // unresolvable marker to `null`, which read as "no `--name` was given" and
+  // let the LOWER-PRECEDENCE config identity answer — so a computed
+  // `["--name", worker]` beside a literal unprotected config passed, although
+  // wrangler deploys whatever `worker` holds (Codex #2036 r6).
+  //
+  // `getScriptName` is `args.name ?? config.name`: once a name is present the
+  // config cannot override it, so a name we cannot read means the target is
+  // unknown — which is the inversion's case, not the config's.
+  // ...but it does NOT short-circuit to the unnamed scope, which is where my
+  // first cut of this put it and which broke the #1995 r16 control: a dynamic
+  // `--name` must still DEFER to the surrounding text, so a runbook line that
+  // names a package reports under that package rather than under "a Worker this
+  // scanner could not name". The rule is narrower than "unknown target" — it is
+  // "the CONFIG may not answer", because the config is the one thing an
+  // explicit name outranks. Text and directory still answer, and the inversion
+  // is the last resort exactly as it is for an unreadable config.
+  const nameUnresolved = nameRaw !== null && name === null;
   if (name !== null) {
     // wrangler's `getScriptName` is `args.name ?? config.name`, so an explicit
     // name is authoritative no matter what the config path turns out to be.
@@ -3126,6 +3181,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     argvValue(rawSeg, '-e|--env') !== null;
   if (
     cfg !== null &&
+    !nameUnresolved &&
     !envAssigned &&
     !/(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion)
   ) {
@@ -3251,7 +3307,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // PROSE IS DELIBERATELY EXCLUDED: the `!hasCwdState` branch above has already
   // returned, deferring to the surrounding text, which on a runbook line is the
   // better answer and names a package the reader can act on.
-  if (cfg !== null) return { scope: UNNAMED_SCOPE };
+  if (cfg !== null || nameUnresolved) return { scope: UNNAMED_SCOPE };
   return { scope: null };
 }
 

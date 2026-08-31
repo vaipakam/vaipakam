@@ -6920,6 +6920,62 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
+  // ---- Codex #2036 r6 ----
+
+  it('an UNREADABLE explicit name does not let the config answer', () => {
+    // `getScriptName` is `args.name ?? config.name`, so once a name is present
+    // the config cannot override it. Collapsing the unresolvable marker to null
+    // read as "no --name was given" and let the lower-precedence config identity
+    // answer, although wrangler deploys whatever the variable holds.
+    seed('configs/www.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd .\nconst worker = "vaipakam-agent";\n' +
+        'spawnSync("wrangler", ["deploy", "--name", worker, "--config", "configs/www.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
+
+  it('but a dynamic name still DEFERS to the surrounding text (#1995 r16 control)', () => {
+    // The narrower rule, pinned. My first cut short-circuited an unreadable name
+    // to the unnamed scope and broke this standing control: a runbook line that
+    // names a package must report under THAT package, with its remedy. The rule
+    // is "the config may not answer", not "the target is unknown".
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy --name "$WORKER"\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('an ESCAPED argv literal is not read at its source spelling', () => {
+    // JavaScript decodes `"vaipakam\\u002dagent"` before wrangler sees it.
+    // Comparing the source spelling made an explicit PROTECTED name read as
+    // authoritatively unprotected — the TOML-escape defect from round 1, on the
+    // other side of the file.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nspawnSync("wrangler", ["deploy", "--name", "vaipakam\\u002dagent"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a fake multiline name inside another value is not the identity', () => {
+    // The r5 fix tracked string bodies in the line loop but left the
+    // multiline-NAME search as a separate stateless pre-scan, so it read ahead
+    // of the state machine and found this embedded key.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.toml',
+      ["note = '''", 'name = """vaipakam-www"""', "'''", 'name = "vaipakam-agent"', ''].join('\n'),
+    );
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {
