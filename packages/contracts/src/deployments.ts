@@ -230,22 +230,21 @@ export interface Deployment {
   // ── Universal cross-chain plumbing ──────────────────────────────
   weth?: HexAddress;
 
-  /** Optional override for the token-icon URL template used by
-   *  `<TokenIcon>` on this specific chain. Two placeholders supported:
-   *  `{chainSlug}` (mapped via `TRUST_WALLET_SLUG` in `TokenIcon.tsx`)
-   *  and `{address}` (checksummed). Read-precedence on the frontend:
+  /** Optional per-chain override for the token-icon URL template.
    *
-   *    1. `VITE_TOKEN_ICON_URL_TEMPLATE` env var (chain-agnostic
-   *       operator override — set in `.env.local` / Cloudflare build
-   *       vars).
-   *    2. This per-chain field (chain-specific override; useful when
-   *       one chain needs a different icon source than the rest, e.g.
-   *       a chain with self-hosted icons).
-   *    3. Hardcoded default in `TokenIcon.tsx` — Trust Wallet's CDN.
+   *  INERT since #1963. Its only reader was `<TokenIcon>` in
+   *  `packages/ui`, retired when #1854 removed that package's last
+   *  consumer — so today nothing sets this field (no chain stanza
+   *  carries it) and nothing reads it. The field is left on the type
+   *  rather than removed: it is optional, dropping it is a deployment-
+   *  schema change with its own review, and a future icon surface
+   *  would want the same shape back.
    *
-   *  Most deploys leave this unset and rely on the global default.
-   *  The chain-slug map gates icon rendering regardless: chains absent
-   *  from `TRUST_WALLET_SLUG` short-circuit before any URL is built. */
+   *  Historical read-precedence, for whoever restores a consumer:
+   *  the `VITE_TOKEN_ICON_URL_TEMPLATE` env var (chain-agnostic
+   *  operator override) beat this per-chain field, which beat the
+   *  component's hardcoded Trust Wallet CDN default. Two placeholders
+   *  were supported — `{chainSlug}` and `{address}` (checksummed). */
   tokenIconUrlTemplate?: string;
 
   // ── Testnet / anvil mock fixtures (omitted on mainnet) ──────────

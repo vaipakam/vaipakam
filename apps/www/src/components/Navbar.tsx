@@ -91,9 +91,10 @@ export default function Navbar() {
   const groupsWrapRef = useRef<HTMLDivElement | null>(null);
   // Settings gear (Language + Theme) popover. Lives next to the
   // hamburger so the public navbar matches the in-app topbar's
-  // settings entry-point. Click-only on every device (mirrors the
-  // InfoTip click-only pattern; avoids the iOS hover-on-first-tap
-  // bug that would defer click to a second tap).
+  // settings entry-point. Click-only on every device (the pattern
+  // inherited from the retired `<InfoTip>` in packages/ui, #1963;
+  // avoids the iOS hover-on-first-tap bug that would defer click to a
+  // second tap).
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsRef = useRef<HTMLDivElement | null>(null);
 

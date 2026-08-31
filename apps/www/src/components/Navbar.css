@@ -639,20 +639,34 @@
   gap: 8px;
 }
 
-/* Inside the mobile flyout, the three connected-state controls
- * (wallet pill → chain picker → disconnect) stretch to fill the
- * column AND centre their inner content so they read as equal-
+/* ── Connected-state mobile flyout — CURRENTLY UNREACHABLE ──
+ *
+ * Nothing on this site emits `.wallet-connected-mobile`,
+ * `.wallet-address-pill`, `.chain-picker` or `.chain-picker-menu`
+ * (grep puts all four at zero in `src/`). This is the marketing site,
+ * which is wallet-free by design, and `<ChainPicker>` lived in
+ * `packages/ui`, retired in #1963. So the rules below style a state
+ * this site cannot enter.
+ *
+ * Left in place rather than deleted: removing style rules is a
+ * visual-risk change that wants its own review, and the reasoning
+ * below is worth keeping if a connected navbar is ever built here.
+ * Read the rest of this comment in the past tense.
+ *
+ * Inside the mobile flyout, the three connected-state controls
+ * (wallet pill → chain picker → disconnect) stretched to fill the
+ * column AND centred their inner content so they read as equal-
  * weight rows alongside the centred Launch App + Disconnect
  * buttons. Without these overrides:
  *   - `<WalletAddressPill>` would render at its intrinsic
  *     `inline-flex` width with content left-aligned (default).
- *   - `<ChainPicker>` button uses `justify-content: space-between`
- *     globally so the chevron pins to the right edge — fine in a
+ *   - the `<ChainPicker>` button used `justify-content: space-between`
+ *     globally so the chevron pinned to the right edge — fine in a
  *     compact desktop pill, mismatched against the centred siblings
  *     in the flyout column.
  *   - `.btn-ghost` (Disconnect) sits at intrinsic content width.
  *
- * Stretching to 100% + centring the inner cluster makes all three
+ * Stretching to 100% + centring the inner cluster made all three
  * read as a tidy stack of equal-width, equal-aligned rows. */
 .wallet-connected-mobile .wallet-address-pill {
   display: flex;
