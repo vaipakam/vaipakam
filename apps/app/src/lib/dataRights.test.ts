@@ -9,7 +9,7 @@
  * `app.`. A data-rights page that lies is worse than no page, so the
  * prefix list is pinned against the keys the app really uses.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import {
   incompleteExportNote,
@@ -22,6 +22,10 @@ import {
   STORAGE_PREFIXES,
   PREFERENCE_COOKIES,
   THIRD_PARTY_STORAGE_MARKERS,
+  ERASABLE_INDEXED_DB_NAMES,
+  ERASURE_REGISTRY,
+  eraseIndexedDbData,
+  INDEXED_DB_DELETE_TIMEOUT_MS,
 } from './dataRights';
 
 /**
@@ -556,5 +560,113 @@ describe('cookie value decoding', () => {
     expect(decodeOrRaw('%')).toBe('%');
     expect(decodeOrRaw('en')).toBe('en');
     expect(decodeOrRaw('zh%2DHans')).toBe('zh-Hans');
+  });
+});
+
+describe('IndexedDB erasure (#1862 Part 2)', () => {
+  const realIdb = (globalThis as Record<string, unknown>).indexedDB;
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).indexedDB = realIdb;
+  });
+
+  /** A fake `deleteDatabase` whose per-name outcome the test chooses. */
+  function stubIndexedDb(
+    outcome: (name: string) => 'success' | 'error' | 'blocked' | 'never',
+  ): string[] {
+    const asked: string[] = [];
+    (globalThis as Record<string, unknown>).indexedDB = {
+      deleteDatabase(name: string) {
+        asked.push(name);
+        const req: Record<string, unknown> = {};
+        const verdict = outcome(name);
+        if (verdict !== 'never') {
+          // Fire on a later turn, as the real API does.
+          queueMicrotask(() => {
+            const handler = req[`on${verdict}`];
+            if (typeof handler === 'function') (handler as () => void)();
+          });
+        }
+        return req;
+      },
+    };
+    return asked;
+  }
+
+  it('names both databases, and both come from the registry', () => {
+    // Not a spelling test: the erasure deletes whole databases, so a wrong
+    // name is a silent no-op that still reports success (deleteDatabase
+    // resolves for a database that never existed). The names are quoted
+    // from the installed packages in the registry's own comment.
+    expect(ERASABLE_INDEXED_DB_NAMES).toEqual([
+      'WALLET_CONNECT_V2_INDEXED_DB',
+      'cbwsdk',
+    ]);
+    expect(ERASURE_REGISTRY).toHaveLength(2);
+    for (const target of ERASURE_REGISTRY) {
+      // Every entry carries its provenance. Part 1 shipped four markers of
+      // which one was confirmed; this field is what stops that recurring.
+      expect(target.evidence.length).toBeGreaterThan(20);
+      expect(target.writtenBy.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('deletes both databases and reports no refusal', async () => {
+    const asked = stubIndexedDb(() => 'success');
+    const result = await eraseIndexedDbData();
+    expect(asked).toEqual(['WALLET_CONNECT_V2_INDEXED_DB', 'cbwsdk']);
+    expect(result).toEqual({ deleted: 2, refused: [], unavailable: false });
+  });
+
+  it('reports a BLOCKED database by name rather than counting it erased', async () => {
+    // The failure this guards against: another tab holds the WalletConnect
+    // database open, the deletion never completes, and the page tells the
+    // user their session was removed while it is still live.
+    stubIndexedDb((n) => (n === 'cbwsdk' ? 'success' : 'blocked'));
+    const result = await eraseIndexedDbData();
+    expect(result.deleted).toBe(1);
+    expect(result.refused).toEqual(['WALLET_CONNECT_V2_INDEXED_DB']);
+  });
+
+  it('treats an errored deletion as refused', async () => {
+    stubIndexedDb(() => 'error');
+    const result = await eraseIndexedDbData();
+    expect(result.deleted).toBe(0);
+    expect(result.refused).toEqual([
+      'WALLET_CONNECT_V2_INDEXED_DB',
+      'cbwsdk',
+    ]);
+  });
+
+  it('times out a request that never settles, and calls it refused', async () => {
+    vi.useFakeTimers();
+    try {
+      stubIndexedDb(() => 'never');
+      const pending = eraseIndexedDbData();
+      await vi.advanceTimersByTimeAsync(INDEXED_DB_DELETE_TIMEOUT_MS + 1);
+      const result = await pending;
+      // A blocked request stays pending forever; without the timeout the
+      // page would hang on the erasure rather than report it.
+      expect(result.deleted).toBe(0);
+      expect(result.refused).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says so when the browser has no IndexedDB at all', async () => {
+    delete (globalThis as Record<string, unknown>).indexedDB;
+    const result = await eraseIndexedDbData();
+    expect(result).toEqual({ deleted: 0, refused: [], unavailable: true });
+  });
+
+  it('survives an indexedDB accessor that throws', async () => {
+    (globalThis as Record<string, unknown>).indexedDB = {
+      deleteDatabase() {
+        throw new Error('site data blocked');
+      },
+    };
+    const result = await eraseIndexedDbData();
+    expect(result.unavailable).toBe(false);
+    expect(result.refused).toHaveLength(2);
   });
 });

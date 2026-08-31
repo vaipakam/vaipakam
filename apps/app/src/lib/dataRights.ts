@@ -566,6 +566,179 @@ export interface EraseResult {
 }
 
 /**
+ * #1862 Part 2 — the erasure registry.
+ *
+ * Part 1 could be a list of `localStorage` prefixes because everything it
+ * reached lived in one store and came out with one synchronous sweep. That
+ * stops being true here: the material that matters most — a live wallet
+ * session — is in IndexedDB, which the Part 1 erasure never opened, and
+ * removing it is asynchronous and can be REFUSED by another tab holding the
+ * database open.
+ *
+ * So an entry has to say four things, and they are not interchangeable:
+ * which store, which namespace within it, who writes it, and how it is
+ * cleared. Only the first method below is synchronous, and only the first
+ * can report its result immediately.
+ *
+ * The `evidence` field is not decoration. Part 1 shipped four markers of
+ * which exactly one was confirmed from the code that composes the key; the
+ * rest were literals spotted in shipped bundles. Recording how each entry
+ * was established is what lets the next person tell a verified entry from a
+ * guess, and it is why the IndexedDB entries below cite file and constant.
+ */
+export type ErasureMethod =
+  /** A key sweep over a Web Storage area. Synchronous; result is exact. */
+  | { readonly kind: 'webStorageMarker'; readonly marker: string }
+  /**
+   * `indexedDB.deleteDatabase`. Asynchronous, and genuinely refusable: the
+   * request BLOCKS while any other tab on this origin holds the database
+   * open, and a blocked deletion must be reported as a refusal rather than
+   * waited on forever.
+   */
+  | { readonly kind: 'indexedDbDatabase'; readonly database: string };
+
+export interface ErasureTarget {
+  readonly store: 'localStorage' | 'sessionStorage' | 'indexedDB';
+  readonly writtenBy: string;
+  readonly holds: string;
+  readonly evidence: string;
+  readonly method: ErasureMethod;
+}
+
+/**
+ * The two IndexedDB databases a connected wallet leaves on this origin.
+ *
+ * Both names are read out of the installed packages, not inferred from
+ * documentation or from a running browser:
+ *
+ *  - `@walletconnect/keyvaluestorage@1.1.1`, `dist/index.es.js`:
+ *    `const D = "WALLET_CONNECT_V2_INDEXED_DB", E = "keyvaluestorage"`,
+ *    passed straight to `createStore(dbName, storeName)`. The same file
+ *    migrates any pre-existing `localStorage` copies into this database and
+ *    then DELETES them, which is why Part 1's `wc@2:` marker reaches at most
+ *    a pre-migration remnant on a browser that has not run the migration.
+ *  - `@coinbase/wallet-sdk@4.3.6`, `dist/kms/crypto-key/index.js`:
+ *    `STORAGE_SCOPE = 'cbwsdk'`, `STORAGE_NAME = 'keys'`. This is the
+ *    smart-wallet keypair store — `activeId` plus a record per public key.
+ *
+ * The whole database is deleted rather than individual keys. On an origin
+ * this app has to itself the database belongs to the wallet integration and
+ * nothing else, so a scoped key deletion would be more code for a strictly
+ * smaller guarantee. That reasoning is origin-specific and would not hold on
+ * a shared origin, which is why it is written here rather than assumed.
+ */
+export const ERASURE_REGISTRY: readonly ErasureTarget[] = [
+  {
+    store: 'indexedDB',
+    writtenBy: '@walletconnect/keyvaluestorage (via idb-keyval)',
+    holds: 'the live WalletConnect v2 session — pairing topics, keys, expiry',
+    evidence:
+      'dist/index.es.js constants D/E passed to createStore(dbName, storeName)',
+    method: {
+      kind: 'indexedDbDatabase',
+      database: 'WALLET_CONNECT_V2_INDEXED_DB',
+    },
+  },
+  {
+    store: 'indexedDB',
+    writtenBy: '@coinbase/wallet-sdk kms/crypto-key',
+    holds: "the Coinbase smart wallet's signing keypairs and active key id",
+    evidence:
+      "dist/kms/crypto-key/index.js STORAGE_SCOPE 'cbwsdk' / STORAGE_NAME 'keys'",
+    method: { kind: 'indexedDbDatabase', database: 'cbwsdk' },
+  },
+];
+
+/** Databases the erasure deletes, in registry order. */
+export const ERASABLE_INDEXED_DB_NAMES: readonly string[] =
+  ERASURE_REGISTRY.flatMap((t) =>
+    t.method.kind === 'indexedDbDatabase' ? [t.method.database] : [],
+  );
+
+/**
+ * How long to wait for a `deleteDatabase` that another tab is blocking.
+ *
+ * A blocked deletion never completes on its own — it waits for every other
+ * connection to close, which may be never. The page cannot hang on that, and
+ * it must not report success either, so the wait is bounded and a timeout is
+ * reported as a refusal.
+ */
+export const INDEXED_DB_DELETE_TIMEOUT_MS = 3_000;
+
+export interface IndexedDbEraseResult {
+  /** Databases deleted, or already absent. */
+  readonly deleted: number;
+  /**
+   * Databases that could NOT be deleted — blocked by another tab, timed
+   * out, or rejected. Named so the page can say which, rather than
+   * reporting a count the user cannot act on.
+   */
+  readonly refused: readonly string[];
+  /** True when this browser exposes no IndexedDB at all. */
+  readonly unavailable: boolean;
+}
+
+/**
+ * Delete one IndexedDB database, resolving to whether it is now gone.
+ *
+ * Three outcomes, deliberately not collapsed:
+ *  - `success` — deleted, or it never existed (`deleteDatabase` succeeds
+ *    either way, and "absent" is the state the erasure wanted).
+ *  - `blocked` — another tab holds it open. Reported, never waited out.
+ *  - `error` — the request failed.
+ */
+function deleteDatabase(name: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+    let request: IDBOpenDBRequest;
+    try {
+      request = indexedDB.deleteDatabase(name);
+    } catch {
+      // Some privacy modes throw on access rather than returning a request.
+      finish(false);
+      return;
+    }
+    // A blocked request stays pending indefinitely, so the timeout is the
+    // only thing that ends it. It resolves FALSE: the database is still
+    // there, and saying otherwise is the false-assurance failure this page
+    // exists to avoid.
+    const timer = setTimeout(() => finish(false), INDEXED_DB_DELETE_TIMEOUT_MS);
+    const done = (ok: boolean) => {
+      clearTimeout(timer);
+      finish(ok);
+    };
+    request.onsuccess = () => done(true);
+    request.onerror = () => done(false);
+    request.onblocked = () => done(false);
+  });
+}
+
+/**
+ * Delete every database in the registry.
+ *
+ * Runs them concurrently: they are independent, and a wallet holding one
+ * open should not delay the verdict on the other.
+ */
+export async function eraseIndexedDbData(): Promise<IndexedDbEraseResult> {
+  if (typeof indexedDB === 'undefined') {
+    return { deleted: 0, refused: [], unavailable: true };
+  }
+  const names = ERASABLE_INDEXED_DB_NAMES;
+  const outcomes = await Promise.all(names.map((n) => deleteDatabase(n)));
+  const refused = names.filter((_, i) => !outcomes[i]);
+  return {
+    deleted: outcomes.filter(Boolean).length,
+    refused,
+    unavailable: false,
+  };
+}
+
+/**
  * Remove everything this origin holds.
  *
  * Returns what was actually removed rather than a boolean, because the
