@@ -6458,10 +6458,18 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('apps/agent');
   });
 
-  it('and the same shape naming an UNPROTECTED Worker passes', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('configs/other.jsonc', '{"name": "vaipakam-www"}\n');
-    expect(runWith('w.sh', 'wrangler deploy --config configs/other.jsonc\n').ok).toBe(true);
+  it('and the same shape naming the KEEPER reports the keeper', () => {
+    // Which of the two protected Workers, not merely that something was
+    // reported. The out-of-scope control for this direction is the fixture
+    // below, where an unprotected name inside a protected DIRECTORY passes —
+    // an unprotected name in an unprotected directory would pass with or
+    // without this mechanism and pins nothing.
+    seed('apps/keeper/package.json', '{"name":"@vaipakam/keeper"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-keeper"}\n');
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/keeper');
+    expect(r.out).not.toContain('apps/agent');
   });
 
   it('the TOML spelling answers too', () => {
