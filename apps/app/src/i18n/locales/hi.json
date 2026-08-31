@@ -245,9 +245,9 @@
       "eraseDoneDisconnected": "{{count}} संग्रहित आइटम हटा दिए गए और यहाँ आपको साइन आउट कर दिया गया। आपकी खुली हुई अन्य tabs से भी कहा गया है कि वे अपना डेटा हटाएँ और साइन आउट करें।",
       "eraseDoneNoPeers": "{{count}} संग्रहित आइटम हटा दिए गए।",
       "eraseDoneDisconnectedNoPeers": "{{count}} संग्रहित आइटम हटा दिए गए और आपको यहाँ से sign out कर दिया गया।",
-      "eraseSessionHeld": "आपका संग्रहित डेटा हटा दिया गया, लेकिन wallet का सहेजा हुआ session साफ़ नहीं हो सका, इसलिए वह अब भी इस डिवाइस पर हो सकता है। अपने browser की settings से site data हटाने पर वह भी हट जाएगा।",
+      "eraseSessionHeld": "Wallet का संग्रहित session साफ़ नहीं किया जा सका, इसलिए वह अब भी इस डिवाइस पर हो सकता है। अपने browser की settings से site data हटाने पर वह हट जाएगा।",
       "eraseWalletHeld": "Wallet disconnect नहीं हुआ, इसलिए यह साइट अब भी उससे जुड़ी है। अपने wallet से सीधे disconnect करें, फिर दोबारा हटाएँ।",
-      "eraseStoresUnreadable": "आपका संग्रहित डेटा हटा दिया गया, लेकिन इस browser ने app को wallet के session storage तक पहुँचने नहीं दिया, इसलिए वहाँ रखा कुछ भी अब भी इस डिवाइस पर हो सकता है। अपने browser की settings से site data हटाने पर वह भी हट जाएगा।"
+      "eraseStoresUnreadable": "इस browser ने ऐप को wallet के session storage खोलने नहीं दिया, इसलिए वहाँ रखा डेटा अब भी इस डिवाइस पर हो सकता है। अपने browser की settings से site data हटाने पर वह हट जाएगा।"
     },
     "killSwitch": {
       "disabled": "यह action अभी switched off है — operators ने सावधानी से इसे pause किया है जबकि कुछ देखा जा रहा है। जो पहले से आपका है वह unaffected है: repayments, claims और withdrawals खुले रहते हैं।"

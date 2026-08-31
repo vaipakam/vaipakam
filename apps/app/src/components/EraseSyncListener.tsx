@@ -23,8 +23,8 @@
  * `changeLanguage` persists on its way through — the storage key AND the
  * parent-scope cookie, since it writes both.
  */
-import { useEffect, useRef } from 'react';
-import { useAccount, useDisconnect } from 'wagmi';
+import { useEffect } from 'react';
+import { useConfig, useDisconnect } from 'wagmi';
 import { useTranslation } from 'react-i18next';
 import {
   disconnectEvery,
@@ -59,7 +59,7 @@ export function EraseSyncListener() {
   // BEFORE the write it exists to undo, and a rejection was invisible to the
   // aggregation. The listener still acknowledges nothing — awaiting is about
   // ordering its own cleanup, not about reporting.
-  const { disconnectAsync, connectors: liveConnectors } = useDisconnect();
+  const { disconnectAsync } = useDisconnect();
   // #1862 Part 2 round 3 P1 — a disconnect with nothing to disconnect is NOT
   // free here. `@wagmi/core`'s action calls `config.setState` unconditionally,
   // outside the `if (connector)` branch, and the config's store is wrapped in
@@ -70,13 +70,12 @@ export function EraseSyncListener() {
   // silently if it runs before. The originating page gained this guard in
   // round 2; the listener is the same hazard reached from the other side.
   //
-  // `status`, NOT `isConnected` (round 9 P1) — the same correction the
-  // originating page took in round 8, which I applied there and not here.
-  // wagmi reports `isConnected` as false while a persisted session is still
-  // restoring, so a peer tab reconnecting when the broadcast arrived skipped
-  // its teardown AND every cleanup after it, and the reconnect then completed
-  // after the originating tab's sweeps and repopulated both stores.
-  const { status } = useAccount();
+  // `status`, NOT `isConnected` (round 9 P1) — wagmi reports `isConnected` as
+  // false while a persisted session is still restoring, so a peer tab
+  // reconnecting when the broadcast arrived skipped its teardown AND every
+  // cleanup after it, and the reconnect then completed after the originating
+  // tab's sweeps and repopulated both stores. Read from the config below
+  // rather than from `useAccount`, for the reason given there.
   // Round 4 P2 — the live preferences. `ThemeProvider` and `ModeProvider`
   // read storage once at mount and never subscribe to it, so a peer tab went
   // on displaying an erased non-default theme or mode indefinitely: the
@@ -94,16 +93,18 @@ export function EraseSyncListener() {
   // therefore tore down and re-opened the BroadcastChannel on every render of
   // a component with half a dozen re-render sources — and an erase broadcast
   // landing in one of those gaps is simply not heard, which for this listener
-  // is the whole failure it exists to prevent. The value is read through a ref
-  // at handler time instead, which is also FRESHER than a captured dependency:
-  // what matters is the set connected when the broadcast arrives.
-  const connectorsRef = useRef(liveConnectors);
-  const connectedRef = useRef(status === 'connected' || status === 'reconnecting');
-  useEffect(() => {
-    connectorsRef.current = liveConnectors;
-    connectedRef.current =
-      status === 'connected' || status === 'reconnecting';
-  });
+  // is the whole failure it exists to prevent.
+  //
+  // READ FROM THE STORE, NOT FROM REFS (round 13 P2). The refs were written
+  // in a passive effect, so a broadcast delivered after a render committed
+  // but before that effect ran saw the PREVIOUS render's values — and a peer
+  // that had just finished connecting would skip its teardown entirely, stay
+  // connected, and repopulate storage after the originating tab's sweep. A
+  // ref refreshed after commit has a stale window by construction; wagmi's
+  // config is the live external store and has none. Reading it inside the
+  // callback also keeps the effect's dependencies stable, which is what
+  // stopped the BroadcastChannel churning in the first place.
+  const config = useConfig();
   useEffect(
     () =>
       listenForErase(() => {
@@ -132,8 +133,13 @@ export function EraseSyncListener() {
         // page that may already have navigated. That is why the copy says
         // other tabs have been ASKED, and claims confirmation only for the
         // tab the user is looking at.
-        const connectors = connectorsRef.current;
-        if (connectedRef.current && connectors.length > 0) {
+        const connectors = [...config.state.connections.values()].map(
+          (connection) => connection.connector,
+        );
+        const connected =
+          config.state.status === 'connected' ||
+          config.state.status === 'reconnecting';
+        if (connected && connectors.length > 0) {
           // RE-SWEEP AFTERWARDS, on both outcomes (round 6 P1). This teardown
           // runs after the ORIGINATING tab has already swept shared storage,
           // and wagmi persists `wagmi.store` through `config.setState` once
@@ -188,7 +194,7 @@ export function EraseSyncListener() {
     // Only stable values. `disconnect` is react-query's `mutate`, the two
     // `resetToDefault`s are `useCallback`-wrapped, and `i18n` is the instance;
     // the two that change identity per render are read through the refs above.
-    [disconnectAsync, resetTheme, resetMode, i18n],
+    [config, disconnectAsync, resetTheme, resetMode, i18n],
   );
   return null;
 }

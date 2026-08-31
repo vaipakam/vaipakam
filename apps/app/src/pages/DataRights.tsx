@@ -395,6 +395,23 @@ export function DataRights() {
               // page owns the ordering because it owns both calls.
               onStragglerSettled: () => {
                 void erasedFully.current.then(() => {
+                  // NOT IF THE USER HAS RECONNECTED SINCE (round 13 P2). The
+                  // gate stops this outrunning the counted clear; it does not
+                  // stop it arriving after the person went back to using the
+                  // app. A teardown given up on can settle arbitrarily late,
+                  // and clearing whole wallet stores then destroys a session
+                  // created AFTER the erase request — something nobody asked
+                  // for and nothing reports.
+                  //
+                  // There is no per-record attribution in these stores, so
+                  // "remove only what the old teardown wrote" is not
+                  // expressible; what IS knowable is whether anything is
+                  // connected now. If something is, whatever the stores hold
+                  // is newer than the request and not ours to remove. The
+                  // cleanup exists to undo a write nobody wanted, and skipping
+                  // it leaves at worst a stale connector key — strictly better
+                  // than deleting a live session.
+                  if (config.state.status !== 'disconnected') return;
                   eraseConnectorStorageQuietly();
                   void eraseIndexedDbData();
                 });
@@ -545,9 +562,7 @@ export function DataRights() {
                   // IndexedDB fall through to a success message. Neither
                   // store was emptied nor seen absent, which is the same
                   // "could not look" case `holdingUnreadable` exists for.
-                  result.indexedDb.unavailable
-                  ? copy.dataRights.eraseStoresUnreadable
-                  : // Round 2 P2: `total` counts the synchronous sweep
+ // Round 2 P2: `total` counts the synchronous sweep
                       // only, so a browser whose Web Storage was already
                       // empty but whose wallet session was not reported
                       // "nothing was stored" after deleting that session.
@@ -579,11 +594,21 @@ export function DataRights() {
                 the same locked-down storage policy, so they co-occur readily,
                 and their remedies differ. Same reasoning as the wallet line
                 below, reached one store along. */}
-            {!result.indexedDb.unavailable &&
+            {result.indexedDb.unavailable ||
             result.indexedDb.refused.length > 0 ? (
               <span className="block-line">
                 {' '}
-                {copy.dataRights.eraseSessionHeld}
+                {/* `unavailable` is additive too (round 13 P2). Round 12 made
+                    the session REFUSAL additive and left its sibling as a
+                    ladder branch, so a Web Storage failure alongside a hidden
+                    IndexedDB reported only the first — omitting that the
+                    wallet store could not even be opened. Both are the same
+                    kind of statement and want the same treatment; only the
+                    wording differs, because "could not open" and "would not
+                    clear" have different remedies. */}
+                {result.indexedDb.unavailable
+                  ? copy.dataRights.eraseStoresUnreadable
+                  : copy.dataRights.eraseSessionHeld}
               </span>
             ) : null}
             {/* WALLET outcome, additive. Its remedy — disconnect in the

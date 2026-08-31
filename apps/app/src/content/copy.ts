@@ -417,10 +417,17 @@ const copySource = {
        store that refused: nothing was even looked at, so this is the
        "could not look" case `holdingUnreadable` exists for, one store
        along. It must not fall through to a success message. */
+    /* OUTCOME-NEUTRAL, both of them (round 13 P2). These are appended to
+       whichever storage outcome applies, so an opening "Your stored data was
+       removed" can land directly under "There was nothing stored" or "nothing
+       was removed" — the same self-contradiction round 5 removed from the
+       wallet clause, reproduced here when round 12 made these additive. An
+       additive clause must say nothing about the outcome the sentence above
+       it just reported; it carries only its own fact and its own remedy. */
     eraseStoresUnreadable:
-      'Your stored data was removed, but this browser would not let the app open the wallet’s session storage, so anything kept there may still be on this device. Clearing site data through your browser’s own settings will remove it.',
+      'This browser would not let the app open the wallet’s session storage, so anything kept there may still be on this device. Clearing site data through your browser’s own settings will remove it.',
     eraseSessionHeld:
-      'Your stored data was removed, but the wallet’s stored session could not be cleared, so it may still be on this device. Clearing site data through your browser’s own settings will remove it.',
+      'The wallet’s stored session could not be cleared, so it may still be on this device. Clearing site data through your browser’s own settings will remove it.',
     /* The wallet refused to disconnect. The app is still attached, and
        saying "erased" over that is the false assurance this page exists to
        avoid.

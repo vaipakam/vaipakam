@@ -245,9 +245,9 @@
       "eraseDoneDisconnected": "{{count}} gespeicherte Einträge gelöscht und Sie wurden hier abgemeldet. Andere geöffnete Tabs wurden gebeten, ihre ebenfalls zu löschen und sich abzumelden.",
       "eraseDoneNoPeers": "{{count}} gespeicherte Elemente wurden gelöscht.",
       "eraseDoneDisconnectedNoPeers": "{{count}} gespeicherte Elemente wurden gelöscht und Sie wurden hier abgemeldet.",
-      "eraseSessionHeld": "Ihre gespeicherten Daten wurden entfernt, aber die gespeicherte Sitzung der Wallet konnte nicht gelöscht werden und kann daher noch auf diesem Gerät liegen. Das Löschen der Websitedaten in den Einstellungen Ihres Browsers entfernt sie.",
+      "eraseSessionHeld": "Die gespeicherte Wallet-Sitzung konnte nicht gelöscht werden und liegt möglicherweise weiterhin auf diesem Gerät. Das Löschen der Websitedaten in den Browsereinstellungen entfernt sie.",
       "eraseWalletHeld": "Die Wallet hat sich nicht getrennt, sodass diese Website weiterhin mit ihr verbunden ist. Trennen Sie die Verbindung direkt in Ihrer Wallet und löschen Sie dann erneut.",
-      "eraseStoresUnreadable": "Ihre gespeicherten Daten wurden entfernt, aber dieser Browser ließ die App den Sitzungsspeicher der Wallet nicht öffnen, sodass dort Abgelegtes noch auf diesem Gerät liegen kann. Das Löschen der Websitedaten in den Einstellungen Ihres Browsers entfernt es."
+      "eraseStoresUnreadable": "Dieser Browser ließ die App die Sitzungsspeicherung der Wallet nicht öffnen, daher kann dort Gespeichertes weiterhin auf diesem Gerät liegen. Das Löschen der Websitedaten in den Browsereinstellungen entfernt es."
     },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."
