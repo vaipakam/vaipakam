@@ -6500,6 +6500,43 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('apps/agent');
   });
 
+  it('an ENVIRONMENT-suffixed name is still the protected Worker', () => {
+    // Self-review, not Codex: exact matching alone made this read a way to LOSE
+    // a report. Wrangler appends the environment to the top-level name, so this
+    // config deploys the keeper's staging Worker — same dashboard-managed
+    // values — and an exact-only answer called it out of scope, where the
+    // directory heuristic it replaced reported it.
+    seed('apps/keeper/package.json', '{"name":"@vaipakam/keeper"}\n');
+    seed('apps/keeper/staging.jsonc', '{"name": "vaipakam-keeper-staging"}\n');
+    const r = runWith('w.sh', 'cd apps/keeper\nwrangler deploy --config staging.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/keeper');
+  });
+
+  it('but a name that merely shares a PREFIX SEGMENT is not', () => {
+    // The separator is what keeps the prefix rule from swallowing the
+    // namespace: `vaipakam-keeperbot` is not an environment of the keeper.
+    seed('apps/keeper/package.json', '{"name":"@vaipakam/keeper"}\n');
+    seed('apps/keeper/other.jsonc', '{"name": "vaipakam-keeperbot"}\n');
+    expect(runWith('w.sh', 'cd apps/keeper\nwrangler deploy --config other.jsonc\n').ok).toBe(
+      true,
+    );
+  });
+
+  it('a config path climbing OUT of the checkout changes no verdict', () => {
+    // The out-of-tree refusal in the source is recorded as an EQUIVALENT
+    // MUTANT rather than pinned, and this fixture states the verdict it does
+    // not change: an escaping path already resolves to no directory scope, so
+    // the deploy passes with or without the refusal. Proving otherwise would
+    // mean planting a file OUTSIDE the fixture root — in the shared temp
+    // directory, where concurrent fixture roots would see it — which is the
+    // isolation this harness exists to keep.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    expect(
+      runWith('w.sh', 'cd apps/agent\nwrangler deploy --config ../../../outside.jsonc\n').ok,
+    ).toBe(true);
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

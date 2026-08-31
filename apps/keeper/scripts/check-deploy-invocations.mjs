@@ -2708,11 +2708,44 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
       // directory — the same rule `commandIsSafe` follows for `keep_vars`. An
       // absolute path is outside anything this scanner can reason about.
       if (cfg.startsWith('/')) break;
-      const declared = declaredWorkerName(
-        `${REPO_ROOT}/${normalizeRel(`${b}/${cfg}`)}`,
-      );
+      const rel = normalizeRel(`${b}/${cfg}`);
+      // A path that climbs OUT of the checkout is not this repository's config
+      // and must not be opened. `normalizeRel` keeps leading `..` rather than
+      // clamping, so without this the scanner would read a file beside the
+      // repository — outside anything it is allowed to reason about, and in the
+      // fixture harness outside the temporary tree.
+      //
+      // EQUIVALENT MUTANT, recorded as one: an escaping path resolves to no
+      // directory scope either, so removing this line changes no verdict on any
+      // tree whose parent holds no wrangler config. Kept because "do not read
+      // outside the checkout" is a property worth holding independently of
+      // whether today's fallback happens to agree, and pinning it would mean
+      // planting a file in the shared temp directory that concurrent fixture
+      // roots could see.
+      if (rel.startsWith('..')) continue;
+      const declared = declaredWorkerName(`${REPO_ROOT}/${rel}`);
       if (declared === null) continue;
-      return { scope: SCOPED.find((s) => s.workerName === declared) ?? null };
+      // EXACT, or the protected name plus an environment suffix.
+      //
+      // The suffix half is not tidiness — without it this read was a way to
+      // LOSE a report. Wrangler derives an environment's script name by
+      // appending to the top-level one, so a `vaipakam-keeper-staging` config
+      // sitting in `apps/keeper` deploys the keeper's staging Worker, which
+      // carries the same dashboard-managed values; an exact-match-only answer
+      // called that out of scope, where the directory heuristic it replaced
+      // reported it. Matching the prefix errs toward reporting, which is the
+      // direction to err in: the cost is a false red on a Worker that merely
+      // shares the prefix, and the alternative cost is silence on a live
+      // destructive deploy.
+      //
+      // The SEPARATOR is what stops the rule swallowing the namespace:
+      // `vaipakam-keeperbot` is a different Worker, not an environment.
+      return {
+        scope:
+          SCOPED.find(
+            (s) => s.workerName === declared || declared.startsWith(`${s.workerName}-`),
+          ) ?? null,
+      };
     }
   }
 
