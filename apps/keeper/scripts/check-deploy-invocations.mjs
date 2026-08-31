@@ -1333,7 +1333,7 @@ function isHelpInvocation(cmd) {
  * Worker's directory could bless an upload through a DIFFERENT file than the
  * one selected (#1995 r22).
  */
-function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '') {
+function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt = null) {
   if (isHelpInvocation(cmd)) return true;
   // `run deploy` gets the same option-value strip the flags do: it was a raw
   // substring test, so `--message="run deploy"` blessed a bare deploy that
@@ -1626,7 +1626,12 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '') {
         // and every protected package's own config is checked in — so the
         // conservative reading there costs a false red on the tree as it
         // stands, which this one does not.
-        if (cfgName !== null && configIsRewritten(fileText, cfgName)) continue;
+        if (
+          cfgName !== null &&
+          configIsRewritten(fileText, cfgName, fileAt)
+        ) {
+          continue;
+        }
         if (keepVarsEnabled(chosen)) return true;
       }
     }
@@ -3110,6 +3115,26 @@ function atChildOptionsDepth(text, index) {
 }
 
 /**
+ * The character offset at which 1-based physical line `lineNo` starts.
+ *
+ * The caller knows which LINE it is judging, which is exact where matching the
+ * command text is not: two deploys of the same config differ only by a suffix,
+ * so the earlier one is also a prefix of the later and no text search can tell
+ * them apart. `null` when the line is unknown or out of range, which leaves the
+ * caller on its older whole-file reasoning.
+ */
+function lineStartOffset(text, lineNo) {
+  if (typeof text !== 'string' || typeof lineNo !== 'number' || lineNo < 1) return null;
+  let at = 0;
+  for (let n = 1; n < lineNo; n += 1) {
+    const nl = text.indexOf('\n', at);
+    if (nl === -1) return null;
+    at = nl + 1;
+  }
+  return at <= text.length ? at : null;
+}
+
+/**
  * Is this config REWRITTEN by the same file before the deploy runs? (#2036 r13)
  *
  * The identity read trusts the checkout's copy, which is right for a config
@@ -3124,31 +3149,40 @@ function atChildOptionsDepth(text, index) {
  * the identity goes UNREAD — the inversion's case, which reports — so the
  * conservative direction is the cheap one.
  */
-function configIsRewritten(text, cfgPath) {
+function configIsRewritten(text, cfgPath, at = null) {
   const base = cfgPath.slice(cfgPath.lastIndexOf('/') + 1);
   if (!base) return false;
   const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const Q = String.raw`["'\`]`;
   // THE PATH IS NOT ALWAYS AN ARGUMENT. `Path("configs/custom.jsonc")
   // .write_text(…)` — the ordinary pathlib spelling — puts the name BEFORE the
   // method, and a pattern that only searched inside the call's parentheses
-  // missed it entirely (Codex #2036 r18). Both shapes now, argument-form and
-  // receiver-form.
+  // missed it entirely (Codex #2036 r18). Both shapes, argument and receiver.
+  //
+  // `open` ONLY IN A WRITE MODE. A helper that READS the config it is about to
+  // deploy is ordinary inspection, and counting `open(path, "r")` as a rewrite
+  // refused the checked-in identity and reported a legitimate deploy (#2036
+  // r20). The default mode is read, so a bare `open(path)` is a read too.
   //
   // A path bound to a VARIABLE first (`p = Path(…)` then `p.write_text(…)`) is
   // still missed, and is left so deliberately: chasing the binding is
   // constant-folding the host language, and the write forms that name the file
   // outright are what a config-generating script actually looks like.
+  const WRITE_CALL =
+    String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
+    String.raw`|outputFile(?:Sync)?|write_text|write_bytes)\s*\([^)]*` + esc;
+  const OPEN_WRITE =
+    String.raw`open\s*\([^)]*` + esc + String.raw`[^)]*` + Q + String.raw`[rbt]*[wax+]`;
+  const RECEIVER_WRITE =
+    Q + String.raw`[^"'\`]*` + esc + Q + String.raw`\s*\)?\s*\.\s*(?:write_text|write_bytes)\s*\(`;
+  const RECEIVER_OPEN =
+    Q + String.raw`[^"'\`]*` + esc + Q +
+    String.raw`\s*\)?\s*\.\s*open\s*\(\s*` + Q + String.raw`[rbt]*[wax+]`;
+  const REDIRECT = String.raw`>\s*\S*` + esc;
   const writes = [
     ...text.matchAll(
       new RegExp(
-        String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
-          String.raw`|outputFile(?:Sync)?|write_text|write_bytes|open)\s*\([^)]*` +
-          esc +
-          String.raw`|["'\`][^"'\`]*` +
-          esc +
-          String.raw`["'\`]\s*\)?\s*\.\s*(?:write_text|write_bytes|open)\s*\(` +
-          String.raw`|>\s*\S*` +
-          esc,
+        [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, REDIRECT].join('|'),
         'g',
       ),
     ),
@@ -3160,16 +3194,18 @@ function configIsRewritten(text, cfgPath) {
   // that runs after it (Codex #2036 r18), which on a check wired into
   // typechecking blocks work.
   //
-  // Positions within the file, against where the config is SELECTED. A file
-  // carrying both orderings still invalidates, which is the conservative
-  // direction and the one this check errs in everywhere else.
+  // AGAINST THIS DEPLOY when the caller can say where it is. Comparing against
+  // ANY later selection of the same config was the same defect one step out: a
+  // file deploying safely, rewriting, then deploying again made the SECOND
+  // selection satisfy the ordering for the FIRST deploy, and reported a command
+  // that runs before the rewrite (#2036 r20).
+  if (at !== null) return writes.some((w) => w < at);
   const uses = [
     ...text.matchAll(
       new RegExp(
-        String.raw`--config(?:=|\s)\s*["'\`]?[^\s"'\`]*` +
-          esc +
-          String.raw`|["'\`]--config["'\`]\s*,\s*["'\`][^"'\`]*` +
-          esc,
+        String.raw`--config(?:=|\s)\s*` + Q + String.raw`?[^\s"'\`]*` + esc +
+          String.raw`|` + Q + String.raw`--config` + Q + String.raw`\s*,\s*` + Q +
+          String.raw`[^"'\`]*` + esc,
         'g',
       ),
     ),
@@ -3365,6 +3401,21 @@ function declaredWorkerNames(absPath, includeEnvs, envName = null) {
   return names.length === 0 ? null : { names, complete };
 }
 
+/**
+ * Is this TOML key the `name` key, once decoded?
+ *
+ * Bare, quoted, or quoted WITH ESCAPES: TOML decodes `"na\u006de"` to `name`
+ * before wrangler reads it, and comparing source spellings declined to read
+ * such a config at all (#2036 r20). A literal (single-quoted) key processes no
+ * escapes, matching how the reader treats literal VALUES.
+ */
+function isNameKey(raw) {
+  if (raw === 'name') return true;
+  if (raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1) === 'name';
+  if (!raw.startsWith('"') || !raw.endsWith('"')) return false;
+  return decodeTomlBasic(raw.slice(1, -1)) === 'name';
+}
+
 /** Does this TOML config declare any environment table? */
 function envTablesInToml(absPath) {
   let text;
@@ -3420,7 +3471,26 @@ function declaredWorkerName(absPath) {
     // value (Codex #2036 r6). Two readers of one file, one of them stateless,
     // is the two-halves shape this file keeps producing; the fix is a single
     // reader that cannot get ahead of its own state.
-    const NAME_KEY = String.raw`(?:name|"name"|'name')`;
+    // A QUOTED KEY MAY CARRY ESCAPES. TOML decodes `"na\u006de"` to `name`
+    // before wrangler ever sees it, and matching source text declined to read
+    // such a config at all — sending an otherwise unprotected deploy to the
+    // inversion (Codex #2036 r20). The reader has decoded basic-string VALUES
+    // since r4; its KEY test did not, which is the same half-a-pair split as
+    // the rest of this file's findings.
+    //
+    // Matched loosely here and decoded below, rather than enumerating
+    // spellings: the alternation cannot express "any escape sequence that
+    // decodes to `name`".
+    // A QUOTED KEY MAY CARRY ESCAPES. TOML decodes `"na\\u006de"` to `name`
+    // before wrangler ever sees it, and matching source text declined to read
+    // such a config at all — sending an otherwise unprotected deploy to the
+    // inversion (Codex #2036 r20). The reader has decoded basic-string VALUES
+    // since r4; its KEY test did not, which is the same half-a-pair split as
+    // the rest of this file's findings.
+    //
+    // The pattern admits ANY quoted key and `isNameKey` decides, because an
+    // alternation cannot express "any escape sequence that decodes to name".
+    const NAME_KEY = String.raw`(?:name|"(?:[^"\\]|\\[\s\S])*"|'[^']*')`;
     const OPENERS = ['"""', "'''"];
     let inMultiline = null;
     let collecting = null;
@@ -3477,10 +3547,10 @@ function declaredWorkerName(absPath) {
         // CRLF file left the carriage return unmatched and the whole opener
         // failed — the r4 CRLF defect surviving into the rewrite that was meant
         // to preserve its fix.
-        new RegExp(String.raw`^[^\S\n]*${NAME_KEY}\s*=\s*("""|''')(.*?)\r?$`),
+        new RegExp(String.raw`^[^\S\n]*(${NAME_KEY})\s*=\s*("""|''')(.*?)\r?$`),
       );
-      if (opens) {
-        const rest = opens[2];
+      if (opens && isNameKey(opens[1])) {
+        const rest = opens[3];
         // The SAME unescaped-delimiter rule the in-body search uses. My r12 fix
         // applied it only after multiline state had been entered, leaving the
         // OPENER line's own close search escape-unaware — so `note = """prefix
@@ -3489,24 +3559,24 @@ function declaredWorkerName(absPath) {
         // to one of them.
         const close = (() => {
           // ...and only for BASIC strings, per r16 — see the in-body search.
-          const escapes = opens[1] === '"""';
-          for (let i = 0; i <= rest.length - opens[1].length; i += 1) {
+          const escapes = opens[2] === '"""';
+          for (let i = 0; i <= rest.length - opens[2].length; i += 1) {
             if (escapes && rest[i] === '\\') {
               i += 1;
               continue;
             }
-            if (rest.startsWith(opens[1], i)) return i;
+            if (rest.startsWith(opens[2], i)) return i;
           }
           return -1;
         })();
         if (close !== -1) {
           const body = rest.slice(0, close);
-          const decoded = opens[1] === '"""' ? decodeTomlBasic(body, true) : body;
+          const decoded = opens[2] === '"""' ? decodeTomlBasic(body, true) : body;
           if (decoded !== null) name = decoded;
           break;
         }
-        inMultiline = opens[1];
-        collecting = opens[1];
+        inMultiline = opens[2];
+        collecting = opens[2];
         collected = rest.replace(/\r$/, '') === '' ? [] : [rest];
         continue;
       }
@@ -3520,9 +3590,11 @@ function declaredWorkerName(absPath) {
       // FALSE-RED direction, not a bypass: an unprotected Worker's config
       // sitting under `apps/agent` blocked a legitimate deploy (Codex #2036 r2).
       const m = line.match(
-        /^\s*(?:name|"name"|'name')\s*=\s*(?:"((?:[^"\\]|\\[\s\S])*)"|'([^']*)')\s*(?:#.*)?$/,
+        new RegExp(
+          String.raw`^\s*(${NAME_KEY})\s*=\s*(?:"((?:[^"\\]|\\[\s\S])*)"|'([^']*)')\s*(?:#.*)?$`,
+        ),
       );
-      if (m) {
+      if (m && isNameKey(m[1])) {
         // A BASIC string's ESCAPES are decoded; a LITERAL string's are not.
         // That asymmetry is TOML's, not a shortcut: `'…'` has no escape
         // sequences at all, so decoding one would corrupt a name containing a
@@ -3533,10 +3605,10 @@ function declaredWorkerName(absPath) {
         // (Codex #2036 r1). An unknown escape yields no name rather than a
         // guess, because a name this scanner has decoded WRONGLY is worse than
         // one it declines to read.
-        if (m[2] !== undefined) {
-          name = m[2];
+        if (m[3] !== undefined) {
+          name = m[3];
         } else {
-          const decoded = decodeTomlBasic(m[1]);
+          const decoded = decodeTomlBasic(m[2]);
           if (decoded !== null) name = decoded;
         }
         break;
@@ -3638,7 +3710,7 @@ function declaredWorkerName(absPath) {
  * against every REACHABLE cwd, the same states the `cd` walk maintains, so a
  * relative selector lands where the shell would put it.
  */
-function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = '') {
+function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = '', fileAt = null) {
   // A value is ONE SHELL WORD, and a word can mix adjacent quoted and unquoted
   // chunks: `--name vaipakam"-"agent` is the single argument `vaipakam-agent`.
   // Capturing only the first chunk made the value `vaipakam`, which matched no
@@ -4170,7 +4242,13 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // whole-config scan the right answer in that case and the wrong one here.
   const envName = (() => {
     const fromArgv = argvValue(rawSeg, '-e|--env');
-    const fromFlag = wranglerRegion.match(/(?<![\w-])(?:--env|-e)(?:=|\s+)(\S+)/)?.[1];
+    // DECODED AS A SHELL WORD, not captured raw. `--env stag"ing"` is `staging`
+    // to the shell, and keeping the embedded quotes looked up an environment
+    // that does not exist — so the config's top-level name stayed authoritative
+    // although a different block ships (Codex #2036 r20). `valueOf` has removed
+    // quotes and decoded escapes for every other shell selector since #1995 r5;
+    // this reader was written in r17 with its own capture instead.
+    const fromFlag = valueOf('--env|-e', wranglerRegion);
     const raw =
       fromArgv ?? fromFlag ?? envValueFromOptions(rawSeg) ?? shellEnvValue(vars);
     if (typeof raw !== 'string' || raw === '') return null;
@@ -4202,7 +4280,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // A config the surrounding file REWRITES before the deploy is not the
       // file wrangler will load, so the checkout's copy answers nothing
       // (#2036 r13). Unread reaches the inversion, which reports.
-      const read = configIsRewritten(fileText ?? '', cfg)
+      const read = configIsRewritten(fileText ?? '', cfg, fileAt)
         ? null
         : declaredWorkerNames(`${REPO_ROOT}/${rel}`, envSelected, envName);
       const declared = read === null ? null : read.names;
@@ -4287,7 +4365,12 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // Narrow on purpose: only when a config was actually selected and could not
   // be identified, which is the inversion's own precondition. Everything a
   // prose line does is unchanged.
-  const isChildCall = new RegExp(ARGV_DEPLOY_RE).test(seg);
+  // BOTH CHILD-CALL SPELLINGS. `execSync("wrangler deploy --config …")` passes
+  // the command as one shell STRING rather than as an argv array, and scoping
+  // this to the argv form left that spelling deferring like prose (Codex #2036
+  // r20) — the same half-a-pair split the previous round's fix was about.
+  const isChildCall =
+    new RegExp(ARGV_DEPLOY_RE).test(seg) || new RegExp(SHELLSTR_DEPLOY_RE).test(seg);
   if (!hasCwdState && !(isChildCall && cfg !== null)) {
     // Both directory selectors are candidates here, most specific first
     // (#1995 r9) — `cwdFlag` was one variable before they were split apart.
@@ -7350,9 +7433,15 @@ for (const file of walk(REPO_ROOT)) {
         // negation.
         const aliased = resolveRunAlias(seg, packageContextOf(rel));
         if (
-          commandIsSafe(aliased ?? seg, safeHint, '', text) ||
+          commandIsSafe(aliased ?? seg, safeHint, '', text, lineStartOffset(text, lineNo)) ||
           (aliased === null &&
-            commandIsSafe(expandCommandVars(seg, fileVars), safeHint, '', text))
+            commandIsSafe(
+              expandCommandVars(seg, fileVars),
+              safeHint,
+              '',
+              text,
+              lineStartOffset(text, lineNo),
+            ))
         ) {
           continue;
         }
@@ -7995,7 +8084,7 @@ for (const file of walk(REPO_ROOT)) {
         // reporting it under the keeper handed the reader the wrong remedy
         // (#1995 r2). Textual and cwd scope apply only when no selector
         // resolved.
-        const sel = selectorScope(seg, input, true, shellVars, text);
+        const sel = selectorScope(seg, input, true, shellVars, text, lineStartOffset(text, lineNo));
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
         // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
         // package", and it ran before the modelled cwd — so in a script under
@@ -8060,8 +8149,13 @@ for (const file of walk(REPO_ROOT)) {
         // and shadows the file's. Named rather than renamed so the shadowing
         // is visible at the point it matters.
         const fileTextForSafety = text;
+        // The LINE this command is on, so a rewrite is compared against THIS
+        // deploy rather than against any later selection of the same config.
+        const atInFile = lineStartOffset(text, lineNo);
         const safeEverywhere = (text) =>
-          cmdCwds.every((cwd) => commandIsSafe(text, safeHint, cwd, fileTextForSafety));
+          cmdCwds.every((cwd) =>
+            commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile),
+          );
         if (
           safeEverywhere(aliased ?? seg) ||
           (aliased === null && safeEverywhere(expandCommandVars(seg, fileVars)))
