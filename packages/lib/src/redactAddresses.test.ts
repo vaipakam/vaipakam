@@ -391,6 +391,25 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     expect(out).toContain('word ');
   });
 
+  it('swallows an address that a long trailing run reaches back over', () => {
+    // Self-probe after the r13 restructure. With no window, the scan walks
+    // back through a long hex run and past an address sitting inside it, so
+    // that address is DROPPED rather than shortened. Safe, and worth pinning
+    // because it is the visible edge of the unwindowed scan.
+    const out = redactText(`word ${CHECKSUMMED}${'a'.repeat(MAX_MAPPED_INPUT)}`);
+    expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
+    expect(out.endsWith('word …')).toBe(true);
+  });
+
+  it('still shortens an address when a separator ends the run before it', () => {
+    // The other direction, and the one that keeps the unwindowed scan from
+    // being a blunt instrument: a single space stops the walk, so an address
+    // before it is redacted normally rather than swallowed.
+    const out = redactText(`word ${CHECKSUMMED} ${'a'.repeat(MAX_MAPPED_INPUT)}`);
+    expect(out).toContain('0x1234…5678');
+    expect(out).not.toContain(CHECKSUMMED);
+  });
+
   it('drops a bisected address whose head is escaped', () => {
     const out = redactText(cutAfter(`%20${CHECKSUMMED.slice(0, 20)}`));
     expect(out).not.toContain(CHECKSUMMED.slice(2, 20));
