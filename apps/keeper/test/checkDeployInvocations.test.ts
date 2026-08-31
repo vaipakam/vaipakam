@@ -4969,7 +4969,12 @@ describe('check-deploy-invocations — #1995 r17', () => {
   it('versions upload reads the EXPLICITLY selected config (r17)', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
-    seed('apps/agent/unsafe.jsonc', '{"name":"x"}\n');
+    // The name matters now (#1996): a selected config is read for the WORKER
+    // IT NAMES, so the placeholder `x` this fixture used to carry would make
+    // the upload target a Worker called `x` rather than the agent — which is
+    // out of scope, and the r17 assertion would then pass for the wrong
+    // reason. Spelled as the real Worker so this stays a keep_vars test.
+    seed('apps/agent/unsafe.jsonc', '{"name":"vaipakam-agent"}\n');
     const r = runWith('x.sh', 'cd apps/agent\nwrangler versions upload --config unsafe.jsonc\n');
     expect(r.ok).toBe(false);
   });
@@ -6431,5 +6436,118 @@ describe('check-deploy-invocations — #1995 r23c', () => {
       'spawnSync("wrangler", ["deploy"]);\n',
     );
     expect(r.ok).toBe(true);
+  });
+});
+
+/**
+ * #1996 — a selected config is read for the WORKER IT NAMES.
+ *
+ * Wrangler's `getScriptName` is `args.name ?? config.name`, so the directory a
+ * config sits in never decided anything; the guard's directory heuristic was
+ * standing in for an identity it can now read directly. The degradation cases
+ * matter as much as the finding: this guard runs inside `typecheck`, so every
+ * way the file can fail to answer must fall back to the old heuristic rather
+ * than to a report.
+ */
+describe('check-deploy-invocations — #1996 config identity', () => {
+  it('a config OUTSIDE any scoped package that names the agent is the agent', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and the same shape naming an UNPROTECTED Worker passes', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/other.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(runWith('w.sh', 'wrangler deploy --config configs/other.jsonc\n').ok).toBe(true);
+  });
+
+  it('the TOML spelling answers too', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.toml', 'name = "vaipakam-agent"\n\n[vars]\nX = "1"\n');
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a config UNDER a scoped package naming a different Worker is that Worker', () => {
+    // The discriminating direction: if the directory still decided, this would
+    // report the agent. Wrangler deploys `vaipakam-www`, whose vars are not the
+    // agent's, so there is nothing here to protect.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.jsonc\n').ok).toBe(true);
+  });
+
+  it('an explicit --name still wins over the config it selects', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/www.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'wrangler deploy --name vaipakam-agent --config configs/www.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  // ---- degradation paths: each falls back, none reports ----
+
+  it('a config ABSENT from the checkout falls back to the directory', () => {
+    // Generated at build time, so the scanner never sees it. The old answer is
+    // still available and is still taken.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy --config generated.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a config that does not PARSE falls back to the directory', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/broken.jsonc', '{ "name": "vaipakam-agent"\n');
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy --config broken.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a config with NO name falls back to the directory', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/nameless.jsonc', '{"keep_vars": false}\n');
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy --config nameless.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a TEMPLATED name falls back to the directory', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/tpl.jsonc', '{"name": "vaipakam-$ENV"}\n');
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy --config tpl.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a name inside a VALUE does not name a Worker', () => {
+    // Structural parse, not a text match: the same defect `keep_vars` had at
+    // #1995 r18, one field over.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/quoted.jsonc', '{"vars": {"NOTE": "name: vaipakam-www"}}\n');
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy --config quoted.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('--env suppresses the name answer and the directory decides', () => {
+    // Wrangler derives the deployed script name from the environment, so the
+    // declared `name` is not what ships and an exact match would answer "out of
+    // scope" for a deploy that is inside it. Recorded limit, pinned here.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nwrangler deploy --config side.jsonc --env staging\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
   });
 });

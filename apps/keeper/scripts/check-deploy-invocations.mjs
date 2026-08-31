@@ -2432,6 +2432,52 @@ function scopeOfCwd(cwd) {
 }
 
 /**
+ * The Worker a configuration file NAMES, or `null` when the file cannot say.
+ *
+ * `null` is "this file does not answer", never "this file names nothing":
+ * every caller falls back to its own reasoning on `null`, so an unreadable,
+ * unparseable or name-less config costs the guard nothing it had before
+ * (#1996). Absence is deliberately indistinguishable from failure here —
+ * wrangler has no config without a name, so a config that parses and declares
+ * none is a file this scanner has misidentified rather than a Worker called
+ * nothing.
+ *
+ * Parsed STRUCTURALLY, top level only, for the reason `keep_vars` is: the text
+ * form matches inside string VALUES, so `"vars": {"NOTE": "name: x"}` would
+ * name a Worker (#1995 r18). For TOML the top level ends at the first table
+ * header. A name carrying a `$` is a template whose deployed value this
+ * scanner cannot know, so it does not answer either.
+ */
+function declaredWorkerName(absPath) {
+  let text;
+  try {
+    text = readFileSync(absPath, 'utf8');
+  } catch {
+    return null;
+  }
+  let name;
+  if (/\.toml$/.test(absPath)) {
+    for (const line of text.split('\n')) {
+      if (/^\s*\[/.test(line)) break;
+      const m = line.match(/^\s*name\s*=\s*"([^"]*)"\s*(?:#.*)?$/);
+      if (m) {
+        name = m[1];
+        break;
+      }
+    }
+  } else {
+    try {
+      const cfg = parseJsonc(text);
+      if (cfg !== null && typeof cfg === 'object') name = cfg.name;
+    } catch {
+      return null;
+    }
+  }
+  if (typeof name !== 'string' || name === '' || /\$/.test(name)) return null;
+  return name;
+}
+
+/**
  * The scope a segment names through wrangler's own TARGET SELECTORS, rather
  * than through the path the shell happens to be standing in (#1995 r1).
  *
@@ -2479,7 +2525,14 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // deploy --no-keep-vars` was ALREADY reported before this change, so it
     // reaches scope by another path. Measured, not assumed — an earlier draft
     // of this comment claimed `-C` was broken.
-    ['name', 'config', 'cwd', 'dir', 'C', 'prefix'],
+    //
+    // `env` is kept because the config-identity read below CONSULTS it (#1996)
+    // — not for its value, but for its presence, which is enough to make the
+    // declared `name` stop being the deployed one. The strip replaces an
+    // option AND its value with a single placeholder, so without the entry
+    // `--env staging` vanished entirely and the suppression never fired: the
+    // drift this list's own comment warns about, arriving immediately.
+    ['name', 'config', 'cwd', 'dir', 'C', 'prefix', 'env'],
   )
     // Everything after WRANGLER's `--` is inert. Verified against 4.90.0:
     // `wrangler deploy --dry-run -- --name vaipakam-indexer` still processed
@@ -2615,6 +2668,53 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // `--config` names a FILE; its directory is the package.
   const target =
     cfg !== null ? cfg.slice(0, cfg.lastIndexOf('/') + 1) || '.' : null;
+
+  // THE CONFIG'S `name` IS THE WORKER'S IDENTITY — not the directory the file
+  // happens to sit in (#1996, deferred out of #1995 r8).
+  //
+  // Wrangler's `getScriptName` is `args.name ?? config.name`, so a config
+  // living anywhere at all and declaring `"name": "vaipakam-agent"` deploys the
+  // protected agent. The directory answer below says "`configs/` is out of
+  // scope" and the guard exits 0 on a destructive deploy; verified against
+  // wrangler 4.90.0 in the #1995 review. Read here rather than left as a
+  // recorded limit because the machinery the deferral was about — resolve a
+  // path against the modelled cwd, open the file, parse JSONC, read a field —
+  // was built for `keep_vars` in `commandIsSafe` during that same PR, so this
+  // is now one more field out of a file already being opened.
+  //
+  // Authoritative when the file answers, exactly as `--name` is above: once
+  // wrangler's own identity field has been read there is nothing left to guess.
+  // That cuts both ways — a config UNDER a scoped directory naming a different
+  // Worker deploys that different Worker, whose vars are not the protected
+  // ones.
+  //
+  // DEGRADES SILENTLY, which is what the deferral was really about: this guard
+  // runs inside `typecheck`, so a false red blocks every PR in the repo.
+  // Everything that stops the file answering — a path built from a variable or
+  // climbing out of the tree (already `null` by the time we are here), a file
+  // absent from the checkout because it is generated at build time, one that
+  // does not parse, one with no literal `name` — falls through to the directory
+  // heuristic that was here before, never to a report.
+  //
+  // `--env` suppresses it, and that is a REAL limit rather than caution:
+  // wrangler derives the deployed script name from the environment
+  // (`vaipakam-agent-staging`), so the declared `name` is not what ships, and an
+  // exact match against the protected set would answer "out of scope" for a
+  // deploy that is squarely inside it. The directory heuristic is the safer
+  // answer there and keeps its job.
+  if (cfg !== null && !/(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion)) {
+    for (const b of bases) {
+      // Resolved AS WRANGLER RESOLVES IT — against the command's own working
+      // directory — the same rule `commandIsSafe` follows for `keep_vars`. An
+      // absolute path is outside anything this scanner can reason about.
+      if (cfg.startsWith('/')) break;
+      const declared = declaredWorkerName(
+        `${REPO_ROOT}/${normalizeRel(`${b}/${cfg}`)}`,
+      );
+      if (declared === null) continue;
+      return { scope: SCOPED.find((s) => s.workerName === declared) ?? null };
+    }
+  }
 
   for (const b of bases) {
     const hit = scopeOfCwd(target === null ? b : resolveDir(b, target));
