@@ -127,6 +127,9 @@ jobs:
           # verification every signed endpoint now routes through. Being
           # outside this detector meant an agent-only PR did not even
           # TRIGGER the workflow, so the gap was two-layered.
+          # `packages/ui` was in this list until #1963 retired the package
+          # (orphaned by the #1854 apps/defi deletion). No path can match
+          # a package that no longer exists.
           # The two ops Workers are here for a DIFFERENT reason and so are
           # listed differently: the var-preservation invariant
           # (apps/keeper/test/workerKeepVars.test.ts) asserts `keep_vars` for
@@ -138,10 +141,6 @@ jobs:
           # indexer, keeper and agent suites for every unrelated ops change.
           # A companion unconditional job in ci.yml runs the same invariant
           # with no filter; this one additionally brings in the richer suite.
-          #
-          # `packages/ui` was in this list until #1963 retired the package
-          # (orphaned by the #1854 apps/defi deletion). No path can match
-          # a package that no longer exists.
           DEFI_RE='^(apps/(app|indexer|keeper|agent)/|ops/(mesh-watcher|offchain-data-warm)/wrangler\.jsonc$|packages/(lib|contracts|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
