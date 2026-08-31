@@ -600,6 +600,19 @@ export interface EraseResult {
   sessionStorage: number;
   cookies: number;
   total: number;
+  /**
+   * Whether the cross-tab request actually left this tab (round 11 P2).
+   *
+   * The page tells the user other tabs were ASKED to clear and sign out, and
+   * where `BroadcastChannel` is missing, blocked, or throws on `postMessage`,
+   * none of them was — so a peer stays connected and keeps its per-tab data
+   * while the page says the opposite. Best effort has to be reported as best
+   * effort ATTEMPTED, not as best effort DELIVERED.
+   *
+   * `true` still promises nothing about what peers DID: nobody acknowledges,
+   * by design. It means only that the request was sent.
+   */
+  peersNotified: boolean;
 }
 
 /**
@@ -905,6 +918,26 @@ function clearObjectStore(
   });
 }
 
+/**
+ * The IndexedDB factory, or `undefined` where it cannot even be looked at.
+ *
+ * Round 11 P2. `typeof indexedDB === 'undefined'` reads a GLOBAL PROPERTY, and
+ * a locked-down browser can expose it through a getter that throws
+ * `SecurityError` — so the guard meant to detect "no IndexedDB here" was
+ * itself the thing that threw, before either per-store `try` could run.
+ * `eraseMyDataFully` then rejected after its synchronous sweep with no result
+ * at all, and the page's inventory request was left unanswered: a browser
+ * strict enough to hide the API got the worst outcome instead of the honest
+ * one this module already has a state for.
+ */
+function indexedDbFactory(): IDBFactory | undefined {
+  try {
+    return typeof indexedDB === 'undefined' ? undefined : indexedDB;
+  } catch {
+    return undefined;
+  }
+}
+
 /** What the registered databases are holding, without touching them. */
 export interface IndexedDbInventory {
   /** Records across every registered store. */
@@ -1044,7 +1077,7 @@ function countObjectStore(
  * not nothing.
  */
 export async function inspectIndexedDbData(): Promise<IndexedDbInventory> {
-  if (typeof indexedDB === 'undefined') return { records: 0, refused: true };
+  if (!indexedDbFactory()) return { records: 0, refused: true };
   const targets = ERASABLE_INDEXED_DB_STORES;
   const outcomes = await Promise.all(
     targets.map((t) => countObjectStore(t.database, t.store)),
@@ -1062,7 +1095,7 @@ export async function inspectIndexedDbData(): Promise<IndexedDbInventory> {
  * misbehaving should not delay the verdict on the other.
  */
 export async function eraseIndexedDbData(): Promise<IndexedDbEraseResult> {
-  if (typeof indexedDB === 'undefined') {
+  if (!indexedDbFactory()) {
     return { cleared: 0, records: 0, refused: [], unavailable: true };
   }
   const targets = ERASABLE_INDEXED_DB_STORES;
@@ -1204,12 +1237,16 @@ export function eraseMyData(): EraseResult {
   // the tabs this one cannot touch are told to clear their own (review
   // round 2 P2). Announced AFTER the local erase so a listener never
   // races ahead of the tab that started it.
-  announceErase();
+  // Whether the cross-tab request actually left this tab (round 11 P2). The
+  // page claims other tabs were ASKED, and in a browser without a working
+  // BroadcastChannel none of them was.
+  const peersNotified = announceErase();
   return {
     localStorage: local,
     sessionStorage: session,
     cookies,
     total: local + session + cookies,
+    peersNotified,
   };
 }
 
@@ -1383,7 +1420,14 @@ export function disconnectEvery<C>(
         failures.push(error);
         // This straggler cleans up after ITSELF when it settles — see
         // `onStragglerSettled` for why a barrier over all of them was wrong.
-        const cleanup = opts.onStragglerSettled;
+        //
+        // ONLY ON A REAL TIMEOUT (round 11 P2). A connector that REFUSES has
+        // finished: it will write nothing more, so there is nothing to clean
+        // up after, and registering the callback anyway attached it to an
+        // already-rejected promise — which fired the cleanup immediately,
+        // ahead of the counted clear it was meant to follow.
+        const cleanup =
+          error instanceof TimeoutError ? opts.onStragglerSettled : undefined;
         if (cleanup) {
           void original.then(
             () => cleanup(),
@@ -1434,11 +1478,25 @@ export const DISCONNECT_TIMEOUT_MS = 10_000;
  */
 export const PER_CONNECTOR_TIMEOUT_MS = 4_000;
 
+/**
+ * Thrown by `withTimeout` when the WAIT expired, as opposed to the awaited
+ * work rejecting on its own.
+ *
+ * The distinction is load-bearing (round 11 P2). Late cleanup exists for work
+ * that is STILL RUNNING after we stopped waiting for it; a promise that
+ * rejected promptly has finished, will write nothing more, and needs no
+ * cleanup. Treating the two alike scheduled that cleanup immediately — and
+ * since it now clears IndexedDB, it raced `eraseMyDataFully`'s own counted
+ * clear and could empty the stores first, so the erasure reported zero
+ * database records over records it had removed.
+ */
+class TimeoutError extends Error {}
+
 /** Reject after `ms` if `promise` has not settled. */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error('timeout')),
+      () => reject(new TimeoutError('timeout')),
       ms,
     );
     promise.then(
@@ -1578,9 +1636,15 @@ export async function eraseMyDataFully(
         });
       await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
       connector = { attempted: true, disconnected: true };
-    } catch {
+    } catch (error) {
       connector = { attempted: true, disconnected: false };
-      settledLate = true;
+      // Same distinction as inside `disconnectEvery`, and the same reason
+      // (round 11 P2, second site — the finding named the per-connector one).
+      // A teardown that REJECTED has finished; only one we stopped waiting for
+      // can still write, so only that one earns a late cleanup. Setting this
+      // on an ordinary rejection ran the cleanup before the counted clear
+      // below and could zero the reported record count.
+      settledLate = error instanceof TimeoutError;
     }
   }
   const base = eraseMyData();

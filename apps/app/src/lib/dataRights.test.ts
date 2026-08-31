@@ -1764,3 +1764,148 @@ describe('round 8 — a wedged wallet must not suppress the others', () => {
     expect(asked).toEqual(['captured']);
   });
 });
+
+describe('round 11 — a refusal is not a timeout, and a guard that throws', () => {
+  const realIdb = (globalThis as Record<string, unknown>).indexedDB;
+  afterEach(() => {
+    // `defineProperty`, not assignment: one of these tests installs a
+    // GETTER-ONLY `indexedDB` (which is the whole point of it), and a plain
+    // assignment onto that throws in the teardown — failing the test whose
+    // assertions had already passed.
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      writable: true,
+      value: realIdb,
+    });
+  });
+
+  it('does NOT schedule straggler cleanup for a connector that simply refused', async () => {
+    // Round 11 P2. A refusal has FINISHED — it will write nothing more, so
+    // there is nothing to clean up after. Treating it like a timeout attached
+    // the callback to an already-rejected promise, firing the cleanup
+    // immediately; and since that cleanup now clears IndexedDB, it raced the
+    // counted clear and could report zero records over records removed.
+    let cleanups = 0;
+    const teardown = disconnectEvery(
+      ['refuser'],
+      async () => {
+        throw new Error('user rejected');
+      },
+      {
+        perConnectorTimeoutMs: 50,
+        onStragglerSettled: () => {
+          cleanups += 1;
+        },
+      },
+    );
+    await expect(teardown()).rejects.toThrow(/1 of 1/);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(cleanups).toBe(0);
+  });
+
+  it('DOES schedule it for one that ran out of time', async () => {
+    // The other side of the same distinction, so the fix cannot be "never
+    // schedule it".
+    vi.useFakeTimers();
+    try {
+      let cleanups = 0;
+      let land: (() => void) | undefined;
+      const teardown = disconnectEvery(
+        ['slow'],
+        () =>
+          new Promise<void>((resolve) => {
+            land = resolve;
+          }),
+        {
+          perConnectorTimeoutMs: 50,
+          onStragglerSettled: () => {
+            cleanups += 1;
+          },
+        },
+      );
+      const outcome = teardown().catch(() => 'gave up');
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await outcome).toBe('gave up');
+      land?.();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cleanups).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reports peersNotified FALSE when the broadcast cannot go out', () => {
+    // Round 11 P2. The success copy tells the user other tabs were asked to
+    // clear and sign out. Where BroadcastChannel is missing or blocked,
+    // `announceErase` silently returns and none of them was — so a peer stays
+    // connected and keeps its data while the page says the opposite. Best
+    // effort has to be reported as ATTEMPTED, not as DELIVERED.
+    const store = new Map<string, string>([['app.mode', 'basic']]);
+    const fake: Storage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+    const priorWindow = (globalThis as Record<string, unknown>).window;
+    const priorBc = (globalThis as Record<string, unknown>).BroadcastChannel;
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: fake,
+      sessionStorage: fake,
+      location: { origin: 'https://app.example' },
+      navigator: { userAgent: 'test' },
+      dispatchEvent: () => true,
+    };
+    try {
+      delete (globalThis as Record<string, unknown>).BroadcastChannel;
+      expect(eraseMyData().peersNotified).toBe(false);
+
+      // And TRUE when it does go out, so the fix is not "always false".
+      store.set('app.mode', 'basic');
+      const posted: unknown[] = [];
+      (globalThis as Record<string, unknown>).BroadcastChannel = class {
+        postMessage(m: unknown) {
+          posted.push(m);
+        }
+        close() {}
+        addEventListener() {}
+        removeEventListener() {}
+      };
+      expect(eraseMyData().peersNotified).toBe(true);
+      expect(posted).toEqual([{ type: 'erase' }]);
+    } finally {
+      (globalThis as Record<string, unknown>).window = priorWindow;
+      (globalThis as Record<string, unknown>).BroadcastChannel = priorBc;
+    }
+  });
+
+  it('survives an indexedDB GETTER that throws, rather than rejecting', async () => {
+    // Round 11 P2. `typeof indexedDB` reads a global PROPERTY, and a
+    // locked-down browser can expose it through a getter that throws
+    // SecurityError — so the guard meant to detect "no IndexedDB" was itself
+    // what threw, before any per-store try could run. The erase then rejected
+    // with no result at all and the inventory request was left unanswered:
+    // the strictest browser got the worst outcome instead of the honest one.
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      get() {
+        throw new Error('SecurityError');
+      },
+    });
+    await expect(eraseIndexedDbData()).resolves.toEqual({
+      cleared: 0,
+      records: 0,
+      refused: [],
+      unavailable: true,
+    });
+    await expect(inspectIndexedDbData()).resolves.toEqual({
+      records: 0,
+      refused: true,
+    });
+  });
+});

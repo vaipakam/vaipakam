@@ -231,6 +231,8 @@
       "erasePartial": "Erased {{removed}} items, but {{left}} could not be removed. Clearing site data through your browser’s own settings will remove the rest.",
       "eraseWorking": "Signing out and clearing…",
       "eraseDoneDisconnected": "Erased {{count}} stored items and signed you out here. Any other tabs you have open have been asked to clear theirs and sign out as well.",
+      "eraseDoneNoPeers": "Erased {{count}} stored items.",
+      "eraseDoneDisconnectedNoPeers": "Erased {{count}} stored items and signed you out here.",
       "eraseStoresUnreadable": "Your stored data was removed, but this browser would not let the app open the wallet’s session storage, so anything kept there may still be on this device. Clearing site data through your browser’s own settings will remove it.",
       "eraseSessionHeld": "Your stored data was removed, but the wallet’s stored session could not be cleared, so it may still be on this device. Clearing site data through your browser’s own settings will remove it.",
       "eraseWalletHeld": "The wallet would not disconnect, so this site is still connected to it. Disconnect from your wallet directly, then erase again.",

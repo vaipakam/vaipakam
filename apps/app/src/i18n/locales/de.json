@@ -243,6 +243,8 @@
       "diagProcessedChainUnknown": "Ihr Löschantrag wurde nur für die Einträge eines einzigen Netzwerks verarbeitet — des Netzwerks, das die Signatur Ihrer Wallet geprüft hat. Die Signatur einer Smart-Account-Wallet wird jeweils nur auf einem Netzwerk geprüft, daher sind auf anderen Netzwerken erfasste Einträge nicht abgedeckt — wechseln Sie das Netzwerk und wiederholen Sie den Antrag dort, oder schreiben Sie an support@vaipakam.com, und wir verarbeiten ihn für Ihre Wallet überall.",
       "eraseWorking": "Abmelden und löschen…",
       "eraseDoneDisconnected": "{{count}} gespeicherte Einträge gelöscht und Sie wurden hier abgemeldet. Andere geöffnete Tabs wurden gebeten, ihre ebenfalls zu löschen und sich abzumelden.",
+      "eraseDoneNoPeers": "{{count}} gespeicherte Elemente wurden gelöscht.",
+      "eraseDoneDisconnectedNoPeers": "{{count}} gespeicherte Elemente wurden gelöscht und Sie wurden hier abgemeldet.",
       "eraseSessionHeld": "Ihre gespeicherten Daten wurden entfernt, aber die gespeicherte Sitzung der Wallet konnte nicht gelöscht werden und kann daher noch auf diesem Gerät liegen. Das Löschen der Websitedaten in den Einstellungen Ihres Browsers entfernt sie.",
       "eraseWalletHeld": "Die Wallet hat sich nicht getrennt, sodass diese Website weiterhin mit ihr verbunden ist. Trennen Sie die Verbindung direkt in Ihrer Wallet und löschen Sie dann erneut.",
       "eraseStoresUnreadable": "Ihre gespeicherten Daten wurden entfernt, aber dieser Browser ließ die App den Sitzungsspeicher der Wallet nicht öffnen, sodass dort Abgelegtes noch auf diesem Gerät liegen kann. Das Löschen der Websitedaten in den Einstellungen Ihres Browsers entfernt es."

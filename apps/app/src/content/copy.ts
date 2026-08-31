@@ -388,6 +388,20 @@ const copySource = {
       'Erased {{count}} stored items and signed you out here. Any other tabs you have open have been asked to clear theirs and sign out as well.',
       ['count'],
     ),
+    /* THE SAME TWO OUTCOMES WITH NO CLAIM ABOUT OTHER TABS (round 11 P2).
+       The cross-tab request can fail to go out at all — no BroadcastChannel,
+       a blocked constructor, a throwing postMessage — and the messages above
+       said other tabs had been asked regardless. In that browser a second tab
+       stays connected and keeps its data while the page says the opposite.
+       These carry no claim rather than a hedged one: a sentence about tabs
+       that were never contacted is better absent than qualified, and the
+       limits section below already tells the reader what this page can and
+       cannot reach. */
+    eraseDoneNoPeers: tmpl('Erased {{count}} stored items.', ['count']),
+    eraseDoneDisconnectedNoPeers: tmpl(
+      'Erased {{count}} stored items and signed you out here.',
+      ['count'],
+    ),
     /* A live session survives this one, so it must not read as a success.
        The cause is nearly always another tab of this site holding the
        database open, which the user can act on — hence naming it. */

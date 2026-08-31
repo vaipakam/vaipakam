@@ -243,6 +243,8 @@
       "diagProcessedChainUnknown": "Votre demande d’effacement a été traitée uniquement pour les enregistrements d’un seul réseau — celui qui a vérifié la signature de votre portefeuille. La signature d’un portefeuille à compte intelligent n’est vérifiée que sur un réseau à la fois : les enregistrements capturés sur d’autres réseaux ne sont donc pas couverts — changez de réseau et répétez la demande, ou écrivez à support@vaipakam.com et nous la traiterons pour votre portefeuille partout.",
       "eraseWorking": "Déconnexion et effacement…",
       "eraseDoneDisconnected": "{{count}} éléments stockés effacés et vous avez été déconnecté ici. Les autres onglets ouverts ont été invités à effacer les leurs et à se déconnecter également.",
+      "eraseDoneNoPeers": "{{count}} éléments stockés ont été effacés.",
+      "eraseDoneDisconnectedNoPeers": "{{count}} éléments stockés ont été effacés et vous avez été déconnecté ici.",
       "eraseSessionHeld": "Vos données stockées ont été supprimées, mais la session enregistrée du portefeuille n’a pas pu être effacée ; elle peut donc rester sur cet appareil. Effacer les données du site depuis les paramètres de votre navigateur la supprimera.",
       "eraseWalletHeld": "Le portefeuille ne s’est pas déconnecté : ce site y est donc toujours connecté. Déconnectez-vous directement depuis votre portefeuille, puis effacez à nouveau.",
       "eraseStoresUnreadable": "Vos données stockées ont été supprimées, mais ce navigateur n’a pas laissé l’application ouvrir le stockage de session du portefeuille ; ce qui s’y trouve peut donc rester sur cet appareil. Effacer les données du site depuis les paramètres de votre navigateur le supprimera."

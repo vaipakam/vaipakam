@@ -533,11 +533,24 @@ export function DataRights() {
                       // empty but whose wallet session was not reported
                       // "nothing was stored" after deleting that session.
                       result.total > 0 || result.indexedDb.records > 0
-                      ? result.connector.disconnected
-                        ? copy.dataRights.eraseDoneDisconnected(
-                            erasedItemCount(result),
-                          )
-                        : copy.dataRights.eraseDone(erasedItemCount(result))
+                      ? // Round 11 P2 — the cross-tab claim is only made when
+                        // the request actually went out. `announceErase`
+                        // returns false where BroadcastChannel is missing or
+                        // blocked, and the page was promising peers had been
+                        // asked in exactly the browser where none had.
+                        result.connector.disconnected
+                        ? result.peersNotified
+                          ? copy.dataRights.eraseDoneDisconnected(
+                              erasedItemCount(result),
+                            )
+                          : copy.dataRights.eraseDoneDisconnectedNoPeers(
+                              erasedItemCount(result),
+                            )
+                        : result.peersNotified
+                          ? copy.dataRights.eraseDone(erasedItemCount(result))
+                          : copy.dataRights.eraseDoneNoPeers(
+                              erasedItemCount(result),
+                            )
                       : copy.dataRights.eraseNothing}
             {/* WALLET outcome, additive. Its remedy — disconnect in the
                 wallet itself — is not reachable from any storage message,
