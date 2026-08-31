@@ -338,14 +338,26 @@ export function DataRights() {
         // this page. The page has no rendering harness, and round 2's lesson
         // here was that the fixes were in the library and the page was not
         // using them.
-        // `status !== 'disconnected'` (round 8 P1) — see the hook above. The
+        // `connected` or `reconnecting` (round 8 P1, NARROWED by self-review).
+        // The first version of this gate was `status !== 'disconnected'`, which
+        // also admits `connecting` — the state after a user clicks Connect with
+        // a wallet modal open, where `connections` is empty by definition. That
+        // supplied a teardown with nothing to tear down, so `disconnectEvery`
+        // raised its empty-list refusal and the page told a user who had NEVER
+        // CONNECTED that the wallet would not disconnect and the site was still
+        // connected to it. Round 2 fixed a false sign-out over nothing; that was
+        // a false HOLDOUT over nothing, which is the same untruth inverted.
+        // `connecting` has no persisted connection to protect, which was the
+        // entire reason `reconnecting` had to be admitted.
+        //
+        // See the hook above. The
         // teardown reads the connector list from the LIVE config at call time
         // rather than from the render-time value, because during a reconnect
         // that list is still filling: by the time the user's click reaches
         // here, connections wagmi did not have at render may exist, and those
         // are exactly the ones that would otherwise survive the erasure.
         disconnect:
-          status !== 'disconnected'
+          status === 'connected' || status === 'reconnecting'
           ? disconnectEvery(liveConnectors, disconnectAsync, {
               // Self-review after round 7: the straggler callback was wired
               // into the peer listener and NOT here, so the page had the

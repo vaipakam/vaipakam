@@ -98,10 +98,11 @@ export function EraseSyncListener() {
   // at handler time instead, which is also FRESHER than a captured dependency:
   // what matters is the set connected when the broadcast arrives.
   const connectorsRef = useRef(liveConnectors);
-  const connectedRef = useRef(status !== 'disconnected');
+  const connectedRef = useRef(status === 'connected' || status === 'reconnecting');
   useEffect(() => {
     connectorsRef.current = liveConnectors;
-    connectedRef.current = status !== 'disconnected';
+    connectedRef.current =
+      status === 'connected' || status === 'reconnecting';
   });
   useEffect(
     () =>
