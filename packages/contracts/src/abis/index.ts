@@ -77,6 +77,7 @@ import ProtocolBroadcastFacetABI from './ProtocolBroadcastFacet.json';
 import InteractionRewardsFacetABI from './InteractionRewardsFacet.json';
 // #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
 import RewardClaimFacetABI from './RewardClaimFacet.json';
+import PerkFacetABI from './PerkFacet.json';
 import RewardHorizonSweepFacetABI from './RewardHorizonSweepFacet.json';
 // #1306 follow-up — read-only lens split off InteractionRewardsFacet.
 import InteractionRewardsLensFacetABI from './InteractionRewardsLensFacet.json';
@@ -84,6 +85,7 @@ import InteractionRewardsLensFacetABI from './InteractionRewardsLensFacet.json';
 // VpfiBuyReceiver) along with the fixed-rate sale.
 import RewardReporterFacetABI from './RewardReporterFacet.json';
 import RewardAggregatorFacetABI from './RewardAggregatorFacet.json';
+import RewardBroadcastFacetABI from './RewardBroadcastFacet.json';
 import RewardRemittanceFacetABI from './RewardRemittanceFacet.json';
 import RewardRemittanceLensFacetABI from './RewardRemittanceLensFacet.json';
 import RewardCompensationDispatchFacetABI from './RewardCompensationDispatchFacet.json';
@@ -178,10 +180,12 @@ export {
   ProtocolBroadcastFacetABI,
   InteractionRewardsFacetABI,
   RewardClaimFacetABI,
+  PerkFacetABI,
   RewardHorizonSweepFacetABI,
   InteractionRewardsLensFacetABI,
   RewardReporterFacetABI,
   RewardAggregatorFacetABI,
+  RewardBroadcastFacetABI,
   RewardRemittanceFacetABI,
   RewardRemittanceLensFacetABI,
   RewardCompensationDispatchFacetABI,
@@ -273,10 +277,12 @@ export const DIAMOND_ABI = [
   ...InteractionRewardsFacetABI,
   // #1351 slice 2c — CLAIM entry points split off for EIP-170 headroom.
   ...RewardClaimFacetABI,
+  ...PerkFacetABI,
   ...RewardHorizonSweepFacetABI,
   ...InteractionRewardsLensFacetABI,
   ...RewardReporterFacetABI,
   ...RewardAggregatorFacetABI,
+  ...RewardBroadcastFacetABI,
   ...RewardRemittanceFacetABI,
   ...RewardRemittanceLensFacetABI,
   ...RewardCompensationDispatchFacetABI,

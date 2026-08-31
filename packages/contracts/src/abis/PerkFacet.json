@@ -1,70 +1,15 @@
 [
   {
     "type": "function",
-    "name": "modifyOffer",
+    "name": "consumePerkCredit",
     "inputs": [
       {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
       },
       {
-        "name": "params",
-        "type": "tuple",
-        "internalType": "struct LibVaipakam.OfferModifyParams",
-        "components": [
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "amountMax",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBpsMax",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmountMax",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setOfferAmount",
-    "inputs": [
-      {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newAmountMax",
+        "name": "perkId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -74,22 +19,103 @@
   },
   {
     "type": "function",
-    "name": "setOfferCollateral",
+    "name": "getPerkConfig",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "perkId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "priceVpfi",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newCollateralAmount",
+        "name": "durationSeconds",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "unitsSold",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPerkEntitlement",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "perkId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "active",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "until",
+        "type": "uint64",
+        "internalType": "uint64"
+      },
+      {
+        "name": "credits",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getPerkSpendCumulative",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "purchasePerk",
+    "inputs": [
+      {
+        "name": "perkId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newCollateralAmountMax",
+        "name": "units",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "maxTotalVpfi",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "expectedDurationSeconds",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -97,22 +123,22 @@
   },
   {
     "type": "function",
-    "name": "setOfferRate",
+    "name": "setPerkConfig",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "perkId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newRateBps",
+        "name": "priceVpfi",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newRateBpsMax",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "durationSeconds",
+        "type": "uint32",
+        "internalType": "uint32"
       }
     ],
     "outputs": [],
@@ -120,19 +146,112 @@
   },
   {
     "type": "event",
-    "name": "OfferModified",
+    "name": "PerkConfigured",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "perkId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "creator",
+        "name": "priceVpfi",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "durationSeconds",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PerkCreditConsumed",
+    "inputs": [
+      {
+        "name": "user",
         "type": "address",
         "indexed": true,
         "internalType": "address"
+      },
+      {
+        "name": "perkId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "creditsAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "PerkPurchased",
+    "inputs": [
+      {
+        "name": "buyer",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "perkId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "units",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "vpfiSpent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "entitledUntil",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "creditsAfter",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiRecycled",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "refId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       },
       {
         "name": "amount",
@@ -141,31 +260,32 @@
         "internalType": "uint256"
       },
       {
-        "name": "amountMax",
+        "name": "dayId",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "VpfiRecycledPreLaunch",
+    "inputs": [
+      {
+        "name": "source",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
       },
       {
-        "name": "interestRateBps",
+        "name": "refId",
         "type": "uint256",
-        "indexed": false,
+        "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "interestRateBpsMax",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralAmountMax",
+        "name": "amount",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -175,18 +295,19 @@
   },
   {
     "type": "error",
-    "name": "AmountMaxMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AmountMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AmountMutationUnsupportedForShape",
-    "inputs": []
+    "name": "AccessControlUnauthorizedAccount",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "neededRole",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ]
   },
   {
     "type": "error",
@@ -408,21 +529,6 @@
   {
     "type": "error",
     "name": "ChainDayAlreadyReported",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CollateralAmountMaxMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CollateralMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CollateralMutationUnsupportedForShape",
     "inputs": []
   },
   {
@@ -1073,6 +1179,22 @@
   },
   {
     "type": "error",
+    "name": "InsufficientRecycleBacking",
+    "inputs": [
+      {
+        "name": "needed",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "available",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "IntentPending",
     "inputs": [
       {
@@ -1121,11 +1243,6 @@
   },
   {
     "type": "error",
-    "name": "InterestRateAboveCeiling",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -1136,17 +1253,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidAmountRange",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAsset",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidCollateralAmountRange",
     "inputs": []
   },
   {
@@ -1157,16 +1264,6 @@
   {
     "type": "error",
     "name": "InvalidLoanStatus",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidOffer",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidRateRange",
     "inputs": []
   },
   {
@@ -1373,11 +1470,6 @@
   },
   {
     "type": "error",
-    "name": "LenderCollateralRangeNotAllowed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "LenderResolutionFailed",
     "inputs": []
   },
@@ -1430,56 +1522,8 @@
   },
   {
     "type": "error",
-    "name": "MaxLendingAboveCeiling",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "ceiling",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "MessengerPredatesV3",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "MinCollateralBelowFloor",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ModifyBelowFilledFloor",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "alreadyFilled",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1563,27 +1607,7 @@
   },
   {
     "type": "error",
-    "name": "OfferAlreadyAccepted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OfferAlreadyConsumedBySaleMutate",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "OfferCreationFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OfferLockedByParallelSale",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OffsetVehicleImmutable",
     "inputs": []
   },
   {
@@ -1712,6 +1736,81 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PerkModeLocked",
+    "inputs": [
+      {
+        "name": "perkId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkNoCreditsHeld",
+    "inputs": [
+      {
+        "name": "user",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "perkId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkNotForSale",
+    "inputs": [
+      {
+        "name": "perkId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkPriceExceedsMax",
+    "inputs": [
+      {
+        "name": "spend",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxTotalVpfi",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkTermsChanged",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "actual",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "PerkUnitsZero",
+    "inputs": []
   },
   {
     "type": "error",
@@ -2064,11 +2163,6 @@
   {
     "type": "error",
     "name": "SaleOfferAlreadyExists",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SaleVehicleImmutable",
     "inputs": []
   },
   {

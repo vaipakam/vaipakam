@@ -14,37 +14,6 @@
   },
   {
     "type": "function",
-    "name": "broadcastGlobal",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "broadcastGlobalTo",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "destChainId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
     "name": "finalizeDay",
     "inputs": [
       {
@@ -184,6 +153,25 @@
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getChainKeeperAllocateBps",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -756,46 +744,21 @@
   },
   {
     "type": "function",
-    "name": "quoteBroadcastGlobal",
+    "name": "setChainKeeperAllocateBps",
     "inputs": [
       {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "nativeFee",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "quoteBroadcastGlobalTo",
-    "inputs": [
-      {
-        "name": "dayId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
       },
       {
-        "name": "destChainId",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "bps",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
-    "outputs": [
-      {
-        "name": "nativeFee",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -937,6 +900,25 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ChainKeeperAllocateBpsSet",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       }
     ],
     "anonymous": false
@@ -2729,6 +2711,11 @@
         "internalType": "uint256"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "PerkVpfiTokenNotSet",
+    "inputs": []
   },
   {
     "type": "error",
