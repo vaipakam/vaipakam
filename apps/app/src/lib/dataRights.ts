@@ -1574,6 +1574,14 @@ export async function eraseMyDataFully(
   // outside. The guard is worth keeping (a full Web Storage pass on every
   // successful erasure is waste) and is not worth claiming a test for.
   let settledLate = false;
+  // Opened once the COUNTED clear below has finished. Every late cleanup —
+  // this function's own, and the caller's per-straggler one, which is handed
+  // the same gate — waits on it, so a teardown settling early cannot empty
+  // the stores ahead of the call that counts them (round 12 P2).
+  let openGate: () => void = () => {};
+  const countedClearDone = new Promise<void>((resolve) => {
+    openGate = resolve;
+  });
   if (disconnect) {
     try {
       // BOUNDED (round 1 P2). Only a REJECTED promise reaches the catch; one
@@ -1614,25 +1622,32 @@ export async function eraseMyDataFully(
           // must not surface as a page error.
         })
         .finally(() => {
+          // AFTER THE COUNTED CLEAR, never before it (round 12 P2). A late
+          // teardown can settle at any moment, including one BEFORE this
+          // function's own `eraseIndexedDbData()` has run — and this cleanup
+          // empties the same stores, so it would leave that counted call
+          // looking at an empty store and the erasure reporting zero database
+          // records over records it removed. Queuing behind the gate makes the
+          // ordering a property of the code rather than of the timing.
+          void countedClearDone.then(() => {
           // CONNECTOR KEYS ONLY, for the reason round 7 gave about the peer
           // listener's equivalent: this fires seconds after the result was
           // reported, the page stays usable in between, and a blanket sweep
           // would delete records the user created AFTER the erasure. What a
           // late teardown can recreate is connector state, so that is all a
           // late cleanup has any business removing.
-          if (settledLate) {
-            // BOTH stores here too (round 10 P2). The per-connector straggler
-            // callback clears the databases, and this whole-teardown path did
-            // not — but they catch different timeouts. Several connectors can
-            // each finish INSIDE the four-second per-target bound while their
-            // sequential total exceeds the ten-second outer one (three at 3.5s
-            // does it), so no `onStragglerSettled` is ever registered and this
-            // continuation is the only cleanup that runs. If the last of them
-            // is WalletConnect, its IndexedDB write lands after the main clear
-            // and a Web-Storage-only sweep cannot see it.
-            eraseConnectorStorageQuietly();
-            void eraseIndexedDbData();
-          }
+            if (settledLate) {
+              // BOTH stores (round 10 P2). The per-connector straggler
+              // callback clears the databases, and this whole-teardown path
+              // did not — but they catch different timeouts. Several
+              // connectors can each finish INSIDE the per-target bound while
+              // their sequential total exceeds the outer one (three at 3.5s
+              // does it), so no `onStragglerSettled` is registered and this
+              // continuation is the only cleanup that runs.
+              eraseConnectorStorageQuietly();
+              void eraseIndexedDbData();
+            }
+          });
         });
       await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
       connector = { attempted: true, disconnected: true };
@@ -1649,6 +1664,8 @@ export async function eraseMyDataFully(
   }
   const base = eraseMyData();
   const indexedDb = await eraseIndexedDbData();
+  // The counted clear is done; anything queued behind the gate may run now.
+  openGate();
   return {
     ...base,
     indexedDb,

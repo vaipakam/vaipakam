@@ -130,7 +130,7 @@ Each of those messages replaces a success that would have been true of the
 storage and false of the session. Reporting "erased" over a live connection is
 the same failure this page was built to avoid, one layer further along.
 
-**Three things it still cannot promise, said here rather than discovered.**
+**Four things it still cannot promise, said here rather than discovered.**
 Each is being tracked separately, and each is the kind of limit a person
 would rather read than meet.
 
@@ -147,11 +147,23 @@ would rather read than meet.
 - **In a language other than English, the confirmation can be lost too.**
   Erasing returns the app to English, and changing language rebuilds the
   screen — which can take the report with it. The data is erased either way.
+- **With the app open in more than one tab, two things can go wrong, and this
+  is the only limit here that can cost you something.** A second tab tidies up
+  after signing itself out, and if that takes a long time — a wallet that is
+  slow to answer — the tidying can arrive after you have gone back to using
+  that tab, and remove a wallet session you started in the meantime. The other
+  way round, a second tab can clear the wallet's stored session a moment
+  before the tab you pressed the button in looks at it, so the count you are
+  shown can read zero over records that were removed.
 
 The third is the milder shape of the second: the erasure completes and the
 *evidence* of it does not survive. On a page whose whole purpose is telling
 you what happened, even that is a real gap rather than a cosmetic one, which
-is why both are written down here instead of left to be found.
+is why both are written down here instead of left to be found. The fourth is
+listed last and is the one to read twice — it is the only case where erasing
+can remove something you did **afterwards**, or report a number that is
+wrong. Every other limit above leaves you with less reach than you wanted;
+that one can leave you with less than you had.
 
 **One promise is deliberately not made.** A browser extension, or a Safe, keeps
 its own record that you allowed this site, somewhere no page can reach. The

@@ -1909,3 +1909,104 @@ describe('round 11 — a refusal is not a timeout, and a guard that throws', () 
     });
   });
 });
+
+describe('round 12 — a late cleanup must never outrun the counted clear', () => {
+  const realIdb = (globalThis as Record<string, unknown>).indexedDB;
+  const realWindow = (globalThis as Record<string, unknown>).window;
+  afterEach(() => {
+    Object.defineProperty(globalThis, 'indexedDB', {
+      configurable: true,
+      writable: true,
+      value: realIdb,
+    });
+    (globalThis as Record<string, unknown>).window = realWindow;
+  });
+
+  it('reports the counted records when a straggler lands around the clear', async () => {
+    // Round 12 P2 — and an HONEST NOTE about what this does and does not pin.
+    //
+    // The fix is a gate: a late cleanup waits on the counted clear before
+    // emptying the same stores, so it cannot leave that clear looking at an
+    // empty store and reporting zero records over records just removed.
+    //
+    // THIS TEST DOES NOT PIN THE GATE, and two attempts to make it did not
+    // work. Replacing the gate with an immediate `Promise.resolve()` leaves
+    // the suite green. The reason is the fixture: the stub settles its
+    // transactions on microtasks, so `eraseMyDataFully`'s awaited chain
+    // completes before a straggler landed with fake timers can interleave —
+    // there is no window to land in. Producing one needs a stub whose
+    // transactions complete on timers, which is a fixture rewrite rather than
+    // an assertion.
+    //
+    // What IS asserted is the outcome under an ordinary straggler: the
+    // counted figure is the real one. The ordering guarantee itself is
+    // structural — the cleanup is behind `countedClearDone` by construction —
+    // and is recorded as unpinned in COVERAGE.md rather than implied here.
+    vi.useFakeTimers();
+    try {
+      const order: string[] = [];
+      const store = new Map<string, string>([['app.mode', 'basic']]);
+      const fake: Storage = {
+        get length() {
+          return store.size;
+        },
+        key: (i: number) => [...store.keys()][i] ?? null,
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => void store.set(k, v),
+        removeItem: (k: string) => void store.delete(k),
+        clear: () => store.clear(),
+      };
+      (globalThis as Record<string, unknown>).window = {
+        localStorage: fake,
+        sessionStorage: fake,
+        location: { origin: 'https://app.example' },
+        navigator: { userAgent: 'test' },
+        dispatchEvent: () => true,
+      };
+      (globalThis as Record<string, unknown>).indexedDB = {
+        deleteDatabase: () => ({}),
+        open() {
+          const req: Record<string, unknown> = {};
+          queueMicrotask(() => {
+            req.result = {
+              objectStoreNames: { contains: () => true },
+              close: () => {},
+              transaction: () => {
+                order.push('clear');
+                const tx: Record<string, unknown> = {
+                  objectStore: () => ({
+                    count: () => ({ result: 2 }),
+                    clear: () => {},
+                  }),
+                  abort: () => {},
+                };
+                queueMicrotask(
+                  () => (tx.oncomplete as (() => void) | undefined)?.(),
+                );
+                return tx;
+              },
+            };
+            (req.onsuccess as (() => void) | undefined)?.();
+          });
+          return req;
+        },
+      };
+      let land: (() => void) | undefined;
+      const pending = eraseMyDataFully({
+        disconnect: () =>
+          new Promise<void>((resolve) => {
+            land = resolve;
+          }),
+      });
+      // The straggler lands around the counted clear.
+      await vi.advanceTimersByTimeAsync(DISCONNECT_TIMEOUT_MS + 1);
+      land?.();
+      const result = await pending;
+      // Two stores, two records each, all seen by the counted clear.
+      expect(result.indexedDb.records).toBe(4);
+      await vi.advanceTimersByTimeAsync(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

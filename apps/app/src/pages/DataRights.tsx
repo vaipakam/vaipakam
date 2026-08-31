@@ -118,6 +118,10 @@ export function DataRights() {
   // a busy state the button looks dead for those seconds, and a second
   // click would start a second teardown.
   const [erasing, setErasing] = useState(false);
+  // Resolves when an erasure has finished its counted clear. Held in a ref
+  // rather than state: nothing renders from it, and a straggler cleanup
+  // registered during one erasure must see that erasure's gate.
+  const erasedFully = useRef<Promise<void>>(Promise.resolve());
   // Review round 1 P2: the providers sit ABOVE this route and read
   // storage only on their own mount, so clearing the keys left the live
   // theme and mode showing the erased values until a reload — the page
@@ -327,6 +331,13 @@ export function DataRights() {
     // accident of statement order.
     void i18n.changeLanguage('en');
     setErasing(true);
+    // Opened when the erasure — including its counted database clear — has
+    // finished. See `onStragglerSettled` below for why a late cleanup must
+    // not run before it.
+    let openGate: () => void = () => {};
+    erasedFully.current = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
     let erased: FullEraseResult;
     try {
       // The teardown is injected rather than imported by the library: see
@@ -375,9 +386,18 @@ export function DataRights() {
               // `eraseIndexedDbData()` has already run, and a Web-Storage-only
               // cleanup cannot see that. The same fix, in the place it was
               // not applied.
+              // QUEUED BEHIND THE ERASE, never ahead of it (round 12 P2). A
+              // connector that timed out at four seconds can settle at five
+              // while a later one keeps the loop running to seven — so this
+              // fired before `eraseMyDataFully` reached its COUNTED clear,
+              // emptied the same stores, and left that call reporting zero
+              // database records over records the erasure had removed. The
+              // page owns the ordering because it owns both calls.
               onStragglerSettled: () => {
-                eraseConnectorStorageQuietly();
-                void eraseIndexedDbData();
+                void erasedFully.current.then(() => {
+                  eraseConnectorStorageQuietly();
+                  void eraseIndexedDbData();
+                });
               },
               // Re-read at call time, for the reconnect case above.
               connectorsAtRunTime: () =>
@@ -389,6 +409,7 @@ export function DataRights() {
       });
     } finally {
       setErasing(false);
+      openGate();
     }
     // Measured immediately, once, and kept with the result — see the
     // state declaration for why this is not recomputed later.
@@ -526,9 +547,7 @@ export function DataRights() {
                   // "could not look" case `holdingUnreadable` exists for.
                   result.indexedDb.unavailable
                   ? copy.dataRights.eraseStoresUnreadable
-                  : result.indexedDb.refused.length > 0
-                    ? copy.dataRights.eraseSessionHeld
-                    : // Round 2 P2: `total` counts the synchronous sweep
+                  : // Round 2 P2: `total` counts the synchronous sweep
                       // only, so a browser whose Web Storage was already
                       // empty but whose wallet session was not reported
                       // "nothing was stored" after deleting that session.
@@ -552,6 +571,21 @@ export function DataRights() {
                               erasedItemCount(result),
                             )
                       : copy.dataRights.eraseNothing}
+            {/* SESSION-STORE outcome, additive (round 12 P2). It used to be
+                a branch in the ladder above, so a Web Storage leftover or an
+                unreadable inspection won first and the wallet-session holdout
+                was suppressed entirely — with `erasePartial` then quoting a
+                remainder that counted only Web Storage. The two arise from
+                the same locked-down storage policy, so they co-occur readily,
+                and their remedies differ. Same reasoning as the wallet line
+                below, reached one store along. */}
+            {!result.indexedDb.unavailable &&
+            result.indexedDb.refused.length > 0 ? (
+              <span className="block-line">
+                {' '}
+                {copy.dataRights.eraseSessionHeld}
+              </span>
+            ) : null}
             {/* WALLET outcome, additive. Its remedy — disconnect in the
                 wallet itself — is not reachable from any storage message,
                 so it must survive one. */}
