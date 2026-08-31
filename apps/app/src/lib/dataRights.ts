@@ -431,6 +431,43 @@ export function countMyData(): number {
   return inspectMyData().count;
 }
 
+/** Count what an erasure would remove from one store, preserving WHY it
+ *  came back empty — the same distinction `collect` makes. */
+function countErasable(storage: Storage | null): { count: number; refused: boolean } {
+  if (!storage) return { count: 0, refused: true };
+  let count = 0;
+  try {
+    for (let i = 0; i < storage.length; i += 1) {
+      if (isErasableStorageKey(storage.key(i))) count += 1;
+    }
+  } catch {
+    return { count, refused: true };
+  }
+  return { count, refused: false };
+}
+
+/**
+ * What an erasure would remove, counted over the ERASURE set (#1862).
+ *
+ * Separate from `inspectMyData().count`, which counts the EXPORT set, and the
+ * separation is the point. Reusing the export count here meant connector keys
+ * were invisible to both the "N items will be removed" figure the user sees
+ * before confirming and the `remaining` figure checked afterwards — so a
+ * connector key that refused removal, or that a live connector wrote straight
+ * back, left the page reporting a clean success or "nothing was stored". A
+ * verification that cannot see what the erasure targets is not a verification,
+ * and on this page a false success is the failure mode that matters.
+ */
+export function inspectErasableData(): { count: number; refused: boolean } {
+  const local = countErasable(safeStorage('localStorage'));
+  const session = countErasable(safeStorage('sessionStorage'));
+  const cookies = readCookies();
+  return {
+    count: local.count + session.count + Object.keys(cookies.data).length,
+    refused: local.refused || session.refused || cookies.refused,
+  };
+}
+
 function clearStorage(storage: Storage | null): number {
   if (!storage) return 0;
   let removed = 0;

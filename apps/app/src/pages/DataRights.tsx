@@ -31,6 +31,7 @@ import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
   eraseMyData,
+  inspectErasableData,
   inspectMyData,
   isAppStorageKey,
   type EraseResult,
@@ -181,7 +182,11 @@ export function DataRights() {
     const erased = eraseMyData();
     // Measured immediately, once, and kept with the result — see the
     // state declaration for why this is not recomputed later.
-    const after = inspectMyData();
+    // The ERASURE inventory, not the export one (#1862 round 1 P1): a
+    // connector key that refused removal, or that a live connector wrote
+    // straight back, is invisible to the export scan — so the page would
+    // report a clean success over storage that is still there.
+    const after = inspectErasableData();
     setResult({ ...erased, remaining: after.count, refusedAfter: after.refused });
     setConfirming(false);
     // The other two reset AFTER, through setters that do not persist:

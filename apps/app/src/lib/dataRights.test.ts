@@ -16,6 +16,7 @@ import {
   isAppStorageKey,
   collectMyData,
   eraseMyData,
+  inspectErasableData,
   isErasableStorageKey,
   liveLastErrorEntry,
   STORAGE_PREFIXES,
@@ -148,6 +149,45 @@ describe('erasure reaches connector storage (#1862)', () => {
       expect(store.has('app.mode')).toBe(false);
       // ...and left the unrelated one where it was.
       expect(store.get('some-other-dapp-preference')).toBe('keep me');
+    } finally {
+      (globalThis as Record<string, unknown>).window = priorWindow;
+    }
+  });
+
+  it('COUNTS a surviving connector key, so a false success is impossible', () => {
+    // Round 1 P1. The post-erasure `remaining` figure came from the export
+    // inventory, which cannot see connector keys — so one that refused
+    // removal, or that a live connector wrote straight back, left the page
+    // reporting a clean success over storage still sitting there. A
+    // verification that cannot see what the erasure targets is not one.
+    const store = new Map<string, string>([['wagmi.store', '{}']]);
+    const fake: Storage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: () => {
+        /* a connector that refuses removal, or rewrites immediately */
+      },
+      clear: () => store.clear(),
+    };
+    const priorWindow = (globalThis as Record<string, unknown>).window;
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: fake,
+      sessionStorage: fake,
+      location: { origin: 'https://app.example' },
+      navigator: { userAgent: 'test' },
+      dispatchEvent: () => true,
+    };
+    try {
+      // Two stores share one fake, so the surviving key is counted twice —
+      // what matters is that it is NOT zero.
+      expect(inspectErasableData().count).toBeGreaterThan(0);
+      // The export inventory still cannot see it, which is why the two
+      // inventories have to be different functions.
+      expect(Object.keys(collectMyData().localStorage)).toHaveLength(0);
     } finally {
       (globalThis as Record<string, unknown>).window = priorWindow;
     }

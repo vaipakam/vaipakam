@@ -711,9 +711,20 @@ Thin-market honesty rules apply.
   windows and restrictive privacy settings do this, and reporting it as done
   would be a false assurance about a legal right. The user is pointed at the
   browser's own controls, which work.
-- Erasure covers what this app stored and nothing else. State belonging to a
-  wallet connector or another tool is left untouched: removing it would
-  disconnect the user as a side effect of exercising a data right.
+- Erasure covers what this app stored, and also the browser storage its wallet
+  connectors keep on the app's behalf. That reverses an earlier intent recorded
+  here — that connector state was left untouched so a data right would not
+  disconnect anyone — because leaving it made the control report success while
+  a reload could restore the same connected wallet, and a right to erasure that
+  does not erase is the more serious of the two failures.
+- The disconnection is therefore an intended consequence rather than an
+  accident, and it is bounded by what the erasure actually reaches today:
+  storage the browser exposes to this origin. Session material that a connector
+  holds elsewhere — WalletConnect keeps its live session in IndexedDB rather
+  than local storage, as does the Coinbase smart-wallet key — is NOT cleared,
+  and the in-memory connection in the current tab is not dropped, so a
+  connected user stays connected until reload. The page must not claim
+  otherwise while that is true.
 - The page states its limits as prominently as its controls, and each is
   stated at its true extent. It does not reach on-chain data — which is public,
   so the user can look it up themselves, and permanent, so nobody can erase it.
