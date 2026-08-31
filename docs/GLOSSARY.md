@@ -29,9 +29,12 @@ day's closing and lowest balance, which is what a user's effective
 tier is derived from: a minimum staked duration, a recency-weighted
 average over a trailing window (governance-bounded 14–30 days,
 default 30, never reaching back before the current stake began), and
-a clamp to the lowest tier reached in that history. It also keeps a monotone
-`(BPS × seconds)` running sum, which since T-087 Sub 1.B is an
-observability surface only — no fee path reads it. It used to compute
+a clamp to the lowest tier reached in that history. A legacy
+`(BPS × seconds)` total also sits in the same struct. It is **frozen,
+not maintained**: since T-087 Sub 1.B nothing writes it, so
+`VPFIDiscountFacet`'s getter returns a pre-T-087 value — zero for
+anyone who never accrued under the old code. Treat it as an abandoned
+historical field, not an observability surface. It used to compute
 the average tier held over a loan's own lifetime; that averaging was
 removed (#1981). ADR-0003 records the original design and carries a
 superseded-by note.

@@ -2117,8 +2117,12 @@ currently 30 days, a governance setting the protocol bounds
 to 14–30 — with the LAST 7 days weighted 3× and the earlier
 days weighted 1× (both of those are settings too, bounded
 1–10 for the weight). The window never reaches back past the
-day your current balance began, so a recent depositor is not
-diluted by days they held nothing. This means:
+day your current **continuous holding** began — the day your
+balance first went above zero and stayed there — so a recent
+depositor is not diluted by days they held nothing. Note that
+adding to a holding you already have does NOT move that day:
+the window keeps your pre-top-up days, which is why a top-up
+does not immediately lift your tier. This means:
 
 - The most recent week dominates — recent behaviour matters.
 - A "top-up right before a loan settles" doesn't immediately

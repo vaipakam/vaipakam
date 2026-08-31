@@ -752,13 +752,24 @@ above read. Keep calling it at mutation sites with the
 which let a user keep a high-tier stamp after dropping to tier 0 —
 gaming vector); read-only snapshots pass the live balance.
 
-**What IS vestigial**, and must not be relied on: the monotone
-`cumulativeDiscountBpsSeconds` total, now read only by
-`VPFIDiscountFacet`'s public getter and by no fee path; and the
-per-loan `lenderDiscountAccAtInit` / `borrowerDiscountAccAtInit`
-anchors, still populated at init but never read. An earlier version of
-this section said "don't bypass" `borrowerDiscountAccAtInit` — that
-invariant no longer exists.
+**What is DEAD, and must not be relied on** (#1981 r3 — this list said
+"still populated" / "still written" until then, which is wrong and
+worse than vague: it invites a reader to treat these as a live
+compatibility or analytics surface):
+
+- `lenderDiscountAccAtInit` / `borrowerDiscountAccAtInit` — the slots
+  are retained in the `Loan` layout but **nothing assigns them**.
+  `_snapshotLenderDiscount` / `_snapshotBorrowerDiscount` only call
+  `rollupUserDiscount`; a repo-wide search finds no write. Every loan
+  opened since T-087 Sub 1.B carries **zero** here.
+- `cumulativeDiscountBpsSeconds` — likewise **never written**.
+  `_rollupCore` updates the lifecycle fields, the day ring buffer and
+  the projected expiry, and nothing else. `VPFIDiscountFacet`'s getter
+  returns a FROZEN pre-T-087 value, not a running total; an indexer
+  plotting it is plotting stale data.
+
+An earlier version of this section said "don't bypass"
+`borrowerDiscountAccAtInit` — that invariant no longer exists.
 
 **Naming caveat**: `LibVPFIDiscount.lenderHoldTierDiscountBps` /
 `borrowerHoldTierDiscountBps` were called `lenderTimeWeightedDiscountBps`
@@ -797,8 +808,8 @@ were right.
   `LibVPFIDiscount.forfeitBorrowerLif(loan)`.
 - ~~Loan struct `borrowerDiscountAccAtInit` is snapshotted in
   `LoanFacet._snapshotBorrowerDiscount` at loan-init; don't bypass.~~
-  **Retired (#1981)** — the anchor is still written but no fee path
-  reads it, so this is no longer an invariant. Left struck through
+  **Retired (#1981)** — nothing writes the anchor and no fee path reads
+  it, so this is no longer an invariant. Left struck through
   rather than deleted because it was stated as a mainnet invariant for
   long enough that a reader may remember it and wonder where it went.
   Do not restore it without also restoring the loan-window averaging

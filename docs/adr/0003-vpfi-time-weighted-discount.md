@@ -16,7 +16,9 @@
 > trailing window (governance-bounded 14–30 days, default 30, floored at
 > the day the current stake began), and a clamp to the lowest tier
 > reached in that history. The per-loan anchors (`lenderDiscountAccAtInit`,
-> `borrowerDiscountAccAtInit`) are still written but never read.
+> `borrowerDiscountAccAtInit`) survive only as storage slots — nothing
+> writes them and nothing reads them, so every loan opened since carries
+> zero there.
 >
 > Against the vector this ADR was written for — a top-up shortly before
 > settlement — the replacement is **stricter**, not a relaxation: an

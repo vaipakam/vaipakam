@@ -672,7 +672,8 @@ intended behaviour. The documentation was corrected.**
 T-087 Sub 1.B removed the per-loan averaging from both VPFI fee discounts.
 Fee application resolves the party's effective tier at the moment the fee is
 charged; the per-loan anchors (`lenderDiscountAccAtInit`,
-`borrowerDiscountAccAtInit`) are still written and never read. The
+`borrowerDiscountAccAtInit`) are neither written nor read — the slots
+remain in the `Loan` layout and hold zero on every loan opened since. The
 documentation set did not follow, and went on asserting a loan-lifetime
 average in `CLAUDE.md`, the whitepaper, `docs/GLOSSARY.md`, and the user
 guides in several languages.

@@ -1175,12 +1175,12 @@ library LibVPFIDiscount {
     }
 
     /**
-     * @notice Attempt to pay the lender's time-weighted Yield-Fee discount
+     * @notice Attempt to pay the lender's hold-tier Yield-Fee discount
      *         in VPFI out of the lender's vault into the treasury.
      *
      * @dev On success, the lender keeps 100% of `interestAmount` in the
      *      lending asset (no full-rate treasury haircut) and the
-     *      time-weighted-discounted treasury share is satisfied entirely
+     *      discounted treasury share is satisfied entirely
      *      in VPFI from the lender's vault. Silent fallback on any
      *      failure — quote unavailable, vault underfunded, oracle gap,
      *      zero-duration loan.
@@ -1188,13 +1188,25 @@ library LibVPFIDiscount {
      *      Caller must have verified `s.vpfiDiscountConsent[lender]`
      *      before invoking; consent is platform-level, not loan-level.
      *
-     *      Ordering invariant: this function performs the lender's
-     *      discount rollup BEFORE computing the quote and BEFORE
-     *      checkpointing the staking accrual, so the closed period is
-     *      attributed to the pre-mutation vault balance. Read-only
-     *      callers that need the quote should not invoke this mutating
-     *      entrypoint; they can read the per-loan snapshot + user
-     *      accumulator themselves and call {lenderHoldTierDiscountBps}.
+     *      Ordering invariant, corrected #1981 r3 — it is
+     *      QUOTE, then MUTATE, then ROLL UP. This block said the
+     *      opposite ("performs the lender's discount rollup BEFORE
+     *      computing the quote"), which is the pre-T-087 order. The
+     *      quote is a read of the lender's effective tier and does not
+     *      roll up; the rollup happens only AFTER the vault debit
+     *      succeeds, stamped at the post-mutation balance like every
+     *      other vault-mutation site.
+     *
+     *      The direction matters: a rollup before the quote would put
+     *      the lifecycle / mirror-broadcast path in front of a
+     *      read-only fee resolution, which is the failure the T-087
+     *      note in {settleBorrowerLifProper} records.
+     *
+     *      Read-only callers that need the quote should not invoke this
+     *      mutating entrypoint; they can call {quoteYieldFee} or
+     *      {lenderHoldTierDiscountBps} directly. (The retired advice to
+     *      "read the per-loan snapshot + user accumulator themselves"
+     *      named the anchors, which nothing writes any more.)
      *
      * @param loan           Live loan storage slot the yield fee is
      *                       settling against. Provides the principal
