@@ -8046,4 +8046,42 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       ).ok,
     ).toBe(true);
   });
+  it('a quoted assignment AFTER the real one still loses', () => {
+    // My first fixture for this put the real assignment last, so "last wins"
+    // gave the right answer whether or not quoted text was filtered out —
+    // removing the filter left all 780 fixtures green. Ordered the other way,
+    // the string wins without it, and the deploy of a protected Worker passes.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {CLOUDFLARE_ENV: "staging", NOTE: \'"CLOUDFLARE_ENV": "production"\'}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('the LAST assignment wins, as the object literal does', () => {
+    // Two real assignments, the second overwriting the first. Reading the first
+    // consults the wrong block of the config — the same first-versus-last
+    // mistake the shell reader was corrected for.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {CLOUDFLARE_ENV: "production", CLOUDFLARE_ENV: "staging"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
 });
