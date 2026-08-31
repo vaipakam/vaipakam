@@ -325,27 +325,53 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     expect(out).toContain(SHORT);
   });
 
-  it('drops a fragment whose trailing escape the cut bisected', () => {
-    // Codex r9 P1, and the shape the earlier straddle case could not reach:
-    // the cut lands INSIDE a `%xx` rather than between characters. A lone
-    // `%3` is not an escape run, so nothing removed it, and sitting at the end
-    // of the string it stopped the fragment rule from anchoring. Measured
-    // before the fix, through the caller's own 1,200-character cap:
-    // `…%0x1234567890abCDeF1234567890aBcDEF1234567%…` — 39 of 40 digits, with
-    // EIP-55 casing intact, which narrows the missing nibble further still.
-    //
-    // The checksummed spelling is deliberate: a lowercase address would hide
-    // how much a fragment actually gives away.
-    const CHECKSUMMED = '0x1234567890abCDeF1234567890aBcDEF12345678';
-    const tail = `${CHECKSUMMED.slice(0, 41)}%30`;
-    const padLen = MAX_MAPPED_INPUT - tail.length + 2;
-    const pad = '%20'.repeat(Math.ceil(padLen / 3)).slice(0, padLen);
-    const out = redactCap(
-      redactText(`${pad}${tail}${'z'.repeat(MAX_MAPPED_INPUT)}`),
-      1_200,
-    );
-    expect(out).not.toContain(CHECKSUMMED.slice(0, 41));
-    expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
+  // Codex r9 P1, then a self-probe that showed the r9 fix was a SPELLING
+  // rather than the rule. The cut can land inside a `%xx`, and the stranded
+  // remainder sits between the address fragment and the end of the string,
+  // where the original "must end in hex" rule could not anchor. Stripping an
+  // incomplete trailing escape fixed `%3` and nothing else: `%%` survives one
+  // strip pass as `%`, and `%z` is not an escape shape at all. Both still
+  // forwarded `0x` + 39 hex.
+  //
+  // So the table is the point. Enumerating what a cut can strand is a losing
+  // game, and a single example would have let the next spelling through — the
+  // rule is now "a `0x` near the end with no completed shortening after it",
+  // which does not care what follows.
+  //
+  // Checksummed spelling throughout, deliberately: EIP-55 casing is a function
+  // of the whole address, so 39 characters plus the casing narrow the missing
+  // nibble to a few offline-checkable candidates. A lowercase fixture would
+  // understate what a fragment gives away.
+  const CHECKSUMMED = '0x1234567890abCDeF1234567890aBcDEF12345678';
+  const beyondTheCut = 'z'.repeat(MAX_MAPPED_INPUT);
+  const cutAfter = (tail: string): string =>
+    `${'q'.repeat(MAX_MAPPED_INPUT - tail.length)}${tail}${beyondTheCut}`;
+
+  for (const [name, stranded] of [
+    ['nothing', ''],
+    ['a bare percent', '%'],
+    ['a half escape', '%3'],
+    ['a doubled percent', '%%'],
+    ['a percent and a non-hex char', '%z'],
+    ['a whole escape the run pass could not use', '%3f'],
+  ] as const) {
+    it(`drops a boundary fragment followed by ${name}`, () => {
+      const out = redactText(cutAfter(`${CHECKSUMMED.slice(0, 41)}${stranded}`));
+      expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
+      expect(out).not.toContain(CHECKSUMMED.slice(0, 41));
+    });
+  }
+
+  it('drops an uppercase 0X boundary fragment too', () => {
+    const upper = `0X${CHECKSUMMED.slice(2)}`;
+    const out = redactText(cutAfter(`${upper.slice(0, 41)}%%`));
+    expect(out).not.toContain(upper.slice(2, 22));
+  });
+
+  it('KEEPS a completed shortening sitting at the very end', () => {
+    // The rule must not buy safety by eating its own output. A shortened
+    // address reads `0x1234…5678`, and the ellipsis is what marks it finished.
+    expect(redactText(cutAfter(CHECKSUMMED))).toContain('0x1234…5678');
   });
 
   it('drops an address straddling the truncation boundary rather than halving it', () => {

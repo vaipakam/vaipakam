@@ -247,33 +247,51 @@ function decodeToFixpoint(text: string): {
 export const MAX_MAPPED_INPUT = 64 * 1024;
 
 /**
- * A `0x`-prefixed hex run reaching the very end of the truncated head.
+ * How far back from the cut a boundary fragment can start.
  *
- * The 64 KB cut can land in the middle of an address, and half an account
- * forwarded verbatim is not something this module should be relied on to
- * emit — the redact-before-cap ordering in `redactCap` exists to stop exactly
- * that shape. Dropping the boundary fragment costs a few characters of a
- * message that is already being truncated.
+ * An address is 42 characters, and the cut can additionally strand the
+ * remainder of one escape it landed inside — at most two more. 48 leaves
+ * margin over that 44 without reaching far enough back to swallow much
+ * legitimate text.
  */
-const TRAILING_HEX_FRAGMENT_RE = /0[xX][a-fA-F0-9]*$/;
+const BOUNDARY_WINDOW = 48;
+
+/** A `0x` prefix, either case, searched for within that window. */
+const PREFIX_RE = /0[xX]/g;
 
 /**
- * An INCOMPLETE escape at the very end of the truncated head (#2024, r9 P1).
+ * Drop an address fragment created by the 64 KB cut, and mark the truncation.
  *
- * The cut can land inside a `%xx` rather than between characters, and a lone
- * `%3` is not an escape run — nothing removes it — so it sat between the
- * address fragment and the end of the string and stopped the fragment strip
- * above from anchoring. Verified: escape padding that collapses, followed by
- * `0x` + 39 hex + `%30` cut two characters in, produced
- * `…%0x1234567890abCDeF1234567890aBcDEF1234567%…` in a 1,200-character report
- * — 39 of the 40 digits, with EIP-55 checksum casing intact, which narrows the
- * missing nibble further still.
+ * TWO EARLIER VERSIONS OF THIS RULE WERE SPELLINGS RATHER THAN THE RULE, and
+ * the second was mine after being shown the first (#2024, r9 and the probe
+ * after it). The original required the head to END in hex, so a cut landing
+ * inside a `%xx` left `%3` sitting between the fragment and the end and the
+ * rule could not anchor. Stripping an incomplete trailing escape first fixed
+ * that exact spelling and nothing more: `%%` survives one strip pass as `%`,
+ * and `%z` is not an escape shape at all, so both still forwarded
+ * `0x` + 39 hex — with EIP-55 casing, which narrows the missing nibble to a
+ * handful of offline-checkable candidates.
  *
- * Stripping this first lets the fragment rule see the hex run it was written
- * for. Two simple rules composed, rather than one rule taught to spell every
- * way a cut can land.
+ * Enumerating what a cut can strand is a losing game. What is actually true is
+ * simpler and does not depend on the junk: near the end of a truncated head,
+ * a `0x` NOT followed by a completed shortening is a fragment, whatever
+ * follows it. So the cut moves back to that prefix.
+ *
+ * The ellipsis test is what protects the ordinary result: a shortened address
+ * reads `0x1234…5678`, so a `0x` whose remainder contains `…` is finished work
+ * and stays. Anything else in the window goes with the truncation — which can
+ * cost a short hex mention that happened to land in the last 48 characters of
+ * a message already being cut off, and that is the correct side to err on.
  */
-const TRAILING_PARTIAL_ESCAPE_RE = /%[0-9a-fA-F]?$/;
+function dropBoundaryFragment(head: string): string {
+  const windowStart = Math.max(0, head.length - BOUNDARY_WINDOW);
+  const tail = head.slice(windowStart);
+  PREFIX_RE.lastIndex = 0;
+  let cutAt = -1;
+  for (const m of tail.matchAll(PREFIX_RE)) cutAt = m.index;
+  if (cutAt === -1 || tail.slice(cutAt).includes('…')) return `${head}…`;
+  return `${head.slice(0, windowStart + cutAt)}…`;
+}
 
 /** Scrub any full address ANYWHERE in report text — crash messages,
  *  component stacks, and deep-link paths routinely embed the
@@ -297,10 +315,7 @@ export function redactText(text: string): string {
       ADDRESS_RE,
       shortenMatch,
     );
-    // Partial escape first, then the hex fragment: the incomplete escape is
-    // what hides the fragment from the rule below (r9 P1).
-    const trimmed = head.replace(TRAILING_PARTIAL_ESCAPE_RE, '');
-    return `${trimmed.replace(TRAILING_HEX_FRAGMENT_RE, '')}…`;
+    return dropBoundaryFragment(head);
   }
 
   // No escapes means the text IS its own fixpoint, so the cheap pass is the

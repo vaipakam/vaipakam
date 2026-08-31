@@ -37,7 +37,11 @@ report, is a poor way to ask for help. If the cut lands in the middle of an
 address, the fragment is dropped rather than carried through as half an
 account — including when it lands inside one of the escape sequences itself,
 which for a while left the incomplete sequence sitting where it hid the
-fragment from that very rule. A part of an address is worth less than the
+fragment from the very rule meant to remove it. The rule no longer tries to
+describe the debris a cut can leave, which was a losing game — two attempts
+each covered the example in front of them and missed the next one. It asks a
+simpler question instead: near the end of a truncated report, an address
+prefix with no finished shortening after it is a fragment, whatever trails it. A part of an address is worth less than the
 whole and not nothing: written in the mixed upper and lower case that wallets
 use as a typo check, thirty-nine of the forty characters narrow the last one
 to a handful of possibilities.
