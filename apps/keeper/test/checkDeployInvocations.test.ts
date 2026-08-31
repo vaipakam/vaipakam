@@ -7723,4 +7723,52 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       true,
     );
   });
+  it('the literal rule holds on a CONTINUATION line too', () => {
+    // The escape rule lives at three call sites — the delimiter counter, the
+    // opener line's own close search, and the in-body search on the lines
+    // after it. Only the counter was pinned; mutating either other site left
+    // 760 fixtures green. Here the value opens with nothing after the
+    // delimiter, so the close is found by the in-body search.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ["note = '''", "prefix \\'''", 'name = "vaipakam-www"', ''].join('\n'),
+    );
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(
+      true,
+    );
+  });
+
+  it('the literal rule holds on the OPENER line of a NAME value', () => {
+    // The third site: a `name` key opening a literal multiline whose close is
+    // preceded by a backslash. Read as an escape, the value never closes and
+    // the identity goes unread.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.toml', "name = '''vaipakam-www\\'''\n");
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(
+      true,
+    );
+  });
+
+  it('the array-depth rule holds in the keep_vars reader too', () => {
+    // The finding named the name reader; the preservation reader beside it has
+    // the same defect, and mutating only that one left every fixture green. A
+    // nested array item stopped the scan before `keep_vars`, so a config that
+    // does preserve its vars was reported as destructive.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      [
+        'vars.MATRIX = [',
+        '  [1, 2],',
+        ']',
+        'keep_vars = true',
+        'name = "vaipakam-agent"',
+        '',
+      ].join('\n'),
+    );
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(
+      true,
+    );
+  });
 });
