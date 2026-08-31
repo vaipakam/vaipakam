@@ -1365,7 +1365,17 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
   // { NOTE: '--keep-vars' } })` passes wrangler only the bare `deploy` — but a
   // whole-text scan read the environment value as an enabled flag and blessed a
   // destructive invocation (#1995 r16). Scored from the array alone.
-  const argv = cmd.match(new RegExp(`${ARGV_DEPLOY_RE}[\\s\\S]*?\\]`));
+  // TUPLE-AWARE, like the selector reader. I widened DETECTION to accept
+  // `subprocess.run((…))` in r13 and left this scan ending at `]`, so a tuple
+  // call fell back to scanning the whole call and `env={"NOTE": "--keep-vars"}`
+  // blessed a destructive deploy (Codex #2036 r14). Widening what is recognised
+  // without likewise constraining what is read is the same mistake as widening
+  // a predicate's reach without narrowing where it looks — twice now.
+  const argvHead = cmd.match(new RegExp(ARGV_DEPLOY_RE));
+  const argvBody = argvHead === null
+    ? null
+    : firstArgvArray(cmd.slice(argvHead.index), '');
+  const argv = argvBody === null ? null : [argvBody];
   const flagText = argv ? argv[0] : forFlags;
   if (flagEnabled(flagText, '--keep-vars') || flagEnabled(flagText, '--dry-run')) {
     return true;
@@ -2662,11 +2672,61 @@ function firstArgvArray(text, before = '') {
   //
   // Only when the paren is a SEQUENCE rather than the call's own argument list:
   // `run((` opens a tuple, `run(` opens the call.
-  const asList = (t) => t.replace(/\(\s*\(/g, '(['). replace(/\)\s*\)/g, '])');
-  if (/\(\s*\(/.test(text) || /\(\s*\(/.test(before)) {
-    return firstArgvArrayInner(asList(text), asList(before));
+  //
+  // MATCHED BY POSITION, not by a `))` text pattern. The first cut of this
+  // rewrote the opener on `((` and the closer on `))`, which only coincide when
+  // the tuple is the call's LAST argument: `run(("wrangler", "deploy"), env={…})`
+  // closes the tuple with a lone `)`, so the opener became `[` with no `]` to
+  // match, the balanced scan below ran off the end and returned null, and the
+  // flag scan fell back to the WHOLE call — where `env={"NOTE": "--keep-vars"}`
+  // blessed a destructive deploy (Codex #2036 r14). Pairing the delimiters is
+  // the only reading that does not depend on where the tuple sits.
+  if (/\(\s*\(/.test(before + text)) {
+    // Length-preserving, so the two halves re-split at the same offset — and
+    // normalised JOINED, because a tuple opened in `before` and closed in
+    // `text` is exactly the Python shape this reader exists to handle.
+    const n = tuplesAsLists(before + text);
+    return firstArgvArrayInner(n.slice(before.length), n.slice(0, before.length));
   }
   return firstArgvArrayInner(text, before);
+}
+
+/**
+ * Sequence parens rewritten to brackets, in place, one character each.
+ *
+ * Quote-aware, so a `(` inside a string is not a delimiter, and stack-matched,
+ * so each opener's OWN closer is the one rewritten. A paren opened directly
+ * inside another paren is the sequence; a paren opened after a callee name is
+ * that call's argument list and is left alone.
+ */
+function tuplesAsLists(text) {
+  const chars = [...text];
+  const stack = [];
+  let quote = null;
+  for (let i = 0; i < chars.length; i += 1) {
+    const c = chars[i];
+    if (quote !== null) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      quote = c;
+      continue;
+    }
+    if (c === '(') {
+      const isTuple = /\($/.test(text.slice(0, i).replace(/\s+$/, ''));
+      stack.push(isTuple);
+      if (isTuple) chars[i] = '[';
+      continue;
+    }
+    if (c === ')') {
+      // An unmatched closer means the region began inside a call, so nothing
+      // here opened it and nothing here may rewrite it.
+      if (stack.pop() === true) chars[i] = ']';
+    }
+  }
+  return chars.join('');
 }
 
 function firstArgvArrayInner(text, before = '') {
@@ -2925,7 +2985,22 @@ function declaredWorkerName(absPath) {
       );
       if (opens) {
         const rest = opens[2];
-        const close = rest.indexOf(opens[1]);
+        // The SAME unescaped-delimiter rule the in-body search uses. My r12 fix
+        // applied it only after multiline state had been entered, leaving the
+        // OPENER line's own close search escape-unaware — so `note = """prefix
+        // \\"""` closed on the escaped sequence and a `name` inside that value
+        // became top level (Codex #2036 r14). One rule, two call sites, taught
+        // to one of them.
+        const close = (() => {
+          for (let i = 0; i <= rest.length - opens[1].length; i += 1) {
+            if (rest[i] === '\\') {
+              i += 1;
+              continue;
+            }
+            if (rest.startsWith(opens[1], i)) return i;
+          }
+          return -1;
+        })();
         if (close !== -1) {
           const body = rest.slice(0, close);
           const decoded = opens[1] === '"""' ? decodeTomlBasic(body, true) : body;
@@ -3020,8 +3095,26 @@ function declaredWorkerName(absPath) {
         }
         return out;
       })();
-      for (const delim of OPENERS) {
-        if ((uncommented.split(delim).length - 1) % 2 === 1) inMultiline = delim;
+      // COUNTED WITH ESCAPES HONOURED, and tracking which delimiter is open.
+      // Splitting on the delimiter counts an ESCAPED one — `note = """prefix
+      // \\"""` reads as opened-and-closed, so the value's own content became
+      // top level and a `name` inside it answered (Codex #2036 r14). Inside a
+      // triple-quoted body a backslash escapes the next character, which is the
+      // rule the cross-line search already followed and this counter did not.
+      {
+        let open = null;
+        for (let i = 0; i < uncommented.length; i += 1) {
+          if (open !== null && uncommented[i] === '\\') {
+            i += 1;
+            continue;
+          }
+          const hit = OPENERS.find((d) => uncommented.startsWith(d, i));
+          if (!hit) continue;
+          if (open === null) open = hit;
+          else if (open === hit) open = null;
+          i += 2;
+        }
+        if (open !== null) inMultiline = open;
       }
     }
   } else {

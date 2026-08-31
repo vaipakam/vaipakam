@@ -7436,6 +7436,35 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('could not name');
   });
 
+  // ---- Codex #2036 r14 ----
+
+  it('an escaped delimiter on the OPENER line does not close the value', () => {
+    // The r12 fix applied the unescaped-delimiter rule only after multiline
+    // state had been entered, leaving the opener line's own close search
+    // escape-unaware. One rule, two call sites, taught to one of them.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.toml',
+      ['note = """prefix \\"""', 'name = "vaipakam-www"', '"""', 'name = "vaipakam-agent"', ''].join('\n'),
+    );
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a TUPLE call scopes its safety flags to argv', () => {
+    // I widened DETECTION to accept tuple calls in r13 and left the flag scan
+    // ending at `]`, so a tuple fell back to scanning the whole call and an
+    // options-object string blessed the deploy. `NOTE` passes wrangler nothing.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/deploy.py',
+      'subprocess.run(("wrangler", "deploy"), env={**os.environ, "NOTE": "--keep-vars"})\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {
