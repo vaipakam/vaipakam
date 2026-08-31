@@ -6948,6 +6948,19 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
+  it('and an unreadable name ALONE still reaches the inversion', () => {
+    // Isolates the rule from the config: with no `--config` present, the only
+    // thing that can carry this to the unnamed scope is the unreadable name
+    // itself. My first fixture had a config too, so the inversion fired on that
+    // instead and the mutant dropping the name arm survived.
+    const r = runWith(
+      'w.sh',
+      'cd .\nconst worker = "vaipakam-agent";\nspawnSync("wrangler", ["deploy", "--name", worker]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
+
   it('an ESCAPED argv literal is not read at its source spelling', () => {
     // JavaScript decodes `"vaipakam\\u002dagent"` before wrangler sees it.
     // Comparing the source spelling made an explicit PROTECTED name read as

@@ -3079,7 +3079,13 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     }
     return null;
   }
-  if (cfg === null && pkgDir === null && wrCwd === null) return null;
+  // ...unless an explicit NAME was given and could not be read. That is a
+  // selector too, and the earliest exit here treated it as no selector at all —
+  // so the unresolved-name rule below was unreachable whenever no config or
+  // directory accompanied it. The walk continues instead, so the cwd still
+  // answers (the #1995 r16 deferral) and the inversion is still the last
+  // resort.
+  if (cfg === null && pkgDir === null && wrCwd === null && !nameUnresolved) return null;
 
   // ORDER MATTERS: `--cwd` runs wrangler "as if started in the specified
   // directory", so a relative `--config` resolves FROM it. Resolving the two
