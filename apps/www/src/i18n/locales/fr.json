@@ -1141,19 +1141,13 @@
   },
   "lenderDiscountCard": {
     "borrowerTitle": "Vous empruntez un ERC-20 liquide ? Obtenez jusqu'à {{maxDiscount}}% de remboursement VPFI sur les frais d'initiation",
-    "borrowerBody1": "Conservez du VPFI dans votre Vaipakam Vault personnel et activez le consentement VPFI unique au niveau de la plateforme depuis le tableau de bord. Le protocole prélève d'avance la totalité des frais d'initiation de {{loanInitiationFee}}% en VPFI, puis crédite un remboursement pondéré dans le temps à la clôture régulière du prêt (remboursement / preclose / refinancement), selon la durée pendant laquelle l'emprunteur a détenu du VPFI pendant le prêt. Un défaut ou une liquidation entraîne la perte du remboursement. Besoin de VPFI ? ",
     "lenderTitle": "Vous prêtez un ERC-20 liquide ? Obtenez jusqu'à {{maxDiscount}}% de remise VPFI sur les frais de rendement",
-    "lenderBody1": "Conservez du VPFI dans votre Vaipakam Vault personnel et activez le consentement VPFI unique au niveau de la plateforme depuis le tableau de bord. Au règlement, le prélèvement de {{treasuryFee}}% de la trésorerie sur les intérêts perçus est réduit par une remise VPFI pondérée dans le temps sur toute la durée de vie du prêt — jusqu'à {{maxDiscount}}%, ce qui permet au prêteur de conserver davantage d'intérêts. Aucun paiement à l'avance ; la remise est appliquée automatiquement lorsque le prêt est correctement réglé (remboursement / preclose / refinancement). Un défaut ou une liquidation entraîne la perte de la remise. Besoin de VPFI ? ",
     "buyVpfi": "Acheter du VPFI",
     "routingNote": " (acheter depuis une chaîne préférée — le routage est géré).",
     "enableConsent": "Activer le consentement sur le tableau de bord",
     "loanTitle": "Remise sur les frais de rendement du prêteur",
-    "effectiveSoFar": "Effectif jusqu'à présent (pondéré dans le temps)",
     "currentlyEarning": "Gain actuel (palier estampillé)",
     "windowElapsed": "Fenêtre écoulée",
-    "tiersDifferAlertPrefix": "Au règlement, le prélèvement de la trésorerie sur le rendement de ce prêt est réduit par la moyenne pondérée dans le temps ",
-    "tiersDifferAlertMid": ", et non par le taux actuel ",
-    "tiersDifferAlertSuffix": ". Recharger en VPFI juste avant le remboursement ne capture pas toute la remise du palier actuel — seulement la part proportionnelle au temps de détention pendant le prêt.",
     "duration0s": "0s",
     "durationDays": "{{days}}j",
     "durationDaysHours": "{{days}}j {{hours}}h",
@@ -1489,8 +1483,7 @@
     "loanDetailsCollateralRiskBorrower": "Le collatéral verrouillé par l'emprunteur + le Health Factor et la LTV en direct. Maintenir le HF au-dessus de 1 — s'il tombe en dessous, le collatéral peut être liquidé. Le collatéral liquide est valorisé automatiquement via oracle ; le collatéral illiquide n'a pas de valorisation on-chain et est transféré au prêteur en intégralité en cas de défaut.",
     "loanDetailsParties": "Adresses du prêteur et de l'emprunteur, proxies de vault par utilisateur qui détiennent leurs actifs, et NFT de position que chaque côté a reçus à l'initiation du prêt. Chaque NFT est l'instrument au porteur de la créance de ce côté — le perdre, c'est perdre la créance.",
     "loanDetailsActionsLender": "Actions disponibles pour le prêteur sur ce prêt. Réclamer une fois le prêt réglé (restitue principal + intérêts, moins les {{treasuryFee}}% prélevés par la trésorerie). Initier une Sortie Anticipée pour vendre le NFT prêteur à un acheteur en cours de prêt. N'importe qui (y compris le prêteur) peut déclencher Liquider quand HF < 1 ou que la période de grâce a expiré. Les actions désactivées affichent une raison au survol.",
-    "loanDetailsActionsBorrower": "Actions disponibles pour l'emprunteur sur ce prêt. Rembourser intégralement ou partiellement ; Preclose direct (payer le restant maintenant) ou compensation (vendre du collatéral via DEX) ; Refinancer en un nouveau prêt avec de nouveaux termes. Réclamer restitue le collatéral en cas de remboursement intégral, ou toute remise VPFI inutilisée. Les actions désactivées affichent une raison au survol.",
-    "buyVpfiUnstake": "Déplacer du VPFI du vault vers le portefeuille sur cette chaîne. Réduit le palier de remise en temps réel — l'accumulateur pondéré dans le temps recalcule immédiatement chaque prêt ouvert au nouveau solde (plus bas), de sorte qu'un retrait est effectif pour la mécanique de remise dès cet instant."
+    "loanDetailsActionsBorrower": "Actions disponibles pour l'emprunteur sur ce prêt. Rembourser intégralement ou partiellement ; Preclose direct (payer le restant maintenant) ou compensation (vendre du collatéral via DEX) ; Refinancer en un nouveau prêt avec de nouveaux termes. Réclamer restitue le collatéral en cas de remboursement intégral, ou toute remise VPFI inutilisée. Les actions désactivées affichent une raison au survol."
   },
   "acceptReview": {
     "partialRepayLabel": "Remboursement partiel",

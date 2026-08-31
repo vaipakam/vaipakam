@@ -1141,19 +1141,13 @@
   },
   "lenderDiscountCard": {
     "borrowerTitle": "திரவ ERC-20 கடன் வாங்குகிறீர்களா? initiation fee-யில் {{maxDiscount}}% வரை VPFI rebate பெறுங்கள்",
-    "borrowerBody1": "தனிப்பட்ட vault-வில் VPFI வைத்திருந்து, Dashboard-இல் ஒருமுறை platform-level VPFI consent-ஐ செயல்படுத்தவும். Protocol முழு {{loanInitiationFee}}% initiation fee-யை VPFI-யில் முன்கூட்டியே எடுத்து, சரியான loan close (repay / preclose / refinance) நேரத்தில் borrower loan முழுவதும் VPFI எவ்வளவு காலம் வைத்திருந்தார் என்பதின் அடிப்படையில் time-weighted rebate-ஐ திருப்பிக் credit செய்கிறது. Default அல்லது liquidation rebate-ஐ இழக்கச் செய்யும். VPFI தேவையா? ",
     "lenderTitle": "திரவ ERC-20 கடன் வழங்குகிறீர்களா? yield fee-யில் {{maxDiscount}}% வரை VPFI discount பெறுங்கள்",
-    "lenderBody1": "தனிப்பட்ட vault-வில் VPFI வைத்திருந்து, Dashboard-இல் ஒருமுறை platform-level VPFI consent-ஐ செயல்படுத்தவும். Settlement நேரத்தில், சம்பாதித்த வட்டியில் {{treasuryFee}}% treasury cut loan lifetime முழுவதும் time-weighted VPFI discount-ஆல் குறைக்கப்படுகிறது — {{maxDiscount}}% வரை; அதனால் lender சம்பாதித்த வட்டியில் அதிகம் வைத்துக்கொள்கிறார். முன்கூட்டியே எதுவும் செலுத்தப்படாது; loan சரியாக settle ஆகும் போது (repay / preclose / refinance) discount தானாகப் பயன்படுத்தப்படும். Default அல்லது liquidation discount-ஐ இழக்கச் செய்யும். VPFI தேவையா? ",
     "buyVpfi": "VPFI ஐ வாங்கவும்",
     "routingNote": " (விருப்பமான செயினில் இருந்து வாங்கவும் — வழித்தடம் கையாளப்படுகிறது).",
     "enableConsent": "Dashboard இல் ஒப்புதலை செயல்படுத்தவும்",
     "loanTitle": "கடன் வழங்குபவர் வருமான-கட்டண தள்ளுபடி",
-    "effectiveSoFar": "இதுவரை செயல்படுவது (நேரம்-எடைப்பட்ட)",
     "currentlyEarning": "தற்போது சம்பாதிக்கிறது (முத்திரையிடப்பட்ட Tier)",
     "windowElapsed": "கழிந்த சாளரம்",
-    "tiersDifferAlertPrefix": "தீர்வின் போது, இந்த கடனின் வருமானத்தின் மீதான treasury வெட்டு நேரம்-எடைப்பட்ட சராசரி ",
-    "tiersDifferAlertMid": " ஆல் குறைக்கப்படுகிறது, தற்போதைய ",
-    "tiersDifferAlertSuffix": " விகிதம் அல்ல. திருப்பிச் செலுத்தலுக்கு முன்னதாக VPFI ஐ அதிகரிப்பது தற்போதைய Tier முழு தள்ளுபடியைப் பிடிக்காது — கடனின் போது அது எவ்வளவு காலம் வைத்திருந்தது என்ற விகிதத்தில் மட்டுமே.",
     "duration0s": "0வி",
     "durationDays": "{{days}}நா",
     "durationDaysHours": "{{days}}நா {{hours}}ம",
@@ -1489,8 +1483,7 @@
     "loanDetailsCollateralRiskBorrower": "கடன் வாங்குபவர் பூட்டிய பிணையம் + நேரலை Health Factor மற்றும் LTV. HF-ஐ 1-க்கு மேல் வைத்திருக்கவும் — அதற்கு கீழே வீழ்ந்தால் பிணையம் Liquidate செய்யப்படலாம். திரவ பிணையம் oracle வழியாக தானாக விலை-இடப்படுகிறது; லிக்விடிட்டி குறைந்த பிணையத்திற்கு on-chain மதிப்பீடு இல்லை மற்றும் தோல்வியில் முழுமையாக கடன் வழங்குபவருக்கு மாற்றப்படுகிறது.",
     "loanDetailsParties": "கடன் வழங்குபவர் மற்றும் கடன் வாங்குபவர் முகவரிகள், அவர்களின் சொத்துக்களை வைத்திருக்கும் Vaipakam Vault proxies, மற்றும் கடன் தொடங்கும் போது ஒவ்வொரு பக்கமும் பெற்ற நிலை NFT-கள். ஒவ்வொரு NFT-உம் அந்தப் பக்கத்தின் claim-க்கான bearer instrument — அதை இழப்பது claim-ஐ இழப்பதாகும்.",
     "loanDetailsActionsLender": "இந்தக் கடனில் கடன் வழங்குபவருக்குக் கிடைக்கும் செயல்கள். கடன் தீர்வு செய்த பிறகு Claim செய்யவும் ({{treasuryFee}}% Treasury கழிவைக் கழித்து அசல் + வட்டியை திருப்பித் தருகிறது). கடன் இடையில் கடன் வழங்குபவர் NFT-ஐ ஒரு வாங்குபவருக்கு விற்க Early Withdrawal-ஐ தொடங்கவும். HF < 1 அல்லது grace காலம் முடிந்துவிட்டால், எவரும் (கடன் வழங்குபவர் உட்பட) Liquidate-ஐ இயக்க முடியும். முடக்கப்பட்ட செயல்கள் hover-ல் காரணத்தைக் காட்டுகின்றன.",
-    "loanDetailsActionsBorrower": "இந்தக் கடனில் கடன் வாங்குபவருக்குக் கிடைக்கும் செயல்கள். முழு அல்லது பகுதி Repay; Preclose direct (நிலுவையை இப்போது செலுத்தவும்) அல்லது offset (DEX வழியாக பிணையத்தை விற்கவும்); புதிய நிபந்தனைகளுடன் ஒரு புதிய கடனில் Refinance. முழு திருப்பிச் செலுத்தலில் Claim பிணையத்தைத் திருப்பித் தருகிறது, அல்லது பயன்படுத்தப்படாத VPFI rebate. முடக்கப்பட்ட செயல்கள் hover-ல் காரணத்தைக் காட்டுகின்றன.",
-    "buyVpfiUnstake": "இந்தச் செயினில் VPFI-ஐ vault-இலிருந்து wallet-க்கு திருப்பி நகர்த்தவும். தள்ளுபடி tier-ஐ real-time-இல் குறைக்கிறது — time-weighted accumulator திறந்திருக்கும் ஒவ்வொரு கடனையும் புதிய (குறைந்த) இருப்பில் உடனடியாக re-stamp செய்கிறது, எனவே ஒரு withdrawal அந்தத் தருணத்திலிருந்து கட்டண-தள்ளுபடி கணிதத்திற்கு உடனடியாக நடைமுறைக்கு வருகிறது."
+    "loanDetailsActionsBorrower": "இந்தக் கடனில் கடன் வாங்குபவருக்குக் கிடைக்கும் செயல்கள். முழு அல்லது பகுதி Repay; Preclose direct (நிலுவையை இப்போது செலுத்தவும்) அல்லது offset (DEX வழியாக பிணையத்தை விற்கவும்); புதிய நிபந்தனைகளுடன் ஒரு புதிய கடனில் Refinance. முழு திருப்பிச் செலுத்தலில் Claim பிணையத்தைத் திருப்பித் தருகிறது, அல்லது பயன்படுத்தப்படாத VPFI rebate. முடக்கப்பட்ட செயல்கள் hover-ல் காரணத்தைக் காட்டுகின்றன."
   },
   "acceptReview": {
     "partialRepayLabel": "பகுதி திருப்பிச்செலுத்தல்",

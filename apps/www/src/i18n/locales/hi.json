@@ -1141,19 +1141,13 @@
   },
   "lenderDiscountCard": {
     "borrowerTitle": "तरल ERC-20 उधार ले रहे हैं? Initiation fee पर {{maxDiscount}}% तक VPFI rebate कमाएँ",
-    "borrowerBody1": "Personal vault में VPFI रखें और Dashboard पर one-time platform-level VPFI consent enable करें। Protocol पूरी {{loanInitiationFee}}% initiation fee को VPFI में upfront pull करता है, फिर loan के proper close (repay / preclose / refinance) पर borrower ने loan अवधि में कितनी देर VPFI रखा, उसके आधार पर time-weighted rebate credit करता है। Default या liquidation पर rebate forfeited हो जाता है। VPFI चाहिए? ",
     "lenderTitle": "तरल ERC-20 उधार दे रहे हैं? Yield fee पर {{maxDiscount}}% तक VPFI discount कमाएँ",
-    "lenderBody1": "Personal vault में VPFI रखें और Dashboard पर one-time platform-level VPFI consent enable करें। Settlement पर earned interest पर {{treasuryFee}}% treasury cut loan lifetime के time-weighted VPFI discount से कम होता है — {{maxDiscount}}% तक, ताकि lender earned interest का अधिक हिस्सा रख सके। Upfront कुछ नहीं देना होता; loan proper settle होने पर discount automatically apply होता है (repay / preclose / refinance)। Default या liquidation पर discount forfeited हो जाता है। VPFI चाहिए? ",
     "buyVpfi": "VPFI खरीदें",
     "routingNote": " (पसंदीदा चेन से खरीदें — रूटिंग संभाली जाती है)।",
     "enableConsent": "Dashboard पर सहमति सक्षम करें",
     "loanTitle": "ऋणदाता यील्ड-शुल्क छूट",
-    "effectiveSoFar": "अब तक प्रभावी (समय-भारित)",
     "currentlyEarning": "वर्तमान में अर्जित (मुहर लगा Tier)",
     "windowElapsed": "बीती हुई विंडो",
-    "tiersDifferAlertPrefix": "निपटान पर इस ऋण की उपज पर ट्रेज़री कटौती समय-भारित औसत ",
-    "tiersDifferAlertMid": " से कम होती है, वर्तमान ",
-    "tiersDifferAlertSuffix": " दर से नहीं। पुनर्भुगतान से ठीक पहले VPFI टॉप-अप करना वर्तमान-Tier की पूरी छूट नहीं प्राप्त करेगा — केवल उतना ही हिस्सा जितना समय इसे ऋण के दौरान रखा गया था।",
     "duration0s": "0s",
     "durationDays": "{{days}}दि",
     "durationDaysHours": "{{days}}दि {{hours}}घं",
@@ -1489,8 +1483,7 @@
     "loanDetailsCollateralRiskBorrower": "ऋणकर्ता ने जो गिरवी लॉक किया है + लाइव Health Factor और LTV। HF को 1 से ऊपर रखें — यदि नीचे गिर गया तो गिरवी लिक्विडेट हो सकता है। लिक्विड गिरवी ऑरेकल के माध्यम से ऑटो-प्राइस्ड होता है; अनलिक्विड गिरवी का ऑन-चेन मूल्यांकन नहीं होता और डिफ़ॉल्ट पर पूर्ण रूप से ऋणदाता को हस्तांतरित हो जाता है।",
     "loanDetailsParties": "ऋणदाता और ऋणकर्ता के एड्रेस, उनके एसेट रखने वाले प्रति-उपयोगकर्ता Vault प्रॉक्सी, और हर साइड को लोन शुरू होने पर मिले पोजीशन NFT। हर NFT उस साइड के दावे का बेयरर इंस्ट्रूमेंट है — इसे खोना दावे को खोना है।",
     "loanDetailsActionsLender": "इस लोन पर ऋणदाता के लिए उपलब्ध क्रियाएँ। लोन सेटल होने पर क्लेम (प्रिंसिपल + ब्याज लौटाता है, {{treasuryFee}}% ट्रेज़री कटौती के बाद)। लोन के बीच में ऋणदाता NFT को खरीदार को बेचने के लिए अर्ली विदड्रॉल शुरू करें। कोई भी (ऋणदाता सहित) Liquidate ट्रिगर कर सकता है जब HF < 1 हो या ग्रेस अवधि समाप्त हो जाए। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।",
-    "loanDetailsActionsBorrower": "इस लोन पर ऋणकर्ता के लिए उपलब्ध क्रियाएँ। पूर्ण या आंशिक रीपे; Preclose डायरेक्ट (बकाया अभी चुकाएँ) या ऑफ़सेट (DEX के माध्यम से गिरवी बेचें); नई शर्तों के साथ नए लोन में रीफाइनेंस। पूर्ण रीपेमेंट पर क्लेम गिरवी लौटाता है, या कोई भी अप्रयुक्त VPFI रिबेट। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।",
-    "buyVpfiUnstake": "इस चेन पर VPFI को Vault से वॉलेट में वापस ले जाएँ। डिस्काउंट टियर रियल-टाइम में घटाता है — टाइम-वेटेड एक्युमुलेटर हर खुले लोन को नए (कम) बैलेंस पर तुरंत री-स्टांप करता है, इसलिए निकासी उस क्षण से शुल्क-डिस्काउंट गणित के लिए प्रभावी होता है।"
+    "loanDetailsActionsBorrower": "इस लोन पर ऋणकर्ता के लिए उपलब्ध क्रियाएँ। पूर्ण या आंशिक रीपे; Preclose डायरेक्ट (बकाया अभी चुकाएँ) या ऑफ़सेट (DEX के माध्यम से गिरवी बेचें); नई शर्तों के साथ नए लोन में रीफाइनेंस। पूर्ण रीपेमेंट पर क्लेम गिरवी लौटाता है, या कोई भी अप्रयुक्त VPFI रिबेट। निष्क्रिय क्रियाएँ हॉवर पर कारण दिखाती हैं।"
   },
   "acceptReview": {
     "partialRepayLabel": "आंशिक पुनर्भुगतान",
