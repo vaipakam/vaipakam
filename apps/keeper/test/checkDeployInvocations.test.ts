@@ -7244,6 +7244,64 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).not.toContain('keep_vars = true');
   });
 
+  // ---- Codex #2036 r11 ----
+
+  it('an UNREADABLE --cwd blesses no config', () => {
+    // Falling back to the command's own cwd read a DIFFERENT config than the
+    // one wrangler loads, and that config's keep_vars then blessed a
+    // destructive deploy — the "cannot prove it, so assume the safe reading"
+    // mistake this file refuses everywhere else.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('apps/agent/unsafe/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nTARGET=unsafe\nwrangler deploy --name vaipakam-agent --cwd "$TARGET" --config custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it("Python's env= keyword argument is the child environment too", () => {
+    // Narrowing to JavaScript's `{env: {…}}` in round 10 left the Python
+    // child-process shape — which this scanner reads everywhere else —
+    // unprotected.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nsubprocess.run(["wrangler", "deploy", "--config", "www.jsonc"], ' +
+        'env={"CLOUDFLARE_ENV": "staging"})\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('--config inside ANOTHER option value selects nothing', () => {
+    // The same `stripOtherOptionValues` guard the `--cwd` reader beside it
+    // gained one round earlier, applied to one sibling and not the other.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    seed('apps/agent/safe.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nwrangler deploy --name vaipakam-agent --message "note --config safe.jsonc"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the argv terminator must be a COMPLETE element', () => {
+    // Exactly the whole-element rule the selector reader gained in round 9, not
+    // applied to the terminator matcher beside it: a message ending in
+    // quote-like `--` text truncated the array before the real selectors.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd .\nspawnSync("wrangler", ["deploy", "--message", "note \'--", "--name", "vaipakam-agent"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

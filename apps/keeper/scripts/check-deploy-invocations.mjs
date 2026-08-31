@@ -1409,8 +1409,15 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
     const cfgText = stripShellComment(cmd);
     const wi = cfgText.search(/\bwrangler2?\b/);
     const cfgRegion = wi >= 0 ? cfgText.slice(wi) : cfgText;
+    // OTHER OPTIONS' VALUES NEUTRALISED, keeping `--config`/`-c`. Read from the
+    // raw region, `--message "note --config safe.jsonc"` selected a config
+    // wrangler never loads and blessed the deploy (Codex #2036 r11). The same
+    // `stripOtherOptionValues` guard the `--cwd` reader beside it gained one
+    // round earlier — applied to one sibling and not the other, which is this
+    // PR's recurring shape in miniature.
+    const cfgClean = stripOtherOptionValues(cfgRegion, ['config', 'c']);
     const cfgSel =
-      cfgRegion.match(/\s(?:-c|--config)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/) ??
+      cfgClean.match(/\s(?:-c|--config)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/) ??
       // ATTACHED SHORT FORM, the same gap `selectorScope` had (Codex #2036 r1)
       // and the same fix, because it is the same option read twice. Here the
       // consequence is the mirror image: an unrecognised selection makes this
@@ -1418,7 +1425,7 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
       // the selected one does not — blessing an upload rather than reporting it.
       // Narrowed to a path-shaped value for the reason given there.
       (() => {
-        const m = cfgRegion.match(
+        const m = cfgClean.match(
           /(?<![\w-])-c(?=[^\s=-])(?:"([^"]*)"|'([^']*)'|([^\s"']+))/,
         );
         if (!m) return null;
@@ -1466,7 +1473,14 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
         /(?<![\w-])--cwd(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/,
       );
       const v = m ? (m[1] ?? m[2] ?? m[3]) : argvValue(cfgRegion, '--cwd', beforeCfg);
-      if (v === null || v === undefined || /^\/|\$/.test(v)) return cmdCwd;
+      if (v === null || v === undefined) return cmdCwd;
+      // A `--cwd` PRESENT BUT UNREADABLE blesses nothing. Falling back to the
+      // command's own cwd read a DIFFERENT config than the one wrangler loads,
+      // and that config's `keep_vars` then blessed a destructive deploy (Codex
+      // #2036 r11) — the "cannot prove it, so assume the safe reading" mistake
+      // this file refuses everywhere else. `null` here means no candidate path
+      // at all, so the preservation read finds nothing to bless with.
+      if (/^\/|\$/.test(v)) return null;
       return normalizeRel(`${cmdCwd}/${v}`);
     })();
     const cfgName = cfgSel
@@ -1534,7 +1548,9 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
         const candidates =
           cfgName === null
             ? [underWorker]
-            : [`${REPO_ROOT}/${normalizeRel(`${effCwd}/${name}`)}`, underWorker];
+            : effCwd === null
+              ? []
+              : [`${REPO_ROOT}/${normalizeRel(`${effCwd}/${name}`)}`, underWorker];
         const chosen = candidates.find((c) => existsSync(c)) ?? candidates[0];
         if (keepVarsEnabled(chosen)) return true;
       }
@@ -2642,7 +2658,13 @@ function firstArgvArray(text, before = '') {
   if (depth !== 0) return null;
   const body = text.slice(open + 1, i - 1);
   // Wrangler's own terminator, as an ARRAY ELEMENT.
-  const term = body.match(/["'`]--["'`]\s*(?:,|$)/);
+  // A COMPLETE ELEMENT with MATCHING delimiters, anchored to an array boundary.
+  // With independent quote classes and no boundary, a message ending in
+  // quote-like `--` text was mistaken for wrangler's standalone terminator and
+  // truncated the array before the real selectors (Codex #2036 r11). Exactly
+  // the whole-element rule the SELECTOR reader gained in round 9, not applied
+  // to the terminator matcher beside it.
+  const term = body.match(/(?<=^|[,[]\s{0,80})(["'`])--\1\s*(?:,|$)/);
   return term ? body.slice(0, term.index) : body;
 }
 
@@ -3368,7 +3390,12 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // identity and blocked an ordinary deploy (Codex #2036 r10). Same
     // false-red shape as the quoted-string case one round earlier: the
     // predicate kept widening its reach without narrowing WHERE it looks.
-    [...rawSeg.matchAll(/(?<![\w$.])env\s*:\s*\{/g)].some((opener) => {
+    // BOTH HOST SPELLINGS of the child environment. JavaScript writes
+    // `{env: {…}}`; Python writes `env={…}` as a keyword argument, and
+    // narrowing to the colon form in round 10 left the Python child-process
+    // shape — which this scanner already reads everywhere else — unprotected
+    // (Codex #2036 r11).
+    [...rawSeg.matchAll(/(?<![\w$.])env\s*[:=]\s*\{/g)].some((opener) => {
       // The `env` object's own extent, brace-balanced so a nested object does
       // not end it early.
       let i = opener.index + opener[0].length;
