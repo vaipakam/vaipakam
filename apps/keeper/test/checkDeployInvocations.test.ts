@@ -7112,10 +7112,20 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     // With independent open/close quote classes the match could begin at a
     // quote inside another argument and end on that argument's real quote, so
     // wrangler received no `--name` at all and one was invented.
+    // The scope comes from the modelled CWD, not the file path: a helper living
+    // under `apps/agent` is reported as the agent whatever the selector reader
+    // does, so asserting on that string would be satisfied by the INPUT.
+    //
+    // The two halves of the rule — the element boundary and the paired quote —
+    // are individually REDUNDANT for this input and jointly necessary, so each
+    // single mutant survives and the pair does not. My first two mutants were
+    // imprecise rather than the fixture vacuous: both left the backreference in
+    // the ATTACHED arm, which was enough on its own. Verified by building the
+    // round-8 script with only this change applied, which flips it.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     const r = runWith(
-      'apps/agent/deploy.mjs',
-      'spawnSync("wrangler", ["versions", "upload", "--message", "note \'--name=vaipakam-www"]);\n',
+      'w.sh',
+      'cd apps/agent\nspawnSync("wrangler", ["versions", "upload", "--message", "note \'--name=vaipakam-www"]);\n',
     );
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
