@@ -6878,12 +6878,18 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   });
 
   it('an arbitrary argv EXPRESSION is an unresolved selector', () => {
-    // `getConfig()` is as unreadable as `cfg` and means the same thing. The
-    // inversion never needed to evaluate it, only to notice one was there.
+    // A TEMPLATE LITERAL, not `getConfig()`, and the difference is the whole
+    // fixture: `getConfig()` matches the identifier pattern's PREFIX, so it was
+    // already handled and the mutant narrowing back to identifiers survived it.
+    // An element starting with a backtick does not, which is what actually
+    // distinguishes "any non-literal element" from "a bare identifier".
+    //
+    // The inversion never needed to evaluate the expression, only to notice one
+    // was there.
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
       'w.sh',
-      'cd .\nspawnSync("wrangler", ["deploy", "--config", getConfig()]);\n',
+      'cd .\nconst d = "configs";\nspawnSync("wrangler", ["deploy", "--config", `${d}/custom.jsonc`]);\n',
     );
     expect(r.ok).toBe(false);
     expect(r.out).toContain('could not name');
