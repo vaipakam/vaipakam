@@ -6307,3 +6307,74 @@ describe('check-deploy-invocations — #1995 r23 (env as a wrapper)', () => {
     expect(runWith('x.sh', 'cd apps/agent\nenv\n').ok).toBe(true);
   });
 });
+
+describe('check-deploy-invocations — #1995 r23b', () => {
+  const PKG = '{"name":"@vaipakam/agent"}\n';
+
+  it('generated graph output is not walked', () => {
+    // `graphify-out/graph.json` reached 198 MB in one working session and cost
+    // 91 s of a 161 s run. It is gitignored generated analysis, so anything it
+    // quotes is a copy of a source this walk already reads — the same reason
+    // `dist` and `out` are skipped. Measured, not assumed: skipping it took
+    // the real-tree run to 12 s.
+    seed('apps/agent/package.json', PKG);
+    expect(runWith('graphify-out/graph.json', '{"cmd": "cd apps/agent && wrangler deploy"}\n').ok).toBe(
+      true,
+    );
+  });
+
+  it('but the same content OUTSIDE that directory is still read (control)', () => {
+    // The skip must be the directory, not the shape of the file — otherwise it
+    // would be a hole rather than a scope decision.
+    seed('apps/agent/package.json', PKG);
+    expect(runWith('tools/graph.json', '{"cmd": "cd apps/agent && wrangler deploy"}\n').ok).toBe(
+      false,
+    );
+  });
+
+  it('a PYTHON launcher carries the caller cwd to its helper', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('deploy.py', 'import subprocess\nsubprocess.run(["wrangler","deploy"])\n');
+    const r = runWith('x.sh', 'cd apps/agent\npython ../../deploy.py\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and python3 is the same launcher', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('deploy.py', 'import subprocess\nsubprocess.run(["wrangler","deploy"])\n');
+    expect(runWith('x.sh', 'cd apps/agent\npython3 ../../deploy.py\n').ok).toBe(false);
+  });
+
+  it('but a python helper carrying the flag is safe (control)', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('deploy.py', 'import subprocess\nsubprocess.run(["wrangler","deploy","--keep-vars"])\n');
+    expect(runWith('x.sh', 'cd apps/agent\npython ../../deploy.py\n').ok).toBe(true);
+  });
+
+  it('a config with a UTF-8 BOM still declares its setting', () => {
+    // Wrangler accepts the BOM; `JSON.parse` does not. Unparseable read as
+    // "no keep_vars", so a safe upload was reported — a false red on a config
+    // that is doing the right thing.
+    seed('apps/agent/package.json', PKG);
+    seed('apps/agent/wrangler.jsonc', '﻿{"keep_vars": true}\n');
+    expect(runWith('x.sh', 'cd apps/agent\nwrangler versions upload\n').ok).toBe(true);
+  });
+
+  it('a .mk fragment gets the recipe parsing its extension already implied', () => {
+    // `makefileBlocks` always matched `*.mk`; the walk never yielded one, so
+    // the branch was unreachable and the identical content named `Makefile`
+    // behaved differently.
+    seed('apps/agent/package.json', PKG);
+    const r = runWith('apps/agent/deploy.mk', 'deploy:\n\twrangler deploy\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and a safe .mk recipe passes (control)', () => {
+    seed('apps/agent/package.json', PKG);
+    expect(runWith('apps/agent/deploy.mk', 'deploy:\n\twrangler deploy --keep-vars\n').ok).toBe(
+      true,
+    );
+  });
+});

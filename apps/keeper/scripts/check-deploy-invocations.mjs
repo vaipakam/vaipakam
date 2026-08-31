@@ -117,6 +117,13 @@ const REPO_ROOT = (
 const SKIP_DIRS = new Set([
   'node_modules', '.git', 'dist', 'build', 'out', 'coverage',
   '.wrangler', 'cache', 'broadcast', 'artifacts', '.next',
+  // Generated analysis output, gitignored, and LARGE — `graph.json` reached
+  // 198 MB in one working session because the graph rebuilds on every commit,
+  // and scanning it cost 91 s of a 161 s run. Nothing is lost: whatever it
+  // quotes is derived from sources this walk already reads, so a command can
+  // only appear here as a copy of one scanned at its origin. Same class as
+  // `dist` and `out` above — generated, not authored.
+  'graphify-out',
 ]);
 
 /**
@@ -306,7 +313,7 @@ const DECL_PREFIX = String.raw`(?:(?:export|declare|typeset|local|readonly)\s+(?
 // as a shell helper's does (#1995 r22). BOTH the launcher word and a script
 // extension are required — that is what keeps it away from the r20 width
 // problem, since a bare `./x.ts` still matches nothing here.
-const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?(?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1)|(?:node|bun|tsx)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts))`;
+const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?(?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1)|(?:node|bun|tsx)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts)|(?:python3?|py)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+\.py)`;
 
 /** Collapse a captured word to what the shell would hand the command. */
 function dequote(w) {
@@ -369,6 +376,12 @@ const EXTENSIONS = [
   // already recognises — the detector existed, the walk simply never yielded
   // the file (#1995 r22).
   '.py',
+  // `makefileBlocks` has always matched `*.mk`, and the walk never yielded one
+  // — so that branch was unreachable and an included deploy fragment was read
+  // as prose, while the identical content named `Makefile` was rejected
+  // (#1995 r23). The third time a handled extension was not a WALKED one, after
+  // `.mdx` and `.py`.
+  '.mk',
   '.ps1',
   '.cmd',
   '.bat',
@@ -5978,7 +5991,7 @@ for (const file of walk(REPO_ROOT)) {
           (!dir || dir.kind === 'env-chdir') &&
           runWord.match(
             new RegExp(
-              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))|(?:node|bun|tsx)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts)))(?:\s|$)`,
+              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))|(?:node|bun|tsx)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts))|(?:python3?|py)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+\.py))(?:\s|$)`,
             ),
           );
         if (execHelper) {
@@ -5988,7 +6001,8 @@ for (const file of walk(REPO_ROOT)) {
             execHelper[1] ??
             execHelper[2] ??
             execHelper[3] ??
-            execHelper[4]
+            execHelper[4] ??
+            execHelper[5]
           ).replace(/\\/g, '/');
           deferred.push(
             ...sourcedDeploys(resolveDir(execCwd, target, shellVars)),

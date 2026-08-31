@@ -67,5 +67,13 @@ export function stripJsonComments(raw) {
  * config says nothing" rather than as any particular setting.
  */
 export function parseJsonc(raw) {
-  return JSON.parse(stripJsonComments(raw).replace(/,(\s*[}\]])/g, '$1'));
+  // Wrangler accepts a leading UTF-8 BOM — verified against the pinned 4.90.0
+  // with `deploy --dry-run` — but `JSON.parse` rejects it, so a config that
+  // really does declare `keep_vars` read as unparseable. That fails BOTH
+  // consumers the wrong way: the invariant reports the file unreadable and the
+  // scanner reports a safe upload as destructive (#1995 r23). One strip here,
+  // because one reader is the point of this module.
+  return JSON.parse(
+    stripJsonComments(raw.replace(/^\uFEFF/, '')).replace(/,(\s*[}\]])/g, '$1'),
+  );
 }
