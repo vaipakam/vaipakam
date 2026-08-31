@@ -118,9 +118,31 @@ what is not in the config is exactly the dashboard-managed tuning the keeper
 thresholds, `SPLIT_MIN_IMPROVEMENT_BPS`, `PARTIAL_LIQ_MIN_HF_BPS` (see
 `env.ts`). A small config makes the hazard **worse**, not better.
 
-So `apps/keeper`'s `deploy` script now runs `wrangler deploy --keep-vars`,
+So `apps/keeper`'s `deploy` script runs `wrangler deploy --keep-vars`,
 which makes the canonical `pnpm --filter @vaipakam/keeper run deploy`
 safe by construction rather than depending on whoever is typing it.
+
+**Superseded as the primary defence (#1995): the hazard is now removed in
+configuration.** `wrangler.jsonc` declares `"keep_vars": true`, which wrangler
+reads on both the `deploy` and `versions upload` paths — so **every** spelling
+of a deploy preserves dashboard-managed vars, including a bare
+`wrangler deploy` and including spellings nobody has written yet. Requiring the
+flag per call site was an unbounded predicate: #1995 answered 242 review
+findings enumerating ways to spell a deploy (package scripts, manifest aliases,
+Makefile variables, sourced helpers, shell functions and aliases, matrix
+expressions, reusable-workflow inputs, Windows shims, `eval`, marketplace
+actions) without reaching the end.
+
+The flag stays on the package script — it is still correct, and harmless — and
+`scripts/check-deploy-invocations.mjs` remains as defence in depth that
+**switches itself off**: it reports nothing while a Worker declares
+preservation, and resumes full command-level scrutiny for any Worker that
+loses the declaration. `scripts/check-keep-vars.mjs` asserts the declaration
+itself, unconditionally in CI.
+
+**The trade, stated deliberately:** a deploy can no longer *remove* a var.
+Deleting one is now an explicit dashboard action — see the rollback note in
+`apps/indexer/wrangler.jsonc` for a case where that matters.
 
 **And a guard enforces it tree-wide**: `scripts/check-deploy-invocations.mjs`,
 wired into `pnpm --filter @vaipakam/keeper typecheck`, fails on any

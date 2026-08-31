@@ -18,6 +18,29 @@
   "compatibility_date": "2026-04-23",
   "compatibility_flags": ["nodejs_compat"],
 
+  // ── keep_vars: the dashboard's plain-text vars survive a deploy ──
+  //
+  // Wrangler DELETES every var not present in this file before setting the
+  // ones that are, so any value managed only in the dashboard is wiped by an
+  // ordinary `wrangler deploy`. That is the hazard `--keep-vars` was being
+  // added by hand at every call site to avoid — across runbooks, deploy
+  // scripts, workflows and package scripts — which is an unbounded set of
+  // spellings to keep correct, and #1995 spent 242 review findings proving it.
+  //
+  // Set HERE instead, the preservation is a property of the WORKER rather than
+  // of each invocation: wrangler reads `config.keep_vars` on both the deploy
+  // path and `versions upload`, so every spelling becomes safe at once,
+  // including the ones nobody has written yet.
+  //
+  // Declared vars are still uploaded normally — this only suppresses the
+  // DELETE of bindings absent from the config (wire field
+  // `keep_bindings: ["plain_text","json"]`). Secrets were never at risk;
+  // wrangler keeps those unconditionally.
+  //
+  // CONSEQUENCE, and it is the intended trade: a deploy can no longer REMOVE
+  // a var. Deleting one is now a deliberate dashboard action.
+  "keep_vars": true,
+
   // Cron — every minute. Internal pass-level guards (e.g. the
   // dailyOracleSnapshot's 00:00–00:09 UTC window check + last-day
   // D1 dedupe) make most ticks no-ops. Matches the existing

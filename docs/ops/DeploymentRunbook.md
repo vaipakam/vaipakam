@@ -362,9 +362,13 @@ manual follow-up required when the prerequisites are in place:
    head instead of backfilling an empty pre-deploy range.
 5. **Agent Cloudflare deploy** (phase `cf-agent`) —
    `pnpm --filter @vaipakam/agent run deploy` — the packaged script, which
-   carries `--keep-vars`; a bare deploy drops the agent's
+   carries `--keep-vars`. Since #1995 the agent's `wrangler.jsonc` also
+   declares `"keep_vars": true`, so a bare deploy no longer drops the
    dashboard-managed `RECIPIENT_VALIDATING_TOKENS` /
-   `OPENSEA_OFFERS_MAX_PAGES` (notifications,
+   `OPENSEA_OFFERS_MAX_PAGES` either — preservation is a property of the
+   configuration now, not of remembering a flag. Use the packaged script
+   anyway: it is the canonical entry point and carries the rest of the
+   phase's behaviour (notifications,
    Telegram webhook, frames). The retired single-watcher `cf-watcher`
    phase is explicitly rejected by `deploy-mainnet.sh`; all three
    phases above must run for a Stage 3 deploy — stopping after
@@ -562,8 +566,7 @@ declaration the file shipped without — paste it back in, replacing
 Then redeploy:
 
 ```bash
-cd apps/agent
-npx wrangler deploy
+pnpm --filter @vaipakam/agent run deploy
 ```
 
 Verify the binding landed on the live Worker:
@@ -938,8 +941,18 @@ runtime never runs its `alarm()` concurrently), reads only the chain's `safe`
 (finalized) head, and the event handlers are re-scan-idempotent — so a
 missed/duplicate/failed webhook delivery only changes latency, never data.
 
-**Rollback:** set `CHAIN_INGEST_VIA_DO` back to anything other than `"true"` (or
-remove it) and redeploy. The cron immediately reverts to the legacy inline scan,
+**Rollback:** set `CHAIN_INGEST_VIA_DO` to an explicit non-`"true"` value —
+`"false"` — and redeploy.
+
+> **Do NOT roll back by deleting the line.** Since #1995 the indexer's config
+> declares `"keep_vars": true`, which stops a deploy deleting vars that are not
+> in the file — so removing `CHAIN_INGEST_VIA_DO` leaves the *already-deployed*
+> `"true"` live, and the DO path keeps writing while this runbook says it has
+> stopped. That is the worst moment to be wrong about it. An explicit `"false"`
+> is uploaded like any other declared var and takes effect immediately.
+> Removing the value entirely is a dashboard action, not a deploy.
+
+The cron immediately reverts to the legacy inline scan,
 the webhook 200-no-ops, and any already-armed DO alarm bails on its next fire
 (it re-checks the gate before scanning). No data migration either direction.
 

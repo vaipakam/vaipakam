@@ -130,7 +130,18 @@ jobs:
           # `packages/ui` was in this list until #1963 retired the package
           # (orphaned by the #1854 apps/defi deletion). No path can match
           # a package that no longer exists.
-          DEFI_RE='^(apps/(app|indexer|keeper|agent)/|packages/(lib|contracts|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
+          # The two ops Workers are here for a DIFFERENT reason and so are
+          # listed differently: the var-preservation invariant
+          # (apps/keeper/test/workerKeepVars.test.ts) asserts `keep_vars` for
+          # five Workers, and that invariant is what carries the whole
+          # property since #1995. apps/agent is covered by its directory rule
+          # above; the ops Workers have no rule here at all, so their CONFIGS
+          # are named — the key can only be lost by editing one of those
+          # files, and gating on the whole directory would run the app,
+          # indexer, keeper and agent suites for every unrelated ops change.
+          # A companion unconditional job in ci.yml runs the same invariant
+          # with no filter; this one additionally brings in the richer suite.
+          DEFI_RE='^(apps/(app|indexer|keeper|agent)/|ops/(mesh-watcher|offchain-data-warm)/wrangler\.jsonc$|packages/(lib|contracts|i18n)/|package\.json$|pnpm-lock\.yaml$|pnpm-workspace\.yaml$|\.github/workflows/app-vitest\.yml$)'
           if echo "$CHANGED" | grep -Eq "$DEFI_RE"; then
             echo "defi=true" >> "$GITHUB_OUTPUT"
           else
