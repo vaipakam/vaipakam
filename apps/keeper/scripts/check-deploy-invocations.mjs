@@ -2789,7 +2789,14 @@ function argvValue(region, spellings, before = '') {
     // #2036 r5). The inversion never needed to evaluate the expression, only to
     // notice one was there.
     const v = rawVal.trim();
-    return /^(?:true|false|null|None|undefined)$/.test(v) || v === '' ? null : `\${${v}}`;
+    // The marker is built by CONCATENATION rather than as a template literal.
+    // `` `\${…}` `` needs the escape to stop the interpolation, and CodeQL reads
+    // that escape as a useless REGEX escape (alert 1971) — a false positive,
+    // since this string is a subject and never a pattern. Concatenation has no
+    // escape to misread, and says what it builds more plainly anyway.
+    return /^(?:true|false|null|None|undefined)$/.test(v) || v === ''
+      ? null
+      : '${' + v + '}';
   }
   // AN ESCAPED LITERAL IS NOT ITS RUNTIME VALUE. JavaScript decodes
   // `"vaipakam\\u002dagent"` to `vaipakam-agent` before wrangler ever sees it,
@@ -2801,7 +2808,7 @@ function argvValue(region, spellings, before = '') {
   // here (JS and Python spell escapes differently), and a name decoded WRONGLY
   // is authoritative, which is worse than one declined. Worker names do not
   // contain backslashes, so this costs nothing real.
-  if (litVal.includes('\\')) return `\${${litVal}}`;
+  if (litVal.includes('\\')) return '${' + litVal + '}';
   return litVal;
 }
 
