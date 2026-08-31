@@ -33,18 +33,18 @@ escapes at all, which had been quick enough per character to step around the
 limit unnoticed — and marks the report truncated there, rather than scrubbing
 the whole of a message the report keeps twelve hundred characters of — a few seconds
 of a frozen drawer, immediately after the failure someone is trying to
-report, is a poor way to ask for help. If the cut lands in the middle of an
-address, the fragment is dropped rather than carried through as half an
-account — including when it lands inside one of the escape sequences itself,
-which for a while left the incomplete sequence sitting where it hid the
-fragment from the very rule meant to remove it. The rule no longer tries to
-describe the debris a cut can leave, which was a losing game — two attempts
-each covered the example in front of them and missed the next one. It asks a
-simpler question instead: near the end of a truncated report, an address
-prefix with no finished shortening after it is a fragment, whatever trails it. A part of an address is worth less than the
-whole and not nothing: written in the mixed upper and lower case that wallets
-use as a typo check, thirty-nine of the forty characters narrow the last one
-to a handful of possibilities.
+report, is a poor way to ask for help. The cut is also moved back off anything that could be part of an address
+before any shortening happens, so a report can never carry the front half of
+an account. Getting there took six attempts at the opposite arrangement —
+shorten first, then tidy up whatever the cut broke — and each one had to
+decide, by appearance alone, whether a piece of text was the shortener's own
+work or something the user had written. That is a question about text someone
+else controls, and each answer was defeated by a slightly different way of
+writing the same thing. Doing the two steps in the other order means the
+question never arises. Two things are given up for that, both at the very end
+of a message that is already being cut short: an address finishing exactly at
+the cut is dropped rather than shortened, and a line of pure hexadecimal can
+lose its last few dozen characters.
 
 There are two situations the shortener cannot fully account for: a message
 too large to read in full, and escapes nested too deeply to unwrap within a

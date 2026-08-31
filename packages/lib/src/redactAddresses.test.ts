@@ -325,86 +325,58 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     expect(out).toContain(SHORT);
   });
 
-  // Codex r9 P1, then a self-probe that showed the r9 fix was a SPELLING
-  // rather than the rule. The cut can land inside a `%xx`, and the stranded
-  // remainder sits between the address fragment and the end of the string,
-  // where the original "must end in hex" rule could not anchor. Stripping an
-  // incomplete trailing escape fixed `%3` and nothing else: `%%` survives one
-  // strip pass as `%`, and `%z` is not an escape shape at all. Both still
-  // forwarded `0x` + 39 hex.
+  // THE BOUNDARY PROPERTY, rewritten after r12 (#2024).
   //
-  // So the table is the point. Enumerating what a cut can strand is a losing
-  // game, and a single example would have let the next spelling through — the
-  // rule is now "a `0x` near the end with no completed shortening after it",
-  // which does not care what follows.
+  // Six versions of a post-hoc repair failed here, and the tests that pinned
+  // them were themselves confused: they fed inputs like `0x` + 39 digits + `%z`
+  // and asserted the fragment was scrubbed. It was — incidentally — but the
+  // SAME string leaks with no truncation involved at all, verified directly:
   //
-  // Checksummed spelling throughout, deliberately: EIP-55 casing is a function
-  // of the whole address, so 39 characters plus the casing narrow the missing
-  // nibble to a few offline-checkable candidates. A lowercase fixture would
-  // understate what a fragment gives away.
+  //   redactText('0x' + 39 digits + '%z')  →  unchanged, at any input size
+  //
+  // So those cases were pinning the #2027 class (a partial address present in
+  // the input), not anything truncation created, and they made the old repair
+  // look sounder than it was. Dropping the repair for safe truncation loses
+  // that incidental scrubbing and makes the behaviour CONSISTENT: a partial
+  // address in the input now reads the same whether the message is 1 KB or
+  // 100 MB, and is #2027's business either way.
+  //
+  // What belongs here is the property truncation actually owns: an address the
+  // CUT bisects must not be partially published. The table walks the cut
+  // across the address so no single offset can be the only one covered.
   const CHECKSUMMED = '0x1234567890abCDeF1234567890aBcDEF12345678';
   const beyondTheCut = 'z'.repeat(MAX_MAPPED_INPUT);
   const cutAfter = (tail: string): string =>
     `${'q'.repeat(MAX_MAPPED_INPUT - tail.length)}${tail}${beyondTheCut}`;
 
-  for (const [name, stranded] of [
-    ['nothing', ''],
-    ['a bare percent', '%'],
-    ['a half escape', '%3'],
-    ['a doubled percent', '%%'],
-    ['a percent and a non-hex char', '%z'],
-    ['a whole escape the run pass could not use', '%3f'],
-  ] as const) {
-    it(`drops a boundary fragment followed by ${name}`, () => {
-      const out = redactText(cutAfter(`${CHECKSUMMED.slice(0, 41)}${stranded}`));
-      expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
-      expect(out).not.toContain(CHECKSUMMED.slice(0, 41));
+  for (const inside of [2, 6, 20, 38, 41]) {
+    it(`drops an address the cut bisects after ${inside} characters`, () => {
+      const out = redactText(cutAfter(CHECKSUMMED.slice(0, inside)));
+      expect(out).not.toContain(CHECKSUMMED.slice(0, inside));
+      expect(out).not.toContain(CHECKSUMMED.slice(2, Math.max(3, inside)));
     });
   }
 
-  it('drops an uppercase 0X boundary fragment too', () => {
-    const upper = `0X${CHECKSUMMED.slice(2)}`;
-    const out = redactText(cutAfter(`${upper.slice(0, 41)}%%`));
-    expect(out).not.toContain(upper.slice(2, 22));
+  it('drops a bisected address whose head is escaped', () => {
+    const out = redactText(cutAfter(`%20${CHECKSUMMED.slice(0, 20)}`));
+    expect(out).not.toContain(CHECKSUMMED.slice(2, 20));
   });
 
-  it('drops a fragment followed by an ellipsis the USER supplied', () => {
-    // Codex r10 P1. The first version of this rule asked whether an ellipsis
-    // appeared after the prefix, which is IN-BAND SIGNALLING: the ellipsis is
-    // the redactor's own mark for finished work, and also an ordinary
-    // character a provider error or a URL can contain. So `0x` + 39 digits
-    // followed by a `…` from the user's own text read as a completed
-    // shortening and was preserved.
-    //
-    // The whole shape is checked now — four hex, ellipsis, four hex — which
-    // arbitrary text does not supply by accident and a fragment cannot satisfy,
-    // because 39 digits do not stop after four.
-    const out = redactText(cutAfter(`${CHECKSUMMED.slice(0, 41)}…`));
-    expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
+  it('drops a COMPLETE address ending exactly at the cut', () => {
+    // The stated cost of truncating before shortening: this one is dropped
+    // rather than shortened. Over-redaction at the tail of a message already
+    // being truncated, which is the correct side — and pinned so the trade is
+    // a decision rather than a surprise.
+    const out = redactText(cutAfter(CHECKSUMMED));
+    expect(out).not.toContain(CHECKSUMMED);
+    expect(out).not.toContain('0x1234…5678');
   });
 
-  it('drops a fragment wearing a completed shortening as a prefix', () => {
-    // Codex r11 P1. The shape test was start-anchored with nothing after it,
-    // so `0x1234…` followed by the address's remaining 36 digits matched on
-    // its first four suffix digits and the whole run was preserved: every
-    // digit present, one user-supplied ellipsis in the middle for a reader to
-    // delete. "Starts like finished work" is not "is finished work".
-    const out = redactText(cutAfter(`${CHECKSUMMED.slice(0, 6)}…${CHECKSUMMED.slice(6)}`));
-    expect(out).not.toContain(CHECKSUMMED.slice(6, 26));
-  });
-
-  it('cuts at the EARLIEST unresolved prefix, not the last one', () => {
-    // Codex r11 P1. Keeping only the last match in the window cut behind the
-    // fragment and published everything before it — `0x` + 39 digits followed
-    // by `-0x` cut at the second prefix.
-    const out = redactText(cutAfter(`${CHECKSUMMED.slice(0, 41)}-0x`));
-    expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
-  });
-
-  it('KEEPS a completed shortening sitting at the very end', () => {
-    // The rule must not buy safety by eating its own output. A shortened
-    // address reads `0x1234…5678`, and the ellipsis is what marks it finished.
-    expect(redactText(cutAfter(CHECKSUMMED))).toContain('0x1234…5678');
+  it('still shortens an address comfortably inside the head', () => {
+    // The truncation must not reach back past its window and eat ordinary
+    // redaction — everything before the last 48 characters is untouched.
+    const out = redactText(cutAfter(`${CHECKSUMMED} and then some words`));
+    expect(out).toContain('0x1234…5678');
   });
 
   it('drops an address straddling the truncation boundary rather than halving it', () => {

@@ -247,81 +247,47 @@ function decodeToFixpoint(text: string): {
 export const MAX_MAPPED_INPUT = 64 * 1024;
 
 /**
- * How far back from the cut a boundary fragment can start.
+ * How far back from the cut the safe-truncation scan may reach.
  *
- * An address is 42 characters, and the cut can additionally strand the
- * remainder of one escape it landed inside — at most two more. 48 leaves
- * margin over that 44 without reaching far enough back to swallow much
- * legitimate text.
+ * An address is 42 characters, so one straddling the cut has at most 41 inside
+ * it. 48 covers that with margin while bounding what a hex-heavy log can lose.
  */
 const BOUNDARY_WINDOW = 48;
 
-/** A `0x` prefix, either case, searched for within that window. */
-const PREFIX_RE = /0[xX]/g;
+/** Characters an address can be spelled with, escapes included. */
+const ADDRESS_CHAR_RE = /[0-9a-fA-FxX%]/;
 
 /**
- * The EXACT shape `shortenMatch` emits: `0x` + 4 hex + `…` + 4 hex.
+ * Move the 64 KB cut back off anything that could be part of an address —
+ * BEFORE any shortening runs (#2024, r12 P1).
  *
- * Testing for a bare ellipsis instead was IN-BAND SIGNALLING (#2024, r10 P1),
- * and it failed the way in-band signalling always does. The ellipsis is the
- * redactor's own mark for finished work, but it is also an ordinary character
- * that can arrive in a provider error or a URL — so `0x` + 39 digits followed
- * by a user-supplied `…` read as a completed shortening and was preserved,
- * putting the fragment back in the report. Verified before the fix.
+ * SIX VERSIONS OF A POST-HOC REPAIR FAILED HERE, and the reason is structural
+ * rather than a run of oversights. Repairing after shortening means asking "is
+ * this span my own output or the user's text?", and that had to be inferred
+ * from shape — a question about text an attacker writes. Every answer was
+ * defeated by a sharper spelling: must-end-in-hex, then
+ * strip-the-stranded-escape, then contains-an-ellipsis, then
+ * starts-like-a-shortening, then the-last-prefix-is-the-fragment, then
+ * `0x1234…5678-` followed by the remaining digits — a fabricated shortening
+ * with one separator after it, which the shape assertion accepted while every
+ * digit of the account rode along behind.
  *
- * Matching the whole shape closes it, because the surrounding digit counts are
- * not something arbitrary text supplies by accident: four hex, the ellipsis,
- * four hex.
+ * Ordering removes the question instead of answering it better. Cutting on the
+ * RAW slice means nothing in it came from this module: a run of
+ * address-spellable characters at the end is unredacted input, and dropping it
+ * needs no judgement about who wrote it. Shortening then runs on text whose end
+ * cannot bisect an address, and there is no repair pass at all.
  *
- * THE TRAILING LOOKAHEAD IS LOAD-BEARING (r11 P1). Without it the pattern
- * verifies a PREFIX of the emitted shape and stops looking, so `0x1234…`
- * followed by the address's remaining 36 digits matched on its first four and
- * the whole thing was preserved — every digit present, with one user-supplied
- * ellipsis sitting in the middle for the reader to delete. "Starts like
- * finished work" is not "is finished work"; the shortening ends after four
- * suffix digits, and the assertion has to say so.
+ * The cost, stated because it is real: a COMPLETE address ending exactly at the
+ * cut is now dropped rather than shortened, and a hex-heavy log can lose up to
+ * 48 characters at the boundary. Both are over-redaction at the tail of a
+ * message already being truncated, which is the correct side to err on.
  */
-const SHORTENED_ADDRESS_RE = /^0[xX][a-fA-F0-9]{4}…[a-fA-F0-9]{4}(?![a-fA-F0-9])/;
-
-/**
- * Drop an address fragment created by the 64 KB cut, and mark the truncation.
- *
- * TWO EARLIER VERSIONS OF THIS RULE WERE SPELLINGS RATHER THAN THE RULE, and
- * the second was mine after being shown the first (#2024, r9 and the probe
- * after it). The original required the head to END in hex, so a cut landing
- * inside a `%xx` left `%3` sitting between the fragment and the end and the
- * rule could not anchor. Stripping an incomplete trailing escape first fixed
- * that exact spelling and nothing more: `%%` survives one strip pass as `%`,
- * and `%z` is not an escape shape at all, so both still forwarded
- * `0x` + 39 hex — with EIP-55 casing, which narrows the missing nibble to a
- * handful of offline-checkable candidates.
- *
- * Enumerating what a cut can strand is a losing game. What is actually true is
- * simpler and does not depend on the junk: near the end of a truncated head,
- * a `0x` NOT followed by a completed shortening is a fragment, whatever
- * follows it. So the cut moves back to that prefix.
- *
- * The shortened-shape test is what protects the ordinary result: a `0x` whose
- * remainder IS `0x1234…5678` is finished work and stays. It tests the whole
- * shape rather than merely the presence of an ellipsis — see r10 P1 on
- * SHORTENED_ADDRESS_RE, where the looser test was defeated by an ellipsis the
- * user's own text supplied. Anything else in the window goes with the truncation — which can
- * cost a short hex mention that happened to land in the last 48 characters of
- * a message already being cut off, and that is the correct side to err on.
- */
-function dropBoundaryFragment(head: string): string {
-  const windowStart = Math.max(0, head.length - BOUNDARY_WINDOW);
-  const tail = head.slice(windowStart);
-  // EARLIEST unresolved prefix, not the last (r11 P1). Keeping only the last
-  // match cut behind it and preserved everything before: `0x` + 39 digits
-  // followed by `-0x` cut at the second prefix and published the first
-  // fragment whole. Every prefix in the window has to clear the bar, and the
-  // cut goes to the first that does not.
-  for (const m of tail.matchAll(PREFIX_RE)) {
-    if (SHORTENED_ADDRESS_RE.test(tail.slice(m.index))) continue;
-    return `${head.slice(0, windowStart + m.index)}…`;
-  }
-  return `${head}…`;
+function truncateAtSafeBoundary(sliced: string): string {
+  const floor = Math.max(0, sliced.length - BOUNDARY_WINDOW);
+  let cut = sliced.length;
+  while (cut > floor && ADDRESS_CHAR_RE.test(sliced[cut - 1]!)) cut -= 1;
+  return sliced.slice(0, cut);
 }
 
 /** Scrub any full address ANYWHERE in report text — crash messages,
@@ -342,11 +308,9 @@ export function redactText(text: string): string {
     // shortened. A hash whose tail was escaped now reads as an address and is
     // shortened too: with the tail unread there is no way to tell, and losing
     // a hash to over-redaction is the right side of that trade.
-    const head = dropEscapeRunsWithHex(text.slice(0, MAX_MAPPED_INPUT)).replace(
-      ADDRESS_RE,
-      shortenMatch,
-    );
-    return dropBoundaryFragment(head);
+    // Truncate first, shorten second — the ordering IS the fix (r12 P1).
+    const safe = truncateAtSafeBoundary(text.slice(0, MAX_MAPPED_INPUT));
+    return `${dropEscapeRunsWithHex(safe).replace(ADDRESS_RE, shortenMatch)}…`;
   }
 
   // No escapes means the text IS its own fixpoint, so the cheap pass is the
