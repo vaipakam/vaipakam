@@ -6734,7 +6734,12 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       'spawnSync("wrangler", ["deploy", "--config", "side.jsonc", "--env", "staging"]);\n',
     );
     expect(r.ok).toBe(false);
-    expect(r.out).toContain('apps/agent');
+    // Asserted on the AGENT'S OWN REMEDY, not on the string `apps/agent` — the
+    // report echoes the file path, so that substring is satisfied by the INPUT
+    // and would pass however the suppression behaved. That vacuity survived its
+    // own mutant on the sibling fixture below before it was caught.
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+    expect(r.out).not.toContain('could not name');
   });
 
   it('CLOUDFLARE_ENV in a child-process OPTIONS OBJECT suppresses it too', () => {
@@ -6748,7 +6753,10 @@ describe('check-deploy-invocations — #1996 config identity', () => {
         '{env: {...process.env, CLOUDFLARE_ENV: "staging"}});\n',
     );
     expect(r.ok).toBe(false);
-    expect(r.out).toContain('apps/agent');
+    // Same correction as the fixture above: the agent's remedy, not a substring
+    // the report's own file path supplies.
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+    expect(r.out).not.toContain('could not name');
   });
 
   it('one base answering does not speak for a base that answered nothing', () => {
