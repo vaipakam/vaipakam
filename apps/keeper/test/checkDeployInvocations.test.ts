@@ -6257,6 +6257,13 @@ describe('check-deploy-invocations — #1995 r22 (reach, this side)', () => {
   it('and a python helper deploying an UNSCOPED worker passes (control)', () => {
     seed('apps/agent/package.json', PKG);
     seed('apps/www/package.json', '{"name":"@vaipakam/www"}\n');
+    // The CONFIG has to exist for this to test what it claims. Without it the
+    // selected path resolves to nothing, and the deploy passed because nothing
+    // could be identified rather than because an unprotected Worker was — which
+    // #2036 r18 turned into a report, correctly, for a child-process call whose
+    // config this scanner cannot read. Same wrong-reason pass the modelled-cwd
+    // note records one describe block over.
+    seed('apps/www/wrangler.jsonc', '{"name": "vaipakam-www"}\n');
     expect(
       runWith(
         'deploy.py',

@@ -1589,6 +1589,17 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '') {
           cfgName === null && effCwd !== null && effCwd !== cmdCwd
             ? `${REPO_ROOT}/${normalizeRel(`${effCwd}/${name}`)}`
             : null;
+        // AN EXPLICIT SELECTOR IS ANSWERED BY THE PATH IT NAMES, and by nothing
+        // else. Falling back to the same basename under the protected package
+        // let `apps/agent/custom.jsonc` bless a root `--config custom.jsonc`
+        // whose file a helper generates at run time — a different file that
+        // this scanner cannot read, and whose preservation it therefore cannot
+        // know (Codex #2036 r18). Unreadable now reaches the inversion, which
+        // reports, instead of borrowing an unrelated file's answer.
+        //
+        // The DEFAULT-name branch keeps its package-relative resolution: there
+        // the name is not a path the caller chose but the file wrangler
+        // discovers, and its home IS the package directory.
         const candidates =
           cfgName === null
             ? movedDefault === null
@@ -1596,7 +1607,7 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '') {
               : [movedDefault]
             : effCwd === null
               ? []
-              : [`${REPO_ROOT}/${normalizeRel(`${effCwd}/${name}`)}`, underWorker];
+              : [`${REPO_ROOT}/${normalizeRel(`${effCwd}/${name}`)}`];
         const chosen = candidates.find((c) => existsSync(c)) ?? candidates[0];
         // A config the surrounding file REWRITES before the deploy runs is not
         // the file wrangler will load, so the checkout's copy cannot bless the
@@ -3074,12 +3085,56 @@ function configIsRewritten(text, cfgPath) {
   const base = cfgPath.slice(cfgPath.lastIndexOf('/') + 1);
   if (!base) return false;
   const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(
-    String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream|outputFile(?:Sync)?|write_text|open)\s*\([^)]*` +
-      esc +
-      String.raw`|>\s*\S*` +
-      esc,
-  ).test(text);
+  // THE PATH IS NOT ALWAYS AN ARGUMENT. `Path("configs/custom.jsonc")
+  // .write_text(…)` — the ordinary pathlib spelling — puts the name BEFORE the
+  // method, and a pattern that only searched inside the call's parentheses
+  // missed it entirely (Codex #2036 r18). Both shapes now, argument-form and
+  // receiver-form.
+  //
+  // A path bound to a VARIABLE first (`p = Path(…)` then `p.write_text(…)`) is
+  // still missed, and is left so deliberately: chasing the binding is
+  // constant-folding the host language, and the write forms that name the file
+  // outright are what a config-generating script actually looks like.
+  const writes = [
+    ...text.matchAll(
+      new RegExp(
+        String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream` +
+          String.raw`|outputFile(?:Sync)?|write_text|write_bytes|open)\s*\([^)]*` +
+          esc +
+          String.raw`|["'\`][^"'\`]*` +
+          esc +
+          String.raw`["'\`]\s*\)?\s*\.\s*(?:write_text|write_bytes|open)\s*\(` +
+          String.raw`|>\s*\S*` +
+          esc,
+        'g',
+      ),
+    ),
+  ].map((m) => m.index);
+  if (writes.length === 0) return false;
+  // ...AND THE WRITE HAS TO COME FIRST. Scanning the whole file without
+  // comparing positions let maintenance code BELOW a deploy invalidate the
+  // config that deploy reads — a legitimate command reported because of a line
+  // that runs after it (Codex #2036 r18), which on a check wired into
+  // typechecking blocks work.
+  //
+  // Positions within the file, against where the config is SELECTED. A file
+  // carrying both orderings still invalidates, which is the conservative
+  // direction and the one this check errs in everywhere else.
+  const uses = [
+    ...text.matchAll(
+      new RegExp(
+        String.raw`--config(?:=|\s)\s*["'\`]?[^\s"'\`]*` +
+          esc +
+          String.raw`|["'\`]--config["'\`]\s*,\s*["'\`][^"'\`]*` +
+          esc,
+        'g',
+      ),
+    ),
+  ].map((m) => m.index);
+  // No locatable selection means the ordering cannot be judged, so the older
+  // whole-file answer stands rather than a guess in the blessing direction.
+  if (uses.length === 0) return true;
+  return writes.some((w) => uses.some((u) => w < u));
 }
 
 /**
@@ -4113,7 +4168,19 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // textual scope and let "From apps/agent, run `wrangler deploy --config
   // wrangler.jsonc`" pass (#1995 r3). A relative value there is unresolved, not
   // resolved-to-nothing, so defer to the text.
-  if (!hasCwdState) {
+  // A RECOGNISED CHILD-PROCESS CALL IS NOT PROSE. The deferral below exists so
+  // a runbook line yields to the surrounding text, which names a package the
+  // reader can act on. An executable `spawnSync("wrangler", ["deploy",
+  // "--config", …])` in a helper outside both packages has no surrounding text
+  // to defer TO, and deferring returned nothing at all — so a config generated
+  // at run time, which may name a protected Worker and disable preservation,
+  // passed silently (Codex #2036 r18).
+  //
+  // Narrow on purpose: only when a config was actually selected and could not
+  // be identified, which is the inversion's own precondition. Everything a
+  // prose line does is unchanged.
+  const isChildCall = new RegExp(ARGV_DEPLOY_RE).test(seg);
+  if (!hasCwdState && !(isChildCall && cfg !== null)) {
     // Both directory selectors are candidates here, most specific first
     // (#1995 r9) — `cwdFlag` was one variable before they were split apart.
     const raw = (target ?? wrCwd ?? pkgDir ?? '').replace(/\/+$/, '');
