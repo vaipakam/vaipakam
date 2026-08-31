@@ -39,7 +39,17 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+// Overridable so the invariant can be exercised against a COPIED tree. The
+// suite proving this check fails when the key is removed must not remove the
+// key from the real configs to do it: a crash or a kill between the write and
+// the restore would leave the developer's worktree in exactly the unsafe state
+// this check exists to prevent, and JavaScript cleanup does not run after
+// process termination (Codex #1995 r23). Same override the deploy guard has
+// carried since it was written, for the same reason.
+const REPO_ROOT = (
+  process.env.CHECK_KEEP_VARS_ROOT ??
+  resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+).replace(/\/$/, '');
 
 /**
  * Workers whose config declares plain-text `vars`, so a deploy can wipe them.

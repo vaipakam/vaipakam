@@ -1174,6 +1174,45 @@ function executedCommand(cmd) {
   // may mix quoted and unquoted chunks and carry escapes.
   let t = cmd.replace(/^[\s(){]*/, '');
   for (;;) {
+    // `env [OPTION]... [NAME=VALUE]... COMMAND [ARG]...` RUNS the command, so
+    // the executed command is what follows the wrapper — the same proposition
+    // this function already models for a bare assignment prefix. Without it,
+    // `env ../../deploy-helper.sh` named `env` as the command word and the
+    // helper was never followed (#1995 r23).
+    //
+    // Options are skipped, and the four that take a SEPARATED value consume it
+    // (`-u NAME`, `-C DIR`, `-S STR`, and their long forms use `=`, which the
+    // token skip already covers). Looping means `env A=1 env B=2 cmd` unwraps
+    // as bash runs it. `--` ends the options, and anything after it is the
+    // command.
+    const envLead = /^env(?:\s|$)/.exec(t);
+    if (envLead) {
+      let u = t.slice(envLead[0].length).replace(/^\s*/, '');
+      for (;;) {
+        const opt = /^(--?[A-Za-z0-9-]+)(=\S*)?(?:\s+|$)/.exec(u);
+        if (!opt) break;
+        if (opt[1] === '--') {
+          u = u.slice(opt[0].length);
+          break;
+        }
+        u = u.slice(opt[0].length).replace(/^\s*/, '');
+        // A separated value belongs to the option, not to the command.
+        // The LONG forms take a separated value too — `env --chdir ../agent
+        // helper.sh` is valid, and consuming the flag but not its argument
+        // made `../agent` look like the command (#1995 r23). An attached
+        // `=value` is already inside `opt[2]`.
+        if (!opt[2] && /^(?:-[uCS]|--(?:unset|chdir|split-string))$/.test(opt[1])) {
+          const val = /^\S+\s*/.exec(u);
+          if (val) u = u.slice(val[0].length);
+        }
+      }
+      // Only treat it as the wrapper if something is actually left to run;
+      // a bare `env` prints the environment and executes nothing.
+      if (u.trim() !== '') {
+        t = u;
+        continue;
+      }
+    }
     const m = /^[A-Za-z_][A-Za-z0-9_]*=/.exec(t);
     if (!m) break;
     let j = m[0].length;
@@ -5821,6 +5860,14 @@ for (const file of walk(REPO_ROOT)) {
                 .map((st) => scopeOfCwd(resolveDir(st.cwd, dir.target, shellVars)))
                 .find(Boolean) ?? null
             : null;
+        // Where THIS command runs, which is not always where the shell stands:
+        // `env --chdir X helper.sh` execs the helper with cwd X, so both the
+        // helper's own PATH and the scope its deploys land in resolve there
+        // (#1995 r23). Falls back to the shell's cwd for every other segment.
+        const execCwd =
+          dir?.kind === 'env-chdir'
+            ? resolveDir(input[0]?.cwd ?? '', dir.target, shellVars)
+            : (input[0]?.cwd ?? '');
         // A `cd` that runs as a PIPELINE or BACKGROUND element executes in a
         // SUBSHELL and cannot move the parent (#1995 r9). In
         // `cd apps/agent; cd ../indexer | cat; wrangler deploy` bash is still
@@ -5906,7 +5953,7 @@ for (const file of walk(REPO_ROOT)) {
         // exiting here.
         const deferred = [];
         if (dir?.kind === 'source') {
-          deferred.push(...sourcedDeploys(resolveDir(input[0]?.cwd ?? '', dir.target, shellVars)));
+          deferred.push(...sourcedDeploys(resolveDir(execCwd, dir.target, shellVars)));
         }
         // A helper EXECUTED as its own process inherits this shell's cwd just
         // as a sourced one does — `cd apps/agent; ../../deploy.sh` (or
@@ -5924,8 +5971,11 @@ for (const file of walk(REPO_ROOT)) {
         // and its launcher spellings (#1995 r21). It requires one of the
         // Windows extensions, which is what lets the optional launcher prefix
         // stay optional without admitting a bare word.
+        // `env --chdir X helper.sh` IS a directive AND a command — the same
+        // reason the directive short-circuit below exempts `env-chdir`. Gating
+        // this on `!dir` skipped the helper entirely (#1995 r23).
         const execHelper =
-          !dir &&
+          (!dir || dir.kind === 'env-chdir') &&
           runWord.match(
             new RegExp(
               String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))|(?:node|bun|tsx)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts)))(?:\s|$)`,
@@ -5941,7 +5991,7 @@ for (const file of walk(REPO_ROOT)) {
             execHelper[4]
           ).replace(/\\/g, '/');
           deferred.push(
-            ...sourcedDeploys(resolveDir(input[0]?.cwd ?? '', target, shellVars)),
+            ...sourcedDeploys(resolveDir(execCwd, target, shellVars)),
           );
         }
         if (/^shopt\s+-s\b[^;]*\bexpand_aliases\b/.test(seg)) aliasesOn = true;
@@ -5974,7 +6024,9 @@ for (const file of walk(REPO_ROOT)) {
         // helper that runs `cd ../agent` before its deploy lands somewhere
         // the caller never stood (#1995 r17).
         for (const e of deferred) {
-          const landed = input.map((st) => e.dirs.reduce((acc, d) => applyDir(acc, d, null), st));
+          const from =
+            dir?.kind === 'env-chdir' ? [{ cwd: execCwd, stack: [] }] : input;
+          const landed = from.map((st) => e.dirs.reduce((acc, d) => applyDir(acc, d, null), st));
           const at = landed.map((st) => scopeOfCwd(st.cwd)).find(Boolean) ?? null;
           if (at) {
             flagged = true;

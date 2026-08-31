@@ -6251,3 +6251,59 @@ describe('check-deploy-invocations — #1995 r22 (reach, this side)', () => {
     ).toBe(true);
   });
 });
+
+describe('check-deploy-invocations — #1995 r23 (env as a wrapper)', () => {
+  const PKG = '{"name":"@vaipakam/agent"}\n';
+
+  it('a helper launched through env inherits the caller cwd', () => {
+    // `env [OPTION]... [NAME=VALUE]... COMMAND` RUNS the command, so the
+    // executed command is what follows the wrapper — the same proposition the
+    // reader already modelled for a bare assignment prefix.
+    seed('apps/agent/package.json', PKG);
+    seed('deploy-helper.sh', 'wrangler deploy\n');
+    const r = runWith('x.sh', 'cd apps/agent\nenv ../../deploy-helper.sh\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and still does with an assignment between env and the helper', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('deploy-helper.sh', 'wrangler deploy\n');
+    expect(runWith('x.sh', 'cd apps/agent\nenv MODE=prod ../../deploy-helper.sh\n').ok).toBe(
+      false,
+    );
+  });
+
+  it('env --chdir moves the helper as well as the command', () => {
+    // Two things had to be true at once: the segment is a directive AND runs a
+    // command, so the helper matcher must be reachable for it; and the long
+    // option takes a SEPARATED value, so `--chdir ../agent` must not leave
+    // `../agent` looking like the command.
+    seed('apps/agent/package.json', PKG);
+    seed('apps/www/package.json', '{"name":"@vaipakam/www"}\n');
+    seed('deploy-helper.sh', 'wrangler deploy\n');
+    const r = runWith('x.sh', 'cd apps/www\nenv --chdir ../agent ../../deploy-helper.sh\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but a helper carrying the flag is safe (control)', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('deploy-helper.sh', 'wrangler deploy --keep-vars\n');
+    expect(runWith('x.sh', 'cd apps/agent\nenv ../../deploy-helper.sh\n').ok).toBe(true);
+  });
+
+  it('and one launched from an UNSCOPED directory passes (control)', () => {
+    seed('apps/agent/package.json', PKG);
+    seed('apps/www/package.json', '{"name":"@vaipakam/www"}\n');
+    seed('deploy-helper.sh', 'wrangler deploy\n');
+    expect(runWith('x.sh', 'cd apps/www\nenv ../../deploy-helper.sh\n').ok).toBe(true);
+  });
+
+  it('a bare env executes nothing, so it is not a wrapper (control)', () => {
+    // `env` alone prints the environment. Treating it as a wrapper with an
+    // empty command would have made the next token the command word.
+    seed('apps/agent/package.json', PKG);
+    expect(runWith('x.sh', 'cd apps/agent\nenv\n').ok).toBe(true);
+  });
+});

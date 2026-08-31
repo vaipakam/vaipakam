@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 /**
  * The keep_vars invariant, exercised through the SAME script CI runs.
@@ -37,13 +38,34 @@ const VAR_CARRYING_WORKERS = [
   'ops/offchain-data-warm',
 ];
 
-function runCheck(): { ok: boolean; out: string } {
+function runCheck(root?: string): { ok: boolean; out: string } {
+  const env = root ? { ...process.env, CHECK_KEEP_VARS_ROOT: root } : process.env;
   try {
-    return { ok: true, out: execFileSync('node', [SCRIPT], { encoding: 'utf8' }) };
+    return { ok: true, out: execFileSync('node', [SCRIPT], { encoding: 'utf8', env }) };
   } catch (err) {
     const e = err as { stdout?: string; stderr?: string };
     return { ok: false, out: `${e.stdout ?? ''}${e.stderr ?? ''}` };
   }
+}
+
+/**
+ * A throwaway tree holding COPIES of the real configs.
+ *
+ * The mutation cases below must not edit the repository's own
+ * `wrangler.jsonc` files: a crash or a kill between the write and the restore
+ * would leave the worktree without `keep_vars` — the exact unsafe state this
+ * invariant exists to prevent — and no `finally` runs after process
+ * termination (Codex #1995 r23). Copying keeps the fixtures HONEST, since the
+ * bytes under test are the committed ones.
+ */
+function copiedRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), 'keep-vars-'));
+  for (const dir of VAR_CARRYING_WORKERS) {
+    const rel = `${dir}/wrangler.jsonc`;
+    mkdirSync(dirname(join(root, rel)), { recursive: true });
+    writeFileSync(join(root, rel), readFileSync(join(REPO_ROOT, rel), 'utf8'));
+  }
+  return root;
 }
 
 describe('worker configs preserve dashboard vars at the source (#1995)', () => {
@@ -65,23 +87,24 @@ describe('worker configs preserve dashboard vars at the source (#1995)', () => {
 
   it.each(VAR_CARRYING_WORKERS)('fails when %s loses the declaration', (dir) => {
     // The check RUNS ON ITS OWN CASE, once per Worker: a check that only ever
-    // passes proves nothing about the Worker it names. The config is restored
-    // in `finally`, and the restore is asserted before the verdict so a
-    // failure cannot leave the tree edited.
-    const path = join(REPO_ROOT, dir, 'wrangler.jsonc');
-    const original = readFileSync(path, 'utf8');
-    let result: { ok: boolean; out: string };
+    // passes proves nothing about the Worker it names. Mutated in a COPY, so
+    // an interrupted run cannot leave the repository unsafe.
+    const root = copiedRoot();
     try {
+      const path = join(root, dir, 'wrangler.jsonc');
+      const original = readFileSync(path, 'utf8');
       const mutated = original.replace(/^\s*"keep_vars":\s*true,\s*$/m, '');
       expect(mutated, `${dir}: mutation did not change the file`).not.toBe(original);
       writeFileSync(path, mutated);
-      result = runCheck();
+      const result = runCheck(root);
+      expect(result.ok, `${dir}: removing keep_vars did not fail the check`).toBe(false);
+      expect(result.out).toContain(dir);
     } finally {
-      writeFileSync(path, original);
+      rmSync(root, { recursive: true, force: true });
     }
-    expect(readFileSync(path, 'utf8')).toBe(original);
-    expect(result.ok, `${dir}: removing keep_vars did not fail the check`).toBe(false);
-    expect(result.out).toContain(dir);
+    // The REAL tree is untouched — asserted, not assumed, because the whole
+    // point of the copy is that this can never have been edited.
+    expect(runCheck().ok).toBe(true);
   });
 
   it('CI actually runs this suite when any listed config changes', () => {
