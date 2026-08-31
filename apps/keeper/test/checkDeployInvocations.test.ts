@@ -6511,13 +6511,19 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   });
 
   it('a protected name at a LATER reachable cwd is not suppressed by an earlier one', () => {
-    // Two reachable directories, and the config resolves to a different file
+    // Two reachable directories, and `side.jsonc` resolves to a different file
     // under each. Returning on the first base that merely ANSWERED let the
     // unprotected name suppress the protected one — the same
     // one-spelling-for-two-answers defect as #1995 r8.
+    //
+    // WHICH FILE HOLDS WHICH NAME IS LOAD-BEARING, and my first cut of this
+    // fixture had it backwards and so proved nothing: the walk orders
+    // `apps/agent` first here, so the protected name has to live at the LATER
+    // base for the early return to be able to suppress it. Names not matching
+    // their directory is the premise of this whole read, not a contrivance.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/www/side.jsonc', '{"name": "vaipakam-www"}\n');
-    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/www/side.jsonc', '{"name": "vaipakam-agent"}\n');
     const r = runWith(
       'w.sh',
       'if [ -n "$X" ]; then cd apps/www; else cd apps/agent; fi\nwrangler deploy --config side.jsonc\n',
