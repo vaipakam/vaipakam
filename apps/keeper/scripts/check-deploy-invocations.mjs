@@ -1432,16 +1432,17 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
     // DEFAULT config, which may declare `keep_vars` while the selected one
     // does not (#1995 r23). The separator is `","` however it is quoted or
     // spaced, which is what distinguishes this from the shell form above.
-    const cfgArgv = cfgSel
-      ? null
-      : cfgRegion.match(
-          /["'](?:-c|--config)["']\s*,\s*["']([^"']+)["']/,
-        );
+    // Shared with `selectorScope`, so a computed argv value cannot be read as
+    // "no selector" here while being read as "unresolvable" there. That split
+    // is what let a config named by a variable fall back to the Worker's
+    // DEFAULT config — which may declare `keep_vars` while the selected one
+    // does not, blessing the upload (Codex #2036 r3). `argvValue` returns an
+    // unresolvable `${…}` marker for a non-literal, and the `/\$/` test below
+    // already refuses those.
+    const cfgArgvValue = cfgSel ? null : argvValue(cfgRegion, '-c|--config');
     const cfgName = cfgSel
       ? (cfgSel[1] ?? cfgSel[2] ?? cfgSel[3])
-      : cfgArgv
-        ? cfgArgv[1]
-        : null;
+      : cfgArgvValue;
     const cfgNames =
       cfgName === null
         ? ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml']
@@ -2513,6 +2514,48 @@ function decodeTomlBasic(raw) {
   return out;
 }
 
+/**
+ * One selector out of a CHILD-PROCESS ARGV ARRAY, or `null` if absent.
+ *
+ * `spawnSync("wrangler", ["deploy", "--config", "x.jsonc"])` separates a flag
+ * from its value with a quoted comma, which no shell-oriented pattern sees.
+ * Written once and used for every selector this scanner reads, because reading
+ * only `--config` from argv was itself a finding: `--name` OUTRANKS the config's
+ * identity and `--cwd` changes what the config path resolves against, so a
+ * parser that saw one and not the others made the config authoritative over the
+ * two things wrangler lets override it (Codex #2036 r3).
+ *
+ * A NON-LITERAL value — `["--config", cfg]`, where `cfg` is a variable — is
+ * returned as an unresolvable marker rather than as `null`. The distinction is
+ * the whole point: `null` means "no selector", which lets the deploy fall
+ * through to whatever else names it, while an unresolvable selector means "a
+ * target was named and I cannot say what it is", which is what the burden
+ * inversion exists to refuse. Returning `null` for a computed value let a
+ * config naming the agent exit 0 (same round).
+ *
+ * LAST occurrence, the rule every other selector here follows.
+ */
+function argvValue(region, spellings) {
+  const all = [
+    ...region.matchAll(
+      new RegExp(
+        `["'](?:${spellings})["']\\s*,\\s*(?:["']([^"']+)["']|([A-Za-z_$][\\w$.]*))`,
+        'g',
+      ),
+    ),
+  ];
+  const m = all[all.length - 1];
+  if (!m) return null;
+  // A bare identifier is the host language's variable, so it is spelled as one:
+  // `known()` already refuses anything still carrying a `$`, and this reaches
+  // the "selector present but unresolvable" branch by the same route a shell
+  // `"$CFG"` does. `true`/`false`/`null` are literals, not references.
+  if (m[2] !== undefined) {
+    return /^(?:true|false|null|None|undefined)$/.test(m[2]) ? null : `\${${m[2]}}`;
+  }
+  return m[1];
+}
+
 function declaredWorkerName(absPath) {
   let text;
   try {
@@ -2522,7 +2565,32 @@ function declaredWorkerName(absPath) {
   }
   let name;
   if (/\.toml$/.test(absPath)) {
-    for (const line of text.split('\n')) {
+    // MULTILINE STRINGS FIRST, because they are the one form a line-at-a-time
+    // scan cannot see at all. `name = """vaipakam-www"""` is valid TOML that
+    // wrangler consumes, and declining to read it sent the deploy to the
+    // directory fallback — the FALSE-RED direction, blocking a legitimate
+    // deploy of an unprotected Worker (Codex #2036 r3). Matched over the
+    // top-level text rather than per line, so a value that really does span
+    // lines is still one value.
+    //
+    // TOML trims a newline IMMEDIATELY after the opening delimiter, which is
+    // why the `\n?` is there and not decoration: without it the name gains a
+    // leading newline and matches nothing.
+    const top = text.split(/^[^\S\n]*\[/m)[0];
+    const ml = top.match(
+      new RegExp(
+        String.raw`^[^\S\n]*(?:name|"name"|'name')\s*=\s*` +
+          String.raw`(?:"""\n?([\s\S]*?)"""|'''\n?([\s\S]*?)''')`,
+        'm',
+      ),
+    );
+    if (ml) {
+      // A basic multiline decodes escapes, a literal one does not — the same
+      // asymmetry the single-line forms follow, for the same TOML reason.
+      const decoded = ml[1] !== undefined ? decodeTomlBasic(ml[1]) : ml[2];
+      if (decoded !== null && decoded !== undefined) name = decoded;
+    }
+    for (const line of name === undefined ? text.split('\n') : []) {
       if (/^\s*\[/.test(line)) break;
       // BOTH TOML string forms. A single-quoted literal string is as valid a
       // name as a double-quoted basic one, and accepting only the latter meant
@@ -2707,7 +2775,13 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // dynamic" discarded a perfectly resolved `--name` whenever some other
   // selector happened to be a variable, so
   // `--name vaipakam-agent --config "$CFG"` passed the guard (#1995 r3).
-  const name = known(valueOf('--name'));
+  // `--name` from the argv array too. It OUTRANKS the config's identity —
+  // `getScriptName` is `args.name ?? config.name` — so a parser that read the
+  // config out of argv but not the name made the config authoritative over the
+  // one selector wrangler lets override it, and
+  // `["--name","vaipakam-agent","--config","configs/www.jsonc"]` passed as
+  // unprotected (Codex #2036 r3).
+  const name = known(valueOf('--name') ?? argvValue(wranglerRegion, '--name'));
   if (name !== null) {
     // wrangler's `getScriptName` is `args.name ?? config.name`, so an explicit
     // name is authoritative no matter what the config path turns out to be.
@@ -2773,13 +2847,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // `subprocess.run(["wrangler","deploy","--config","x.jsonc"])`. The flag and
     // its value are separate array elements, so no `=` or space joins them and
     // `valueOf` sees nothing.
-    (() => {
-      const all = [
-        ...wranglerRegion.matchAll(/["'](?:-c|--config)["']\s*,\s*["']([^"']+)["']/g),
-      ];
-      const m = all[all.length - 1];
-      return m ? m[1] : null;
-    })();
+    argvValue(wranglerRegion, '-c|--config');
   // `--cwd` is wrangler's; `--dir` / `-C` is pnpm's own, documented as "change
   // to that directory", and it decides which package's script runs (#1995 r8).
   // `--prefix` is npm's spelling of the same idea — its config documentation
@@ -2795,7 +2863,10 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // already moved to. The package manager moves first and wrangler starts
   // where it was left, so the two chain rather than compete.
   const pkgDirRaw = valueOf('--dir|-C|--prefix');
-  const wrCwdRaw = valueOf('--cwd');
+  // `--cwd` from argv as well: it changes what a relative `--config` resolves
+  // AGAINST, so missing it here made the scanner read a different file than the
+  // one wrangler loads — the r2 ordering defect arriving through the argv door.
+  const wrCwdRaw = valueOf('--cwd') ?? argvValue(wranglerRegion, '--cwd');
   const cfg = known(cfgRaw);
   const pkgDir = known(pkgDirRaw);
   const wrCwd = known(wrCwdRaw);

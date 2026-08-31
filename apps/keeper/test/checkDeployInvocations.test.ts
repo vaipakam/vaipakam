@@ -6765,6 +6765,65 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(true);
   });
 
+  // ---- Codex #2036 r3 ----
+
+  it('a COMPUTED argv config value is an unresolvable selector, not an absent one', () => {
+    // `["--config", cfg]` where `cfg` is a variable. Read as "no selector" this
+    // passed; read as "a target was named and I cannot say what it is" it is
+    // exactly what the inversion refuses.
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd .\nconst cfg = "configs/custom.jsonc"; spawnSync("wrangler", ["deploy", "--config", cfg]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
+
+  it('an argv --name outranks the config it selects', () => {
+    // `getScriptName` is `args.name ?? config.name`, so reading the config out
+    // of argv but not the name made the config authoritative over the one
+    // selector wrangler lets override it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/www.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'spawnSync("wrangler", ["deploy", "--name", "vaipakam-agent", "--config", "configs/www.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('an argv --cwd changes what the config path resolves against', () => {
+    // Missing it made the scanner read a different file than the one wrangler
+    // loads — the r2 ordering defect arriving through the argv door.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent"}\n');
+    seed('side.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'spawnSync("wrangler", ["deploy", "--cwd", "apps/agent", "--config", "side.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a MULTILINE TOML name answers', () => {
+    // The false-red direction again: declining to read a valid multiline string
+    // sent an unprotected Worker's config to the directory fallback.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.toml', 'name = """vaipakam-www"""\n');
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(true);
+  });
+
+  it('and a multiline TOML name spanning lines answers too', () => {
+    // TOML trims a newline immediately after the opening delimiter, which is
+    // what makes this the same name rather than one with a leading blank.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.toml', 'name = """\nvaipakam-www"""\n');
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(true);
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

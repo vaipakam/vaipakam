@@ -16,13 +16,16 @@ both ways: a configuration sitting inside a protected directory but naming a
 different Worker is now correctly treated as deploying that different Worker,
 whose values are not the protected ones.
 
-When the file cannot answer, the checker no longer guesses from the directory —
-it declines to stay silent. A deployment that selects a configuration whose
-Worker cannot be identified is reported, with its own remedy rather than a
-package's, because naming a package would be a claim about a Worker that was
-never identified. The remedy is to make the command safe for whatever it
-targets, which is always available and never wrong for any Worker: carry the
-preservation flag, or declare preservation in the selected configuration.
+When the file cannot answer, the checker no longer stays silent. It still tries
+the older directory-based reasoning first — a configuration selected from inside
+a protected package is reported against that package, with that package's
+remedy, because that is the more useful answer when it is available. What
+changed is the case where even that yields nothing: rather than passing the
+deployment, the checker reports it against no package at all, with a remedy of
+its own, because naming a package would be a claim about a Worker that was never
+identified. That remedy is to make the command safe for whatever it targets,
+which is always available and never wrong for any Worker: carry the preservation
+flag, or declare preservation in the selected configuration.
 
 That inversion is affordable because it was measured before it was adopted. The
 repository contains one hundred and thirty-two deployment mentions and none of
