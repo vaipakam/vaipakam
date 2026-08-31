@@ -6500,6 +6500,32 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('apps/agent');
   });
 
+  it('a SINGLE-QUOTED TOML name answers too', () => {
+    // A literal string is as valid a TOML name as a basic one; accepting only
+    // the double-quoted form made an ordinary config decline to answer.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.toml', "name = 'vaipakam-agent'\n");
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a protected name at a LATER reachable cwd is not suppressed by an earlier one', () => {
+    // Two reachable directories, and the config resolves to a different file
+    // under each. Returning on the first base that merely ANSWERED let the
+    // unprotected name suppress the protected one — the same
+    // one-spelling-for-two-answers defect as #1995 r8.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/www/side.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'w.sh',
+      'if [ -n "$X" ]; then cd apps/www; else cd apps/agent; fi\nwrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
   it('an ENVIRONMENT-suffixed name is still the protected Worker', () => {
     // Self-review, not Codex: exact matching alone made this read a way to LOSE
     // a report. Wrangler appends the environment to the top-level name, so this

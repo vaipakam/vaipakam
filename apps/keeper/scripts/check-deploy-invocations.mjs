@@ -2459,9 +2459,12 @@ function declaredWorkerName(absPath) {
   if (/\.toml$/.test(absPath)) {
     for (const line of text.split('\n')) {
       if (/^\s*\[/.test(line)) break;
-      const m = line.match(/^\s*name\s*=\s*"([^"]*)"\s*(?:#.*)?$/);
+      // BOTH TOML string forms. A single-quoted literal string is as valid a
+      // name as a double-quoted basic one, and accepting only the latter meant
+      // a perfectly ordinary config silently declined to answer.
+      const m = line.match(/^\s*name\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$/);
       if (m) {
-        name = m[1];
+        name = m[1] ?? m[2];
         break;
       }
     }
@@ -2702,6 +2705,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // exact match against the protected set would answer "out of scope" for a
   // deploy that is squarely inside it. The directory heuristic is the safer
   // answer there and keeps its job.
+  let answered = false;
   if (cfg !== null && !/(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion)) {
     for (const b of bases) {
       // Resolved AS WRANGLER RESOLVES IT — against the command's own working
@@ -2740,14 +2744,26 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
       //
       // The SEPARATOR is what stops the rule swallowing the namespace:
       // `vaipakam-keeperbot` is a different Worker, not an environment.
-      return {
-        scope:
-          SCOPED.find(
-            (s) => s.workerName === declared || declared.startsWith(`${s.workerName}-`),
-          ) ?? null,
-      };
+      const hit = SCOPED.find(
+        (s) => s.workerName === declared || declared.startsWith(`${s.workerName}-`),
+      );
+      // KEEP SEARCHING PAST A NON-MATCH, exactly as the directory loop below
+      // does. Returning on the first base that merely ANSWERED made an
+      // unprotected name at one reachable cwd suppress a protected one at
+      // another — "this file names no protected Worker" and "no reachable path
+      // names one" collapsed into a single authoritative answer. That is the
+      // one-spelling-for-two-answers defect this file has now produced three
+      // times (#1995 r8's `filterScopes` is the same shape), so the loop is
+      // written to the same rule as its neighbour rather than to a new one.
+      if (hit) return { scope: hit };
+      answered = true;
     }
   }
+  // Every reachable base that could answer said the same thing: not a protected
+  // Worker. That IS authoritative — wrangler has told us the identity — and it
+  // is the half of this read that lets a config under a protected directory
+  // name a different Worker and pass.
+  if (answered) return { scope: null };
 
   for (const b of bases) {
     const hit = scopeOfCwd(target === null ? b : resolveDir(b, target));
