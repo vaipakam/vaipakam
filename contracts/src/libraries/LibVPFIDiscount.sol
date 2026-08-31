@@ -1218,9 +1218,13 @@ library LibVPFIDiscount {
      *
      * @param loan           Live loan storage slot the yield fee is
      *                       settling against. Provides the principal
-     *                       asset, lender address, and the per-loan
+     *                       asset, the lender address and the loan id
+     *                       (which keys the Full-tariff stamp). It
+     *                       supplies NO discount input: the "per-loan
      *                       snapshot that anchors the time-weighted
-     *                       window.
+     *                       window" this line described until #1981 r4
+     *                       is `lenderDiscountAccAtInit`, which nothing
+     *                       writes and nothing reads.
      * @param interestAmount Pre-split interest, in the wei of the asset the fee
      *                       is DENOMINATED in — `loan.principalAsset` for ERC-20
      *                       loans, `loan.prepayAsset` for NFT rentals — that the
