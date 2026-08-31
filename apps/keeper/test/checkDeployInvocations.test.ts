@@ -7538,4 +7538,86 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('apps/agent');
   });
+  // ---- Codex #2036 r15 ----
+
+  it('a config the file REWRITES cannot bless the deploy either', () => {
+    // `selectorScope` has invalidated a rewritten config for the IDENTITY read
+    // since r13. This is the PRESERVATION read — the same file, a different
+    // field — and it still opened the checkout's copy, so a checked-in
+    // `keep_vars: true` rewritten to `false` immediately before the call
+    // blessed a destructive deploy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      'writeFileSync("configs/custom.jsonc", JSON.stringify({keep_vars: false}));\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('an UNREWRITTEN config still blesses it — the control', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    expect(
+      runWith(
+        'apps/agent/deploy.mjs',
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it("an ENVIRONMENT's own name pulls the deploy into scope", () => {
+    // The environment predicate read only inline objects, so an externally
+    // built child environment was missed and the top-level name was trusted.
+    // Detecting it is not enough on its own: the deploy then fell through to
+    // the directory, which for a helper outside both packages is nothing. The
+    // environment's declared name is what answers.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'const childEnv = {...process.env, CLOUDFLARE_ENV: "staging"};\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], {env: childEnv});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('the same config with NO environment selected stays out of scope', () => {
+    // The control for the one-directional rule: without an environment the
+    // top-level name is authoritative, and it names an unprotected Worker.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.mjs',
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('an environment naming NOTHING protected does not pull it in', () => {
+    // The other control: reading environments must not become a way to report
+    // every environment-selecting deploy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-www-staging"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.mjs',
+        'const childEnv = {...process.env, CLOUDFLARE_ENV: "staging"};\n' +
+          'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], {env: childEnv});\n',
+      ).ok,
+    ).toBe(true);
+  });
 });
