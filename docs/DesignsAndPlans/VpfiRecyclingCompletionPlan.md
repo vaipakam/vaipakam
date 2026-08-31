@@ -1054,11 +1054,14 @@ the spend from the buyer's vault, re-stamps their discount accumulator,
 and credits the bucket under the appended `SpendGatedPerk` source, on the
 same pull → rollup → credit ordering the notification tariff uses.
 
-What is deliberately NOT built is any perk's EFFECT. The design's three
-open decisions — perk prices, referral credit sizing, and whether the
-listing-visibility boost ships at all — are the owner's, so the facet
-sells ENTITLEMENTS and a consumer reads them when that perk's own
-behaviour is decided. Price zero (the deploy default) means a perk is not
+What is deliberately NOT built is any perk's EFFECT. **One of the three
+open decisions is now settled: the listing-visibility boost does NOT ship
+(owner, 2026-08-31) — the neutral-book ethos wins.** A perk may change
+what its buyer gets, never what other participants see; position in a
+shared view is not purchasable. That leaves **priority solver routing**
+as the spend-gated perk, and the remaining decisions (prices, referral
+sizing) are pricing rather than shape. The facet sells ENTITLEMENTS and a
+consumer reads them when that perk's own behaviour is built. Price zero (the deploy default) means a perk is not
 for sale, so the channel ships dark and each perk is armed individually:
 those decisions became configuration rather than code, and nothing here
 presumes them.
