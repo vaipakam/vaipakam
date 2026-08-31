@@ -32,6 +32,7 @@ import { copy } from '../content/copy';
 import {
   disconnectEvery,
   eraseConnectorStorageQuietly,
+  eraseIndexedDbData,
   erasedItemCount,
   eraseMyDataFully,
   inspectErasableData,
@@ -354,7 +355,18 @@ export function DataRights() {
               // nothing left to notice. Two different triggers are needed and
               // both are now present: this one for a straggler, the library's
               // `settledLate` for the whole-teardown timeout.
-              onStragglerSettled: eraseConnectorStorageQuietly,
+              // BOTH stores (round 9 P2). Round 8 taught the PEER cleanup to
+              // re-clear the databases and left the originating page's
+              // straggler cleanup on Web Storage alone — but a WalletConnect
+              // disconnect that outruns the per-connector bound persists its
+              // session and keychain back into IndexedDB after
+              // `eraseIndexedDbData()` has already run, and a Web-Storage-only
+              // cleanup cannot see that. The same fix, in the place it was
+              // not applied.
+              onStragglerSettled: () => {
+                eraseConnectorStorageQuietly();
+                void eraseIndexedDbData();
+              },
               // Re-read at call time, for the reconnect case above.
               connectorsAtRunTime: () =>
                 [...config.state.connections.values()].map(

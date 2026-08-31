@@ -69,7 +69,14 @@ export function EraseSyncListener() {
   // erasing tab's final inspection runs after the broadcast, and left behind
   // silently if it runs before. The originating page gained this guard in
   // round 2; the listener is the same hazard reached from the other side.
-  const { isConnected } = useAccount();
+  //
+  // `status`, NOT `isConnected` (round 9 P1) — the same correction the
+  // originating page took in round 8, which I applied there and not here.
+  // wagmi reports `isConnected` as false while a persisted session is still
+  // restoring, so a peer tab reconnecting when the broadcast arrived skipped
+  // its teardown AND every cleanup after it, and the reconnect then completed
+  // after the originating tab's sweeps and repopulated both stores.
+  const { status } = useAccount();
   // Round 4 P2 — the live preferences. `ThemeProvider` and `ModeProvider`
   // read storage once at mount and never subscribe to it, so a peer tab went
   // on displaying an erased non-default theme or mode indefinitely: the
@@ -91,10 +98,10 @@ export function EraseSyncListener() {
   // at handler time instead, which is also FRESHER than a captured dependency:
   // what matters is the set connected when the broadcast arrives.
   const connectorsRef = useRef(liveConnectors);
-  const connectedRef = useRef(isConnected);
+  const connectedRef = useRef(status !== 'disconnected');
   useEffect(() => {
     connectorsRef.current = liveConnectors;
-    connectedRef.current = isConnected;
+    connectedRef.current = status !== 'disconnected';
   });
   useEffect(
     () =>
