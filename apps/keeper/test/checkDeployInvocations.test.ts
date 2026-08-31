@@ -8084,4 +8084,95 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
+  // ---- Codex #2036 r20 ----
+
+  it('a READ of the config is not a rewrite', () => {
+    // A helper that reads the config it is about to deploy is ordinary
+    // inspection; counting it as a rewrite refused the checked-in identity.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nopen("side.jsonc", "r")\nwrangler deploy --config side.jsonc\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('...but a WRITE-mode open still is', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nopen("side.jsonc", "w")\nwrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a LATER deploy does not invalidate an earlier one', () => {
+    // The rewrite is compared against the deploy being judged, not against any
+    // later selection of the same config. The first deploy runs before the
+    // rewrite and the checked-in preservation is what it gets.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nwrangler deploy --config side.jsonc\necho "{}" > side.jsonc\n' +
+          'wrangler deploy --config side.jsonc --keep-vars\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('--env is decoded as a shell word', () => {
+    // `--env stag"ing"` is `staging` to the shell; keeping the quotes looked up
+    // an environment that does not exist and left the top-level name trusted.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.sh',
+      'wrangler deploy --config configs/custom.jsonc --env stag"ing"\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a SHELL-STRING child call reaches the inversion too', () => {
+    // The r18 fix classified only argv-array calls as executable, so a command
+    // passed as one shell string went on deferring like prose.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'deploy.mjs',
+      'execSync("wrangler deploy --config configs/generated.jsonc");\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
+
+  it('an ESCAPED quoted TOML key is still the name key', () => {
+    // TOML decodes the key before wrangler sees it; comparing source text
+    // declined to read the config at all and sent an unprotected deploy to the
+    // inversion.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.toml', '"na\\u006de" = "vaipakam-www"\n');
+    expect(
+      runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok,
+    ).toBe(true);
+  });
+
+  it('...but a different quoted key is not', () => {
+    // The control for admitting any quoted key into the pattern: only one that
+    // decodes to `name` may answer.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['"note" = "vaipakam-www"', 'name = "vaipakam-agent"', ''].join('\n'),
+    );
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
 });
