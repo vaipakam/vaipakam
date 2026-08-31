@@ -34,9 +34,11 @@ import {
   erasedItemCount,
   eraseMyDataFully,
   inspectErasableData,
+  inspectIndexedDbData,
   inspectMyData,
   isAppStorageKey,
   type FullEraseResult,
+  type IndexedDbInventory,
 } from '../lib/dataRights';
 import { useTheme } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
@@ -128,7 +130,10 @@ export function DataRights() {
   // below are no longer gated on the render-time count at all: this
   // subscription keeps the FIGURES fresh across tabs, and the
   // handlers' own fresh reads keep the CONTROLS truthful everywhere.
-  const [, setStorageTick] = useState(0);
+  // The tick VALUE is read (round 4 P2): the asynchronous database inventory
+  // below re-runs off it, so the two halves of the pre-confirm figure refresh
+  // on one signal rather than drifting apart.
+  const [storageTick, setStorageTick] = useState(0);
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
       // `key === null` is a whole-store clear — always relevant.
@@ -175,13 +180,38 @@ export function DataRights() {
   // those records erased on confirm. The payload below still comes from the
   // export snapshot — it is what the download would contain.
   const erasable = inspectErasableData();
-  const stored = erasable.count;
+  // Round 4 P2 — the databases count too, and they can only be read
+  // asynchronously. Without this the pre-confirm figure covered a strictly
+  // narrower set than the erasure it introduces: a browser holding a wallet
+  // session and one app key was offered "1 item" and then erased four, and one
+  // whose Web Storage was already empty was told nothing was stored right
+  // before the session was removed. That is round 2's "the page contradicts
+  // itself across a single click" with the session in the gap.
+  //
+  // Re-read on the same tick the synchronous figure changes, so the two halves
+  // of one sentence describe one moment. `refused` folds in: a store that will
+  // not answer means the figure is a floor, and this page has a "could not
+  // look" state precisely so a floor is never shown as a total.
+  const [dbInventory, setDbInventory] = useState<IndexedDbInventory>({
+    records: 0,
+    refused: false,
+  });
+  useEffect(() => {
+    let live = true;
+    void inspectIndexedDbData().then((inventory) => {
+      if (live) setDbInventory(inventory);
+    });
+    return () => {
+      live = false;
+    };
+  }, [storageTick, result]);
+  const stored = erasable.count + dbInventory.records;
   // Review round 1 P1: "could not read" is not "nothing is here". With
   // them collapsed, a browser refusing to be read told the user their
   // storage was empty — the refusal message below unreachable in the
   // one case it was written for. (The buttons that gating disabled
   // then are un-gated entirely as of round 8.)
-  const refused = snapshot.refused || erasable.refused;
+  const refused = snapshot.refused || erasable.refused || dbInventory.refused;
   // What this render is showing, recorded for the poll above to
   // compare against — an every-render effect rather than a render-time
   // ref write, which the refs rule forbids.
@@ -340,8 +370,18 @@ export function DataRights() {
                 wallet that refused — and a single-branch ladder showed only
                 the first, hiding the one whose remedy is different. */}
             {result.remaining > 0
-              ? result.total > 0
-                ? copy.dataRights.erasePartial(result.total, result.remaining)
+              ? // Round 4 P2 — `erasedItemCount`, not `total`, here too. Both
+                // SUCCESS branches took the wider figure in round 3 and this
+                // PARTIAL one was left on the synchronous count, so a mixed
+                // outcome — some Web Storage removed, some left, database
+                // records cleared — omitted every record from the number it
+                // reported. The figure has to mean the same thing in all
+                // three sentences or it means nothing in any of them.
+                erasedItemCount(result) > 0
+                ? copy.dataRights.erasePartial(
+                    erasedItemCount(result),
+                    result.remaining,
+                  )
                 : copy.dataRights.eraseBlocked
               : result.refusedAfter
                 ? // Review round 2 P1: a store that REFUSED to be read

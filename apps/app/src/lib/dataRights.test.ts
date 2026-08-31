@@ -30,6 +30,7 @@ import {
   DISCONNECT_TIMEOUT_MS,
   erasedItemCount,
   isDisconnectSentinelKey,
+  inspectIndexedDbData,
   disconnectEvery,
   type FullEraseResult,
 } from './dataRights';
@@ -1168,5 +1169,187 @@ describe('the connectors are configured so a disconnect survives a reload', () =
     // nothing writes any more, which is a silent regression rather than a
     // visible one.
     expect(wagmiSource()).not.toContain('shimDisconnect: false');
+  });
+});
+
+describe('round 4 — the pre-confirm figure and the late teardown', () => {
+  const realIdb = (globalThis as Record<string, unknown>).indexedDB;
+  const realWindow = (globalThis as Record<string, unknown>).window;
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).indexedDB = realIdb;
+    (globalThis as Record<string, unknown>).window = realWindow;
+  });
+
+  function fakeWindow(store: Map<string, string>) {
+    const fake: Storage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: fake,
+      sessionStorage: fake,
+      location: { origin: 'https://app.example' },
+      navigator: { userAgent: 'test' },
+      dispatchEvent: () => true,
+    };
+  }
+
+  /** An `indexedDB` whose per-database shape the test chooses. */
+  function stubIdb(
+    shape: (name: string) => 'missing' | { stores: string[]; count?: number },
+  ): { modes: string[]; deleted: string[] } {
+    const modes: string[] = [];
+    const deleted: string[] = [];
+    (globalThis as Record<string, unknown>).indexedDB = {
+      deleteDatabase(name: string) {
+        deleted.push(name);
+        return {};
+      },
+      open(name: string) {
+        const req: Record<string, unknown> = {};
+        queueMicrotask(() => {
+          const s = shape(name);
+          if (s === 'missing') {
+            (req.onupgradeneeded as (() => void) | undefined)?.();
+          }
+          const stores = s === 'missing' ? [] : s.stores;
+          req.result = {
+            objectStoreNames: { contains: (n: string) => stores.includes(n) },
+            close: () => {},
+            transaction: (_store: string, mode: string) => {
+              modes.push(mode);
+              const tx: Record<string, unknown> = {
+                objectStore: () => ({
+                  count: () => ({
+                    result: s === 'missing' ? 0 : (s.count ?? 2),
+                  }),
+                  clear: () => {},
+                }),
+                abort: () => {},
+              };
+              queueMicrotask(
+                () => (tx.oncomplete as (() => void) | undefined)?.(),
+              );
+              return tx;
+            },
+          };
+          (req.onsuccess as (() => void) | undefined)?.();
+        });
+        return req;
+      },
+    };
+    return { modes, deleted };
+  }
+
+  it('counts the database records WITHOUT modifying them', async () => {
+    // Round 4 P2. The pre-confirm figure came from the synchronous sweep
+    // only, so a browser holding a wallet session and one app key was offered
+    // "1 item" and then erased four — round 2's "the page contradicts itself
+    // across a single click", with the session in the gap.
+    const spy = stubIdb(() => ({
+      stores: ['keyvaluestorage', 'keys'],
+      count: 3,
+    }));
+    const inventory = await inspectIndexedDbData();
+    expect(inventory).toEqual({ records: 6, refused: false });
+    // READONLY — an inventory that writes is not one.
+    expect(spy.modes).toEqual(['readonly', 'readonly']);
+  });
+
+  it('does not invent the databases it is counting', async () => {
+    // Same hazard as the erasure's: `open` with no version CREATES. An
+    // inventory that left empty databases behind would be reporting on
+    // something it had just made.
+    const spy = stubIdb(() => 'missing');
+    const inventory = await inspectIndexedDbData();
+    expect(inventory).toEqual({ records: 0, refused: false });
+    expect(spy.deleted).toEqual(['WALLET_CONNECT_V2_INDEXED_DB', 'cbwsdk']);
+  });
+
+  it('reports a browser with no IndexedDB as unreadable, not as empty', async () => {
+    delete (globalThis as Record<string, unknown>).indexedDB;
+    expect(await inspectIndexedDbData()).toEqual({ records: 0, refused: true });
+  });
+
+  it('reports a store that will not answer as unreadable', async () => {
+    vi.useFakeTimers();
+    try {
+      (globalThis as Record<string, unknown>).indexedDB = {
+        open: () => ({}),
+        deleteDatabase: () => ({}),
+      };
+      const pending = inspectIndexedDbData();
+      await vi.advanceTimersByTimeAsync(INDEXED_DB_TIMEOUT_MS + 1);
+      expect(await pending).toEqual({ records: 0, refused: true });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-sweeps when a given-up-on teardown completes and writes anyway', async () => {
+    // Round 4 P2. `withTimeout` abandons the WAIT, not the WORK: the wagmi
+    // action keeps running and, on completion, rewrites `wagmi.store` through
+    // zustand's `persist` — into storage this erasure swept seconds earlier.
+    // The device would be left holding a key the page reported removed.
+    vi.useFakeTimers();
+    try {
+      const store = new Map<string, string>([['app.mode', 'basic']]);
+      fakeWindow(store);
+      stubIdb(() => ({ stores: ['keyvaluestorage', 'keys'] }));
+      let finishTeardown: (() => void) | undefined;
+      const pending = eraseMyDataFully({
+        disconnect: () =>
+          new Promise<void>((resolve) => {
+            finishTeardown = () => {
+              // The late write, exactly as wagmi makes it.
+              store.set('wagmi.store', '{}');
+              resolve();
+            };
+          }),
+      });
+      await vi.advanceTimersByTimeAsync(DISCONNECT_TIMEOUT_MS + 1);
+      const result = await pending;
+      expect(result.connector).toEqual({
+        attempted: true,
+        disconnected: false,
+      });
+      expect(result.complete).toBe(false);
+      // Now the teardown finally lands, after the result was frozen.
+      finishTeardown?.();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(store.has('wagmi.store')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a teardown that finishes in time needs no late sweep — and why that is not pinned', async () => {
+    // HONEST NOTE, because the obvious assertion here does not bind and a
+    // test that cannot fail is worse than no test. The `settledLate` guard
+    // on the late re-sweep is an EFFICIENCY guard, not a correctness one:
+    // removing it survives mutation, and it should. The continuation runs
+    // when the teardown resolves, which on the in-time path is BEFORE
+    // `eraseMyData` — so an unconditional sweep there would be a redundant
+    // pass immediately followed by the real one, invisible from outside.
+    // What IS worth pinning is the ordinary path's outcome, so that is what
+    // this asserts; the claim "no second sweep happened" is deliberately not
+    // made, because nothing here could tell.
+    const store = new Map<string, string>();
+    fakeWindow(store);
+    stubIdb(() => ({ stores: ['keyvaluestorage', 'keys'] }));
+    const result = await eraseMyDataFully({
+      disconnect: async () => {
+        store.set('wagmi.store', '{}');
+      },
+    });
+    expect(result.connector).toEqual({ attempted: true, disconnected: true });
+    expect(store.has('wagmi.store')).toBe(false);
+    expect(result.complete).toBe(true);
   });
 });

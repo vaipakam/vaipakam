@@ -757,6 +757,17 @@ Thin-market honesty rules apply.
   of sentence**: a report that decides to claim a success on the wider set and
   then states a figure drawn from the narrower one understates what was
   removed, and reads as a contradiction where the narrower set was empty.
+  It binds on the PARTIAL report as well as the successful one: a mixed
+  outcome states a number too, and a figure that means one thing in two
+  sentences and something else in a third means nothing in any of them.
+- **What is offered BEFORE the confirmation must cover what the confirmation
+  will erase.** The figure shown while asking is a promise about the button
+  next to it, so it spans every store the erasure reaches, including the
+  wallet's own. Where a store cannot be read in time to say, the page reports
+  that it could not look rather than presenting a floor as a total — the same
+  distinction it already draws elsewhere between "nothing is here" and "could
+  not tell". Reading it must not modify anything, and must not bring into
+  existence a store it is reporting on.
 - **Completeness is not "something was removed".** A browser holding nothing
   erases nothing and is complete; a browser that gave up its storage but held
   its session records or a connection is incomplete. The report keys on the
@@ -778,7 +789,29 @@ Thin-market honesty rules apply.
 - **A tab with nothing to disconnect must not be asked to disconnect.** The
   cross-tab request is best effort, but it is not free: acting on it writes,
   and a tab that was already signed out would write into storage the erasing
-  tab had just cleared. Only tabs holding a connection act on it.
+  tab had just cleared. Only tabs holding a connection act on it, and a tab
+  that does act ends **every** connection it holds, for the same reason the
+  originating tab does.
+- **A tab told about another tab's erasure must bring ITSELF into line, not
+  only its storage.** Everything the erasure promises that is held per
+  browsing context has to be reset there too — the connection, and equally
+  the preferences the user can see. A second tab still displaying a theme or
+  a language that was erased is showing the user data they were told was
+  gone; that the value is now only in memory is a distinction the promise
+  does not make.
+- **Nothing a peer tab does in response may write.** Its resets run after the
+  originating tab's sweep, so any write lands in storage that was just
+  cleared and stays there — a peer tab restoring the keys the erasure
+  removed. Where the natural way to reset something persists, the peer tab
+  removes what it wrote.
+- **A request abandoned for taking too long must not be left free to act
+  later.** Giving up on a wallet teardown bounds the wait, not the work: the
+  wallet may still complete afterwards and write its state back into storage
+  the erasure had already cleared, leaving the device holding what the user
+  was told was removed. What arrives late must be cleared up after. The
+  REPORT is not revised — it is fixed at the moment it was made, and it
+  already says the wallet held out — so this is about the device, not the
+  claim.
 - **Bounding a wait must not leave work running.** Where the app gives up on a
   storage operation that has not answered in time, it must also stop that
   operation and release its hold on the storage. A wait that only stops

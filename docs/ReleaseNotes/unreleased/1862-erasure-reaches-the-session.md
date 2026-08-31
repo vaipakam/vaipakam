@@ -55,11 +55,31 @@ wait: an abandoned operation left running is what a second attempt queues
 behind, and the hold it keeps on the storage is exactly what blocks the
 browser's own delete-site-data — the remedy the failure message sends you to.
 
+Giving up also no longer leaves a wallet free to act afterwards. A wallet asked
+to disconnect can take longer than the page is willing to wait and then finish
+anyway, minutes later, writing its state back into storage that had been
+cleared in between — so the device ends up holding exactly what the user was
+told had been removed. Anything that arrives late is now cleared up after it.
+What is *reported* does not change: that report was fixed at the moment it was
+made, it already says the wallet held out, and a message that quietly rewrites
+itself later would be its own kind of untruth.
+
 **And the number it reports counts everything it removed.** The page had
 learned to stop saying "nothing was stored" after clearing a wallet session,
 but the sentence it switched to still counted only the ordinary storage — so
 the same erasure went on to announce that it had erased nothing. The figure now
-spans the same ground the sentence claims.
+spans the same ground the sentence claims, in the partial report as well as the
+successful one.
+
+**The count offered before you press the button covers what pressing it will
+remove.** It did not: it described the ordinary storage while the button
+erased the wallet session too. So someone holding a session and one saved
+preference was shown "1 item" and then told four were erased, and someone whose
+ordinary storage happened to be empty was told nothing was stored at all,
+moments before their wallet session was removed. A figure shown next to a
+button is a promise about that button. Reading the wallet's own storage to
+answer takes a moment, and where it cannot be read the page says it could not
+look rather than presenting an incomplete total as a complete one.
 
 **Every wallet, not the one in use.** Asking to be disconnected turned out to
 disconnect a single wallet — the current one — and then quietly promote the
@@ -88,6 +108,17 @@ one, it cannot report back — so the page confirms only the tab you are looking
 at, and says the others were asked. A tab that was *already* signed out is now
 left alone: acting on the request writes, and a tab with nothing to disconnect
 was writing back into storage the erasing tab had just cleared.
+
+**And a second tab now catches up with itself, not just with its storage.** It
+was clearing its data and letting go of its wallet while carrying on showing
+the theme, the display mode and the language the erasure had just removed —
+data the user had been told was gone, still on screen. The values only lived in
+memory by then, which is not a distinction the promise makes. Everything a
+second tab can reset, it now resets. All of it without writing: those resets
+happen after the first tab has already cleared the shared storage, so anything
+written lands in a store that was just emptied and simply stays there. Where the
+ordinary way to change something saves it, the second tab removes what it
+saved.
 
 Each of those messages replaces a success that would have been true of the
 storage and false of the session. Reporting "erased" over a live connection is

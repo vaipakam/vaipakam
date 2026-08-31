@@ -877,6 +877,145 @@ function clearObjectStore(
   });
 }
 
+/** What the registered databases are holding, without touching them. */
+export interface IndexedDbInventory {
+  /** Records across every registered store. */
+  readonly records: number;
+  /** True when any store could not be read, or the API is absent. */
+  readonly refused: boolean;
+}
+
+/**
+ * Count one object store without modifying it.
+ *
+ * The read-only twin of `clearObjectStore`, and it keeps every one of that
+ * function's hard-won properties: it does not create a database that is
+ * missing (`open` with no version would, so an inventory would invent the
+ * thing it claims to be counting), it treats absent as zero rather than as a
+ * failure, and it bounds the wait and tears the transaction down on the way
+ * out.
+ */
+function countObjectStore(
+  database: string,
+  store: string,
+): Promise<{ ok: boolean; records: number }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok: boolean, records = 0) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok, records });
+    };
+    let request: IDBOpenDBRequest;
+    try {
+      request = indexedDB.open(database);
+    } catch {
+      finish(false);
+      return;
+    }
+    let openDb: IDBDatabase | undefined;
+    let openTx: IDBTransaction | undefined;
+    const timer = setTimeout(() => {
+      try {
+        openTx?.abort();
+      } catch {
+        /* already ending */
+      }
+      try {
+        openDb?.close();
+      } catch {
+        /* best effort */
+      }
+      finish(false);
+    }, INDEXED_DB_TIMEOUT_MS);
+    const done = (ok: boolean, records = 0) => {
+      clearTimeout(timer);
+      finish(ok, records);
+    };
+    let created = false;
+    request.onupgradeneeded = () => {
+      created = true;
+    };
+    request.onerror = () => done(false);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (settled) {
+        try {
+          db.close();
+        } catch {
+          /* best effort */
+        }
+        return;
+      }
+      openDb = db;
+      if (created) {
+        db.close();
+        try {
+          indexedDB.deleteDatabase(database);
+        } catch {
+          /* an empty database we made is harmless */
+        }
+        done(true);
+        return;
+      }
+      if (!db.objectStoreNames.contains(store)) {
+        db.close();
+        done(true);
+        return;
+      }
+      try {
+        const tx = db.transaction(store, 'readonly');
+        openTx = tx;
+        const counted = tx.objectStore(store).count();
+        tx.oncomplete = () => {
+          db.close();
+          done(true, typeof counted.result === 'number' ? counted.result : 0);
+        };
+        tx.onerror = () => {
+          db.close();
+          done(false);
+        };
+        tx.onabort = () => {
+          db.close();
+          done(false);
+        };
+      } catch {
+        db.close();
+        done(false);
+      }
+    };
+  });
+}
+
+/**
+ * What the registered databases hold right now.
+ *
+ * Round 4 P2, and it is the round-2 defect one layer along. That round moved
+ * the pre-confirm figure off the EXPORT inventory and onto the erasure one,
+ * because a browser holding only connector keys was told nothing was stored
+ * and then had those keys erased on confirm — the page contradicting itself
+ * across a single click. Part 2 then added two databases to what the erasure
+ * removes and left the pre-confirm figure synchronous, so the same
+ * contradiction came back with the wallet SESSION in the gap: "Nothing is
+ * stored", confirm, "erased 3 items".
+ *
+ * A browser that hides IndexedDB, or a store that will not answer, reports
+ * `refused` — the page already has a "could not look" state, and it is the
+ * honest one here for the same reason it is honest elsewhere: not knowing is
+ * not nothing.
+ */
+export async function inspectIndexedDbData(): Promise<IndexedDbInventory> {
+  if (typeof indexedDB === 'undefined') return { records: 0, refused: true };
+  const targets = ERASABLE_INDEXED_DB_STORES;
+  const outcomes = await Promise.all(
+    targets.map((t) => countObjectStore(t.database, t.store)),
+  );
+  return {
+    records: outcomes.reduce((n, o) => n + o.records, 0),
+    refused: outcomes.some((o) => !o.ok),
+  };
+}
+
 /**
  * Empty every store in the registry.
  *
@@ -915,6 +1054,26 @@ export function erasePerTabData(): number {
   const removed = clearStorage(safeStorage('sessionStorage'));
   clearLastError();
   return removed;
+}
+
+/**
+ * Re-sweep Web Storage, announcing nothing and reporting nothing.
+ *
+ * For the one caller that needs to clean up after a write which arrived
+ * AFTER an erasure had already been reported (round 4 P2 — a connector
+ * teardown that was given up on and then completed anyway, rewriting
+ * `wagmi.store` into storage that had been swept seconds earlier).
+ *
+ * Quiet on both counts, and deliberately. It does not `announceErase`,
+ * because the broadcast is what drives every other tab's listener and a
+ * cleanup firing it would restart a cross-tab cascade for a single key. It
+ * returns nothing, because the figure the user was shown is frozen at the
+ * moment it happened and a report that revises itself later is its own kind
+ * of untruth. This is about what remains on the device.
+ */
+function eraseWebStorageQuietly(): void {
+  clearStorage(safeStorage('localStorage'));
+  clearStorage(safeStorage('sessionStorage'));
 }
 
 export function eraseMyData(): EraseResult {
@@ -1149,6 +1308,18 @@ export async function eraseMyDataFully(
     attempted: false,
     disconnected: false,
   };
+  // Set only when the teardown was given up on, so a teardown that finishes
+  // in time never triggers the late re-sweep below — its writes are already
+  // caught by the ordinary sweep, which is the whole point of the ordering.
+  //
+  // EFFICIENCY, NOT CORRECTNESS, and recorded as such because a mutation run
+  // says so: removing this guard survives every test, and should. On the
+  // in-time path the continuation runs when the teardown resolves, which is
+  // before `eraseMyData` — so an unconditional sweep there would be a
+  // redundant pass immediately followed by the real one, invisible from
+  // outside. The guard is worth keeping (a full Web Storage pass on every
+  // successful erasure is waste) and is not worth claiming a test for.
+  let settledLate = false;
   if (disconnect) {
     try {
       // BOUNDED (round 1 P2). Only a REJECTED promise reaches the catch; one
@@ -1159,10 +1330,38 @@ export async function eraseMyDataFully(
       // erasure still runs, which is the outcome that matters: failing to
       // close a connection must not cost the user the deletion of
       // everything else.
-      await withTimeout(disconnect(), DISCONNECT_TIMEOUT_MS);
+      const teardown = disconnect();
+      // A TIMEOUT ABANDONS THE WAIT, NOT THE WORK (round 4 P2). `withTimeout`
+      // rejects the wrapper; the wagmi action underneath keeps running, and
+      // when it finally completes it calls `config.setState`, which rewrites
+      // `wagmi.store` through zustand's `persist` — into storage this erasure
+      // swept several seconds earlier. The device would then be left holding a
+      // connector key the page had reported removed.
+      //
+      // So a late teardown re-sweeps. Web Storage only: that is where the late
+      // write lands, and it is synchronous, so the re-sweep cannot itself
+      // straddle anything. The ON-SCREEN result is deliberately NOT revised —
+      // it is frozen at the moment it happened by an older decision, and a
+      // report that rewrites itself minutes later is its own untruth. The
+      // report already says the wallet held out and the erasure is incomplete,
+      // which remains true; this is about what is left on the device, not
+      // about what the page claims.
+      teardown.then(
+        () => {
+          if (settledLate) eraseWebStorageQuietly();
+        },
+        () => {
+          // A teardown that eventually FAILS wrote nothing on the way out, so
+          // there is nothing to sweep. Swallowed rather than left unhandled:
+          // this promise is no longer awaited, and an unhandled rejection from
+          // a data-rights control must not surface as a page error.
+        },
+      );
+      await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
       connector = { attempted: true, disconnected: true };
     } catch {
       connector = { attempted: true, disconnected: false };
+      settledLate = true;
     }
   }
   const base = eraseMyData();
