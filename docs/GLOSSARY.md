@@ -22,11 +22,18 @@ consumer; `vaipakam-keeper-bot/src/abis/` for the public reference
 bot). Done after any selector-changing contract edit. See
 `CLAUDE.md` § "Keeper-bot ABI sync" and § "Frontend ABI sync".
 
-**Accumulator (time-weighted)** — a per-user running sum of
-`(BPS × seconds elapsed since last touch)`. Re-stamped on every
-balance mutation at the **post-mutation** balance. Used to compute
-the average VPFI tier a user held over a loan's lifetime — see
-`LibVPFIDiscount.rollupUserDiscount` and ADR-0003.
+**Accumulator (time-weighted)** — the per-user VPFI holding history
+`LibVPFIDiscount.rollupUserDiscount` maintains, re-stamped on every
+balance mutation at the **post-mutation** balance. It records each
+day's closing and lowest balance, which is what a user's effective
+tier is derived from: a minimum staked duration, a time-weighted
+average over a trailing 30-day window, and a clamp to the lowest tier
+reached in that history. It also keeps a monotone
+`(BPS × seconds)` running sum, which since T-087 Sub 1.B is an
+observability surface only — no fee path reads it. It used to compute
+the average tier held over a loan's own lifetime; that averaging was
+removed (#1981). ADR-0003 records the original design and carries a
+superseded-by note.
 
 **Advisory (Codex finding)** — a `P3` finding. Not a merge-blocker;
 maintainer applies fix or rationale + closes the thread.

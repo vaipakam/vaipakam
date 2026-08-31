@@ -256,10 +256,15 @@ protocol fees on loans you participate in on that chain:
 | `{liveValue:tier3Min}` – `{liveValue:tier4Min}`             | `{liveValue:tier3DiscountBps}`% |
 | Above `{liveValue:tier4Min}`                                | `{liveValue:tier4DiscountBps}`% |
 
-Discounts apply to both lender and borrower fees. The discount is
-**time-weighted across the loan's life**, so topping up just before
-a loan ends doesn't game the calculation — you earn the discount in
-proportion to how long you actually held the tier.
+Discounts apply to both lender and borrower fees. Your tier is a
+**time-weighted average of what you have held over the last 30
+days**, and it is then **held down to the lowest tier you dropped to
+at any point in that history** — a dip counts even if you top up
+again the same day. No discount is earned at all until you have held
+your current balance for a minimum number of days, set by the
+protocol. So topping up just before a loan ends doesn't game the
+calculation: the minimum holding period rejects it outright, and the
+lowest-tier rule keeps your rate at what you actually sustained.
 
 ### 2. Platform interaction rewards
 

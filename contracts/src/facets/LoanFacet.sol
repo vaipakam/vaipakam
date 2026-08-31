@@ -987,7 +987,7 @@ contract LoanFacet is DiamondPausable, DiamondAccessControl, IVaipakamErrors {
         // Codex round-7 P1 #7. The `lenderDiscountAccAtInit` slot
         // stays in place but is vestigial under the new design
         // (loan-window averaging replaced by instant EFFECTIVE_BPS
-        // lookup at fee time — see {LibVPFIDiscount.lenderTimeWeightedDiscountBps}
+        // lookup at fee time — see {LibVPFIDiscount.lenderHoldTierDiscountBps}
         // for the rewire). Left at 0; deferring removal until storage-
         // layout cleanup in a later sub-card so loupe-readable layout
         // stays byte-identical for now.

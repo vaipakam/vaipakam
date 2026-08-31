@@ -663,3 +663,68 @@ NEW authoritative read, and this one needs none for the ordinary case.
 
 Recorded so a later reader finds a known, bounded, safe-direction gap rather
 than concluding the card's rule is simply the lock.
+
+## VPFI fee discounts: the spec was right and everything downstream of it was wrong (#1981)
+
+**Resolved 2026-08-31 by owner intent-decision: the code's behaviour is the
+intended behaviour. The documentation was corrected.**
+
+T-087 Sub 1.B removed the per-loan averaging from both VPFI fee discounts.
+Fee application resolves the party's effective tier at the moment the fee is
+charged; the per-loan anchors (`lenderDiscountAccAtInit`,
+`borrowerDiscountAccAtInit`) are still written and never read. The
+documentation set did not follow, and went on asserting a loan-lifetime
+average in `CLAUDE.md`, the whitepaper, `docs/GLOSSARY.md`, and the user
+guides in several languages.
+
+**What makes this entry worth keeping is which document did NOT drift.**
+`TokenomicsTechSpec.md` §"Lender rules" was correct the whole time, and
+specifically so: it requires the applied discount to *"equal the user's
+current effective discount at that fee-application moment"*, states that
+*"loan-opening snapshots may remain for compatibility and analytics, but they
+must not drive the discount bps"*, and grounds the anti-gaming property in
+*"the canonical TWA, minimum-history, and minimum-tier-over-history rules"*
+rather than in a per-loan average. That is the intended-behaviour oracle
+describing the shipped behaviour exactly, while four other documents
+described a mechanism that had been deleted.
+
+So this was never a code-vs-spec divergence. It was a **spec-vs-derivative-
+docs** divergence, which the `_CodeVsDocsAudit` process is not shaped to
+catch: nothing in the loop compares the reference documents against the
+oracle, only code against the oracle. Recorded here anyway, because the most
+expensive of the stale copies was `CLAUDE.md` — the top of the doc-precedence
+chain — which instructed contributors to preserve an invariant
+(*"`borrowerDiscountAccAtInit` … don't bypass"*) that the code had stopped
+honouring.
+
+**Two things nearly turned this into a wrong fix.**
+
+First, the issue as filed said *"the code applies a point-in-time tier
+lookup"*. It does not. `effectiveTierAndBps` gates on a minimum staked
+duration, takes a time-weighted average over a 30-day ring buffer, and then
+clamps to the lowest tier held over that history — using each day's *minimum*
+balance, so a same-day dip counts. Had the correction been made from the
+issue's own summary, the docs would have been rewritten to say something
+false in the opposite direction, and the user-facing anti-gaming promise
+would have been withdrawn when it is in fact true. It holds more firmly under
+the real rule than under the old one: an average can be pulled up by a late
+top-up, a minimum cannot.
+
+Second, most occurrences of "time-weighted" in the tree are **correct** — the
+tier genuinely is time-weighted. Only the phrase's attachment to a *loan's
+own window* was false. A find-and-replace over the phrase would have broken
+more than it fixed.
+
+**Naming was the proximate cause, and is fixed.**
+`lenderTimeWeightedDiscountBps` / `borrowerTimeWeightedDiscountBps` performed
+no time-weighting and had not since T-087 Sub 1.B; they are now
+`lenderHoldTierDiscountBps` / `borrowerHoldTierDiscountBps`. A name that
+asserts a property the body does not have is a documentation defect that
+outlives every comment written around it — a reader checking the signature
+instead of the body would have concluded the stale docs were right.
+
+`docs/adr/0003-vpfi-time-weighted-discount.md` records the superseded design
+and now carries a supersession note rather than an edit: an ADR is a record
+of a decision as it was taken, and rewriting its body would falsify it. The
+same reasoning left `docs/ReleaseNotes/`, `docs/OlderDocs/` and
+`docs/FindingsAndFixes/` untouched.

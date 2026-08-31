@@ -93,12 +93,20 @@ Tier ladder:
 
 Tier is computed against your **post-change** vault balance the
 moment you deposit or withdraw VPFI. **For the lender yield fee**
-it is then time-weighted across each loan's lifetime: an unstake
-re-stamps the rate at the new lower balance immediately for every
-open loan you're on, with no grace window where your old (higher)
-tier still applies. This closes the gaming pattern where a user
-could top up VPFI just before a loan ends, capture the full-tier
-discount, and withdraw seconds later.
+the rate that is actually charged is resolved at settlement from
+your tier at that moment — there is no separate average taken over
+each loan's own lifetime. Your tier itself is the guard: it is a
+time-weighted average of your daily balance over the last 30 days,
+then held down to the lowest tier you dropped to at any point in
+that history, and it is zero altogether until your current balance
+has been held for a minimum number of days set by the protocol.
+An unstake therefore bites immediately across every open loan
+you're on, with no grace window where your old (higher) tier still
+applies. This closes the gaming pattern where a user could top up
+VPFI just before a loan ends, capture the full-tier discount, and
+withdraw seconds later — and it closes it more firmly than an
+average over the loan would, since an average can be pulled up by a
+late top-up while a minimum cannot.
 
 **The borrower's initiation-fee rate is read once, when the loan
 is accepted**, so nothing you do afterwards moves it — neither a

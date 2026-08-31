@@ -689,19 +689,59 @@ reasons.
 > (yield-fee discount) is unaffected and current. See #1352, #1555.
 
 Both sides of the VPFI fee discount (lender yield-fee + borrower Loan
-Initiation Fee) are **time-weighted** across a loan's lifetime and
-**not** a point-in-time tier lookup. The lender discount reduces the
-yield-fee treasury haircut at settlement; the borrower discount is
-delivered as a VPFI **rebate** paid out alongside `claimAsBorrower`.
+Initiation Fee) are **not** a point-in-time tier lookup — but the
+time-weighting is in the **TIER**, not in a per-loan average.
+**There is no averaging over a loan's own window; T-087 Sub 1.B
+removed it** (#1981, owner decision 2026-08-31: the code is the
+intended behaviour, the docs were stale). The lender discount reduces
+the yield-fee treasury haircut at settlement; the borrower discount is
+delivered as a VPFI **rebate** paid out alongside `claimAsBorrower` on
+the grandfathered peg-custody path (see the scope banner above).
 
-**Time-weighted accumulator (`LibVPFIDiscount.rollupUserDiscount`)**:
-re-stamps the BPS at the **post-mutation** vault VPFI balance on
-every change, so an unstake takes effect immediately for every open
-loan's average. Pre-Phase-5 code stamped at pre-mutation balance,
-which let a user keep a high-tier stamp after dropping to tier 0
-until the next balance change — gaming vector. Always call rollup at
-mutation sites passing the post-mutation balance; read-only snapshots
-pass the live balance.
+**What actually resolves a discount —
+`VPFIDiscountAccumulatorFacet.effectiveTierAndBps`**, three gates, all
+of which must pass:
+
+1. **Minimum staked duration.** Zero tier until the CURRENT stake has
+   been held `cfgTwaMinStakedDaysEffective()` days. A balance that
+   returns to zero clears `currentStakeStartSec` and restarts the
+   clock.
+2. **TWA over the 30-day ring buffer** (`_computeTwa` over
+   `s.dayBalances`, recency-weighted) → `rawTier`.
+3. **Min-tier-over-history clamp** (`_computeRingBufferMinTier`, over
+   each day's `dayMin`, scanning back to the earlier of
+   `today - minDays + 1` and `currentStakeStartDayId`, floored at the
+   ring buffer's 30 days) → `effTier = min(rawTier, minOverHistory)`.
+
+This is STRICTER than the loan-window average it replaced: an average
+can be pulled up by a late spike, a minimum cannot, and `dayMin`
+captures a same-day dip that a close-of-day read would miss. So the
+anti-gaming claim the old wording made is still true — via a different
+mechanism.
+
+**`rollupUserDiscount` is NOT vestigial — its consumer moved.** The
+rollup writes `dayBalances` (`dayClose` + `dayMin`), `lastUpdateDayId`
+and `currentStakeStartSec`, which is exactly what the three gates
+above read. Keep calling it at mutation sites with the
+**post-mutation** balance (pre-Phase-5 code stamped pre-mutation,
+which let a user keep a high-tier stamp after dropping to tier 0 —
+gaming vector); read-only snapshots pass the live balance.
+
+**What IS vestigial**, and must not be relied on: the monotone
+`cumulativeDiscountBpsSeconds` total, now read only by
+`VPFIDiscountFacet`'s public getter and by no fee path; and the
+per-loan `lenderDiscountAccAtInit` / `borrowerDiscountAccAtInit`
+anchors, still populated at init but never read. An earlier version of
+this section said "don't bypass" `borrowerDiscountAccAtInit` — that
+invariant no longer exists.
+
+**Naming caveat**: `LibVPFIDiscount.lenderHoldTierDiscountBps` /
+`borrowerHoldTierDiscountBps` were called `lenderTimeWeightedDiscountBps`
+/ `borrowerTimeWeightedDiscountBps` until #1981. The old names claimed
+a per-loan averaging they had not performed since T-087 Sub 1.B, and
+are the likeliest reason this whole section went stale — a reader
+checking the name instead of the body would have concluded the docs
+were right.
 
 **Borrower LIF — Phase 5 flow**:
 
@@ -730,8 +770,14 @@ pass the live balance.
   `LibVPFIDiscount.settleBorrowerLifProper(loan)`.
 - Every default / liquidation terminal path MUST call
   `LibVPFIDiscount.forfeitBorrowerLif(loan)`.
-- Loan struct `borrowerDiscountAccAtInit` is snapshotted in
-  `LoanFacet._snapshotBorrowerDiscount` at loan-init; don't bypass.
+- ~~Loan struct `borrowerDiscountAccAtInit` is snapshotted in
+  `LoanFacet._snapshotBorrowerDiscount` at loan-init; don't bypass.~~
+  **Retired (#1981)** — the anchor is still written but no fee path
+  reads it, so this is no longer an invariant. Left struck through
+  rather than deleted because it was stated as a mainnet invariant for
+  long enough that a reader may remember it and wonder where it went.
+  Do not restore it without also restoring the loan-window averaging
+  T-087 Sub 1.B removed.
 - The diamond holds the custody VPFI until terminal; no intermediate
   transfer. A leaked `vpfiHeld` (non-zero on a Settled loan) is a bug.
 
