@@ -7557,6 +7557,23 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
+  it('a SHELL wrapper rewriting its config cannot bless it either', () => {
+    // The invalidation is threaded to both scanners, and only the prose one was
+    // exercised: the shell walk's closure names its own parameter `text`, which
+    // shadows the file's, so passing the wrong one there compiles and quietly
+    // reads no rewrites at all. A redirection is the shell's spelling of the
+    // write, and shell wrappers are the main deploy vector.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\necho \'{"keep_vars": false}\' > custom.jsonc\n' +
+        'wrangler deploy --config custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
   it('an UNREWRITTEN config still blesses it — the control', () => {
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
