@@ -383,6 +383,24 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
   });
 
+  it('drops a fragment wearing a completed shortening as a prefix', () => {
+    // Codex r11 P1. The shape test was start-anchored with nothing after it,
+    // so `0x1234…` followed by the address's remaining 36 digits matched on
+    // its first four suffix digits and the whole run was preserved: every
+    // digit present, one user-supplied ellipsis in the middle for a reader to
+    // delete. "Starts like finished work" is not "is finished work".
+    const out = redactText(cutAfter(`${CHECKSUMMED.slice(0, 6)}…${CHECKSUMMED.slice(6)}`));
+    expect(out).not.toContain(CHECKSUMMED.slice(6, 26));
+  });
+
+  it('cuts at the EARLIEST unresolved prefix, not the last one', () => {
+    // Codex r11 P1. Keeping only the last match in the window cut behind the
+    // fragment and published everything before it — `0x` + 39 digits followed
+    // by `-0x` cut at the second prefix.
+    const out = redactText(cutAfter(`${CHECKSUMMED.slice(0, 41)}-0x`));
+    expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
+  });
+
   it('KEEPS a completed shortening sitting at the very end', () => {
     // The rule must not buy safety by eating its own output. A shortened
     // address reads `0x1234…5678`, and the ellipsis is what marks it finished.

@@ -271,9 +271,17 @@ const PREFIX_RE = /0[xX]/g;
  *
  * Matching the whole shape closes it, because the surrounding digit counts are
  * not something arbitrary text supplies by accident: four hex, the ellipsis,
- * four hex. A fragment cannot satisfy it — 39 digits do not stop after four.
+ * four hex.
+ *
+ * THE TRAILING LOOKAHEAD IS LOAD-BEARING (r11 P1). Without it the pattern
+ * verifies a PREFIX of the emitted shape and stops looking, so `0x1234…`
+ * followed by the address's remaining 36 digits matched on its first four and
+ * the whole thing was preserved — every digit present, with one user-supplied
+ * ellipsis sitting in the middle for the reader to delete. "Starts like
+ * finished work" is not "is finished work"; the shortening ends after four
+ * suffix digits, and the assertion has to say so.
  */
-const SHORTENED_ADDRESS_RE = /^0[xX][a-fA-F0-9]{4}…[a-fA-F0-9]{4}/;
+const SHORTENED_ADDRESS_RE = /^0[xX][a-fA-F0-9]{4}…[a-fA-F0-9]{4}(?![a-fA-F0-9])/;
 
 /**
  * Drop an address fragment created by the 64 KB cut, and mark the truncation.
@@ -304,11 +312,16 @@ const SHORTENED_ADDRESS_RE = /^0[xX][a-fA-F0-9]{4}…[a-fA-F0-9]{4}/;
 function dropBoundaryFragment(head: string): string {
   const windowStart = Math.max(0, head.length - BOUNDARY_WINDOW);
   const tail = head.slice(windowStart);
-  PREFIX_RE.lastIndex = 0;
-  let cutAt = -1;
-  for (const m of tail.matchAll(PREFIX_RE)) cutAt = m.index;
-  if (cutAt === -1 || SHORTENED_ADDRESS_RE.test(tail.slice(cutAt))) return `${head}…`;
-  return `${head.slice(0, windowStart + cutAt)}…`;
+  // EARLIEST unresolved prefix, not the last (r11 P1). Keeping only the last
+  // match cut behind it and preserved everything before: `0x` + 39 digits
+  // followed by `-0x` cut at the second prefix and published the first
+  // fragment whole. Every prefix in the window has to clear the bar, and the
+  // cut goes to the first that does not.
+  for (const m of tail.matchAll(PREFIX_RE)) {
+    if (SHORTENED_ADDRESS_RE.test(tail.slice(m.index))) continue;
+    return `${head.slice(0, windowStart + m.index)}…`;
+  }
+  return `${head}…`;
 }
 
 /** Scrub any full address ANYWHERE in report text — crash messages,
