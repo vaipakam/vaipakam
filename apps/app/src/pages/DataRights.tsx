@@ -155,10 +155,25 @@ export function DataRights() {
   // wrong. The displayed pair is recorded after each render (an
   // every-render effect, not a render-time ref write) so the poll
   // compares against what the user is actually seeing.
+  //
+  // It records the SYNCHRONOUS half of the displayed figure, and the poll
+  // recomputes the same half — corrected by self-review after round 4, where
+  // it was `inspectMyData()` (the EXPORT inventory) compared against the
+  // displayed count. Those became different sets in round 2, when the
+  // displayed figure moved to the ERASURE inventory, so any browser holding a
+  // connector key had a permanently unequal comparison and bumped the tick
+  // every two seconds for the life of the page. Harmless while a tick meant
+  // only a re-render; adding the database inventory below hangs an IndexedDB
+  // open-and-count on the same signal, which would have turned a spurious
+  // re-render into a spurious database read every two seconds. A guard that
+  // compares two different things is not a guard.
+  //
+  // The asynchronous half is deliberately NOT in the comparison: it cannot be
+  // recomputed cheaply, and re-reading it is the very thing the tick triggers.
   const shownFigures = useRef({ count: 0, refused: false });
   useEffect(() => {
     const id = setInterval(() => {
-      const now = inspectMyData();
+      const now = inspectErasableData();
       if (
         now.count !== shownFigures.current.count ||
         now.refused !== shownFigures.current.refused
@@ -212,11 +227,25 @@ export function DataRights() {
   // one case it was written for. (The buttons that gating disabled
   // then are un-gated entirely as of round 8.)
   const refused = snapshot.refused || erasable.refused || dbInventory.refused;
-  // What this render is showing, recorded for the poll above to
-  // compare against — an every-render effect rather than a render-time
-  // ref write, which the refs rule forbids.
+  // The SYNCHRONOUS half of what this render is showing, recorded for the
+  // poll above to compare against — an every-render effect rather than a
+  // render-time ref write, which the refs rule forbids. Sync-only on both
+  // sides, so the two figures being compared are the same figure; see the
+  // poll's own note for what went wrong when they were not.
+  //
+  // STRICTLY the erasure inventory on both sides, including the refusal flag.
+  // The displayed `refused` is a union with the export snapshot's and the
+  // database inventory's, and recording that union here would reintroduce the
+  // same defect one field along: the poll recomputes only this inventory, so a
+  // union that was true for a reason the poll cannot see would never compare
+  // equal. The two read the same stores and would agree in practice — which is
+  // exactly the reasoning this PR has already been caught by twice, so the
+  // comparison is made symmetric by construction instead.
   useEffect(() => {
-    shownFigures.current = { count: stored, refused };
+    shownFigures.current = {
+      count: erasable.count,
+      refused: erasable.refused,
+    };
   });
 
   function onDownload() {
