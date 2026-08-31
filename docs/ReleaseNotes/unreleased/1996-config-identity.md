@@ -16,14 +16,30 @@ both ways: a configuration sitting inside a protected directory but naming a
 different Worker is now correctly treated as deploying that different Worker,
 whose values are not the protected ones.
 
-Every way the file can fail to answer falls back to the previous
-directory-based reasoning rather than to a complaint. That matters more than
-usual here, because this checker runs as part of type-checking and a wrong
-complaint would block every change in the repository. A path built from a
-variable, a file generated at build time and so absent from the checkout, a
-file that does not parse, a file with no literal name, and a name built from a
-template are all treated as "this file did not answer", and the older reasoning
-takes over unchanged.
+When the file cannot answer, the checker no longer guesses from the directory —
+it declines to stay silent. A deployment that selects a configuration whose
+Worker cannot be identified is reported, with its own remedy rather than a
+package's, because naming a package would be a claim about a Worker that was
+never identified. The remedy is to make the command safe for whatever it
+targets, which is always available and never wrong for any Worker: carry the
+preservation flag, or declare preservation in the selected configuration.
+
+That inversion is affordable because it was measured before it was adopted. The
+repository contains one hundred and thirty-two deployment mentions and none of
+them selects a configuration file, so the rule cannot produce a single complaint
+on the tree as it stands — which matters, because this checker runs as part of
+type-checking and a wrong complaint would block every change in the repository.
+Anyone who later adds a legitimate configuration-selecting deployment clears the
+complaint by making the command safe, not by asking for an exemption. The
+measurement is worth re-taking rather than assumed, and the reasoning is
+recorded beside the rule so a future reader can re-take it.
+
+The inversion is deliberately confined to configuration selection. Two related
+options name a directory rather than a file and reach the same
+cannot-be-identified state, but they are ordinary in wrapper scripts and were
+not part of the measurement, so widening to them is separate work with its own
+count. Prose keeps deferring to the surrounding text, which on a runbook line
+names a package the reader can act on.
 
 One limit is recorded rather than solved, and is deliberate. When a deployment
 selects an environment, Wrangler derives the deployed Worker name from that
