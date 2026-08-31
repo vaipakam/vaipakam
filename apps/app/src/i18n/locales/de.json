@@ -203,7 +203,7 @@
       "downloadButton": "Meine Daten herunterladen",
       "downloadDone": "Gespeichert",
       "eraseTitle": "Aus diesem Browser löschen",
-      "eraseBody": "Entfernt alles von diesem Gerät. Ihre Anzeigeeinstellungen kehren zu den Standardwerten zurück, und alles Halbfertige verliert seine lokale Markierung.",
+      "eraseBody": "Entfernt all das von diesem Gerät und meldet Sie ab. Ihre Anzeigeeinstellungen kehren zu den Standardwerten zurück, Angefangenes verliert seine lokale Markierung, und die Wallet-Verbindung wird geschlossen und ihre gespeicherte Sitzung gelöscht. Eine Browser-Erweiterung oder ein Safe behält einen eigenen Vermerk darüber, dass Sie diese Website erlaubt haben; den kann keine Seite für Sie entfernen — dort erneut zu verbinden ist weiterhin ein Klick.",
       "eraseButton": "Meine Daten löschen",
       "eraseConfirm": "Ja, löschen",
       "eraseCancel": "Abbrechen",
@@ -211,6 +211,7 @@
       "eraseDone": "{{count}} gespeicherte Einträge wurden gelöscht. Ihre übrigen geöffneten Tabs wurden ebenfalls aufgefordert, ihre eigenen zu löschen.",
       "eraseNothing": "In diesem Browser war nichts gespeichert, das gelöscht werden könnte.",
       "erasePartial": "{{removed}} Einträge wurden gelöscht, {{left}} konnten jedoch nicht entfernt werden. Das Löschen der Websitedaten über die Einstellungen Ihres Browsers entfernt den Rest.",
+      "erasePartlyUnverifiable": "{{count}} gespeicherte Elemente wurden gelöscht, aber dieser Browser ließ die App den gewöhnlichen Speicher danach nicht prüfen — dort kann noch etwas liegen. Das Löschen der Websitedaten in den Browsereinstellungen entfernt es.",
       "eraseBlocked": "Dieser Browser hat der App nicht erlaubt, ihren Speicher zu leeren, daher wurde nichts entfernt. Private Fenster und strenge Datenschutzeinstellungen können das bewirken — das Löschen der Websitedaten über die Einstellungen Ihres Browsers funktioniert.",
       "holdingTitle": "Was derzeit gespeichert ist",
       "holdingCount": "{{count}} Einträge",
@@ -240,7 +241,14 @@
       "diagExpired": "Die signierte Anfrage ist abgelaufen, bevor der Dienst sie angenommen hat – es wurden also keine Einträge geprüft oder gelöscht. Versuchen Sie es erneut und bestätigen Sie die Wallet-Abfrage zügig; tritt dies wiederholt auf, geht möglicherweise die Uhr dieses Geräts falsch.",
       "diagVerifyUnavailable": "Der Support-Dienst konnte die Signatur Ihrer Wallet gerade nicht überprüfen – das Netzwerk, in dem Ihr Wallet-Konto lebt, war vom Dienst aus nicht erreichbar. Das bedeutet nicht, dass die Signatur falsch war. Versuchen Sie es in Kürze erneut, oder schreiben Sie an support@vaipakam.com und wir bearbeiten eine Löschanfrage für Ihre Wallet.",
       "diagProcessedChainOnly": "Ihr Löschantrag wurde nur für die Einträge von {{network}} verarbeitet. Die Signatur einer Smart-Account-Wallet wird jeweils nur auf einem Netzwerk geprüft, daher sind auf anderen Netzwerken erfasste Einträge nicht abgedeckt — wechseln Sie auf ein anderes Netzwerk und wiederholen Sie den Antrag dort, oder schreiben Sie an support@vaipakam.com, und wir verarbeiten ihn für Ihre Wallet überall.",
-      "diagProcessedChainUnknown": "Ihr Löschantrag wurde nur für die Einträge eines einzigen Netzwerks verarbeitet — des Netzwerks, das die Signatur Ihrer Wallet geprüft hat. Die Signatur einer Smart-Account-Wallet wird jeweils nur auf einem Netzwerk geprüft, daher sind auf anderen Netzwerken erfasste Einträge nicht abgedeckt — wechseln Sie das Netzwerk und wiederholen Sie den Antrag dort, oder schreiben Sie an support@vaipakam.com, und wir verarbeiten ihn für Ihre Wallet überall."
+      "diagProcessedChainUnknown": "Ihr Löschantrag wurde nur für die Einträge eines einzigen Netzwerks verarbeitet — des Netzwerks, das die Signatur Ihrer Wallet geprüft hat. Die Signatur einer Smart-Account-Wallet wird jeweils nur auf einem Netzwerk geprüft, daher sind auf anderen Netzwerken erfasste Einträge nicht abgedeckt — wechseln Sie das Netzwerk und wiederholen Sie den Antrag dort, oder schreiben Sie an support@vaipakam.com, und wir verarbeiten ihn für Ihre Wallet überall.",
+      "eraseWorking": "Abmelden und löschen…",
+      "eraseDoneDisconnected": "{{count}} gespeicherte Einträge gelöscht und Sie wurden hier abgemeldet. Andere geöffnete Tabs wurden gebeten, ihre ebenfalls zu löschen und sich abzumelden.",
+      "eraseDoneNoPeers": "{{count}} gespeicherte Elemente wurden gelöscht.",
+      "eraseDoneDisconnectedNoPeers": "{{count}} gespeicherte Elemente wurden gelöscht und Sie wurden hier abgemeldet.",
+      "eraseSessionHeld": "Die gespeicherte Wallet-Sitzung konnte nicht gelöscht werden und liegt möglicherweise weiterhin auf diesem Gerät. Das Löschen der Websitedaten in den Browsereinstellungen entfernt sie.",
+      "eraseWalletHeld": "Die Wallet hat sich nicht getrennt, sodass diese Website weiterhin mit ihr verbunden ist. Trennen Sie die Verbindung direkt in Ihrer Wallet und löschen Sie dann erneut.",
+      "eraseStoresUnreadable": "Dieser Browser ließ die App die Sitzungsspeicherung der Wallet nicht öffnen, daher kann dort Gespeichertes weiterhin auf diesem Gerät liegen. Das Löschen der Websitedaten in den Browsereinstellungen entfernt es."
     },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."

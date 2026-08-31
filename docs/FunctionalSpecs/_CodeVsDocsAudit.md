@@ -734,3 +734,36 @@ and now carries a supersession note rather than an edit: an ADR is a record
 of a decision as it was taken, and rewriting its body would falsify it. The
 same reasoning left `docs/ReleaseNotes/`, `docs/OlderDocs/` and
 `docs/FindingsAndFixes/` untouched.
+
+---
+
+## Data-rights erasure: four places the shipped behaviour cannot yet meet the stated intent (#1862 Part 2)
+
+Recorded here rather than by weakening
+[`Alpha02ConnectedApp.md`](Alpha02ConnectedApp.md), per this doc set's rule
+that the spec states **intent** and a divergence is a finding rather than an
+edit. All four are tracked, and all four were found by review of the work that
+introduced the intent — so the spec is not stale; the implementation has not
+caught up with it.
+
+**The common cause is worth stating once.** An erasure must act on wallet
+machinery it neither controls nor can pause: a wallet SDK that navigates the
+page, a reconnect with no cancel, per-tab clients that cannot be coordinated
+without an acknowledgement protocol, and an app-wide remount keyed on a
+preference the erasure itself resets. Each divergence below is one instance of
+that, and none is a coding slip.
+
+| Intent, as the spec states it | Where the code falls short | Tracked |
+| --- | --- | --- |
+| *"every one of them must be ended before a sign-out is claimed"* | A wallet whose persisted session is mid-restore cannot reliably be ended: the persisted connection map holds method-less placeholders during a reconnect, and there is no cancel for an in-flight reconnect. The app reports the wallet as holding out, so it does not *claim* the sign-out — but the reconnect can complete afterwards and repopulate storage. | #2039 |
+| *"A request abandoned for taking too long must not be left free to act later"* | Honoured for storage and for connector stragglers. NOT honoured against a wallet SDK that navigates: Coinbase Wallet's WalletLink teardown schedules a page reload during connector cleanup, which runs before the sweep and the database clear, so it can end the erasure partway with nothing reported. | #2035 |
+| *"A tab told about another tab's erasure must bring ITSELF into line"* and *"Nothing a peer tab does in response may write"* | Both are met for the peer's own context. What is not met is the consequence: a peer clearing SHARED stores is a second uncoordinated remover, which can destroy a session created after the request and can take the originating tab's transaction so the reported count reads zero. Neither has a fix inside the current design. | #2037 |
+| *"the erasure is reported as a count rather than a blanket done"* | For a non-English user the report may not be shown at all: resetting the language remounts the app subtree, which replaces the page while the erasure is still awaiting. The data is erased; the evidence of it is discarded. | #2038 |
+
+**What this does not mean.** None of the four is a case where the app claims
+success falsely — the reporting rules the spec sets out hold in every one of
+them, which is why they are divergences of *reach* rather than of *honesty*.
+Two of them (#2035, #2038) are the narrower failure of an erasure that works
+while its evidence does not survive, which on a page whose purpose is
+reporting is still a real gap.
+

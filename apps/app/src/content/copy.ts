@@ -346,8 +346,14 @@ const copySource = {
        arrives is the same defect as promising an erasure that does not
        reach, and a user expecting to revisit consent here would have
        kept their old choice believing otherwise. */
+    /* #1862 Part 2 — the erasure now also signs you out and removes the
+       wallet libraries' own session databases, so the body says so. It
+       deliberately does NOT promise that every wallet forgets this site:
+       an extension or a Safe holds that authorisation itself, outside
+       anything this page can reach, and a user who reconnects in one click
+       should have been told that here rather than discovering it. */
     eraseBody:
-      'Removes all of it from this device. Your display preferences go back to their defaults, and anything you had part-way through will lose its local marker.',
+      'Removes all of it from this device and signs you out. Your display preferences go back to their defaults, anything you had part-way through will lose its local marker, and the wallet connection is closed and its stored session removed. A browser extension or a Safe keeps its own record that you allowed this site, which no page can remove for you — reconnecting there is still one click.',
     eraseButton: 'Erase my data',
     eraseConfirm: 'Yes, erase it',
     eraseCancel: 'Cancel',
@@ -372,6 +378,87 @@ const copySource = {
     erasePartial: tmpl(
       'Erased {{removed}} items, but {{left}} could not be removed. Clearing site data through your browser’s own settings will remove the rest.',
       ['removed', 'left'],
+    ),
+    /* #1862 Part 2 — the async outcomes. Each names WHAT is still there,
+       because "partly failed" on this page is unactionable: the user's next
+       move differs completely depending on whether a tab is holding a
+       database open or a wallet refused to disconnect. */
+    eraseWorking: 'Signing out and clearing…',
+    eraseDoneDisconnected: tmpl(
+      'Erased {{count}} stored items and signed you out here. Any other tabs you have open have been asked to clear theirs and sign out as well.',
+      ['count'],
+    ),
+    /* THE SAME TWO OUTCOMES WITH NO CLAIM ABOUT OTHER TABS (round 11 P2).
+       The cross-tab request can fail to go out at all — no BroadcastChannel,
+       a blocked constructor, a throwing postMessage — and the messages above
+       said other tabs had been asked regardless. In that browser a second tab
+       stays connected and keeps its data while the page says the opposite.
+       These carry no claim rather than a hedged one: a sentence about tabs
+       that were never contacted is better absent than qualified, and the
+       limits section below already tells the reader what this page can and
+       cannot reach. */
+    eraseDoneNoPeers: tmpl('Erased {{count}} stored items.', ['count']),
+    eraseDoneDisconnectedNoPeers: tmpl(
+      'Erased {{count}} stored items and signed you out here.',
+      ['count'],
+    ),
+    /* A live session survives this one, so it must not read as a success.
+       The cause is nearly always another tab of this site holding the
+       database open, which the user can act on — hence naming it. */
+    /* Round 1 P1 — this used to blame another open tab and tell the user to
+       close their tabs. That was advice for the previous design, which
+       deleted the whole database and could be blocked by any open
+       connection including this page's own; the erase now empties the store
+       instead, which no other tab can block. So a failure here is the
+       browser's storage refusing, and the remedy is the browser's own
+       controls. Telling someone to close tabs that were never the problem
+       is a worse failure than saying less. */
+    /* Round 2 P2 — a browser that hides IndexedDB entirely. Distinct from a
+       store that refused: nothing was even looked at, so this is the
+       "could not look" case `holdingUnreadable` exists for, one store
+       along. It must not fall through to a success message. */
+    /* OUTCOME-NEUTRAL, both of them (round 13 P2). These are appended to
+       whichever storage outcome applies, so an opening "Your stored data was
+       removed" can land directly under "There was nothing stored" or "nothing
+       was removed" — the same self-contradiction round 5 removed from the
+       wallet clause, reproduced here when round 12 made these additive. An
+       additive clause must say nothing about the outcome the sentence above
+       it just reported; it carries only its own fact and its own remedy. */
+    eraseStoresUnreadable:
+      'This browser would not let the app open the wallet’s session storage, so anything kept there may still be on this device. Clearing site data through your browser’s own settings will remove it.',
+    eraseSessionHeld:
+      'The wallet’s stored session could not be cleared, so it may still be on this device. Clearing site data through your browser’s own settings will remove it.',
+    /* The wallet refused to disconnect. The app is still attached, and
+       saying "erased" over that is the false assurance this page exists to
+       avoid.
+
+       SAYS NOTHING ABOUT THE STORAGE (round 5 P2). This line is appended to
+       whichever storage outcome applies rather than replacing it — round 2
+       made it additive because a storage holdout and a wallet holdout can
+       occur together and have unrelated remedies. It kept its own opening
+       claim through that change, so the two could contradict each other in
+       the same breath: "nothing was removed" immediately followed by "Your
+       stored data was removed". An additive clause has to be silent about
+       the outcome the sentence above it just reported. */
+    eraseWalletHeld:
+      'The wallet would not disconnect, so this site is still connected to it. Disconnect from your wallet directly, then erase again.',
+    /* Round 14 P2: ordinary storage could not be VERIFIED, but the wallet
+       store was reachable and gave up records. `eraseBlocked` says nothing
+       was removed, which contradicts a non-zero count; this reports what was
+       removed and is separately honest about what could not be checked. */
+    // SOURCE-NEUTRAL, deliberately (round 15 P2). This said the items came
+    // "from the wallet's session storage", but the number it is given is the
+    // whole erasure — ordinary storage and cookies as well as database
+    // records — so on the common case of a wallet that held nothing it
+    // attributed every removed preference to a wallet the user may never have
+    // connected. Naming only the databases would be wrong in the other
+    // direction: both sources really can contribute here, since the count is
+    // taken as the sweep runs and it is only the LATER inspection that this
+    // browser refused. What the page can honestly say is how much it removed
+    // and what it could not go back and check.
+    erasePartlyUnverifiable: tmpl(
+      'Erased {{count}} stored items, but this browser would not let the app check its ordinary storage afterwards, so something may still be there. Clearing site data through your browser’s own settings will remove it.',
+      ['count'],
     ),
     eraseBlocked:
       'This browser would not let the app clear its storage, so nothing was removed. Private-browsing windows and locked-down privacy settings can both do this — clearing site data through your browser’s own settings will work.',
