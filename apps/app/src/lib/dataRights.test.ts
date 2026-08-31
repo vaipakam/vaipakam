@@ -34,6 +34,7 @@ import {
   eraseWebStorageQuietly,
   eraseConnectorStorageQuietly,
   disconnectEvery,
+  createConnectionGeneration,
   type FullEraseResult,
 } from './dataRights';
 
@@ -2063,6 +2064,147 @@ describe('round 12 — a late cleanup must never outrun the counted clear', () =
       // Two stores, two records each, all seen by the counted clear.
       expect(result.indexedDb.records).toBe(4);
       await vi.advanceTimersByTimeAsync(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('round 15 — the fence cannot ask the witness that was tampered with', () => {
+  // The finding, restated as the thing that has to hold: a connection the user
+  // made AFTER the erase request must keep the late cleanup away from the
+  // stores, EVEN WHEN wagmi's own status says nothing is connected. That
+  // caveat is the whole finding — `@wagmi/core@2.22.1`'s `disconnect` captures
+  // `config.state.connections` before awaiting the connector while `connect`
+  // publishes a replacement Map, so a slow teardown settles against an
+  // orphaned map, sees it empty, and writes `status: 'disconnected'` over the
+  // newer connection. A fence reading status is reading that write.
+  //
+  // These drive the generation with plain Maps rather than a wagmi config:
+  // what is being pinned is that a connection is counted as an EVENT, and an
+  // event cannot be revised away by a later snapshot.
+  const conn = (...uids: string[]) => new Map(uids.map((u) => [u, {}]));
+
+  it('counts a connection that a later snapshot no longer shows', () => {
+    const gen = createConnectionGeneration();
+    const atRequest = gen.current();
+    // The user connects again while a given-up-on teardown is still pending.
+    gen.observe(conn('wallet-b'), conn());
+    // ...and that teardown lands, publishing its stale, empty map.
+    gen.observe(conn(), conn('wallet-b'));
+    // Status now says `disconnected`. The generation still remembers.
+    expect(gen.current()).not.toBe(atRequest);
+  });
+
+  it('counts a reconnect of the SAME wallet, not just a new one', () => {
+    // Connector uids are stable for the life of the config, so the obvious
+    // implementation — a set of uids ever seen — treats MetaMask → disconnect
+    // → MetaMask as one connection and misses the second entirely. That second
+    // one is a live session the request predates, and the cleanup would have
+    // deleted it.
+    const gen = createConnectionGeneration();
+    gen.observe(conn('metamask'), conn());
+    const atRequest = gen.current();
+    gen.observe(conn(), conn('metamask'));
+    gen.observe(conn('metamask'), conn());
+    expect(gen.current()).not.toBe(atRequest);
+  });
+
+  it('does not move when the same connections are merely re-published', () => {
+    // The mirror of the above: a fence that moved on every store notification
+    // would decline every late cleanup, which is the defect this whole class
+    // of cleanup exists to fix. Only an APPEARANCE counts.
+    const gen = createConnectionGeneration();
+    gen.observe(conn('wallet-a'), conn());
+    const atRequest = gen.current();
+    gen.observe(conn('wallet-a'), conn('wallet-a'));
+    gen.observe(conn('wallet-a'), conn('wallet-a'));
+    expect(gen.current()).toBe(atRequest);
+  });
+
+  it('counts each of several connections that appear at once', () => {
+    const gen = createConnectionGeneration();
+    const atRequest = gen.current();
+    gen.observe(conn('wallet-a', 'wallet-b'), conn());
+    expect(gen.current()).toBe(atRequest + 2);
+  });
+
+  // THE TEARDOWN MUST ACTUALLY SETTLE, and the first version of these two did
+  // not — a `new Promise(() => {})` that never resolves. The late cleanup
+  // hangs off `teardown.finally`, so nothing ran with the fence or without it,
+  // and removing the fence left the suite green. That is round 12's mistake
+  // repeated: a fixture shaped like the case without containing it. The pair
+  // below is what makes each of them bind — same fixture, opposite answer from
+  // the fence, opposite fate for a key written after the request.
+  const wedgedStore = () => {
+    const store = new Map<string, string>([['wagmi.recentConnectorId', 'x']]);
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: {
+        get length() {
+          return store.size;
+        },
+        key: (i: number) => [...store.keys()][i] ?? null,
+        getItem: (k: string) => store.get(k) ?? null,
+        removeItem: (k: string) => void store.delete(k),
+      },
+      sessionStorage: {
+        length: 0,
+        key: () => null,
+        getItem: () => null,
+        removeItem: () => {},
+      },
+      document: { cookie: '' },
+    };
+    return store;
+  };
+
+  async function runLateCleanup(hasLiveSession: () => boolean) {
+    const store = wedgedStore();
+    let land: (() => void) | undefined;
+    const pending = eraseMyDataFully({
+      hasLiveSession,
+      disconnect: () =>
+        new Promise<void>((resolve) => {
+          land = resolve;
+        }),
+    });
+    // The aggregate bound expires: the erasure gives up and reports.
+    await vi.advanceTimersByTimeAsync(DISCONNECT_TIMEOUT_MS + 1);
+    const result = await pending;
+    expect(result.connector.disconnected).toBe(false);
+    // The user goes back to using the app and connects again.
+    store.set('wagmi.store', 'a session created after the request');
+    // ...and only THEN does the abandoned teardown finish, which is what
+    // triggers the late cleanup.
+    land?.();
+    await vi.advanceTimersByTimeAsync(1);
+    return store;
+  }
+
+  it('a live session stops the aggregate-timeout cleanup', async () => {
+    // The library half of the same fence, through the renamed option. Round 14
+    // gave this path a fence and round 15 changed what it is allowed to ask;
+    // the behaviour it must produce is unchanged, so this pins the behaviour
+    // rather than the question.
+    vi.useFakeTimers();
+    try {
+      const store = await runLateCleanup(() => true);
+      expect(store.get('wagmi.store')).toBe(
+        'a session created after the request',
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('and removes the same key when nothing is live', async () => {
+    // Without this the case above is unfalsifiable: a cleanup that never runs,
+    // or a key it would never have touched, passes it just as well as a fence
+    // that works.
+    vi.useFakeTimers();
+    try {
+      const store = await runLateCleanup(() => false);
+      expect(store.has('wagmi.store')).toBe(false);
     } finally {
       vi.useRealTimers();
     }

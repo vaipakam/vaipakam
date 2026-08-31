@@ -446,8 +446,18 @@ const copySource = {
        store was reachable and gave up records. `eraseBlocked` says nothing
        was removed, which contradicts a non-zero count; this reports what was
        removed and is separately honest about what could not be checked. */
+    // SOURCE-NEUTRAL, deliberately (round 15 P2). This said the items came
+    // "from the wallet's session storage", but the number it is given is the
+    // whole erasure — ordinary storage and cookies as well as database
+    // records — so on the common case of a wallet that held nothing it
+    // attributed every removed preference to a wallet the user may never have
+    // connected. Naming only the databases would be wrong in the other
+    // direction: both sources really can contribute here, since the count is
+    // taken as the sweep runs and it is only the LATER inspection that this
+    // browser refused. What the page can honestly say is how much it removed
+    // and what it could not go back and check.
     erasePartlyUnverifiable: tmpl(
-      'Erased {{count}} stored items from the wallet’s session storage, but this browser would not let the app check its ordinary storage afterwards, so something may still be there. Clearing site data through your browser’s own settings will remove it.',
+      'Erased {{count}} stored items, but this browser would not let the app check its ordinary storage afterwards, so something may still be there. Clearing site data through your browser’s own settings will remove it.',
       ['count'],
     ),
     eraseBlocked:

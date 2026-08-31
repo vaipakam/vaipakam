@@ -26,10 +26,11 @@
  * refused, and partly erased — with anything REMAINING or UNREADABLE
  * outranking anything removed. See `eraseMyData`.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
+  createConnectionGeneration,
   disconnectEvery,
   eraseConnectorStorageQuietly,
   eraseIndexedDbData,
@@ -99,6 +100,42 @@ export function DataRights() {
   // `disconnected` means something may still be holding on.
   const { status } = useAccount();
   const config = useConfig();
+  // THE FENCE CANNOT ASK WAGMI'S STATUS (round 15 P2). Both late-cleanup
+  // fences below used to read `config.state.status`, and that is the single
+  // value a stale teardown is guaranteed to have overwritten by the time they
+  // run: `@wagmi/core@2.22.1`'s `disconnect` captures the connections Map
+  // before awaiting the connector and `connect` REPLACES that Map, so a slow
+  // teardown settling after the user reconnects deletes from an orphaned map,
+  // finds it empty, and publishes `status: 'disconnected'` over the newer
+  // connection. Reading status there meant the fence protecting a session was
+  // consulting the write that had just discarded it.
+  //
+  // A generation counts connections as EVENTS instead — see
+  // `createConnectionGeneration`. Held in a ref because nothing renders from
+  // it and a cleanup registered during one erasure must compare against that
+  // erasure's mark.
+  const connectionGen = useRef(createConnectionGeneration());
+  const genAtRequest = useRef(0);
+  useEffect(
+    () =>
+      config.subscribe(
+        (state) => state.connections,
+        (connections, previous) =>
+          connectionGen.current.observe(connections, previous),
+      ),
+    [config],
+  );
+  // "Is there a session the request must not destroy?" — status OR generation,
+  // because each catches what the other cannot. The generation misses a
+  // connection made and dropped again between the request and the cleanup
+  // (nothing to protect, so that is correct); the status misses one the stale
+  // write erased, which is this round's finding.
+  const hasLiveSession = useCallback(
+    () =>
+      config.state.status !== 'disconnected' ||
+      connectionGen.current.current() !== genAtRequest.current,
+    [config],
+  );
   const [downloaded, setDownloaded] = useState(false);
   const [confirming, setConfirming] = useState(false);
   // The erase outcome, FROZEN at the moment it happened (review round 3
@@ -331,6 +368,10 @@ export function DataRights() {
     // accident of statement order.
     void i18n.changeLanguage('en');
     setErasing(true);
+    // The mark every late cleanup compares against. Taken here, at the
+    // request, so that "newer than the request" is measured from the moment
+    // the user asked rather than from whenever a straggler happens to settle.
+    genAtRequest.current = connectionGen.current.current();
     // Opened when the erasure — including its counted database clear — has
     // finished. See `onStragglerSettled` below for why a late cleanup must
     // not run before it.
@@ -350,7 +391,7 @@ export function DataRights() {
         // sequential total crosses the outer one, so no straggler callback is
         // registered and the library's own late cleanup is the only one that
         // runs — unguarded until now.
-        isConnected: () => config.state.status !== 'disconnected',
+        hasLiveSession,
         // Every live connection, not just the current one — see
         // `disconnectEvery`, which holds the loop so it is testable outside
         // this page. The page has no rendering harness, and round 2's lesson
@@ -412,13 +453,18 @@ export function DataRights() {
                   //
                   // There is no per-record attribution in these stores, so
                   // "remove only what the old teardown wrote" is not
-                  // expressible; what IS knowable is whether anything is
-                  // connected now. If something is, whatever the stores hold
-                  // is newer than the request and not ours to remove. The
-                  // cleanup exists to undo a write nobody wanted, and skipping
-                  // it leaves at worst a stale connector key — strictly better
-                  // than deleting a live session.
-                  if (config.state.status !== 'disconnected') return;
+                  // expressible; what IS knowable is whether a session exists
+                  // that postdates the request. If one does, whatever the
+                  // stores hold is newer than the request and not ours to
+                  // remove. The cleanup exists to undo a write nobody wanted,
+                  // and skipping it leaves at worst a stale connector key —
+                  // strictly better than deleting a live session.
+                  //
+                  // Asked through `hasLiveSession`, NOT of wagmi's status
+                  // (round 15 P2): the straggler settling here is the very
+                  // call whose stale connections map can have published
+                  // `disconnected` over the session this line is protecting.
+                  if (hasLiveSession()) return;
                   eraseConnectorStorageQuietly();
                   void eraseIndexedDbData();
                 });

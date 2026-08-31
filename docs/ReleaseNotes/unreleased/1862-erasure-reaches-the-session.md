@@ -165,6 +165,27 @@ can remove something you did **afterwards**, or report a number that is
 wrong. Every other limit above leaves you with less reach than you wanted;
 that one can leave you with less than you had.
 
+**The guard against that first half no longer trusts the wallet's own
+account of itself.** If you connect again while a slow sign-out is still
+running, the page holds back its clean-up rather than removing the session you
+just started. That guard used to work by asking the wallet library whether
+anything was connected — and in this exact situation that is the one question
+it answers wrongly: the abandoned sign-out finishes against a picture of the
+world it took before you reconnected, and reports that nothing is connected.
+The guard was asking the very thing that had just lost track of your new
+session. It now keeps its own count of connections made, which a later
+correction cannot take back, so a session you start after pressing the button
+is recognised as yours whatever the wallet library thinks. The same limit
+still applies to a SECOND tab tidying up, which is tracked separately.
+
+**A message about a partly-checked erasure no longer blames the wallet for
+everything it removed.** Where the browser refuses to let the app check its
+ordinary storage afterwards, the page reports how much it erased — and that
+figure covers preferences and cookies as well as any wallet session. It used
+to describe all of it as coming from the wallet's session storage, which for
+someone who had never connected a wallet was simply untrue. It now states the
+number without claiming where it came from, in every language.
+
 **One promise is deliberately not made.** A browser extension, or a Safe, keeps
 its own record that you allowed this site, somewhere no page can reach. The
 erase copy now says so, and says reconnecting there is still a single click.

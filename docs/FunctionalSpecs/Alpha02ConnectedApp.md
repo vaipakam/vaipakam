@@ -903,6 +903,26 @@ Thin-market honesty rules apply.
   copies of its preferences and restores them, shared copies included, on the
   next visit, so resetting that site belongs to its own data controls and the
   page says so. Erasing here fully resets this app's own language and theme.
+- **An erase request must never destroy a session that came after it.** A
+  wallet can be slow to let go, and the app tidies up whatever such a teardown
+  writes on its way out. That tidying can arrive long after the request, by
+  which time the person may have gone back to using the app and connected
+  again — and the stores involved hold no record of which session wrote what,
+  so the only honest question is whether a session exists now that postdates
+  the request. If one does, the tidying is skipped: a leftover connection
+  record is a far better outcome than deleting a wallet session the user is
+  holding. **The intent is that this is decided from the app's own knowledge
+  of connections having happened, not from the wallet library's current
+  view.** A teardown the app gave up on can, on finishing, publish a stale
+  picture that omits the newer connection entirely, so asking the library
+  after the fact can return the answer that destroys the session — the
+  guarantee has to rest on something a late correction cannot revise.
+- **A report of how much was erased must not attribute it to a source it
+  cannot vouch for.** Where the browser refuses a check, the page may still
+  know how many items it removed; that figure spans ordinary storage,
+  cookies and any wallet session together. Naming one of those as the origin
+  is a claim about the user's wallet the app is in no position to make, and
+  is plainly false for someone who never connected one.
 - Erasing does not reload the page, so the confirmation of what happened
   survives long enough to be read.
 - **If any part of the browser's storage could not be read, the result is

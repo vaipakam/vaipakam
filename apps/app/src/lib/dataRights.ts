@@ -1324,8 +1324,8 @@ export function erasedItemCount(result: FullEraseResult): number {
  * round established that a teardown resolving over nothing must not be
  * reported as a sign-out, and the page answered it by supplying a teardown
  * only when connected. This function would have undone that: the caller
- * decides to disconnect from `isConnected` and takes the list from a separate
- * hook, so a list that is empty when the loop runs — the connection dropped
+ * decides to disconnect from the account status and takes the list from a
+ * separate hook, so a list that is empty when the loop runs — the connection dropped
  * between render and click, by another tab or a wallet locking — would loop
  * zero times, resolve, and report a sign-out that never happened. The two
  * values come from one store and normally agree; "normally agree" is not the
@@ -1512,9 +1512,70 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * Counts how many connections have been ESTABLISHED, in a way no later write
+ * can revise downwards.
+ *
+ * Round 15 P2, and it is the fence's foundation rather than an optimisation.
+ * Both late-cleanup fences asked wagmi whether anything was connected *now*,
+ * and `@wagmi/core@2.22.1` makes that question unanswerable from status alone:
+ * `disconnect` reads `config.state.connections` into a local BEFORE awaiting
+ * the connector, while `connect` publishes `new Map(x.connections).set(...)`.
+ * So once a teardown is slow enough for the user to connect again, the two
+ * hold different Map objects — and when the teardown finally settles it
+ * deletes from its orphaned one, sees `size === 0`, and writes
+ * `status: 'disconnected'` with an empty map. wagmi loses the newer connection
+ * and the fence is told nothing is live, seconds before it clears the stores
+ * holding that connection's session. The fence was asking the one witness the
+ * failure had already tampered with.
+ *
+ * A COUNT OF EVENTS, not a reading of state, is what survives that: the
+ * connection happened, and a later write cannot make it not have happened.
+ * The generation moves on every uid that appears without having been present
+ * in the immediately preceding snapshot, so it also catches a RECONNECT OF THE
+ * SAME WALLET — connector uids are stable for the life of the config, so a
+ * set of uids ever seen would have counted MetaMask → disconnect → MetaMask as
+ * one connection and missed the second entirely.
+ *
+ * The caller captures `current()` when the erase is requested and compares at
+ * cleanup time; any increase means a session postdates the request. It counts
+ * a `reconnect()` that completes after the request as well, which is
+ * deliberately conservative: the cost is a stale connector key, and the
+ * alternative is deleting a session the user is holding.
+ *
+ * Structural rather than wagmi-typed, so it can be driven from plain Maps in a
+ * test — the page has no rendering harness, and this fence's whole value is
+ * that it does not trust the store it observes.
+ */
+export interface ConnectionGeneration {
+  /** The generation as of now. Monotonic; never decreases. */
+  readonly current: () => number;
+  /**
+   * Feed one store notification: the connections now, and the ones
+   * immediately before. Safe to call with identical maps.
+   */
+  readonly observe: (
+    connections: ReadonlyMap<string, unknown>,
+    previous: ReadonlyMap<string, unknown>,
+  ) => void;
+}
+
+export function createConnectionGeneration(): ConnectionGeneration {
+  let generation = 0;
+  return {
+    current: () => generation,
+    observe: (connections, previous) => {
+      for (const uid of connections.keys()) {
+        if (!previous.has(uid)) generation += 1;
+      }
+    },
+  };
+}
+
 export interface FullEraseOptions {
   /**
-   * Whether anything is connected RIGHT NOW, asked at cleanup time.
+   * Whether a session exists that the erase request must not destroy, asked
+   * at cleanup time.
    *
    * Round 14 P2. The late cleanup below can run arbitrarily long after the
    * erasure, and clearing whole wallet stores then destroys a session the
@@ -1523,11 +1584,24 @@ export interface FullEraseOptions {
    * AGGREGATE bound expires while every individual connector stayed inside
    * its own, so it needs the same fence and had none.
    *
+   * NOT `isConnected`, and the rename is the round 15 P2 fix rather than
+   * tidying. Both fences asked wagmi for its CURRENT STATUS, and that status
+   * is the one thing a stale teardown is guaranteed to have overwritten:
+   * `@wagmi/core@2.22.1`'s `disconnect` captures the connections map before
+   * awaiting the connector, and `connect` replaces that map rather than
+   * mutating it — so a teardown that settles late deletes from an orphaned
+   * map, finds it empty, and writes `status: 'disconnected'` over a NEWER
+   * connection. The fence then read `disconnected`, concluded nothing was
+   * live, and cleared the very session it exists to protect. A predicate
+   * named for the status invites exactly that implementation; one named for
+   * the question makes it obvious that the answer has to come from something
+   * the stale write cannot reach — see `createConnectionGeneration`.
+   *
    * Injected rather than imported, like `disconnect`, so this module stays
    * free of the wagmi config. Absent means "cannot tell", which is treated
-   * as not connected — the pre-existing behaviour.
+   * as no live session — the pre-existing behaviour.
    */
-  readonly isConnected?: () => boolean;
+  readonly hasLiveSession?: () => boolean;
   /**
    * Tear down the live wallet connection. Injected rather than imported so
    * this module stays free of the wagmi config — it is a pure storage
@@ -1655,7 +1729,7 @@ export async function eraseMyDataFully(
             // fence the page's straggler callback got in round 13, on the
             // path that bypasses it. A stale connector key is a far better
             // outcome than deleting a live session.
-            if (settledLate && !options.isConnected?.()) {
+            if (settledLate && !options.hasLiveSession?.()) {
               // BOTH stores (round 10 P2). The per-connector straggler
               // callback clears the databases, and this whole-teardown path
               // did not — but they catch different timeouts. Several
