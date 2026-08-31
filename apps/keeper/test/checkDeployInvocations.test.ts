@@ -6824,6 +6824,46 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(true);
   });
 
+  // ---- Codex #2036 r4 ----
+
+  it('an ATTACHED argv --name=value outranks the config', () => {
+    // argv is a list of STRINGS, so an option may carry its value inside one of
+    // them: `["--name=x"]` and `["--name","x"]` are the same invocation.
+    // Reading only the pair form trusted the config's unprotected name over the
+    // explicit one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/www.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'spawnSync("wrangler", ["deploy", "--name=vaipakam-agent", "--config", "configs/www.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('but an attached argv --name= with no value names nothing', () => {
+    // The control for the empty case, matching the empty-CLOUDFLARE_ENV rule.
+    seed('configs/www.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'spawnSync("wrangler", ["deploy", "--name=", "--config", "configs/www.jsonc"]);\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('a CRLF multiline TOML name is trimmed like an LF one', () => {
+    // Trimming only `\\n` left a `\\r` on the front of the name, which matched no
+    // protected Worker and was then AUTHORITATIVE — an agent-naming config read
+    // as unprotected. A partially-decoded name is what the invalid-escape rule
+    // already refuses; this was the same mistake by whitespace.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/win.toml', 'name = """\r\nvaipakam-agent"""\r\n');
+    const r = runWith('w.sh', 'wrangler deploy --config configs/win.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

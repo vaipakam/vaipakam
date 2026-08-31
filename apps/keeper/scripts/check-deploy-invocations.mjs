@@ -2536,16 +2536,27 @@ function decodeTomlBasic(raw) {
  * LAST occurrence, the rule every other selector here follows.
  */
 function argvValue(region, spellings) {
+  // TWO ARGV SHAPES, because argv is a list of STRINGS and an option may carry
+  // its value inside one of them: `["--name", "x"]` and `["--name=x"]` are the
+  // same invocation to wrangler, and reading only the pair form let
+  // `["--name=vaipakam-agent", "--config", "configs/www.jsonc"]` trust the
+  // config's unprotected name over the explicit one (Codex #2036 r4). The
+  // attached form is the argv twin of the shell's `--name=x`, which `valueOf`
+  // has always read.
   const all = [
     ...region.matchAll(
       new RegExp(
-        `["'](?:${spellings})["']\\s*,\\s*(?:["']([^"']+)["']|([A-Za-z_$][\\w$.]*))`,
+        `["'](?:${spellings})(?:["']\\s*,\\s*(?:["']([^"']+)["']|([A-Za-z_$][\\w$.]*))` +
+          `|=([^"']*)["'])`,
         'g',
       ),
     ),
   ];
   const m = all[all.length - 1];
   if (!m) return null;
+  // An attached EMPTY value (`["--name="]`) names nothing, the same rule the
+  // empty `CLOUDFLARE_ENV` follows.
+  if (m[3] !== undefined) return m[3] === '' ? null : m[3];
   // A bare identifier is the host language's variable, so it is spelled as one:
   // `known()` already refuses anything still carrying a `$`, and this reaches
   // the "selector present but unresolvable" branch by the same route a shell
@@ -2573,14 +2584,21 @@ function declaredWorkerName(absPath) {
     // top-level text rather than per line, so a value that really does span
     // lines is still one value.
     //
-    // TOML trims a newline IMMEDIATELY after the opening delimiter, which is
-    // why the `\n?` is there and not decoration: without it the name gains a
-    // leading newline and matches nothing.
+    // TOML trims a NEWLINE immediately after the opening delimiter, which is
+    // why the `(?:\r?\n)?` is there and not decoration: without it the name
+    // gains a leading blank and matches nothing.
+    //
+    // CRLF is part of that, not a nicety. Trimming only `\n` on a
+    // Windows-formatted config left a `\r` on the front of the name, which
+    // matched no protected Worker and was then AUTHORITATIVE — so an
+    // agent-naming config read as unprotected and the deploy exited 0 (Codex
+    // #2036 r4). A partially-decoded name is the failure mode the invalid-escape
+    // rule above already refuses; this was the same mistake by whitespace.
     const top = text.split(/^[^\S\n]*\[/m)[0];
     const ml = top.match(
       new RegExp(
         String.raw`^[^\S\n]*(?:name|"name"|'name')\s*=\s*` +
-          String.raw`(?:"""\n?([\s\S]*?)"""|'''\n?([\s\S]*?)''')`,
+          String.raw`(?:"""(?:\r?\n)?([\s\S]*?)"""|'''(?:\r?\n)?([\s\S]*?)''')`,
         'm',
       ),
     );
@@ -2781,7 +2799,19 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // one selector wrangler lets override it, and
   // `["--name","vaipakam-agent","--config","configs/www.jsonc"]` passed as
   // unprotected (Codex #2036 r3).
-  const name = known(valueOf('--name') ?? argvValue(wranglerRegion, '--name'));
+  // ARGV READER FIRST, and the order is a fix rather than a preference.
+  // `valueOf` matches `--name=` INSIDE a quoted argv element and its value
+  // pattern then runs past the closing quote into the next element, yielding a
+  // mangled name that matches no protected Worker — and that non-match is
+  // AUTHORITATIVE, so `["--name=vaipakam-agent", "--config", …]` passed as
+  // unprotected. The argv reader knows where an element ends; the shell reader
+  // does not, and cannot without knowing it is reading a list.
+  //
+  // Safe in the other direction because `argvValue` requires a QUOTED flag,
+  // which shell text does not have — and where it does (`wrangler deploy
+  // "--name=x"`), bash really is passing that single argument, so reading it as
+  // one is right.
+  const name = known(argvValue(wranglerRegion, '--name') ?? valueOf('--name'));
   if (name !== null) {
     // wrangler's `getScriptName` is `args.name ?? config.name`, so an explicit
     // name is authoritative no matter what the config path turns out to be.
@@ -2796,6 +2826,9 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // invisible `--config` reaches neither the identity read nor the inversion,
   // which means it PASSES.
   const cfgRaw =
+    // Same ordering as `--name` below, for the same reason: an attached value
+    // inside a quoted argv element is the argv reader's to read.
+    argvValue(wranglerRegion, '-c|--config') ??
     valueOf('--config|-c', wranglerRegion) ??
     // ATTACHED SHORT FORM. yargs accepts `-cconfigs/custom.jsonc` as one word,
     // and wrangler 4.90.0 processes it — verified in the review by dry run.
@@ -2847,7 +2880,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // `subprocess.run(["wrangler","deploy","--config","x.jsonc"])`. The flag and
     // its value are separate array elements, so no `=` or space joins them and
     // `valueOf` sees nothing.
-    argvValue(wranglerRegion, '-c|--config');
+    null;
   // `--cwd` is wrangler's; `--dir` / `-C` is pnpm's own, documented as "change
   // to that directory", and it decides which package's script runs (#1995 r8).
   // `--prefix` is npm's spelling of the same idea — its config documentation
@@ -2866,7 +2899,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // `--cwd` from argv as well: it changes what a relative `--config` resolves
   // AGAINST, so missing it here made the scanner read a different file than the
   // one wrangler loads — the r2 ordering defect arriving through the argv door.
-  const wrCwdRaw = valueOf('--cwd') ?? argvValue(wranglerRegion, '--cwd');
+  const wrCwdRaw = argvValue(wranglerRegion, '--cwd') ?? valueOf('--cwd');
   const cfg = known(cfgRaw);
   const pkgDir = known(pkgDirRaw);
   const wrCwd = known(wrCwdRaw);
