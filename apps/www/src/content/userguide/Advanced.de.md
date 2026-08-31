@@ -98,15 +98,50 @@ Tier-Leiter:
 | 3    | ≥ `{liveValue:tier3Min}`               | `{liveValue:tier3DiscountBps}`%   |
 | 4    | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%   |
 
-Das Tier wird gegen deinen Vault-Saldo **nach der Änderung** in
-dem Moment berechnet, in dem du VPFI einzahlst oder abhebst, und
-dann über die Laufzeit jedes Loans zeitgewichtet. Ein Abhebung
-stempelt die Rate sofort auf den neuen niedrigeren Saldo für jeden
-offenen Loan, an dem du beteiligt bist — es gibt kein
-Gnadenfenster, in dem dein altes (höheres) Tier weiter gilt. Damit
-wird das Muster geschlossen, bei dem ein Nutzer kurz vor Loan-Ende
-VPFI aufladen, den vollen Tier-Rabatt mitnehmen und Sekunden später
-wieder abheben könnte.
+Das Tier wird gegen deinen Vault-Saldo **nach der Änderung** in dem
+Moment berechnet, in dem du VPFI einzahlst oder abhebst. Der
+tatsächlich berechnete Satz wird bei der Abrechnung aus deinem Tier
+in genau diesem Moment aufgelöst — es gibt keinen gesonderten
+Durchschnitt über die Laufzeit eines Loans. Das Tier selbst ist die
+Absicherung: ein zeitgewichteter Durchschnitt deines Tagessaldos über
+ein jüngeres Fenster von höchstens 30 Tagen — eine
+Protokoll-Einstellung, gerechnet ab dem Tag, an dem dein aktueller
+Bestand begann, wobei die jüngsten Tage stärker zählen. Dieser
+Durchschnitt wird anschließend auf das niedrigste Tier gesenkt, auf
+das du seit Beginn dieses Bestands gefallen bist, mit einem Rückblick
+von bis zu 30 Tagen.
+
+**Das sind zwei getrennte Rückblicke, und der zweite ist meist der
+längere.** Das Durchschnittsfenster ist konfigurierbar und kann kürzer
+als 30 Tage sein; der Rückblick der niedrigsten Stufe hängt nicht
+daran — er umfasst deinen gesamten aktuellen Bestand, gedeckelt bei 30
+Tagen. Bei einem 14-Tage-Fenster senkt ein Absacken vor 20 Tagen also
+weiterhin dein Tier, obwohl es ganz außerhalb des Durchschnitts liegt.
+
+Dein Tier ist vollständig null, solange du nicht **durchgehend** ein
+Guthaben über null eine Mindestanzahl von Tagen gehalten hast —
+ebenfalls eine Protokoll-Einstellung. Diese Frist beginnt, wenn dein
+Saldo von null auf positiv wechselt, und beginnt nur dann von vorn,
+wenn er wieder null erreicht; ein Aufstocken eines bestehenden
+Bestands setzt sie nicht zurück.
+
+Eine Abhebung greift daher sofort für jeden offenen Loan, an dem du
+beteiligt bist — es gibt kein Gnadenfenster, in dem dein altes
+(höheres) Tier weiter gilt. Damit wird das Muster geschlossen, bei dem
+ein Nutzer kurz vor Loan-Ende VPFI aufladen, den vollen Tier-Rabatt
+mitnehmen und Sekunden später wieder abheben könnte. Beachte, welche
+Regel es schließt: Wer schon länger hält, hat die Mindestdauer längst
+erfüllt, die Arbeit tut also die Regel der niedrigsten Stufe — was ein
+Durchschnitt nicht könnte, denn einen Durchschnitt kann eine späte
+Aufstockung hochziehen, ein Minimum nicht.
+
+Gegen genau dieses Muster ist die heutige Regel die stärkere der
+beiden. Sie ist **nicht** in jeder Hinsicht strenger: Weil der
+Rückblick der niedrigsten Stufe höchstens 30 Tage zurückreicht, zählen
+die frühen Monate mit niedrigem Tier bei einem langen Loan irgendwann
+nicht mehr mit, während ein Durchschnitt über die gesamte Laufzeit sie
+behalten hätte. Die Änderung hat die Abwehr gegen kurzes Aufladen
+verschärft und das Gedächtnis verkürzt.
 
 **Das gilt für die Lender-Yield-Fee.** Der Satz des Borrowers für die
 Initiation-Fee wird einmal bei Annahme des Loans gelesen; danach ändert ihn

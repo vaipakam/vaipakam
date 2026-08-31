@@ -92,14 +92,44 @@ Tier ladder:
 | 3    | ≥ `{liveValue:tier3Min}`                | `{liveValue:tier3DiscountBps}`%   |
 | 4    | > `{liveValue:tier4Min}`                | `{liveValue:tier4DiscountBps}`%   |
 
-Tier आपके VPFI deposit या withdraw करते ही **post-change**
-vault balance के against calculate होता है, फिर हर loan की
-पूरी अवधि पर time-weighted किया जाता है। Withdraw आपके हर खुले
-loan पर तुरंत नए (कम) balance के आधार पर rate को फिर से stamp
-कर देता है — कोई grace window नहीं जहाँ आपका पुराना (ऊँचा)
-tier जारी रहे। इससे वह exploit pattern बंद होता है जहाँ कोई
-user loan खत्म होने से ठीक पहले VPFI top up करके पूरा-tier
-discount ले और कुछ seconds बाद withdraw कर ले।
+Tier आपके VPFI deposit या withdraw करते ही **post-change** vault
+balance के against calculate होता है। जो rate असल में लगती है, वह
+settlement के समय आपके उसी क्षण के tier से तय होती है — हर loan की अपनी
+अवधि पर कोई अलग average नहीं लिया जाता। असली सुरक्षा tier में ही है: यह
+हाल की एक window — ज़्यादा से ज़्यादा 30 दिन, protocol की एक setting,
+और आपकी मौजूदा holding जिस दिन से शुरू हुई उसी से गिनी हुई, जिसमें हाल
+के दिनों का वज़न ज़्यादा है — के आपके दैनिक balance का time-weighted
+average है। फिर उस average को उस holding के शुरू होने के बाद से आप जिस
+सबसे नीचे के tier तक गिरे, वहीं तक घटा दिया जाता है; यह पीछे 30 दिन तक
+देखता है।
+
+**ये दो अलग-अलग look-back हैं, और दूसरा आमतौर पर लंबा होता है।**
+averaging window configurable है और 30 दिन से कम भी हो सकती है; सबसे
+नीचे के tier वाला look-back उससे बंधा नहीं — वह आपकी पूरी मौजूदा holding
+पर फैलता है, अधिकतम 30 दिन। इसलिए 14 दिन की averaging window के साथ भी,
+20 दिन पहले की गिरावट आपका tier नीचे रखती है, भले ही वह average से बाहर हो।
+
+जब तक आप **लगातार** शून्य से ऊपर का balance कम-से-कम तय दिनों तक hold
+नहीं करते, तब तक आपका tier शून्य ही रहता है; यह भी protocol की setting
+है। वह घड़ी तब शुरू होती है जब आपका balance शून्य से ऊपर जाता है, और
+तभी दोबारा शुरू होती है जब वह वापस शून्य हो जाए — पहले से मौजूद holding
+में जोड़ने से वह reset नहीं होती।
+
+इसीलिए withdraw आपके हर खुले loan पर तुरंत असर करता है — कोई grace
+window नहीं जहाँ आपका पुराना (ऊँचा) tier जारी रहे। इससे वह exploit
+pattern बंद होता है जहाँ कोई user loan खत्म होने से ठीक पहले VPFI top up
+करके पूरा-tier discount ले और कुछ seconds बाद withdraw कर ले। ध्यान
+दीजिए कि उसे कौन सा नियम बंद करता है: लंबे समय से hold करने वाले ने
+minimum period पहले ही पूरा कर लिया है, तो काम सबसे नीचे के tier वाला
+नियम करता है — जो एक average नहीं कर सकता, क्योंकि average को देर से
+किया गया top up ऊपर खींच सकता है, minimum को नहीं।
+
+उस ख़ास pattern के विरुद्ध मौजूदा नियम दोनों में मज़बूत है। यह **हर
+लिहाज़ से** ज़्यादा सख़्त नहीं है: चूँकि सबसे नीचे के tier वाला look-back
+अधिकतम 30 दिन पीछे जाता है, किसी लंबे loan के शुरुआती नीचे-tier महीने
+आख़िरकार गिनती से बाहर हो जाते हैं, जबकि पूरे loan पर लिया गया average
+उन्हें बनाए रखता। इस बदलाव ने थोड़े समय के top up के ख़िलाफ़ बचाव मज़बूत
+किया और याददाश्त छोटी कर दी।
 
 **यह lender के yield fee के बारे में है।** Borrower की initiation fee की दर
 loan accept होते समय एक बार पढ़ी जाती है; उसके बाद न withdraw से बदलती है, न

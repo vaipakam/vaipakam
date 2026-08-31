@@ -138,7 +138,9 @@ Rental 结束后（无论是 expiry 还是 default），NFT 会回到 owner 的 
 | `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
 | `{liveValue:tier4Min}` 以上 | `{liveValue:tier4DiscountBps}`% |
 
-Discounts 适用于 lender 和 borrower fees。Discount 会在 **loan's life 中按时间加权**计算，因此在 loan 结束前临时 top up 不能 game the calculation - 你实际持有该 tier 多久，就按相应比例获得 discount。
+Discounts 适用于 lender 和 borrower fees。你的 tier 是**最近一个不超过 30 天的窗口内、你所持有数量的时间加权平均**，该窗口从你当前持有开始之日算起；随后还会**被压低到自那次持有开始以来你曾经跌到的最低 tier**，最多回看 30 天 - 即使你当天又 top up，这次下跌同样计入，而且这个回看是它自己的历史，并非上面那个求平均的窗口。并且在你**不间断地**持有大于零的 balance 达到规定的最少天数之前，完全不会产生任何 discount；balance 一旦归零，这个计时就重新开始。窗口和这个最少天数都是 protocol 的设置。
+
+因此在 loan 结束前临时 top up 没有用。请注意是哪条规则在起作用：如果你已经持有了一段时间，最短持有期早已满足，并不会挡住什么 —— 真正把你的费率固定在你真正维持住的水平上的，是最低 tier 规则。
 
 ### 2. Platform interaction rewards
 
