@@ -59,9 +59,9 @@ disconnect on the same signal that asks it to clear its own storage. Like that
 one, it cannot report back — so the page confirms only the tab you are looking
 at, and says the others were asked.
 
-Both of those replace a success message that would otherwise have been true of
-the storage and false of the session. Reporting "erased" over a live connection
-is the same failure this page was built to avoid, one layer further along.
+Each of those messages replaces a success that would have been true of the
+storage and false of the session. Reporting "erased" over a live connection is
+the same failure this page was built to avoid, one layer further along.
 
 **One promise is deliberately not made.** A browser extension, or a Safe, keeps
 its own record that you allowed this site, somewhere no page can reach. The
@@ -69,6 +69,6 @@ erase copy now says so, and says reconnecting there is still a single click.
 Someone who deletes their data and finds one click restores the connection
 should have been told that here, rather than discovering it.
 
-The page also now shows that it is working. Disconnecting a wallet and waiting
-for a wallet to answer takes real seconds, and a button that simply greys out
-reads as broken rather than busy.
+The page also now shows that it is working. Waiting for a wallet to answer
+takes real seconds, and a button that simply greys out reads as broken rather
+than busy.
