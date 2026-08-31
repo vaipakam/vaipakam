@@ -7363,6 +7363,39 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ---- Codex #2036 r13 ----
+
+  it('a Python TUPLE argv sequence exposes its selectors', () => {
+    // The deploy detector already recognises this spelling; the argv reader
+    // looked only for `[`, so a recognised deploy exposed none of its
+    // selectors.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'deploy.py',
+      'subprocess.run(("wrangler", "deploy", "--config", "configs/custom.jsonc"))\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('the env option is found when the CALL sits inside an object', () => {
+    // My r12 depth check measured from the segment start, so a deploy written
+    // inside an object literal put its own options argument one brace deeper
+    // and the real `env` was rejected as nested metadata — measuring from the
+    // wrong origin, the same class as reading a value from the wrong base
+    // directory.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nconst runners = {result: spawnSync("wrangler", ["deploy", "--config", "www.jsonc"], ' +
+        '{env: {...process.env, CLOUDFLARE_ENV: "staging"}})};\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

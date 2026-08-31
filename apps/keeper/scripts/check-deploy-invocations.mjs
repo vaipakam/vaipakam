@@ -178,7 +178,7 @@ const DEPLOY_RE = String.raw`wrangler2?(?:\.(?:cmd|ps1|bat))?(?:@[^\s]+)?\s+(?:-
 // `[^'"\`\s]*[/\\]` before the name: `spawnSync('./node_modules/.bin/wrangler',
 // …)` runs the same local executable, and requiring the quote to be followed
 // immediately by `wrangler` missed every path-qualified spelling (#1995 r16).
-const ARGV_DEPLOY_RE = String.raw`\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(\s*\[?\s*(['"\`])(?:[^'"\`\s]*[/\\])?wrangler2?(?:\.(?:cmd|ps1|bat))?\1[\s\S]{0,200}?(['"\`])(?:deploy|versions\2\s*,\s*(['"\`])upload)\3?`;
+const ARGV_DEPLOY_RE = String.raw`\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(\s*[[(]?\s*(['"\`])(?:[^'"\`\s]*[/\\])?wrangler2?(?:\.(?:cmd|ps1|bat))?\1[\s\S]{0,200}?(['"\`])(?:deploy|versions\2\s*,\s*(['"\`])upload)\3?`;
 
 /**
  * The PACKAGE-SCRIPT form is a deploy too, and the guard could not see it
@@ -2654,6 +2654,22 @@ function decodeTomlBasic(raw, multiline = false) {
  * rule since #1995 r16; the argv reader did not.
  */
 function firstArgvArray(text, before = '') {
+  // TUPLES ARE SEQUENCES TOO. Python's `subprocess.run(("wrangler", "deploy",
+  // …))` is an ordinary spelling this scanner's deploy DETECTOR already
+  // recognises, and the reader looked only for `[` — so a recognised deploy
+  // exposed none of its selectors (Codex #2036 r13). Normalised to brackets
+  // once, here, rather than teaching every bracket-aware step about parens.
+  //
+  // Only when the paren is a SEQUENCE rather than the call's own argument list:
+  // `run((` opens a tuple, `run(` opens the call.
+  const asList = (t) => t.replace(/\(\s*\(/g, '(['). replace(/\)\s*\)/g, '])');
+  if (/\(\s*\(/.test(text) || /\(\s*\(/.test(before)) {
+    return firstArgvArrayInner(asList(text), asList(before));
+  }
+  return firstArgvArrayInner(text, before);
+}
+
+function firstArgvArrayInner(text, before = '') {
   // An unclosed `[` in the text preceding the command word means we are already
   // inside the array — Python's shape. Counted quote-naively on purpose: this
   // only decides WHERE to start, and the balanced scan below is what parses.
@@ -3445,9 +3461,24 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // object puts `env` one brace in, Python's `env={…}` keyword none.
     [...rawSeg.matchAll(/(?<![\w$.])env\s*[:=]\s*\{/g)]
       .filter((opener) => {
+        // DEPTH RELATIVE TO THE CHILD CALL, not to the whole segment. Measured
+        // globally, a deploy written inside an object literal —
+        // `const runners = {result: spawnSync(…)}` — put its own options
+        // argument one brace deeper and the real `env` was rejected as nested
+        // metadata (Codex #2036 r13). My r12 fix measured from the wrong
+        // origin, which is the same class as reading a value from the wrong
+        // base directory.
+        //
+        // The origin is the child-process call word nearest before this `env`.
+        const callAt = (() => {
+          const calls = [...rawSeg.matchAll(
+            /\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(/g,
+          )].filter((c) => c.index < opener.index);
+          return calls.length > 0 ? calls[calls.length - 1].index : 0;
+        })();
         let depth = 0;
         let quote = null;
-        for (let i = 0; i < opener.index; i += 1) {
+        for (let i = callAt; i < opener.index; i += 1) {
           const c = rawSeg[i];
           if (quote) {
             if (c === '\\') i += 1;
