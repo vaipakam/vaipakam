@@ -8175,4 +8175,28 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
+  it('the RECEIVER form of open follows the same mode rule', () => {
+    // The mode class appears twice — the argument form and the receiver form —
+    // and my first fixtures reached only the first. Mutating the receiver
+    // form's class to admit reads, or dropping it altogether, left all 789
+    // fixtures green in both directions.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nPath("side.jsonc").open("w")\nwrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('...and a receiver-form READ still is not a rewrite', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nPath("side.jsonc").open("r")\nwrangler deploy --config side.jsonc\n',
+      ).ok,
+    ).toBe(true);
+  });
 });
