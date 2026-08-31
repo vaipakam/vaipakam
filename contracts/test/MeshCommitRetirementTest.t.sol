@@ -134,6 +134,60 @@ contract MeshCommitRetirementTest is SetupTest {
         );
     }
 
+    // ─── #1569 keeper earmark vs. the identity ───────────────────────────
+
+    /// The keeper earmark must NOT ride `chainConsumedRecycled`.
+    ///
+    /// That counter is one half of `outstanding == instructed − retired`,
+    /// and only the local COMMIT enters the retirement lifecycle — a mirror
+    /// can retire at most what it was committed. The first version of #1569
+    /// added the earmark to it, which broke the identity on the first
+    /// non-zero allocation and left the difference as phantom consumption
+    /// permanently suppressing the chain's availability (Codex #2031 r2).
+    ///
+    /// The earmark now has its own draw slot, exactly like the C2
+    /// repatriation draw whose storage doc names this same trap.
+    function test_KeeperEarmarkDoesNotBreakTheLedgerIdentity() public {
+        // 25% — large enough that a regression cannot hide inside the
+        // approximate-equality slack the instruction figure carries.
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+
+        uint256 instructed = _armAndInstruct40();
+
+        // The identity holds WITH an armed allocation. Against the first
+        // version of #1569 this fails: outstanding is the commit while
+        // instructed carries commit + earmark.
+        _assertLedgerIdentity(CHAIN_ARB);
+        assertEq(
+            _agg().getChainOutstandingRecycledCommit(CHAIN_ARB),
+            instructed,
+            "the earmark never inflated the instruction cumulative"
+        );
+    }
+
+    /// …and the property the wrong placement was reaching for still holds:
+    /// availability nets the earmark, so Base cannot instruct the same
+    /// tokens twice. Without this the fix would be a regression dressed as
+    /// one — the identity restored by simply forgetting the earmark.
+    function test_KeeperEarmarkStillDrawsDownAvailability() public {
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        _armAndInstruct40();
+        (, , uint256 availArmed, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+
+        // Re-run the identical scenario with the knob dark. The earmark is
+        // 25% of the same local commit, so an unarmed chain must retain
+        // strictly more availability than an armed one.
+        setUp();
+        _armAndInstruct40();
+        (, , uint256 availDark, ) = _agg().getChainRecycledLedger(CHAIN_ARB);
+
+        assertGt(
+            availDark,
+            availArmed,
+            "an armed earmark draws availability down; a dark one does not"
+        );
+    }
+
     // ─── The reservation ledger now retires ──────────────────────────────
 
     /// The core B3 behaviour: a later report carrying the mirror's

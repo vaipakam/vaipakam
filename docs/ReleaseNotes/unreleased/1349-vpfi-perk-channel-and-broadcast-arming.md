@@ -58,6 +58,13 @@ this: replays on that format stay accepted so settled days keep replaying
 harmlessly, but installing an arming day is not a harmless replay, and a retired
 era must not get to choose one.
 
+The same gap existed on a second route and is closed with it. A day first
+opened by the older message format carries no lapse timetable, so its
+rebroadcast on the current format is handled as a repair of that missing
+timetable — and that repair finished without ever installing the arming day,
+leaving the chain waiting on a further broadcast nobody had a reason to send.
+Both routes now install it, on the same one-shot terms.
+
 A third change gives one chain the ability to earmark part of its own recycling
 budget for the keepers that serve it — but only when the home chain says so.
 That instruction has ridden the cross-chain message since the mesh was built and
@@ -67,6 +74,16 @@ chain only, defaulting to nothing. A receiving chain cannot grant itself a
 budget, which is the whole point of the arrangement; and because the figure is
 frozen into each day when that day closes, changing it affects later days rather
 than rewriting settled ones.
+
+That earmark is counted as its own kind of draw rather than folded in with the
+budget a chain has been committed to spend. The two behave differently: a
+commitment is something the receiving chain later reports back as settled,
+which releases it, whereas an earmark is simply set aside and never reported
+that way. Counting them together would have left every earmark looking like a
+commitment that could never be settled, quietly and permanently understating
+how much that chain had available. It is still subtracted from what the chain
+can be asked to fund, so the home chain can never promise the same tokens
+twice — that was always the point of counting it, and it is unchanged.
 
 Arming it required making room first. The contract that owns the reward day had
 32 bytes of deployable space left — less than a single call — so nothing could

@@ -1195,6 +1195,44 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertEq(armedAfter, 2, "an era still in force fills the hole");
     }
 
+    /// The install has to survive the V3 CLOCK-BACKFILL branch too.
+    ///
+    /// A day applied over V2 carries no lapse clock, so its post-arm
+    /// rebroadcast over V3 takes the backfill branch and returns there —
+    /// never reaching `_applyBroadcastV2Core`'s replay install. The mirror
+    /// stayed unarmed and needed a second, unexplained V3 delivery: the
+    /// #1944 defect resurfacing one path over (Codex #2031 r2).
+    function testV3ClockBackfillInstallsArmedDayWhenTheMirrorHasNone()
+        public
+    {
+        _configureMirror(CHAIN_ARB);
+
+        // Applied over V2 while Base carried no D*. No clock is written,
+        // which is what routes the rebroadcast into the backfill branch.
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.armedFromDay = 0;
+        messenger.deliverBroadcastV2(pre);
+        // The LAPSE clock is what routes the rebroadcast into the backfill
+        // branch — not `dayClockEra`, which a V2 apply does set. Asserted so
+        // the test cannot quietly stop exercising that branch.
+        (uint64 finalizedAtBefore, , , ) = _com().getDayLapseClock(3);
+        assertEq(finalizedAtBefore, 0, "V2 leaves no lapse clock");
+        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedBefore, 0, "mirror starts unarmed");
+
+        // Base arms and rebroadcasts the same day over V3.
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+
+        (uint256 armedAfter, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedAfter, 2, "the backfill installed D* in one delivery");
+        (uint64 finalizedAtAfter, , , ) = _com().getDayLapseClock(3);
+        assertEq(
+            finalizedAtAfter,
+            1_700_000_000,
+            "and it really was the backfill branch that ran"
+        );
+    }
+
     // ── #1569 M4 C3 — the Base-authorized keeper allocation ────────────
 
     /// The instruction EARMARKS inside the mirror's own bucket.

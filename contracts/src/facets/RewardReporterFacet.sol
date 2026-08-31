@@ -922,6 +922,22 @@ contract RewardReporterFacet is
             // healed by the same re-send).
             _installDayPoolStampV3(s, b);
             _installDayClock(s, b, /* backfilled */ true);
+            // #1944 (Codex #2031 r2) — the one-shot `D*` install must survive
+            // THIS branch too, for exactly the reason the reservation repair
+            // above must: a day applied over V2 while Base was unarmed has no
+            // clock, so its post-arm rebroadcast lands HERE and returns,
+            // never reaching `_applyBroadcastV2Core`'s replay install. The
+            // mirror stayed unarmed and needed a second, unexplained V3
+            // delivery to arm — the #1944 defect resurfacing one path over.
+            //
+            // No retired-era clause, and the asymmetry is the point: this
+            // path is V3-only and has already authenticated `baseDeployment`
+            // against the configured ground truth above. Authenticating its
+            // era is precisely what the legacy wire cannot do, which is why
+            // the replay-branch install excludes it and this one does not.
+            if (b.v2.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
+                s.governorCommitArmedFromDay = b.v2.armedFromDay;
+            }
             _notifyCompensationHook(b);
             return;
         }

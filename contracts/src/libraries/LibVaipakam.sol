@@ -7147,6 +7147,36 @@ library LibVaipakam {
         ///         the LOCAL register weight already carries, so neither
         ///         allocation surface can earmark more than half a bucket.
         mapping(uint32 => uint16) chainKeeperAllocateBps;
+        /// @notice BASE-ONLY: the NET recycled value chain `c` has been
+        ///         instructed to earmark for its keeper register — a SEPARATE
+        ///         draw term of §3.6a's availability formula, exactly like
+        ///         `chainRepatriationDebited` and for exactly the same reason.
+        ///
+        ///         It must NOT ride `chainConsumedRecycled` (Codex #2031 r2).
+        ///         That counter is one half of the
+        ///         `outstanding + retired == consumed` identity, and only
+        ///         `commitLocal` ever enters the outstanding/retirement
+        ///         lifecycle — a mirror can retire at most what it was
+        ///         committed. Charging the earmark there breaks the identity
+        ///         on the first non-zero allocation and leaves the difference
+        ///         as phantom consumption that permanently suppresses the
+        ///         chain's reported availability. The counter's own doc names
+        ///         this trap for the repatriation draw; the keeper earmark is
+        ///         the same class of non-claim draw and had walked into it.
+        ///
+        ///         Availability still nets it, so Base can never instruct the
+        ///         same tokens twice — that property was the reason for the
+        ///         original (wrong) placement and it is preserved here.
+        ///
+        ///         NET is maintained IN this slot rather than derived from a
+        ///         debited/released pair, following the same Codex #1608 r1
+        ///         P2 reasoning the repatriation draw records: two cumulatives
+        ///         let a cancelled near-max draw pin one at ~2^256 and wedge
+        ///         every later authorization on overflow.
+        ///
+        ///         Zero until `chainKeeperAllocateBps` is armed, so the term
+        ///         is inert on every deployment built before then.
+        mapping(uint32 => uint256) chainKeeperAllocDebited;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

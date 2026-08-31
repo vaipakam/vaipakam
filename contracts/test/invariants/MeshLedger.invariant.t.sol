@@ -263,6 +263,26 @@ contract MeshLedgerInvariant is Test {
         RepatriationFacet(address(diamond)).setRepatriationTokenAdminRegistry(
             address(tokenReg)
         );
+        // #1569 M4 C3 (Codex #2031 r2) — ARM the per-chain keeper earmark on
+        // one chain, so every invariant below runs against a live one.
+        //
+        // The first version of that card charged the earmark to
+        // `chainConsumedRecycled`, which is one half of
+        // `outstanding == instructed − retired`. This campaign is exactly
+        // what should have caught it and did not: the knob defaults to zero,
+        // so `invariant_OutstandingEqualsInstructedMinusRetired` held
+        // vacuously for the new field. Arming it here rather than adding a
+        // fuzz action makes the coverage DETERMINISTIC — a fuzzed arming
+        // could lose the race with the reserved-day sequence and quietly
+        // stop exercising it, which is the failure mode this suite's own
+        // coverage probe exists to catch.
+        //
+        // ARB only, so `invariant_...MinusRetired` still spans an armed and
+        // an unarmed chain in the same campaign.
+        RewardAggregatorFacet(address(diamond)).setChainKeeperAllocateBps(
+            CHAIN_ARB, 2_500
+        );
+
         targetContract(address(handler));
         // RESTRICT to the handler's OWN entry points. `MeshHandler` inherits
         // `Test`, which brings hundreds of public cheatcode/assertion helpers

@@ -429,12 +429,27 @@ library LibMeshFunding {
             // The INSTRUCTION cumulative (B1's definition) — the binding
             // availability backstop `_mirrorAvailable` nets against, so a
             // chain can never be committed twice for the same tokens.
-            // `chainConsumedRecycled` is defined as B2 `recycleConsume` PLUS
-            // `keeperAllocate` plus B3 netting (see its storage docs), so an
-            // armed instruction lands here too. Omitting it would hide the
-            // earmarked share from the availability backstop and let Base
-            // instruct the same tokens twice.
-            s.chainConsumedRecycled[c.chainId] += commitLocal + keeperAlloc;
+            //
+            // ONLY `commitLocal`. The keeper earmark is charged to its own
+            // draw slot below, NOT here (Codex #2031 r2): this counter is one
+            // half of the `outstanding + retired == consumed` identity, and
+            // only `commitLocal` enters the outstanding/retirement lifecycle
+            // — a mirror can retire at most what it was committed. Adding the
+            // earmark here broke the identity on the first non-zero
+            // allocation and left the difference as phantom consumption that
+            // permanently suppressed the chain's availability. The storage
+            // doc for `chainConsumedRecycled` names exactly this trap for the
+            // C2 repatriation draw; the keeper earmark is the same class of
+            // non-claim draw, and the first version of this code walked into
+            // it while quoting the half of that doc which lists
+            // `keeperAllocate` — a definition written while the field was
+            // dead, so the identity held vacuously.
+            s.chainConsumedRecycled[c.chainId] += commitLocal;
+            // The SEPARATE draw term, the sibling of
+            // `chainRepatriationDebited`. Availability nets it, so the
+            // backstop property the wrong placement was reaching for is
+            // preserved: Base still cannot instruct the same tokens twice.
+            s.chainKeeperAllocDebited[c.chainId] += keeperAlloc;
             // §5's per-chain reservation ledger, the sibling of the global
             // `outstandingCommitRecycled`. Monotonic in d3: Base has no
             // authenticated view of mirror claims, so B3's source-scoped

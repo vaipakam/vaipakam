@@ -1312,7 +1312,17 @@ library LibVpfiRecycle {
         // this view said the capacity was back. Zero until #1568 arms, so
         // the term is inert on every deployment built before then.
         uint256 netRepat = s.chainRepatriationDebited[chainId];
-        return avail > netRepat ? avail - netRepat : 0;
+        avail = avail > netRepat ? avail - netRepat : 0;
+        // #1569 M4 C3 keeper earmark — the THIRD separate draw term, added
+        // for the same reason as the repatriation one above and maintained
+        // the same way (net in the debited slot). It rides here rather than
+        // on `chainConsumedRecycled` because that counter is one half of the
+        // `outstanding + retired == consumed` identity and only the local
+        // COMMIT enters the retirement lifecycle. Netting it is what stops
+        // Base instructing the same tokens twice. Zero until
+        // `chainKeeperAllocateBps` is armed, so inert on older deployments.
+        uint256 netKeeper = s.chainKeeperAllocDebited[chainId];
+        return avail > netKeeper ? avail - netKeeper : 0;
     }
 
     /**

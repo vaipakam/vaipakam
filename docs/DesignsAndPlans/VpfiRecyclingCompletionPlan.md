@@ -19,11 +19,14 @@
 > landed as #1970; the card is open only for its arming gate).
 >
 > Landed in this pass: **#1204**'s absorption channel (`SpendGatedPerk` +
-> `PerkFacet`, §M6) and **#1944**'s replay-branch `D*` install.
+> `PerkFacet`, §M6), **#1944**'s `D*` install on both the replay and the
+> V3 clock-backfill paths, and **#1569**'s per-chain keeper allocation
+> (§M6) — the owner settled its gate on 2026-08-31 ("configurable by
+> admin, later governance"), and it is ARMED, not pending.
 >
 > Still owner-gated and deliberately untouched: **#1566** (which quantity
-> bounds a canonical payout), **#1569**, **#1219**'s legal glance, the
-> per-perk effects behind #1204's three open design decisions, and the M7
+> bounds a canonical payout), **#1219**'s legal glance, the per-perk
+> effects behind #1204's remaining design decisions, and the M7
 > ceremonies. **#1949** is open engineering with a design fork recorded on
 > the card.
 
