@@ -18,35 +18,22 @@ const MAX_URL_LEN = 7000;
 const MAX_ERROR_CHARS = 1200;
 const MAX_STACK_CHARS = 1000;
 
-export function redactAddress(address: string | undefined): string {
-  if (!address) return 'not connected';
-  return `${address.slice(0, 6)}…${address.slice(-4)}`;
-}
+/**
+ * The redaction contract itself now lives in `@vaipakam/lib/redactAddresses`
+ * (#2024, Codex r7 P1). It has to hold on the receiving service too — the
+ * support-ticket endpoint accepts arbitrary JSON from any caller clearing the
+ * Origin gate, and from cached older clients — and two copies of an algorithm
+ * this fiddly would diverge at the next finding. Re-exported here so this
+ * module's callers, and the drawer's on-screen error row, are unchanged.
+ */
+export {
+  MAX_MAPPED_INPUT,
+  redactAddress,
+  redactCap,
+  redactText,
+} from '@vaipakam/lib/redactAddresses';
+import { redactCap, redactText } from '@vaipakam/lib/redactAddresses';
 
-// Exactly 20 bytes: the negative lookahead stops the pattern from
-// eating the first 40 hex chars of a 32-byte tx hash — support needs
-// those hashes intact, and a mangled prefix would neither redact nor
-// preserve anything useful (round 4). The prefix is case-insensitive:
-// a pasted 0X-prefixed address must redact too (round 5).
-const ADDRESS_RE = /0[xX][a-fA-F0-9]{40}(?![a-fA-F0-9])/g;
-
-/** Scrub any full address ANYWHERE in report text — crash messages,
- *  component stacks, and deep-link paths routinely embed the
- *  connected account, and the redaction contract covers the whole
- *  public report, not just the wallet row. Applied to the finished
- *  body/title so future fields can't reintroduce a leak; exported so
- *  the drawer's ON-SCREEN error row honours the same contract. */
-export function redactText(text: string): string {
-  return text.replace(ADDRESS_RE, (m) => `${m.slice(0, 6)}…${m.slice(-4)}`);
-}
-
-/** Redact FIRST, then cap: truncation that cuts through an address
- *  would leave a partial hex string the whole-text scrubber no longer
- *  recognises (round 2) — free text must be scrubbed while intact.
- *  Exported for the drawer's on-screen last-error row (round 6). */
-export function redactCap(text: string, max: number): string {
-  return cap(redactText(text), max);
-}
 
 /** Paths are user-navigable input (deep links, 404s) — bound them so
  *  the final no-error fallback stays provably under MAX_URL_LEN. */
@@ -71,9 +58,6 @@ function issuesBase(): string {
   return env || DEFAULT_ISSUES_URL;
 }
 
-function cap(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
-}
 
 /** The diagnostics section shared by the clipboard copy and the issue
  *  form's "Additional context" field. */

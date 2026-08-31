@@ -128,6 +128,32 @@ describe('parseSupportTicket', () => {
     expect(redactWalletAddresses(upper)).toBe('0X1DAe…8282');
   });
 
+  it('redacts a PERCENT-ENCODED address, which the hand-rolled pattern missed', () => {
+    // #2024 Codex r7 P1. This endpoint's whole reason for re-scrubbing is
+    // that it trusts no client — the comment on the redactor says the promise
+    // must hold "regardless of who built the payload" — and yet its own
+    // pattern matched only literal addresses. A crafted payload, or simply a
+    // cached client from before the app-side fix, put an encoded address
+    // straight into D1 and the operator notification.
+    //
+    // It now delegates to the shared contract in `@vaipakam/lib`, so the
+    // server cannot be a second, weaker copy of the client's rules.
+    const addr = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
+    const encoded = [...addr]
+      .map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, '0')}`)
+      .join('');
+    const parsed = parseSupportTicket({
+      message: 'something broke',
+      page: `/offers?owner=${encoded}`,
+      diagnostics: `wallet: ${encoded}`,
+    });
+    expect(parsed?.page).toBe('/offers?owner=0x1DAe…8282');
+    expect(parsed?.diagnostics).toBe('wallet: 0x1DAe…8282');
+    // And the escapes around it still read as they arrived — a support
+    // reader needs the link as it actually was, minus the account.
+    expect(redactWalletAddresses(`/a%20b?w=${encoded}`)).toBe('/a%20b?w=0x1DAe…8282');
+  });
+
   it('redacts diagnostics BEFORE the size cap, so a boundary-spanning address cannot survive', () => {
     const addr = '0x1DAefA360ED370285f003Fa2d92DB75628088282';
     // Position the address to straddle the 4,000-char cutoff: cap

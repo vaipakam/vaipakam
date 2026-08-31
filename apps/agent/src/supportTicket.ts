@@ -19,6 +19,8 @@
  *    same redaction the report-issue path uses) and is size-capped
  *    again here — the Worker never trusts client-side caps.
  */
+import { redactText } from '@vaipakam/lib/redactAddresses';
+
 import type { Env } from './env';
 import { insertSupportTicket } from './db';
 
@@ -44,13 +46,14 @@ export interface SupportTicketBody {
  *  user's `message` is deliberately NOT touched: the policy promises
  *  it is stored exactly as typed. Exported for the vitest suite. */
 export function redactWalletAddresses(s: string): string {
-  // `0[xX]` — EIP-55 tooling and some wallets emit an uppercase
-  // prefix; the frontend redactor matches both and this server
-  // fallback must too (Codex round-4 P2).
-  return s.replace(
-    /0[xX][a-fA-F0-9]{40}(?![a-fA-F0-9])/g,
-    (m) => `${m.slice(0, 6)}…${m.slice(-4)}`,
-  );
+  // Delegates to the SHARED contract rather than carrying its own pattern
+  // (#2024, Codex r7 P1). The hand-rolled version here matched only LITERAL
+  // addresses, so a percent-encoded one — from a crafted payload or simply a
+  // cached older client — passed this defence unchanged into D1 and the
+  // operator notification, while the comment above promised the opposite.
+  // A defence stated to hold "regardless of who built the payload" cannot be
+  // a second, weaker copy of the client's rules.
+  return redactText(s);
 }
 
 /** Strict body validation — returns null on any shape violation.
