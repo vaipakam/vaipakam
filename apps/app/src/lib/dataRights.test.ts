@@ -31,6 +31,7 @@ import {
   erasedItemCount,
   isDisconnectSentinelKey,
   inspectIndexedDbData,
+  eraseWebStorageQuietly,
   disconnectEvery,
   type FullEraseResult,
 } from './dataRights';
@@ -1370,5 +1371,200 @@ describe('round 4 — the pre-confirm figure and the late teardown', () => {
     expect(result.connector).toEqual({ attempted: true, disconnected: true });
     expect(store.has('wagmi.store')).toBe(false);
     expect(result.complete).toBe(true);
+  });
+});
+
+describe('round 6 — what a late, partial, or unresponsive teardown leaves behind', () => {
+  const realIdb = (globalThis as Record<string, unknown>).indexedDB;
+  const realWindow = (globalThis as Record<string, unknown>).window;
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).indexedDB = realIdb;
+    (globalThis as Record<string, unknown>).window = realWindow;
+  });
+
+  function fakeWindow(store: Map<string, string>) {
+    const fake: Storage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: fake,
+      sessionStorage: fake,
+      location: { origin: 'https://app.example' },
+      navigator: { userAgent: 'test' },
+      dispatchEvent: () => true,
+    };
+  }
+
+  function stubIdbOk() {
+    (globalThis as Record<string, unknown>).indexedDB = {
+      deleteDatabase: () => ({}),
+      open() {
+        const req: Record<string, unknown> = {};
+        queueMicrotask(() => {
+          req.result = {
+            objectStoreNames: { contains: () => true },
+            close: () => {},
+            transaction: () => {
+              const tx: Record<string, unknown> = {
+                objectStore: () => ({
+                  count: () => ({ result: 1 }),
+                  clear: () => {},
+                }),
+                abort: () => {},
+              };
+              queueMicrotask(
+                () => (tx.oncomplete as (() => void) | undefined)?.(),
+              );
+              return tx;
+            },
+          };
+          (req.onsuccess as (() => void) | undefined)?.();
+        });
+        return req;
+      },
+    };
+  }
+
+  it('moves past a connector that never answers, instead of parking on it', async () => {
+    // Round 6 P2. Catching a rejection moves past a wallet that REFUSES and
+    // does nothing for one that never answers: a permanently pending promise
+    // parked the loop forever, and the outer timeout only lets the CALLER
+    // stop waiting — it does not advance the loop. So every later wallet
+    // stayed connected without even being attempted, which is the exact
+    // defect the aggregation fix was for, through the one failure mode it
+    // did not cover.
+    vi.useFakeTimers();
+    try {
+      const asked: string[] = [];
+      const teardown = disconnectEvery(
+        ['wedged', 'metaMask'],
+        async ({ connector }) => {
+          asked.push(connector);
+          if (connector === 'wedged') return new Promise<void>(() => {});
+        },
+        50,
+      );
+      const pending = teardown();
+      const settled = pending.then(
+        () => 'resolved',
+        () => 'rejected',
+      );
+      await vi.advanceTimersByTimeAsync(200);
+      expect(await settled).toBe('rejected');
+      // The point of the fix: the second connector WAS asked.
+      expect(asked).toEqual(['wedged', 'metaMask']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('re-sweeps after a late teardown that PARTLY succeeded before failing', async () => {
+    // Round 6 P2. The rejection handler used to skip the re-sweep, on the
+    // reasoning that a failed teardown wrote nothing. True while one refusal
+    // ended the whole attempt; false since the aggregation fix — one
+    // connector can let go, persisting `wagmi.store`, before a later one
+    // refuses and makes the aggregate reject.
+    vi.useFakeTimers();
+    try {
+      const store = new Map<string, string>([['app.mode', 'basic']]);
+      fakeWindow(store);
+      stubIdbOk();
+      let land: (() => void) | undefined;
+      const pending = eraseMyDataFully({
+        disconnect: () =>
+          new Promise<void>((_resolve, reject) => {
+            land = () => {
+              // One connector let go and wrote; a later one refused.
+              store.set('wagmi.store', '{}');
+              reject(new Error('1 of 2 connectors did not disconnect'));
+            };
+          }),
+      });
+      await vi.advanceTimersByTimeAsync(DISCONNECT_TIMEOUT_MS + 1);
+      const result = await pending;
+      expect(result.connector).toEqual({
+        attempted: true,
+        disconnected: false,
+      });
+      land?.();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(store.has('wagmi.store')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('the quiet re-sweep covers cookies, not only Web Storage', async () => {
+    // Round 6 P2. A peer tab's language reset writes the `vaipakam_lang`
+    // COOKIE as well as the storage key, so a cleanup that swept only Web
+    // Storage restored an erased preference by half.
+    const store = new Map<string, string>();
+    fakeWindow(store);
+    const cleared: string[] = [];
+    let jar = 'vaipakam_lang=ta';
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: {
+        get cookie() {
+          return jar;
+        },
+        set cookie(v: string) {
+          cleared.push(v);
+          if (v.startsWith('vaipakam_lang=;')) jar = '';
+        },
+      },
+    });
+    try {
+      eraseWebStorageQuietly();
+      expect(cleared.some((c) => c.startsWith('vaipakam_lang=;'))).toBe(true);
+    } finally {
+      delete (globalThis as Record<string, unknown>).document;
+    }
+  });
+
+  it('ABORTS the upgrade rather than creating a database it means to delete', async () => {
+    // Round 6 P2. `open` with no version starts a version-1 creation. Letting
+    // it commit and deleting afterwards leaves a window holding an empty
+    // database WITHOUT the wallet library's object store — and if that
+    // library opens it in the interval, our deletion is blocked and its next
+    // transaction fails with NotFoundError. An erasure must not be able to
+    // break the store it is erasing from.
+    const aborted: string[] = [];
+    (globalThis as Record<string, unknown>).indexedDB = {
+      deleteDatabase: () => ({}),
+      open(name: string) {
+        const req: Record<string, unknown> = {
+          transaction: { abort: () => aborted.push(name) },
+        };
+        queueMicrotask(() => {
+          (req.onupgradeneeded as (() => void) | undefined)?.();
+          req.result = {
+            objectStoreNames: { contains: () => false },
+            close: () => {},
+            transaction: () => ({
+              objectStore: () => ({
+                count: () => ({ result: 0 }),
+                clear: () => {},
+              }),
+              abort: () => {},
+            }),
+          };
+          (req.onsuccess as (() => void) | undefined)?.();
+        });
+        return req;
+      },
+    };
+    await eraseIndexedDbData();
+    expect(aborted).toEqual(['WALLET_CONNECT_V2_INDEXED_DB', 'cbwsdk']);
+    aborted.length = 0;
+    await inspectIndexedDbData();
+    expect(aborted).toEqual(['WALLET_CONNECT_V2_INDEXED_DB', 'cbwsdk']);
   });
 });

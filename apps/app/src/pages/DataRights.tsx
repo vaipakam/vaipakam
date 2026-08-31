@@ -207,9 +207,18 @@ export function DataRights() {
   // of one sentence describe one moment. `refused` folds in: a store that will
   // not answer means the figure is a floor, and this page has a "could not
   // look" state precisely so a floor is never shown as a total.
+  //
+  // PENDING IS NOT "READ, AND EMPTY" (round 6 P2). The first render happens
+  // before the asynchronous inspection has run, and defaulting to
+  // `{records: 0, refused: false}` asserted both halves of an answer nobody
+  // had yet — so on a slow open the page said "Nothing is stored" and let the
+  // user confirm an erasure that then removed a wallet session. This page's
+  // governing rule is that not knowing is not nothing, and a loading state is
+  // the purest case of not knowing. It starts UNREADABLE, which renders the
+  // "could not look" message until a real answer replaces it.
   const [dbInventory, setDbInventory] = useState<IndexedDbInventory>({
     records: 0,
-    refused: false,
+    refused: true,
   });
   useEffect(() => {
     let live = true;

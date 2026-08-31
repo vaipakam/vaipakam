@@ -19,14 +19,18 @@
  * storage that was just cleared and stays there — a peer tab resurrecting
  * the keys the erasure removed. That is why the theme and mode resets are
  * the state-only `resetToDefault`s rather than their ordinary setters, and
- * why the language reset removes the key `changeLanguage` writes on its way
- * through.
+ * why the language reset is followed by a quiet sweep that removes what
+ * `changeLanguage` persists on its way through — the storage key AND the
+ * parent-scope cookie, since it writes both.
  */
 import { useEffect, useRef } from 'react';
 import { useAccount, useDisconnect } from 'wagmi';
 import { useTranslation } from 'react-i18next';
-import { LANGUAGE_STORAGE_KEY } from '@vaipakam/i18n';
-import { disconnectEvery, erasePerTabData } from '../lib/dataRights';
+import {
+  disconnectEvery,
+  erasePerTabData,
+  eraseWebStorageQuietly,
+} from '../lib/dataRights';
 import { bumpEraseEpoch } from '../lib/eraseEpoch';
 import { listenForErase } from '../lib/eraseBroadcast';
 import { useTheme } from '../app/ThemeContext';
@@ -93,13 +97,28 @@ export function EraseSyncListener() {
         // tab the user is looking at.
         const connectors = connectorsRef.current;
         if (connectedRef.current && connectors.length > 0) {
-          void disconnectEvery(connectors, async (args) =>
-            disconnect(args),
-          )().catch(() => {
-            // Unacknowledged either way — there is nobody to report to. The
-            // catch exists so a wallet that refuses cannot take the rest of
-            // this handler down with it.
-          });
+          // RE-SWEEP AFTERWARDS, on both outcomes (round 6 P1). This teardown
+          // runs after the ORIGINATING tab has already swept shared storage,
+          // and wagmi persists `wagmi.store` through `config.setState` once
+          // the connector's own asynchronous disconnect finishes — so a slow
+          // peer recreates that key after the erasing tab's final inspection
+          // and leaves data behind under a reported success. The guard above
+          // stops a no-op write; this covers the write a genuine disconnect
+          // NECESSARILY makes.
+          //
+          // On rejection as well as fulfilment, because since the aggregation
+          // fix a rejection no longer means nothing was written: one
+          // connector can let go — persisting the store — before a later one
+          // refuses and makes the whole thing reject.
+          void disconnectEvery(connectors, async (args) => disconnect(args))()
+            .catch(() => {
+              // Unacknowledged either way — there is nobody to report to. The
+              // catch exists so a wallet that refuses cannot take the rest of
+              // this handler down with it.
+            })
+            .finally(() => {
+              eraseWebStorageQuietly();
+            });
         }
         resetTheme();
         resetMode();
@@ -109,13 +128,17 @@ export function EraseSyncListener() {
         // happened elsewhere, so the write would restore an erased key in
         // shared storage. Changing the language is what updates the screen,
         // and removing the key is what keeps the erasure true.
+        //
+        // BOTH stores, not just the key (round 6 P2). `createI18n`'s
+        // `languageChanged` listener writes the `vaipakam_lang` COOKIE at the
+        // parent scope as well as the storage key, so undoing only the key
+        // restored an erased preference by half and left the cookie standing
+        // — and retrying the erase reproduced it every time. The quiet sweep
+        // covers Web Storage and cookies alike, which is the same set the
+        // erasure itself covers; anything narrower is a cleanup that has to
+        // be kept in step with a writer it cannot see.
         void i18n.changeLanguage('en');
-        try {
-          window.localStorage.removeItem(LANGUAGE_STORAGE_KEY);
-        } catch {
-          // A tab that cannot reach storage has nothing to undo; the
-          // on-screen reset above still happened.
-        }
+        eraseWebStorageQuietly();
         // ...and tell this tab's mounted readers to re-read, exactly as
         // the erasing tab does for its own.
         bumpEraseEpoch();

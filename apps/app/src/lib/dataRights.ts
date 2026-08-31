@@ -813,7 +813,23 @@ function clearObjectStore(
     request.onupgradeneeded = () => {
       // The database was absent and this call is creating it. Nothing to
       // erase, and nothing should be left behind.
+      //
+      // ABORT THE UPGRADE rather than let it commit and delete afterwards
+      // (round 6 P2). Create-then-delete leaves a window in which an empty
+      // version-1 database exists WITHOUT the wallet library's object store:
+      // if that library opens and caches it in the interval, our deletion is
+      // blocked by its connection and `idb-keyval` is left holding a database
+      // whose store does not exist, so its next transaction fails with
+      // NotFoundError. An erasure must not be able to break the thing it is
+      // erasing from. Aborting the version-change transaction means the
+      // database is never created at all, and the abort is the SIGNAL for
+      // absent rather than an error.
       created = true;
+      try {
+        request.transaction?.abort();
+      } catch {
+        // Older engines may refuse; the delete below is then the fallback.
+      }
     };
     request.onerror = () => done(false);
     request.onsuccess = () => {
@@ -934,7 +950,15 @@ function countObjectStore(
     };
     let created = false;
     request.onupgradeneeded = () => {
+      // Aborted, not created-then-deleted — see `clearObjectStore` for why:
+      // an empty version-1 database without the wallet library's store is a
+      // state that can break that library if it opens in the interval.
       created = true;
+      try {
+        request.transaction?.abort();
+      } catch {
+        // Older engines may refuse; the delete below is then the fallback.
+      }
     };
     request.onerror = () => done(false);
     request.onsuccess = () => {
@@ -1071,9 +1095,16 @@ export function erasePerTabData(): number {
  * moment it happened and a report that revises itself later is its own kind
  * of untruth. This is about what remains on the device.
  */
-function eraseWebStorageQuietly(): void {
+export function eraseWebStorageQuietly(): void {
   clearStorage(safeStorage('localStorage'));
   clearStorage(safeStorage('sessionStorage'));
+  // Cookies too (round 6 P2). A peer tab's language reset writes the
+  // `vaipakam_lang` cookie as well as the storage key — `createI18n`'s
+  // `languageChanged` listener emits both — so a cleanup that swept only Web
+  // Storage restored an erased preference by half and left the cookie
+  // standing. Anything called "quietly erase what a late write put back" has
+  // to cover every store the erasure itself covers.
+  clearCookies();
 }
 
 export function eraseMyData(): EraseResult {
@@ -1206,6 +1237,7 @@ export function erasedItemCount(result: FullEraseResult): number {
 export function disconnectEvery<C>(
   connectors: readonly C[],
   disconnect: (args: { connector: C }) => Promise<unknown>,
+  perConnectorTimeoutMs: number = PER_CONNECTOR_TIMEOUT_MS,
 ): () => Promise<void> {
   const targets = [...connectors];
   return async () => {
@@ -1223,10 +1255,21 @@ export function disconnectEvery<C>(
     // "One wallet held on" and "one wallet held on and the rest were never
     // tried" are very different states to leave a user in, and only the first
     // is what the report describes.
+    // EACH ONE IS BOUNDED SEPARATELY (round 6 P2). Catching a rejection is
+    // enough to move past a wallet that REFUSES; it does nothing for one that
+    // simply never answers. A permanently pending promise parks this loop
+    // forever, and the outer timeout does not help — it lets
+    // `eraseMyDataFully` stop waiting, it does not advance the loop — so every
+    // later wallet stayed connected without even being attempted, which is the
+    // exact defect the aggregation fix was for, reachable by the one failure
+    // mode that fix did not cover.
     const failures: unknown[] = [];
     for (const connector of targets) {
       try {
-        await disconnect({ connector });
+        await withTimeout(
+          Promise.resolve(disconnect({ connector })),
+          perConnectorTimeoutMs,
+        );
       } catch (error) {
         failures.push(error);
       }
@@ -1260,6 +1303,17 @@ export function disconnectEvery<C>(
  * enough that a wedged transport cannot strand the erasure indefinitely.
  */
 export const DISCONNECT_TIMEOUT_MS = 10_000;
+
+/**
+ * How long to wait for ONE connector before moving on to the next.
+ *
+ * Shorter than the whole-teardown bound, so several unresponsive wallets can
+ * each be given up on inside it and the ones behind them still get asked. It
+ * is not a subdivision of that bound and does not need to be: the outer one
+ * caps what the USER waits, this one caps what one wallet can cost the
+ * others.
+ */
+export const PER_CONNECTOR_TIMEOUT_MS = 4_000;
 
 /** Reject after `ms` if `promise` has not settled. */
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -1369,17 +1423,22 @@ export async function eraseMyDataFully(
       // report already says the wallet held out and the erasure is incomplete,
       // which remains true; this is about what is left on the device, not
       // about what the page claims.
-      teardown.then(
-        () => {
+      //
+      // ON BOTH OUTCOMES (round 6 P2). An earlier revision swept only on
+      // fulfilment, reasoning that a failed teardown wrote nothing — true when
+      // one refusal ended the whole attempt, and false since the aggregation
+      // fix: `disconnectEvery` now keeps going, so one connector can let go
+      // (persisting `wagmi.store`) before a later one refuses and makes the
+      // aggregate reject. A rejection no longer means no connector completed.
+      teardown
+        .catch(() => {
+          // Swallowed rather than left unhandled: this promise is no longer
+          // awaited, and an unhandled rejection from a data-rights control
+          // must not surface as a page error.
+        })
+        .finally(() => {
           if (settledLate) eraseWebStorageQuietly();
-        },
-        () => {
-          // A teardown that eventually FAILS wrote nothing on the way out, so
-          // there is nothing to sweep. Swallowed rather than left unhandled:
-          // this promise is no longer awaited, and an unhandled rejection from
-          // a data-rights control must not surface as a page error.
-        },
-      );
+        });
       await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
       connector = { attempted: true, disconnected: true };
     } catch {
