@@ -807,3 +807,44 @@ export function eraseMyData(): EraseResult {
     total: local + session + cookies,
   };
 }
+
+/**
+ * What a complete erasure removed, across every store in the registry.
+ *
+ * `EraseResult` is left exactly as it was and this wraps it, rather than
+ * `eraseMyData` growing an async step. That is a deliberate response to how
+ * the round-1 verification gap happened in Part 1: a function whose contract
+ * is "returns what it removed" acquired a second job, and the counting stayed
+ * behind. Here the synchronous contract keeps its meaning and the asynchronous
+ * work is a separate, separately-reportable field.
+ */
+export interface FullEraseResult extends EraseResult {
+  readonly indexedDb: IndexedDbEraseResult;
+  /**
+   * True when every store the registry names came away clean. NOT the same
+   * as `total > 0`: a browser holding nothing erases nothing and is complete,
+   * while one refusing a database deletion is incomplete however much Web
+   * Storage it gave up. The page needs the second distinction to avoid
+   * reporting a success over a live session.
+   */
+  readonly complete: boolean;
+}
+
+/**
+ * Erase everything this origin holds, including the wallet databases.
+ *
+ * Web Storage and cookies go first and synchronously, so the per-tab
+ * broadcast and the preference resets keep the ordering Part 1 established.
+ * The database deletions then run and are awaited — they are the slow,
+ * refusable part, and the caller must not report an outcome until they have
+ * settled or timed out.
+ */
+export async function eraseMyDataFully(): Promise<FullEraseResult> {
+  const base = eraseMyData();
+  const indexedDb = await eraseIndexedDbData();
+  return {
+    ...base,
+    indexedDb,
+    complete: indexedDb.refused.length === 0,
+  };
+}

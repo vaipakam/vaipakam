@@ -26,6 +26,7 @@ import {
   ERASURE_REGISTRY,
   eraseIndexedDbData,
   INDEXED_DB_DELETE_TIMEOUT_MS,
+  eraseMyDataFully,
 } from './dataRights';
 
 /**
@@ -668,5 +669,79 @@ describe('IndexedDB erasure (#1862 Part 2)', () => {
     const result = await eraseIndexedDbData();
     expect(result.unavailable).toBe(false);
     expect(result.refused).toHaveLength(2);
+  });
+});
+
+describe('eraseMyDataFully (#1862 Part 2)', () => {
+  const realIdb = (globalThis as Record<string, unknown>).indexedDB;
+  const realWindow = (globalThis as Record<string, unknown>).window;
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).indexedDB = realIdb;
+    (globalThis as Record<string, unknown>).window = realWindow;
+  });
+
+  function fakeWindow(store: Map<string, string>) {
+    const fake: Storage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: fake,
+      sessionStorage: fake,
+      location: { origin: 'https://app.example' },
+      navigator: { userAgent: 'test' },
+      dispatchEvent: () => true,
+    };
+  }
+
+  function stubIdb(verdict: 'success' | 'blocked') {
+    (globalThis as Record<string, unknown>).indexedDB = {
+      deleteDatabase() {
+        const req: Record<string, unknown> = {};
+        queueMicrotask(() => {
+          const h = req[`on${verdict}`];
+          if (typeof h === 'function') (h as () => void)();
+        });
+        return req;
+      },
+    };
+  }
+
+  it('removes Web Storage AND the databases, and calls that complete', async () => {
+    fakeWindow(new Map([['wagmi.store', '{}']]));
+    stubIdb('success');
+    const result = await eraseMyDataFully();
+    expect(result.localStorage).toBeGreaterThan(0);
+    expect(result.indexedDb.deleted).toBe(2);
+    expect(result.complete).toBe(true);
+  });
+
+  it('is INCOMPLETE when a database refuses, however much storage it cleared', async () => {
+    // The failure this exists to prevent: Web Storage gives up several keys,
+    // the page adds them up and reports success, and the live WalletConnect
+    // session is still in a database another tab is holding open.
+    fakeWindow(new Map([['wagmi.store', '{}'], ['app.mode', 'basic']]));
+    stubIdb('blocked');
+    const result = await eraseMyDataFully();
+    expect(result.total).toBeGreaterThan(0);
+    expect(result.complete).toBe(false);
+    expect(result.indexedDb.refused).toHaveLength(2);
+  });
+
+  it('an empty browser erases nothing and is still complete', async () => {
+    // `complete` is not `total > 0`. Nothing stored is a clean outcome, and
+    // conflating the two is how "nothing was stored" became a failure
+    // message in Part 1.
+    fakeWindow(new Map());
+    stubIdb('success');
+    const result = await eraseMyDataFully();
+    expect(result.total).toBe(0);
+    expect(result.complete).toBe(true);
   });
 });

@@ -13,21 +13,23 @@ the rule actually in force it gains you even less than the old explanation
 implied.
 
 Here is what really decides your rate. Your tier is a time-weighted average of
-what you held over a recent window — at most thirty days, and never reaching
-back before your current run of holding began — the day your balance first
-rose above zero and stayed there — with the latest days counting for more.
-Adding to a balance you already have does not move that starting day, so a
-top-up does not wipe your earlier days from the average or reset anything. That average is then pushed down to the lowest tier you dropped to at any
-point since your current holding began — a separate look-back, reaching back
-up to thirty days, not the averaging window just described — using each day's
-low rather than its closing figure, so a dip counts even if you top back up
-before the day ends. And none of it
-applies at all until you have held a balance above zero, without interruption,
-for a minimum number of days — that clock starts when your balance first goes
-above zero and restarts only if it returns to zero, so adding to a holding you
-already have neither resets it nor has to serve it again. Both the window and that minimum are settings
-the protocol can adjust within fixed bounds. The rate is then read at the
-moment a fee is charged.
+what you held over a recent window of at most thirty days, with the latest days
+counting for more. That window never reaches back past the start of your
+current run of holding — the day your balance first rose above zero and stayed
+there. Adding to a balance you already have does not move that starting day, so
+a top-up neither wipes your earlier days from the average nor resets anything.
+
+The average is then pushed down to the lowest tier you dropped to at any point
+since that run began, using each day's low rather than its closing figure, so a
+dip counts even if you top back up before the day ends. This is a separate
+look-back of up to thirty days, not the averaging window just described.
+
+None of it applies at all until you have held a balance above zero, without
+interruption, for a minimum number of days. That clock starts when your balance
+first goes above zero and restarts only if it returns to zero, so adding to an
+existing holding neither resets it nor has to serve it again. Both the window
+and that minimum are settings the protocol can adjust within fixed bounds, and
+the rate is read at the moment a fee is charged.
 
 The two look-backs are separate, and the second is usually the longer. The
 averaging window can be set shorter than thirty days; the lowest-tier
