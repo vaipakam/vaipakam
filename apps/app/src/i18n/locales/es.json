@@ -364,7 +364,10 @@
       "report": "Reportar un problema en GitHub",
       "reportHint": "Abre un issue de GitHub prellenado con los detalles de arriba y el último error registrado. Tu dirección completa de billetera nunca se incluye.",
       "copyDetails": "Copiar detalles",
-      "copied": "Copiado."
+      "copied": "Copiado.",
+      "copyFailed": "Este navegador no permitió que la aplicación usara el portapapeles. El informe completo está abajo: selecciónalo para copiarlo a mano.",
+      "showReport": "Mostrar informe completo",
+      "hideReport": "Ocultar informe completo"
     },
     "support": {
       "title": "Contactar soporte",
@@ -1966,6 +1969,7 @@
       "mintedNft": "Se acuñó un NFT de alquiler de prueba en tu billetera. Su token ID — lo necesitarás para listar el alquiler:",
       "copyTokenId": "Copiar token ID",
       "copiedTokenId": "Copiado.",
+      "copyTokenIdFailed": "No se pudo copiar: selecciona el ID de arriba.",
       "liquid": {
         "title": "Token de prueba líquido (tLIQ)",
         "blurb": "Con precio por un oráculo de prueba, así que se comporta como un activo líquido — factor de salud, liquidación y refinanciación funcionan con él. Combínalo con mWETH (uno como préstamo, otro como garantía) cuando un flujo necesite dos tokens líquidos distintos.",

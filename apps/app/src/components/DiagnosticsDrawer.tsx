@@ -94,7 +94,12 @@ export function DiagnosticsDrawer() {
 }
 
 function DrawerPanel({ onClose }: { onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
+  // Three states, not a boolean: "did not copy" and "copied" are not the only
+  // outcomes, and the old boolean could only ever say nothing about the third.
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
+    'idle',
+  );
+  const [showReport, setShowReport] = useState(false);
   const { pathname, search } = useLocation();
   const { address, isConnected, readChain, onSupportedChain } =
     useActiveChain();
@@ -261,13 +266,39 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   );
   const issueUrl = useMemo(() => buildIssueUrl(reportCtx), [reportCtx]);
 
+  // #2023 — the report body is rendered locally, and the clipboard is a
+  // convenience on top of it rather than the only way to see it.
+  //
+  // WHY THIS IS NOT A MISSING TOAST. Opening the report is a `<a href>` to a
+  // pre-filled GitHub issue, so the diagnostics — last error, component
+  // trace, route, network, redacted wallet — reach GitHub the MOMENT the form
+  // opens, whether or not an issue is ever filed. The drawer's own summary is
+  // partial (it shows 300 characters of the error and no trace at all, where
+  // the report carries up to 1200 and 1000). So "copy it, read it, then
+  // decide whether GitHub may have it" was the only ordering that let someone
+  // check before disclosing — and `navigator.clipboard.writeText` REJECTS in
+  // an insecure context, a hardened browser, or on a denied permission. The
+  // old catch swallowed that: no clipboard content, no error, not even a
+  // change of button label. The only remaining way to inspect the payload was
+  // the action that discloses it.
+  //
+  // Its comment said so inadvertently — "the GitHub link still carries the
+  // details" is true, and that link is precisely what the user was trying to
+  // evaluate before taking it.
+  const reportBody = useMemo(() => buildReportBody(reportCtx), [reportCtx]);
   const copyDetails = async () => {
     try {
-      await navigator.clipboard.writeText(buildReportBody(reportCtx));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2_000);
+      await navigator.clipboard.writeText(reportBody);
+      setCopyState('copied');
+      setTimeout(() => setCopyState('idle'), 2_000);
     } catch {
-      /* clipboard blocked — the GitHub link still carries the details */
+      // NOT SILENT, and not a dead end either: the failure is stated AND the
+      // disclosure is opened, so the text the clipboard refused to take is
+      // on screen and selectable. Telling someone it failed while leaving
+      // them no way to read the report would fix the honesty and not the
+      // problem.
+      setCopyState('failed');
+      setShowReport(true);
     }
   };
 
@@ -358,9 +389,48 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
             {copy.diagnostics.report}
           </a>
           <button type="button" className="btn btn-secondary" onClick={copyDetails}>
-            {copied ? copy.diagnostics.copied : copy.diagnostics.copyDetails}
+            {copyState === 'copied'
+              ? copy.diagnostics.copied
+              : copy.diagnostics.copyDetails}
           </button>
         </div>
+        {copyState === 'failed' ? (
+          <p className="muted" style={{ fontSize: 13 }} role="status">
+            {copy.diagnostics.copyFailed}
+          </p>
+        ) : null}
+        {/* The preview, and the reason the whole change exists: this is what
+            travels to GitHub, readable BEFORE the link above is taken. Plain
+            markup rather than a `<textarea>` — it is text to read, not to
+            edit, and a read-only textarea sized to a 2 kB report either
+            scrolls in a small box or dominates the drawer. */}
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          aria-expanded={showReport}
+          aria-controls="diag-report-body"
+          onClick={() => setShowReport((open) => !open)}
+        >
+          {showReport
+            ? copy.diagnostics.hideReport
+            : copy.diagnostics.showReport}
+        </button>
+        {showReport ? (
+          <pre
+            id="diag-report-body"
+            className="mono"
+            style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontSize: 12,
+              maxHeight: 280,
+              overflowY: 'auto',
+              userSelect: 'text',
+            }}
+          >
+            {reportBody}
+          </pre>
+        ) : null}
         <p className="muted" style={{ fontSize: 13 }}>
           {copy.diagnostics.reportHint}
         </p>

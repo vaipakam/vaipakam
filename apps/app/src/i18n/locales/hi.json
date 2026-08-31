@@ -364,7 +364,10 @@
       "report": "GitHub पर issue report करें",
       "reportHint": "ऊपर की details और last recorded error के साथ pre-filled GitHub issue खोलता है। आपका full wallet address कभी शामिल नहीं होता।",
       "copyDetails": "Details copy करें",
-      "copied": "Copied."
+      "copied": "Copied.",
+      "copyFailed": "इस browser ने ऐप को clipboard उपयोग नहीं करने दिया। पूरी रिपोर्ट नीचे है — उसे चुनकर हाथ से copy करें।",
+      "showReport": "पूरी रिपोर्ट दिखाएँ",
+      "hideReport": "पूरी रिपोर्ट छिपाएँ"
     },
     "support": {
       "title": "Support से contact करें",
@@ -1966,6 +1969,7 @@
       "mintedNft": "आपके wallet में test rental NFT mint हुआ। इसका token ID — rental list करने के लिए चाहिए:",
       "copyTokenId": "Token ID copy करें",
       "copiedTokenId": "Copied.",
+      "copyTokenIdFailed": "copy नहीं हो सका — इसके बजाय ऊपर दी गई ID चुनें।",
       "liquid": {
         "title": "Liquid टेस्ट टोकन (tLIQ)",
         "blurb": "Test oracle द्वारा priced, इसलिए liquid asset जैसा behave करता है — health factor, liquidation और refinancing सब इसके साथ काम करते हैं। Flow को two different liquid tokens चाहिए तो इसे mWETH के साथ pair करें (एक loan, एक collateral)।",

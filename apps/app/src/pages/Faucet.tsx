@@ -105,6 +105,7 @@ export function Faucet() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<MintOutcome | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [watched, setWatched] = useState(false);
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
@@ -435,13 +436,32 @@ export function Faucet() {
                     <button
                       type="button"
                       className="btn btn-secondary"
+                      // #2023, second site — this claimed success
+                      // UNCONDITIONALLY. `writeText` rejects in an insecure
+                      // context, a hardened browser, or on a denied
+                      // permission, and the fire-and-forget `void` meant the
+                      // label flipped to "Copied" regardless. That is worse
+                      // than the drawer's silent no-op it was found beside:
+                      // a user told the token id is on their clipboard stops
+                      // looking at the `<code>` block above, and pastes
+                      // whatever was there before.
                       onClick={() => {
-                        void navigator.clipboard.writeText(done.tokenId!);
-                        setCopied(true);
+                        void navigator.clipboard
+                          .writeText(done.tokenId!)
+                          .then(() => setCopied(true))
+                          .catch(() => setCopyFailed(true));
                       }}
                     >
                       {copied ? copy.faucet.copiedTokenId : copy.faucet.copyTokenId}
                     </button>{' '}
+                    {copyFailed ? (
+                      // The id is already rendered in the `<code>` above, so
+                      // saying the copy failed is enough — it points at text
+                      // that is on screen rather than at a dead end.
+                      <span className="muted" role="status" style={{ fontSize: 13 }}>
+                        {copy.faucet.copyTokenIdFailed}
+                      </span>
+                    ) : null}
                   </>
                 ) : null}
                 <a

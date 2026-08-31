@@ -364,7 +364,10 @@
       "report": "在 GitHub 上报告问题",
       "reportHint": "打开一个预填充的 GitHub issue，包含上方详情和最后记录的错误。您的完整钱包地址绝不会包含在内。",
       "copyDetails": "复制详情",
-      "copied": "已复制。"
+      "copied": "已复制。",
+      "copyFailed": "此浏览器不允许应用使用剪贴板。完整报告在下方——选中它即可手动复制。",
+      "showReport": "显示完整报告",
+      "hideReport": "隐藏完整报告"
     },
     "support": {
       "title": "联系支持",
@@ -1966,6 +1969,7 @@
       "mintedNft": "已向您的钱包铸造测试租赁 NFT。它的 token ID — 列出租赁时会用到：",
       "copyTokenId": "复制 token ID",
       "copiedTokenId": "已复制。",
+      "copyTokenIdFailed": "无法复制——请改为选中上方的 ID。",
       "liquid": {
         "title": "流动测试 token (tLIQ)",
         "blurb": "由测试预言机定价，因此表现得像流动资产 — 健康因子、清算和再融资都可使用它。当流程需要两个不同流动 token 时，将其与 mWETH 配对（一个作贷款，一个作抵押）。",

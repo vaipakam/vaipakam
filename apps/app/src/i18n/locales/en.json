@@ -382,7 +382,10 @@
       "report": "Report an issue on GitHub",
       "reportHint": "Opens a pre-filled GitHub issue with the details above and the last recorded error. Your full wallet address is never included.",
       "copyDetails": "Copy details",
-      "copied": "Copied."
+      "copied": "Copied.",
+      "copyFailed": "This browser would not let the app use the clipboard. The full report is below — select it to copy it by hand.",
+      "showReport": "Show full report",
+      "hideReport": "Hide full report"
     },
     "support": {
       "title": "Contact support",
@@ -1984,6 +1987,7 @@
       "mintedNft": "Minted a test rental NFT to your wallet. Its token ID — you’ll need it to list the rental:",
       "copyTokenId": "Copy token ID",
       "copiedTokenId": "Copied.",
+      "copyTokenIdFailed": "Could not copy — select the ID above instead.",
       "liquid": {
         "title": "Liquid test token (tLIQ)",
         "blurb": "Priced by a test oracle, so it behaves like a liquid asset — health factor, liquidation, and refinancing all work with it. Pair it with mWETH (one as the loan, one as collateral) when a flow needs two different liquid tokens.",
