@@ -6989,6 +6989,56 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
+  // ---- Codex #2036 r7 ----
+
+  it("a PYTHON argv array is read, though the command word sits inside it", () => {
+    // `firstArgvArray` was handed a region starting at the wrangler token, so
+    // for `subprocess.run(["wrangler", …])` the opening bracket was already
+    // behind it and the reader found nothing at all.
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'deploy.py',
+      'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it("argv selectors stop at wrangler's -- terminator", () => {
+    // Everything after wrangler's `--` is inert; the shell reader has known
+    // that since #1995 r16 and the argv reader did not, so an inert name became
+    // an authoritative unprotected target and suppressed the directory scope.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      'spawnSync("wrangler", ["deploy", "--", "--name", "vaipakam-www"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('the SAFETY read honours --cwd, not just the identity read', () => {
+    // Fixing `--cwd` for identity without fixing it for preservation let an
+    // unrelated same-named config under the protected package bless a deploy
+    // that actually loads a different file.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith(
+      'w.sh',
+      'spawnSync("wrangler", ["deploy", "--cwd", "configs", "--config", "custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a TOML line continuation folds rather than failing to decode', () => {
+    // The false-red direction: `\\` + newline is TOML's line folding, and
+    // reading it as an unknown escape made a valid config decline to answer.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.toml', ['name = """vaipakam-\\', '      www"""', ''].join('\n'));
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(true);
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

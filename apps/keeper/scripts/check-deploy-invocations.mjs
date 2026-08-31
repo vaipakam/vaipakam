@@ -1440,6 +1440,24 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
     // unresolvable `${…}` marker for a non-literal, and the `/\$/` test below
     // already refuses those.
     const cfgArgvValue = cfgSel ? null : argvValue(cfgRegion, '-c|--config');
+    // `--cwd` MOVES WHERE A RELATIVE CONFIG RESOLVES FROM, and this check has to
+    // honour it for the same reason `selectorScope` does: wrangler runs "as if
+    // started in the specified directory". Fixing the identity read for `--cwd`
+    // without fixing the PRESERVATION read let an unrelated same-named config
+    // under the protected package bless a deploy that actually loads a different
+    // file (Codex #2036 r7) — the two-halves shape again, this time across the
+    // two functions that each open a config.
+    //
+    // An absolute or computed value is left alone: this scanner cannot resolve
+    // it, and guessing a directory would pick the wrong file rather than none.
+    const effCwd = (() => {
+      const m = cfgRegion.match(
+        /(?<![\w-])--cwd(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/,
+      );
+      const v = m ? (m[1] ?? m[2] ?? m[3]) : argvValue(cfgRegion, '--cwd');
+      if (v === null || v === undefined || /^\/|\$/.test(v)) return cmdCwd;
+      return normalizeRel(`${cmdCwd}/${v}`);
+    })();
     const cfgName = cfgSel
       ? (cfgSel[1] ?? cfgSel[2] ?? cfgSel[3])
       : cfgArgvValue;
@@ -1505,7 +1523,7 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
         const candidates =
           cfgName === null
             ? [underWorker]
-            : [`${REPO_ROOT}/${normalizeRel(`${cmdCwd}/${name}`)}`, underWorker];
+            : [`${REPO_ROOT}/${normalizeRel(`${effCwd}/${name}`)}`, underWorker];
         const chosen = candidates.find((c) => existsSync(c)) ?? candidates[0];
         if (keepVarsEnabled(chosen)) return true;
       }
@@ -2484,7 +2502,7 @@ function scopeOfCwd(cwd) {
  * than one this scanner declines to read, because a wrong name is treated as an
  * authoritative answer.
  */
-function decodeTomlBasic(raw) {
+function decodeTomlBasic(raw, multiline = false) {
   let out = '';
   for (let i = 0; i < raw.length; i += 1) {
     if (raw[i] !== '\\') {
@@ -2496,6 +2514,17 @@ function decodeTomlBasic(raw) {
     if (c in simple) {
       out += simple[c];
       i += 1;
+      continue;
+    }
+    // LINE-ENDING BACKSLASH, multiline basic strings only. TOML folds
+    // `\\` + newline + leading whitespace to nothing, which is how a long name
+    // is spelled across lines. Read as an unknown escape it returned null, so a
+    // valid config declined to answer and the directory fallback blocked a
+    // legitimate deploy (Codex #2036 r7) — the false-red direction.
+    if (multiline && (c === '\n' || (c === '\r' && raw[i + 2] === '\n'))) {
+      let j = i + 1;
+      while (j < raw.length && /\s/.test(raw[j])) j += 1;
+      i = j - 1;
       continue;
     }
     if (c === 'u' || c === 'U') {
@@ -2536,13 +2565,33 @@ function decodeTomlBasic(raw) {
  * LAST occurrence, the rule every other selector here follows.
  */
 /**
- * The first bracketed ARRAY LITERAL in a child-process call, or `null`.
+ * The child-process ARGUMENT ARRAY, or `null`.
  *
  * Bracket-balanced and quote-aware so a `]` inside a string does not end it.
- * Deliberately the FIRST array: in every spelling this scanner reads, argv is
- * the argument that follows the executable, and the options object comes after.
+ *
+ * TWO SHAPES, because the executable is not always outside the array. Node's
+ * `spawnSync("wrangler", ["deploy", …])` puts argv AFTER the command word;
+ * Python's `subprocess.run(["wrangler", "deploy", …])` puts the command word
+ * INSIDE the array. The reader is handed a region that begins at the wrangler
+ * token, so for the Python shape the opening bracket is already behind it and
+ * the search found nothing at all (Codex #2036 r7) — a Python deploy selecting
+ * a protected config passed. It now looks BACKWARD for an unclosed `[` before
+ * falling forward to the first one after.
+ *
+ * Everything after wrangler's `--` is dropped: the CLI treats it as inert, and
+ * scanning past it made `["deploy", "--", "--name", "vaipakam-www"]` an
+ * authoritative unprotected target (same round). The shell reader has had that
+ * rule since #1995 r16; the argv reader did not.
  */
-function firstArgvArray(text) {
+function firstArgvArray(text, before = '') {
+  // An unclosed `[` in the text preceding the command word means we are already
+  // inside the array — Python's shape. Counted quote-naively on purpose: this
+  // only decides WHERE to start, and the balanced scan below is what parses.
+  const priorOpen = before.lastIndexOf('[');
+  if (priorOpen !== -1 && !before.slice(priorOpen).includes(']')) {
+    const body = firstArgvArray(before.slice(priorOpen) + text);
+    if (body !== null) return body;
+  }
   const open = text.indexOf('[');
   if (open === -1) return null;
   let i = open + 1;
@@ -2565,10 +2614,14 @@ function firstArgvArray(text) {
     else if (c === ']') depth -= 1;
     i += 1;
   }
-  return depth === 0 ? text.slice(open + 1, i - 1) : null;
+  if (depth !== 0) return null;
+  const body = text.slice(open + 1, i - 1);
+  // Wrangler's own terminator, as an ARRAY ELEMENT.
+  const term = body.match(/["'`]--["'`]\s*(?:,|$)/);
+  return term ? body.slice(0, term.index) : body;
 }
 
-function argvValue(region, spellings) {
+function argvValue(region, spellings, before = '') {
   // SCOPED TO THE ARGUMENT ARRAY, not to the whole region after the wrangler
   // word. Searching the region made a quoted option-like string ANYWHERE in the
   // call an authoritative selector — including inside the options object, where
@@ -2580,7 +2633,7 @@ function argvValue(region, spellings) {
   // reintroduced by the reader I added to fix a different one. The shell path
   // defends against it with `stripOtherOptionValues`; the argv path needs the
   // ARRAY, which is the only place argv actually is.
-  const arr = firstArgvArray(region);
+  const arr = firstArgvArray(region, before);
   if (arr === null) return null;
   region = arr;
   // TWO ARGV SHAPES, because argv is a list of STRINGS and an option may carry
@@ -2686,7 +2739,7 @@ function declaredWorkerName(absPath) {
         if (collecting !== null) {
           collected.push(line.slice(0, at));
           const body = collected.join('\n');
-          const decoded = collecting === '"""' ? decodeTomlBasic(body) : body;
+          const decoded = collecting === '"""' ? decodeTomlBasic(body, true) : body;
           if (decoded !== null) name = decoded;
           break;
         }
@@ -2710,7 +2763,7 @@ function declaredWorkerName(absPath) {
         const close = rest.indexOf(opens[1]);
         if (close !== -1) {
           const body = rest.slice(0, close);
-          const decoded = opens[1] === '"""' ? decodeTomlBasic(body) : body;
+          const decoded = opens[1] === '"""' ? decodeTomlBasic(body, true) : body;
           if (decoded !== null) name = decoded;
           break;
         }
@@ -2867,10 +2920,11 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // segment with no wrangler word has the whole of itself as its region, which
   // is every package-script line. Mutation showed the two forms agreeing on the
   // entire suite, so this is one rule rather than two with an untested seam.
-  const wranglerRegion = (() => {
-    const at = clean.search(/\bwrangler2?(?:\.(?:cmd|ps1|bat))?\b/);
-    return at === -1 ? clean : clean.slice(at);
-  })();
+  const wranglerAt = clean.search(/\bwrangler2?(?:\.(?:cmd|ps1|bat))?\b/);
+  const wranglerRegion = wranglerAt === -1 ? clean : clean.slice(wranglerAt);
+  // The text BEFORE the command word, so the argv reader can find an array the
+  // command word sits INSIDE — Python's `subprocess.run(["wrangler", …])`.
+  const beforeWrangler = wranglerAt === -1 ? '' : clean.slice(0, wranglerAt);
   // IN AN ARGV INVOCATION, THE ARRAY IS THE ARGUMENT LIST — and nothing outside
   // it is an argument. Scoping `argvValue` to the array was necessary and not
   // sufficient: `valueOf` still read `--name=` out of
@@ -2943,7 +2997,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // which shell text does not have — and where it does (`wrangler deploy
   // "--name=x"`), bash really is passing that single argument, so reading it as
   // one is right.
-  const nameRaw = argvValue(wranglerRegion, '--name') ?? valueOf('--name');
+  const nameRaw = argvValue(wranglerRegion, '--name', beforeWrangler) ?? valueOf('--name');
   const name = known(nameRaw);
   // AN UNREADABLE EXPLICIT NAME IS NOT AN ABSENT ONE. `known()` collapses the
   // unresolvable marker to `null`, which read as "no `--name` was given" and
@@ -2979,7 +3033,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   const cfgRaw =
     // Same ordering as `--name` below, for the same reason: an attached value
     // inside a quoted argv element is the argv reader's to read.
-    argvValue(wranglerRegion, '-c|--config') ??
+    argvValue(wranglerRegion, '-c|--config', beforeWrangler) ??
     valueOf('--config|-c', wranglerRegion) ??
     // ATTACHED SHORT FORM. yargs accepts `-cconfigs/custom.jsonc` as one word,
     // and wrangler 4.90.0 processes it — verified in the review by dry run.
@@ -3050,7 +3104,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // `--cwd` from argv as well: it changes what a relative `--config` resolves
   // AGAINST, so missing it here made the scanner read a different file than the
   // one wrangler loads — the r2 ordering defect arriving through the argv door.
-  const wrCwdRaw = argvValue(wranglerRegion, '--cwd') ?? valueOf('--cwd');
+  const wrCwdRaw = argvValue(wranglerRegion, '--cwd', beforeWrangler) ?? valueOf('--cwd');
   const cfg = known(cfgRaw);
   const pkgDir = known(pkgDirRaw);
   const wrCwd = known(wrCwdRaw);
