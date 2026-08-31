@@ -7950,4 +7950,20 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
+  it('a selection spelled through a VARIABLE still invalidates', () => {
+    // The ordering rule needs to locate the selection to compare positions
+    // against it, and a `--config "$CFG"` does not carry the basename beside
+    // the flag. Mutation testing found that fallback unpinned: making it answer
+    // "not rewritten" left all 774 fixtures green while a rewritten config went
+    // back to blessing the deploy. Where the ordering cannot be judged, the
+    // older whole-file answer stands rather than a guess in the blessing
+    // direction.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nCFG=side.jsonc\necho "{}" > side.jsonc\nwrangler deploy --config "$CFG"\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
