@@ -7396,6 +7396,46 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
+  it('a shell assignment AFTER the command word is argv, not the environment', () => {
+    // `--message CLOUDFLARE_ENV=staging` selects nothing. This was the last
+    // predicate still scanning the whole segment freely.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nwrangler deploy --config www.jsonc --message CLOUDFLARE_ENV=staging\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('an UNSET clears the carried environment', () => {
+    // The variable map recorded assignments and never removals, so a value the
+    // shell had dropped went on suppressing the config identity — a false red
+    // from state that is out of date rather than wrong.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nexport CLOUDFLARE_ENV=staging\nunset CLOUDFLARE_ENV\nwrangler deploy --config www.jsonc\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('a config REWRITTEN before the deploy is not read from the checkout', () => {
+    // The file this scanner opens is not the file wrangler loads. Unread
+    // reaches the inversion, which reports.
+    seed('configs/custom.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd .\nwriteFileSync("configs/custom.jsonc", JSON.stringify({name: "vaipakam-agent"}));\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

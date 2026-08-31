@@ -2805,6 +2805,33 @@ function argvValue(region, spellings, before = '') {
   return litVal;
 }
 
+/**
+ * Is this config REWRITTEN by the same file before the deploy runs? (#2036 r13)
+ *
+ * The identity read trusts the checkout's copy, which is right for a config
+ * that ships and wrong for one a script generates or edits on its way to the
+ * deploy: the file this scanner opens is then not the file wrangler loads. A
+ * checked-in `configs/custom.jsonc` naming an unprotected Worker, rewritten to
+ * name the agent immediately before the call, read as unprotected and passed.
+ *
+ * Answered by NAME rather than by resolving the write target, because the write
+ * and the deploy may spell the same path differently and a wrong resolution
+ * would silence a real config. The consequence of a false positive here is that
+ * the identity goes UNREAD — the inversion's case, which reports — so the
+ * conservative direction is the cheap one.
+ */
+function configIsRewritten(text, cfgPath) {
+  const base = cfgPath.slice(cfgPath.lastIndexOf('/') + 1);
+  if (!base) return false;
+  const esc = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(
+    String.raw`(?:writeFile(?:Sync)?|appendFile(?:Sync)?|createWriteStream|outputFile(?:Sync)?|write_text|open)\s*\([^)]*` +
+      esc +
+      String.raw`|>\s*\S*` +
+      esc,
+  ).test(text);
+}
+
 function declaredWorkerName(absPath) {
   let text;
   try {
@@ -3012,7 +3039,7 @@ function declaredWorkerName(absPath) {
  * against every REACHABLE cwd, the same states the `cd` walk maintains, so a
  * relative selector lands where the shell would put it.
  */
-function selectorScope(seg, states, hasCwdState = true, vars = null) {
+function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = '') {
   // A value is ONE SHELL WORD, and a word can mix adjacent quoted and unquoted
   // chunks: `--name vaipakam"-"agent` is the single argument `vaipakam-agent`.
   // Capturing only the first chunk made the value `vaipakam`, which matched no
@@ -3431,8 +3458,18 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
       // the top-level name (Codex #2036 r8). `match()` reads the first, which is
       // the same first-versus-last mistake `valueOf` was corrected for at
       // #1995 r16.
+      // ONLY THE COMMAND PREFIX, not arbitrary text after the command word. A
+      // shell assignment precedes the command it applies to; `--message
+      // CLOUDFLARE_ENV=staging` is argv and selects nothing, and matching the
+      // whole segment blocked an ordinary deploy (Codex #2036 r13). Same shape
+      // as every other "quoted or trailing text read as a real thing" finding
+      // in this PR, on the last predicate that still scanned freely.
+      const prefixEnd = (() => {
+        const at = rawSeg.search(/\bwrangler2?(?:\.(?:cmd|ps1|bat))?\b/);
+        return at === -1 ? rawSeg.length : at;
+      })();
       const all = [
-        ...rawSeg.matchAll(
+        ...rawSeg.slice(0, prefixEnd).matchAll(
           /(?:^|[\s;&|(])(?:export\s+)?CLOUDFLARE_ENV=(?:"([^"]*)"|'([^']*)'|([^\s;&|)]*))/g,
         ),
       ];
@@ -3528,7 +3565,10 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // predicate looked only at the current segment (Codex #2036 r9).
     // `shellVars` already carries statically-known assignments for every other
     // reader here; the environment predicate was the one not consulting it.
-    (vars instanceof Map && (vars.get('CLOUDFLARE_ENV') ?? '') !== '');
+    (vars instanceof Map &&
+      // A value the shell has since UNSET is removed from this map at the
+      // point the walk sees the `unset`, so consulting it here is enough.
+      (vars.get('CLOUDFLARE_ENV') ?? '') !== '');
   if (
     cfg !== null &&
     !nameUnresolved &&
@@ -3555,7 +3595,12 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
       // planting a file in the shared temp directory that concurrent fixture
       // roots could see.
       if (rel.startsWith('..')) continue;
-      const declared = declaredWorkerName(`${REPO_ROOT}/${rel}`);
+      // A config the surrounding file REWRITES before the deploy is not the
+      // file wrangler will load, so the checkout's copy answers nothing
+      // (#2036 r13). Unread reaches the inversion, which reports.
+      const declared = configIsRewritten(fileText ?? '', cfg)
+        ? null
+        : declaredWorkerName(`${REPO_ROOT}/${rel}`);
       if (declared === null) continue;
       // EXACT, or the protected name plus an environment suffix.
       //
@@ -7082,6 +7127,21 @@ for (const file of walk(REPO_ROOT)) {
         // same segment — so the segment must go on to be scored. Skipping it
         // here is the third time the directive short-circuit has swallowed a
         // segment that still had a deploy in it (`source` was the second).
+        // `unset` REMOVES a binding, and this map only ever recorded additions —
+        // so a value the shell had dropped went on suppressing the config
+        // identity long after (Codex #2036 r13). A false red from state that is
+        // out of date rather than wrong, which is the harder kind to notice.
+        //
+        // Scanned for EVERY segment, not only assignment-shaped ones: `unset`
+        // is its own command, so putting this beside the assignment handling —
+        // where I first wrote it — meant it never ran at all.
+        for (const un of seg.matchAll(
+          /(?:^|[\s;&|(])unset\s+((?:-v\s+)?[A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*)/g,
+        )) {
+          for (const nm of un[1].split(/\s+/)) {
+            if (nm !== '-v') shellVars.delete(nm);
+          }
+        }
         if (dir && dir.kind !== 'env-chdir') continue;
         // Only constructs that can actually ESTABLISH a target carry forward:
         // a `VAR=…` assignment, or a directory expression the dir-walk could
@@ -7305,7 +7365,7 @@ for (const file of walk(REPO_ROOT)) {
         // reporting it under the keeper handed the reader the wrong remedy
         // (#1995 r2). Textual and cwd scope apply only when no selector
         // resolved.
-        const sel = selectorScope(seg, input, true, shellVars);
+        const sel = selectorScope(seg, input, true, shellVars, text);
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
         // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
         // package", and it ran before the modelled cwd — so in a script under
