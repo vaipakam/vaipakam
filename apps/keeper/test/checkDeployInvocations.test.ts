@@ -6649,11 +6649,12 @@ describe('check-deploy-invocations — #1996 config identity', () => {
 
   it('CLOUDFLARE_ENV suppresses the name answer, as --env does', () => {
     // Wrangler resolves the environment as `args.env ?? getCloudflareEnv()` and
-    // then reads the environment-specific name, which this scanner does not
-    // parse. Trusting the top level here let a config whose `env.staging.name`
-    // is the agent pass as unprotected.
+    // then reads the environment-specific name. Trusting the top level here let
+    // a config whose `env.staging.name` is the agent pass as unprotected —
+    // which this fixture now asserts directly, the scanner having learned to
+    // read that block in #2036 r15/r17 rather than only to distrust it.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n');
     const r = runWith(
       'w.sh',
       'cd apps/agent\nCLOUDFLARE_ENV=staging wrangler deploy --config side.jsonc\n',
@@ -7083,7 +7084,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     // Reading the first saw an empty value and trusted the top-level name. The
     // same first-versus-last mistake `valueOf` was corrected for at #1995 r16.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n');
     const r = runWith(
       'w.sh',
       'cd apps/agent\nCLOUDFLARE_ENV= CLOUDFLARE_ENV=staging wrangler deploy --config side.jsonc\n',
@@ -7136,7 +7137,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     // already carried it for every other reader; the environment predicate was
     // the one that did not consult it.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n');
     const r = runWith(
       'w.sh',
       'cd apps/agent\nexport CLOUDFLARE_ENV=staging\nwrangler deploy --config side.jsonc\n',
@@ -7206,7 +7207,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   it('but inside the env option it still is', () => {
     // The control for the narrowing — it must not stop reading a real one.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n');
     const r = runWith(
       'w.sh',
       'cd apps/agent\nspawnSync("wrangler", ["deploy", "--config", "www.jsonc"], ' +
@@ -7266,7 +7267,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     // child-process shape — which this scanner reads everywhere else —
     // unprotected.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n');
     const r = runWith(
       'w.sh',
       'cd apps/agent\nsubprocess.run(["wrangler", "deploy", "--config", "www.jsonc"], ' +
@@ -7386,7 +7387,7 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     // wrong origin, the same class as reading a value from the wrong base
     // directory.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n');
     const r = runWith(
       'w.sh',
       'cd apps/agent\nconst runners = {result: spawnSync("wrangler", ["deploy", "--config", "www.jsonc"], ' +
@@ -7525,12 +7526,15 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('apps/agent');
   });
 
-  it('--env suppresses the name answer and the directory decides', () => {
+  it("--env selects the environment whose name is read", () => {
     // Wrangler derives the deployed script name from the environment, so the
-    // declared `name` is not what ships and an exact match would answer "out of
-    // scope" for a deploy that is inside it. Recorded limit, pinned here.
+    // top-level `name` is not what ships. This was a RECORDED LIMIT until
+    // #2036 r15 — the answer was suppressed and the directory decided — and
+    // r17 made it a real read: the selected environment's own name is what
+    // answers, so the config below is in scope on the strength of
+    // `env.staging.name` rather than of where the script sits.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n');
     const r = runWith(
       'w.sh',
       'cd apps/agent\nwrangler deploy --config side.jsonc --env staging\n',
@@ -7770,5 +7774,94 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(
       true,
     );
+  });
+  // ---- Codex #2036 r17 ----
+
+  it('an INHERITED environment is not an empty one', () => {
+    // `{env: {...process.env}}` hands the child whatever the parent carries, so
+    // a CLOUDFLARE_ENV in the shell reaches wrangler through it. Reading "no
+    // CLOUDFLARE_ENV property here" as "no environment selected" trusted the
+    // top-level name on exactly that path.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {...process.env}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('--env-file can carry the environment too', () => {
+    // A dotenv file is loaded into the process environment BEFORE the config is
+    // parsed, so its contents reach the environment resolver exactly as an
+    // inline assignment does — with neither an --env flag nor an assignment on
+    // the line. Treated as an unresolved selection rather than read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.sh',
+      'wrangler deploy --env-file staging.env --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an UNRELATED environment is not authoritative', () => {
+    // Wrangler deploys the selected environment, not every configured one.
+    // Scanning them all made `env.production` answer for an `--env staging`
+    // deploy whose own environment names an unprotected Worker.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-www"}, ' +
+        '"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nwrangler deploy --config side.jsonc --env staging\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('...but the environment that IS selected still answers', () => {
+    // The control for the scoping: the same config, selecting the environment
+    // that does name a protected Worker.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-www"}, ' +
+        '"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nwrangler deploy --config side.jsonc --env production\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a TOML config with environment tables stays one-directional', () => {
+    // The completeness rule earns its exception here: the top-level TOML reader
+    // stops at the first table header, so `[env.staging]` is unread and the
+    // top-level name is not evidence that nothing protected ships. The deploy
+    // falls back to the directory rather than being called out of scope.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-www"', '[env.staging]', 'name = "vaipakam-agent"', ''].join('\n'),
+    );
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nwrangler deploy --config side.toml --env staging\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 });

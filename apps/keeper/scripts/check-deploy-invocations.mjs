@@ -3100,7 +3100,29 @@ function configIsRewritten(text, cfgPath) {
  * only fail to pull a deploy into scope — never push one out — and a guard
  * against it would be code no verdict depends on.
  */
-function declaredWorkerNames(absPath, includeEnvs) {
+/**
+ * A LITERAL `CLOUDFLARE_ENV` value out of a child call's inline `env` object,
+ * or `null` when there is none to read.
+ *
+ * Only the quoted forms: an identifier is a binding this scanner cannot follow,
+ * and returning its source spelling as an environment NAME would be worse than
+ * declining, since the name decides which config block is consulted.
+ */
+function envValueFromOptions(text) {
+  const m = text.match(
+    /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`)/,
+  );
+  return m ? (m[1] ?? m[2] ?? m[3]) : null;
+}
+
+/** The shell's `CLOUDFLARE_ENV`, if the walk carries one. */
+function shellEnvValue(vars) {
+  if (!(vars instanceof Map)) return null;
+  const v = vars.get('CLOUDFLARE_ENV');
+  return typeof v === 'string' && v !== '' ? v : null;
+}
+
+function declaredWorkerNames(absPath, includeEnvs, envName = null) {
   const top = declaredWorkerName(absPath);
   const names = top === null ? [] : [top];
   if (includeEnvs && !/\.toml$/.test(absPath)) {
@@ -3108,7 +3130,23 @@ function declaredWorkerNames(absPath, includeEnvs) {
       const cfg = parseJsonc(readFileSync(absPath, 'utf8'));
       const envs = cfg !== null && typeof cfg === 'object' ? cfg.env : null;
       if (envs !== null && typeof envs === 'object') {
-        for (const e of Object.values(envs)) {
+        // THE SELECTED ENVIRONMENT, when the selector's value could be read.
+        // Wrangler reads `rawConfig.env?.[envName]` and deploys that one — so
+        // scanning every entry made an UNRELATED environment authoritative, and
+        // `--env staging` was reported against a protected Worker that only
+        // `env.production` names (Codex #2036 r17). Every entry is the right
+        // answer only when the selector itself is unresolved, which is the case
+        // this widening was actually for.
+        const scoped =
+          envName !== null && Object.prototype.hasOwnProperty.call(envs, envName)
+            ? [envs[envName]]
+            : envName !== null
+              // A named environment the config does not declare contributes no
+              // name of its own: wrangler derives `<top-level>-<env>`, which the
+              // caller's suffix rule already matches against the top-level name.
+              ? []
+              : Object.values(envs);
+        for (const e of scoped) {
           // The same rejections the top-level read applies: an empty name is no
           // name, and one carrying an unexpanded variable is not a value.
           if (e === null || typeof e !== 'object') continue;
@@ -3120,7 +3158,24 @@ function declaredWorkerNames(absPath, includeEnvs) {
       return null;
     }
   }
-  return names.length === 0 ? null : names;
+  // COMPLETE means the deployed name is certainly among these. A JSONC config
+  // is: either the selected environment was read by name, or every environment
+  // was, and an environment declaring no name of its own derives `<top>-<env>`,
+  // which the caller's suffix rule matches against the top-level entry. TOML
+  // carrying `[env.…]` tables is NOT: the top-level scanner stops at the first
+  // table header and never sees them.
+  const complete = !(includeEnvs && /\.toml$/.test(absPath) && envTablesInToml(absPath));
+  return names.length === 0 ? null : { names, complete };
+}
+
+/** Does this TOML config declare any environment table? */
+function envTablesInToml(absPath) {
+  try {
+    return /^\s*\[\s*env\s*\./m.test(readFileSync(absPath, 'utf8'));
+  } catch {
+    // Unreadable answers nothing either way; the caller has already declined.
+    return false;
+  }
 }
 
 function declaredWorkerName(absPath) {
@@ -3856,6 +3911,18 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
         i += 1;
       }
       const body = rawSeg.slice(opener.index, i);
+      // AN INHERITED ENVIRONMENT IS NOT AN EMPTY ONE. `{env: {...process.env}}`
+      // hands the child whatever the parent carries, so a `CLOUDFLARE_ENV` in
+      // the shell reaches wrangler through it — and reading "no CLOUDFLARE_ENV
+      // property here" as "no environment selected" trusted the top-level name
+      // on exactly that path (Codex #2036 r17). The literal branch can only
+      // prove a NEGATIVE for an environment built entirely in the source.
+      //
+      // Both host spellings of the spread, and `os.environ` on its own for the
+      // Python idiom that passes it directly.
+      if (/\.{3}\s*[A-Za-z_$]|\*\*\s*[A-Za-z_$]|\bos\.environ\b/.test(body)) {
+        return true;
+      }
       return [...body.matchAll(
         // BACKTICKS ARE A THIRD QUOTE. Node hands wrangler the literal, and this
         // predicate read only the two ASCII quote forms — one more spelling the
@@ -3925,7 +3992,29 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // r15). Reading the environments answers the question the fall-through was
   // avoiding.
   const envSelected =
-    envAssigned || /(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion);
+    envAssigned ||
+    /(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion) ||
+    // `--env-file` loads a dotenv file into `process.env` BEFORE the config is
+    // parsed, so its contents reach `getCloudflareEnv()` exactly as an inline
+    // assignment does and neither `--env` nor an assignment is present on the
+    // line (Codex #2036 r17). Treated as an unresolved selection rather than
+    // read: the file is another artifact to resolve and parse, and the
+    // conservative answer costs nothing because the read is one-directional.
+    /(?<![\w-])--env-file(?:=|\s+)\S/.test(wranglerRegion) ||
+    argvValue(rawSeg, '--env-file') !== null;
+  // WHICH environment, when the selector's value can be read statically. `null`
+  // means "one is selected and I cannot say which", which is what makes the
+  // whole-config scan the right answer in that case and the wrong one here.
+  const envName = (() => {
+    const fromArgv = argvValue(rawSeg, '-e|--env');
+    const fromFlag = wranglerRegion.match(/(?<![\w-])(?:--env|-e)(?:=|\s+)(\S+)/)?.[1];
+    const raw =
+      fromArgv ?? fromFlag ?? envValueFromOptions(rawSeg) ?? shellEnvValue(vars);
+    if (typeof raw !== 'string' || raw === '') return null;
+    // An unresolvable marker is exactly the "cannot say which" case.
+    if (raw.includes('${')) return null;
+    return raw.replace(/^["'`]|["'`]$/g, '');
+  })();
   if (cfg !== null && !nameUnresolved) {
     for (const b of bases) {
       // Resolved AS WRANGLER RESOLVES IT — against the command's own working
@@ -3950,9 +4039,10 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // A config the surrounding file REWRITES before the deploy is not the
       // file wrangler will load, so the checkout's copy answers nothing
       // (#2036 r13). Unread reaches the inversion, which reports.
-      const declared = configIsRewritten(fileText ?? '', cfg)
+      const read = configIsRewritten(fileText ?? '', cfg)
         ? null
-        : declaredWorkerNames(`${REPO_ROOT}/${rel}`, envSelected);
+        : declaredWorkerNames(`${REPO_ROOT}/${rel}`, envSelected, envName);
+      const declared = read === null ? null : read.names;
       if (declared === null) continue;
       // EXACT, or the protected name plus an environment suffix.
       //
@@ -3981,19 +4071,18 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // times (#1995 r8's `filterScopes` is the same shape), so the loop is
       // written to the same rule as its neighbour rather than to a new one.
       if (hit) return { scope: hit };
-      // WITH AN ENVIRONMENT SELECTED THE READ MAY ONLY ADD A SCOPE, NEVER
-      // REMOVE ONE. Wrangler derives the deployed name from the environment, so
-      // a top-level name that matches nothing protected is not evidence that
-      // nothing protected is deployed — the environment block this scanner may
-      // not have been able to read could still name one. Counting it as an
-      // answer would suppress the directory fallback on that non-evidence,
-      // which is the recorded limit this file has pinned since the identity
-      // read landed, and seven fixtures pin it.
+      // AN INCOMPLETE READ MAY ONLY ADD A SCOPE, NEVER REMOVE ONE. A top-level
+      // name matching nothing protected is not evidence that nothing protected
+      // is deployed when an environment block went unread — it could name one.
       //
-      // So the environment case is one-directional: an environment naming a
-      // protected Worker pulls the deploy INTO scope (Codex #2036 r15), and
-      // anything else defers to the directory exactly as before.
-      if (envSelected) continue;
+      // r15 applied that to EVERY environment-selecting deploy, which was right
+      // while the environments were not read at all and became a false-red
+      // generator once r17 made an inherited `{...process.env}` spread count as
+      // a selection: that spread is in almost every real child call, so the
+      // restriction fired constantly and reported ordinary deploys of
+      // unprotected Workers. It now applies where it is actually earned — a
+      // TOML config whose `[env.…]` tables this scanner cannot reach.
+      if (envSelected && !read.complete) continue;
       answered += 1;
     }
   }
