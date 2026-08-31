@@ -27,6 +27,16 @@ identified. That remedy is to make the command safe for whatever it targets,
 which is always available and never wrong for any Worker: carry the preservation
 flag, or declare preservation in the selected configuration.
 
+A configuration the surrounding script rewrites on its way to the deployment is
+not the file that gets loaded, so the copy sitting in the checkout answers
+nothing about it — neither which Worker it names nor whether it preserves
+values. A script that ships a configuration declaring preservation and edits
+that declaration away immediately before deploying is the case, and it reads as
+safe to anyone reading only the checked-in file. Both of the checker's readers
+of a selected configuration now stand down when they see it being written,
+whether the write is spelled as a file write in a program or as a redirection in
+a shell script.
+
 That inversion is affordable because it was measured before it was adopted. The
 repository contains one hundred and thirty-two deployment mentions and none of
 them selects a configuration file, so the rule cannot produce a single complaint
@@ -44,11 +54,27 @@ not part of the measurement, so widening to them is separate work with its own
 count. Prose keeps deferring to the surrounding text, which on a runbook line
 names a package the reader can act on.
 
-One limit is recorded rather than solved, and is deliberate. When a deployment
-selects an environment, Wrangler derives the deployed Worker name from that
-environment rather than using the declared name as written, so the declared
-name is no longer what ships. In that case the checker ignores the name and
-falls back to the directory, which is the answer that errs toward reporting.
+Selecting an environment changes which name ships, and the checker reads that
+too. Wrangler layers the chosen environment over the top of the configuration
+and takes the deployed Worker from the result, so a configuration whose
+top-level name is some unprotected Worker can still deploy a protected one
+through an environment further down the same file. The names a configuration
+can deploy are therefore its top-level name together with each environment's
+own, and any of them naming a protected Worker brings the deployment into
+scope. An environment can be chosen in more ways than a command-line flag —
+including through a set of environment variables assembled elsewhere in the
+script and handed to the command — and the checker treats a selection it cannot
+read as a selection all the same.
+
+That reading runs in one direction only, which is the load-bearing part. An
+environment naming a protected Worker brings a deployment into scope; nothing
+about the environment case may take one out of scope. A top-level name that
+matches no protected Worker says nothing about an environment block, and
+letting it answer would silence the older directory reasoning on the strength
+of evidence that was never read. Where an environment is in play and no name
+matches, the checker falls back to the directory exactly as it did before —
+which is the answer that errs toward reporting, and the limit this document
+previously recorded as unsolved in every case.
 
 This was the one finding of ten deferred out of the preceding deploy-guard
 work, on the grounds that reading another file was a different kind of tool
