@@ -717,8 +717,11 @@ Thin-market honesty rules apply.
   disconnect anyone — because leaving it made the control report success while
   a reload could restore the same connected wallet, and a right to erasure that
   does not erase is the more serious of the two failures.
-- The disconnection is therefore an intended consequence rather than an
-  accident, and it is bounded by what the erasure actually reaches today:
+- What the erasure requires is the REMOVAL OF THOSE RECORDS, not the ending of
+  a session. It does not disconnect anyone: an earlier draft of this bullet
+  said the disconnection was an intended consequence, which asserted a
+  behaviour the synchronous storage cleanup does not perform for any wallet.
+  The requirement is bounded by what the erasure actually reaches today:
   storage the browser exposes to this origin. Session material that a connector
   holds elsewhere — WalletConnect keeps its live session in IndexedDB rather
   than local storage, as does the Coinbase smart-wallet key — is NOT cleared,

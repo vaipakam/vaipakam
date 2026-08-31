@@ -356,11 +356,13 @@ export default function PrivacyPage() {
               the app's storage for that site plus the small amount of
               data belonging to the tab you run it from — a little is
               per-tab, so download from each open tab if you want the
-              complete picture. Like the erasure below, it does not
-              reach your wallet-connection state, which the
-              wallet-connection library keeps under its own name — so a
-              connected user's export does not contain it. What it
-              exports is browser storage — we assemble no profile of
+              complete picture. It deliberately leaves out your
+              wallet-connection state, which the wallet libraries keep
+              under names of their own: an export is a file you can
+              keep and forward, and wallet session material does not
+              belong in one. So a connected user's export does not
+              contain it, even though the erasure below does reach it.
+              What it exports is browser storage — we assemble no profile of
               you on our side. Be aware though that where you have
               saved per-wallet settings, such as alert preferences or
               which notifications you have seen, your full wallet

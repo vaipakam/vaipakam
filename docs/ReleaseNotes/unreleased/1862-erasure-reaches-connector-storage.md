@@ -54,8 +54,19 @@ matching is deliberately generous, on the reasoning that this app has its
 browser origin to itself and removing slightly too much is a better failure than
 leaving an account connected.
 
-Finally, the page's own report was corrected. It had counted what remained using
-the same narrow rule the deletion used to use, so a name that refused to be
-removed would not have been counted and the page would have reported a clean
-success over storage still present. A check that cannot see what the deletion
-aims at is not a check.
+Finally, the page's own arithmetic was corrected at both ends. It had counted
+what remained using the same narrow rule the deletion used to use, so a name
+that refused to be removed would not have been counted and the page would have
+reported a clean success over storage still present. A check that cannot see
+what the deletion aims at is not a check. The figure offered *before* the
+confirmation had the same fault, with a stranger result: a browser holding only
+wallet records was told nothing was stored, and then had those records deleted
+when the person confirmed anyway — the page disagreeing with itself either side
+of one click. Both figures now describe what the deletion actually reaches.
+
+Two pieces of writing were corrected alongside it. The privacy policy described
+the download as reaching no further than the deletion, which stopped being true
+the moment the deletion reached further; it now says what the download leaves
+out and why, rather than describing it by comparison. And the specification
+still called being signed out an intended consequence of the deletion, which
+this deletion does not do for any wallet.
