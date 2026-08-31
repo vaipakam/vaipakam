@@ -30,15 +30,16 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
-  eraseMyData,
+  eraseMyDataFully,
   inspectErasableData,
   inspectMyData,
   isAppStorageKey,
-  type EraseResult,
+  type FullEraseResult,
 } from '../lib/dataRights';
 import { useTheme } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
 import { useTranslation } from 'react-i18next';
+import { useDisconnect } from 'wagmi';
 import { bumpEraseEpoch } from '../lib/eraseEpoch';
 import { DiagErasureCard } from '../components/DiagErasureCard';
 
@@ -62,6 +63,10 @@ function downloadJson(filename: string, payload: unknown): void {
 }
 
 export function DataRights() {
+  // `disconnectAsync` rather than `disconnect`: the erasure must not delete
+  // the session databases until the teardown has actually finished, and the
+  // fire-and-forget variant gives nothing to await.
+  const { disconnectAsync } = useDisconnect();
   const [downloaded, setDownloaded] = useState(false);
   const [confirming, setConfirming] = useState(false);
   // The erase outcome, FROZEN at the moment it happened (review round 3
@@ -73,8 +78,14 @@ export function DataRights() {
   // failed removal. A report about a past event must not be rewritten
   // by later events.
   const [result, setResult] = useState<
-    (EraseResult & { remaining: number; refusedAfter: boolean }) | null
+    (FullEraseResult & { remaining: number; refusedAfter: boolean }) | null
   >(null);
+  // #1862 Part 2 — the erasure is asynchronous now: it disconnects the
+  // wallet and deletes two databases, and a database another tab is
+  // holding open takes up to the delete timeout to give an answer. Without
+  // a busy state the button looks dead for those seconds, and a second
+  // click would start a second teardown.
+  const [erasing, setErasing] = useState(false);
   // Review round 1 P2: the providers sit ABOVE this route and read
   // storage only on their own mount, so clearing the keys left the live
   // theme and mode showing the erased values until a reload — the page
@@ -177,7 +188,7 @@ export function DataRights() {
     setTimeout(() => setDownloaded(false), 2500);
   }
 
-  function onErase() {
+  async function onErase() {
     // Language goes back to the default BEFORE the erase, deliberately.
     // `changeLanguage` persists — to the key and the shared-domain
     // cookie — so running it afterwards would rewrite what the erase
@@ -185,7 +196,16 @@ export function DataRights() {
     // write, and the order is the whole mechanism rather than an
     // accident of statement order.
     void i18n.changeLanguage('en');
-    const erased = eraseMyData();
+    setErasing(true);
+    let erased: FullEraseResult;
+    try {
+      // The teardown is injected rather than imported by the library: see
+      // `eraseMyDataFully`. It runs FIRST, so a connector holding a
+      // database open gets the chance to close it before the deletion.
+      erased = await eraseMyDataFully({ disconnect: () => disconnectAsync() });
+    } finally {
+      setErasing(false);
+    }
     // Measured immediately, once, and kept with the result — see the
     // state declaration for why this is not recomputed later.
     // The ERASURE inventory, not the export one (#1862 round 1 P1): a
@@ -273,7 +293,10 @@ export function DataRights() {
         {result ? (
           <div
             className={
-              result.remaining === 0 && !result.refusedAfter && result.total > 0
+              result.remaining === 0 &&
+              !result.refusedAfter &&
+              result.complete &&
+              result.total > 0
                 ? 'banner banner-success'
                 : 'banner'
             }
@@ -297,9 +320,25 @@ export function DataRights() {
                   // unreadable store still held data. Not knowing is
                   // not done.
                   copy.dataRights.eraseBlocked
-                : result.total > 0
-                  ? copy.dataRights.eraseDone(result.total)
-                  : copy.dataRights.eraseNothing}
+                : // #1862 Part 2 — the two asynchronous holdouts, checked
+                  // BEFORE any success message and named separately. They
+                  // are not interchangeable: a held database is another tab
+                  // of this site and the user closes it; a wallet that
+                  // refused to disconnect is the wallet's own UI. Reporting
+                  // either as "erased" would be the same false assurance as
+                  // reporting a success over storage that is still there,
+                  // one store further along.
+                  result.connector.attempted && !result.connector.disconnected
+                  ? copy.dataRights.eraseWalletHeld
+                  : result.indexedDb.refused.length > 0
+                    ? copy.dataRights.eraseSessionHeld
+                    : result.total > 0
+                      ? // The connection is gone too, so the message says
+                        // so rather than reusing the storage-only wording.
+                        result.connector.disconnected
+                        ? copy.dataRights.eraseDoneDisconnected(result.total)
+                        : copy.dataRights.eraseDone(result.total)
+                      : copy.dataRights.eraseNothing}
           </div>
         ) : null}
 
@@ -307,12 +346,25 @@ export function DataRights() {
           <>
             <p className="muted">{copy.dataRights.eraseConfirmPrompt}</p>
             <div className="cluster">
-              <button type="button" className="btn btn-danger" onClick={onErase}>
-                {copy.dataRights.eraseConfirm}
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => void onErase()}
+                disabled={erasing}
+              >
+                {/* The label carries the busy state, not just the disabled
+                    attribute. Disconnecting a wallet and waiting out a
+                    blocked database can take seconds, and a greyed button
+                    with its original text reads as broken rather than
+                    working. */}
+                {erasing
+                  ? copy.dataRights.eraseWorking
+                  : copy.dataRights.eraseConfirm}
               </button>
               <button
                 type="button"
                 className="btn btn-ghost"
+                disabled={erasing}
                 onClick={() => setConfirming(false)}
               >
                 {copy.dataRights.eraseCancel}

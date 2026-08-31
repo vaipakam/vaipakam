@@ -346,8 +346,14 @@ const copySource = {
        arrives is the same defect as promising an erasure that does not
        reach, and a user expecting to revisit consent here would have
        kept their old choice believing otherwise. */
+    /* #1862 Part 2 — the erasure now also signs you out and removes the
+       wallet libraries' own session databases, so the body says so. It
+       deliberately does NOT promise that every wallet forgets this site:
+       an extension or a Safe holds that authorisation itself, outside
+       anything this page can reach, and a user who reconnects in one click
+       should have been told that here rather than discovering it. */
     eraseBody:
-      'Removes all of it from this device. Your display preferences go back to their defaults, and anything you had part-way through will lose its local marker.',
+      'Removes all of it from this device and signs you out. Your display preferences go back to their defaults, anything you had part-way through will lose its local marker, and the wallet connection is closed and its stored session removed. A browser extension or a Safe keeps its own record that you allowed this site, which no page can remove for you — reconnecting there is still one click.',
     eraseButton: 'Erase my data',
     eraseConfirm: 'Yes, erase it',
     eraseCancel: 'Cancel',
@@ -373,6 +379,25 @@ const copySource = {
       'Erased {{removed}} items, but {{left}} could not be removed. Clearing site data through your browser’s own settings will remove the rest.',
       ['removed', 'left'],
     ),
+    /* #1862 Part 2 — the async outcomes. Each names WHAT is still there,
+       because "partly failed" on this page is unactionable: the user's next
+       move differs completely depending on whether a tab is holding a
+       database open or a wallet refused to disconnect. */
+    eraseWorking: 'Signing out and clearing…',
+    eraseDoneDisconnected: tmpl(
+      'Erased {{count}} stored items and signed you out. Any other tabs you have open have been told to clear theirs as well.',
+      ['count'],
+    ),
+    /* A live session survives this one, so it must not read as a success.
+       The cause is nearly always another tab of this site holding the
+       database open, which the user can act on — hence naming it. */
+    eraseSessionHeld:
+      'Your stored data was removed, but the wallet session database could not be deleted — another tab of this site is most likely still open and holding it. Close your other tabs and erase again, or clear site data through your browser’s own settings.',
+    /* The wallet refused to disconnect. Everything else went; the app is
+       still attached, and saying "erased" over that is the false assurance
+       this page exists to avoid. */
+    eraseWalletHeld:
+      'Your stored data was removed, but the wallet would not disconnect, so this site is still connected to it. Disconnect from your wallet directly, then erase again.',
     eraseBlocked:
       'This browser would not let the app clear its storage, so nothing was removed. Private-browsing windows and locked-down privacy settings can both do this — clearing site data through your browser’s own settings will work.',
     holdingTitle: 'What is stored right now',
