@@ -634,7 +634,22 @@ contract RewardReporterFacet is
             // ignores a later, different `D*`, so a replay can fill the hole
             // but can never re-choose the era. No event, matching the
             // main-path install below.
-            if (b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
+            //
+            // RETIRED ERAS ARE EXCLUDED, and that is not the same test the
+            // fresh path makes. {LegacyBroadcastRetired} sits BELOW this
+            // branch on purpose, so an applied day keeps replaying
+            // idempotently after a rotation — but idempotent replay is a
+            // no-op, and this install is not. Without the clause, a kind-5
+            // packet from a retired era could still choose this mirror's
+            // era through a delayed replay, which is precisely the authority
+            // the rotation withdrew. A replay from a retired era therefore
+            // stays a no-op here; the V3 wire passes `legacyWire = false`
+            // and has authenticated its era, so the hole it exists to fill
+            // is still fillable.
+            if (
+                b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0
+                    && !(legacyWire && s.rewardEraRotated)
+            ) {
                 s.governorCommitArmedFromDay = b.armedFromDay;
             }
             return;
@@ -1022,22 +1037,25 @@ contract RewardReporterFacet is
 
     /// @notice #1944 — whether THIS chain has already applied the V2 broadcast
     ///         for `dayId`.
-    /// @dev    The M7 arming ceremony has to know, per mirror and immediately
-    ///         before broadcasting, whether a candidate propagation day is
-    ///         still unapplied: `_applyBroadcastV2Core` returns early on an
-    ///         already-applied day, BEFORE the `armedFromDay` install, so
-    ///         arming through a burnt day silently no-ops and `D*` is one-shot.
+    /// @dev    Written for the M7 arming ceremony, which had to know per
+    ///         mirror — and immediately before broadcasting — whether a
+    ///         candidate propagation day was still unapplied, because a
+    ///         replay used to return BEFORE the `armedFromDay` install and
+    ///         `D*` is one-shot. Answering it by scanning for
+    ///         `RewardBroadcastV2Applied` logs is materially worse than a
+    ///         readback under ceremony pressure: it depends on provider
+    ///         retention and range limits, and a missed page reads as "not
+    ///         applied", which is the exact wrong answer here.
     ///
-    ///         Until now that question was answerable only by scanning for
-    ///         `RewardBroadcastV2Applied` logs. A log scan under ceremony
-    ///         pressure is materially worse than a readback — it depends on
-    ///         provider retention and range limits, and a missed page reads as
-    ///         "not applied", which is the exact wrong answer here.
-    ///
-    ///         Read-only: this does NOT close the underlying defect (a day
-    ///         applied pre-arm still cannot carry `D*`), it makes the
-    ///         ceremony's mitigation executable. The protocol fix wants its own
-    ///         design pass — see #1944.
+    ///         THE UNDERLYING DEFECT IS NOW CLOSED. This comment used to end
+    ///         "a day applied pre-arm still cannot carry `D*`", and that
+    ///         stopped being true when #1944 moved the install inside the
+    ///         replay branch: a rebroadcast of an applied day now fills an
+    ///         empty `D*` (never re-chooses a set one, and never from a
+    ///         retired era's legacy wire). The readback stays useful — an
+    ///         operator still wants to see which days are applied — but it is
+    ///         no longer load-bearing for arming, and reading it as "this day
+    ///         is burnt for propagation" is now the wrong conclusion.
     function getBroadcastV2Applied(uint256 dayId) external view returns (bool) {
         return LibVaipakam.storageSlot().broadcastV2Applied[dayId];
     }

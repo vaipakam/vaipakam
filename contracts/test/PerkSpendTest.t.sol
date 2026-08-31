@@ -92,13 +92,13 @@ contract PerkSpendTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(PerkFacet.PerkNotForSale.selector, PERK_PRIORITY)
         );
-        _perk().purchasePerk(PERK_PRIORITY, 1);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
     }
 
     function testDisarmingStopsSalesWithoutTouchingHeldEntitlements() public {
         _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_PRIORITY, 1);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
         (bool activeBefore, , ) = _perk().getPerkEntitlement(buyer, PERK_PRIORITY);
         assertTrue(activeBefore, "entitlement held after purchase");
 
@@ -108,7 +108,7 @@ contract PerkSpendTest is SetupTest {
         vm.expectRevert(
             abi.encodeWithSelector(PerkFacet.PerkNotForSale.selector, PERK_PRIORITY)
         );
-        _perk().purchasePerk(PERK_PRIORITY, 1);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
 
         // Disarming is a decision about FUTURE sales. Revoking what someone
         // already paid for would make the purchase refundable-by-governance,
@@ -133,7 +133,7 @@ contract PerkSpendTest is SetupTest {
         uint256 diamondBefore = vpfiToken.balanceOf(address(diamond));
 
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_PRIORITY, 2);
+        _perk().purchasePerk(PERK_PRIORITY, 2, 6e18, 1 days);
 
         uint256 spend = 6e18;
         assertEq(
@@ -165,7 +165,7 @@ contract PerkSpendTest is SetupTest {
 
         vm.recordLogs();
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_VISIBILITY, 1);
+        _perk().purchasePerk(PERK_VISIBILITY, 1, 2e18, 0);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         // WHICH event fires depends on whether the emission schedule is
@@ -199,7 +199,7 @@ contract PerkSpendTest is SetupTest {
         uint256 cumBefore = ConfigFacet(address(diamond)).getRecycleCreditedCumulative();
 
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_PRIORITY, 1);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 4e18, 1 days);
 
         assertEq(
             ConfigFacet(address(diamond)).getRecycleCreditedCumulative() - cumBefore,
@@ -214,14 +214,14 @@ contract PerkSpendTest is SetupTest {
         _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
 
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_PRIORITY, 1);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
         (, uint64 firstUntil, ) = _perk().getPerkEntitlement(buyer, PERK_PRIORITY);
 
         // Buy again while the first window is still open. Buying early must
         // not cost the buyer the unused remainder.
         vm.warp(block.timestamp + 1 hours);
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_PRIORITY, 1);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
         (, uint64 secondUntil, ) = _perk().getPerkEntitlement(buyer, PERK_PRIORITY);
 
         assertEq(secondUntil, firstUntil + 1 days, "second window extends the first");
@@ -230,14 +230,14 @@ contract PerkSpendTest is SetupTest {
     function testLapsedTimedEntitlementRestartsFromNow() public {
         _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_PRIORITY, 1);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
 
         vm.warp(block.timestamp + 10 days);
         (bool active, , ) = _perk().getPerkEntitlement(buyer, PERK_PRIORITY);
         assertFalse(active, "entitlement lapsed");
 
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_PRIORITY, 1);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
         (, uint64 until, ) = _perk().getPerkEntitlement(buyer, PERK_PRIORITY);
         assertEq(until, uint64(block.timestamp + 1 days), "restarts from now, not from the stale expiry");
     }
@@ -245,7 +245,7 @@ contract PerkSpendTest is SetupTest {
     function testCountedPerkAccumulatesCredits() public {
         _perk().setPerkConfig(PERK_VISIBILITY, 1e18, 0);
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_VISIBILITY, 3);
+        _perk().purchasePerk(PERK_VISIBILITY, 3, 3e18, 0);
         (bool active, uint64 until, uint256 credits) =
             _perk().getPerkEntitlement(buyer, PERK_VISIBILITY);
         assertTrue(active, "counted units make the perk active");
@@ -256,7 +256,7 @@ contract PerkSpendTest is SetupTest {
     function testCreditsAreConsumedOnlyThroughTheDiamond() public {
         _perk().setPerkConfig(PERK_VISIBILITY, 1e18, 0);
         vm.prank(buyer);
-        _perk().purchasePerk(PERK_VISIBILITY, 1);
+        _perk().purchasePerk(PERK_VISIBILITY, 1, 1e18, 0);
 
         // An open `consumePerkCredit` would let anyone burn another user's
         // paid-for units.
@@ -269,7 +269,7 @@ contract PerkSpendTest is SetupTest {
         _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
         vm.prank(buyer);
         vm.expectRevert(PerkFacet.PerkUnitsZero.selector);
-        _perk().purchasePerk(PERK_PRIORITY, 0);
+        _perk().purchasePerk(PERK_PRIORITY, 0, 1e18, 1 days);
     }
 
     function testHugeUnitCountSaturatesRatherThanWrappingTheExpiry() public {
@@ -282,11 +282,120 @@ contract PerkSpendTest is SetupTest {
         vm.startPrank(buyer);
         vpfiToken.approve(address(diamond), type(uint256).max);
         VPFIDiscountFacet(address(diamond)).depositVPFIToVault(units);
-        _perk().purchasePerk(PERK_PRIORITY, units);
+        _perk().purchasePerk(
+            PERK_PRIORITY, units, units, type(uint32).max
+        );
         vm.stopPrank();
 
         (, uint64 until, ) = _perk().getPerkEntitlement(buyer, PERK_PRIORITY);
         assertEq(until, type(uint64).max, "expiry saturates instead of wrapping");
+    }
+
+    // ── the terms the buyer signed ──────────────────────────────────────
+
+    function testPurchaseRefusesAPriceRaisedAfterTheBuyerSigned() public {
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
+
+        // Governance re-prices while the buyer's transaction is in flight.
+        // Without the ceiling the buyer is simply debited the new price.
+        _perk().setPerkConfig(PERK_PRIORITY, 5e18, 1 days);
+
+        uint256 vaultBefore = _vaultVpfi(buyer);
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PerkFacet.PerkPriceExceedsMax.selector, 5e18, 1e18
+            )
+        );
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
+        assertEq(_vaultVpfi(buyer), vaultBefore, "no debit on a refused purchase");
+    }
+
+    function testPurchaseRefusesTermsChangedAfterTheBuyerSigned() public {
+        // Nothing has sold yet, so the duration is still governance's to
+        // change — which is exactly the window this guard covers.
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 7 days);
+
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PerkFacet.PerkTermsChanged.selector, uint32(1 days), uint32(7 days)
+            )
+        );
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
+    }
+
+    function testTermsAreBoundInBothDirections() public {
+        // A LENGTHENED entitlement is still not the one the buyer signed for.
+        // Binding only the downside would let governance substitute terms
+        // silently whenever the substitution looks generous.
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 7 days);
+        vm.prank(buyer);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PerkFacet.PerkTermsChanged.selector, uint32(1 days), uint32(7 days)
+            )
+        );
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
+    }
+
+    // ── the mode freeze ─────────────────────────────────────────────────
+
+    function testModeIsFrozenOnceThePerkHasSold() public {
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
+        vm.prank(buyer);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
+
+        // Flipping this timed perk to a counted one would strand the holder
+        // above on a basis the perk no longer reads — and there is no way to
+        // walk the per-user records and clean up.
+        vm.expectRevert(
+            abi.encodeWithSelector(PerkFacet.PerkModeLocked.selector, PERK_PRIORITY)
+        );
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 0);
+
+        // Re-pricing and disarming stay available: they are decisions about
+        // future sales and do not reinterpret what a holder already owns.
+        _perk().setPerkConfig(PERK_PRIORITY, 9e18, 1 days);
+        _perk().setPerkConfig(PERK_PRIORITY, 0, 1 days);
+        (uint256 price, uint32 dur, uint256 sold) =
+            _perk().getPerkConfig(PERK_PRIORITY);
+        assertEq(price, 0, "disarmed");
+        assertEq(dur, 1 days, "mode intact");
+        assertEq(sold, 1, "the sale that froze the mode is visible to operators");
+    }
+
+    function testModeIsStillFreeBeforeTheFirstSale() public {
+        // The freeze must not fire on an unsold perk, or arming would be a
+        // one-shot decision made before anyone could have been harmed by it.
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 0);
+        (, uint32 dur, uint256 sold) = _perk().getPerkConfig(PERK_PRIORITY);
+        assertEq(dur, 0, "duration still free to change");
+        assertEq(sold, 0, "nothing sold");
+    }
+
+    // ── containment ─────────────────────────────────────────────────────
+
+    function testAPerkCanBeDisarmedWhileTheProtocolIsPaused() public {
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
+        AdminFacet(address(diamond)).pause();
+
+        // The pause is when the lever is most wanted. Gating the setter
+        // behind it would leave an armed channel that cannot be shut.
+        _perk().setPerkConfig(PERK_PRIORITY, 0, 1 days);
+        (uint256 price, , ) = _perk().getPerkConfig(PERK_PRIORITY);
+        assertEq(price, 0, "disarmed during containment");
+
+        // The purchase path stays closed regardless, so the open setter
+        // cannot be used to arm a channel the pause has shut.
+        AdminFacet(address(diamond)).unpause();
+        _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
+        AdminFacet(address(diamond)).pause();
+        vm.prank(buyer);
+        vm.expectRevert();
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
     }
 
     function testPurchaseWithAnEmptyVaultReverts() public {
@@ -294,6 +403,6 @@ contract PerkSpendTest is SetupTest {
         address pauper = makeAddr("pauper");
         vm.prank(pauper);
         vm.expectRevert();
-        _perk().purchasePerk(PERK_PRIORITY, 1);
+        _perk().purchasePerk(PERK_PRIORITY, 1, 1e18, 1 days);
     }
 }

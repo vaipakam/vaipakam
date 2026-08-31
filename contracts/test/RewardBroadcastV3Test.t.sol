@@ -1138,6 +1138,63 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertEq(armed, 2, "an armed mirror ignores a later, different D*");
     }
 
+    /// …and a RETIRED era cannot arm this mirror through that same door.
+    ///
+    /// {LegacyBroadcastRetired} deliberately sits BELOW the replay branch, so
+    /// an already-applied day keeps replaying idempotently forever after a
+    /// rotation. That placement is safe while a replay is a no-op — and the
+    /// install above is not one. Without the exclusion, a delayed or
+    /// re-executed kind-5 packet from the retired era could still CHOOSE this
+    /// mirror's era, which is precisely the authority the rotation withdrew.
+    function testRetiredEraCannotArmThroughAReplay() public {
+        _configureMirror(CHAIN_ARB);
+
+        // The racing application, leaving the mirror unarmed.
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.armedFromDay = 0;
+        messenger.deliverBroadcastV2(pre);
+        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedBefore, 0, "mirror starts unarmed, as the race leaves it");
+
+        // Base rotates. Everything the old era says is now unauthenticated.
+        _rep().setBaseRewardDeployment(address(0xE2));
+
+        // The retired era replays that same day carrying an arming day. The
+        // replay is still ACCEPTED — idempotency after rotation is the
+        // deliberate part — but it must not arm.
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+        (uint256 armedAfterLegacy, , , ) = _agg().getGovernorCommitState();
+        assertEq(
+            armedAfterLegacy, 0, "a retired era cannot choose this mirror's era"
+        );
+
+        // Nothing else about the replay changed: the day stays applied and
+        // the mirror stays usable. Only the ARMING was withheld.
+        assertTrue(_rep().getBroadcastV2Applied(3), "the day is still applied");
+    }
+
+    /// The control for the test above, and the reason it is not vacuous: the
+    /// SAME wire, the SAME day, the SAME replay — differing only in that no
+    /// rotation has happened — must still install `D*`. Without this, a
+    /// change that simply broke the #1944 install on the legacy path would
+    /// pass the retired-era test above and look like a fix.
+    ///
+    /// It also pins the install on the V2 path specifically; #1944's own test
+    /// drives it through V3.
+    function testLegacyReplayArmsWhileTheEraIsStillCurrent() public {
+        _configureMirror(CHAIN_ARB);
+
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.armedFromDay = 0;
+        messenger.deliverBroadcastV2(pre);
+        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedBefore, 0, "mirror starts unarmed");
+
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+        (uint256 armedAfter, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedAfter, 2, "an era still in force fills the hole");
+    }
+
     // ── #1569 M4 C3 — the Base-authorized keeper allocation ────────────
 
     /// The instruction EARMARKS inside the mirror's own bucket.

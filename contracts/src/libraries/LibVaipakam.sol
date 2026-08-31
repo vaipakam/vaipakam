@@ -7121,6 +7121,15 @@ library LibVaipakam {
         ///         operator surface. The bucket already counts it; this
         ///         separates the perk channel's contribution from the rest.
         uint256 perkSpendCumulative;
+        /// @notice Units of `perkId` ever sold. Governance may re-price or
+        ///         disarm a perk at any time, but once this is non-zero the
+        ///         perk's MODE is frozen: a timed perk stays timed and a
+        ///         counted one stays counted. Entitlements already granted
+        ///         live in per-user mappings that no setter can walk, so a
+        ///         mode switch would leave holders with a basis the perk no
+        ///         longer has. A new meaning takes a new `perkId`; they are
+        ///         opaque and free.
+        mapping(uint256 => uint256) perkUnitsSold;
         // ── #1569 M4 C3 — per-chain keeper allocation (append-only tail) ──
         /// @notice BASE-ONLY. Share, in bps of a chain's locally-funded
         ///         recycled commit, that Base instructs that chain to earmark

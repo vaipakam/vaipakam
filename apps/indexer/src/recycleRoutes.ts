@@ -368,43 +368,63 @@ export async function captureBackingSnapshot(
   // (`backingSnapshotUnavailableGap`, asserted against the compiled ABI at
   // startup). This is the indexer's equivalent, at the only place it can be
   // told apart — the decode itself (#1930 follow-up).
-  const [snap, composition] = await Promise.all([
-    client.readContract({
-      address: chain.diamond as Address,
-      abi: InteractionRewardsLensFacetABI,
-      functionName: 'getRecycleBackingSnapshot',
-      blockNumber,
-      // EIGHT outputs, matching the compiled ABI. This cast said SIX until
-      // #1930 — `strandedRecoveryReserved` (#1434 P2-w2) and
-      // `recoveryPositionReserved` (P2-w5) were appended to the view and
-      // never picked up here, so the destructure below silently dropped
-      // them. Both are subtrahends INSIDE `unearmarked`, published so a
-      // reader can recompute it from components; omitting them left the
-      // series unable to do the one thing they exist for.
-    }) as Promise<
-      readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint]
-    >,
-    client.readContract({
-      address: chain.diamond as Address,
-      abi: RewardAggregatorFacetABI,
-      functionName: 'getRecycleCompositionPosition',
-      blockNumber,
-    }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
-  ]).catch((err: unknown) => {
-    if (isAbiShapeMismatch(err)) {
-      // Named, and rethrown so the tick's handler still keeps one chain's
+  //
+  // The facet is named AT THE CALL SITE, not inferred from the rejection.
+  // Two reads on two facets settle together here, so one shared handler has
+  // to guess which of them failed — and a guess that names the wrong facet
+  // sends an operator to refresh something healthy while the stale one keeps
+  // aging. Tagging each read removes the guess: whichever rejects already
+  // knows what it was reading.
+  const tagged = <T>(
+    read: Promise<T>,
+    facet: string,
+    fn: string,
+  ): Promise<T> =>
+    read.catch((err: unknown) => {
+      if (isAbiShapeMismatch(err)) {
+        console.error(
+          `[recycling] chain ${chainId} diamond ${chain.diamond} returned a ` +
+            `${fn} response the compiled ABI cannot decode — the deployed ` +
+            `facet is behind the tree. Refresh ${facet} on this chain; ` +
+            `waiting will not clear it.`,
+        );
+      }
+      // Rethrown so the tick's fail-open handler still keeps one chain's
       // problem from wedging the others. What changes is that the log says
-      // WHICH failure this is.
-      console.error(
-        `[recycling] chain ${chainId} diamond ${chain.diamond} returned a ` +
-          `backing snapshot the compiled ABI cannot decode — the deployed ` +
-          `lens facet is behind the tree (expects 8 outputs since #1434 ` +
-          `P2-w2/P2-w5). Refresh InteractionRewardsLensFacet on this chain; ` +
-          `waiting will not clear it.`,
-      );
-    }
-    throw err;
-  });
+      // WHICH failure this is, and on WHICH facet.
+      throw err;
+    });
+  const [snap, composition] = await Promise.all([
+    tagged(
+      client.readContract({
+        address: chain.diamond as Address,
+        abi: InteractionRewardsLensFacetABI,
+        functionName: 'getRecycleBackingSnapshot',
+        blockNumber,
+          // EIGHT outputs, matching the compiled ABI. This cast said SIX until
+          // #1930 — `strandedRecoveryReserved` (#1434 P2-w2) and
+          // `recoveryPositionReserved` (P2-w5) were appended to the view and
+          // never picked up here, so the destructure below silently dropped
+          // them. Both are subtrahends INSIDE `unearmarked`, published so a
+          // reader can recompute it from components; omitting them left the
+          // series unable to do the one thing they exist for.
+      }) as Promise<
+        readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint]
+      >,
+      'InteractionRewardsLensFacet',
+      'getRecycleBackingSnapshot',
+    ),
+    tagged(
+      client.readContract({
+        address: chain.diamond as Address,
+        abi: RewardAggregatorFacetABI,
+        functionName: 'getRecycleCompositionPosition',
+        blockNumber,
+      }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
+      'RewardAggregatorFacet',
+      'getRecycleCompositionPosition',
+    ),
+  ]);
   const [
     vpfiBalance,
     bucket,

@@ -101,6 +101,21 @@ contract PerkFacet is
     /// @notice The caller holds no unspent counted units of this perk.
     error PerkNoCreditsHeld(address user, uint256 perkId);
 
+    /// @notice The perk cost more than the buyer agreed to pay. Governance can
+    ///         re-price between a purchase being signed and mined, so the
+    ///         buyer states a ceiling and the charge is bound by it.
+    error PerkPriceExceedsMax(uint256 spend, uint256 maxTotalVpfi);
+
+    /// @notice The perk no longer grants what the buyer agreed to buy. Bound
+    ///         EXACTLY, in both directions: a lengthened entitlement is still
+    ///         not the one that was signed for, and refusing is honest where
+    ///         silently substituting terms is not.
+    error PerkTermsChanged(uint32 expected, uint32 actual);
+
+    /// @notice The perk has sold at least one unit, so its mode is frozen.
+    ///         Price may still change; duration may not. See `perkUnitsSold`.
+    error PerkModeLocked(uint256 perkId);
+
     /// @notice Arms, re-prices, or disarms one perk.
     /// @param  perkId          Opaque identifier, agreed with the consumer.
     /// @param  priceVpfi       VPFI wei per unit. ZERO DISARMS the perk —
@@ -108,27 +123,62 @@ contract PerkFacet is
     ///                         further units can be bought.
     /// @param  durationSeconds Seconds of entitlement one unit grants. Zero
     ///                         makes the perk a COUNTED consumable instead,
-    ///                         redeemed through {consumePerkCredit}.
+    ///                         redeemed through {consumePerkCredit}. FROZEN
+    ///                         once the perk has sold a unit — see
+    ///                         {PerkModeLocked}.
+    /// @dev    NOT `whenNotPaused`, deliberately. Disarming a perk is a
+    ///         containment action, and a pause is when you most need it: the
+    ///         purchase path below IS paused, so this setter cannot arm a
+    ///         channel that a pause has closed, only shut one that is open.
+    ///         Gating it behind the pause would take the lever away at
+    ///         exactly the moment it is wanted.
     function setPerkConfig(
         uint256 perkId,
         uint256 priceVpfi,
         uint32 durationSeconds
-    ) external whenNotPaused onlyRole(LibAccessControl.ADMIN_ROLE) {
+    ) external onlyRole(LibAccessControl.ADMIN_ROLE) {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
+        // The mode is frozen once anything has been sold. Entitlements are
+        // per-user records that no setter can walk, so flipping a timed perk
+        // to a counted one would strand every holder on a basis the perk no
+        // longer reads — and flipping back would resurrect expiries that were
+        // meant to be gone. Re-pricing and disarming stay available.
+        if (
+            s.perkUnitsSold[perkId] != 0
+                && s.perkDurationSeconds[perkId] != durationSeconds
+        ) {
+            revert PerkModeLocked(perkId);
+        }
         s.perkPriceVpfi[perkId] = priceVpfi;
         s.perkDurationSeconds[perkId] = durationSeconds;
         emit PerkConfigured(perkId, priceVpfi, durationSeconds);
     }
 
     /// @notice Buys `units` of `perkId`, paying from the caller's own vault.
+    /// @param  perkId                  Perk to buy.
+    /// @param  units                   How many units.
+    /// @param  maxTotalVpfi            Ceiling on the TOTAL charge, in VPFI
+    ///                                 wei. The buyer's own number, not a
+    ///                                 quote read back from the chain.
+    /// @param  expectedDurationSeconds The duration the buyer is buying, bound
+    ///                                 exactly. Zero means "a counted perk".
     /// @dev    Sanctions-gated as a Tier-1 state-creating entry point: this
     ///         creates an entitlement and moves funds, which is exactly the
     ///         class `_assertNotSanctioned` covers.
-    function purchasePerk(uint256 perkId, uint256 units)
-        external
-        nonReentrant
-        whenNotPaused
-    {
+    ///
+    ///         BOTH TERMS ARE BOUND because governance can re-price and
+    ///         re-shape a perk while a purchase sits in the mempool, and the
+    ///         two failure modes differ: a price rise over-debits a buyer who
+    ///         agreed to less, while a duration change hands them something
+    ///         other than what they agreed to buy. Passing the terms in makes
+    ///         the transaction self-describing — what the buyer signed is on
+    ///         the wire, so neither substitution can pass silently.
+    function purchasePerk(
+        uint256 perkId,
+        uint256 units,
+        uint256 maxTotalVpfi,
+        uint32 expectedDurationSeconds
+    ) external nonReentrant whenNotPaused {
         LibVaipakam._assertNotSanctioned(msg.sender);
         if (units == 0) revert PerkUnitsZero();
 
@@ -136,10 +186,18 @@ contract PerkFacet is
         uint256 price = s.perkPriceVpfi[perkId];
         if (price == 0) revert PerkNotForSale(perkId);
 
+        uint32 dur = s.perkDurationSeconds[perkId];
+        if (dur != expectedDurationSeconds) {
+            revert PerkTermsChanged(expectedDurationSeconds, dur);
+        }
+
         address vpfi = s.vpfiToken;
         if (vpfi == address(0)) revert PerkVpfiTokenNotSet();
 
         uint256 spend = price * units;
+        if (spend > maxTotalVpfi) {
+            revert PerkPriceExceedsMax(spend, maxTotalVpfi);
+        }
 
         // 1. Pull the spend into Diamond custody. Reverts if the buyer has no
         //    vault or too little VPFI — the same failure surface the
@@ -167,11 +225,12 @@ contract PerkFacet is
             spend
         );
         s.perkSpendCumulative += spend;
+        // Records the sale, which FREEZES this perk's mode from here on.
+        s.perkUnitsSold[perkId] += units;
 
         // 4. Grant the entitlement. A timed perk EXTENDS from whichever is
         //    later — now, or the buyer's existing expiry — so buying early
         //    stacks rather than burning the unused remainder.
-        uint32 dur = s.perkDurationSeconds[perkId];
         uint64 until = s.perkEntitlementUntil[msg.sender][perkId];
         uint256 creditsAfter = s.perkCredits[msg.sender][perkId];
         if (dur == 0) {
@@ -211,13 +270,22 @@ contract PerkFacet is
     }
 
     /// @notice Price and duration of one perk. `priceVpfi == 0` ⇒ not for sale.
+    /// @return priceVpfi       VPFI wei per unit.
+    /// @return durationSeconds Seconds one unit grants; zero ⇒ counted perk.
+    /// @return unitsSold       Units ever sold. Non-zero ⇒ the mode is frozen,
+    ///                         so an operator can see before calling whether
+    ///                         {setPerkConfig} will accept a duration change.
     function getPerkConfig(uint256 perkId)
         external
         view
-        returns (uint256 priceVpfi, uint32 durationSeconds)
+        returns (uint256 priceVpfi, uint32 durationSeconds, uint256 unitsSold)
     {
         LibVaipakam.Storage storage s = LibVaipakam.storageSlot();
-        return (s.perkPriceVpfi[perkId], s.perkDurationSeconds[perkId]);
+        return (
+            s.perkPriceVpfi[perkId],
+            s.perkDurationSeconds[perkId],
+            s.perkUnitsSold[perkId]
+        );
     }
 
     /// @notice Whether `user` currently holds `perkId`, and on what basis.

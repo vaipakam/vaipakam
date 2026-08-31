@@ -1066,8 +1066,43 @@ for sale, so the channel ships dark and each perk is armed individually:
 those decisions became configuration rather than code, and nothing here
 presumes them.
 
+Two governance-vs-buyer edges are closed in the facet rather than left to
+operator discipline, because both are cases where the honest-operator
+assumption is doing the work. A purchase settles on the terms the BUYER
+signed — a stated ceiling on the total charge and the exact entitlement
+being bought — so a re-price or a re-shape between signing and mining
+fails the purchase instead of substituting terms. And a perk's MODE
+(timed vs counted) freezes at its first sale: entitlements are per-holder
+records no setter can walk, so flipping the mode would strand holders on
+a basis the perk no longer reads, and flipping back would revive expiries
+meant to be gone. Price stays adjustable and the perk stays withdrawable
+— including while the protocol is PAUSED, which is when withdrawing an
+armed channel is most wanted and where a `whenNotPaused` setter would
+have taken the lever away. Only the meaning is frozen; a new meaning
+takes a new `perkId`, and those are free.
+
 §6 counts perks complete in a DECIDED state. The absorption half is now
 built and crediting; the per-perk effects remain owner-scoped.
+
+**#1569 C3 keeper allocation — ARMED (2026-08-31).** The per-chain
+`keeperAllocate` instruction had ridden the wire since B2 with no
+consumer: Base hardcoded it to `0` in `LibMeshFunding._stampOne` and the
+mirror stored it on the day record without reading it. It is now set per
+destination by `RewardAggregatorFacet.setChainKeeperAllocateBps`
+(ADMIN + `onlyCanonical` — a mirror must not grant itself keeper budget,
+which is the card's load-bearing qualifier), carved from that chain's own
+local commit, counted into `chainConsumedRecycled` as its storage docs
+already specified, and applied on arrival into `recycleKeeperBudget`.
+Zero — the deploy default — instructs nothing.
+
+Arming it required a facet split first, and that is worth recording:
+`RewardAggregatorFacet` had **32 bytes** of EIP-170 headroom, so the ~96
+bytes of stamping did not fit. The broadcast cluster moved to
+`RewardBroadcastFacet` along the seam the facet's own header already drew
+("separated from finalizeDay so finalization stays cheap"), freeing ~5.3KB.
+A pure relocation: every code line identical, storage and selectors
+unchanged.
+
 **#1219 service bonds** — schedule the legal glance now (the bounded
 review slot the excision doc recommends); slash path →
 `credit(ServiceBondSlash, …)` on build. **Still unbuilt and deliberately

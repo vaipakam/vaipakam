@@ -24,6 +24,25 @@ timed perk while one is still running extends it instead of replacing it, so
 buying early never costs the buyer the remainder; withdrawing a perk from sale
 stops further purchases and leaves what people already bought untouched.
 
+Because the price and the shape of a perk are governance's to change, a purchase
+now settles on the terms the buyer stated rather than whatever the chain happens
+to hold when the transaction lands. The buyer names the most they are willing to
+pay in total and the entitlement they are buying, and a perk that has been
+re-priced or re-shaped in the meantime makes their purchase fail instead of
+quietly charging more or handing them something else. That binding runs both
+ways — a longer entitlement than the one agreed is still a substitution, and
+refusing it costs a buyer nothing but a retry.
+
+Once a perk has sold its first unit, its kind is settled: a timed perk stays
+timed and a counted one stays counted. Entitlements live as per-holder records
+that no setting can revisit, so changing a perk's kind after it has sold would
+leave its holders with a basis the perk no longer reads — and changing it back
+would revive entitlements that were meant to be gone. Price stays adjustable and
+the perk stays withdrawable; only the meaning is frozen, and a new meaning takes
+a new perk. Withdrawing a perk from sale also works while the protocol is
+paused, which is when an operator is most likely to want it: purchases are
+closed by that same pause, so the lever can only shut a channel, never open one.
+
 Separately, a cross-chain defect that could not be closed operationally. The
 reward broadcast that opens a day on a mirror chain is permissionless by design,
 so anyone may apply a finalized day. If that happened before the governor was
@@ -33,10 +52,34 @@ mirror could no longer be armed through that route at all. The operator runbook
 could only avoid it by hoping an unused day still existed when it was needed,
 which a third party gets to decide. A duplicate broadcast now installs the
 arming day when the chain has none, while still refusing to re-choose one that
-is already set, so the hole can be filled but never moved.
+is already set, so the hole can be filled but never moved. A duplicate arriving
+on the retired message format after the reward era has rotated is excluded from
+this: replays on that format stay accepted so settled days keep replaying
+harmlessly, but installing an arming day is not a harmless replay, and a retired
+era must not get to choose one.
+
+A third change gives one chain the ability to earmark part of its own recycling
+budget for the keepers that serve it — but only when the home chain says so.
+That instruction has ridden the cross-chain message since the mesh was built and
+did nothing: the receiving chain stored it and no code ever read it. It is now
+applied, and the amount is set per destination by an administrator on the home
+chain only, defaulting to nothing. A receiving chain cannot grant itself a
+budget, which is the whole point of the arrangement; and because the figure is
+frozen into each day when that day closes, changing it affects later days rather
+than rewriting settled ones.
+
+Arming it required making room first. The contract that owns the reward day had
+32 bytes of deployable space left — less than a single call — so nothing could
+be added to it at all. The part that ships a finished day to other chains has
+been moved into its own contract, along the boundary the code already described:
+that step was documented as deliberately separate so a finalization stays cheap
+and a failed delivery to one chain can be retried on its own. Nothing about the
+behaviour changes, the same operations are reached the same way, and the move
+freed roughly five kilobytes — enough for this work and for the queue of changes
+that were previously undeployable.
 
 Also in this pass: the indexer now tells an out-of-date contract apart from an
 unreliable network when it reads the recycling backing figures, because those
 two need opposite operator responses and previously produced the same log line.
 
-Refs #1349, #1204, #1944, #1930.
+Refs #1349, #1204, #1944, #1930, #1569.
