@@ -368,6 +368,21 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     expect(out).not.toContain(upper.slice(2, 22));
   });
 
+  it('drops a fragment followed by an ellipsis the USER supplied', () => {
+    // Codex r10 P1. The first version of this rule asked whether an ellipsis
+    // appeared after the prefix, which is IN-BAND SIGNALLING: the ellipsis is
+    // the redactor's own mark for finished work, and also an ordinary
+    // character a provider error or a URL can contain. So `0x` + 39 digits
+    // followed by a `…` from the user's own text read as a completed
+    // shortening and was preserved.
+    //
+    // The whole shape is checked now — four hex, ellipsis, four hex — which
+    // arbitrary text does not supply by accident and a fragment cannot satisfy,
+    // because 39 digits do not stop after four.
+    const out = redactText(cutAfter(`${CHECKSUMMED.slice(0, 41)}…`));
+    expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
+  });
+
   it('KEEPS a completed shortening sitting at the very end', () => {
     // The rule must not buy safety by eating its own output. A shortened
     // address reads `0x1234…5678`, and the ellipsis is what marks it finished.

@@ -260,6 +260,22 @@ const BOUNDARY_WINDOW = 48;
 const PREFIX_RE = /0[xX]/g;
 
 /**
+ * The EXACT shape `shortenMatch` emits: `0x` + 4 hex + `…` + 4 hex.
+ *
+ * Testing for a bare ellipsis instead was IN-BAND SIGNALLING (#2024, r10 P1),
+ * and it failed the way in-band signalling always does. The ellipsis is the
+ * redactor's own mark for finished work, but it is also an ordinary character
+ * that can arrive in a provider error or a URL — so `0x` + 39 digits followed
+ * by a user-supplied `…` read as a completed shortening and was preserved,
+ * putting the fragment back in the report. Verified before the fix.
+ *
+ * Matching the whole shape closes it, because the surrounding digit counts are
+ * not something arbitrary text supplies by accident: four hex, the ellipsis,
+ * four hex. A fragment cannot satisfy it — 39 digits do not stop after four.
+ */
+const SHORTENED_ADDRESS_RE = /^0[xX][a-fA-F0-9]{4}…[a-fA-F0-9]{4}/;
+
+/**
  * Drop an address fragment created by the 64 KB cut, and mark the truncation.
  *
  * TWO EARLIER VERSIONS OF THIS RULE WERE SPELLINGS RATHER THAN THE RULE, and
@@ -277,9 +293,11 @@ const PREFIX_RE = /0[xX]/g;
  * a `0x` NOT followed by a completed shortening is a fragment, whatever
  * follows it. So the cut moves back to that prefix.
  *
- * The ellipsis test is what protects the ordinary result: a shortened address
- * reads `0x1234…5678`, so a `0x` whose remainder contains `…` is finished work
- * and stays. Anything else in the window goes with the truncation — which can
+ * The shortened-shape test is what protects the ordinary result: a `0x` whose
+ * remainder IS `0x1234…5678` is finished work and stays. It tests the whole
+ * shape rather than merely the presence of an ellipsis — see r10 P1 on
+ * SHORTENED_ADDRESS_RE, where the looser test was defeated by an ellipsis the
+ * user's own text supplied. Anything else in the window goes with the truncation — which can
  * cost a short hex mention that happened to land in the last 48 characters of
  * a message already being cut off, and that is the correct side to err on.
  */
@@ -289,7 +307,7 @@ function dropBoundaryFragment(head: string): string {
   PREFIX_RE.lastIndex = 0;
   let cutAt = -1;
   for (const m of tail.matchAll(PREFIX_RE)) cutAt = m.index;
-  if (cutAt === -1 || tail.slice(cutAt).includes('…')) return `${head}…`;
+  if (cutAt === -1 || SHORTENED_ADDRESS_RE.test(tail.slice(cutAt))) return `${head}…`;
   return `${head.slice(0, windowStart + cutAt)}…`;
 }
 
