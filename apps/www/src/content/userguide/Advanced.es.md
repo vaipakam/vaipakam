@@ -98,14 +98,22 @@ Escalera de niveles:
 | 4     | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%    |
 
 El nivel se calcula contra tu saldo de vault **posterior al cambio** en el
-momento en que depositas o retiras VPFI, y luego se pondera por
-tiempo a lo largo de la vida útil de cada préstamo. Un retiro
-vuelve a fijar la tasa al nuevo saldo más bajo inmediatamente para
-cada préstamo abierto en el que estés —no hay ventana de gracia
-donde tu nivel anterior (más alto) aún se aplique. Esto cierra el
-patrón de abuso en el que un usuario podría recargar VPFI justo
-antes del cierre de un préstamo, capturar el descuento del nivel
-completo y retirar segundos después.
+momento en que depositas o retiras VPFI. La tasa que realmente se
+cobra se resuelve en la liquidación a partir de tu nivel en ese
+instante: no se toma ningún promedio aparte sobre la vida de cada
+préstamo. La salvaguarda es el nivel mismo: un promedio ponderado
+en el tiempo de tu saldo diario durante los últimos 30 días,
+rebajado después al nivel más bajo al que hayas caído en ese
+historial, y nulo por completo hasta que tu saldo actual se haya
+mantenido un número mínimo de días fijado por el protocolo. Por eso
+un retiro muerde de inmediato en cada préstamo abierto en el que
+estés —no hay ventana de gracia donde tu nivel anterior (más alto)
+aún se aplique. Esto cierra el patrón de abuso en el que un usuario
+podría recargar VPFI justo antes del cierre de un préstamo,
+capturar el descuento del nivel completo y retirar segundos
+después, y lo cierra con más firmeza que un promedio sobre el
+préstamo, porque a un promedio lo puede levantar una recarga tardía
+y a un mínimo no.
 
 **Eso vale para la comisión de rendimiento del prestamista.** La tasa del
 prestatario para la comisión de iniciación se lee una sola vez al aceptarse el

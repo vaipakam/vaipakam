@@ -97,14 +97,22 @@ s'applique.
 | 4    | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%   |
 
 Le tier est calculé contre ton solde d'vault **après changement**
-au moment où tu déposes ou retires du VPFI, puis pondéré dans le
-temps sur la durée de vie de chaque prêt. Un retrait refixe
-le taux au nouveau solde plus bas immédiatement pour chaque prêt
-ouvert te concernant — il n'y a pas de fenêtre de grâce où ton
-ancien tier (plus haut) s'applique encore. Cela ferme le schéma
-d'abus où un utilisateur pourrait recharger du VPFI juste
-avant la fin d'un prêt, capturer la remise du tier complet, et
-retirer quelques secondes plus tard.
+au moment où tu déposes ou retires du VPFI. Le taux réellement
+prélevé est résolu au règlement à partir de ton tier à cet
+instant : aucune moyenne distincte n'est prise sur la durée de vie
+de chaque prêt. C'est le tier lui-même qui protège : une moyenne
+pondérée dans le temps de ton solde quotidien sur les 30 derniers
+jours, puis ramenée au palier le plus bas que tu as atteint sur cet
+historique, et nulle tant que ton solde actuel n'a pas été détenu
+pendant un nombre minimum de jours fixé par le protocole. Un
+retrait mord donc immédiatement sur chaque prêt ouvert te
+concernant — il n'y a pas de fenêtre de grâce où ton ancien tier
+(plus haut) s'applique encore. Cela ferme le schéma d'abus où un
+utilisateur pourrait recharger du VPFI juste avant la fin d'un
+prêt, capturer la remise du tier complet, et retirer quelques
+secondes plus tard — et le ferme plus solidement qu'une moyenne sur
+le prêt, car une moyenne peut être tirée vers le haut par un
+rechargement tardif, un minimum non.
 
 **Cela vaut pour le yield-fee du prêteur.** Le taux de l'emprunteur sur les
 frais d'initiation est lu une seule fois, à l'acceptation du prêt ; ensuite, ni

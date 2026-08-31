@@ -242,10 +242,15 @@ loans-ன் protocol fees-க்கு discount கிடைக்கும்:
 | `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
 | `{liveValue:tier4Min}`-க்கு மேல் | `{liveValue:tier4DiscountBps}`% |
 
-Discounts lender மற்றும் borrower fees இரண்டிற்கும் பொருந்தும். Discount **loan life
-முழுவதும் time-weighted** ஆக கணக்கிடப்படும்; loan முடிவதற்கு முன் திடீரென top up
-செய்வதால் calculation-ஐ game செய்ய முடியாது - நீங்கள் tier-ஐ உண்மையில் hold செய்த
-காலத்திற்கு proportional-ஆக discount பெறுகிறீர்கள்.
+Discounts lender மற்றும் borrower fees இரண்டிற்கும் பொருந்தும். உங்கள் tier என்பது
+**கடந்த 30 நாட்களில் நீங்கள் hold செய்ததன் time-weighted average**; அதன் பிறகு **அந்தக்
+காலத்தில் நீங்கள் எப்போதாவது இறங்கிய மிகக் குறைந்த tier வரை அது தாழ்த்தப்படும்** - அதே
+நாளில் மீண்டும் top up செய்தாலும் அந்த இறக்கம் கணக்கில் கொள்ளப்படும். உங்கள் தற்போதைய
+balance-ஐ protocol நிர்ணயிக்கும் குறைந்தபட்ச நாட்களுக்கு hold செய்யும் வரை எந்த
+discount-ம் கிடைக்காது. எனவே loan முடிவதற்கு முன் திடீரென top up செய்வதால்
+calculation-ஐ game செய்ய முடியாது: குறைந்தபட்ச hold காலம் அதை முதலிலேயே
+நிராகரிக்கிறது, மிகக் குறைந்த tier விதி உங்கள் rate-ஐ நீங்கள் உண்மையில் தக்கவைத்த
+அளவிலேயே வைத்திருக்கிறது.
 
 ### 2. Platform interaction rewards
 

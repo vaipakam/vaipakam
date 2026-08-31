@@ -280,10 +280,16 @@ auf dieser Chain teilnehmen:
 | Über `{liveValue:tier4Min}` | `{liveValue:tier4DiscountBps}` % |
 
 Rabatte gelten sowohl für Kreditgeber- als auch für Kreditnehmer-
-Gebühren. Der Rabatt ist **zeitgewichtet über die Lebensdauer des
-Kredits**, also manipuliert Aufladen kurz vor Kreditende die
-Berechnung nicht — Sie verdienen den Rabatt anteilig zur Zeit, in
-der Sie tatsächlich die Stufe gehalten haben.
+Gebühren. Ihre Stufe ist ein **zeitgewichteter Durchschnitt dessen,
+was Sie in den letzten 30 Tagen gehalten haben**, und wird
+anschließend **auf die niedrigste Stufe gesenkt, auf die Sie in
+diesem Zeitraum gefallen sind** — ein Absacken zählt auch dann, wenn
+Sie am selben Tag wieder aufladen. Ein Rabatt entsteht überhaupt
+erst, wenn Sie Ihr aktuelles Guthaben eine vom Protokoll festgelegte
+Mindestanzahl von Tagen gehalten haben. Aufladen kurz vor Kreditende
+manipuliert die Berechnung deshalb nicht: Die Mindesthaltedauer
+weist es von vornherein ab, und die Regel der niedrigsten Stufe hält
+Ihren Satz auf dem, was Sie tatsächlich durchgehalten haben.
 
 ### 2. Plattform-Interaktionsbelohnungen
 

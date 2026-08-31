@@ -99,14 +99,23 @@ Tier-Leiter:
 | 4    | > `{liveValue:tier4Min}`               | `{liveValue:tier4DiscountBps}`%   |
 
 Das Tier wird gegen deinen Vault-Saldo **nach der Änderung** in
-dem Moment berechnet, in dem du VPFI einzahlst oder abhebst, und
-dann über die Laufzeit jedes Loans zeitgewichtet. Ein Abhebung
-stempelt die Rate sofort auf den neuen niedrigeren Saldo für jeden
-offenen Loan, an dem du beteiligt bist — es gibt kein
-Gnadenfenster, in dem dein altes (höheres) Tier weiter gilt. Damit
-wird das Muster geschlossen, bei dem ein Nutzer kurz vor Loan-Ende
-VPFI aufladen, den vollen Tier-Rabatt mitnehmen und Sekunden später
-wieder abheben könnte.
+dem Moment berechnet, in dem du VPFI einzahlst oder abhebst. Der
+tatsächlich berechnete Satz wird bei der Abrechnung aus deinem Tier
+in genau diesem Moment aufgelöst — es gibt keinen gesonderten
+Durchschnitt über die Laufzeit eines Loans. Das Tier selbst ist die
+Absicherung: ein zeitgewichteter Durchschnitt deines Tagessaldos
+über die letzten 30 Tage, anschließend auf das niedrigste Tier
+gesenkt, auf das du in diesem Zeitraum gefallen bist, und
+vollständig null, solange dein aktueller Saldo nicht eine vom
+Protokoll festgelegte Mindestanzahl von Tagen gehalten wurde. Eine
+Abhebung greift daher sofort für jeden offenen Loan, an dem du
+beteiligt bist — es gibt kein Gnadenfenster, in dem dein altes
+(höheres) Tier weiter gilt. Damit wird das Muster geschlossen, bei
+dem ein Nutzer kurz vor Loan-Ende VPFI aufladen, den vollen
+Tier-Rabatt mitnehmen und Sekunden später wieder abheben könnte —
+und zwar zuverlässiger, als ein Durchschnitt über den Loan es
+könnte, denn einen Durchschnitt kann eine späte Aufstockung
+hochziehen, ein Minimum nicht.
 
 **Das gilt für die Lender-Yield-Fee.** Der Satz des Borrowers für die
 Initiation-Fee wird einmal bei Annahme des Loans gelesen; danach ändert ihn

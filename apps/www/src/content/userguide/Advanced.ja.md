@@ -91,13 +91,19 @@ Tier ladder:
 | 4    | > `{liveValue:tier4Min}`                | `{liveValue:tier4DiscountBps}`%   |
 
 Tier は、VPFI を deposit または withdraw した瞬間の
-**post-change** vault balance に対して calculate され、その後
-各 loan の全期間にわたって time-weighted されます。引き出し は、
-あなたの open loans すべてに対して、新しい (低い) balance を
-使って rate を即座に re-stamp します — 古い (高い) tier が残る
-grace window はありません。これにより、loan 終了直前に VPFI を
-top up して full-tier discount を取り、数秒後に withdraw する
-exploit pattern を防ぎます。
+**post-change** vault balance に対して calculate されます。実際に
+charge される rate は settlement 時点のあなたの tier から決まり、
+各 loan 固有の期間について別途 average を取ることはありません。
+守りになっているのは tier そのものです。直近 30 日間の日次
+balance の time-weighted average を取り、さらにその期間中に一度
+でも下がった最も低い tier まで引き下げ、現在の balance を
+protocol が定める最低日数だけ hold するまではゼロのままです。
+そのため withdraw は、あなたの open loans すべてに即座に効きます
+— 古い (高い) tier が残る grace window はありません。これにより、
+loan 終了直前に VPFI を top up して full-tier discount を取り、
+数秒後に withdraw する exploit pattern を防ぎます。しかも loan
+単位の average よりも強固に防ぎます。average は遅い top up で
+引き上げられますが、最小値は引き上げられないからです。
 
 **これは lender yield fee についての説明です。** 借り手の開始手数料の
 レートは loan の accept 時に一度だけ読み取られ、その後は withdraw も

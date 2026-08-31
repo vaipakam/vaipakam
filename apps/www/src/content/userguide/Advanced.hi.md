@@ -93,13 +93,20 @@ Tier ladder:
 | 4    | > `{liveValue:tier4Min}`                | `{liveValue:tier4DiscountBps}`%   |
 
 Tier आपके VPFI deposit या withdraw करते ही **post-change**
-vault balance के against calculate होता है, फिर हर loan की
-पूरी अवधि पर time-weighted किया जाता है। Withdraw आपके हर खुले
-loan पर तुरंत नए (कम) balance के आधार पर rate को फिर से stamp
-कर देता है — कोई grace window नहीं जहाँ आपका पुराना (ऊँचा)
+vault balance के against calculate होता है। जो rate असल में लगती
+है, वह settlement के समय आपके उसी क्षण के tier से तय होती है —
+हर loan की अपनी अवधि पर कोई अलग average नहीं लिया जाता। असली
+सुरक्षा tier में ही है: यह पिछले 30 दिनों के आपके दैनिक balance
+का time-weighted average है, जिसे फिर उस अवधि में आप जिस सबसे
+नीचे के tier तक गिरे थे, वहीं तक घटा दिया जाता है; और जब तक आपका
+मौजूदा balance protocol द्वारा तय कम-से-कम दिनों तक hold न हो,
+तब तक यह शून्य ही रहता है। इसीलिए withdraw आपके हर खुले loan पर
+तुरंत असर करता है — कोई grace window नहीं जहाँ आपका पुराना (ऊँचा)
 tier जारी रहे। इससे वह exploit pattern बंद होता है जहाँ कोई
 user loan खत्म होने से ठीक पहले VPFI top up करके पूरा-tier
-discount ले और कुछ seconds बाद withdraw कर ले।
+discount ले और कुछ seconds बाद withdraw कर ले — और यह loan पर
+लिए गए average से ज़्यादा मज़बूती से बंद होता है, क्योंकि average
+को देर से किया गया top up ऊपर खींच सकता है, minimum को नहीं।
 
 **यह lender के yield fee के बारे में है।** Borrower की initiation fee की दर
 loan accept होते समय एक बार पढ़ी जाती है; उसके बाद न withdraw से बदलती है, न

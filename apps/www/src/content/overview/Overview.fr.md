@@ -278,10 +278,16 @@ sur cette chaîne :
 | Au-delà de `{liveValue:tier4Min}` | `{liveValue:tier4DiscountBps}` % |
 
 Les remises s'appliquent à la fois aux frais du prêteur et de
-l'emprunteur. La remise est **pondérée dans le temps sur la durée
-du prêt**, donc recharger juste avant la fin d'un prêt ne biaise
-pas le calcul — vous gagnez la remise au prorata du temps pendant
-lequel vous avez réellement détenu le palier.
+l'emprunteur. Votre palier est une **moyenne pondérée dans le temps
+de ce que vous avez détenu au cours des 30 derniers jours**, puis il
+est **ramené au palier le plus bas que vous avez atteint à un moment
+quelconque de cet historique** — une baisse compte même si vous
+rechargez le même jour. Aucune remise n'est acquise tant que vous
+n'avez pas détenu votre solde actuel pendant un nombre minimum de
+jours, fixé par le protocole. Recharger juste avant la fin d'un prêt
+ne biaise donc pas le calcul : la durée de détention minimale
+l'écarte d'emblée, et la règle du palier le plus bas maintient votre
+taux à ce que vous avez réellement tenu.
 
 ### 2. Récompenses d'interaction sur la plateforme
 

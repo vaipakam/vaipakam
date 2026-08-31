@@ -249,10 +249,14 @@ protocol feesがdiscountされます。
 | `{liveValue:tier3Min}` – `{liveValue:tier4Min}` | `{liveValue:tier3DiscountBps}`% |
 | `{liveValue:tier4Min}`超 | `{liveValue:tier4DiscountBps}`% |
 
-Discountsはlender feesとborrower feesの両方に適用されます。Discountは
-**loanのlife全体でtime-weighted**されるため、loan終了直前にtop upして
-calculationをgameすることはできません。実際にそのtierをholdしていた
-時間に比例してdiscountを得ます。
+Discountsはlender feesとborrower feesの両方に適用されます。あなたの
+tierは**直近30日間にholdしていた量のtime-weighted average**であり、
+さらに**その期間中に一度でも下がった最も低いtierまで引き下げられます**。
+同じ日にtop upし直しても、下がったこと自体がカウントされます。また、
+現在のbalanceをprotocolが定める最低日数だけholdするまでは、discountは
+まったく得られません。したがってloan終了直前にtop upしてcalculationを
+gameすることはできません。最低保有期間がそれを最初から弾き、最も低い
+tierのruleがあなたのrateを実際に維持できていた水準に留めます。
 
 ### 2. Platform interaction rewards
 

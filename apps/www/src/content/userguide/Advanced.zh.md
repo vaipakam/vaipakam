@@ -83,11 +83,16 @@ Tier ladder：
 | 4    | > `{liveValue:tier4Min}`                  | `{liveValue:tier4DiscountBps}`%     |
 
 您 deposit 或 withdraw VPFI 的瞬间，tier 会按您的 **post-change**
-vault balance 计算；随后在每笔 loan 的生命周期内按 time-weighted
-方式生效。withdraw 会立即对您参与的每笔 open loan，用新的较低
-balance re-stamp rate — 没有让旧的 (更高) tier 继续适用的 grace
-window。这会关闭一种 exploit pattern：在 loan 即将结束时临时 top up
-VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
+vault balance 计算。真正收取的费率，是在 settlement 时按您当下的
+tier 得出的；不会再针对每笔 loan 自身的存续期单独取平均。真正的
+防护在 tier 本身：它是您过去 30 天日终 balance 的时间加权平均，
+随后被压低到您在这段期间曾经跌到的最低 tier；并且在您按 protocol
+规定的最少天数持有当前 balance 之前，它一直为零。因此 withdraw 会
+立即作用于您参与的每笔 open loan — 没有让旧的 (更高) tier 继续适用
+的 grace window。这会关闭一种 exploit pattern：在 loan 即将结束时
+临时 top up VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
+而且它比按 loan 取平均关得更严：平均值会被临近的 top up 拉高，最小
+值不会。
 
 **以上针对的是 lender yield fee。** Borrower 的发起费费率在 loan 被 accept 时
 读取一次，此后 withdraw 或 top up 都不会改变它。
