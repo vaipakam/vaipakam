@@ -7871,4 +7871,83 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
+  // ---- Codex #2036 r18 ----
+
+  it('an explicit selector does not borrow the package config', () => {
+    // The selected path is generated at run time and absent from the checkout.
+    // Falling back to the same basename under the protected package let that
+    // unrelated file's preservation bless a deploy of a file nobody read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'generate-config custom.jsonc\nwrangler deploy --config custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a pathlib RECEIVER write invalidates the config too', () => {
+    // The ordinary spelling puts the path before the method, and a pattern
+    // searching only inside the call's parentheses missed it — so both readers
+    // went on trusting a checkout copy the script rewrites first.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'apps/agent/deploy.py',
+      'Path("configs/custom.jsonc").write_text(json.dumps({"keep_vars": False}))\n' +
+        'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"])\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a write AFTER the deploy does not invalidate it', () => {
+    // Scanning the whole file without comparing positions let maintenance code
+    // below a deploy invalidate the config that deploy reads — a legitimate
+    // command reported because of a line that runs after it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www", "keep_vars": false}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nwrangler deploy --config side.jsonc\necho "{}" > side.jsonc\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('...but a write BEFORE it still does', () => {
+    // The control for the ordering, so it cannot become "never invalidate".
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www", "keep_vars": false}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\necho "{}" > side.jsonc\nwrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a CHILD-PROCESS call is not prose and reaches the inversion', () => {
+    // The prose deferral exists so a runbook line yields to surrounding text
+    // that names a package. An executable call in a helper outside both
+    // packages has nothing to defer to, and deferring returned no scope at all.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'deploy.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/generated.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
+
+  it('...and PROSE still defers to the surrounding text', () => {
+    // The control for that narrowing: a runbook line naming the same
+    // unreadable config must keep yielding, and keep naming the package.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'docs/ops/Runbook.md',
+      'From `apps/agent/`, run `wrangler deploy --config configs/generated.jsonc`.\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
 });
