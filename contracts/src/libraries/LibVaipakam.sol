@@ -7121,6 +7121,23 @@ library LibVaipakam {
         ///         operator surface. The bucket already counts it; this
         ///         separates the perk channel's contribution from the rest.
         uint256 perkSpendCumulative;
+        // ── #1569 M4 C3 — per-chain keeper allocation (append-only tail) ──
+        /// @notice BASE-ONLY. Share, in bps of a chain's locally-funded
+        ///         recycled commit, that Base instructs that chain to earmark
+        ///         for its own keeper-incentive register.
+        ///
+        ///         BASE-AUTHORIZED is the load-bearing property of the card: a
+        ///         mirror must not be able to grant itself keeper budget, so
+        ///         this is written only on the canonical chain and travels
+        ///         outbound on the wire as `keeperAllocate`. A mirror reads the
+        ///         instruction it was sent; it never sets one.
+        ///
+        ///         Zero — the deploy default — instructs nothing, which is the
+        ///         behaviour every deployment had before this was armed.
+        ///         Bounded by {RECYCLE_REGISTER_KEEPER_MAX_BPS}, the ceiling
+        ///         the LOCAL register weight already carries, so neither
+        ///         allocation surface can earmark more than half a bucket.
+        mapping(uint32 => uint16) chainKeeperAllocateBps;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

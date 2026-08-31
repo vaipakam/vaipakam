@@ -14,6 +14,7 @@ import {InteractionRewardsFacet} from "../../src/facets/InteractionRewardsFacet.
 import {InteractionRewardsLensFacet} from "../../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../../src/facets/RewardAggregatorFacet.sol";
+import {RewardBroadcastFacet} from "../../src/facets/RewardBroadcastFacet.sol";
 import {RepatriationFacet} from "../../src/facets/RepatriationFacet.sol";
 import {LibAccessControl} from "../../src/libraries/LibAccessControl.sol";
 import {VPFIToken} from "../../src/token/VPFIToken.sol";
@@ -148,7 +149,7 @@ contract MeshLedgerInvariant is Test {
         InteractionRewardsLensFacet lens = new InteractionRewardsLensFacet();
         RepatriationFacet repatFacet = new RepatriationFacet();
 
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](9);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](10);
         cuts[0] = _cut(address(ac), helper.getAccessControlFacetSelectors());
         cuts[1] = _cut(address(admin), helper.getAdminFacetSelectors());
         cuts[2] = _cut(address(vpfiFacet), helper.getVPFITokenFacetSelectors());
@@ -160,6 +161,11 @@ contract MeshLedgerInvariant is Test {
         );
         cuts[5] = _cut(
             address(aggregator), helper.getRewardAggregatorFacetSelectors()
+        );
+        // #1569 — broadcast split into its own facet.
+        cuts[9] = _cut(
+            address(new RewardBroadcastFacet()),
+            helper.getRewardBroadcastFacetSelectors()
         );
         cuts[6] = _cut(address(mutator), helper.getTestMutatorFacetSelectors());
         cuts[7] = _cut(

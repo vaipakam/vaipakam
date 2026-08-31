@@ -44,6 +44,7 @@ import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {PerkFacet} from "../src/facets/PerkFacet.sol";
+import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -211,7 +212,7 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
     // (#1434) landed on either side of one merge.
     // 74 -> 75: OfferAcceptFeeFacet (#1835) — the borrower-LIF charge split
     // off OfferAcceptFacet, which was 164 bytes under EIP-170.
-    uint256 public constant EXPECTED_FACETS = 76;
+    uint256 public constant EXPECTED_FACETS = 77;
 
     function refresh() external {
         uint256 cid = block.chainid;
@@ -1011,6 +1012,12 @@ contract RefreshAllFacetsInPlace is DeployDiamond {
             "perkFacet",
             address(new PerkFacet()),
             _getPerkSelectors()
+        );
+        // Slot 76: #1569's broadcast split.
+        items[76] = Item(
+            "rewardBroadcastFacet",
+            address(new RewardBroadcastFacet()),
+            _getRewardBroadcastSelectors()
         );
         items[26] = Item("rewardReporterFacet", address(new RewardReporterFacet()), _getRewardReporterSelectors());
         // #1222 M3 B3 — `getChainRecycledLedger` /

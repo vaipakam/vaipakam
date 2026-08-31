@@ -140,6 +140,7 @@ import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
 import {PerkFacet} from "../src/facets/PerkFacet.sol";
+import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
@@ -321,6 +322,7 @@ contract SetupTest is Test {
     RewardClaimFacet rewardClaimFacet;
     RewardHorizonSweepFacet rewardHorizonSweepFacet;
     PerkFacet perkFacet;
+    RewardBroadcastFacet rewardBroadcastFacet;
     InteractionRewardsLensFacet interactionRewardsLensFacet;
     RewardAggregatorFacet rewardAggregatorFacet;
     RewardRemittanceFacet rewardRemittanceFacet;
@@ -440,6 +442,7 @@ contract SetupTest is Test {
         rewardClaimFacet = new RewardClaimFacet();
         rewardHorizonSweepFacet = new RewardHorizonSweepFacet();
         perkFacet = new PerkFacet();
+        rewardBroadcastFacet = new RewardBroadcastFacet();
         interactionRewardsLensFacet = new InteractionRewardsLensFacet();
         rewardAggregatorFacet = new RewardAggregatorFacet();
         rewardRemittanceFacet = new RewardRemittanceFacet();
@@ -476,7 +479,7 @@ contract SetupTest is Test {
         // Preclose / Refinance / EarlyWithdrawal / PartialWithdrawal
         // quartet at slots 24-27 to unblock the PauseGating fold —
         // those slots stay where they are.
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](77);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](78);
         cuts[0] = IDiamondCut.FacetCut({
             facetAddress: address(offerCreateFacet),
             action: IDiamondCut.FacetCutAction.Add,
@@ -747,6 +750,12 @@ contract SetupTest is Test {
             facetAddress: address(perkFacet),
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: helperTest.getPerkFacetSelectors()
+        });
+        // #1569 — the broadcast cluster split (slot 77).
+        cuts[77] = IDiamondCut.FacetCut({
+            facetAddress: address(rewardBroadcastFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: helperTest.getRewardBroadcastFacetSelectors()
         });
         // #1306 follow-up — read-only lens facet (view/getter surface split
         // off InteractionRewardsFacet for EIP-170 headroom; shared storage).

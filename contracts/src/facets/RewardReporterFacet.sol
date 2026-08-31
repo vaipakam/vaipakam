@@ -696,6 +696,23 @@ contract RewardReporterFacet is
             freshBorrowerHalf: b.freshBorrowerHalf
         });
 
+        // #1569 M4 C3 — apply the Base-authorized keeper instruction.
+        //
+        // The earmark is carved from INSIDE this chain's bucket, exactly as
+        // the local register is on Base: `recycleBucket` is unchanged and no
+        // tokens move. What changes is how much of the bucket is available to
+        // fund reward budgets, since `recycleKeeperBudget` is netted out of
+        // the fundable figure and out of repatriation's draw.
+        //
+        // Base carved this from the SAME local commit reserved below, so it is
+        // value this chain already holds; the instruction says how to label
+        // it, never to find more. Inside the whole-day idempotency guard, so a
+        // replay cannot double-credit — and the field sits under the replay
+        // equality check above, so a day cannot be re-instructed either.
+        if (b.keeperAllocate != 0) {
+            s.recycleKeeperBudget += b.keeperAllocate;
+        }
+
         if (b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
             s.governorCommitArmedFromDay = b.armedFromDay;
         }

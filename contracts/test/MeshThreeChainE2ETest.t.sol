@@ -19,6 +19,7 @@ import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
 import {VPFIToken} from "../src/token/VPFIToken.sol";
 import {LibVaipakam} from "../src/libraries/LibVaipakam.sol";
 
@@ -129,7 +130,7 @@ contract MeshThreeChainE2ETest is Test {
         private
         returns (IDiamondCut.FacetCut[] memory cuts)
     {
-        cuts = new IDiamondCut.FacetCut[](11);
+        cuts = new IDiamondCut.FacetCut[](12);
         cuts[0] = _cut(
             address(new AccessControlFacet()),
             helper.getAccessControlFacetSelectors()
@@ -163,6 +164,12 @@ contract MeshThreeChainE2ETest is Test {
         cuts[7] = _cut(
             address(new RewardAggregatorFacet()),
             helper.getRewardAggregatorFacetSelectors()
+        );
+        // #1569 — the broadcast cluster is its own facet now; this harness
+        // builds its own cut list, so it has to carry it too.
+        cuts[11] = _cut(
+            address(new RewardBroadcastFacet()),
+            helper.getRewardBroadcastFacetSelectors()
         );
         cuts[8] = _cut(
             address(new TestMutatorFacet()),
@@ -265,6 +272,12 @@ contract MeshThreeChainE2ETest is Test {
 
     function _agg() private view returns (RewardAggregatorFacet) {
         return RewardAggregatorFacet(baseD);
+    }
+
+    /// #1569 — broadcast moved to its own facet for EIP-170 headroom.
+    /// Same Diamond, same selectors; only the cast type changed.
+    function _bcast() private view returns (RewardBroadcastFacet) {
+        return RewardBroadcastFacet(baseD);
     }
 
     function _mut(uint256 chainId) private view returns (TestMutatorFacet) {
@@ -372,7 +385,7 @@ contract MeshThreeChainE2ETest is Test {
 
     function _broadcast(uint256 dayId) private {
         vm.chainId(BASE);
-        _agg().broadcastGlobal(dayId);
+        _bcast().broadcastGlobal(dayId);
     }
 
     /// @dev Deliver one queued broadcast to its own destination, with the

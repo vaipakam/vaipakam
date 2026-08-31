@@ -416,11 +416,25 @@ library LibMeshFunding {
             }
         }
         reservedBase = commit - commitLocal;
+        // #1569 — the Base-authorized keeper instruction rides the SAME local
+        // commit, so it exists only where that does. Computed before the
+        // ledger writes because the instruction cumulative must count it:
+        // Base has told the chain to spend it, and the backstop that stops a
+        // chain being committed twice for the same tokens nets against that
+        // cumulative.
+        uint256 keeperAlloc;
         if (commitLocal != 0) {
+            keeperAlloc =
+                (commitLocal * s.chainKeeperAllocateBps[c.chainId]) / 10_000;
             // The INSTRUCTION cumulative (B1's definition) — the binding
             // availability backstop `_mirrorAvailable` nets against, so a
             // chain can never be committed twice for the same tokens.
-            s.chainConsumedRecycled[c.chainId] += commitLocal;
+            // `chainConsumedRecycled` is defined as B2 `recycleConsume` PLUS
+            // `keeperAllocate` plus B3 netting (see its storage docs), so an
+            // armed instruction lands here too. Omitting it would hide the
+            // earmarked share from the availability backstop and let Base
+            // instruct the same tokens twice.
+            s.chainConsumedRecycled[c.chainId] += commitLocal + keeperAlloc;
             // §5's per-chain reservation ledger, the sibling of the global
             // `outstandingCommitRecycled`. Monotonic in d3: Base has no
             // authenticated view of mirror claims, so B3's source-scoped
@@ -440,7 +454,10 @@ library LibMeshFunding {
             // exactly this at broadcast arrival (same figure, both ledgers),
             // and the remit path nets it out so Base sends only its top-up.
             recycleConsume: commitLocal,
-            keeperAllocate: 0,
+            // #1569 — carved from the chain's OWN local commit, so it is
+            // value that chain already holds and Base is telling it how to
+            // label — never an extra draw on the mirror.
+            keeperAllocate: keeperAlloc,
             stamped: true,
             // Per-side fresh floors: the global value on both sides until a
             // per-chain fresh trim mechanism exists (plan §M3) — but ZERO

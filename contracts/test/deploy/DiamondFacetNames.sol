@@ -65,7 +65,11 @@ abstract contract DiamondFacetNames {
     ///      channel: a fund-moving purchase entry point with its own
     ///      storage and admin surface, so its own facet rather than growth
     ///      on a host whose concern it does not share).
-    function cutFacetNames() internal pure returns (string[76] memory) {
+    ///      76 → 77 in #1569 with `RewardBroadcastFacet` (the broadcast
+    ///      cluster split off `RewardAggregatorFacet`, which had 32 bytes
+    ///      of EIP-170 headroom — far less than one cross-facet call, the
+    ///      same condition as #1780 at 30 and #1835 at 164).
+    function cutFacetNames() internal pure returns (string[77] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -83,6 +87,7 @@ abstract contract DiamondFacetNames {
             "RewardClaimFacet",
             "RewardHorizonSweepFacet",
             "PerkFacet",
+            "RewardBroadcastFacet",
             "InteractionRewardsLensFacet",
             "LegalFacet",
             "LoanFacet",
