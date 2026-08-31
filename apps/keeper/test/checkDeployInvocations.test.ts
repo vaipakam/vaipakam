@@ -6862,6 +6862,58 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
+  // ---- Codex #2036 r5 ----
+
+  it('a quoted option-like string outside argv is NOT a selector', () => {
+    // The #1995 r3 defect — quoted text read as a real selector — reintroduced
+    // by the argv reader I added to fix a different one. `NOTE` supplies
+    // wrangler no CLI name at all.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      'spawnSync("wrangler", ["deploy"], {env: {...process.env, NOTE: "--name=vaipakam-www"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('an arbitrary argv EXPRESSION is an unresolved selector', () => {
+    // `getConfig()` is as unreadable as `cfg` and means the same thing. The
+    // inversion never needed to evaluate it, only to notice one was there.
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd .\nspawnSync("wrangler", ["deploy", "--config", getConfig()]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
+
+  it('an explicitly CLEARED CLOUDFLARE_ENV selects no environment', () => {
+    // The `\S` matched the opening quote of an empty assignment, so a shell
+    // clearing the variable read as selecting an environment and an ordinary
+    // deploy was sent to the unnamed scope — a false red, in the direction that
+    // blocks CI.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(
+      runWith('w.sh', 'cd apps/agent\nCLOUDFLARE_ENV="" wrangler deploy --config side.jsonc\n').ok,
+    ).toBe(true);
+  });
+
+  it('a name inside a MULTILINE TOML body is not the identity', () => {
+    // An authoritative identity read out of somebody else's prose. The real
+    // top-level key follows it and is the one wrangler uses.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.toml',
+      ["note = '''", 'name = "vaipakam-www"', "'''", 'name = "vaipakam-agent"', ''].join('\n'),
+    );
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

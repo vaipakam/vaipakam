@@ -2535,7 +2535,54 @@ function decodeTomlBasic(raw) {
  *
  * LAST occurrence, the rule every other selector here follows.
  */
+/**
+ * The first bracketed ARRAY LITERAL in a child-process call, or `null`.
+ *
+ * Bracket-balanced and quote-aware so a `]` inside a string does not end it.
+ * Deliberately the FIRST array: in every spelling this scanner reads, argv is
+ * the argument that follows the executable, and the options object comes after.
+ */
+function firstArgvArray(text) {
+  const open = text.indexOf('[');
+  if (open === -1) return null;
+  let i = open + 1;
+  let depth = 1;
+  let quote = null;
+  while (i < text.length && depth > 0) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = null;
+      i += 1;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      quote = c;
+      i += 1;
+      continue;
+    }
+    if (c === '[') depth += 1;
+    else if (c === ']') depth -= 1;
+    i += 1;
+  }
+  return depth === 0 ? text.slice(open + 1, i - 1) : null;
+}
+
 function argvValue(region, spellings) {
+  // SCOPED TO THE ARGUMENT ARRAY, not to the whole region after the wrangler
+  // word. Searching the region made a quoted option-like string ANYWHERE in the
+  // call an authoritative selector — including inside the options object, where
+  // `{env: {...process.env, NOTE: "--name=vaipakam-www"}}` suppressed the
+  // agent's scope although `NOTE` supplies wrangler no CLI name at all (Codex
+  // #2036 r5).
+  //
+  // That is the #1995 r3 defect — quoted text read as a real selector —
+  // reintroduced by the reader I added to fix a different one. The shell path
+  // defends against it with `stripOtherOptionValues`; the argv path needs the
+  // ARRAY, which is the only place argv actually is.
+  const arr = firstArgvArray(region);
+  if (arr === null) return null;
+  region = arr;
   // TWO ARGV SHAPES, because argv is a list of STRINGS and an option may carry
   // its value inside one of them: `["--name", "x"]` and `["--name=x"]` are the
   // same invocation to wrangler, and reading only the pair form let
@@ -2546,7 +2593,7 @@ function argvValue(region, spellings) {
   const all = [
     ...region.matchAll(
       new RegExp(
-        `["'](?:${spellings})(?:["']\\s*,\\s*(?:["']([^"']+)["']|([A-Za-z_$][\\w$.]*))` +
+        `["'](?:${spellings})(?:["']\\s*,\\s*(?:["']([^"']+)["']|([^,\\]]+?)\\s*(?=,|$))` +
           `|=([^"']*)["'])`,
         'g',
       ),
@@ -2565,7 +2612,14 @@ function argvValue(region, spellings) {
   // the "selector present but unresolvable" branch by the same route a shell
   // `"$CFG"` does. `true`/`false`/`null` are literals, not references.
   if (m[2] !== undefined) {
-    return /^(?:true|false|null|None|undefined)$/.test(m[2]) ? null : `\${${m[2]}}`;
+    // ANY non-literal element, not only a bare identifier. `getConfig()` and
+    // `cfgs[i]` are as unreadable as `cfg` and mean the same thing to this
+    // scanner — a target was named and it cannot say what it is — but the
+    // identifier-only pattern read them as NO SELECTOR, which passes (Codex
+    // #2036 r5). The inversion never needed to evaluate the expression, only to
+    // notice one was there.
+    const v = m[2].trim();
+    return /^(?:true|false|null|None|undefined)$/.test(v) || v === '' ? null : `\${${v}}`;
   }
   return m[1];
 }
@@ -2611,7 +2665,29 @@ function declaredWorkerName(absPath) {
       const decoded = ml[1] !== undefined ? decodeTomlBasic(ml[1]) : ml[2];
       if (decoded !== null && decoded !== undefined) name = decoded;
     }
+    // STRING-BODY STATE, because a line scan cannot otherwise tell a key from
+    // text that merely looks like one. A config carrying
+    // `note = '''\nname = "vaipakam-www"\n'''` above its real
+    // `name = "vaipakam-agent"` had the EMBEDDED line answer — an authoritative
+    // identity read out of somebody else's prose, and the agent deploy passed
+    // (Codex #2036 r5).
+    //
+    // Only the multiline delimiters need tracking: a single-line string cannot
+    // carry a newline, so it cannot hide a line from this loop.
+    let inMultiline = null;
     for (const line of name === undefined ? text.split('\n') : []) {
+      if (inMultiline !== null) {
+        if (line.includes(inMultiline)) inMultiline = null;
+        continue;
+      }
+      // An opener whose closer is not on the same line starts a body. Counted
+      // rather than tested, so `x = """a""" ` (opened and closed here) does not
+      // swallow the rest of the file.
+      for (const delim of ['"""', "'''"]) {
+        const n = line.split(delim).length - 1;
+        if (n % 2 === 1) inMultiline = delim;
+      }
+      if (inMultiline !== null) continue;
       if (/^\s*\[/.test(line)) break;
       // BOTH TOML string forms. A single-quoted literal string is as valid a
       // name as a double-quoted basic one, and accepting only the latter meant
@@ -2759,7 +2835,24 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     const at = clean.search(/\bwrangler2?(?:\.(?:cmd|ps1|bat))?\b/);
     return at === -1 ? clean : clean.slice(at);
   })();
+  // IN AN ARGV INVOCATION, THE ARRAY IS THE ARGUMENT LIST — and nothing outside
+  // it is an argument. Scoping `argvValue` to the array was necessary and not
+  // sufficient: `valueOf` still read `--name=` out of
+  // `{env: {…, NOTE: "--name=vaipakam-www"}}` and answered with it, so the
+  // quoted note suppressed the agent's scope anyway (Codex #2036 r5).
+  //
+  // The shell path defends against exactly this with `executedCommand` and
+  // `stripOtherOptionValues` (#1995 r3/r4), but an options OBJECT is neither a
+  // leading assignment nor an option-with-value, so neither defence applies.
+  // What does apply is that argv is a list: when the invocation is one, the
+  // selector readers consult the list and nothing else.
+  //
+  // Gated on `ARGV_DEPLOY_RE` rather than on finding a `[`, because shell text
+  // is full of brackets — `if [ -n "$X" ]` would otherwise put an ordinary
+  // script into argv-only mode and blind every shell selector.
+  const isArgvCall = new RegExp(ARGV_DEPLOY_RE).test(clean);
   const valueOf = (spellings, region = clean) => {
+    if (isArgvCall) return null;
     // LAST occurrence, because that is what the CLIs do — the same rule the
     // safety flag is scored by. `pnpm --dir apps/indexer --dir apps/agent run
     // deploy` runs the AGENT script (confirmed against the pinned pnpm), and
@@ -3006,14 +3099,31 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   const rawSeg = stripShellComment(seg);
   const envAssigned =
     // Shell assignment, with or without `export`.
-    /(?:^|[\s;&|(])(?:export\s+)?CLOUDFLARE_ENV=\S/.test(rawSeg) ||
+    (() => {
+      // The VALUE is parsed, not tested for a non-space character. `\S` matched
+      // the opening QUOTE of `CLOUDFLARE_ENV=""`, which is a shell explicitly
+      // CLEARING the variable — wrangler gates environment selection on
+      // truthiness, so that config is used normally — and the guard sent a
+      // perfectly ordinary deploy to UNNAMED_SCOPE (Codex #2036 r5). A
+      // false red, in the direction that blocks CI.
+      const m = rawSeg.match(
+        /(?:^|[\s;&|(])(?:export\s+)?CLOUDFLARE_ENV=(?:"([^"]*)"|'([^']*)'|([^\s;&|)]*))/,
+      );
+      if (!m) return false;
+      return (m[1] ?? m[2] ?? m[3] ?? '') !== '';
+    })() ||
     // Options-object entry, JS or Python: `CLOUDFLARE_ENV: "staging"`,
     // `"CLOUDFLARE_ENV": "staging"`. A quoted EMPTY value is not an
     // environment, the same rule the shell form follows.
     /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|[A-Za-z_$][\w$.]*)/.test(rawSeg) ||
     // Argv-array `--env` / `-e`, the spelling the config selector already
     // learned two findings ago. Same shape, same blind spot.
-    /["'](?:-e|--env)["']\s*,\s*["'][^"']+["']/.test(rawSeg);
+    // Reuses the argv reader rather than a second pattern, so a COMPUTED
+    // environment (`["--env", environment]`) counts as selecting one — the
+    // identifier-only spelling read it as absent and trusted the top-level
+    // name (Codex #2036 r5). Any answer at all means an environment was
+    // chosen; its value is not needed, only its presence.
+    argvValue(rawSeg, '-e|--env') !== null;
   if (
     cfg !== null &&
     !envAssigned &&
