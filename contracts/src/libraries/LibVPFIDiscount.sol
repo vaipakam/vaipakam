@@ -794,11 +794,18 @@ library LibVPFIDiscount {
      * @return canQuote      True iff a non-zero discount is available.
      * @return vpfiRequired  VPFI (18 dec) the lender must hold in vault
      *                       to take the discount.
-     * @return avgBps        The effective discount BPS at this moment (0
-     *                       when canQuote=false). The name is a holdover
-     *                       from the removed per-loan averaging and is kept
-     *                       only because it is a named return several call
-     *                       sites bind; nothing is averaged over the loan.
+     * @return effBps        The effective discount BPS at this moment (0
+     *                       when canQuote=false). Renamed from `avgBps`,
+     *                       which claimed an average over the loan that
+     *                       T-087 Sub 1.B removed. (#1981 r3 self-audit: an
+     *                       earlier revision kept the old name and gave the
+     *                       reason that "several call sites bind" it. Both
+     *                       halves were false — there is ONE caller, it
+     *                       destructures positionally and discards this
+     *                       value, and a Solidity named return cannot be
+     *                       bound by name at a call site at all. Asserting
+     *                       a constraint to justify not doing the work is
+     *                       the same defect this PR is about.)
      */
     function quoteYieldFee(
         LibVaipakam.Loan storage loan,
@@ -807,7 +814,7 @@ library LibVPFIDiscount {
     )
         internal
         view
-        returns (bool canQuote, uint256 vpfiRequired, uint256 avgBps)
+        returns (bool canQuote, uint256 vpfiRequired, uint256 effBps)
     {
         if (interestAmount == 0 || lender == address(0)) return (false, 0, 0);
 
@@ -828,15 +835,15 @@ library LibVPFIDiscount {
 
         // #1354 §F2 — total discount `min(d_hold + d_tariff, 5000)`: the
         // (consent-verified above) hold slice PLUS the +10% Full-tariff bump.
-        avgBps = _effectiveYieldFeeDiscountBps(loan, lender, true);
-        if (avgBps == 0) return (false, 0, 0);
+        effBps = _effectiveYieldFeeDiscountBps(loan, lender, true);
+        if (effBps == 0) return (false, 0, 0);
 
         // #957 (#921 item 6) — size the yield-fee VPFI requirement against the
         // loan's snapshotted treasury BPS so the discount matches the treasury
         // cut `splitTreasury` will actually charge at settlement.
         uint256 normalFee = (interestAmount *
             LibVaipakam.effectiveTreasuryFeeBps(loan)) / LibVaipakam.BASIS_POINTS;
-        uint256 payBps = LibVaipakam.BASIS_POINTS - avgBps;
+        uint256 payBps = LibVaipakam.BASIS_POINTS - effBps;
         uint256 tierFee = (normalFee * payBps) / LibVaipakam.BASIS_POINTS;
 
         // #1383 (Codex #1389 P2) — price against the asset the fee is actually
@@ -853,7 +860,7 @@ library LibVPFIDiscount {
             : loan.prepayAsset;
         (bool ok, uint256 vpfi) = _feeAssetWeiToVpfi(feeAsset, tierFee);
         if (!ok) return (false, 0, 0);
-        return (true, vpfi, avgBps);
+        return (true, vpfi, effBps);
     }
 
     // ─── Apply (mutating) ────────────────────────────────────────────────────
@@ -998,8 +1005,8 @@ library LibVPFIDiscount {
         // here keeps the heavy lifecycle / nonce-bump path out of
         // every settlement facet's inlined bytecode (PrecloseFacet
         // would otherwise breach EIP-170).
-        uint256 avgBps = borrowerHoldTierDiscountBps(loan);
-        uint256 rebate = (held * avgBps) / LibVaipakam.BASIS_POINTS;
+        uint256 effBps = borrowerHoldTierDiscountBps(loan);
+        uint256 rebate = (held * effBps) / LibVaipakam.BASIS_POINTS;
         if (rebate > held) rebate = held;
         uint256 treasuryShare = held - rebate;
 
@@ -1194,8 +1201,9 @@ library LibVPFIDiscount {
      *      computing the quote"), which is the pre-T-087 order. The
      *      quote is a read of the lender's effective tier and does not
      *      roll up; the rollup happens only AFTER the vault debit
-     *      succeeds, stamped at the post-mutation balance like every
-     *      other vault-mutation site.
+     *      succeeds, stamped at the post-mutation balance — the same
+     *      shape as the rollups in {LibNotificationFee} and
+     *      {LibConsolidation}.
      *
      *      The direction matters: a rollup before the quote would put
      *      the lifecycle / mirror-broadcast path in front of a
@@ -1239,9 +1247,13 @@ library LibVPFIDiscount {
         uint256 vaultBal = IERC20(vpfi).balanceOf(lenderVault);
         uint256 prevTracked = s.protocolTrackedVaultBalance[lender][vpfi];
 
-        // Quote against the live accumulator + the loan's init
-        // snapshot. This returns the time-weighted avg discount
-        // for the window, not a live tier lookup.
+        // Quote from the lender's EFFECTIVE tier, read live. This
+        // comment asserted the exact opposite until #1981 — "the
+        // time-weighted avg discount for the window, not a live tier
+        // lookup" — and named "the loan's init snapshot", which is
+        // `lenderDiscountAccAtInit`: a slot nothing writes. Sixth site
+        // of the same inverted claim, and the first found as an inline
+        // comment rather than NatSpec.
         (bool canQuote, uint256 vpfiRequired, ) = quoteYieldFee(loan, lender, interestAmount);
         if (!canQuote) return (false, 0);
         if (vaultBal < vpfiRequired) return (false, 0);
