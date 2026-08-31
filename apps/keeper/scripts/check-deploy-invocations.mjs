@@ -2961,50 +2961,42 @@ function configIsRewritten(text, cfgPath) {
 /**
  * Every Worker name this config can deploy, or `null` if it answers none.
  *
- * `{ names, enumerable }`. `names` is the top-level identity plus, when an
- * environment may be selected, each environment's own declared name.
- * `enumerable` says whether that list is COMPLETE — a TOML config with
- * `[env.…]` tables is not, because the top-level reader stops at the first
- * table header, and a caller must not read an incomplete list as "no protected
- * Worker here".
+ * The top-level identity, plus — when an environment may be selected — each
+ * environment's own declared name, because wrangler merges `env.<name>` over
+ * the top level and takes the deployed Worker from the merged result.
  *
  * Split from `declaredWorkerName` when an environment stopped meaning
  * "unreadable" and started meaning "a different name in the same file"
  * (#2036 r15).
+ *
+ * The TOML reader stops at the first table header and so cannot see
+ * `[env.staging]`, which means this list is INCOMPLETE for a TOML config with
+ * environments. That costs nothing, and deliberately carries no flag saying so:
+ * the caller's environment read is one-directional, so an incomplete list can
+ * only fail to pull a deploy into scope — never push one out — and a guard
+ * against it would be code no verdict depends on.
  */
 function declaredWorkerNames(absPath, includeEnvs) {
   const top = declaredWorkerName(absPath);
-  if (!includeEnvs) return top === null ? null : { names: [top], enumerable: true };
-  let text;
-  try {
-    text = readFileSync(absPath, 'utf8');
-  } catch {
-    return null;
-  }
-  if (/\.toml$/.test(absPath)) {
-    // The TOML reader is a top-level scanner that stops at the first table
-    // header, so it cannot see `[env.staging]`. Declining is the honest answer;
-    // inventing one from the top level alone is the false-green direction.
-    const enumerable = !/^\s*\[\s*env\s*\./m.test(text);
-    return top === null ? null : { names: [top], enumerable };
-  }
-  let envNames = [];
-  try {
-    const cfg = parseJsonc(text);
-    const envs = cfg !== null && typeof cfg === 'object' ? cfg.env : null;
-    if (envs !== null && typeof envs === 'object') {
-      envNames = Object.values(envs)
-        .filter((e) => e !== null && typeof e === 'object' && typeof e.name === 'string')
-        // The same rejections the top-level read applies: an empty name is no
-        // name, and one carrying an unexpanded variable is not a value.
-        .map((e) => e.name)
-        .filter((n) => n !== '' && !/\$/.test(n));
+  const names = top === null ? [] : [top];
+  if (includeEnvs && !/\.toml$/.test(absPath)) {
+    try {
+      const cfg = parseJsonc(readFileSync(absPath, 'utf8'));
+      const envs = cfg !== null && typeof cfg === 'object' ? cfg.env : null;
+      if (envs !== null && typeof envs === 'object') {
+        for (const e of Object.values(envs)) {
+          // The same rejections the top-level read applies: an empty name is no
+          // name, and one carrying an unexpanded variable is not a value.
+          if (e === null || typeof e !== 'object') continue;
+          if (typeof e.name !== 'string' || e.name === '' || /\$/.test(e.name)) continue;
+          names.push(e.name);
+        }
+      }
+    } catch {
+      return null;
     }
-  } catch {
-    return null;
   }
-  const names = [...(top === null ? [] : [top]), ...envNames];
-  return names.length === 0 ? null : { names, enumerable: true };
+  return names.length === 0 ? null : names;
 }
 
 function declaredWorkerName(absPath) {
@@ -3814,19 +3806,9 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // A config the surrounding file REWRITES before the deploy is not the
       // file wrangler will load, so the checkout's copy answers nothing
       // (#2036 r13). Unread reaches the inversion, which reports.
-      const read = configIsRewritten(fileText ?? '', cfg)
+      const declared = configIsRewritten(fileText ?? '', cfg)
         ? null
         : declaredWorkerNames(`${REPO_ROOT}/${rel}`, envSelected);
-      // NOT ENUMERABLE is not the same as NOT PROTECTED, and collapsing them
-      // would be this file's recurring defect once more: one spelling for two
-      // answers. A TOML config carrying `[env.…]` tables cannot have its
-      // environments read by the top-level scanner here, so with an environment
-      // selected it answers nothing and falls through — the behaviour before
-      // this change, kept rather than widened, because the alternative is to
-      // treat an unread environment as an unprotected one.
-      const declared = read === null || (envSelected && !read.enumerable)
-        ? null
-        : read.names;
       if (declared === null) continue;
       // EXACT, or the protected name plus an environment suffix.
       //
