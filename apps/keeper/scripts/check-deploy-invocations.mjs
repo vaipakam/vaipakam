@@ -2527,7 +2527,15 @@ function declaredWorkerName(absPath) {
       // BOTH TOML string forms. A single-quoted literal string is as valid a
       // name as a double-quoted basic one, and accepting only the latter meant
       // a perfectly ordinary config silently declined to answer.
-      const m = line.match(/^\s*name\s*=\s*(?:"((?:[^"\\]|\\[\s\S])*)"|'([^']*)')\s*(?:#.*)?$/);
+      // TOML KEYS MAY BE QUOTED. `"name" = "vaipakam-www"` is a valid config
+      // that wrangler consumes, and reading only the bare spelling made the
+      // file decline to answer — which under the directory fallback reports the
+      // deploy as targeting whatever package the file sits in. That is the
+      // FALSE-RED direction, not a bypass: an unprotected Worker's config
+      // sitting under `apps/agent` blocked a legitimate deploy (Codex #2036 r2).
+      const m = line.match(
+        /^\s*(?:name|"name"|'name')\s*=\s*(?:"((?:[^"\\]|\\[\s\S])*)"|'([^']*)')\s*(?:#.*)?$/,
+      );
       if (m) {
         // A BASIC string's ESCAPES are decoded; a LITERAL string's are not.
         // That asymmetry is TOML's, not a shortcut: `'…'` has no escape
@@ -2723,21 +2731,21 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // would REPORT and so be a CI-blocking false red rather than a harmless
     // misread.
     //
-    // EQUIVALENT MUTANT on today's tree, recorded as one rather than claimed as
-    // a fix. I wrote this narrowing to stop that misread and then could not
-    // construct a case where removing it changes a verdict: `&&`, `;` and `|`
-    // all split SEGMENTS before the region is taken, so a following command's
-    // flags never reach wrangler's argv text; on the prose path the unresolved
-    // value defers to the text rather than reporting; and a `-czf` genuinely
-    // adjacent to the wrangler word IS wrangler's `-c` by its own parser, so
-    // reading it that way is right rather than wrong. The measured verdict is
-    // "no observable difference", not "verified necessary".
+    // I RECORDED THIS AS AN EQUIVALENT MUTANT AND IT WAS NOT ONE. Worth keeping
+    // the correction here, because the reasoning failed in an instructive way.
     //
-    // Kept anyway, on the same reasoning as the out-of-checkout refusal below:
-    // the value is being used as a PATH, and admitting text that cannot be one
-    // is a property worth holding independently of whether the segment splitter
-    // happens to protect it today. A fixture states the verdict it does not
-    // change.
+    // I could not construct a case where removing the narrowing changed a
+    // verdict — `&&`, `;` and `|` split SEGMENTS before the region is taken,
+    // prose defers to the text, and a `-czf` genuinely adjacent to the wrangler
+    // word IS wrangler's `-c` — so I wrote it down as measured-equivalent.
+    // Codex then produced the case in one round: the narrowing ran BEFORE
+    // variable expansion, so `-c"$CFG"` was judged on the spelling `$CFG` and
+    // dropped (r2). The mutant I could not kill was not equivalent; I had only
+    // failed to find its input, and "I could not construct one" is weaker
+    // evidence than it reads.
+    //
+    // The narrowing is kept and now runs only on LITERAL values, which is where
+    // it can mean anything.
     (() => {
       const all = [
         ...wranglerRegion.matchAll(
@@ -2747,6 +2755,18 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
       const m = all[all.length - 1];
       if (!m) return null;
       const v = m[1].replace(/\\([\s\S])/g, '$1').replace(/["'`]/g, '');
+      // A COMPUTED value is handed on UNFILTERED, because the filter cannot see
+      // what it will become. `known()` expands variables further down; running a
+      // path-shape test on the raw `$CFG` first judged the spelling of the
+      // variable rather than the path, so `CFG=configs/custom.jsonc; wrangler
+      // deploy -c"$CFG"` dropped the selector entirely and the config's Worker
+      // was never scoped (Codex #2036 r2).
+      //
+      // This is also what settles the equivalence question recorded above: the
+      // narrowing was NOT equivalent, it was actively wrong, and it took a
+      // second reviewer to produce the case I could not construct. The order is
+      // the whole fix — expand first, judge the path second.
+      if (/\$/.test(v)) return v;
       return v.includes('/') || /\.(?:jsonc?|toml)$/.test(v) ? v : null;
     })() ??
     // ARGV-ARRAY FORM, the spelling `commandIsSafe` learned at #1995 r23:
@@ -2854,7 +2874,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // exact match against the protected set would answer "out of scope" for a
   // deploy that is squarely inside it. The directory heuristic is the safer
   // answer there and keeps its job.
-  let answered = false;
+  let answered = 0;
   // AN ENVIRONMENT IS NOT ONLY A FLAG. Wrangler resolves it as
   // `args.env ?? getCloudflareEnv()`, so `CLOUDFLARE_ENV` selects one just as
   // `--env` does, and it then reads the environment-specific `name` — which
@@ -2868,9 +2888,25 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // leading assignment as environment rather than argv, which is correct for
   // everything else and is exactly what hid this one. An empty value selects no
   // environment, hence the `\S`.
-  const envAssigned = /(?:^|[\s;&|(])(?:export\s+)?CLOUDFLARE_ENV=\S/.test(
-    stripShellComment(seg),
-  );
+  // AN ENVIRONMENT HAS FOUR SPELLINGS, not one, and I shipped one of them.
+  // A child process carries neither a shell assignment nor a spaced flag:
+  // `spawnSync("wrangler", ["deploy", "--env", "staging"])` puts the flag and
+  // its value in separate array elements, and
+  // `{env: {...process.env, CLOUDFLARE_ENV: "staging"}}` puts the variable in an
+  // options OBJECT with a `:` rather than an `=` (Codex #2036 r2). Both reach
+  // wrangler exactly as the shell forms do, and both were trusting the
+  // top-level name.
+  const rawSeg = stripShellComment(seg);
+  const envAssigned =
+    // Shell assignment, with or without `export`.
+    /(?:^|[\s;&|(])(?:export\s+)?CLOUDFLARE_ENV=\S/.test(rawSeg) ||
+    // Options-object entry, JS or Python: `CLOUDFLARE_ENV: "staging"`,
+    // `"CLOUDFLARE_ENV": "staging"`. A quoted EMPTY value is not an
+    // environment, the same rule the shell form follows.
+    /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|[A-Za-z_$][\w$.]*)/.test(rawSeg) ||
+    // Argv-array `--env` / `-e`, the spelling the config selector already
+    // learned two findings ago. Same shape, same blind spot.
+    /["'](?:-e|--env)["']\s*,\s*["'][^"']+["']/.test(rawSeg);
   if (
     cfg !== null &&
     !envAssigned &&
@@ -2925,14 +2961,24 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
       // times (#1995 r8's `filterScopes` is the same shape), so the loop is
       // written to the same rule as its neighbour rather than to a new one.
       if (hit) return { scope: hit };
-      answered = true;
+      answered += 1;
     }
   }
-  // Every reachable base that could answer said the same thing: not a protected
-  // Worker. That IS authoritative — wrangler has told us the identity — and it
-  // is the half of this read that lets a config under a protected directory
-  // name a different Worker and pass.
-  if (answered) return { scope: null };
+  // AUTHORITATIVE ONLY IF EVERY REACHABLE BASE ANSWERED — a count, not a flag.
+  //
+  // As a boolean this said "at least one base answered", and one unprotected
+  // answer then suppressed the directory fallback for bases that had answered
+  // NOTHING. With `then cd apps/www; else cd apps/agent` and a config present
+  // only under `www`, the agent branch — a bare deploy from inside a protected
+  // directory — passed on the strength of a file the other branch would read
+  // (Codex #2036 r2).
+  //
+  // This is the THIRD time this exact confusion has been fixed in this block,
+  // each time in a smaller form: first returning on the first base that merely
+  // answered, then a flag standing in for a quantifier. "Some base said not
+  // protected" and "no reachable path is protected" are different claims, and
+  // only the second one is authoritative.
+  if (answered === bases.length && bases.length > 0) return { scope: null };
 
   for (const b of bases) {
     const hit = scopeOfCwd(target === null ? b : resolveDir(b, target));

@@ -6712,6 +6712,68 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).not.toContain('"keep_vars": true');
   });
 
+  // ---- Codex #2036 r2 ----
+
+  it('an attached config built from a VARIABLE is not dropped by the path filter', () => {
+    // The path-shape narrowing ran before `known()` expands variables, so the
+    // filter judged the spelling `$CFG` rather than the path it becomes and
+    // dropped the selector entirely. This is the case that disproved my own
+    // "equivalent mutant" note on that narrowing.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('w.sh', 'CFG=configs/custom.jsonc\nwrangler deploy -c"$CFG"\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('an ARGV-ARRAY --env suppresses the name answer', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "side.jsonc", "--env", "staging"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('CLOUDFLARE_ENV in a child-process OPTIONS OBJECT suppresses it too', () => {
+    // No environment flag is present at all here — the variable arrives through
+    // the spawn options, with a `:` rather than an `=`.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "side.jsonc"], ' +
+        '{env: {...process.env, CLOUDFLARE_ENV: "staging"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('one base answering does not speak for a base that answered nothing', () => {
+    // `answered` was a boolean, so "at least one base said not protected"
+    // suppressed the directory fallback for a base with no readable config at
+    // all — and that base was a bare deploy from inside a protected directory.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/www/side.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'if [ -n "$X" ]; then cd apps/www; else cd apps/agent; fi\nwrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a QUOTED TOML name key answers', () => {
+    // The false-red direction: reading only the bare spelling made an
+    // unprotected Worker's config under apps/agent decline to answer, and the
+    // directory fallback then blocked a legitimate deploy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.toml', '"name" = "vaipakam-www"\n');
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(true);
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {
