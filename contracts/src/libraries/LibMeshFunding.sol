@@ -497,9 +497,19 @@ library LibMeshFunding {
             // exactly this at broadcast arrival (same figure, both ledgers),
             // and the remit path nets it out so Base sends only its top-up.
             recycleConsume: commitLocal,
-            // #1569 — carved from the chain's OWN local commit, so it is
-            // value that chain already holds and Base is telling it how to
-            // label — never an extra draw on the mirror.
+            // #1569 — a SECOND draw on the chain's own bucket, sized from
+            // the local commit but charged BESIDE it, and bounded above by
+            // the headroom that commit leaves (see the clamp where
+            // `keeperAlloc` is computed).
+            //
+            // NOT carved out of `commitLocal`, which an earlier revision of
+            // this comment claimed (Codex #2031 r4). `commitLocal` remains
+            // the FULL claimant commitment; taking the earmark out of it
+            // would leave the day short by exactly the earmark and move the
+            // shortfall onto claimants. The distinction is load-bearing: a
+            // maintainer who believes the commit already contains the
+            // earmark would see the separate capacity bound as redundant
+            // and remove it, which is the over-commit r3 fixed.
             keeperAllocate: keeperAlloc,
             stamped: true,
             // Per-side fresh floors: the global value on both sides until a

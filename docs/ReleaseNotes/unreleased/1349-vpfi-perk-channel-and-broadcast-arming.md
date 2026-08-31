@@ -14,9 +14,14 @@ the terms of offers already posted, or to any settlement outcome. That shape is
 what keeps a perk a price on a service rather than an instrument.
 
 What deliberately did NOT ship is any individual perk's behaviour. Which perks
-exist, what they cost, and whether the listing-visibility boost ships at all are
-open product decisions, so the platform sells entitlements and each perk's
-effect arrives with its own decision. A perk with no published price is not for
+exist and what they cost remain open product decisions, so the platform sells
+entitlements and each perk's effect arrives with its own decision.
+
+One of those decisions is settled, and in the negative: the listing-visibility
+boost does NOT ship. A perk may change what its buyer gets, never what other
+participants see — an ordering that can be bought is not a neutral book, and
+saying so on the listing would document that rather than undo it. That rules
+out visibility-for-sale as a whole class, not merely one proposed perk. A perk with no published price is not for
 sale, and that is the state every perk is in on a fresh deployment — the channel
 is dormant until an operator prices something. Those decisions are therefore
 configuration rather than code, and nothing shipped here presumes them. Buying a

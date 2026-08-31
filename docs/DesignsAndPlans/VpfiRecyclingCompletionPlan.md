@@ -1093,9 +1093,10 @@ consumer: Base hardcoded it to `0` in `LibMeshFunding._stampOne` and the
 mirror stored it on the day record without reading it. It is now set per
 destination by `RewardAggregatorFacet.setChainKeeperAllocateBps`
 (ADMIN + `onlyCanonical` — a mirror must not grant itself keeper budget,
-which is the card's load-bearing qualifier), carved from that chain's own
-local commit, drawn against the chain's availability through its OWN
-ledger slot (`chainKeeperAllocDebited`), and applied on arrival into
+which is the card's load-bearing qualifier), SIZED from that chain's own
+local commit but charged BESIDE it — bounded by the headroom that commit
+leaves in the chain's availability — drawn through its OWN ledger slot
+(`chainKeeperAllocDebited`), and applied on arrival into
 `recycleKeeperBudget`. Zero — the deploy default — instructs nothing.
 
 **NOT `chainConsumedRecycled`**, which an earlier revision of this line

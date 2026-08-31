@@ -245,6 +245,8 @@ export function retainedFrom(bucket: bigint, outstanding: bigint, keeper: bigint
  * deliberately NOT claimed as a shape mismatch — a false "your facet is stale"
  * would send an operator to redeploy over what was really a bad RPC.
  */
+export const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
+
 export function isAbiShapeMismatch(err: unknown): boolean {
   const NAMES = new Set([
     'AbiDecodingDataSizeTooSmallError',
@@ -252,8 +254,39 @@ export function isAbiShapeMismatch(err: unknown): boolean {
     'DecodeAbiParametersError',
   ]);
   for (let e: unknown = err, depth = 0; e && depth < 8; depth += 1) {
-    const named = e as { name?: unknown; cause?: unknown };
+    const named = e as {
+      name?: unknown;
+      cause?: unknown;
+      data?: unknown;
+      signature?: unknown;
+      errorName?: unknown;
+    };
     if (typeof named.name === 'string' && NAMES.has(named.name)) return true;
+    // THE MISSING-SELECTOR CASE, which the decode-error names above do not
+    // cover and which is the scenario this predicate exists to diagnose
+    // (Codex #2031 r4). A view absent from the Diamond's CURRENT CUT never
+    // reaches a decoder at all: `VaipakamDiamond.fallback` reverts
+    // `FunctionDoesNotExist()` when no facet owns the selector, and viem
+    // surfaces that as an ordinary contract revert. The first version of
+    // this predicate therefore returned false for exactly the stale-facet
+    // case it claimed to name, and the operator got the generic log.
+    //
+    // Matched on the EXACT four-byte error data, never on "a revert
+    // happened": an arbitrary revert from a live facet is a different
+    // condition with a different remedy, and reading it as ABI drift would
+    // send an operator to redeploy a healthy facet. `errorName` is checked
+    // too because viem decodes it when the consulted ABI happens to carry
+    // the error, but the raw selector is the reliable half — the per-facet
+    // ABIs do not declare the Diamond's own errors.
+    if (
+      named.errorName === 'FunctionDoesNotExist' ||
+      (typeof named.data === 'string' &&
+        named.data.toLowerCase() === FUNCTION_DOES_NOT_EXIST_SELECTOR) ||
+      (typeof named.signature === 'string' &&
+        named.signature.toLowerCase() === FUNCTION_DOES_NOT_EXIST_SELECTOR)
+    ) {
+      return true;
+    }
     e = named.cause;
   }
   return false;

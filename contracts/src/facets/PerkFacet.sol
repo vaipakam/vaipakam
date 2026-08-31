@@ -20,10 +20,17 @@ import {VaultFactoryFacet} from "./VaultFactoryFacet.sol";
  * @dev    WHAT THIS FACET DELIBERATELY DOES NOT DO.
  *
  *         It sells entitlements; it does not decide what a perk MEANS. The
- *         design note's open decisions — which perks ship, at what price, and
- *         whether the listing-visibility boost ships at all — are the owner's,
- *         and this facet is built so that they stay CONFIGURATION rather than
- *         code:
+ *         design note's open decisions — which perks ship, and at what price
+ *         — are the owner's, and this facet is built so that they stay
+ *         CONFIGURATION rather than code:
+ *
+ *         (The listing-visibility boost is no longer among them: it was
+ *         DECIDED against, and does not ship. A perk may change what its
+ *         buyer gets, never what other participants see — see
+ *         `VpfiUsagePerksAndReferralDesign.md`. Nothing here needs to know
+ *         that, which is the point of selling entitlements rather than
+ *         effects, but a header that still called it open would send the
+ *         next implementer to build a perk the ratified design forbids.)
  *
  *          - a perk with no configured price cannot be bought at all, and zero
  *            is the deploy default, so the whole channel ships DARK and each

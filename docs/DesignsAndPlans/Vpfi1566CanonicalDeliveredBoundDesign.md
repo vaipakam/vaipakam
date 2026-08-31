@@ -312,7 +312,20 @@ without a frozen migration. **D** removes the ownership question entirely by
 holding reward funding outside the shared balance, at the cost of being the
 largest change and having to re-home remittance, expiry and forfeit routing. **E** takes fresh emissions out of the shared balance entirely by minting
 only on use, at the cost of changing the supply story and leaving the recycled
-half still to solve. That is an owner call, and it is a four-way one.
+half still to solve. **F** declines the premise the other four share — it leaves
+user value in the user's own vault under a lien, so there is nothing commingled
+to reason about and no subtraction to complete, at the cost of reworking each
+mover to pull-at-use, of making the withdrawal chokepoint fund-safety-critical
+rather than merely user-protective, and of not covering treasury/payroll or the
+grandfathered balances already inside the Diamond. That is an owner call, and it
+is a five-way one.
+
+**F is the one the owner chose (2026-08-31).** The ratification — the
+per-class assessment that followed from scouting it against the tree, the one
+class where it does not fit, and the explicit statement that F settles only
+the first of #1566's three required closures — lands separately on the #1566
+card rather than in this PR, so this section records the trade-off rather
+than restating the decision.
 
 ## 5. What is true regardless of the option
 

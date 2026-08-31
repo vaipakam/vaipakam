@@ -713,17 +713,29 @@ contract RewardReporterFacet is
 
         // #1569 M4 C3 — apply the Base-authorized keeper instruction.
         //
-        // The earmark is carved from INSIDE this chain's bucket, exactly as
-        // the local register is on Base: `recycleBucket` is unchanged and no
-        // tokens move. What changes is how much of the bucket is available to
+        // The earmark comes from INSIDE this chain's bucket — bounded on
+        // Base by the headroom the day's commit left in this chain's
+        // availability — exactly as the local register is on Base:
+        // `recycleBucket` is unchanged and no tokens move. What changes is how much of the bucket is available to
         // fund reward budgets, since `recycleKeeperBudget` is netted out of
         // the fundable figure and out of repatriation's draw.
         //
-        // Base carved this from the SAME local commit reserved below, so it is
-        // value this chain already holds; the instruction says how to label
-        // it, never to find more. Inside the whole-day idempotency guard, so a
-        // replay cannot double-credit — and the field sits under the replay
-        // equality check above, so a day cannot be re-instructed either.
+        // Base sized this from the same local commit reserved below and
+        // charged it BESIDE that commit, against the headroom the commit
+        // left in the chain's availability — so it is value this chain
+        // already holds and Base is telling it how to label, never an
+        // instruction to find more.
+        //
+        // An earlier revision said Base "carved this from" the commit
+        // (Codex #2031 r4). It does not: the commit stays whole and the
+        // earmark is a second, separately-bounded draw. Stated precisely
+        // because the mirror reserves BOTH figures, and a reader who
+        // believes one contains the other would conclude the mirror
+        // double-reserves.
+        //
+        // Inside the whole-day idempotency guard, so a replay cannot
+        // double-credit — and the field sits under the replay equality
+        // check above, so a day cannot be re-instructed either.
         if (b.keeperAllocate != 0) {
             s.recycleKeeperBudget += b.keeperAllocate;
         }

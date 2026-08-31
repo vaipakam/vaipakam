@@ -328,6 +328,42 @@ contract MeshLedgerInvariant is Test {
 
     // ─── Invariants ──────────────────────────────────────────────────────
 
+    /// #1569 M4 C3 — the THIRD draw on one reported capacity:
+    /// `keeperNet ≤ reported − claimNet − repatNet`.
+    ///
+    /// Arming the knob in `setUp` does NOT by itself make this campaign
+    /// verify the earmark's safety property (Codex #2031 r4): no other
+    /// invariant reads the keeper draw, and availability SATURATES — so a
+    /// mutation that removed the headroom clamp would over-draw, floor
+    /// `avail` to zero, and leave all eighteen green. This is the assertion
+    /// that can actually fail on that mutation.
+    ///
+    /// Against the remainder after BOTH other draws, not against `reported`
+    /// alone: the three share one capacity, and each being individually
+    /// within `reported` still over-commits it when their sum is not — the
+    /// same two-comparison form `repat-cap` uses on the watcher side.
+    function invariant_KeeperDrawWithinRemainingCapacity() public view {
+        uint32[2] memory ids = [CHAIN_ARB, CHAIN_OP];
+        for (uint256 i; i < ids.length; ++i) {
+            (uint256 reported, uint256 consumed, , ) =
+                _agg().getChainRecycledLedger(ids[i]);
+            (, uint256 released) =
+                _agg().getChainRecycledCommitRetirement(ids[i]);
+            uint256 claimNet = consumed > released ? consumed - released : 0;
+            uint256 afterClaims = reported > claimNet ? reported - claimNet : 0;
+            (uint256 repatNet, ) =
+                RepatriationFacet(address(diamond))
+                    .getChainRepatriationDraw(ids[i]);
+            uint256 remainder =
+                afterClaims > repatNet ? afterClaims - repatNet : 0;
+            assertLe(
+                _agg().getChainKeeperDraw(ids[i]),
+                remainder,
+                "keeperNet <= reported - claimNet - repatNet"
+            );
+        }
+    }
+
     /// §7 #6, in B3's form: `sat(consumed − released) ≤ reported`. The
     /// formula-check:allow the superseded bare form is quoted just below.
     /// original `consumed ≤ reported` gained the release term because a
@@ -543,6 +579,21 @@ contract MeshLedgerInvariant is Test {
             0,
             "VACUOUS RUN: the fuzzer never instructed any mirror - every "
             "invariant above passed on an untouched ledger"
+        );
+        // #1569 M4 C3 (Codex #2031 r4) — the keeper bound above is only
+        // meaningful if a NONZERO draw was actually produced. `setUp` arms
+        // ARB at 2,500 bps, but the draw is bounded by the headroom each
+        // day's commit leaves, so a campaign that only ever instructed
+        // chains to their full availability would leave every earmark at
+        // zero and the bound trivially satisfied — green, and testing
+        // nothing. This is the same class of vacuity the instruction and
+        // retirement guards above exist for.
+        assertGt(
+            _agg().getChainKeeperDraw(CHAIN_ARB),
+            0,
+            "VACUOUS RUN: the fuzzer never produced a nonzero keeper "
+            "earmark - invariant_KeeperDrawWithinRemainingCapacity passed "
+            "on an unexercised ledger"
         );
         // Codex #1437 r1 P1 — instructions alone are NOT enough. If no
         // post-instruction retirement report ever lands (or
