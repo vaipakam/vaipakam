@@ -1562,7 +1562,19 @@ export async function eraseMyDataFully(
           // would delete records the user created AFTER the erasure. What a
           // late teardown can recreate is connector state, so that is all a
           // late cleanup has any business removing.
-          if (settledLate) eraseConnectorStorageQuietly();
+          if (settledLate) {
+            // BOTH stores here too (round 10 P2). The per-connector straggler
+            // callback clears the databases, and this whole-teardown path did
+            // not — but they catch different timeouts. Several connectors can
+            // each finish INSIDE the four-second per-target bound while their
+            // sequential total exceeds the ten-second outer one (three at 3.5s
+            // does it), so no `onStragglerSettled` is ever registered and this
+            // continuation is the only cleanup that runs. If the last of them
+            // is WalletConnect, its IndexedDB write lands after the main clear
+            // and a Web-Storage-only sweep cannot see it.
+            eraseConnectorStorageQuietly();
+            void eraseIndexedDbData();
+          }
         });
       await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
       connector = { attempted: true, disconnected: true };

@@ -50,10 +50,16 @@ one:
 Neither waits forever. A wallet that never answers at all, rather than
 refusing outright, would otherwise leave the page working indefinitely with
 nothing erased, so both waits are bounded and running out of time counts as
-holding out. Giving up now also stops the work rather than only stopping the
-wait: an abandoned operation left running is what a second attempt queues
-behind, and the hold it keeps on the storage is exactly what blocks the
-browser's own delete-site-data — the remedy the failure message sends you to.
+holding out.
+
+Where the app can also *stop* the abandoned work, it now does. Giving up on
+reading the wallet's own storage aborts that read and lets go of it, rather
+than leaving it running: an abandoned operation is what a second attempt
+queues behind, and the hold it keeps is exactly what blocks the browser's own
+delete-site-data — the remedy the failure message sends you to. Giving up on a
+*wallet* is not the same and cannot be: nothing here can cancel a request a
+wallet has already accepted, which is why what happens when one finishes late
+is described below rather than claimed away.
 
 Giving up also no longer leaves a wallet free to act afterwards. A wallet asked
 to disconnect can take longer than the page is willing to wait and then finish
@@ -135,16 +141,17 @@ would rather read than meet.
   otherwise: it reports that the wallet would not disconnect.
 - **Coinbase Wallet on a phone reloads the page as it disconnects.** That is
   the wallet's own behaviour and nothing on the page can prevent it. The
-  erasure itself still happens; what is lost is the confirmation, because the
-  reload takes the page with it.
+  reload can arrive while the erasure is still running, so it may take away
+  the confirmation, the remaining steps, or both — this is the one case where
+  pressing the button may leave the work unfinished and say nothing about it.
 - **In a language other than English, the confirmation can be lost too.**
   Erasing returns the app to English, and changing language rebuilds the
   screen — which can take the report with it. The data is erased either way.
 
-The second and third share a shape worth naming: the erasure works and the
+The third is the milder shape of the second: the erasure completes and the
 *evidence* of it does not survive. On a page whose whole purpose is telling
-you what happened, that is a real gap rather than a cosmetic one, which is why
-it is written down here instead of left to be found.
+you what happened, even that is a real gap rather than a cosmetic one, which
+is why both are written down here instead of left to be found.
 
 **One promise is deliberately not made.** A browser extension, or a Safe, keeps
 its own record that you allowed this site, somewhere no page can reach. The
