@@ -6841,16 +6841,14 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
-  it('but an attached argv --name= with no value names nothing', () => {
-    // The control for the empty case, matching the empty-CLOUDFLARE_ENV rule.
-    seed('configs/www.jsonc', '{"name": "vaipakam-www"}\n');
-    expect(
-      runWith(
-        'w.sh',
-        'spawnSync("wrangler", ["deploy", "--name=", "--config", "configs/www.jsonc"]);\n',
-      ).ok,
-    ).toBe(true);
-  });
+  // The EMPTY attached form (`["--name="]`) has no fixture, deliberately. It
+  // cannot change a verdict: an empty name and the mangled value `valueOf`
+  // produces from the same text both match no protected Worker, so the deploy
+  // passes either way. My first cut asserted exactly that and survived its own
+  // mutant; the second tried to make it cost something and failed on the fixed
+  // code for this reason. The rule stays in the source because "an empty value
+  // names nothing" is the right reading of the flag, not because it was shown
+  // to matter — and that distinction is recorded rather than implied.
 
   it('a CRLF multiline TOML name is trimmed like an LF one', () => {
     // Trimming only `\\n` left a `\\r` on the front of the name, which matched no

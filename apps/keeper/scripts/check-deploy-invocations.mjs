@@ -2555,7 +2555,10 @@ function argvValue(region, spellings) {
   const m = all[all.length - 1];
   if (!m) return null;
   // An attached EMPTY value (`["--name="]`) names nothing, the same rule the
-  // empty `CLOUDFLARE_ENV` follows.
+  // empty `CLOUDFLARE_ENV` follows. UNFIXTURED and recorded as such: it cannot
+  // change a verdict, because the mangled value `valueOf` produces from the
+  // same text matches no protected Worker either. Kept as the right reading of
+  // the flag, not as a demonstrated fix.
   if (m[3] !== undefined) return m[3] === '' ? null : m[3];
   // A bare identifier is the host language's variable, so it is spelled as one:
   // `known()` already refuses anything still carrying a `$`, and this reaches
