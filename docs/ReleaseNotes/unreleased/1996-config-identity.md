@@ -58,23 +58,31 @@ Selecting an environment changes which name ships, and the checker reads that
 too. Wrangler layers the chosen environment over the top of the configuration
 and takes the deployed Worker from the result, so a configuration whose
 top-level name is some unprotected Worker can still deploy a protected one
-through an environment further down the same file. The names a configuration
-can deploy are therefore its top-level name together with each environment's
-own, and any of them naming a protected Worker brings the deployment into
-scope. An environment can be chosen in more ways than a command-line flag —
-including through a set of environment variables assembled elsewhere in the
-script and handed to the command — and the checker treats a selection it cannot
-read as a selection all the same.
+through an environment further down the same file. Which environment matters:
+when the choice is written plainly enough to read, only that one is consulted,
+because deploying one environment says nothing about the others, and consulting
+them all made an unrelated environment answer for a deployment that never
+touches it. Where the choice cannot be read, every environment is a candidate.
 
-That reading runs in one direction only, which is the load-bearing part. An
-environment naming a protected Worker brings a deployment into scope; nothing
-about the environment case may take one out of scope. A top-level name that
-matches no protected Worker says nothing about an environment block, and
-letting it answer would silence the older directory reasoning on the strength
-of evidence that was never read. Where an environment is in play and no name
-matches, the checker falls back to the directory exactly as it did before —
-which is the answer that errs toward reporting, and the limit this document
-previously recorded as unsolved in every case.
+An environment can be chosen in more ways than a command-line flag, and two of
+them look like nothing at all. A set of environment variables assembled
+elsewhere in the script and handed to the command carries whatever the script
+was started with, so an environment can arrive without appearing anywhere on
+the line; the same is true of a file of variables named for loading, which is
+read before the configuration is. In both cases the checker treats the choice
+as made and unread rather than as absent.
+
+The point where this had to be settled is what a name that matches nothing
+protected proves. If the environments were read, it proves the deployment is
+out of scope, and the checker says so. If they could not be — a configuration
+in the format whose environments live in sections this checker's reader stops
+before — it proves nothing, because an unread section could name a protected
+Worker, and the checker falls back to the directory instead. An earlier version
+of this work applied the cautious half everywhere. That was sound while
+environments were not read at all and became wrong the moment an inherited set
+of variables counted as a choice, since almost every real command carries one:
+the caution then fired constantly and reported ordinary deployments of
+unprotected Workers. It now applies only where it is earned.
 
 This was the one finding of ten deferred out of the preceding deploy-guard
 work, on the grounds that reading another file was a different kind of tool
