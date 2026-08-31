@@ -818,8 +818,16 @@ export function eraseMyData(): EraseResult {
  * behind. Here the synchronous contract keeps its meaning and the asynchronous
  * work is a separate, separately-reportable field.
  */
+export interface ConnectorEraseResult {
+  /** Whether a teardown was supplied at all. */
+  readonly attempted: boolean;
+  /** Whether it completed without throwing. */
+  readonly disconnected: boolean;
+}
+
 export interface FullEraseResult extends EraseResult {
   readonly indexedDb: IndexedDbEraseResult;
+  readonly connector: ConnectorEraseResult;
   /**
    * True when every store the registry names came away clean. NOT the same
    * as `total > 0`: a browser holding nothing erases nothing and is complete,
@@ -839,12 +847,66 @@ export interface FullEraseResult extends EraseResult {
  * refusable part, and the caller must not report an outcome until they have
  * settled or timed out.
  */
-export async function eraseMyDataFully(): Promise<FullEraseResult> {
+export interface FullEraseOptions {
+  /**
+   * Tear down the live wallet connection. Injected rather than imported so
+   * this module stays free of the wagmi config — it is a pure storage
+   * library, and a page that has no wallet (or a test) supplies nothing.
+   */
+  readonly disconnect?: () => Promise<unknown>;
+}
+
+/**
+ * Erase everything this origin holds: the live connection, Web Storage and
+ * cookies, and the wallet databases.
+ *
+ * **The order is the mechanism, not statement order.**
+ *
+ * 1. Disconnect first. A connector that is still running is the thing most
+ *    likely to hold a database open, and an open connection is exactly what
+ *    makes `deleteDatabase` block. Giving the client the chance to close is
+ *    the difference between a deletion that succeeds and one that has to be
+ *    reported as refused. This is a REASON for the ordering, not a promise
+ *    that it works — whether a given connector closes its database on
+ *    teardown is not something this app can guarantee, which is why the
+ *    refusal path in step 3 exists and is reported.
+ * 2. Then the synchronous sweep, which also catches anything the teardown
+ *    itself wrote on the way out (wagmi rewrites its own keys as it
+ *    disconnects), and which keeps the per-tab broadcast and preference
+ *    ordering Part 1 established.
+ * 3. Then the database deletions, awaited, because no outcome may be
+ *    reported until they have settled or timed out.
+ *
+ * A teardown that throws is caught and reported, never rethrown: a wallet
+ * refusing to disconnect must not abort the erasure of everything else.
+ */
+export async function eraseMyDataFully(
+  options: FullEraseOptions = {},
+): Promise<FullEraseResult> {
+  const { disconnect } = options;
+  let connector: ConnectorEraseResult = {
+    attempted: false,
+    disconnected: false,
+  };
+  if (disconnect) {
+    try {
+      await disconnect();
+      connector = { attempted: true, disconnected: true };
+    } catch {
+      connector = { attempted: true, disconnected: false };
+    }
+  }
   const base = eraseMyData();
   const indexedDb = await eraseIndexedDbData();
   return {
     ...base,
     indexedDb,
-    complete: indexedDb.refused.length === 0,
+    connector,
+    // A teardown that was asked for and failed leaves the app connected, so
+    // it is as incomplete as a refused database — the page must not report
+    // a clean erasure over a wallet that is still attached.
+    complete:
+      indexedDb.refused.length === 0 &&
+      (!connector.attempted || connector.disconnected),
   };
 }

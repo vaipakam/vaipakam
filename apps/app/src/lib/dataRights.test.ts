@@ -734,6 +734,51 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
     expect(result.indexedDb.refused).toHaveLength(2);
   });
 
+  it('disconnects BEFORE sweeping, so the teardown\'s own writes are caught', async () => {
+    // Ordering is the mechanism here. wagmi rewrites its keys as it
+    // disconnects, so a sweep that ran first would leave them behind.
+    const store = new Map<string, string>();
+    fakeWindow(store);
+    stubIdb('success');
+    const order: string[] = [];
+    const result = await eraseMyDataFully({
+      disconnect: async () => {
+        order.push('disconnect');
+        // What a connector writing on its way out looks like.
+        store.set('wagmi.recentConnectorId', '"injected"');
+      },
+    });
+    expect(order).toEqual(['disconnect']);
+    expect(store.has('wagmi.recentConnectorId')).toBe(false);
+    expect(result.connector).toEqual({ attempted: true, disconnected: true });
+    expect(result.complete).toBe(true);
+  });
+
+  it('is INCOMPLETE when the teardown throws, and does not abort the erasure', async () => {
+    // A wallet refusing to disconnect must not stop everything else being
+    // removed — but the page must not call the result clean either, because
+    // the app is still attached to it.
+    fakeWindow(new Map([['app.mode', 'basic']]));
+    stubIdb('success');
+    const result = await eraseMyDataFully({
+      disconnect: async () => {
+        throw new Error('user rejected');
+      },
+    });
+    expect(result.connector).toEqual({ attempted: true, disconnected: false });
+    expect(result.localStorage).toBeGreaterThan(0);
+    expect(result.indexedDb.deleted).toBe(2);
+    expect(result.complete).toBe(false);
+  });
+
+  it('with no teardown supplied, completeness turns only on the databases', async () => {
+    fakeWindow(new Map());
+    stubIdb('success');
+    const result = await eraseMyDataFully();
+    expect(result.connector).toEqual({ attempted: false, disconnected: false });
+    expect(result.complete).toBe(true);
+  });
+
   it('an empty browser erases nothing and is still complete', async () => {
     // `complete` is not `total > 0`. Nothing stored is a clean outcome, and
     // conflating the two is how "nothing was stored" became a failure
