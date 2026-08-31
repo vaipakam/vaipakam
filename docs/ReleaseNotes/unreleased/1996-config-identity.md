@@ -52,7 +52,22 @@ options name a directory rather than a file and reach the same
 cannot-be-identified state, but they are ordinary in wrapper scripts and were
 not part of the measurement, so widening to them is separate work with its own
 count. Prose keeps deferring to the surrounding text, which on a runbook line
-names a package the reader can act on.
+names a package the reader can act on — but only prose does. A command written
+out as an executable call in a helper script has no surrounding text to defer
+to, and deferring there produced no answer at all, so a generated configuration
+selected from such a helper passed unexamined. Those reach the same complaint
+as any other unidentified selection.
+
+A configuration a script generates deserves the same treatment for
+preservation, and now gets it in two more places. An explicitly named
+configuration is answered by the path it names and by nothing else: the checker
+used to fall back to a file of the same name inside a protected package, which
+answers about a different file. And a script that writes the configuration
+before deploying it is recognised in more of the shapes a script actually uses,
+including the one where the file is named before the write rather than inside
+it. The write has to come first, though — a scan that ignored order let
+maintenance code below a deployment invalidate the file that deployment reads,
+and report a correct command because of a line that runs after it.
 
 Selecting an environment changes which name ships, and the checker reads that
 too. Wrangler layers the chosen environment over the top of the configuration
