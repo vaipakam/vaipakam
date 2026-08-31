@@ -31,10 +31,9 @@ existing holding neither resets it nor has to serve it again. Both the window
 and that minimum are settings the protocol can adjust within fixed bounds, and
 the rate is read at the moment a fee is charged.
 
-The two look-backs are separate, and the second is usually the longer. The
-averaging window can be set shorter than thirty days; the lowest-tier
-look-back is not tied to it and spans your whole current holding, up to thirty
-days. So a dip can still hold your tier down after it has left the average.
+Those two look-backs come apart whenever the averaging window is set shorter
+than thirty days: the lowest-tier rule is not tied to it, so a dip can still
+hold your tier down after it has left the average.
 
 Against the thing both designs were guarding — a deposit made shortly before a
 loan settles — this is the stricter arrangement. An average over a loan can be

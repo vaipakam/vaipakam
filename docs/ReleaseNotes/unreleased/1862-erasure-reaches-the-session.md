@@ -22,8 +22,9 @@ move. The material that mattered was always in the database.
 that is still running is the most likely reason a database cannot be deleted —
 browsers refuse to delete a database anything still has open — so closing the
 connection first is what gives the deletion a chance to succeed. The sweep goes
-second because disconnecting writes on the way out, and a sweep that ran first
-would leave those last few names behind.
+second because disconnecting writes on the way out — the wallet library keeps a
+copy of its own state in browser storage, and closing a connection changes that
+state — so a sweep placed first would leave the last few names behind.
 
 That is a reason rather than a promise, and the difference is written into the
 code: whether a particular wallet closes its database when asked to disconnect

@@ -870,10 +870,21 @@ export interface FullEraseOptions {
  *    that it works — whether a given connector closes its database on
  *    teardown is not something this app can guarantee, which is why the
  *    refusal path in step 3 exists and is reported.
- * 2. Then the synchronous sweep, which also catches anything the teardown
- *    itself wrote on the way out (wagmi rewrites its own keys as it
- *    disconnects), and which keeps the per-tab broadcast and preference
- *    ordering Part 1 established.
+ * 2. Then the synchronous sweep, which also catches what the teardown itself
+ *    writes on the way out, and which keeps the per-tab broadcast and
+ *    preference ordering Part 1 established.
+ *
+ *    That the teardown writes is verified, and the mechanism is worth naming
+ *    because the obvious candidate is the wrong one. `@wagmi/core`'s
+ *    `createConfig` wraps its store in zustand's `persist` middleware under
+ *    `name: 'store'` — so `wagmi.store` — and `disconnect` mutates
+ *    `connections`, `current` and `status`, which rewrites that key every
+ *    time. Its `setItem('recentConnectorId', …)` is the eye-catching write
+ *    but the CONDITIONAL one: `disconnect.js` returns early unless a
+ *    connection remains after the teardown, so a user disconnecting their
+ *    only wallet never reaches it. An earlier revision of this comment cited
+ *    the conditional write as the reason and would have been wrong in the
+ *    ordinary single-wallet case.
  * 3. Then the database deletions, awaited, because no outcome may be
  *    reported until they have settled or timed out.
  *
