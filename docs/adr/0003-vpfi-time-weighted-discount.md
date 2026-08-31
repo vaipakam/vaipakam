@@ -12,9 +12,10 @@
 > averaged across each loan's own lifetime, was removed. Fee application
 > now resolves the party's effective tier at the moment the fee is
 > charged, and the anti-gaming property lives in how that tier is
-> derived — a minimum staked duration, a time-weighted average over a
-> trailing 30-day window, and a clamp to the lowest tier reached in that
-> history. The per-loan anchors (`lenderDiscountAccAtInit`,
+> derived — a minimum staked duration, a recency-weighted average over a
+> trailing window (governance-bounded 14–30 days, default 30, floored at
+> the day the current stake began), and a clamp to the lowest tier
+> reached in that history. The per-loan anchors (`lenderDiscountAccAtInit`,
 > `borrowerDiscountAccAtInit`) are still written but never read.
 >
 > That replacement is **stricter** than what this ADR chose, not a

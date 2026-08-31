@@ -279,9 +279,10 @@ sur cette chaîne :
 
 Les remises s'appliquent à la fois aux frais du prêteur et de
 l'emprunteur. Votre palier est une **moyenne pondérée dans le temps
-de ce que vous avez détenu au cours des 30 derniers jours**, puis il
-est **ramené au palier le plus bas que vous avez atteint à un moment
-quelconque de cet historique** — une baisse compte même si vous
+de ce que vous avez détenu sur une fenêtre récente d'au plus 30
+jours**, comptée depuis le début de votre solde actuel, puis il est
+**ramené au palier le plus bas que vous avez atteint à un moment
+quelconque de cette fenêtre** — une baisse compte même si vous
 rechargez le même jour. Aucune remise n'est acquise tant que vous
 n'avez pas détenu votre solde actuel pendant un nombre minimum de
 jours, fixé par le protocole. Recharger juste avant la fin d'un prêt

@@ -703,15 +703,28 @@ the grandfathered peg-custody path (see the scope banner above).
 of which must pass:
 
 1. **Minimum staked duration.** Zero tier until the CURRENT stake has
-   been held `cfgTwaMinStakedDaysEffective()` days. A balance that
-   returns to zero clears `currentStakeStartSec` and restarts the
-   clock.
-2. **TWA over the 30-day ring buffer** (`_computeTwa` over
-   `s.dayBalances`, recency-weighted) → `rawTier`.
+   been held `cfgTwaMinStakedDaysEffective()` days (`setTwaMinStakedDays`,
+   bounded **2–14**, default **3**). A balance that returns to zero
+   clears `currentStakeStartSec` and restarts the clock.
+2. **Recency-weighted TWA** (`_computeTwa` over `s.dayBalances.dayClose`)
+   → `rawTier`. The window is `cfgTwaWindowDaysEffective()`
+   (`setTwaWindowDays`, bounded **14–30**, default **30** — the upper
+   bound IS the ring buffer's 30 slots), and the last
+   `cfgTwaRecentDaysEffective()` days (default 7) carry
+   `cfgTwaRecentWeightEffective()`× weight (default 3, bounded 1–10).
+   **The scan floor is raised to `currentStakeStartDayId`**, so
+   pre-stake days never dilute a new staker's average.
 3. **Min-tier-over-history clamp** (`_computeRingBufferMinTier`, over
-   each day's `dayMin`, scanning back to the earlier of
-   `today - minDays + 1` and `currentStakeStartDayId`, floored at the
-   ring buffer's 30 days) → `effTier = min(rawTier, minOverHistory)`.
+   each day's `dayMin`, so a same-day dip counts) →
+   `effTier = min(rawTier, minOverHistory)`. Note it uses a DIFFERENT
+   knob and the OPPOSITE floor rule from step 2: the window is
+   `minDays`, but it is WIDENED down to `currentStakeStartDayId` when
+   the stake is older, then floored at `today - 29`. So in practice it
+   scans the whole life of the current stake, capped at 30 days.
+
+**Do not write "30 days" as a fixed figure** in any doc derived from
+this. It is the DEFAULT and the CAP, not the rule — #1981's first pass
+said it flatly across twenty locale files and had to correct itself.
 
 This is STRICTER than the loan-window average it replaced: an average
 can be pulled up by a late spike, a minimum cannot, and `dayMin`

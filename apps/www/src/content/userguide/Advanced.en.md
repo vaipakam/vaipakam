@@ -96,10 +96,12 @@ moment you deposit or withdraw VPFI. **For the lender yield fee**
 the rate that is actually charged is resolved at settlement from
 your tier at that moment — there is no separate average taken over
 each loan's own lifetime. Your tier itself is the guard: it is a
-time-weighted average of your daily balance over the last 30 days,
-then held down to the lowest tier you dropped to at any point in
+time-weighted average of your daily balance over a recent window of
+up to 30 days — a protocol setting, counted from the day your
+current balance began, weighting the most recent days more heavily
+— then held down to the lowest tier you dropped to at any point in
 that history, and it is zero altogether until your current balance
-has been held for a minimum number of days set by the protocol.
+has been held for a minimum number of days, also a protocol setting.
 An unstake therefore bites immediately across every open loan
 you're on, with no grace window where your old (higher) tier still
 applies. This closes the gaming pattern where a user could top up
@@ -2089,9 +2091,13 @@ During this aging window:
 
 ### Time-weighted, not snapshot
 
-Your effective tier is averaged across a rolling 30-day
-window, with the LAST 7 days weighted 3× and the previous
-23 days weighted 1×. This means:
+Your effective tier is averaged across a rolling window —
+currently 30 days, a governance setting the protocol bounds
+to 14–30 — with the LAST 7 days weighted 3× and the earlier
+days weighted 1× (both of those are settings too, bounded
+1–10 for the weight). The window never reaches back past the
+day your current balance began, so a recent depositor is not
+diluted by days they held nothing. This means:
 
 - The most recent week dominates — recent behaviour matters.
 - A "top-up right before a loan settles" doesn't immediately

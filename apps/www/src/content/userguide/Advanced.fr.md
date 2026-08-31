@@ -101,10 +101,13 @@ au moment où tu déposes ou retires du VPFI. Le taux réellement
 prélevé est résolu au règlement à partir de ton tier à cet
 instant : aucune moyenne distincte n'est prise sur la durée de vie
 de chaque prêt. C'est le tier lui-même qui protège : une moyenne
-pondérée dans le temps de ton solde quotidien sur les 30 derniers
-jours, puis ramenée au palier le plus bas que tu as atteint sur cet
-historique, et nulle tant que ton solde actuel n'a pas été détenu
-pendant un nombre minimum de jours fixé par le protocole. Un
+pondérée dans le temps de ton solde quotidien sur une fenêtre
+récente d'au plus 30 jours — un réglage du protocole, comptée
+depuis le jour où ton solde actuel a commencé, les jours les plus
+récents comptant davantage — puis ramenée au palier le plus bas que
+tu as atteint sur cet historique, et nulle tant que ton solde
+actuel n'a pas été détenu pendant un nombre minimum de jours,
+également fixé par le protocole. Un
 retrait mord donc immédiatement sur chaque prêt ouvert te
 concernant — il n'y a pas de fenêtre de grâce où ton ancien tier
 (plus haut) s'applique encore. Cela ferme le schéma d'abus où un

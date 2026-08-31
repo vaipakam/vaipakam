@@ -261,9 +261,10 @@ discount मिलता है:
 | `{liveValue:tier4Min}` से ऊपर | `{liveValue:tier4DiscountBps}`% |
 
 Discounts lender और borrower दोनों fees पर लागू होते हैं। आपका tier
-पिछले **30 दिनों में आपने जो hold किया, उसका time-weighted average**
-होता है, और फिर उसे **उस history में आप जिस सबसे नीचे के tier तक गिरे,
-वहीं तक घटा दिया जाता है** — गिरावट गिनी जाती है, चाहे आप उसी दिन
+**हाल की एक window में — ज़्यादा से ज़्यादा 30 दिन, और आपका मौजूदा
+balance जिस दिन से शुरू हुआ उसी से गिनी हुई — आपने जो hold किया, उसका
+time-weighted average** होता है, और फिर उसे **उसी window में आप जिस
+सबसे नीचे के tier तक गिरे, वहीं तक घटा दिया जाता है** — गिरावट गिनी जाती है, चाहे आप उसी दिन
 दोबारा top up कर लें। जब तक आप अपना मौजूदा balance protocol द्वारा तय
 किए गए कम-से-कम दिनों तक hold नहीं करते, तब तक कोई discount मिलता ही
 नहीं। इसलिए loan end होने से ठीक पहले top up करके calculation game

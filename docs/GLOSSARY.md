@@ -26,9 +26,10 @@ bot). Done after any selector-changing contract edit. See
 `LibVPFIDiscount.rollupUserDiscount` maintains, re-stamped on every
 balance mutation at the **post-mutation** balance. It records each
 day's closing and lowest balance, which is what a user's effective
-tier is derived from: a minimum staked duration, a time-weighted
-average over a trailing 30-day window, and a clamp to the lowest tier
-reached in that history. It also keeps a monotone
+tier is derived from: a minimum staked duration, a recency-weighted
+average over a trailing window (governance-bounded 14–30 days,
+default 30, never reaching back before the current stake began), and
+a clamp to the lowest tier reached in that history. It also keeps a monotone
 `(BPS × seconds)` running sum, which since T-087 Sub 1.B is an
 observability surface only — no fee path reads it. It used to compute
 the average tier held over a loan's own lifetime; that averaging was

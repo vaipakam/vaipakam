@@ -94,10 +94,12 @@ Tier は、VPFI を deposit または withdraw した瞬間の
 **post-change** vault balance に対して calculate されます。実際に
 charge される rate は settlement 時点のあなたの tier から決まり、
 各 loan 固有の期間について別途 average を取ることはありません。
-守りになっているのは tier そのものです。直近 30 日間の日次
-balance の time-weighted average を取り、さらにその期間中に一度
-でも下がった最も低い tier まで引き下げ、現在の balance を
-protocol が定める最低日数だけ hold するまではゼロのままです。
+守りになっているのは tier そのものです。最長 30 日の直近 window
+— protocol の設定で、現在の balance が始まった日から数え、直近の
+日ほど重く扱われます — における日次 balance の time-weighted
+average を取り、さらにその期間中に一度でも下がった最も低い tier
+まで引き下げ、現在の balance を protocol が定める最低日数だけ
+hold するまではゼロのままです。
 そのため withdraw は、あなたの open loans すべてに即座に効きます
 — 古い (高い) tier が残る grace window はありません。これにより、
 loan 終了直前に VPFI を top up して full-tier discount を取り、

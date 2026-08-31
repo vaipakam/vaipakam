@@ -13,12 +13,14 @@ the rule actually in force it gains you even less than the old explanation
 implied.
 
 Here is what really decides your rate. Your tier is a time-weighted average of
-what you held over the last thirty days. That average is then pushed down to
-the lowest tier you dropped to at any point in the same period, using each
-day's low rather than its closing figure — so a dip counts even if you top back
-up before the day ends. And none of it applies at all until you have held your
-current balance for a minimum number of days. The rate is then read at the
-moment a fee is charged.
+what you held over a recent window — at most thirty days, and never reaching
+back before your current balance began, with the latest days counting for
+more. That average is then pushed down to the lowest tier you dropped to at any
+point in the same period, using each day's low rather than its closing figure
+— so a dip counts even if you top back up before the day ends. And none of it
+applies at all until you have held your current balance for a minimum number of
+days. Both the window and that minimum are settings the protocol can adjust
+within fixed bounds. The rate is then read at the moment a fee is charged.
 
 That is a stricter arrangement than the one described before, not a weaker one.
 An average over a loan can be dragged upward by a large late deposit; a

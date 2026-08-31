@@ -270,9 +270,10 @@ esa cadena:
 
 Los descuentos se aplican tanto a las comisiones del prestamista
 como del prestatario. Tu nivel es un **promedio ponderado en el
-tiempo de lo que has mantenido durante los últimos 30 días**, y
+tiempo de lo que has mantenido durante una ventana reciente de
+como mucho 30 días**, contada desde que empezó tu saldo actual, y
 después se **rebaja al nivel más bajo al que hayas caído en
-cualquier momento de ese historial** — una caída cuenta aunque
+cualquier momento de esa ventana** — una caída cuenta aunque
 vuelvas a recargar el mismo día. No ganas ningún descuento hasta que
 hayas mantenido tu saldo actual durante un número mínimo de días,
 fijado por el protocolo. Por eso recargar justo antes de que acabe

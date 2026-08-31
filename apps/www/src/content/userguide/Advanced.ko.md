@@ -87,10 +87,12 @@ Tier ladder:
 Tier는 VPFI를 deposit하거나 withdraw하는 순간의 **post-change** vault
 balance를 기준으로 calculate됩니다. 실제로 부과되는 rate는 settlement
 시점의 tier에서 결정되며, 각 loan의 자체 기간에 대해 별도의 average를
-내지 않습니다. 방어 장치는 tier 자체입니다. tier는 최근 30일 동안의
-일별 balance에 대한 time-weighted average이며, 다시 그 기간 중 한
-번이라도 내려간 가장 낮은 tier까지 끌어내려지고, 현재 balance를
-protocol이 정한 최소 일수 동안 hold하기 전까지는 0입니다. 그래서
+내지 않습니다. 방어 장치는 tier 자체입니다. tier는 최대 30일의 최근 window —
+protocol 설정이며, 현재 balance가 시작된 날부터 세고, 최근 날짜에
+더 큰 가중치를 둡니다 — 동안의 일별 balance에 대한 time-weighted
+average이며, 다시 그 기간 중 한 번이라도 내려간 가장 낮은
+tier까지 끌어내려지고, 현재 balance를 protocol이 정한 최소 일수
+동안 hold하기 전까지는 0입니다. 그래서
 withdraw는 내가 관여하는 모든 open loans에 즉시 영향을 미칩니다 —
 이전 (높은) tier가 계속 적용되는 grace window는 없습니다. 이는 loan
 종료 직전에 VPFI를 top up해 full-tier discount를 받고 몇 초 뒤

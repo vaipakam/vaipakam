@@ -104,10 +104,13 @@ tatsächlich berechnete Satz wird bei der Abrechnung aus deinem Tier
 in genau diesem Moment aufgelöst — es gibt keinen gesonderten
 Durchschnitt über die Laufzeit eines Loans. Das Tier selbst ist die
 Absicherung: ein zeitgewichteter Durchschnitt deines Tagessaldos
-über die letzten 30 Tage, anschließend auf das niedrigste Tier
-gesenkt, auf das du in diesem Zeitraum gefallen bist, und
-vollständig null, solange dein aktueller Saldo nicht eine vom
-Protokoll festgelegte Mindestanzahl von Tagen gehalten wurde. Eine
+über ein jüngeres Fenster von höchstens 30 Tagen — eine
+Protokoll-Einstellung, gerechnet ab dem Tag, an dem dein aktueller
+Saldo begann, wobei die jüngsten Tage stärker zählen —
+anschließend auf das niedrigste Tier gesenkt, auf das du in diesem
+Zeitraum gefallen bist, und vollständig null, solange dein
+aktueller Saldo nicht eine ebenfalls vom Protokoll festgelegte
+Mindestanzahl von Tagen gehalten wurde. Eine
 Abhebung greift daher sofort für jeden offenen Loan, an dem du
 beteiligt bist — es gibt kein Gnadenfenster, in dem dein altes
 (höheres) Tier weiter gilt. Damit wird das Muster geschlossen, bei

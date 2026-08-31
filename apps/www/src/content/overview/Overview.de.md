@@ -281,9 +281,10 @@ auf dieser Chain teilnehmen:
 
 Rabatte gelten sowohl für Kreditgeber- als auch für Kreditnehmer-
 Gebühren. Ihre Stufe ist ein **zeitgewichteter Durchschnitt dessen,
-was Sie in den letzten 30 Tagen gehalten haben**, und wird
-anschließend **auf die niedrigste Stufe gesenkt, auf die Sie in
-diesem Zeitraum gefallen sind** — ein Absacken zählt auch dann, wenn
+was Sie in einem jüngeren Zeitfenster von höchstens 30 Tagen
+gehalten haben**, gerechnet ab dem Beginn Ihres aktuellen
+Guthabens, und wird anschließend **auf die niedrigste Stufe
+gesenkt, auf die Sie in diesem Fenster gefallen sind** — ein Absacken zählt auch dann, wenn
 Sie am selben Tag wieder aufladen. Ein Rabatt entsteht überhaupt
 erst, wenn Sie Ihr aktuelles Guthaben eine vom Protokoll festgelegte
 Mindestanzahl von Tagen gehalten haben. Aufladen kurz vor Kreditende

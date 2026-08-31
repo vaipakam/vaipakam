@@ -250,8 +250,9 @@ protocol feesがdiscountされます。
 | `{liveValue:tier4Min}`超 | `{liveValue:tier4DiscountBps}`% |
 
 Discountsはlender feesとborrower feesの両方に適用されます。あなたの
-tierは**直近30日間にholdしていた量のtime-weighted average**であり、
-さらに**その期間中に一度でも下がった最も低いtierまで引き下げられます**。
+tierは**最長30日の直近windowでholdしていた量のtime-weighted average**
+であり、そのwindowは現在のbalanceが始まった日から数えます。さらに
+**その期間中に一度でも下がった最も低いtierまで引き下げられます**。
 同じ日にtop upし直しても、下がったこと自体がカウントされます。また、
 現在のbalanceをprotocolが定める最低日数だけholdするまでは、discountは
 まったく得られません。したがってloan終了直前にtop upしてcalculationを

@@ -245,8 +245,9 @@ fees가 discount됩니다.
 | `{liveValue:tier4Min}` 초과 | `{liveValue:tier4DiscountBps}`% |
 
 discount는 lender fees와 borrower fees 모두에 적용됩니다. 여러분의 tier는
-**최근 30일 동안 hold한 양의 time-weighted average**이며, 여기에 다시 **그
-기간 중 한 번이라도 내려간 가장 낮은 tier까지 끌어내려집니다** — 같은 날 다시
+**최대 30일의 최근 window 동안 hold한 양의 time-weighted average**이며,
+이 window는 현재 balance가 시작된 날부터 셉니다. 여기에 다시 **그 기간 중
+한 번이라도 내려간 가장 낮은 tier까지 끌어내려집니다** — 같은 날 다시
 top up하더라도 내려갔다는 사실 자체가 반영됩니다. 또한 현재 balance를
 protocol이 정한 최소 일수 동안 hold하기 전까지는 discount가 전혀 발생하지
 않습니다. 따라서 loan이 끝나기 직전에 top up해서 calculation을 game할 수

@@ -701,9 +701,10 @@ honouring.
 
 First, the issue as filed said *"the code applies a point-in-time tier
 lookup"*. It does not. `effectiveTierAndBps` gates on a minimum staked
-duration, takes a time-weighted average over a 30-day ring buffer, and then
-clamps to the lowest tier held over that history — using each day's *minimum*
-balance, so a same-day dip counts. Had the correction been made from the
+duration, takes a recency-weighted average over a trailing window
+(governance-bounded 14-30 days, default 30, and never reaching back past the
+day the current stake began), and then clamps to the lowest tier held over
+that history — using each day's *minimum* balance, so a same-day dip counts. Had the correction been made from the
 issue's own summary, the docs would have been rewritten to say something
 false in the opposite direction, and the user-facing anti-gaming promise
 would have been withdrawn when it is in fact true. It holds more firmly under

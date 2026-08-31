@@ -102,10 +102,13 @@ momento en que depositas o retiras VPFI. La tasa que realmente se
 cobra se resuelve en la liquidación a partir de tu nivel en ese
 instante: no se toma ningún promedio aparte sobre la vida de cada
 préstamo. La salvaguarda es el nivel mismo: un promedio ponderado
-en el tiempo de tu saldo diario durante los últimos 30 días,
-rebajado después al nivel más bajo al que hayas caído en ese
-historial, y nulo por completo hasta que tu saldo actual se haya
-mantenido un número mínimo de días fijado por el protocolo. Por eso
+en el tiempo de tu saldo diario durante una ventana reciente de
+como mucho 30 días — un ajuste del protocolo, contada desde el día
+en que empezó tu saldo actual y con los días más recientes
+pesando más —, rebajado después al nivel más bajo al que hayas
+caído en ese historial, y nulo por completo hasta que tu saldo
+actual se haya mantenido un número mínimo de días, también fijado
+por el protocolo. Por eso
 un retiro muerde de inmediato en cada préstamo abierto en el que
 estés —no hay ventana de gracia donde tu nivel anterior (más alto)
 aún se aplique. Esto cierra el patrón de abuso en el que un usuario

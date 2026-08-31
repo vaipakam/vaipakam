@@ -85,9 +85,11 @@ Tier ladder：
 您 deposit 或 withdraw VPFI 的瞬间，tier 会按您的 **post-change**
 vault balance 计算。真正收取的费率，是在 settlement 时按您当下的
 tier 得出的；不会再针对每笔 loan 自身的存续期单独取平均。真正的
-防护在 tier 本身：它是您过去 30 天日终 balance 的时间加权平均，
-随后被压低到您在这段期间曾经跌到的最低 tier；并且在您按 protocol
-规定的最少天数持有当前 balance 之前，它一直为零。因此 withdraw 会
+防护在 tier 本身：它是您在最近一个不超过 30 天的窗口内日终 balance
+的时间加权平均 —— 该窗口是 protocol 的一项设置，从您当前 balance
+开始之日算起，越近的日子权重越高 —— 随后被压低到您在这段期间曾经
+跌到的最低 tier；并且在您按 protocol 规定的最少天数持有当前 balance
+之前，它一直为零。因此 withdraw 会
 立即作用于您参与的每笔 open loan — 没有让旧的 (更高) tier 继续适用
 的 grace window。这会关闭一种 exploit pattern：在 loan 即将结束时
 临时 top up VPFI 以拿到 full-tier discount，然后几秒钟后 withdraw。
