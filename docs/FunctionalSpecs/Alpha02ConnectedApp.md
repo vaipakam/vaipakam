@@ -753,7 +753,10 @@ Thin-market honesty rules apply.
 - **The count reported must cover everything erased.** Session records removed
   from the wallet's own storage count as erased data, so a browser whose
   ordinary storage was already empty must not be told there was nothing to
-  erase.
+  erase. **The requirement is on the NUMBER SHOWN and not only on the choice
+  of sentence**: a report that decides to claim a success on the wider set and
+  then states a figure drawn from the narrower one understates what was
+  removed, and reads as a contradiction where the narrower set was empty.
 - **Completeness is not "something was removed".** A browser holding nothing
   erases nothing and is complete; a browser that gave up its storage but held
   its session records or a connection is incomplete. The report keys on the
@@ -761,7 +764,27 @@ Thin-market honesty rules apply.
 - **A sign-out may only be claimed where one happened.** A visitor with no
   wallet connected must not be told they were signed out, so the intent is
   that the teardown is attempted only when there is a connection to end —
-  a successful no-op is not evidence of anything.
+  a successful no-op is not evidence of anything. **This applies to EVERY
+  connection, not the one in use**: where more than one wallet is connected,
+  every one of them must be ended before a sign-out is claimed, since a wallet
+  left connected is a live client able to write its session back into storage
+  the erasure has already cleared.
+- **A sign-out must outlast a reload.** Ending a connection only for the app to
+  reconnect on the next visit is not an ending, so the erasure must leave in
+  place whatever record tells the app not to reconnect on its own, and the
+  wallet types the app supports must be configured to keep such a record.
+  Removing it would be more thorough and less faithful: what the user asked
+  for was to be signed out, and the record says only that.
+- **A tab with nothing to disconnect must not be asked to disconnect.** The
+  cross-tab request is best effort, but it is not free: acting on it writes,
+  and a tab that was already signed out would write into storage the erasing
+  tab had just cleared. Only tabs holding a connection act on it.
+- **Bounding a wait must not leave work running.** Where the app gives up on a
+  storage operation that has not answered in time, it must also stop that
+  operation and release its hold on the storage. A wait that only stops
+  waiting leaves the next attempt queued behind the abandoned one, and leaves
+  a hold in place that blocks the browser's own site-data deletion — the very
+  remedy the app directs the user to when it reports the refusal.
 - **What remains outside reach is still stated.** A browser extension, or a
   Safe the app is embedded in, holds its own record that this site was
   authorised, in a place no page can reach. Erasure does not remove it and the

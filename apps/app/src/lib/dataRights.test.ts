@@ -28,6 +28,10 @@ import {
   INDEXED_DB_TIMEOUT_MS,
   eraseMyDataFully,
   DISCONNECT_TIMEOUT_MS,
+  erasedItemCount,
+  isDisconnectSentinelKey,
+  disconnectEvery,
+  type FullEraseResult,
 } from './dataRights';
 
 /**
@@ -909,5 +913,246 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
     const result = await eraseMyDataFully();
     expect(result.total).toBe(0);
     expect(result.complete).toBe(true);
+  });
+});
+
+describe('round 3 — the reported count, the sentinel, the wedged transaction', () => {
+  const realIdb = (globalThis as Record<string, unknown>).indexedDB;
+  const realWindow = (globalThis as Record<string, unknown>).window;
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).indexedDB = realIdb;
+    (globalThis as Record<string, unknown>).window = realWindow;
+  });
+
+  function fakeWindow(store: Map<string, string>) {
+    const fake: Storage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: fake,
+      sessionStorage: fake,
+      location: { origin: 'https://app.example' },
+      navigator: { userAgent: 'test' },
+      dispatchEvent: () => true,
+    };
+  }
+
+  it('counts the database records in the number it shows', () => {
+    // Round 3 P2. The condition that decides WHETHER to claim a success
+    // learned about `indexedDb.records` in round 2; the sentence that carries
+    // the number did not, so an IndexedDB-only erasure said "Erased 0 stored
+    // items" and every mixed one under-reported.
+    const result = {
+      total: 4,
+      indexedDb: { cleared: 2, records: 7, refused: [], unavailable: false },
+    } as unknown as FullEraseResult;
+    expect(erasedItemCount(result)).toBe(11);
+  });
+
+  it('never shows a zero over an erasure that removed database records', () => {
+    const result = {
+      total: 0,
+      indexedDb: { cleared: 2, records: 3, refused: [], unavailable: false },
+    } as unknown as FullEraseResult;
+    expect(erasedItemCount(result)).toBe(3);
+  });
+
+  it('recognises wagmi disconnect sentinels and nothing else under `wagmi.`', () => {
+    expect(isDisconnectSentinelKey('wagmi.metaMask.disconnected')).toBe(true);
+    expect(isDisconnectSentinelKey('wagmi.safe.disconnected')).toBe(true);
+    // The keys that MUST still go: the store holding the connection map, and
+    // the recent-connector hint.
+    expect(isDisconnectSentinelKey('wagmi.store')).toBe(false);
+    expect(isDisconnectSentinelKey('wagmi.recentConnectorId')).toBe(false);
+    // Not a wagmi key at all, however it is spelled.
+    expect(isDisconnectSentinelKey('app.disconnected')).toBe(false);
+    expect(isDisconnectSentinelKey('wagmi.disconnected')).toBe(false);
+    expect(isDisconnectSentinelKey(null)).toBe(false);
+  });
+
+  it('KEEPS the disconnect sentinel through the sweep, and removes the rest', () => {
+    // Round 3 P1, and the sharpest failure in the round: the sweep runs after
+    // the teardown, the teardown's last act is to write this flag, and a
+    // `wagmi.` match deleted it — so the next mount found the wallet still
+    // authorized and reconnected. The fix's own cleanup restored the exact
+    // "delete my data, reload, still signed in" bug the fix is for.
+    expect(isErasableStorageKey('wagmi.metaMask.disconnected')).toBe(false);
+    expect(isErasableStorageKey('wagmi.safe.disconnected')).toBe(false);
+    expect(isErasableStorageKey('wagmi.store')).toBe(true);
+    expect(isErasableStorageKey('wagmi.recentConnectorId')).toBe(true);
+  });
+
+  it('leaves the sentinel behind across a full erase, and does not count it', async () => {
+    // The predicate above is only half of it: the sweep and the post-erase
+    // inspection both have to agree, or the page reports a leftover key it
+    // deliberately kept.
+    const store = new Map<string, string>();
+    fakeWindow(store);
+    (globalThis as Record<string, unknown>).indexedDB = undefined;
+    delete (globalThis as Record<string, unknown>).indexedDB;
+    const result = await eraseMyDataFully({
+      disconnect: async () => {
+        // What `injected({ shimDisconnect: true })` writes on the way out,
+        // alongside the store rewrite.
+        store.set('wagmi.store', '{}');
+        store.set('wagmi.metaMask.disconnected', 'true');
+      },
+    });
+    expect(store.has('wagmi.metaMask.disconnected')).toBe(true);
+    expect(store.has('wagmi.store')).toBe(false);
+    expect(inspectErasableData().count).toBe(0);
+    expect(result.connector.disconnected).toBe(true);
+  });
+
+  it('disconnects EVERY live connector, not just the current one', async () => {
+    // Round 3 P1. `@wagmi/core`'s no-argument disconnect resolves its
+    // connector from `state.current`, then promotes the next connection
+    // rather than clearing the map — so a two-wallet tab dropped one,
+    // resolved, and was reported signed out.
+    const asked: string[] = [];
+    const teardown = disconnectEvery(['metaMask', 'walletConnect'], async ({
+      connector,
+    }) => {
+      asked.push(connector);
+    });
+    await teardown();
+    expect(asked).toEqual(['metaMask', 'walletConnect']);
+  });
+
+  it('reports a failure when ANY connector refuses to let go', async () => {
+    const teardown = disconnectEvery(['metaMask', 'walletConnect'], async ({
+      connector,
+    }) => {
+      if (connector === 'walletConnect') throw new Error('user rejected');
+    });
+    await expect(teardown()).rejects.toThrow('user rejected');
+  });
+
+  it('tears down a wedged transaction when the timeout fires', async () => {
+    // Round 3 P2. The timeout exists FOR this case, and resolving as refused
+    // while leaving the transaction running and the connection open makes it
+    // worse: the next attempt queues behind the abandoned transaction, and
+    // the leaked handle is what blocks the browser-level "delete site data"
+    // the refusal message sends people to.
+    vi.useFakeTimers();
+    try {
+      const aborted: string[] = [];
+      const closed: string[] = [];
+      (globalThis as Record<string, unknown>).indexedDB = {
+        deleteDatabase: () => ({}),
+        open(name: string) {
+          const req: Record<string, unknown> = {};
+          queueMicrotask(() => {
+            req.result = {
+              objectStoreNames: { contains: () => true },
+              close: () => closed.push(name),
+              // A transaction that never fires oncomplete, onerror or
+              // onabort — the wedged store.
+              transaction: () => ({
+                objectStore: () => ({
+                  count: () => ({ result: 1 }),
+                  clear: () => {},
+                }),
+                abort: () => aborted.push(name),
+              }),
+            };
+            (req.onsuccess as (() => void) | undefined)?.();
+          });
+          return req;
+        },
+      };
+      const pending = eraseIndexedDbData();
+      await vi.advanceTimersByTimeAsync(INDEXED_DB_TIMEOUT_MS + 1);
+      const result = await pending;
+      expect(result.refused).toHaveLength(2);
+      expect(aborted).toEqual(['WALLET_CONNECT_V2_INDEXED_DB', 'cbwsdk']);
+      expect(closed).toEqual(['WALLET_CONNECT_V2_INDEXED_DB', 'cbwsdk']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('closes a connection whose open answered only after the timeout', async () => {
+    // The other leak on the same path: `open` itself can outlast the wait,
+    // and the connection it then hands over would live for the life of the
+    // page with nobody left to close it.
+    vi.useFakeTimers();
+    try {
+      const closed: string[] = [];
+      let release: (() => void) | undefined;
+      (globalThis as Record<string, unknown>).indexedDB = {
+        deleteDatabase: () => ({}),
+        open(name: string) {
+          const req: Record<string, unknown> = {};
+          release = () => {
+            req.result = {
+              objectStoreNames: { contains: () => true },
+              close: () => closed.push(name),
+              transaction: () => ({
+                objectStore: () => ({
+                  count: () => ({ result: 1 }),
+                  clear: () => {},
+                }),
+                abort: () => {},
+              }),
+            };
+            (req.onsuccess as (() => void) | undefined)?.();
+          };
+          return req;
+        },
+      };
+      const pending = eraseIndexedDbData();
+      await vi.advanceTimersByTimeAsync(INDEXED_DB_TIMEOUT_MS + 1);
+      release?.();
+      const result = await pending;
+      expect(result.refused).toHaveLength(2);
+      expect(closed.length).toBeGreaterThan(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('the connectors are configured so a disconnect survives a reload', () => {
+  // A SOURCE scan, and deliberately so. The two facts below live in
+  // `chain/wagmi.ts` as connector options; neither is readable off the built
+  // config object, and this vitest project has no browser environment to
+  // mount a connector in. A grep is weak evidence of behaviour and strong
+  // evidence of intent — which is what is at risk here, because both are
+  // one-word settings whose absence is silent and whose effect is the exact
+  // bug #1862 Part 2 exists to fix.
+
+  function wagmiSource(): string {
+    return execFileSync('cat', ['src/chain/wagmi.ts'], {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+    });
+  }
+
+  it('opts the Safe connector into the disconnect shim', () => {
+    // Round 3 P1. `@wagmi/connectors` defaults `shimDisconnect` to FALSE for
+    // `safe()`, so without this its disconnect only drops wagmi's in-memory
+    // connection: `isAuthorized` goes on answering yes while the page is
+    // embedded in a Safe, and the next mount reconnects. A user who erased
+    // their data was told they had been signed out and was not.
+    const src = wagmiSource();
+    const safeCall = src.slice(src.indexOf('safe({'));
+    expect(safeCall).toContain('shimDisconnect: true');
+  });
+
+  it('does not turn the injected connector\'s shim off', () => {
+    // `injected()` defaults `shimDisconnect` to TRUE, and the sentinel it
+    // writes is the thing `isDisconnectSentinelKey` protects from the sweep.
+    // Setting it to false here would leave that protection guarding a key
+    // nothing writes any more, which is a silent regression rather than a
+    // visible one.
+    expect(wagmiSource()).not.toContain('shimDisconnect: false');
   });
 });

@@ -14,7 +14,7 @@
  * live wherever the app is, not only on the page that emits it.
  */
 import { useEffect } from 'react';
-import { useDisconnect } from 'wagmi';
+import { useAccount, useDisconnect } from 'wagmi';
 import { erasePerTabData } from '../lib/dataRights';
 import { bumpEraseEpoch } from '../lib/eraseEpoch';
 import { listenForErase } from '../lib/eraseBroadcast';
@@ -26,6 +26,16 @@ export function EraseSyncListener() {
   // connection that shares neither of the cleared stores, so it would have
   // sailed through an erasure the user was told signed them out.
   const { disconnect } = useDisconnect();
+  // #1862 Part 2 round 3 P1 — a disconnect with nothing to disconnect is NOT
+  // free here. `@wagmi/core`'s action calls `config.setState` unconditionally,
+  // outside the `if (connector)` branch, and the config's store is wrapped in
+  // zustand's `persist`, so every such call rewrites `wagmi.store`. An open tab
+  // that was already signed out would therefore re-create an erasable key in
+  // the storage the erasing tab had just swept — reported as a leftover if the
+  // erasing tab's final inspection runs after the broadcast, and left behind
+  // silently if it runs before. The originating page gained this guard in
+  // round 2; the listener is the same hazard reached from the other side.
+  const { isConnected } = useAccount();
   useEffect(
     () =>
       listenForErase(() => {
@@ -35,12 +45,12 @@ export function EraseSyncListener() {
         // page that may already have navigated. That is why the copy says
         // other tabs have been ASKED, and claims confirmation only for the
         // tab the user is looking at.
-        disconnect();
+        if (isConnected) disconnect();
         // ...and tell this tab's mounted readers to re-read, exactly as
         // the erasing tab does for its own.
         bumpEraseEpoch();
       }),
-    [disconnect],
+    [disconnect, isConnected],
   );
   return null;
 }

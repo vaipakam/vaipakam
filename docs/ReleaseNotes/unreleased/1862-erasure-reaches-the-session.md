@@ -50,14 +50,44 @@ one:
 Neither waits forever. A wallet that never answers at all, rather than
 refusing outright, would otherwise leave the page working indefinitely with
 nothing erased, so both waits are bounded and running out of time counts as
-holding out.
+holding out. Giving up now also stops the work rather than only stopping the
+wait: an abandoned operation left running is what a second attempt queues
+behind, and the hold it keeps on the storage is exactly what blocks the
+browser's own delete-site-data — the remedy the failure message sends you to.
+
+**And the number it reports counts everything it removed.** The page had
+learned to stop saying "nothing was stored" after clearing a wallet session,
+but the sentence it switched to still counted only the ordinary storage — so
+the same erasure went on to announce that it had erased nothing. The figure now
+spans the same ground the sentence claims.
+
+**Every wallet, not the one in use.** Asking to be disconnected turned out to
+disconnect a single wallet — the current one — and then quietly promote the
+next in line, so someone with two wallets connected would be signed out of one
+and told they were signed out. The one still attached is a running client, free
+to write its session back into storage the erase had just emptied. Every live
+connection is now ended, and the sign-out is claimed only if all of them let
+go.
+
+**Being signed out now survives a reload.** This was the sharpest thing the
+review found, and the erase had done it to itself. Disconnecting leaves behind
+a small note saying "do not reconnect on your own" — that note is what stops
+the next visit from silently reattaching the wallet. The erase was deleting it,
+along with everything else the wallet library had written. So the sequence was:
+sign out, delete, reload, connected again. The note is now kept. It costs
+nothing to keep: its entire content is the word "true", it names no wallet and
+holds no session, and keeping it is what the person who pressed the button
+actually asked for. A Safe was worse — it kept no such note at all, and had no
+way to stay disconnected across a reload — so it is now configured to keep one.
 
 **Other tabs are asked to sign out too.** Being signed in is per-tab in the
 same way per-tab storage is, so a second tab left open would have carried on
 connected through an erasure that reported signing you out. It is now asked to
 disconnect on the same signal that asks it to clear its own storage. Like that
 one, it cannot report back — so the page confirms only the tab you are looking
-at, and says the others were asked.
+at, and says the others were asked. A tab that was *already* signed out is now
+left alone: acting on the request writes, and a tab with nothing to disconnect
+was writing back into storage the erasing tab had just cleared.
 
 Each of those messages replaces a success that would have been true of the
 storage and false of the session. Reporting "erased" over a live connection is

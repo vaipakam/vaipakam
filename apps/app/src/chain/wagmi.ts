@@ -180,6 +180,17 @@ export const wagmiConfig = createConfig({
     safe({
       allowedDomains: [/app\.safe\.global$/, /safe\.global$/],
       debug: false,
+      // #1862 Part 2 round 3 P1 — WITHOUT this the Safe connector cannot be
+      // disconnected in any way that survives a reload. `@wagmi/connectors`
+      // defaults `shimDisconnect` to false for `safe()`, so its `disconnect`
+      // only drops wagmi's in-memory connection and `isAuthorized` goes on
+      // answering yes for as long as the page is embedded in a Safe — the
+      // next mount reconnects. That is fine for a user who never asked to
+      // leave, and wrong for one who deleted their data and was told they
+      // had been signed out. With the shim, disconnecting writes
+      // `safe.disconnected` and `isAuthorized` honours it, which is the same
+      // contract `injected()` has had here all along (its default is true).
+      shimDisconnect: true,
     }),
   ],
 });

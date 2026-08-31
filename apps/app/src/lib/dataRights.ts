@@ -140,8 +140,45 @@ export function isAppStorageKey(key: string | null | undefined): boolean {
  * erasure. The two rights want different sets, so they get different
  * predicates rather than one shared list bent to serve both.
  */
+/**
+ * wagmi's "this connector was deliberately disconnected" flag.
+ *
+ * `@wagmi/core`'s `injected` (`shimDisconnect` defaults to TRUE) and, since
+ * this app opts in, `@wagmi/connectors`' `safe` both write
+ * `<connectorId>.disconnected` through the config's storage — so
+ * `wagmi.metaMask.disconnected`, `wagmi.safe.disconnected` — and both consult
+ * it from `isAuthorized`, which is the check that decides whether the next
+ * mount reconnects silently.
+ */
+const WAGMI_DISCONNECT_SENTINEL = /^wagmi\..+\.disconnected$/;
+
+/**
+ * True when a key is wagmi's disconnect sentinel, which an erasure must LEAVE
+ * BEHIND.
+ *
+ * The one exception to "remove everything the connectors wrote", and it exists
+ * because removing this key undoes the erasure (round 3 P1). The sweep runs
+ * after the teardown, and the teardown's last act is to write this flag; a
+ * `wagmi.` match then deleted it, so the next mount found the wallet still
+ * authorized and reconnected — the exact "delete my data, reload, still signed
+ * in" failure this whole change exists to fix, restored by the fix's own
+ * cleanup.
+ *
+ * Keeping it costs the user nothing: the value is the boolean `true`. It holds
+ * no address, no session, no key material and nothing that could identify
+ * anyone — it is a note to the app saying "do not reconnect on your own",
+ * which is what the person who pressed erase asked for. An erasure that
+ * removed it would be more thorough and less faithful.
+ */
+export function isDisconnectSentinelKey(
+  key: string | null | undefined,
+): boolean {
+  return !!key && WAGMI_DISCONNECT_SENTINEL.test(key);
+}
+
 export function isErasableStorageKey(key: string | null | undefined): boolean {
   if (!key) return false;
+  if (isDisconnectSentinelKey(key)) return false;
   if (isAppStorageKey(key)) return true;
   // CASE-INSENSITIVE (round 3 P1). The markers were matched exactly, and
   // `@coinbase/wallet-sdk@4.3.6` persists `cbwsdk.store` in lower case while
@@ -742,7 +779,32 @@ function clearObjectStore(
       finish(false);
       return;
     }
-    const timer = setTimeout(() => finish(false), INDEXED_DB_TIMEOUT_MS);
+    // Held so the timeout can tear them down (round 3 P2). The timeout exists
+    // FOR the wedged-storage case, and resolving the wrapper as refused while
+    // leaving the transaction running and this page's connection open makes
+    // that case worse rather than bounded: the next attempt queues behind the
+    // abandoned transaction and times out too, and the leaked connection is
+    // exactly what blocks the browser-level "delete site data" the refusal
+    // message sends people to.
+    let openDb: IDBDatabase | undefined;
+    let openTx: IDBTransaction | undefined;
+    const timer = setTimeout(() => {
+      try {
+        // `abort()` on a transaction that has already finished throws; it is
+        // also what fires `onabort`, so the guard below keeps that from
+        // re-entering as a second resolution.
+        openTx?.abort();
+      } catch {
+        // Nothing to abort, or already ending. Either way the close below is
+        // the part that matters.
+      }
+      try {
+        openDb?.close();
+      } catch {
+        // Best effort — a connection we cannot close is not a reason to hang.
+      }
+      finish(false);
+    }, INDEXED_DB_TIMEOUT_MS);
     const done = (ok: boolean, records = 0) => {
       clearTimeout(timer);
       finish(ok, records);
@@ -756,6 +818,18 @@ function clearObjectStore(
     request.onerror = () => done(false);
     request.onsuccess = () => {
       const db = request.result;
+      // The open itself can outlast the timeout. Nothing further should be
+      // attempted on a store already reported as refused, but the connection
+      // it just handed us is real and would leak for the life of the page.
+      if (settled) {
+        try {
+          db.close();
+        } catch {
+          // Best effort, as above.
+        }
+        return;
+      }
+      openDb = db;
       if (created) {
         db.close();
         try {
@@ -777,6 +851,7 @@ function clearObjectStore(
       }
       try {
         const tx = db.transaction(store, 'readwrite');
+        openTx = tx;
         const objectStore = tx.objectStore(store);
         // Counted BEFORE clearing, in the same transaction, so the figure is
         // what this erasure actually removed rather than a racy re-read.
@@ -916,6 +991,57 @@ export interface FullEraseResult extends EraseResult {
    * reporting a success over a live session.
    */
   readonly complete: boolean;
+}
+
+/**
+ * How many stored items an erasure actually removed, across every store it
+ * touched.
+ *
+ * `total` counts the SYNCHRONOUS sweep only — Web Storage and cookies — which
+ * is the right contract for `eraseMyData` and the wrong number to show a
+ * person (round 3 P2). Round 2 taught the page to stop saying "there was
+ * nothing stored" after clearing a wallet session, but the sentence it
+ * switched to still carried `total`, so the same erasure then announced
+ * "Erased 0 stored items"; every mixed erasure under-reported by whatever the
+ * databases held. The count on screen has to span the same set the sentence
+ * claims to cover, so it is derived here once rather than composed at each
+ * call site — there are two success messages and they must never disagree.
+ */
+export function erasedItemCount(result: FullEraseResult): number {
+  return result.total + result.indexedDb.records;
+}
+
+/**
+ * Build a teardown that disconnects EVERY live connection, not just the
+ * current one.
+ *
+ * Structurally typed on purpose: it takes the connector list and the
+ * disconnect action as plain values, so this module still knows nothing about
+ * wagmi (the same reason `eraseMyDataFully` takes an injected `disconnect`),
+ * while the loop that has to be right lives somewhere a test can reach it.
+ *
+ * Round 3 P1. `disconnectAsync()` with no argument reads as "disconnect" but
+ * resolves its connector from `state.current` alone; with other connections
+ * still in the map it removes one and promotes the next to current. So a tab
+ * holding two wallets dropped one, resolved, and was reported signed out —
+ * with the survivor's client free to write its session back into stores this
+ * erasure had just emptied.
+ *
+ * Sequential, and over a list captured before the first teardown: that list is
+ * the set that was connected when the user asked, and each disconnect mutates
+ * the live one. A rejection propagates so the caller reports "did not
+ * disconnect" rather than a clean sign-out over a wallet that held on.
+ */
+export function disconnectEvery<C>(
+  connectors: readonly C[],
+  disconnect: (args: { connector: C }) => Promise<unknown>,
+): () => Promise<void> {
+  const targets = [...connectors];
+  return async () => {
+    for (const connector of targets) {
+      await disconnect({ connector });
+    }
+  };
 }
 
 /**

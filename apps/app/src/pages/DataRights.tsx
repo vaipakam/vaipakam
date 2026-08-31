@@ -30,6 +30,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
+  disconnectEvery,
+  erasedItemCount,
   eraseMyDataFully,
   inspectErasableData,
   inspectMyData,
@@ -66,7 +68,16 @@ export function DataRights() {
   // `disconnectAsync` rather than `disconnect`: the erasure must not delete
   // the session databases until the teardown has actually finished, and the
   // fire-and-forget variant gives nothing to await.
-  const { disconnectAsync } = useDisconnect();
+  //
+  // `connectors` is EVERY live connection, and the teardown below names each
+  // one (round 3 P1). A bare `disconnectAsync()` reads as "disconnect", but
+  // `@wagmi/core`'s action resolves the connector from `state.current` alone
+  // and then, when other connections remain, selects the next one as current
+  // rather than clearing the map. So a tab holding two wallets would drop one,
+  // resolve, and be reported as signed out while the second stayed connected —
+  // with a live client free to write its session back into stores this erasure
+  // had already emptied. `useConnections` is exactly the set that has to go.
+  const { disconnectAsync, connectors: liveConnectors } = useDisconnect();
   // #1862 Part 2 round 2 P2 — `disconnectAsync()` RESOLVES when there is no
   // connection, so treating fulfilment as proof of a sign-out told an
   // unconnected visitor they had been signed out. The teardown is supplied
@@ -209,7 +220,14 @@ export function DataRights() {
       // `eraseMyDataFully`. It runs FIRST, so a connector holding a
       // database open gets the chance to close it before the deletion.
       erased = await eraseMyDataFully({
-        disconnect: isConnected ? () => disconnectAsync() : undefined,
+        // Every live connection, not just the current one — see
+        // `disconnectEvery`, which holds the loop so it is testable outside
+        // this page. The page has no rendering harness, and round 2's lesson
+        // here was that the fixes were in the library and the page was not
+        // using them.
+        disconnect: isConnected
+          ? disconnectEvery(liveConnectors, disconnectAsync)
+          : undefined,
       });
     } finally {
       setErasing(false);
@@ -348,8 +366,10 @@ export function DataRights() {
                       // "nothing was stored" after deleting that session.
                       result.total > 0 || result.indexedDb.records > 0
                       ? result.connector.disconnected
-                        ? copy.dataRights.eraseDoneDisconnected(result.total)
-                        : copy.dataRights.eraseDone(result.total)
+                        ? copy.dataRights.eraseDoneDisconnected(
+                            erasedItemCount(result),
+                          )
+                        : copy.dataRights.eraseDone(erasedItemCount(result))
                       : copy.dataRights.eraseNothing}
             {/* WALLET outcome, additive. Its remedy — disconnect in the
                 wallet itself — is not reachable from any storage message,
