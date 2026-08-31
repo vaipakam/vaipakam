@@ -1026,6 +1026,20 @@ describe('round 3 — the reported count, the sentinel, the wedged transaction',
     expect(asked).toEqual(['metaMask', 'walletConnect']);
   });
 
+  it('refuses to report a sign-out when handed no connectors at all', async () => {
+    // Self-review after round 3, and it is round 2's defect through a new
+    // door. That round established that a teardown resolving over nothing
+    // must not read as a sign-out. The page decides to disconnect from
+    // `isConnected` and takes the list from a separate hook, so a connection
+    // dropped between render and click — another tab, a wallet locking —
+    // would loop zero times and resolve. `eraseMyDataFully` turns the
+    // rejection into `disconnected: false`, which is the honest answer.
+    const teardown = disconnectEvery([], async () => {
+      throw new Error('must not be called');
+    });
+    await expect(teardown()).rejects.toThrow(/no connectors/);
+  });
+
   it('reports a failure when ANY connector refuses to let go', async () => {
     const teardown = disconnectEvery(['metaMask', 'walletConnect'], async ({
       connector,

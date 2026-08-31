@@ -1031,6 +1031,18 @@ export function erasedItemCount(result: FullEraseResult): number {
  * the set that was connected when the user asked, and each disconnect mutates
  * the live one. A rejection propagates so the caller reports "did not
  * disconnect" rather than a clean sign-out over a wallet that held on.
+ *
+ * AN EMPTY LIST IS A FAILURE, not a vacuous success — found by self-review
+ * after round 3, and it is round 2's defect returning through a new door. That
+ * round established that a teardown resolving over nothing must not be
+ * reported as a sign-out, and the page answered it by supplying a teardown
+ * only when connected. This function would have undone that: the caller
+ * decides to disconnect from `isConnected` and takes the list from a separate
+ * hook, so a list that is empty when the loop runs — the connection dropped
+ * between render and click, by another tab or a wallet locking — would loop
+ * zero times, resolve, and report a sign-out that never happened. The two
+ * values come from one store and normally agree; "normally agree" is not the
+ * standard for a claim made to a user about a legal right.
  */
 export function disconnectEvery<C>(
   connectors: readonly C[],
@@ -1038,6 +1050,12 @@ export function disconnectEvery<C>(
 ): () => Promise<void> {
   const targets = [...connectors];
   return async () => {
+    if (targets.length === 0) {
+      throw new Error(
+        'disconnectEvery: asked to disconnect with no connectors — refusing ' +
+          'to report a sign-out that did not happen',
+      );
+    }
     for (const connector of targets) {
       await disconnect({ connector });
     }
