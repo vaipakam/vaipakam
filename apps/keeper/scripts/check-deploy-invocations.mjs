@@ -1451,7 +1451,24 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
     // each read argv, one of them taught the rule (Codex #2036 r8). Same shape
     // as every other round of this PR.
     const beforeCfg = wi >= 0 ? cfgText.slice(0, wi) : '';
-    const cfgArgvValue = cfgSel ? null : argvValue(cfgRegion, '-c|--config', beforeCfg);
+    // The ATTACHED short form as an argv ELEMENT — `["-cunsafe.jsonc"]`.
+    // `selectorScope` reads it and this reader did not, so the selected unsafe
+    // config went unseen and the package DEFAULT blessed the deploy (Codex
+    // #2036 r12). Third round running that a rule lives in one reader and not
+    // its sibling.
+    const cfgArgvValue =
+      cfgSel
+        ? null
+        : argvValue(cfgRegion, '-c|--config', beforeCfg) ??
+          (() => {
+            const arr = firstArgvArray(cfgRegion, beforeCfg);
+            if (arr === null) return null;
+            const all = [
+              ...arr.matchAll(/(?<=^|[,[]\s{0,80})(["'`])-c(?=[^\s=-])([^"'`]+)\1/g),
+            ];
+            const mm = all[all.length - 1];
+            return mm ? mm[2] : null;
+          })();
     // `--cwd` MOVES WHERE A RELATIVE CONFIG RESOLVES FROM, and this check has to
     // honour it for the same reason `selectorScope` does: wrangler runs "as if
     // started in the specified directory". Fixing the identity read for `--cwd`
@@ -1545,9 +1562,21 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
         const underWorker = name.startsWith(`${sc.dir}/`)
           ? `${REPO_ROOT}/${name}`
           : `${REPO_ROOT}/${sc.dir}/${name}`;
+        // DEFAULT names follow `--cwd` too. Wrangler runs "as if started in the
+        // specified directory" and discovers its config THERE, so forcing the
+        // package default let `apps/agent/wrangler.jsonc` bless a deploy that
+        // actually loads `sub/wrangler.jsonc` (Codex #2036 r12). The explicit
+        // `--config` case learned this one round earlier; the default case did
+        // not, which is the same sibling split as the finding above.
+        const movedDefault =
+          cfgName === null && effCwd !== null && effCwd !== cmdCwd
+            ? `${REPO_ROOT}/${normalizeRel(`${effCwd}/${name}`)}`
+            : null;
         const candidates =
           cfgName === null
-            ? [underWorker]
+            ? movedDefault === null
+              ? [underWorker]
+              : [movedDefault]
             : effCwd === null
               ? []
               : [`${REPO_ROOT}/${normalizeRel(`${effCwd}/${name}`)}`, underWorker];
@@ -2803,7 +2832,21 @@ function declaredWorkerName(absPath) {
     let collected = [];
     for (const line of text.split('\n')) {
       if (inMultiline !== null) {
-        const at = line.indexOf(inMultiline);
+        // The first UNESCAPED delimiter closes the value. `indexOf` treated an
+        // escaped delimiter inside a multiline basic string as the close, so
+        // text WITHIN the value became top level and a fake `name` there
+        // answered (Codex #2036 r12) — the read-the-identity-out-of-somebody
+        // else\'s-prose defect for the third time, now through an escape.
+        const at = (() => {
+          for (let i = 0; i <= line.length - inMultiline.length; i += 1) {
+            if (line[i] === '\\') {
+              i += 1;
+              continue;
+            }
+            if (line.startsWith(inMultiline, i)) return i;
+          }
+          return -1;
+        })();
         if (at === -1) {
           if (collecting !== null) collected.push(line);
           continue;
@@ -3395,7 +3438,29 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // narrowing to the colon form in round 10 left the Python child-process
     // shape — which this scanner already reads everywhere else — unprotected
     // (Codex #2036 r11).
-    [...rawSeg.matchAll(/(?<![\w$.])env\s*[:=]\s*\{/g)].some((opener) => {
+    // ...and only the OPTIONS argument's own `env`, never a nested one.
+    // `{metadata: {env: {…}}}` is application data Node ignores, and scoping to
+    // "any `env: {` in the call" still let it block an ordinary deploy (Codex
+    // #2036 r12). Brace DEPTH is what separates them: JavaScript's options
+    // object puts `env` one brace in, Python's `env={…}` keyword none.
+    [...rawSeg.matchAll(/(?<![\w$.])env\s*[:=]\s*\{/g)]
+      .filter((opener) => {
+        let depth = 0;
+        let quote = null;
+        for (let i = 0; i < opener.index; i += 1) {
+          const c = rawSeg[i];
+          if (quote) {
+            if (c === '\\') i += 1;
+            else if (c === quote) quote = null;
+            continue;
+          }
+          if (c === '"' || c === "'" || c === '`') quote = c;
+          else if (c === '{') depth += 1;
+          else if (c === '}') depth -= 1;
+        }
+        return depth <= 1;
+      })
+      .some((opener) => {
       // The `env` object's own extent, brace-balanced so a nested object does
       // not end it early.
       let i = opener.index + opener[0].length;

@@ -7302,6 +7302,67 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
+  // ---- Codex #2036 r12 ----
+
+  it('an ESCAPED TOML delimiter does not close the value', () => {
+    // `indexOf` treated an escaped delimiter inside a multiline basic string as
+    // the close, so text WITHIN the value became top level and a fake name
+    // there answered — reading the identity out of somebody else's prose for
+    // the third time, now through an escape.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.toml',
+      ['note = """', 'x \\""" then', 'name = "vaipakam-www"', '"""', 'name = "vaipakam-agent"', ''].join('\n'),
+    );
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a NESTED env object is not the child environment', () => {
+    // Node ignores `metadata` entirely; brace depth is what separates the
+    // options argument's own `env` from application data that merely contains
+    // one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nspawnSync("wrangler", ["deploy", "--config", "www.jsonc"], ' +
+          '{metadata: {env: {CLOUDFLARE_ENV: "staging"}}});\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('an ATTACHED short config as an argv element is consulted', () => {
+    // `selectorScope` reads `["-cunsafe.jsonc"]` and the safety reader did not,
+    // so the selected unsafe config went unseen and the package DEFAULT blessed
+    // the deploy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('apps/agent/unsafe.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nspawnSync("wrangler", ["deploy", "--name=vaipakam-agent", "-cunsafe.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a DEFAULT config follows --cwd as well', () => {
+    // Wrangler discovers its config in the directory it was told to start in,
+    // so forcing the package default let apps/agent/wrangler.jsonc bless a
+    // deploy that actually loads sub/wrangler.jsonc. The explicit --config case
+    // learned this one round earlier; the default case had not.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('apps/agent/sub/wrangler.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nspawnSync("wrangler", ["deploy", "--name=vaipakam-agent", "--cwd=sub"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {
