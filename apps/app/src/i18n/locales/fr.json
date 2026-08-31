@@ -203,7 +203,7 @@
       "downloadButton": "Télécharger mes données",
       "downloadDone": "Enregistré",
       "eraseTitle": "L’effacer de ce navigateur",
-      "eraseBody": "Supprime le tout de cet appareil. Vos préférences d’affichage reviennent à leurs valeurs par défaut et ce qui était en cours perdra son repère local.",
+      "eraseBody": "Supprime tout cela de cet appareil et vous déconnecte. Vos préférences d’affichage reviennent à leurs valeurs par défaut, ce que vous aviez commencé perd son marqueur local, et la connexion du portefeuille est fermée et sa session enregistrée supprimée. Une extension de navigateur ou un Safe conserve son propre enregistrement du fait que vous avez autorisé ce site, qu’aucune page ne peut supprimer à votre place : s’y reconnecter reste un seul clic.",
       "eraseButton": "Effacer mes données",
       "eraseConfirm": "Oui, effacer",
       "eraseCancel": "Annuler",
@@ -244,7 +244,8 @@
       "eraseWorking": "Déconnexion et effacement…",
       "eraseDoneDisconnected": "{{count}} éléments stockés effacés et vous avez été déconnecté ici. Les autres onglets ouverts ont été invités à effacer les leurs et à se déconnecter également.",
       "eraseSessionHeld": "Vos données stockées ont été supprimées, mais la session enregistrée du portefeuille n’a pas pu être effacée ; elle peut donc rester sur cet appareil. Effacer les données du site depuis les paramètres de votre navigateur la supprimera.",
-      "eraseWalletHeld": "Vos données stockées ont été supprimées, mais le portefeuille ne s’est pas déconnecté : ce site y est donc toujours connecté. Déconnectez-vous directement depuis votre portefeuille, puis effacez à nouveau."
+      "eraseWalletHeld": "Vos données stockées ont été supprimées, mais le portefeuille ne s’est pas déconnecté : ce site y est donc toujours connecté. Déconnectez-vous directement depuis votre portefeuille, puis effacez à nouveau.",
+      "eraseStoresUnreadable": "Vos données stockées ont été supprimées, mais ce navigateur n’a pas laissé l’application ouvrir le stockage de session du portefeuille ; ce qui s’y trouve peut donc rester sur cet appareil. Effacer les données du site depuis les paramètres de votre navigateur le supprimera."
     },
     "killSwitch": {
       "disabled": "Cette action est désactivée pour le moment — les opérateurs l'ont mise en pause par précaution pendant qu'un point est examiné. Ce qui vous appartient déjà n'est pas affecté : remboursements, retraits et réclamations restent ouverts."

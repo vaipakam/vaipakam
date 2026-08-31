@@ -693,6 +693,16 @@ export interface IndexedDbEraseResult {
   /** Stores emptied, or already absent. */
   readonly cleared: number;
   /**
+   * How many records were actually removed.
+   *
+   * Separate from `cleared` because a store that was already empty and a
+   * store that held a live session both "clear" successfully. Round 2 P2:
+   * without this the page reported "there was nothing stored to erase" after
+   * deleting a wallet session, since the only count it had came from the
+   * synchronous Web Storage sweep.
+   */
+  readonly records: number;
+  /**
    * Stores that could NOT be emptied, named `database/store` so the page can
    * say which rather than report a count nobody can act on.
    */
@@ -714,13 +724,16 @@ export interface IndexedDbEraseResult {
  * deletion to do. `onupgradeneeded` firing tells us the database did not
  * exist, so the transaction is abandoned and the creation undone.
  */
-function clearObjectStore(database: string, store: string): Promise<boolean> {
+function clearObjectStore(
+  database: string,
+  store: string,
+): Promise<{ ok: boolean; records: number }> {
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (ok: boolean) => {
+    const finish = (ok: boolean, records = 0) => {
       if (settled) return;
       settled = true;
-      resolve(ok);
+      resolve({ ok, records });
     };
     let request: IDBOpenDBRequest;
     try {
@@ -730,9 +743,9 @@ function clearObjectStore(database: string, store: string): Promise<boolean> {
       return;
     }
     const timer = setTimeout(() => finish(false), INDEXED_DB_TIMEOUT_MS);
-    const done = (ok: boolean) => {
+    const done = (ok: boolean, records = 0) => {
       clearTimeout(timer);
-      finish(ok);
+      finish(ok, records);
     };
     let created = false;
     request.onupgradeneeded = () => {
@@ -764,10 +777,14 @@ function clearObjectStore(database: string, store: string): Promise<boolean> {
       }
       try {
         const tx = db.transaction(store, 'readwrite');
-        tx.objectStore(store).clear();
+        const objectStore = tx.objectStore(store);
+        // Counted BEFORE clearing, in the same transaction, so the figure is
+        // what this erasure actually removed rather than a racy re-read.
+        const counted = objectStore.count();
+        objectStore.clear();
         tx.oncomplete = () => {
           db.close();
-          done(true);
+          done(true, typeof counted.result === 'number' ? counted.result : 0);
         };
         tx.onerror = () => {
           db.close();
@@ -793,17 +810,18 @@ function clearObjectStore(database: string, store: string): Promise<boolean> {
  */
 export async function eraseIndexedDbData(): Promise<IndexedDbEraseResult> {
   if (typeof indexedDB === 'undefined') {
-    return { cleared: 0, refused: [], unavailable: true };
+    return { cleared: 0, records: 0, refused: [], unavailable: true };
   }
   const targets = ERASABLE_INDEXED_DB_STORES;
   const outcomes = await Promise.all(
     targets.map((t) => clearObjectStore(t.database, t.store)),
   );
   const refused = targets
-    .filter((_, i) => !outcomes[i])
+    .filter((_, i) => !outcomes[i]!.ok)
     .map((t) => `${t.database}/${t.store}`);
   return {
-    cleared: outcomes.filter(Boolean).length,
+    cleared: outcomes.filter((o) => o.ok).length,
+    records: outcomes.reduce((n, o) => n + o.records, 0),
     refused,
     unavailable: false,
   };

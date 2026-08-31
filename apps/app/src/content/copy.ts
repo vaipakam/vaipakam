@@ -399,6 +399,12 @@ const copySource = {
        browser's storage refusing, and the remedy is the browser's own
        controls. Telling someone to close tabs that were never the problem
        is a worse failure than saying less. */
+    /* Round 2 P2 — a browser that hides IndexedDB entirely. Distinct from a
+       store that refused: nothing was even looked at, so this is the
+       "could not look" case `holdingUnreadable` exists for, one store
+       along. It must not fall through to a success message. */
+    eraseStoresUnreadable:
+      'Your stored data was removed, but this browser would not let the app open the wallet’s session storage, so anything kept there may still be on this device. Clearing site data through your browser’s own settings will remove it.',
     eraseSessionHeld:
       'Your stored data was removed, but the wallet’s stored session could not be cleared, so it may still be on this device. Clearing site data through your browser’s own settings will remove it.',
     /* The wallet refused to disconnect. Everything else went; the app is

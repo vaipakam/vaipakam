@@ -724,23 +724,44 @@ Thin-market honesty rules apply.
   with it. An earlier version of this bullet required only the records, because
   the cleanup was synchronous and reached neither; that limit is gone, and the
   bullet states the intent rather than the interim.
+- **The session material is REMOVED IN PLACE, not by deleting its container.**
+  Deleting the whole store is refused while anything holds it open, including
+  the erasing page itself, so it could not succeed where it matters. The
+  requirement is that the records are gone, by a means that a still-open
+  handle cannot block.
 - **The order is required, not incidental.** The teardown runs before the
-  storage sweep, and the sweep before the database deletion. A running
-  connector is what makes a database deletion block, so closing the connection
-  first is what lets the deletion succeed; and a teardown writes on its way
-  out, so a sweep placed first would leave those writes behind. The intent is
-  the ordering, not merely the three steps.
-- **A refusal must be reported as a refusal, and the two kinds are
-  distinguishable.** A database deletion can be blocked indefinitely by another
-  tab of this site holding it open, and a wallet can decline to disconnect.
-  Neither may be reported as an erasure, both leave everything else removed,
-  and the page must say WHICH held out, because the user's next action differs:
-  closing other tabs, versus disconnecting in the wallet's own interface. A
-  bounded wait is required, since a blocked deletion never settles on its own,
-  and running out of time is a refusal rather than a success.
+  storage sweep, and the sweep before the session records are cleared. Erasing
+  while the wallet client is still running is a race — it can write its session
+  straight back — so closing the connection first is what ends it; and a
+  teardown writes on its way out, so a sweep placed first would leave those
+  writes behind. The intent is the ordering, not merely the three steps.
+- **A refusal must be reported as a refusal, and the kinds are
+  distinguishable.** The session records can fail to clear, the browser can
+  refuse to expose that storage at all, and a wallet can decline to
+  disconnect. None may be reported as an erasure, all leave everything else
+  removed, and the page must say WHICH held out, because the remedies differ:
+  the browser's own site-data controls, versus disconnecting in the wallet's
+  own interface. **A storage holdout and a wallet holdout can occur together**,
+  so reporting is additive rather than a first-match ladder — the wallet's
+  remedy is not reachable from any storage message. Both waits are bounded,
+  since a request that never answers would otherwise strand the erasure with
+  nothing removed, and running out of time is a refusal rather than a success.
+- **A browser that hides the storage is not a clean result.** Nothing was
+  removed and nothing was observed absent, which is the same "could not look"
+  case the pre-erasure disclosure already distinguishes from "nothing is
+  here". It must not fall through to a success message.
+- **The count reported must cover everything erased.** Session records removed
+  from the wallet's own storage count as erased data, so a browser whose
+  ordinary storage was already empty must not be told there was nothing to
+  erase.
 - **Completeness is not "something was removed".** A browser holding nothing
-  erases nothing and is complete; a browser that gave up its storage but held a
-  database or a connection is incomplete. The report keys on the second.
+  erases nothing and is complete; a browser that gave up its storage but held
+  its session records or a connection is incomplete. The report keys on the
+  second.
+- **A sign-out may only be claimed where one happened.** A visitor with no
+  wallet connected must not be told they were signed out, so the intent is
+  that the teardown is attempted only when there is a connection to end —
+  a successful no-op is not evidence of anything.
 - **What remains outside reach is still stated.** A browser extension, or a
   Safe the app is embedded in, holds its own record that this site was
   authorised, in a place no page can reach. Erasure does not remove it and the

@@ -39,7 +39,7 @@ import {
 import { useTheme } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
 import { useTranslation } from 'react-i18next';
-import { useDisconnect } from 'wagmi';
+import { useAccount, useDisconnect } from 'wagmi';
 import { bumpEraseEpoch } from '../lib/eraseEpoch';
 import { DiagErasureCard } from '../components/DiagErasureCard';
 
@@ -67,6 +67,12 @@ export function DataRights() {
   // the session databases until the teardown has actually finished, and the
   // fire-and-forget variant gives nothing to await.
   const { disconnectAsync } = useDisconnect();
+  // #1862 Part 2 round 2 P2 — `disconnectAsync()` RESOLVES when there is no
+  // connection, so treating fulfilment as proof of a sign-out told an
+  // unconnected visitor they had been signed out. The teardown is supplied
+  // only when there is something to tear down, which also keeps
+  // `connector.attempted` meaning what it says.
+  const { isConnected } = useAccount();
   const [downloaded, setDownloaded] = useState(false);
   const [confirming, setConfirming] = useState(false);
   // The erase outcome, FROZEN at the moment it happened (review round 3
@@ -202,7 +208,9 @@ export function DataRights() {
       // The teardown is injected rather than imported by the library: see
       // `eraseMyDataFully`. It runs FIRST, so a connector holding a
       // database open gets the chance to close it before the deletion.
-      erased = await eraseMyDataFully({ disconnect: () => disconnectAsync() });
+      erased = await eraseMyDataFully({
+        disconnect: isConnected ? () => disconnectAsync() : undefined,
+      });
     } finally {
       setErasing(false);
     }
@@ -296,7 +304,7 @@ export function DataRights() {
               result.remaining === 0 &&
               !result.refusedAfter &&
               result.complete &&
-              result.total > 0
+              (result.total > 0 || result.indexedDb.records > 0)
                 ? 'banner banner-success'
                 : 'banner'
             }
@@ -308,6 +316,11 @@ export function DataRights() {
                 items are still there is the false assurance this page
                 must not give. */}
             {/* Read from the FROZEN result, never the live counts. */}
+            {/* STORAGE outcome. Round 2 P2: the wallet is reported
+                separately below rather than as one more branch here,
+                because the two can fail together — a leftover key AND a
+                wallet that refused — and a single-branch ladder showed only
+                the first, hiding the one whose remedy is different. */}
             {result.remaining > 0
               ? result.total > 0
                 ? copy.dataRights.erasePartial(result.total, result.remaining)
@@ -320,25 +333,33 @@ export function DataRights() {
                   // unreadable store still held data. Not knowing is
                   // not done.
                   copy.dataRights.eraseBlocked
-                : // #1862 Part 2 — the two asynchronous holdouts, checked
-                  // BEFORE any success message and named separately. They
-                  // are not interchangeable: a held database is another tab
-                  // of this site and the user closes it; a wallet that
-                  // refused to disconnect is the wallet's own UI. Reporting
-                  // either as "erased" would be the same false assurance as
-                  // reporting a success over storage that is still there,
-                  // one store further along.
-                  result.connector.attempted && !result.connector.disconnected
-                  ? copy.dataRights.eraseWalletHeld
+                : // Round 2 P2: `unavailable` has an EMPTY refusal list, so
+                  // checking `refused` alone let a browser that hides
+                  // IndexedDB fall through to a success message. Neither
+                  // store was emptied nor seen absent, which is the same
+                  // "could not look" case `holdingUnreadable` exists for.
+                  result.indexedDb.unavailable
+                  ? copy.dataRights.eraseStoresUnreadable
                   : result.indexedDb.refused.length > 0
                     ? copy.dataRights.eraseSessionHeld
-                    : result.total > 0
-                      ? // The connection is gone too, so the message says
-                        // so rather than reusing the storage-only wording.
-                        result.connector.disconnected
+                    : // Round 2 P2: `total` counts the synchronous sweep
+                      // only, so a browser whose Web Storage was already
+                      // empty but whose wallet session was not reported
+                      // "nothing was stored" after deleting that session.
+                      result.total > 0 || result.indexedDb.records > 0
+                      ? result.connector.disconnected
                         ? copy.dataRights.eraseDoneDisconnected(result.total)
                         : copy.dataRights.eraseDone(result.total)
                       : copy.dataRights.eraseNothing}
+            {/* WALLET outcome, additive. Its remedy — disconnect in the
+                wallet itself — is not reachable from any storage message,
+                so it must survive one. */}
+            {result.connector.attempted && !result.connector.disconnected ? (
+              <span className="block-line">
+                {' '}
+                {copy.dataRights.eraseWalletHeld}
+              </span>
+            ) : null}
           </div>
         ) : null}
 

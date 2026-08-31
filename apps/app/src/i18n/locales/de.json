@@ -203,7 +203,7 @@
       "downloadButton": "Meine Daten herunterladen",
       "downloadDone": "Gespeichert",
       "eraseTitle": "Aus diesem Browser löschen",
-      "eraseBody": "Entfernt alles von diesem Gerät. Ihre Anzeigeeinstellungen kehren zu den Standardwerten zurück, und alles Halbfertige verliert seine lokale Markierung.",
+      "eraseBody": "Entfernt all das von diesem Gerät und meldet Sie ab. Ihre Anzeigeeinstellungen kehren zu den Standardwerten zurück, Angefangenes verliert seine lokale Markierung, und die Wallet-Verbindung wird geschlossen und ihre gespeicherte Sitzung gelöscht. Eine Browser-Erweiterung oder ein Safe behält einen eigenen Vermerk darüber, dass Sie diese Website erlaubt haben; den kann keine Seite für Sie entfernen — dort erneut zu verbinden ist weiterhin ein Klick.",
       "eraseButton": "Meine Daten löschen",
       "eraseConfirm": "Ja, löschen",
       "eraseCancel": "Abbrechen",
@@ -244,7 +244,8 @@
       "eraseWorking": "Abmelden und löschen…",
       "eraseDoneDisconnected": "{{count}} gespeicherte Einträge gelöscht und Sie wurden hier abgemeldet. Andere geöffnete Tabs wurden gebeten, ihre ebenfalls zu löschen und sich abzumelden.",
       "eraseSessionHeld": "Ihre gespeicherten Daten wurden entfernt, aber die gespeicherte Sitzung der Wallet konnte nicht gelöscht werden und kann daher noch auf diesem Gerät liegen. Das Löschen der Websitedaten in den Einstellungen Ihres Browsers entfernt sie.",
-      "eraseWalletHeld": "Ihre gespeicherten Daten wurden entfernt, aber die Wallet hat sich nicht getrennt, sodass diese Website weiterhin mit ihr verbunden ist. Trennen Sie die Verbindung direkt in Ihrer Wallet und löschen Sie dann erneut."
+      "eraseWalletHeld": "Ihre gespeicherten Daten wurden entfernt, aber die Wallet hat sich nicht getrennt, sodass diese Website weiterhin mit ihr verbunden ist. Trennen Sie die Verbindung direkt in Ihrer Wallet und löschen Sie dann erneut.",
+      "eraseStoresUnreadable": "Ihre gespeicherten Daten wurden entfernt, aber dieser Browser ließ die App den Sitzungsspeicher der Wallet nicht öffnen, sodass dort Abgelegtes noch auf diesem Gerät liegen kann. Das Löschen der Websitedaten in den Einstellungen Ihres Browsers entfernt es."
     },
     "killSwitch": {
       "disabled": "Diese Aktion ist derzeit abgeschaltet — die Betreiber haben sie vorsorglich pausiert, während etwas geprüft wird. Alles, was Ihnen bereits gehört, bleibt unberührt: Rückzahlungen, Ansprüche und Abhebungen bleiben offen."

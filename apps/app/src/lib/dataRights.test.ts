@@ -607,6 +607,7 @@ describe('IndexedDB erasure (#1862 Part 2)', () => {
               txOpened.push(`${name}/${store}`);
               const tx: Record<string, unknown> = {
                 objectStore: () => ({
+                  count: () => ({ result: 3 }),
                   clear: () => {
                     if (s !== 'missing' && s.failTx) return;
                     cleared.push(`${name}/${store}`);
@@ -657,7 +658,7 @@ describe('IndexedDB erasure (#1862 Part 2)', () => {
       'WALLET_CONNECT_V2_INDEXED_DB/keyvaluestorage',
       'cbwsdk/keys',
     ]);
-    expect(result).toEqual({ cleared: 2, refused: [], unavailable: false });
+    expect(result).toEqual({ cleared: 2, records: 6, refused: [], unavailable: false });
   });
 
   it('treats a database that does not exist as already clean, and leaves none behind', async () => {
@@ -716,7 +717,7 @@ describe('IndexedDB erasure (#1862 Part 2)', () => {
   it('says so when the browser has no IndexedDB at all', async () => {
     delete (globalThis as Record<string, unknown>).indexedDB;
     const result = await eraseIndexedDbData();
-    expect(result).toEqual({ cleared: 0, refused: [], unavailable: true });
+    expect(result).toEqual({ cleared: 0, records: 0, refused: [], unavailable: true });
   });
 
   it('survives an indexedDB accessor that throws', async () => {
@@ -766,7 +767,7 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
             close: () => {},
             transaction: () => {
               const tx: Record<string, unknown> = {
-                objectStore: () => ({ clear: () => {} }),
+                objectStore: () => ({ count: () => ({ result: 2 }), clear: () => {} }),
               };
               queueMicrotask(() => {
                 const done = verdict === 'success' ? tx.oncomplete : tx.onerror;
@@ -885,6 +886,18 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('counts records cleared from the wallet stores, so an IndexedDB-only erase is not "nothing"', async () => {
+    // Round 2 P2: `total` counts the synchronous sweep only. A browser whose
+    // Web Storage was already empty but whose wallet session was not would
+    // have been told there was nothing stored — right after deleting that
+    // session.
+    fakeWindow(new Map());
+    stubIdb('success');
+    const result = await eraseMyDataFully();
+    expect(result.total).toBe(0);
+    expect(result.indexedDb.records).toBeGreaterThan(0);
   });
 
   it('an empty browser erases nothing and is still complete', async () => {
