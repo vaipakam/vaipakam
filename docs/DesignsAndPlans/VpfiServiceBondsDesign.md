@@ -73,13 +73,62 @@ ServiceBond { operator; role; amount; unbondRequestedAt; }
 - **Mandatory bonds for all matchers** — breaks permissionlessness;
   rejected.
 
-## Open decisions
+## Decisions (owner, 2026-08-31)
 
-1. Do slash conditions v1 include the liveness tier, or objective-lies
-   only? (Recommendation: objective-lies only; liveness commitments are a
-   later opt-in tier.)
-2. Bond size bounds + unbond delay values.
-3. Legal glance sign-off on the no-yield refundable-deposit shape.
+1. **Slash conditions v1 = OBJECTIVE LIES ONLY.** Ratified. The liveness
+   tier is a later opt-in and is out of v1 scope — so v1 ships no clock-based
+   slash, and an operator who simply goes quiet is never slashed. That keeps
+   every v1 slash anchored to a fact the chain can check without a timing
+   judgement, which is also what keeps the offence dispatcher below tractable.
+2. **Bond sizes + unbond delay** — proposal below, awaiting ratification.
+3. **No-yield refundable-deposit shape: RATIFIED.** The legal glance is
+   discharged. Bonds earn nothing, are refundable at will subject to the
+   unbond delay, and are described as operational security deposits — never
+   staking, never earning.
+
+### Proposed: bond sizes and unbond delay
+
+Nothing here is a new pattern; both follow conventions the repository already
+uses for governance-set values.
+
+**Unbond delay — a bounded knob, floored, dark until set.** The nearest
+precedent is the reward horizon (default 365 days, never below 180, dark
+until governance sets it), and the shape transfers exactly:
+
+| | Value | Why |
+| --- | --- | --- |
+| Default | **7 days** | The design note's own figure. It must exceed the window in which an offence becomes provable, or an operator can misbehave and exit before the counter crosses its threshold |
+| Floor | **3 days** | A floor, not a fixed value, so governance can tune upward for a role that proves slower to adjudicate but can never tune the delay to nothing — which is the slash-and-run configuration |
+| Ceiling | **30 days** | An unbond delay is a refundability constraint, and the shape rule says bonds are refundable at will. A delay long enough to feel like a lockup starts to argue against that characterisation |
+
+**Bond sizes — bound the DISCOUNT, not the deposit.** The instinct is to set
+a minimum bond in VPFI, and it is the wrong instrument: a VPFI-denominated
+floor is a price-varying entry cost, and the design forbids bonds becoming an
+entry barrier. Two rules instead:
+
+- **No minimum.** Any bond, including none, is valid. Capacity scales with
+  the bond; it is never unlocked by it. This is what keeps the free tier real
+  rather than nominal.
+- **A capacity CEILING per role**, expressed as a multiple of the free tier
+  rather than an absolute — proposed **4×**, so the largest bonded operator
+  gets four times the free-tier limits, not unbounded dominance. Bounding the
+  multiple is what stops bonds becoming de-facto exclusivity, which is the
+  failure mode "no role requires a bond" is protecting against and which a
+  minimum-bond rule would not catch.
+
+**Per-offence slash — a bounded bps of the posted bond**, following the
+`MAX_*_BPS` ceiling convention in `ConfigFacet`: proposed default **1,000 bps
+(10%) per offence**, ceiling **2,500 bps (25%)**. Ten offences to zero at the
+default is deliberate: slashing is meant to price misbehaviour, not to
+confiscate on a first mistake, and the offence predicate explicitly does not
+count honest same-block failures.
+
+**Open sub-question the owner may want to settle with this:** whether the
+offence counter DECAYS. Without decay a long-lived honest operator eventually
+accumulates enough sparse offences to be slashed for a rate of error that was
+never harmful. Recommendation: a rolling window rather than a lifetime
+counter, sized to the same knob as the unbond delay so the two cannot be
+configured into contradiction.
 
 ## Tests
 
