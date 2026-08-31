@@ -7637,4 +7637,90 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       ).ok,
     ).toBe(true);
   });
+  // ---- Codex #2036 r16 ----
+
+  it('GROUPING parentheses around the command are not a tuple', () => {
+    // r14 treated any paren opened inside another as a sequence, so the grouped
+    // command word became the whole argv and the real array — with the
+    // `--config` in it — was never read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/agent.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith(
+      'w.mjs',
+      'spawnSync(("wrangler"), ["deploy", "--config", "configs/agent.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a COMMENT before an argv element does not hide it', () => {
+    // The element boundary admitted only literal whitespace after the comma,
+    // and a comment is whitespace to the host language.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/agent.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", /* production */ "--config", "configs/agent.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a BACKTICK CLOUDFLARE_ENV value selects an environment', () => {
+    // The third quote form, which the deploy detector has always accepted and
+    // this predicate had not.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/agent.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/agent.jsonc"], ' +
+        '{env: {...process.env, CLOUDFLARE_ENV: `staging`}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a multiline LITERAL TOML string processes no escapes', () => {
+    // The r12/r14 escape rule is right for the BASIC delimiter and wrong for
+    // its literal sibling: honouring a backslash walked past the real closing
+    // delimiter, so the scanner stayed inside a value that had ended and missed
+    // the name below it — blocking a legitimate unprotected deploy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ["note = '''prefix \\'''", 'name = "vaipakam-www"', ''].join('\n'),
+    );
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(
+      true,
+    );
+  });
+
+  it('a nested ARRAY ITEM is not a TOML table header', () => {
+    // Both begin with `[`, and telling them apart needs the depth carried from
+    // earlier lines. Read as a header, it stopped the top-level scan.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['vars.MATRIX = [', '  [1, 2],', ']', 'name = "vaipakam-www"', ''].join('\n'),
+    );
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(
+      true,
+    );
+  });
+
+  it('but a REAL table header still stops the scan', () => {
+    // The control for the depth rule: an environment table's own `name` must
+    // not answer as if it were the top-level identity.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-www"', '[env.staging]', 'name = "vaipakam-agent"', ''].join('\n'),
+    );
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(
+      true,
+    );
+  });
 });
