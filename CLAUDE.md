@@ -727,9 +727,23 @@ of which must pass:
    the stake is older, then floored at `today - 29`. So in practice it
    scans the whole life of the current stake, capped at 30 days.
 
-**Do not write "30 days" as a fixed figure** in any doc derived from
-this. It is the DEFAULT and the CAP, not the rule — #1981's first pass
-said it flatly across twenty locale files and had to correct itself.
+**Three things not to write about this**, each learned by writing them
+and being caught (#1981 rounds 1–4):
+
+1. **Not "30 days" as a fixed figure.** It is the DEFAULT and the CAP of
+   step 2's window, not the rule; step 3's is a different knob again.
+   The first pass said it flatly across twenty locale files.
+2. **Not "your current balance"** for either the gate or the window
+   floor. Both key on the CURRENT CONTINUOUS NON-ZERO HOLDING. Adding to
+   an existing holding moves neither, which is *why* a top-up does not
+   lift a tier — the opposite of what "current balance" implies.
+3. **Never let step 3 borrow step 2's window.** They read as one idea in
+   English — both recent, both 30 days at the default — so any sentence
+   that describes the average and then says "in it", "in that window" or
+   "in the same period" silently claims the wrong rule. Write them as two
+   look-backs every time, even when it costs a clause. This was corrected
+   in one surface and immediately rewritten into another **three times**
+   over four review rounds, including into the live marketing copy.
 
 Against the brief-top-up vector this is STRICTER than the loan-window
 average it replaced: an average can be pulled up by a late spike, a
