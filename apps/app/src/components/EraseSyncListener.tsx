@@ -22,7 +22,7 @@
  * why the language reset removes the key `changeLanguage` writes on its way
  * through.
  */
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useAccount, useDisconnect } from 'wagmi';
 import { useTranslation } from 'react-i18next';
 import { LANGUAGE_STORAGE_KEY } from '@vaipakam/i18n';
@@ -66,6 +66,22 @@ export function EraseSyncListener() {
   const { resetToDefault: resetTheme } = useTheme();
   const { resetToDefault: resetMode } = useMode();
   const { i18n } = useTranslation();
+  // THE SUBSCRIPTION MUST NOT CHURN — found by self-review, and introduced by
+  // this round's own fix. `useDisconnect` builds `connectors` with a `.map`
+  // over the live connections, so it is a NEW ARRAY on every render whether or
+  // not anything connected changed. Naming it in the effect's dependencies
+  // therefore tore down and re-opened the BroadcastChannel on every render of
+  // a component with half a dozen re-render sources — and an erase broadcast
+  // landing in one of those gaps is simply not heard, which for this listener
+  // is the whole failure it exists to prevent. The value is read through a ref
+  // at handler time instead, which is also FRESHER than a captured dependency:
+  // what matters is the set connected when the broadcast arrives.
+  const connectorsRef = useRef(liveConnectors);
+  const connectedRef = useRef(isConnected);
+  useEffect(() => {
+    connectorsRef.current = liveConnectors;
+    connectedRef.current = isConnected;
+  });
   useEffect(
     () =>
       listenForErase(() => {
@@ -75,8 +91,9 @@ export function EraseSyncListener() {
         // page that may already have navigated. That is why the copy says
         // other tabs have been ASKED, and claims confirmation only for the
         // tab the user is looking at.
-        if (isConnected && liveConnectors.length > 0) {
-          void disconnectEvery(liveConnectors, async (args) =>
+        const connectors = connectorsRef.current;
+        if (connectedRef.current && connectors.length > 0) {
+          void disconnectEvery(connectors, async (args) =>
             disconnect(args),
           )().catch(() => {
             // Unacknowledged either way — there is nobody to report to. The
@@ -103,7 +120,10 @@ export function EraseSyncListener() {
         // the erasing tab does for its own.
         bumpEraseEpoch();
       }),
-    [disconnect, liveConnectors, isConnected, resetTheme, resetMode, i18n],
+    // Only stable values. `disconnect` is react-query's `mutate`, the two
+    // `resetToDefault`s are `useCallback`-wrapped, and `i18n` is the instance;
+    // the two that change identity per render are read through the refs above.
+    [disconnect, resetTheme, resetMode, i18n],
   );
   return null;
 }
