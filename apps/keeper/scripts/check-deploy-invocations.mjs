@@ -1533,9 +1533,16 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '') {
         return false;
       }
       if (/\.toml$/.test(path)) {
+        // ARRAY DEPTH, so a nested array item is not read as a table header —
+        // the same r16 rule the name reader carries. Reported against that
+        // reader only; applying it to one of a pair is how this file's findings
+        // keep recurring, and here the cost is declining to bless a SAFE deploy.
+        let arrayDepth = 0;
         for (const line of text.split('\n')) {
-          if (/^\s*\[/.test(line)) break;
+          if (arrayDepth === 0 && /^\s*\[/.test(line)) break;
           if (/^\s*keep_vars\s*=\s*true\s*(?:#.*)?$/.test(line)) return true;
+          arrayDepth += tomlBracketDelta(line);
+          if (arrayDepth < 0) arrayDepth = 0;
         }
         return false;
       }
@@ -2718,6 +2725,106 @@ function firstArgvArray(text, before = '') {
  * inside another paren is the sequence; a paren opened after a callee name is
  * that call's argument list and is left alone.
  */
+/**
+ * Does the paren opened at `open` hold a comma at its own nesting level?
+ *
+ * Quote- and depth-aware. Stops at the matching close, so a comma belonging to
+ * an enclosing call never counts, and an unterminated paren answers `false`.
+ */
+/**
+ * Source comments blanked to spaces, preserving every offset.
+ *
+ * Quote-aware, so a `//` inside a string stays. Blanked rather than removed
+ * because callers index into the result and compare positions against it.
+ */
+/**
+ * How much this TOML line changes open-array depth, and is it a table header?
+ *
+ * A table header and an array item both begin with `[`, and telling them apart
+ * needs the depth carried from earlier lines: a value like `vars.MATRIX = [`
+ * leaves an array open, so the `[1, 2]` on the next line is an ITEM. Read as a
+ * header it stopped the top-level scan, and the `name` below it went unread —
+ * blocking a legitimate deploy of an unprotected Worker (Codex #2036 r16).
+ *
+ * Quote-aware, and a `#` outside a string starts a comment.
+ */
+function tomlBracketDelta(line) {
+  let delta = 0;
+  let quote = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i];
+    if (quote !== null) {
+      if (quote === '"' && c === '\\') i += 1;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      quote = c;
+      continue;
+    }
+    if (c === '#') break;
+    if (c === '[') delta += 1;
+    else if (c === ']') delta -= 1;
+  }
+  return delta;
+}
+
+function stripSourceComments(text) {
+  const chars = [...text];
+  let quote = null;
+  for (let i = 0; i < chars.length; i += 1) {
+    const c = chars[i];
+    if (quote !== null) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      quote = c;
+      continue;
+    }
+    if (c === '/' && chars[i + 1] === '*') {
+      const end = text.indexOf('*/', i + 2);
+      const stop = end === -1 ? chars.length : end + 2;
+      for (let j = i; j < stop; j += 1) chars[j] = ' ';
+      i = stop - 1;
+      continue;
+    }
+    if (c === '/' && chars[i + 1] === '/') {
+      for (let j = i; j < chars.length && chars[j] !== '\n'; j += 1) chars[j] = ' ';
+      continue;
+    }
+    // Python's comment character, since this reader takes both languages.
+    if (c === '#') {
+      for (let j = i; j < chars.length && chars[j] !== '\n'; j += 1) chars[j] = ' ';
+    }
+  }
+  return chars.join('');
+}
+
+function hasTopLevelComma(text, open) {
+  let depth = 0;
+  let quote = null;
+  for (let i = open; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote !== null) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      quote = c;
+      continue;
+    }
+    if (c === '(' || c === '[' || c === '{') depth += 1;
+    else if (c === ')' || c === ']' || c === '}') {
+      depth -= 1;
+      if (depth === 0) return false;
+    } else if (c === ',' && depth === 1) return true;
+  }
+  return false;
+}
+
 function tuplesAsLists(text) {
   const chars = [...text];
   const stack = [];
@@ -2734,7 +2841,17 @@ function tuplesAsLists(text) {
       continue;
     }
     if (c === '(') {
-      const isTuple = /\($/.test(text.slice(0, i).replace(/\s+$/, ''));
+      // A SEQUENCE, not a GROUPING. Being opened directly inside another paren
+      // is necessary and not sufficient: `spawnSync(("wrangler"), [...])` groups
+      // the command word, and rewriting THAT to a bracket made the grouped
+      // command read as the whole argv — so the real array, with its `--config`
+      // in it, was never seen (Codex #2036 r16).
+      //
+      // A top-level comma is what separates them, and it is the same rule the
+      // host languages use: Python spells a one-element tuple `("x",)`, with
+      // the comma, precisely because `("x")` is the string in parentheses.
+      const isTuple =
+        /\($/.test(text.slice(0, i).replace(/\s+$/, '')) && hasTopLevelComma(text, i);
       stack.push(isTuple);
       if (isTuple) chars[i] = '[';
       continue;
@@ -2835,6 +2952,13 @@ function argvValue(region, spellings, before = '') {
   // `--name` at all — produced an authoritative target (Codex #2036 r9).
   // Scoping the reader to the argv array in r5 was necessary and not
   // sufficient; this boundary is the other half of the same rule.
+  // COMMENTS ARE WHITESPACE to the host language, and the boundary admitted
+  // only literal whitespace — so `["deploy", /* production */ "--config", …]`
+  // exposed no selector at all while the identical call without the comment was
+  // reported (Codex #2036 r16). Stripped from the array body before the scan
+  // rather than widened into the boundary pattern, so the rule stays "an element
+  // starts at an array boundary" instead of growing a second dialect.
+  region = stripSourceComments(region);
   const B = '(?<=[\\[,]\\s{0,80})';
   const all = [
     ...region.matchAll(
@@ -3040,6 +3164,7 @@ function declaredWorkerName(absPath) {
     let inMultiline = null;
     let collecting = null;
     let collected = [];
+    let arrayDepth = 0;
     for (const line of text.split('\n')) {
       if (inMultiline !== null) {
         // The first UNESCAPED delimiter closes the value. `indexOf` treated an
@@ -3048,8 +3173,15 @@ function declaredWorkerName(absPath) {
         // answered (Codex #2036 r12) — the read-the-identity-out-of-somebody
         // else\'s-prose defect for the third time, now through an escape.
         const at = (() => {
+          // ESCAPES ONLY IN BASIC STRINGS. TOML's multiline LITERAL string
+          // (`'''`) processes no escapes at all, so honouring a backslash there
+          // walked past the real closing delimiter and left the scanner inside a
+          // value that had ended — the top-level `name` after it went unread and
+          // a legitimate unprotected deploy was blocked (Codex #2036 r16). The
+          // r12/r14 escape rule was right for `"""` and wrong for its sibling.
+          const escapes = inMultiline === '"""';
           for (let i = 0; i <= line.length - inMultiline.length; i += 1) {
-            if (line[i] === '\\') {
+            if (escapes && line[i] === '\\') {
               i += 1;
               continue;
             }
@@ -3071,7 +3203,10 @@ function declaredWorkerName(absPath) {
         inMultiline = null;
         continue;
       }
-      if (/^\s*\[/.test(line)) break;
+      // A TABLE HEADER, not an array ITEM — see `tomlBracketDelta` (#2036 r16).
+      if (arrayDepth === 0 && /^\s*\[/.test(line)) break;
+      arrayDepth += tomlBracketDelta(line);
+      if (arrayDepth < 0) arrayDepth = 0;
       // The NAME key opening a multiline value. TOML trims a newline (LF or
       // CRLF) immediately after the delimiter — a `\r` left on the front makes
       // the identity partially decoded, which is treated as authoritative and
@@ -3092,8 +3227,10 @@ function declaredWorkerName(absPath) {
         // became top level (Codex #2036 r14). One rule, two call sites, taught
         // to one of them.
         const close = (() => {
+          // ...and only for BASIC strings, per r16 — see the in-body search.
+          const escapes = opens[1] === '"""';
           for (let i = 0; i <= rest.length - opens[1].length; i += 1) {
-            if (rest[i] === '\\') {
+            if (escapes && rest[i] === '\\') {
               i += 1;
               continue;
             }
@@ -3204,7 +3341,8 @@ function declaredWorkerName(absPath) {
       {
         let open = null;
         for (let i = 0; i < uncommented.length; i += 1) {
-          if (open !== null && uncommented[i] === '\\') {
+          // ...and only for BASIC strings, per r16 — see the in-body search.
+          if (open === '"""' && uncommented[i] === '\\') {
             i += 1;
             continue;
           }
@@ -3719,7 +3857,13 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       }
       const body = rawSeg.slice(opener.index, i);
       return [...body.matchAll(
-        /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|[A-Za-z_$][\w$.]*)/g,
+        // BACKTICKS ARE A THIRD QUOTE. Node hands wrangler the literal, and this
+        // predicate read only the two ASCII quote forms — one more spelling the
+        // deploy detector has always accepted and a reader beside it had not
+        // (Codex #2036 r16). An INTERPOLATED template is excluded on purpose:
+        // its value is not in the source, so it is not this literal branch's to
+        // answer, and the opaque-`env` branch below already covers it.
+        /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|`[^`$]+`|[A-Za-z_$][\w$.]*)/g,
       )].some((mm) => notInsideString(body, mm.index + (/^["']/.test(mm[0]) ? 1 : 0)));
     }) ||
     // An `env` option this scanner CANNOT READ counts as selecting one.
