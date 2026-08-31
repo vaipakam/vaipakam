@@ -6378,3 +6378,58 @@ describe('check-deploy-invocations — #1995 r23b', () => {
     );
   });
 });
+
+describe('check-deploy-invocations — #1995 r23c', () => {
+  // `node --require preload.cjs deploy.mjs`: the option-skip consumed only the
+  // FLAG, so `preload.cjs` was captured as the script and the real helper —
+  // the one carrying the deploy — was never read.
+  it('a Node helper behind a separated option value', () => {
+    seed('preload.cjs', 'module.exports = {};\n');
+    seed('deploy.mjs', "spawnSync('wrangler', ['deploy']);\n");
+    const r = runWith('w.sh', 'cd apps/agent\nnode --require ../../preload.cjs ../../deploy.mjs\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and still resolves the plain form with no options', () => {
+    seed('deploy.mjs', "spawnSync('wrangler', ['deploy']);\n");
+    const r = runWith('w.sh', 'cd apps/agent\nnode ../../deploy.mjs\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('an option-only invocation whose script is last is still resolved', () => {
+    // The value-skip must not swallow the script itself when the option takes
+    // no argument — the trailing-space lookahead is what prevents that.
+    seed('deploy.mjs', "spawnSync('wrangler', ['deploy']);\n");
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nnode --experimental-vm-modules ../../deploy.mjs\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  // `subprocess.run(["wrangler","deploy","--config","unsafe.jsonc"])` — the
+  // argv spelling of a config selection. ARGV_DEPLOY_RE admits these arrays,
+  // so the deploy was seen while its selected config was not, and the guard
+  // read the Worker's DEFAULT config, which does declare keep_vars.
+  it('a config selected through an argv array is the one consulted', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
+    seed('apps/agent/unsafe.jsonc', '{"keep_vars": false}\n');
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "unsafe.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('but an argv deploy using the safe default config passes', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      'spawnSync("wrangler", ["deploy"]);\n',
+    );
+    expect(r.ok).toBe(true);
+  });
+});

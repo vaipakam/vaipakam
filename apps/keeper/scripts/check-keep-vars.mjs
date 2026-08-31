@@ -35,7 +35,7 @@
  * node builtins only, so the job needs no install step.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 
@@ -73,6 +73,63 @@ function readJsonc(relPath) {
 }
 
 const problems = [];
+
+/**
+ * Every Wrangler config in the tree, DISCOVERED rather than listed.
+ *
+ * The list above is a floor, not the inventory: a sixth Worker added with a
+ * `vars` block and no `keep_vars` was never examined, and the paired test
+ * compared the list against another copy of the same list — so the two agreed
+ * with each other while both missed the new Worker (#1995 r23). The spec says
+ * this check covers every Worker holding operator-managed values, and it now
+ * does.
+ *
+ * Bounded to `apps/` and `ops/`, one level down, which is where every Worker
+ * in this repo lives; node builtins only, so the unconditional CI job still
+ * needs no install step.
+ */
+function discoverWorkerConfigs() {
+  const found = [];
+  for (const root of ['apps', 'ops']) {
+    let entries;
+    try {
+      entries = readdirSync(join(REPO_ROOT, root), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      for (const name of ['wrangler.jsonc', 'wrangler.json']) {
+        if (existsSync(join(REPO_ROOT, root, e.name, name))) {
+          found.push(`${root}/${e.name}/${name}`);
+          break;
+        }
+      }
+    }
+  }
+  return found.sort();
+}
+
+for (const rel of discoverWorkerConfigs()) {
+  const dir = rel.replace(/\/wrangler\.jsonc?$/, '');
+  if (VAR_CARRYING_WORKERS.includes(dir)) continue; // asserted in full below
+  let cfg;
+  try {
+    cfg = readJsonc(rel);
+  } catch (err) {
+    problems.push(`${rel} could not be read or parsed: ${err.message}`);
+    continue;
+  }
+  const hasVars = typeof cfg.vars === 'object' && cfg.vars !== null;
+  if (hasVars && cfg.keep_vars !== true) {
+    problems.push(
+      `${rel} declares \`vars\` but not \`"keep_vars": true\`, and is not in ` +
+        `VAR_CARRYING_WORKERS.\n    A deploy of this Worker would DELETE every ` +
+        `dashboard-managed var. Add the key, then add\n    "${dir}" to the ` +
+        `list so the per-Worker mutation tests cover it too.`,
+    );
+  }
+}
 
 for (const dir of VAR_CARRYING_WORKERS) {
   const rel = `${dir}/wrangler.jsonc`;

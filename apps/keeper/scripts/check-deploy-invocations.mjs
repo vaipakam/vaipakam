@@ -313,7 +313,7 @@ const DECL_PREFIX = String.raw`(?:(?:export|declare|typeset|local|readonly)\s+(?
 // as a shell helper's does (#1995 r22). BOTH the launcher word and a script
 // extension are required — that is what keeps it away from the r20 width
 // problem, since a bare `./x.ts` still matches nothing here.
-const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?(?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1)|(?:node|bun|tsx)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts)|(?:python3?|py)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+\.py)`;
+const EXEC_HELPER_RE = String.raw`(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*(?:[\w.@-]+\/)*[\w.@-]+|\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh)|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?(?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1)|(?:node|bun|tsx)(?:\s+-\S+(?:\s+(?!-)[^\s]+(?=\s))?)*\s+(?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts)|(?:python3?|py)(?:\s+-\S+(?:\s+(?!-)[^\s]+(?=\s))?)*\s+(?:[\w.@-]+\/)*[\w.@-]+\.py)`;
 
 /** Collapse a captured word to what the shell would hand the command. */
 function dequote(w) {
@@ -1408,10 +1408,27 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
     // `stripOtherOptionValues` deletes exactly the value this is after.
     const cfgText = stripShellComment(cmd);
     const wi = cfgText.search(/\bwrangler2?\b/);
-    const cfgSel = (wi >= 0 ? cfgText.slice(wi) : cfgText).match(
+    const cfgRegion = wi >= 0 ? cfgText.slice(wi) : cfgText;
+    const cfgSel = cfgRegion.match(
       /\s(?:-c|--config)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/,
     );
-    const cfgName = cfgSel ? (cfgSel[1] ?? cfgSel[2] ?? cfgSel[3]) : null;
+    // …and the ARGV spelling, where the flag and its value are separate array
+    // elements: `subprocess.run(["wrangler","deploy","--config","x.jsonc"])`.
+    // `ARGV_DEPLOY_RE` admits those arrays, so the deploy was recognised while
+    // its selected config was not — and the guard then read the Worker's
+    // DEFAULT config, which may declare `keep_vars` while the selected one
+    // does not (#1995 r23). The separator is `","` however it is quoted or
+    // spaced, which is what distinguishes this from the shell form above.
+    const cfgArgv = cfgSel
+      ? null
+      : cfgRegion.match(
+          /["'](?:-c|--config)["']\s*,\s*["']([^"']+)["']/,
+        );
+    const cfgName = cfgSel
+      ? (cfgSel[1] ?? cfgSel[2] ?? cfgSel[3])
+      : cfgArgv
+        ? cfgArgv[1]
+        : null;
     const cfgNames =
       cfgName === null
         ? ['wrangler.jsonc', 'wrangler.json', 'wrangler.toml']
@@ -5991,7 +6008,7 @@ for (const file of walk(REPO_ROOT)) {
           (!dir || dir.kind === 'env-chdir') &&
           runWord.match(
             new RegExp(
-              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))|(?:node|bun|tsx)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts))|(?:python3?|py)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+\.py))(?:\s|$)`,
+              String.raw`^(?:(?:bash|sh|zsh|ksh|dash)\s+(?:-\S+\s+)*((?:[\w.@-]+\/)*[\w.@-]+)|(\.{0,2}\/(?:[\w.@-]+\/)*[\w@-]+|(?:[\w.@-]+\/)*[\w.@-]+\.(?:sh|bash|zsh|ksh))|(?:(?:call|cmd\s+\/[cCkK]|powershell|pwsh)(?:\s+[-\/]\S+(?:\s+(?![-\/])[^\s\\\/]+(?=\s))?)*\s+)?((?:[\w.@-]+[\\\/])*[\w.@-]+\.(?:cmd|bat|ps1))|(?:node|bun|tsx)(?:\s+-\S+(?:\s+(?!-)[^\s]+(?=\s))?)*\s+((?:[\w.@-]+\/)*[\w.@-]+\.(?:mjs|cjs|js|ts))|(?:python3?|py)(?:\s+-\S+(?:\s+(?!-)[^\s]+(?=\s))?)*\s+((?:[\w.@-]+\/)*[\w.@-]+\.py))(?:\s|$)`,
             ),
           );
         if (execHelper) {

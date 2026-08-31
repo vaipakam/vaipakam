@@ -204,6 +204,10 @@
     // the webhook 200-no-ops, so deploying the DO never re-routes live ingest by
     // itself. Turned on now that the per-chain Alchemy webhooks + signing keys
     // are configured for Base Sepolia (84532) + Arb Sepolia (421614).
+    // ROLLBACK: set this to "false" — do NOT delete the line. `keep_vars` above
+    // stops a deploy removing vars absent from this file, so deleting it leaves
+    // the already-deployed "true" live and ingest keeps routing through the DO
+    // (#1995 r23). An explicit "false" is uploaded and takes effect at once.
     "CHAIN_INGEST_VIA_DO": "true",
   },
 
