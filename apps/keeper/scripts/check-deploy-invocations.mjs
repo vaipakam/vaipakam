@@ -1439,7 +1439,12 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
     // does not, blessing the upload (Codex #2036 r3). `argvValue` returns an
     // unresolvable `${…}` marker for a non-literal, and the `/\$/` test below
     // already refuses those.
-    const cfgArgvValue = cfgSel ? null : argvValue(cfgRegion, '-c|--config');
+    // The pre-wrangler text, so the Python array shape is recoverable HERE too.
+    // I passed it in `selectorScope` last round and not here: two functions that
+    // each read argv, one of them taught the rule (Codex #2036 r8). Same shape
+    // as every other round of this PR.
+    const beforeCfg = wi >= 0 ? cfgText.slice(0, wi) : '';
+    const cfgArgvValue = cfgSel ? null : argvValue(cfgRegion, '-c|--config', beforeCfg);
     // `--cwd` MOVES WHERE A RELATIVE CONFIG RESOLVES FROM, and this check has to
     // honour it for the same reason `selectorScope` does: wrangler runs "as if
     // started in the specified directory". Fixing the identity read for `--cwd`
@@ -1454,7 +1459,7 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
       const m = cfgRegion.match(
         /(?<![\w-])--cwd(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/,
       );
-      const v = m ? (m[1] ?? m[2] ?? m[3]) : argvValue(cfgRegion, '--cwd');
+      const v = m ? (m[1] ?? m[2] ?? m[3]) : argvValue(cfgRegion, '--cwd', beforeCfg);
       if (v === null || v === undefined || /^\/|\$/.test(v)) return cmdCwd;
       return normalizeRel(`${cmdCwd}/${v}`);
     })();
@@ -1710,6 +1715,20 @@ const SCOPED = [
  * gives this group its own remedy rather than borrowing a package's.
  */
 const UNNAMED_SCOPE = {
+  dir: 'a Worker this scanner could not name',
+};
+
+/**
+ * The same group, reached because an explicit `--name` could not be read rather
+ * than a config (#2036 r8).
+ *
+ * A separate singleton and not a flag, because the REMEDY differs and the
+ * reporting path groups by identity. The config wording told an operator whose
+ * command had no `--config` at all to edit "the selected config" — and for
+ * `versions upload`, where `--keep-vars` does not exist, that left the only
+ * instruction pointing at a file that does not exist.
+ */
+const UNNAMED_BY_NAME_SCOPE = {
   dir: 'a Worker this scanner could not name',
 };
 
@@ -2643,11 +2662,26 @@ function argvValue(region, spellings, before = '') {
   // config's unprotected name over the explicit one (Codex #2036 r4). The
   // attached form is the argv twin of the shell's `--name=x`, which `valueOf`
   // has always read.
+  // BACKTICKS COUNT AS QUOTES. The deploy DETECTOR has always accepted them,
+  // and this reader did not, so `[\`deploy\`, \`--config\`, \`x.jsonc\`]` — an
+  // ordinary JavaScript spelling — reached neither identity lookup nor the
+  // inversion (Codex #2036 r8). One more rule the older half of the file knew
+  // and the argv half did not.
+  //
+  // Built by concatenation rather than as one template literal: a literal
+  // backtick closes the template, and `${` inside a character class starts an
+  // interpolation. Writing the quote class once, as a variable, is what keeps
+  // that from being re-broken by the next edit.
+  const Q = '["\'`]';
+  // An INTERPOLATED template is not a literal — ``${d}/x.jsonc`` has to stay
+  // unresolved rather than be read as the text `${d}/x.jsonc`, so `$` and the
+  // braces are excluded from the literal class and fall to the non-literal arm.
+  const LIT = '[^"\'`${}]+';
   const all = [
     ...region.matchAll(
       new RegExp(
-        `["'](?:${spellings})(?:["']\\s*,\\s*(?:["']([^"']+)["']|([^,\\]]+?)\\s*(?=,|$))` +
-          `|=([^"']*)["'])`,
+        Q + '(?:' + spellings + ')(?:' + Q + '\\s*,\\s*(?:' + Q + '(' + LIT + ')' + Q +
+          '|([^,\\]]+?)\\s*(?=,|$))' + '|=([^"\'`]*)' + Q + ')',
         'g',
       ),
     ),
@@ -2806,8 +2840,29 @@ function declaredWorkerName(absPath) {
       // Any OTHER key opening a multiline value. Delimiters are COUNTED rather
       // than tested for presence, so a value that opens and closes on the same
       // line (`x = """a"""`) does not swallow the rest of the file.
+      // COMMENTS FIRST. A `#` comment mentioning a delimiter — `# contains '''`
+      // — put the scanner into string state and skipped the real top-level
+      // `name` below it, reporting an unprotected Worker's config as the
+      // package it sits in (Codex #2036 r8). False-red direction.
+      //
+      // The comment is only stripped when the `#` is outside a string on this
+      // line, which is what stops a `#` inside a value being read as one.
+      const uncommented = (() => {
+        let q = null;
+        for (let i = 0; i < line.length; i += 1) {
+          const c = line[i];
+          if (q) {
+            if (c === '\\') i += 1;
+            else if (c === q) q = null;
+            continue;
+          }
+          if (c === '"' || c === "'") q = c;
+          else if (c === '#') return line.slice(0, i);
+        }
+        return line;
+      })();
       for (const delim of OPENERS) {
-        if ((line.split(delim).length - 1) % 2 === 1) inMultiline = delim;
+        if ((uncommented.split(delim).length - 1) % 2 === 1) inMultiline = delim;
       }
     }
   } else {
@@ -3221,9 +3276,18 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
       // truthiness, so that config is used normally — and the guard sent a
       // perfectly ordinary deploy to UNNAMED_SCOPE (Codex #2036 r5). A
       // false red, in the direction that blocks CI.
-      const m = rawSeg.match(
-        /(?:^|[\s;&|(])(?:export\s+)?CLOUDFLARE_ENV=(?:"([^"]*)"|'([^']*)'|([^\s;&|)]*))/,
-      );
+      // The LAST assignment wins, as the shell's own overwrite semantics do:
+      // `CLOUDFLARE_ENV= CLOUDFLARE_ENV=staging wrangler deploy` passes
+      // `staging`, and reading only the first saw the empty value and trusted
+      // the top-level name (Codex #2036 r8). `match()` reads the first, which is
+      // the same first-versus-last mistake `valueOf` was corrected for at
+      // #1995 r16.
+      const all = [
+        ...rawSeg.matchAll(
+          /(?:^|[\s;&|(])(?:export\s+)?CLOUDFLARE_ENV=(?:"([^"]*)"|'([^']*)'|([^\s;&|)]*))/g,
+        ),
+      ];
+      const m = all[all.length - 1];
       if (!m) return false;
       return (m[1] ?? m[2] ?? m[3] ?? '') !== '';
     })() ||
@@ -3367,7 +3431,9 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // PROSE IS DELIBERATELY EXCLUDED: the `!hasCwdState` branch above has already
   // returned, deferring to the surrounding text, which on a runbook line is the
   // better answer and names a package the reader can act on.
-  if (cfg !== null || nameUnresolved) return { scope: UNNAMED_SCOPE };
+  // WHICH selector was unreadable decides the remedy, so it decides the group.
+  if (cfg !== null) return { scope: UNNAMED_SCOPE };
+  if (nameUnresolved) return { scope: UNNAMED_BY_NAME_SCOPE };
   return { scope: null };
 }
 
@@ -7127,11 +7193,22 @@ if (violations.length > 0) {
   // would start treating it as one. Iterating `SCOPED` alone here would have
   // dropped its violations from the output entirely while still counting them
   // in the header, which is the worst of both.
-  for (const s of [...SCOPED, UNNAMED_SCOPE]) {
+  for (const s of [...SCOPED, UNNAMED_SCOPE, UNNAMED_BY_NAME_SCOPE]) {
     const hits = violations.filter((v) => v.scope === s);
     if (hits.length === 0) continue;
     console.error(`  ${s.dir}:\n`);
     for (const v of hits) console.error(`    ${v.where}\n      ${v.line}\n`);
+    if (s === UNNAMED_BY_NAME_SCOPE) {
+      console.error(
+        `    This command passes an explicit --name that this scanner cannot read, so\n` +
+          `    the Worker it deploys is whatever that value holds at run time. No config\n` +
+          `    was selected, so there is no file here to inspect or to fix.\n\n` +
+          `    Add --keep-vars, or declare \`"keep_vars": true\` in the config the named\n` +
+          `    Worker actually uses — which is the only remedy for \`versions upload\`,\n` +
+          `    where the flag does not exist.\n`,
+      );
+      continue;
+    }
     if (s === UNNAMED_SCOPE) {
       // The remedy is SYNTAX, so it has to be the syntax of the file the
       // operator will actually edit. A flat `"keep_vars": true` is invalid TOML,

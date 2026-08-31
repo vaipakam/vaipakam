@@ -7039,6 +7039,73 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(true);
   });
 
+  // ---- Codex #2036 r8 ----
+
+  it('the SAFETY read recovers a Python argv array too', () => {
+    // I passed the pre-wrangler prefix in selectorScope last round and not in
+    // commandIsSafe, so the preservation check still could not see a Python
+    // array and read the package's DEFAULT config instead — which declares
+    // keep_vars while the selected one does not.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith('apps/agent/deploy.py', 'subprocess.run(["wrangler", "deploy", "--config", "side.jsonc"])\n');
+    expect(r.ok).toBe(false);
+  });
+
+  it('BACKTICK-quoted argv elements are read like the other quotes', () => {
+    // The deploy detector has always accepted backticks and this reader did
+    // not, so an ordinary JavaScript spelling reached neither identity lookup
+    // nor the inversion.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd .\nspawnSync("wrangler", [`deploy`, `--config`, `configs/custom.jsonc`]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a TOML COMMENT mentioning a delimiter does not start string state', () => {
+    // False-red direction: the comment put the scanner into string state, the
+    // real top-level name below it was skipped, and an unprotected Worker's
+    // config was reported as the package it sits in.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ["# Documentation contains ''' delimiter", 'name = "vaipakam-www"', ''].join('\n'),
+    );
+    expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(true);
+  });
+
+  it('the LAST CLOUDFLARE_ENV assignment wins, as the shell does', () => {
+    // Reading the first saw an empty value and trusted the top-level name. The
+    // same first-versus-last mistake `valueOf` was corrected for at #1995 r16.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nCLOUDFLARE_ENV= CLOUDFLARE_ENV=staging wrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('an unresolved NAME is not reported as if a config had been selected', () => {
+    // The config wording told an operator whose command has no `--config` at
+    // all to edit "the selected config" — and for `versions upload`, where
+    // --keep-vars does not exist, that left the only instruction pointing at a
+    // file that does not exist.
+    const r = runWith(
+      'w.sh',
+      'cd .\nconst worker = "vaipakam-agent";\nspawnSync("wrangler", ["deploy", "--name", worker]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('explicit --name');
+    expect(r.out).not.toContain('the selected config');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {
