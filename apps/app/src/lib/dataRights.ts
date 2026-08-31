@@ -1294,34 +1294,54 @@ export function erasedItemCount(result: FullEraseResult): number {
  * values come from one store and normally agree; "normally agree" is not the
  * standard for a claim made to a user about a legal right.
  */
-export interface DisconnectEveryOptions {
+export interface DisconnectEveryOptions<C = unknown> {
   /** Per-target bound. See `PER_CONNECTOR_TIMEOUT_MS`. */
   readonly perConnectorTimeoutMs?: number;
   /**
-   * Called once every ORIGINAL teardown has actually settled, however long
-   * that takes — including ones the per-target bound already gave up on.
+   * Called when a teardown the per-target bound GAVE UP ON eventually
+   * settles — once per straggler, and never if none was given up on.
    *
    * Round 7 P2. The bound advances the LOOP; it does not stop the wagmi
    * action underneath, which on a late completion calls `config.setState` and
    * rewrites `wagmi.store`. The aggregate promise had already rejected by
-   * then, so every cleanup hung off it ran at the bound and nothing ran
-   * after the write. The caller's cleanup belongs here instead: this fires
-   * once, after the last straggler, and never if none was given up on.
+   * then, so every cleanup hung off it ran at the bound and nothing ran after
+   * the write.
+   *
+   * PER STRAGGLER, and named for that (round 8 P2). The first version waited
+   * on `Promise.all` of every retained promise and was called `onAllSettled`
+   * — a barrier one permanently pending connector holds open forever, so a
+   * DIFFERENT connector completing late never triggered any cleanup at all. A
+   * wedged wallet must not suppress the cleanup owed to the others. Must
+   * therefore be IDEMPOTENT: several stragglers each call it.
    */
-  readonly onAllSettled?: () => void;
+  readonly onStragglerSettled?: () => void;
+  /**
+   * Re-read the target list at CALL time instead of using the captured one.
+   *
+   * Round 8 P1. The captured list is a render-time snapshot, and during
+   * wagmi's `reconnecting` state it is still filling — so a connection that
+   * did not exist when the page rendered, but does by the time the user
+   * confirms, would never be torn down and would survive the erasure. When
+   * this returns a NON-EMPTY list it wins; an empty one falls back to the
+   * captured targets, so a momentary gap cannot turn into the empty-list
+   * refusal.
+   */
+  readonly connectorsAtRunTime?: () => readonly C[];
 }
 
 export function disconnectEvery<C>(
   connectors: readonly C[],
   disconnect: (args: { connector: C }) => Promise<unknown>,
-  options: DisconnectEveryOptions | number = {},
+  options: DisconnectEveryOptions<C> | number = {},
 ): () => Promise<void> {
-  const opts: DisconnectEveryOptions =
+  const opts: DisconnectEveryOptions<C> =
     typeof options === 'number' ? { perConnectorTimeoutMs: options } : options;
   const perConnectorTimeoutMs =
     opts.perConnectorTimeoutMs ?? PER_CONNECTOR_TIMEOUT_MS;
-  const targets = [...connectors];
+  const captured = [...connectors];
   return async () => {
+    const live = opts.connectorsAtRunTime?.() ?? [];
+    const targets = live.length > 0 ? [...live] : captured;
     if (targets.length === 0) {
       throw new Error(
         'disconnectEvery: asked to disconnect with no connectors — refusing ' +
@@ -1345,35 +1365,34 @@ export function disconnectEvery<C>(
     // exact defect the aggregation fix was for, reachable by the one failure
     // mode that fix did not cover.
     const failures: unknown[] = [];
-    // The ORIGINALS, kept so a straggler can be waited on after the loop has
-    // moved past it (round 7 P2). Discarding them meant a connector that
-    // completed at five seconds wrote `wagmi.store` with nothing left to
-    // notice — the aggregate had rejected at four.
-    const originals: Promise<unknown>[] = [];
-    let gaveUpOnAny = false;
     for (const connector of targets) {
+      // The ORIGINAL is kept so a straggler can still be acted on after the
+      // loop has moved past it (round 7 P2): discarding it meant a connector
+      // completing at five seconds wrote `wagmi.store` with nothing left to
+      // notice, the aggregate having rejected at four.
       const original = Promise.resolve(disconnect({ connector }));
-      // The RETAINED copy carries its own swallow so holding it cannot raise
-      // an unhandled rejection — while `original` itself keeps rejecting, so
-      // the await below still sees a refusal. Attaching the catch to the one
-      // being awaited (the first attempt at this) turned every refusal into a
-      // silent success and broke the aggregation two rounds of review had
-      // just built.
-      originals.push(original.catch(() => undefined));
+      // A SEPARATE swallowed copy, so holding a reference cannot raise an
+      // unhandled rejection while `original` itself keeps rejecting for the
+      // await below. Attaching the catch to the AWAITED promise — the first
+      // attempt at this — turned every refusal into a silent success and
+      // undid the aggregation two rounds of review had built.
+      void original.catch(() => undefined);
       try {
         await withTimeout(original, perConnectorTimeoutMs);
       } catch (error) {
-        gaveUpOnAny = true;
         failures.push(error);
+        // This straggler cleans up after ITSELF when it settles — see
+        // `onStragglerSettled` for why a barrier over all of them was wrong.
+        const cleanup = opts.onStragglerSettled;
+        if (cleanup) {
+          void original.then(
+            () => cleanup(),
+            () => cleanup(),
+          );
+        }
       }
     }
-    if (gaveUpOnAny && opts.onAllSettled) {
-      // Detached on purpose: the caller is told when the last straggler has
-      // finished, and is not made to wait for it. Only when something was
-      // actually given up on — otherwise every ordinary teardown would pay
-      // for a callback with nothing to clean up.
-      void Promise.all(originals).then(() => opts.onAllSettled?.());
-    }
+
     if (failures.length > 0) {
       // Still a rejection, so the caller reports "did not disconnect" — the
       // app IS still attached to something. What changes is that everything

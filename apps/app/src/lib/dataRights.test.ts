@@ -1624,7 +1624,7 @@ describe('round 7 — stragglers, and a cleanup that must not overreach', () => 
           new Promise<void>((resolve) => {
             finish = resolve;
           }),
-        { perConnectorTimeoutMs: 50, onAllSettled: () => (settled = true) },
+        { perConnectorTimeoutMs: 50, onStragglerSettled: () => (settled = true) },
       );
       const outcome = teardown().catch(() => 'gave up');
       await vi.advanceTimersByTimeAsync(100);
@@ -1645,7 +1645,7 @@ describe('round 7 — stragglers, and a cleanup that must not overreach', () => 
     let settled = false;
     const teardown = disconnectEvery(['fast'], async () => undefined, {
       perConnectorTimeoutMs: 50,
-      onAllSettled: () => (settled = true),
+      onStragglerSettled: () => (settled = true),
     });
     await teardown();
     await Promise.resolve();
@@ -1690,5 +1690,77 @@ describe('round 7 — stragglers, and a cleanup that must not overreach', () => 
     expect(store.get('app.mode')).toBe('lend');
     expect(store.get('app.theme')).toBe('dark');
     expect(store.get('wagmi.metaMask.disconnected')).toBe('true');
+  });
+});
+
+describe('round 8 — a wedged wallet must not suppress the others', () => {
+  it('cleans up after EACH straggler, even while another never settles', async () => {
+    // Round 8 P2. The first version awaited `Promise.all` over every retained
+    // promise — a barrier one permanently pending connector holds open
+    // forever, so a DIFFERENT connector completing late, and writing, never
+    // triggered any cleanup at all. A wedged wallet suppressed the cleanup
+    // owed to every other one.
+    vi.useFakeTimers();
+    try {
+      let cleanups = 0;
+      let landSlow: (() => void) | undefined;
+      const teardown = disconnectEvery(
+        ['wedged', 'slow'],
+        ({ connector }) =>
+          new Promise<void>((resolve) => {
+            // 'wedged' never settles at all.
+            if (connector === 'slow') landSlow = resolve;
+          }),
+        {
+          perConnectorTimeoutMs: 50,
+          onStragglerSettled: () => {
+            cleanups += 1;
+          },
+        },
+      );
+      const outcome = teardown().catch(() => 'gave up');
+      await vi.advanceTimersByTimeAsync(200);
+      expect(await outcome).toBe('gave up');
+      expect(cleanups).toBe(0);
+      // The second connector finally lands. The first is still wedged — and
+      // must not prevent this one's cleanup.
+      landSlow?.();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(cleanups).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('prefers the connectors live at CALL time over the captured ones', async () => {
+    // Round 8 P1. The captured list is a render-time snapshot, and during
+    // wagmi's `reconnecting` state it is still filling — so a connection that
+    // did not exist when the page rendered, but does by the time the user
+    // confirms, would never be torn down and would survive the erasure.
+    const asked: string[] = [];
+    const teardown = disconnectEvery(
+      ['captured'],
+      async ({ connector }) => {
+        asked.push(connector);
+      },
+      { connectorsAtRunTime: () => ['restored-a', 'restored-b'] },
+    );
+    await teardown();
+    expect(asked).toEqual(['restored-a', 'restored-b']);
+  });
+
+  it('falls back to the captured list when the live one is momentarily empty', async () => {
+    // An empty live read must not turn into the empty-list refusal — that
+    // would report a wallet holdout over a transient gap.
+    const asked: string[] = [];
+    const teardown = disconnectEvery(
+      ['captured'],
+      async ({ connector }) => {
+        asked.push(connector);
+      },
+      { connectorsAtRunTime: () => [] },
+    );
+    await teardown();
+    expect(asked).toEqual(['captured']);
   });
 });

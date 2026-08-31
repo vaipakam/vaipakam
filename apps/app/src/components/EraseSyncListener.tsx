@@ -29,6 +29,7 @@ import { useTranslation } from 'react-i18next';
 import {
   disconnectEvery,
   eraseConnectorStorageQuietly,
+  eraseIndexedDbData,
   erasePerTabData,
   eraseWebStorageQuietly,
 } from '../lib/dataRights';
@@ -98,6 +99,25 @@ export function EraseSyncListener() {
   useEffect(
     () =>
       listenForErase(() => {
+        // What this tab has to undo after its OWN teardown, in both stores.
+        //
+        // CONNECTOR KEYS ONLY in Web Storage (round 7 P2): this runs seconds
+        // after the broadcast on a slow teardown and the tab stays usable in
+        // between, so a blanket sweep would delete preferences, receipts or
+        // notification state the user created AFTER asking to be erased.
+        //
+        // AND THE DATABASES (round 8 P1). `eraseMyData` broadcasts BEFORE the
+        // originating tab clears IndexedDB, so this teardown races that clear
+        // — and WalletConnect persists its session and keychain THROUGH
+        // IndexedDB while disconnecting. A write landing after the origin's
+        // transaction survived an erasure that reported success, and a
+        // Web-Storage-only cleanup could not see it. Clearing a store that is
+        // already empty is cheap and idempotent, which is what makes this
+        // safe to run on every peer teardown.
+        const peerCleanup = () => {
+          eraseConnectorStorageQuietly();
+          void eraseIndexedDbData();
+        };
         erasePerTabData();
         // Best effort and deliberately unacknowledged, exactly like the
         // per-tab storage clear above: a listener cannot report back to a
@@ -121,9 +141,9 @@ export function EraseSyncListener() {
           // refuses and makes the whole thing reject.
           void disconnectEvery(connectors, disconnectAsync, {
             // A connector the per-target bound gave up on can still complete
-            // later and write (round 7 P2) — this fires after the last one
+            // later and write (round 7 P2) — this fires when each straggler
             // actually settles, which the `finally` below cannot wait for.
-            onAllSettled: eraseConnectorStorageQuietly,
+            onStragglerSettled: peerCleanup,
           })()
             .catch(() => {
               // Unacknowledged either way — there is nobody to report to. The
@@ -131,13 +151,7 @@ export function EraseSyncListener() {
               // this handler down with it.
             })
             .finally(() => {
-              // CONNECTOR KEYS ONLY (round 7 P2). This runs seconds after the
-              // broadcast on a slow teardown, and the tab stays usable in
-              // between — a blanket sweep here would delete preferences,
-              // receipts or notification state the user created AFTER asking
-              // to be erased. The cleanup undoes the teardown's own write and
-              // nothing else.
-              eraseConnectorStorageQuietly();
+              peerCleanup();
             });
         }
         resetTheme();

@@ -44,7 +44,7 @@ import {
 import { useTheme } from '../app/ThemeContext';
 import { useMode } from '../app/ModeContext';
 import { useTranslation } from 'react-i18next';
-import { useAccount, useDisconnect } from 'wagmi';
+import { useAccount, useConfig, useDisconnect } from 'wagmi';
 import { bumpEraseEpoch } from '../lib/eraseEpoch';
 import { DiagErasureCard } from '../components/DiagErasureCard';
 
@@ -86,7 +86,18 @@ export function DataRights() {
   // unconnected visitor they had been signed out. The teardown is supplied
   // only when there is something to tear down, which also keeps
   // `connector.attempted` meaning what it says.
-  const { isConnected } = useAccount();
+  //
+  // `status`, NOT `isConnected` (round 8 P1). wagmi's `getAccount` reports
+  // `isConnected: false` throughout `reconnecting` — the state a persisted
+  // WalletConnect session sits in while it is being restored — even though
+  // there IS a persisted connection and `reconnect()` is actively authorizing
+  // connectors. Gating on `isConnected` therefore supplied no teardown at
+  // exactly the moment one was most needed, marked the connector unattempted,
+  // reported a clean erasure, and let the in-flight reconnect repopulate
+  // connection state and storage after the sweep. Anything other than
+  // `disconnected` means something may still be holding on.
+  const { status } = useAccount();
+  const config = useConfig();
   const [downloaded, setDownloaded] = useState(false);
   const [confirming, setConfirming] = useState(false);
   // The erase outcome, FROZEN at the moment it happened (review round 3
@@ -217,14 +228,29 @@ export function DataRights() {
   // governing rule is that not knowing is not nothing, and a loading state is
   // the purest case of not knowing. It starts UNREADABLE, which renders the
   // "could not look" message until a real answer replaces it.
-  const [dbInventory, setDbInventory] = useState<IndexedDbInventory>({
-    records: 0,
-    refused: true,
-  });
+  //
+  // The answer is stored WITH the generation it answers for, and pendingness
+  // is DERIVED rather than assigned (round 8 P2). Invalidating by writing
+  // `refused: true` at the top of the effect is the obvious shape and this
+  // repo's `set-state-in-effect` rule rejects it, correctly — it is a
+  // cascading render for a value the render can work out for itself. A
+  // generation that has not been answered yet IS the pending state.
+  const inventoryGen = `${storageTick}|${confirming}|${result ? 1 : 0}`;
+  const [dbInventory, setDbInventory] = useState<{
+    gen: string;
+    value: IndexedDbInventory;
+  }>({ gen: '', value: { records: 0, refused: true } });
   useEffect(() => {
     let live = true;
+    // INVALIDATE BEFORE RE-READING (round 8 P2). Adding `confirming` as a
+    // trigger started the refresh and left the PREVIOUS answer on screen, so
+    // the user could open the confirmation and press it while a stale
+    // definitive total was still displayed — the figure claiming to describe
+    // the button beside it, and describing an earlier moment instead. Going
+    // back to unreadable means the page shows "could not look" until the new
+    // answer lands, and the confirm is withheld while it does.
     void inspectIndexedDbData().then((inventory) => {
-      if (live) setDbInventory(inventory);
+      if (live) setDbInventory({ gen: inventoryGen, value: inventory });
     });
     return () => {
       live = false;
@@ -236,14 +262,24 @@ export function DataRights() {
     // could leave this at zero indefinitely, and the figure shown next to the
     // confirm button is exactly where that matters. Re-reading when the user
     // asks to confirm makes the promise fresh at the moment it is made.
-  }, [storageTick, result, confirming]);
-  const stored = erasable.count + dbInventory.records;
+  }, [inventoryGen]);
+  // Unanswered generation = pending, and pending reads as UNREADABLE. Round 6
+  // P2 established that a not-yet-known count must not render as "read, and
+  // empty"; round 8 P2 extended it to a REFRESH, where the previous answer
+  // stayed on screen as a definitive total while a new one was in flight —
+  // the figure claiming to describe the button beside it and describing an
+  // earlier moment instead.
+  const dbPending = dbInventory.gen !== inventoryGen;
+  const dbAnswer: IndexedDbInventory = dbPending
+    ? { records: 0, refused: true }
+    : dbInventory.value;
+  const stored = erasable.count + dbAnswer.records;
   // Review round 1 P1: "could not read" is not "nothing is here". With
   // them collapsed, a browser refusing to be read told the user their
   // storage was empty — the refusal message below unreachable in the
   // one case it was written for. (The buttons that gating disabled
   // then are un-gated entirely as of round 8.)
-  const refused = snapshot.refused || erasable.refused || dbInventory.refused;
+  const refused = snapshot.refused || erasable.refused || dbAnswer.refused;
   // The SYNCHRONOUS half of what this render is showing, recorded for the
   // poll above to compare against — an every-render effect rather than a
   // render-time ref write, which the refs rule forbids. Sync-only on both
@@ -301,7 +337,14 @@ export function DataRights() {
         // this page. The page has no rendering harness, and round 2's lesson
         // here was that the fixes were in the library and the page was not
         // using them.
-        disconnect: isConnected
+        // `status !== 'disconnected'` (round 8 P1) — see the hook above. The
+        // teardown reads the connector list from the LIVE config at call time
+        // rather than from the render-time value, because during a reconnect
+        // that list is still filling: by the time the user's click reaches
+        // here, connections wagmi did not have at render may exist, and those
+        // are exactly the ones that would otherwise survive the erasure.
+        disconnect:
+          status !== 'disconnected'
           ? disconnectEvery(liveConnectors, disconnectAsync, {
               // Self-review after round 7: the straggler callback was wired
               // into the peer listener and NOT here, so the page had the
@@ -311,7 +354,12 @@ export function DataRights() {
               // nothing left to notice. Two different triggers are needed and
               // both are now present: this one for a straggler, the library's
               // `settledLate` for the whole-teardown timeout.
-              onAllSettled: eraseConnectorStorageQuietly,
+              onStragglerSettled: eraseConnectorStorageQuietly,
+              // Re-read at call time, for the reconnect case above.
+              connectorsAtRunTime: () =>
+                [...config.state.connections.values()].map(
+                  (connection) => connection.connector,
+                ),
             })
           : undefined,
       });
