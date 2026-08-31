@@ -1333,7 +1333,7 @@ function isHelpInvocation(cmd) {
  * Worker's directory could bless an upload through a DIFFERENT file than the
  * one selected (#1995 r22).
  */
-function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
+function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '') {
   if (isHelpInvocation(cmd)) return true;
   // `run deploy` gets the same option-value strip the flags do: it was a raw
   // substring test, so `--message="run deploy"` blessed a bare deploy that
@@ -1591,6 +1591,25 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
               ? []
               : [`${REPO_ROOT}/${normalizeRel(`${effCwd}/${name}`)}`, underWorker];
         const chosen = candidates.find((c) => existsSync(c)) ?? candidates[0];
+        // A config the surrounding file REWRITES before the deploy runs is not
+        // the file wrangler will load, so the checkout's copy cannot bless the
+        // command. `selectorScope` has invalidated a rewritten config for the
+        // IDENTITY read since r13; this — the PRESERVATION read, two readers of
+        // the same file for two different fields — did not, so a checked-in
+        // `keep_vars: true` rewritten to `false` immediately before the call
+        // still blessed a destructive deploy (Codex #2036 r15).
+        //
+        // The same sibling split as every other finding on this file, and the
+        // reason the invalidation now lives beside `declaredWorkerName` in the
+        // shared helper rather than at one of its two call sites.
+        //
+        // Only for an EXPLICITLY selected config. A rewritten DEFAULT would be
+        // the same hazard, but this scanner cannot tell a script that generates
+        // its own `wrangler.jsonc` from one that merely mentions the basename,
+        // and every protected package's own config is checked in — so the
+        // conservative reading there costs a false red on the tree as it
+        // stands, which this one does not.
+        if (cfgName !== null && configIsRewritten(fileText, cfgName)) continue;
         if (keepVarsEnabled(chosen)) return true;
       }
     }
@@ -2873,6 +2892,46 @@ function argvValue(region, spellings, before = '') {
 }
 
 /**
+ * Is the token at `index` in the child call's OWN options argument? (#2036 r12)
+ *
+ * `{metadata: {env: {…}}}` is application data Node ignores, and scoping to
+ * "any `env` in the call" let it block an ordinary deploy. Brace DEPTH is what
+ * separates them: JavaScript's options object puts `env` one brace in, Python's
+ * `env={…}` keyword none.
+ *
+ * DEPTH RELATIVE TO THE CHILD CALL, not to the whole segment. Measured
+ * globally, a deploy written inside an object literal — `const runners =
+ * {result: spawnSync(…)}` — put its own options argument one brace deeper and
+ * the real `env` was rejected as nested metadata (#2036 r13). The origin is the
+ * child-process call word nearest before the token.
+ *
+ * Extracted from inside the environment predicate when a second branch needed
+ * it (#2036 r15). Inlined, it was the sort of rule that gets taught to one
+ * caller and not its sibling — which is the shape of most of this file's
+ * findings, including the one that prompted the extraction.
+ */
+function atChildOptionsDepth(text, index) {
+  const calls = [...text.matchAll(
+    /\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(/g,
+  )].filter((c) => c.index < index);
+  const callAt = calls.length > 0 ? calls[calls.length - 1].index : 0;
+  let depth = 0;
+  let quote = null;
+  for (let i = callAt; i < index; i += 1) {
+    const c = text[i];
+    if (quote) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === '`') quote = c;
+    else if (c === '{') depth += 1;
+    else if (c === '}') depth -= 1;
+  }
+  return depth <= 1;
+}
+
+/**
  * Is this config REWRITTEN by the same file before the deploy runs? (#2036 r13)
  *
  * The identity read trusts the checkout's copy, which is right for a config
@@ -2897,6 +2956,55 @@ function configIsRewritten(text, cfgPath) {
       String.raw`|>\s*\S*` +
       esc,
   ).test(text);
+}
+
+/**
+ * Every Worker name this config can deploy, or `null` if it answers none.
+ *
+ * `{ names, enumerable }`. `names` is the top-level identity plus, when an
+ * environment may be selected, each environment's own declared name.
+ * `enumerable` says whether that list is COMPLETE — a TOML config with
+ * `[env.…]` tables is not, because the top-level reader stops at the first
+ * table header, and a caller must not read an incomplete list as "no protected
+ * Worker here".
+ *
+ * Split from `declaredWorkerName` when an environment stopped meaning
+ * "unreadable" and started meaning "a different name in the same file"
+ * (#2036 r15).
+ */
+function declaredWorkerNames(absPath, includeEnvs) {
+  const top = declaredWorkerName(absPath);
+  if (!includeEnvs) return top === null ? null : { names: [top], enumerable: true };
+  let text;
+  try {
+    text = readFileSync(absPath, 'utf8');
+  } catch {
+    return null;
+  }
+  if (/\.toml$/.test(absPath)) {
+    // The TOML reader is a top-level scanner that stops at the first table
+    // header, so it cannot see `[env.staging]`. Declining is the honest answer;
+    // inventing one from the top level alone is the false-green direction.
+    const enumerable = !/^\s*\[\s*env\s*\./m.test(text);
+    return top === null ? null : { names: [top], enumerable };
+  }
+  let envNames = [];
+  try {
+    const cfg = parseJsonc(text);
+    const envs = cfg !== null && typeof cfg === 'object' ? cfg.env : null;
+    if (envs !== null && typeof envs === 'object') {
+      envNames = Object.values(envs)
+        .filter((e) => e !== null && typeof e === 'object' && typeof e.name === 'string')
+        // The same rejections the top-level read applies: an empty name is no
+        // name, and one carrying an unexpanded variable is not a value.
+        .map((e) => e.name)
+        .filter((n) => n !== '' && !/\$/.test(n));
+    }
+  } catch {
+    return null;
+  }
+  const names = [...(top === null ? [] : [top]), ...envNames];
+  return names.length === 0 ? null : { names, enumerable: true };
 }
 
 function declaredWorkerName(absPath) {
@@ -3597,37 +3705,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
     // #2036 r12). Brace DEPTH is what separates them: JavaScript's options
     // object puts `env` one brace in, Python's `env={…}` keyword none.
     [...rawSeg.matchAll(/(?<![\w$.])env\s*[:=]\s*\{/g)]
-      .filter((opener) => {
-        // DEPTH RELATIVE TO THE CHILD CALL, not to the whole segment. Measured
-        // globally, a deploy written inside an object literal —
-        // `const runners = {result: spawnSync(…)}` — put its own options
-        // argument one brace deeper and the real `env` was rejected as nested
-        // metadata (Codex #2036 r13). My r12 fix measured from the wrong
-        // origin, which is the same class as reading a value from the wrong
-        // base directory.
-        //
-        // The origin is the child-process call word nearest before this `env`.
-        const callAt = (() => {
-          const calls = [...rawSeg.matchAll(
-            /\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(/g,
-          )].filter((c) => c.index < opener.index);
-          return calls.length > 0 ? calls[calls.length - 1].index : 0;
-        })();
-        let depth = 0;
-        let quote = null;
-        for (let i = callAt; i < opener.index; i += 1) {
-          const c = rawSeg[i];
-          if (quote) {
-            if (c === '\\') i += 1;
-            else if (c === quote) quote = null;
-            continue;
-          }
-          if (c === '"' || c === "'" || c === '`') quote = c;
-          else if (c === '{') depth += 1;
-          else if (c === '}') depth -= 1;
-        }
-        return depth <= 1;
-      })
+      .filter((opener) => atChildOptionsDepth(rawSeg, opener.index))
       .some((opener) => {
       // The `env` object's own extent, brace-balanced so a nested object does
       // not end it early.
@@ -3652,6 +3730,34 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
         /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|[A-Za-z_$][\w$.]*)/g,
       )].some((mm) => notInsideString(body, mm.index + (/^["']/.test(mm[0]) ? 1 : 0)));
     }) ||
+    // An `env` option this scanner CANNOT READ counts as selecting one.
+    //
+    // Every branch above reads a LITERAL: an inline object, or a value on the
+    // command line. The ordinary way to pass a child environment is neither —
+    // `const childEnv = {...process.env, CLOUDFLARE_ENV: 'staging'};` then
+    // `spawnSync('wrangler', argv, {env: childEnv})` — and with no `env: {`
+    // opener to find, the predicate answered "no environment" and the config's
+    // TOP-LEVEL name was trusted, although `env.staging.name` is what ships
+    // (Codex #2036 r15).
+    //
+    // Answered by PRESENCE, not by chasing the binding. Resolving `childEnv`
+    // means constant-folding the host language, and a value resolved WRONGLY
+    // is authoritative — the same trade the escaped-literal reader settled the
+    // other way for the same reason. Presence alone is enough here because the
+    // question is only whether the declared name still describes what ships.
+    //
+    // The conservative direction is cheap: an unreadable environment sends the
+    // deploy to the directory fallback, which reports rather than blesses. It
+    // costs nothing on this tree either, by the same measurement the burden
+    // inversion rests on — no deploy here selects a config at all, and this
+    // predicate is consulted only when one does.
+    //
+    // Two spellings: a value that is not a brace literal (`env: childEnv`,
+    // `env=os.environ.copy()`), and JavaScript's property shorthand (`{env}`),
+    // which carries no value token at all.
+    [...rawSeg.matchAll(
+      /(?<![\w$.])env\s*[:=]\s*(?!\{)[^\s,)\]}]|(?<=[{,]\s{0,80})env\s*(?=[,}])/g,
+    )].some((m) => atChildOptionsDepth(rawSeg, m.index)) ||
     // Argv-array `--env` / `-e`, the spelling the config selector already
     // learned two findings ago. Same shape, same blind spot.
     // Reuses the argv reader rather than a second pattern, so a COMPUTED
@@ -3669,12 +3775,22 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // A value the shell has since UNSET is removed from this map at the
       // point the walk sees the `unset`, so consulting it here is enough.
       (vars.get('CLOUDFLARE_ENV') ?? '') !== '');
-  if (
-    cfg !== null &&
-    !nameUnresolved &&
-    !envAssigned &&
-    !/(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion)
-  ) {
+  // An environment SELECTS a different name; it does not make the config
+  // unreadable. Wrangler merges `env.<name>` over the top level and derives the
+  // deployed Worker as that block's own `name`, or as `<top-level>-<env>` when
+  // it declares none. So the top-level name stays a candidate — the derived
+  // form matches it by the same suffix rule the scoped lookup already applies —
+  // and each environment's declared name is a candidate beside it.
+  //
+  // Skipping the read entirely, as this did, is what made the finding: with an
+  // environment selected the deploy fell through to the directory, which for a
+  // helper OUTSIDE both packages is nothing at all, so a config whose
+  // `env.staging.name` is a protected Worker deployed it silently (Codex #2036
+  // r15). Reading the environments answers the question the fall-through was
+  // avoiding.
+  const envSelected =
+    envAssigned || /(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion);
+  if (cfg !== null && !nameUnresolved) {
     for (const b of bases) {
       // Resolved AS WRANGLER RESOLVES IT — against the command's own working
       // directory — the same rule `commandIsSafe` follows for `keep_vars`. An
@@ -3698,9 +3814,19 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // A config the surrounding file REWRITES before the deploy is not the
       // file wrangler will load, so the checkout's copy answers nothing
       // (#2036 r13). Unread reaches the inversion, which reports.
-      const declared = configIsRewritten(fileText ?? '', cfg)
+      const read = configIsRewritten(fileText ?? '', cfg)
         ? null
-        : declaredWorkerName(`${REPO_ROOT}/${rel}`);
+        : declaredWorkerNames(`${REPO_ROOT}/${rel}`, envSelected);
+      // NOT ENUMERABLE is not the same as NOT PROTECTED, and collapsing them
+      // would be this file's recurring defect once more: one spelling for two
+      // answers. A TOML config carrying `[env.…]` tables cannot have its
+      // environments read by the top-level scanner here, so with an environment
+      // selected it answers nothing and falls through — the behaviour before
+      // this change, kept rather than widened, because the alternative is to
+      // treat an unread environment as an unprotected one.
+      const declared = read === null || (envSelected && !read.enumerable)
+        ? null
+        : read.names;
       if (declared === null) continue;
       // EXACT, or the protected name plus an environment suffix.
       //
@@ -3717,8 +3843,8 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       //
       // The SEPARATOR is what stops the rule swallowing the namespace:
       // `vaipakam-keeperbot` is a different Worker, not an environment.
-      const hit = SCOPED.find(
-        (s) => s.workerName === declared || declared.startsWith(`${s.workerName}-`),
+      const hit = SCOPED.find((s) =>
+        declared.some((n) => s.workerName === n || n.startsWith(`${s.workerName}-`)),
       );
       // KEEP SEARCHING PAST A NON-MATCH, exactly as the directory loop below
       // does. Returning on the first base that merely ANSWERED made an
@@ -3729,6 +3855,19 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       // times (#1995 r8's `filterScopes` is the same shape), so the loop is
       // written to the same rule as its neighbour rather than to a new one.
       if (hit) return { scope: hit };
+      // WITH AN ENVIRONMENT SELECTED THE READ MAY ONLY ADD A SCOPE, NEVER
+      // REMOVE ONE. Wrangler derives the deployed name from the environment, so
+      // a top-level name that matches nothing protected is not evidence that
+      // nothing protected is deployed — the environment block this scanner may
+      // not have been able to read could still name one. Counting it as an
+      // answer would suppress the directory fallback on that non-evidence,
+      // which is the recorded limit this file has pinned since the identity
+      // read landed, and seven fixtures pin it.
+      //
+      // So the environment case is one-directional: an environment naming a
+      // protected Worker pulls the deploy INTO scope (Codex #2036 r15), and
+      // anything else defers to the directory exactly as before.
+      if (envSelected) continue;
       answered += 1;
     }
   }
@@ -6821,8 +6960,9 @@ for (const file of walk(REPO_ROOT)) {
         // negation.
         const aliased = resolveRunAlias(seg, packageContextOf(rel));
         if (
-          commandIsSafe(aliased ?? seg, safeHint) ||
-          (aliased === null && commandIsSafe(expandCommandVars(seg, fileVars), safeHint))
+          commandIsSafe(aliased ?? seg, safeHint, '', text) ||
+          (aliased === null &&
+            commandIsSafe(expandCommandVars(seg, fileVars), safeHint, '', text))
         ) {
           continue;
         }
@@ -7526,8 +7666,12 @@ for (const file of walk(REPO_ROOT)) {
         // means safe on every path the shell can take, so a segment is blessed
         // only when every reachable base blesses it.
         const cmdCwds = [...new Set(input.map((st) => st.cwd))];
+        // Captured because the closure's own parameter is also called `text`
+        // and shadows the file's. Named rather than renamed so the shadowing
+        // is visible at the point it matters.
+        const fileTextForSafety = text;
         const safeEverywhere = (text) =>
-          cmdCwds.every((cwd) => commandIsSafe(text, safeHint, cwd));
+          cmdCwds.every((cwd) => commandIsSafe(text, safeHint, cwd, fileTextForSafety));
         if (
           safeEverywhere(aliased ?? seg) ||
           (aliased === null && safeEverywhere(expandCommandVars(seg, fileVars)))
