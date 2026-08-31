@@ -4151,7 +4151,16 @@ describe('check-deploy-invocations — apps/agent scope (#1933)', () => {
   });
 
   it("but wrangler's own -c still redirects (#1995 r16 control)", () => {
+    // The REDIRECT TARGET IS SEEDED NOW, and the control is stronger for it.
+    // #1996 inverted the burden for a selected config whose Worker cannot be
+    // identified, and this fixture's tree never contained the file it points
+    // at — so the redirect was being proved by the scanner's inability to look,
+    // which is the same evidence a missing file gives. With the config present
+    // the pass is decided by wrangler's own rule: the file names `vaipakam-www`,
+    // which is not a protected Worker. The real tree has always had this file.
+    seed('apps/www/wrangler.jsonc', '{"name": "vaipakam-www"}\n');
     expect(runWith('n2.sh', 'cd apps/agent\nwrangler deploy -c ../www/wrangler.jsonc\n').ok).toBe(true);
+    seed('apps/www/wrangler.jsonc', '{"name": "vaipakam-www"}\n');
     expect(
       runWith('n3.sh', 'cd apps/agent\nwrangler deploy --config ../www/wrangler.jsonc\n').ok,
     ).toBe(true);
@@ -6555,17 +6564,45 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
   });
 
-  it('a config path climbing OUT of the checkout changes no verdict', () => {
-    // The out-of-tree refusal in the source is recorded as an EQUIVALENT
-    // MUTANT rather than pinned, and this fixture states the verdict it does
-    // not change: an escaping path already resolves to no directory scope, so
-    // the deploy passes with or without the refusal. Proving otherwise would
-    // mean planting a file OUTSIDE the fixture root — in the shared temp
-    // directory, where concurrent fixture roots would see it — which is the
-    // isolation this harness exists to keep.
+  it('a config path climbing OUT of the checkout is reported, not blessed', () => {
+    // The out-of-tree refusal stays an EQUIVALENT MUTANT — with or without it
+    // the Worker is unidentified, because the file is not there to read either
+    // way. What CHANGED is the verdict that unidentified now earns: the burden
+    // inversion reports it rather than passing it. Proving the refusal itself
+    // would mean planting a file OUTSIDE the fixture root, in the shared temp
+    // directory where concurrent roots would see it, which is the isolation
+    // this harness exists to keep.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy --config ../../../outside.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
+
+  it('an UNIDENTIFIABLE selected config is reported under its own group', () => {
+    // The burden inversion, stated directly. Nothing on this line or in the
+    // tree says which Worker the deploy targets, so the guard asks the command
+    // to be safe for whatever it targets rather than guessing — and the report
+    // carries its own remedy instead of a package's, which would name a Worker
+    // that was never identified.
+    const r = runWith('w.sh', 'wrangler deploy --config "$GENERATED"\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+    expect(r.out).not.toContain('pnpm --filter');
+  });
+
+  it('and adding --keep-vars is enough to clear it', () => {
+    // The remedy has to be benign for the inversion to be affordable:
+    // `--keep-vars` is never wrong for any Worker, so a legitimate `--config`
+    // deploy is fixed by making the command safe, not by an exemption.
+    expect(runWith('w.sh', 'wrangler deploy --config "$GENERATED" --keep-vars\n').ok).toBe(true);
+  });
+
+  it('as is declaring keep_vars in the selected config', () => {
+    // The `versions upload` path has no flag at all, so this is the only
+    // remedy there — and it is the root fix rather than a per-call-site one.
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
     expect(
-      runWith('w.sh', 'cd apps/agent\nwrangler deploy --config ../../../outside.jsonc\n').ok,
+      runWith('w.sh', 'wrangler versions upload --config configs/custom.jsonc\n').ok,
     ).toBe(true);
   });
 

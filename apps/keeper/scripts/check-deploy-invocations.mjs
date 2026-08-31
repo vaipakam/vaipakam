@@ -1669,6 +1669,19 @@ const SCOPED = [
 ];
 
 /**
+ * The scope of a deploy whose target this scanner could not name (#1996).
+ *
+ * A SINGLETON, compared by identity everywhere `scope` is, so it groups and
+ * de-duplicates like any other scope while belonging to no package. It carries
+ * no `filter`, `workerName` or `vars` on purpose — every one of those would be
+ * a claim about a Worker that has not been identified, and the reporting path
+ * gives this group its own remedy rather than borrowing a package's.
+ */
+const UNNAMED_SCOPE = {
+  dir: 'a Worker this scanner could not name',
+};
+
+/**
  * In scope by explicit reference, or by living in a scoped package's tree.
  *
  * The brace form matters and is not decoration: the staging plan writes
@@ -2653,6 +2666,22 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     (pkgDirRaw !== null && pkgDir === null) ||
     (wrCwdRaw !== null && wrCwd === null)
   ) {
+    // …except for a COMPUTED `--config`, which is the commonest way to select a
+    // Worker this scanner cannot name and so the case the #1996 inversion is
+    // for. "A target was named and I cannot say what it is" is precisely the
+    // answer that must not pass silently; deferring here let
+    // `wrangler deploy --config "$GENERATED"` through with no report at all.
+    //
+    // NARROWED to `--config` on purpose. `--cwd`/`--dir` reach the same
+    // not-known state, but they are ordinary in wrappers and were not measured;
+    // the zero-invocation basis this inversion rests on was counted for
+    // `--config` alone. Widening to them is a separate change with its own
+    // measurement, not a tidy-up of this one.
+    //
+    // Prose keeps deferring to the text, as below.
+    if (hasCwdState && cfgRaw !== null && cfg === null) {
+      return { scope: UNNAMED_SCOPE };
+    }
     return null;
   }
   if (cfg === null && pkgDir === null && wrCwd === null) return null;
@@ -2795,6 +2824,31 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     }
     if (!raw.startsWith('/')) return null;
   }
+  // BURDEN INVERTED for a selected config this scanner could not identify.
+  //
+  // Everything above answers "which Worker"; this answers "what to do when
+  // nothing could". Wrangler takes the identity from the config's `name`, so a
+  // `--config` whose file cannot be read, parsed, or resolved is a deploy of an
+  // UNKNOWN Worker — and returning "no scope" for it is the scanner asserting
+  // something it does not know. The file's own rule for that is to refuse to
+  // stay silent rather than to infer: the same inversion `ALLOWED` documents
+  // for prose.
+  //
+  // MEASURED before adopting, because over-reporting is safe only while it
+  // stays rare: the tree carries 132 deploy mentions and ZERO that select a
+  // config, so this rule cannot produce a single report on the tree as it
+  // stands. Re-measure before assuming that is still true.
+  //
+  // The remedy is benign, which is what makes the inversion affordable here
+  // rather than an allowlist generator: `--keep-vars` is never wrong for any
+  // Worker — it only preserves dashboard-managed values — so someone adding a
+  // legitimate `--config` deploy fixes the report by making the command safe,
+  // not by asking for an exemption.
+  //
+  // PROSE IS DELIBERATELY EXCLUDED: the `!hasCwdState` branch above has already
+  // returned, deferring to the surrounding text, which on a runbook line is the
+  // better answer and names a package the reader can act on.
+  if (cfg !== null) return { scope: UNNAMED_SCOPE };
   return { scope: null };
 }
 
@@ -6548,11 +6602,30 @@ if (violations.length > 0) {
   // the right pnpm filter and the right list of vars at risk, and a single
   // keeper-worded message next to an agent violation sends them to the wrong
   // wrangler.jsonc (#1933).
-  for (const s of SCOPED) {
+  // `UNNAMED_SCOPE` is appended rather than folded into `SCOPED`: it is a
+  // reporting group, not a protected package, and every other reader of
+  // `SCOPED` — the directory matcher, the filter matcher, the config lookup —
+  // would start treating it as one. Iterating `SCOPED` alone here would have
+  // dropped its violations from the output entirely while still counting them
+  // in the header, which is the worst of both.
+  for (const s of [...SCOPED, UNNAMED_SCOPE]) {
     const hits = violations.filter((v) => v.scope === s);
     if (hits.length === 0) continue;
     console.error(`  ${s.dir}:\n`);
     for (const v of hits) console.error(`    ${v.where}\n      ${v.line}\n`);
+    if (s === UNNAMED_SCOPE) {
+      console.error(
+        `    This command selects a configuration file, and wrangler takes the Worker's\n` +
+          `    identity from that file's \`name\` — which could not be read here (the path\n` +
+          `    is computed, the file is absent from the checkout, it does not parse, or it\n` +
+          `    declares no literal name).\n\n` +
+          `    Rather than guess which Worker this deploys, the guard asks the command to\n` +
+          `    be safe for whatever it targets: add --keep-vars, or declare\n` +
+          `    \`"keep_vars": true\` in the selected config — which is also the only remedy\n` +
+          `    for \`versions upload\`, where the flag does not exist.\n`,
+      );
+      continue;
+    }
     console.error(
       `    Use \`pnpm --filter ${s.filter} run deploy\` (the package script carries\n` +
         `    the flag), or add --keep-vars explicitly. A bare deploy deletes every var\n` +
