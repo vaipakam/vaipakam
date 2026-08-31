@@ -27,6 +27,7 @@ import {
   eraseIndexedDbData,
   INDEXED_DB_TIMEOUT_MS,
   eraseMyDataFully,
+  DISCONNECT_TIMEOUT_MS,
 } from './dataRights';
 
 /**
@@ -577,10 +578,12 @@ describe('IndexedDB erasure (#1862 Part 2)', () => {
     opened: string[];
     cleared: string[];
     deleted: string[];
+    txOpened: string[];
   } {
     const opened: string[] = [];
     const cleared: string[] = [];
     const deleted: string[] = [];
+    const txOpened: string[] = [];
     (globalThis as Record<string, unknown>).indexedDB = {
       deleteDatabase(name: string) {
         deleted.push(name);
@@ -601,6 +604,7 @@ describe('IndexedDB erasure (#1862 Part 2)', () => {
             objectStoreNames: { contains: (n: string) => stores.includes(n) },
             close: () => {},
             transaction: (store: string) => {
+              txOpened.push(`${name}/${store}`);
               const tx: Record<string, unknown> = {
                 objectStore: () => ({
                   clear: () => {
@@ -622,7 +626,7 @@ describe('IndexedDB erasure (#1862 Part 2)', () => {
         return req;
       },
     };
-    return { opened, cleared, deleted };
+    return { opened, cleared, deleted, txOpened };
   }
 
   it('names both stores, and both come from the registry', () => {
@@ -666,10 +670,17 @@ describe('IndexedDB erasure (#1862 Part 2)', () => {
     expect(spy.deleted).toEqual(['WALLET_CONNECT_V2_INDEXED_DB', 'cbwsdk']);
   });
 
-  it('treats a database without the expected store as already clean', async () => {
-    stubIndexedDb(() => ({ stores: ['something-else'] }));
+  it('treats a database without the expected store as already clean, WITHOUT opening a transaction', async () => {
+    // The `objectStoreNames.contains` guard is the whole behaviour here, and
+    // the outcome alone cannot see it: a stub that happily opens a
+    // transaction on a store that does not exist reports success either way.
+    // The real API throws NotFoundError, so what must be asserted is that no
+    // transaction is attempted at all. (Removing the guard survived a
+    // mutation run of the first version of this test.)
+    const spy = stubIndexedDb(() => ({ stores: ['something-else'] }));
     const result = await eraseIndexedDbData();
     expect(result.cleared).toBe(2);
+    expect(spy.txOpened).toEqual([]);
   });
 
   it('names a store whose transaction fails, rather than counting it cleared', async () => {
@@ -835,6 +846,45 @@ describe('eraseMyDataFully (#1862 Part 2)', () => {
     const result = await eraseMyDataFully();
     expect(result.connector).toEqual({ attempted: false, disconnected: false });
     expect(result.complete).toBe(true);
+  });
+
+  it('is INCOMPLETE when the browser hides IndexedDB entirely', async () => {
+    // Round 1 P2. Neither store was emptied nor observed absent, so a
+    // browser that hid the API after a wallet wrote to it leaves that
+    // material in place and unverifiable. Reporting success there is the
+    // same false assurance as reporting it over a refusal.
+    fakeWindow(new Map([['app.mode', 'basic']]));
+    delete (globalThis as Record<string, unknown>).indexedDB;
+    const result = await eraseMyDataFully();
+    expect(result.indexedDb.unavailable).toBe(true);
+    expect(result.localStorage).toBeGreaterThan(0);
+    expect(result.complete).toBe(false);
+  });
+
+  it('bounds a disconnect that never settles, and still erases everything else', async () => {
+    // Round 1 P2. Only a REJECTED promise reaches the catch; one that never
+    // settles would hang the erasure forever, leaving the page on its
+    // working label with nothing removed at all.
+    vi.useFakeTimers();
+    try {
+      fakeWindow(new Map([['wagmi.store', '{}']]));
+      stubIdb('success');
+      const pending = eraseMyDataFully({
+        disconnect: () => new Promise<void>(() => {}),
+      });
+      await vi.advanceTimersByTimeAsync(DISCONNECT_TIMEOUT_MS + 1);
+      const result = await pending;
+      expect(result.connector).toEqual({
+        attempted: true,
+        disconnected: false,
+      });
+      // The point of the bound: the rest of the erasure still ran.
+      expect(result.localStorage).toBeGreaterThan(0);
+      expect(result.indexedDb.cleared).toBe(2);
+      expect(result.complete).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('an empty browser erases nothing and is still complete', async () => {
