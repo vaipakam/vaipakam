@@ -124,6 +124,28 @@ Each of those messages replaces a success that would have been true of the
 storage and false of the session. Reporting "erased" over a live connection is
 the same failure this page was built to avoid, one layer further along.
 
+**Three things it still cannot promise, said here rather than discovered.**
+Each is being tracked separately, and each is the kind of limit a person
+would rather read than meet.
+
+- **A wallet still signing itself back in may not be stopped.** If a saved
+  connection is in the middle of being restored when you erase, the app can
+  ask it to stop and cannot guarantee it hears — the restoring connection may
+  finish afterwards and put its details back. The page does not claim
+  otherwise: it reports that the wallet would not disconnect.
+- **Coinbase Wallet on a phone reloads the page as it disconnects.** That is
+  the wallet's own behaviour and nothing on the page can prevent it. The
+  erasure itself still happens; what is lost is the confirmation, because the
+  reload takes the page with it.
+- **In a language other than English, the confirmation can be lost too.**
+  Erasing returns the app to English, and changing language rebuilds the
+  screen — which can take the report with it. The data is erased either way.
+
+The second and third share a shape worth naming: the erasure works and the
+*evidence* of it does not survive. On a page whose whole purpose is telling
+you what happened, that is a real gap rather than a cosmetic one, which is why
+it is written down here instead of left to be found.
+
 **One promise is deliberately not made.** A browser extension, or a Safe, keeps
 its own record that you allowed this site, somewhere no page can reach. The
 erase copy now says so, and says reconnecting there is still a single click.
