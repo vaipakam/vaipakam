@@ -257,6 +257,24 @@ export const MAX_MAPPED_INPUT = 64 * 1024;
  */
 const TRAILING_HEX_FRAGMENT_RE = /0[xX][a-fA-F0-9]*$/;
 
+/**
+ * An INCOMPLETE escape at the very end of the truncated head (#2024, r9 P1).
+ *
+ * The cut can land inside a `%xx` rather than between characters, and a lone
+ * `%3` is not an escape run — nothing removes it — so it sat between the
+ * address fragment and the end of the string and stopped the fragment strip
+ * above from anchoring. Verified: escape padding that collapses, followed by
+ * `0x` + 39 hex + `%30` cut two characters in, produced
+ * `…%0x1234567890abCDeF1234567890aBcDEF1234567%…` in a 1,200-character report
+ * — 39 of the 40 digits, with EIP-55 checksum casing intact, which narrows the
+ * missing nibble further still.
+ *
+ * Stripping this first lets the fragment rule see the hex run it was written
+ * for. Two simple rules composed, rather than one rule taught to spell every
+ * way a cut can land.
+ */
+const TRAILING_PARTIAL_ESCAPE_RE = /%[0-9a-fA-F]?$/;
+
 /** Scrub any full address ANYWHERE in report text — crash messages,
  *  component stacks, and deep-link paths routinely embed the
  *  connected account, and the redaction contract covers the whole
@@ -279,7 +297,10 @@ export function redactText(text: string): string {
       ADDRESS_RE,
       shortenMatch,
     );
-    return `${head.replace(TRAILING_HEX_FRAGMENT_RE, '')}…`;
+    // Partial escape first, then the hex fragment: the incomplete escape is
+    // what hides the fragment from the rule below (r9 P1).
+    const trimmed = head.replace(TRAILING_PARTIAL_ESCAPE_RE, '');
+    return `${trimmed.replace(TRAILING_HEX_FRAGMENT_RE, '')}…`;
   }
 
   // No escapes means the text IS its own fixpoint, so the cheap pass is the

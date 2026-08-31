@@ -35,7 +35,12 @@ the whole of a message the report keeps twelve hundred characters of — a few s
 of a frozen drawer, immediately after the failure someone is trying to
 report, is a poor way to ask for help. If the cut lands in the middle of an
 address, the fragment is dropped rather than carried through as half an
-account.
+account — including when it lands inside one of the escape sequences itself,
+which for a while left the incomplete sequence sitting where it hid the
+fragment from that very rule. A part of an address is worth less than the
+whole and not nothing: written in the mixed upper and lower case that wallets
+use as a typo check, thirty-nine of the forty characters narrow the last one
+to a handful of possibilities.
 
 There are two situations the shortener cannot fully account for: a message
 too large to read in full, and escapes nested too deeply to unwrap within a

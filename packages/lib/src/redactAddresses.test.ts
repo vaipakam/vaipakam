@@ -325,6 +325,29 @@ describe('redactText — very large input stays bounded (#2024 Codex r3)', () =>
     expect(out).toContain(SHORT);
   });
 
+  it('drops a fragment whose trailing escape the cut bisected', () => {
+    // Codex r9 P1, and the shape the earlier straddle case could not reach:
+    // the cut lands INSIDE a `%xx` rather than between characters. A lone
+    // `%3` is not an escape run, so nothing removed it, and sitting at the end
+    // of the string it stopped the fragment rule from anchoring. Measured
+    // before the fix, through the caller's own 1,200-character cap:
+    // `…%0x1234567890abCDeF1234567890aBcDEF1234567%…` — 39 of 40 digits, with
+    // EIP-55 casing intact, which narrows the missing nibble further still.
+    //
+    // The checksummed spelling is deliberate: a lowercase address would hide
+    // how much a fragment actually gives away.
+    const CHECKSUMMED = '0x1234567890abCDeF1234567890aBcDEF12345678';
+    const tail = `${CHECKSUMMED.slice(0, 41)}%30`;
+    const padLen = MAX_MAPPED_INPUT - tail.length + 2;
+    const pad = '%20'.repeat(Math.ceil(padLen / 3)).slice(0, padLen);
+    const out = redactCap(
+      redactText(`${pad}${tail}${'z'.repeat(MAX_MAPPED_INPUT)}`),
+      1_200,
+    );
+    expect(out).not.toContain(CHECKSUMMED.slice(0, 41));
+    expect(out).not.toContain(CHECKSUMMED.slice(2, 22));
+  });
+
   it('drops an address straddling the truncation boundary rather than halving it', () => {
     // The cut lands 20 characters into the address, leaving `0x` + 18 hex at
     // the end of the head. Half an account is not something a report should
