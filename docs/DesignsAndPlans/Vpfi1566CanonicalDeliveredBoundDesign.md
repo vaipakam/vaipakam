@@ -432,6 +432,102 @@ their own vault; afterwards they also protect rewards from consuming user
 money. Every bypass becomes a fund-safety hole. That reclassification should
 land in the same PR as slice 1, not after it.
 
+## 5c. Closures 2 and 3 — ROOT fixes exist for both (scouted 2026-08-31)
+
+The owner asked whether these can be fixed at the root instead of patched
+per path. Scouted against the tree: **yes for both, and in both cases the
+per-path patch is the worse answer — for closure 2 it is not merely worse but
+INCOHERENT.**
+
+### Closure 3 — the detached role. One negation, fourteen readers.
+
+```solidity
+function isMirrorRewardChain(Storage storage s) internal view returns (bool) {
+    return !s.isCanonicalRewardChain && s.baseChainId != 0;
+}
+```
+
+That negation is read at **14 sites across 6 files**
+(`InteractionRewardsFacet` ×2, `RewardCommitmentFacet` ×2,
+`RewardHorizonSweepFacet` ×2, `RewardRemittanceFacet` ×1,
+`RewardReporterFacet` ×3, `LibInteractionRewards` ×4). Each site
+independently decides two things from it: *am I bounded* and *do I record*.
+
+That is why the detached state fails in two directions at once rather than
+one. `deliveredFreshBound` returns `type(uint256).max`, and every paid-side
+writer stops recording — not through separate bugs but through the same
+expression, read fourteen times, with no case for the third state.
+
+**Root fix: replace the boolean with one exhaustive role resolver** —
+`{Canonical, Mirror, Detached}` — and give `Detached` a DEFINED behaviour
+instead of letting it inherit "not a mirror ⇒ unbounded". Every site then
+reads one function, and the third state stops being an accident of negation.
+Fourteen call sites collapse to fourteen reads of the same decision.
+
+Fail-closed is the right default for `Detached`: bound `0` (nothing new is
+claimable) rather than `max`. A detached deployment has no authenticated
+source of further delivery, so anything else is a promise the chain cannot
+keep. The role change already has an administrative retirement
+(`paid = received`) for the residual, so the operator path exists.
+
+This is a root fix in the strict sense: **no per-path change is required at
+all.** The sites do not need editing to be correct; they need the thing they
+read to be correct.
+
+### Closure 2 — the legacy paths. The ledger measures the wrong noun.
+
+The per-path patch would be: make each legacy spend site also increment
+`rewardBudgetArmedFreshPaid`. **That is incoherent, and worth saying plainly
+so it is not attempted.** Legacy spend is not armed fresh — the counter's own
+name and definition say so — and a pre-`D*` payout has no armed commitment to
+retire. Patching it in would corrupt the counter's meaning to paper over a
+mismatch one level down.
+
+**The actual defect is a noun mismatch.** The ledger tracks a VINTAGE
+(`armed fresh received − armed fresh paid`) while the thing it protects — the
+Diamond's VPFI balance backing reward payouts — is vintage-BLIND. Legacy and
+armed spend the same tokens. So a legacy payout drains backing the armed
+bound has already counted as available, and the bound reports itself
+satisfied. No amount of per-path bookkeeping fixes a bound that is measuring
+a different quantity from the one at risk.
+
+**Root fix: charge the ledger by what MOVES, at the chokepoints where it
+moves, regardless of vintage.** The chokepoints already exist and are
+narrow — this is the finding that makes the root fix practical:
+
+| Outflow | Chokepoint | Callers today |
+| --- | --- | --- |
+| value to a claimant | `RewardClaimFacet._deliverReward` | **exactly 1** |
+| value to the recycle bucket (forfeit / expiry) | `LibVpfiRecycle.credit` / `releaseCommitment` | already the programme's single credit chokepoint |
+
+`_deliverReward(vpfi, paid, deliverTo, today)` is called from one place, and
+its `paid` is the TOTAL the claim disburses — legacy and armed, fresh and
+recycled. Charging there is charging by what actually left, which is exactly
+the quantity the bound needs and exactly the quantity no per-path patch can
+reconstruct reliably.
+
+This is the repository's own "make the check BE the operation" pattern: today
+"spent" is whatever each path *remembered to declare*; afterwards it is a
+consequence of *spending*. A future path that forgets to record cannot exist,
+because recording is not a separate step it could omit.
+
+**Scope honesty.** This is a redefinition of a live ledger, not a patch, and
+it carries what redefinitions carry: `received` must be re-based onto the same
+noun (VPFI actually delivered for rewards, not armed-scoped deliveries), the
+five existing paid-side writers collapse into the chokepoints, and a
+deployment mid-flight needs a migration answer for counters already populated
+under the old meaning. §6 item 1 already anticipated this shape for Option B
+and it applies here. It is more work than five `+=` lines — and the five
+`+=` lines do not close the hole.
+
+### Sequencing
+
+Closure 3 is independent and small; it can land first and alone. Closure 2 is
+the larger piece and shares its migration question with nothing else. Neither
+depends on Option F, and F depends on neither — the three closures are
+genuinely parallel, which is why arming waits on all of them rather than on a
+chain.
+
 ## 6. Recommendation (superseded by §5b — retained for its reasoning)
 
 **No recommendation is offered.** An earlier revision of this note recommended
