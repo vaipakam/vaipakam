@@ -1922,6 +1922,63 @@ describe('round 12 — a late cleanup must never outrun the counted clear', () =
     (globalThis as Record<string, unknown>).window = realWindow;
   });
 
+  it('a gated straggler cleanup cannot run while the loop is still going', async () => {
+    // THE REACHABLE ORDERING, pinned (round 12 P2). Codex's example is a
+    // straggler firing from INSIDE the loop: A times out at four seconds and
+    // settles at five while B keeps the sequential loop running to seven. At
+    // that moment `eraseMyDataFully` is still parked on the teardown and has
+    // NOT reached its counted clear, so an ungated cleanup empties the stores
+    // first and the counted call reports zero over records it removed.
+    //
+    // This is the shape the page uses: the callback waits on a gate the page
+    // opens once the erasure has finished. Asserting it here rather than
+    // through `eraseMyDataFully` is deliberate — see the note on the case
+    // below for why the library's own `settledLate` path is NOT the reachable
+    // one and could not be made to fail.
+    vi.useFakeTimers();
+    try {
+      const events: string[] = [];
+      let openGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        openGate = resolve;
+      });
+      let landA: (() => void) | undefined;
+      const teardown = disconnectEvery(
+        // A never answers; the three behind it each resolve WITHIN the bound,
+        // so the loop keeps running rather than timing out its way to the end.
+        ['A', 'B', 'C', 'D'],
+        ({ connector }) =>
+          new Promise<void>((resolve) => {
+            if (connector === 'A') landA = resolve;
+            else setTimeout(resolve, 800);
+          }),
+        {
+          perConnectorTimeoutMs: 1_000,
+          onStragglerSettled: () => {
+            void gate.then(() => events.push('cleanup'));
+          },
+        },
+      );
+      const done = teardown().catch(() => events.push('loop-done'));
+      // A's bound expires at 1000 and the loop moves on; A then settles at
+      // 1500, while the loop is still working through B.
+      await vi.advanceTimersByTimeAsync(1_500);
+      landA?.();
+      await vi.advanceTimersByTimeAsync(200);
+      // Still mid-loop, and the erasure has not finished: no cleanup.
+      expect(events).toEqual([]);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await done;
+      expect(events).toEqual(['loop-done']);
+      // Only once the erasure opens the gate.
+      openGate();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(events).toEqual(['loop-done', 'cleanup']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('reports the counted records when a straggler lands around the clear', async () => {
     // Round 12 P2 — and an HONEST NOTE about what this does and does not pin.
     //
@@ -1929,19 +1986,20 @@ describe('round 12 — a late cleanup must never outrun the counted clear', () =
     // emptying the same stores, so it cannot leave that clear looking at an
     // empty store and reporting zero records over records just removed.
     //
-    // THIS TEST DOES NOT PIN THE GATE, and two attempts to make it did not
-    // work. Replacing the gate with an immediate `Promise.resolve()` leaves
-    // the suite green. The reason is the fixture: the stub settles its
-    // transactions on microtasks, so `eraseMyDataFully`'s awaited chain
-    // completes before a straggler landed with fake timers can interleave —
-    // there is no window to land in. Producing one needs a stub whose
-    // transactions complete on timers, which is a fixture rewrite rather than
-    // an assertion.
+    // WHY THIS ONE IS NOT THE ORDERING TEST — corrected after first claiming
+    // the ordering could not be pinned at all.
     //
-    // What IS asserted is the outcome under an ordinary straggler: the
-    // counted figure is the real one. The ordering guarantee itself is
-    // structural — the cleanup is behind `countedClearDone` by construction —
-    // and is recorded as unpinned in COVERAGE.md rather than implied here.
+    // The library's own `settledLate` cleanup hangs off `teardown.finally`,
+    // so it can only fire once the teardown settles — and the outer timeout
+    // means that is already past the point where `eraseIndexedDbData()` has
+    // snapshotted its counts. Mutating that gate away leaves every test
+    // green because THAT path is not the reachable one; it is defence in
+    // depth. A timer-settled fixture was tried and did not change it, which
+    // is the evidence rather than the explanation I first gave.
+    //
+    // The reachable path is the PAGE's callback firing from inside the loop,
+    // pinned by the case above. What this one asserts is the ordinary
+    // outcome: a straggler around the clear still reports the real count.
     vi.useFakeTimers();
     try {
       const order: string[] = [];
