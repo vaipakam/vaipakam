@@ -769,6 +769,19 @@ Thin-market honesty rules apply.
   and the record of which notifications have been seen. A page that reports
   preferences returned to their defaults while the app keeps showing them is
   making a claim the user can see is untrue.
+- **The erasure reaches storage the app causes to exist but does not itself
+  write**, specifically the wallet connection. A deletion that leaves the
+  connection in place lets the next page load reconnect the same account, which
+  is wallet-linked state surviving a deletion the user was told had happened —
+  and the app's own storage names are no guide to it, because the wallet
+  libraries choose their own. The intent is that a user who deletes is
+  disconnected.
+- **The download and the deletion deliberately cover different sets.** A
+  download is a file the person keeps and may pass on, and wallet session
+  material does not belong in one; the same material left on the device is what
+  makes a deletion incomplete. So the download carries what this app stored
+  about the user, and the deletion reaches further. Where the two differ, the
+  page says which it is describing.
 - Two shared-domain preference cookies are part of what this browser holds,
   so the download includes them and an erasure removes them — and they differ
   in kind, which the page states rather than blurs. The language is genuinely

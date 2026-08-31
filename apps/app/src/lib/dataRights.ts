@@ -80,10 +80,67 @@ export const PREFERENCE_COOKIES: readonly string[] = [
   'vaipakam_theme',
 ];
 
-/** True when `key` is one this app is responsible for. */
+/**
+ * Namespaces a DEPENDENCY writes on this app's behalf (#1862).
+ *
+ * `eraseMyData` used to clear only the prefixes above, so "Delete my data"
+ * reported success while wallet-connection state stayed behind and a reload
+ * could reconnect the same wallet. That is wallet-linked data surviving a
+ * right-to-erasure control, which is the failure this page exists to prevent.
+ *
+ * None of these is discoverable by scanning `src/` — the app never writes
+ * them; the connectors configured in `chain/wagmi.ts` do. Each entry records
+ * how it was established, because "found in a dependency's bundle" and
+ * "verified from the code that composes the key" are different strengths of
+ * evidence and the next person should not have to guess which they inherited:
+ *
+ *  - `wagmi.`        VERIFIED. `@wagmi/core`'s `createStorage` defaults to
+ *                    `key: prefix = 'wagmi'` and composes every key as
+ *                    `${prefix}.${key}`; `createConfig` is called with no
+ *                    `storage` override, so the default applies.
+ *  - `wc@2:`         From the built `@walletconnect/core` bundle. Its full
+ *                    keys are assembled at runtime, so only this stem is
+ *                    observable statically.
+ *  - `CBWSDK`        From the built `@coinbase/wallet-sdk` bundle.
+ *  - `-walletlink:`  Same package, WalletLink transport.
+ *
+ * Matching is by SUBSTRING rather than prefix, deliberately. Three of the four
+ * key shapes could not be confirmed statically, and on an origin this app has
+ * to itself an erasure that removes slightly too much is a far better failure
+ * than one that leaves an account connected. It is still a wider net than the
+ * evidence strictly supports, which is the honest reason the registry work in
+ * #1862 wants a runtime check — connect each wallet type, diff `localStorage`
+ * before and after — rather than more reading of `node_modules`.
+ */
+export const THIRD_PARTY_STORAGE_MARKERS: readonly string[] = [
+  'wagmi.',
+  'wc@2:',
+  'CBWSDK',
+  '-walletlink:',
+];
+
+/** True when `key` is one this app itself writes. */
 export function isAppStorageKey(key: string | null | undefined): boolean {
   if (!key) return false;
   return STORAGE_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+/**
+ * True when an erasure must remove `key` — this app's own, plus the
+ * connector namespaces it causes to exist.
+ *
+ * DELIBERATELY WIDER THAN THE EXPORT. `collectMyData` still uses
+ * `isAppStorageKey`, so a portability file contains what this app stored and
+ * not a connector's session material: exporting WalletConnect session state
+ * into a file the user downloads and may forward is a hazard the right of
+ * access does not require, while leaving it in place defeats the right to
+ * erasure. The two rights want different sets, so they get different
+ * predicates rather than one shared list bent to serve both.
+ */
+export function isErasableStorageKey(key: string | null | undefined): boolean {
+  if (!key) return false;
+  if (isAppStorageKey(key)) return true;
+  return THIRD_PARTY_STORAGE_MARKERS.some((marker) => key.includes(marker));
 }
 
 export interface DataRightsExport {
@@ -381,7 +438,10 @@ function clearStorage(storage: Storage | null): number {
     const keys: string[] = [];
     for (let i = 0; i < storage.length; i += 1) {
       const key = storage.key(i);
-      if (isAppStorageKey(key)) keys.push(key as string);
+      // The ERASURE predicate, not the export one (#1862): connector
+      // namespaces must go, without their contents entering a portability
+      // file.
+      if (isErasableStorageKey(key)) keys.push(key as string);
     }
     for (const key of keys) {
       try {

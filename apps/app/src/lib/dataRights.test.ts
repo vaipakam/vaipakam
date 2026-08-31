@@ -14,9 +14,13 @@ import { execFileSync } from 'node:child_process';
 import {
   incompleteExportNote,
   isAppStorageKey,
+  collectMyData,
+  eraseMyData,
+  isErasableStorageKey,
   liveLastErrorEntry,
   STORAGE_PREFIXES,
   PREFERENCE_COOKIES,
+  THIRD_PARTY_STORAGE_MARKERS,
 } from './dataRights';
 
 /**
@@ -42,6 +46,122 @@ const KNOWN_KEYS: readonly string[] = [
   'vaipakam.app.lastError',
   'app.chunkReloaded',
 ];
+
+/**
+ * Keys written by a DEPENDENCY on the app's behalf (#1862).
+ *
+ * The app never writes these; the connectors configured in
+ * `chain/wagmi.ts` do. That is what makes them invisible to the
+ * `STORAGE_WRITERS` guard below, which scans `src/` for `setItem` — the
+ * write happens in `node_modules`, so no amount of hardening that guard
+ * reaches them.
+ */
+const CONNECTOR_KEYS: readonly string[] = [
+  'wagmi.store',
+  'wagmi.recentConnectorId',
+  'wc@2:core:0.3//keychain',
+  'wc@2:client:0.3//session',
+  '-CBWSDK:walletUsername',
+  '-walletlink:https://www.walletlink.org:session:id',
+];
+
+describe('erasure reaches connector storage (#1862)', () => {
+  it('erases every connector key', () => {
+    // Before this, "Delete my data" reported success and a reload could
+    // reconnect the same wallet — wallet-linked state surviving a
+    // right-to-erasure control.
+    for (const key of CONNECTOR_KEYS) {
+      expect(isErasableStorageKey(key), key).toBe(true);
+    }
+  });
+
+  it('does NOT put connector keys in the export', () => {
+    // The two rights want different sets. A portability file the user
+    // downloads and may forward should not carry WalletConnect session
+    // material; leaving it on the device would defeat the erasure. So the
+    // export predicate stays narrow and the erasure one is wider.
+    for (const key of CONNECTOR_KEYS) {
+      expect(isAppStorageKey(key), key).toBe(false);
+    }
+  });
+
+  it('still erases everything the app itself writes', () => {
+    for (const key of KNOWN_KEYS) {
+      expect(isErasableStorageKey(key), key).toBe(true);
+    }
+  });
+
+  it('leaves an unrelated key alone', () => {
+    // The wider net is bounded: it matches the recorded markers, not
+    // anything that merely looks foreign.
+    expect(isErasableStorageKey('some-other-dapp-preference')).toBe(false);
+    expect(isErasableStorageKey('')).toBe(false);
+    expect(isErasableStorageKey(null)).toBe(false);
+  });
+
+  it('the ERASURE actually removes them, and the EXPORT actually omits them', () => {
+    // The four cases above test the predicates in isolation, which is not
+    // the same as testing the wiring — and initially they did not catch it:
+    // swapping which predicate `clearStorage` and `collect` use left all of
+    // them green. This one drives the real entry points against a stub
+    // storage, so the two predicates cannot be transposed silently.
+    const store = new Map<string, string>([
+      ['app.mode', 'lend'],
+      ['vaipakam-receipt-sync-ping-v1', '1'],
+      ['wagmi.store', '{"state":{"connections":{}}}'],
+      ['wc@2:client:0.3//session', '[]'],
+      ['-walletlink:https://www.walletlink.org:session:id', 'abc'],
+      ['some-other-dapp-preference', 'keep me'],
+    ]);
+    const fake: Storage = {
+      get length() {
+        return store.size;
+      },
+      key: (i: number) => [...store.keys()][i] ?? null,
+      getItem: (k: string) => store.get(k) ?? null,
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+      clear: () => store.clear(),
+    };
+    const priorWindow = (globalThis as Record<string, unknown>).window;
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: fake,
+      sessionStorage: fake,
+      location: { origin: 'https://app.example' },
+      navigator: { userAgent: 'test' },
+      dispatchEvent: () => true,
+    };
+    try {
+      const exported = collectMyData();
+      const exportedKeys = Object.keys(exported.localStorage);
+      // The export carries the app's own keys and no connector material.
+      expect(exportedKeys).toContain('app.mode');
+      expect(exportedKeys.some((k) => k.includes('wagmi.'))).toBe(false);
+      expect(exportedKeys.some((k) => k.includes('walletlink'))).toBe(false);
+
+      eraseMyData();
+      // The erasure removed the connector keys...
+      expect(store.has('wagmi.store')).toBe(false);
+      expect(store.has('wc@2:client:0.3//session')).toBe(false);
+      expect(store.has('-walletlink:https://www.walletlink.org:session:id')).toBe(false);
+      // ...and the app's own...
+      expect(store.has('app.mode')).toBe(false);
+      // ...and left the unrelated one where it was.
+      expect(store.get('some-other-dapp-preference')).toBe('keep me');
+    } finally {
+      (globalThis as Record<string, unknown>).window = priorWindow;
+    }
+  });
+
+  it('records how each marker was established', () => {
+    // Four markers, and the module comment states the evidence for each
+    // because three could not be confirmed from the code that composes
+    // them. If a marker is added without that reasoning, this count
+    // changes and the comment must be revisited.
+    expect(THIRD_PARTY_STORAGE_MARKERS).toHaveLength(4);
+    expect(THIRD_PARTY_STORAGE_MARKERS).toContain('wagmi.');
+  });
+});
 
 describe('isAppStorageKey', () => {
   it('matches every key the app is known to write', () => {
