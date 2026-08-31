@@ -14,18 +14,24 @@ three belonging to the two wallet transports the app offers.
 worth being specific rather than summarising.** The wallet-connection library's
 own record of which wallet you last used is removed for everyone. Beyond that:
 
-- **Coinbase Wallet's browser-extension and mobile linking mode** keeps its
-  session identifier, secret and cached addresses in ordinary browser storage,
-  and those are now removed.
+- **Coinbase Wallet used by scanning a code from the phone** keeps its session
+  identifier, secret and cached addresses in ordinary browser storage, and
+  those are now removed.
 - **Coinbase's smart-wallet mode** keeps its active key in a separate browser
   database this deletion does not open, so that key survives.
 - **WalletConnect** likewise keeps its live session in that separate database,
-  so a scanned-QR session survives.
-- **A browser-extension wallet such as MetaMask** stays authorised in the
-  extension itself, which this app cannot reach at all.
+  so a scanned-code session survives.
+- **Any browser extension — MetaMask, or the Coinbase extension when it is
+  installed** — holds the authorisation itself, outside anything this app can
+  read or remove. The Coinbase extension belongs here rather than with the
+  phone-scanning case above: when it is present the library talks to it
+  directly and never writes the session material that case is about.
+- **The app opened inside a Safe** takes its authorisation from the Safe it is
+  embedded in, which is likewise untouched.
 
 The app's in-memory connection is not dropped in any of those cases, so nobody
-is signed out at the moment of deleting.
+is signed out at the moment of deleting — and for the last two, nothing this
+control can reach would sign them out at all.
 
 An earlier draft of this note promised that you would at least be signed out
 after reloading. That is not reliably true and the claim is withdrawn: the app

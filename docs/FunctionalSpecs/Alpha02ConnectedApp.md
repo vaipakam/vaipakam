@@ -722,8 +722,12 @@ Thin-market honesty rules apply.
   storage the browser exposes to this origin. Session material that a connector
   holds elsewhere — WalletConnect keeps its live session in IndexedDB rather
   than local storage, as does the Coinbase smart-wallet key — is NOT cleared,
-  and the in-memory connection in the current tab is not dropped, so a
-  connected user stays connected until reload. The page must not claim
+  and the in-memory connection in the current tab is not dropped. Reload is
+  NOT the boundary either: the app reconnects on load, and a wallet that still
+  treats this site as authorised — a browser extension, or the Safe the app is
+  embedded in — reconnects regardless of what was deleted here, because the
+  authorisation lives outside this origin's storage. So erasure removes stored
+  records and does not, on its own, end a session. The page must not claim
   otherwise while that is true.
 - The page states its limits as prominently as its controls, and each is
   stated at its true extent. It does not reach on-chain data — which is public,
