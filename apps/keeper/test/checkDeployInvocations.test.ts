@@ -6726,38 +6726,21 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('apps/agent');
   });
 
-  it('an ARGV-ARRAY --env suppresses the name answer', () => {
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
-    const r = runWith(
-      'apps/agent/deploy.mjs',
-      'spawnSync("wrangler", ["deploy", "--config", "side.jsonc", "--env", "staging"]);\n',
-    );
-    expect(r.ok).toBe(false);
-    // Asserted on the AGENT'S OWN REMEDY, not on the string `apps/agent` — the
-    // report echoes the file path, so that substring is satisfied by the INPUT
-    // and would pass however the suppression behaved. That vacuity survived its
-    // own mutant on the sibling fixture below before it was caught.
-    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
-    expect(r.out).not.toContain('could not name');
-  });
-
-  it('CLOUDFLARE_ENV in a child-process OPTIONS OBJECT suppresses it too', () => {
-    // No environment flag is present at all here — the variable arrives through
-    // the spawn options, with a `:` rather than an `=`.
-    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
-    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
-    const r = runWith(
-      'apps/agent/deploy.mjs',
-      'spawnSync("wrangler", ["deploy", "--config", "side.jsonc"], ' +
-        '{env: {...process.env, CLOUDFLARE_ENV: "staging"}});\n',
-    );
-    expect(r.ok).toBe(false);
-    // Same correction as the fixture above: the agent's remedy, not a substring
-    // the report's own file path supplies.
-    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
-    expect(r.out).not.toContain('could not name');
-  });
+  // The ARGV-ARRAY `--env` and the child-process OPTIONS-OBJECT `CLOUDFLARE_ENV`
+  // (Codex #2036 r2) are READ correctly now — the two patterns match the raw
+  // text, verified directly — but they are deliberately NOT fixtured here,
+  // because no fixture can show them changing a verdict and a fixture that
+  // cannot is the thing this suite keeps catching me writing.
+  //
+  // Why: both shapes live in a helper file with NO MODELLED CWD. On that path
+  // an identity read that declines falls through to "defer to the surrounding
+  // text", which passes — the same outcome as trusting the top-level name. So
+  // suppressing the read changes nothing there. The gap is the inversion's PATH
+  // COVERAGE, not the spelling, and closing it is deferred (see the reply on
+  // that thread) rather than papered over with a green fixture.
+  //
+  // The spellings still bind where a cwd exists, which the shell-form
+  // CLOUDFLARE_ENV fixture above pins and a mutant kills.
 
   it('one base answering does not speak for a base that answered nothing', () => {
     // `answered` was a boolean, so "at least one base said not protected"
