@@ -2181,6 +2181,65 @@ describe('round 15 — the fence cannot ask the witness that was tampered with',
     return store;
   }
 
+  it('the generation is owned by the module and subscribed above React', () => {
+    // Round 16 P2, and it is a LIFETIME defect rather than a logic one. The
+    // first version of this counter was created inside the Data Rights page —
+    // and erasing in a non-English locale resets the language first, which
+    // makes `LanguageRemount` remount the page tree, which runs React's
+    // cleanup and unsubscribes the counter WHILE the erasure it fences is
+    // still running. It then froze at the request's value, agreed with
+    // wagmi's stale `disconnected`, and cleared a session made in the
+    // replacement tree. A fence whose lifetime is shorter than the operation
+    // it fences is not a fence.
+    //
+    // ASSERTED OVER THE SOURCE, deliberately. The behavioural version of this
+    // is unreachable: the page has no rendering harness here, so there is no
+    // way to unmount it mid-erasure, and every in-process assertion I could
+    // write compares the module's own export to itself and passes whatever
+    // the page does. What actually has to hold is a placement rule — the
+    // counter is created ONCE at module scope and subscribed outside the
+    // component tree — and a source check is the honest way to pin a
+    // placement rule. The same shape as the storage-writer check above.
+    const callers = execFileSync(
+      'grep',
+      [
+        '-rl',
+        'createConnectionGeneration(',
+        'src',
+        '--include=*.ts',
+        '--include=*.tsx',
+      ],
+      { cwd: process.cwd(), encoding: 'utf8' },
+    )
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((f) => !f.includes('.test.'));
+    // Only the module that owns the singleton may build one. A component that
+    // constructs its own gets a counter with that component's lifetime, which
+    // is the defect.
+    expect(callers).toEqual(['src/lib/dataRights.ts']);
+
+    // And the subscription that feeds it lives with the wagmi config, above
+    // the router and every remount — not in a component's effect.
+    const subscribers = execFileSync(
+      'grep',
+      [
+        '-rl',
+        'connectionGeneration.observe(',
+        'src',
+        '--include=*.ts',
+        '--include=*.tsx',
+      ],
+      { cwd: process.cwd(), encoding: 'utf8' },
+    )
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((f) => !f.includes('.test.'));
+    expect(subscribers).toEqual(['src/chain/wagmi.ts']);
+  });
+
   it('a live session stops the aggregate-timeout cleanup', async () => {
     // The library half of the same fence, through the renamed option. Round 14
     // gave this path a fence and round 15 changed what it is allowed to ask;

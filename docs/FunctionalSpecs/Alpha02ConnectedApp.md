@@ -916,7 +916,13 @@ Thin-market honesty rules apply.
   view.** A teardown the app gave up on can, on finishing, publish a stale
   picture that omits the newer connection entirely, so asking the library
   after the fact can return the answer that destroys the session — the
-  guarantee has to rest on something a late correction cannot revise.
+  guarantee has to rest on something a late correction cannot revise. **That
+  knowledge must also outlive the page that started the request.** Erasing
+  resets the display language, which rebuilds the screen, so the surface the
+  user pressed the button on is gone while the request it made is still
+  running — and anything the app remembers only for as long as that surface
+  exists stops being remembered exactly when it is needed. A protection with a
+  shorter life than the thing it protects is not a protection.
 - **A report of how much was erased must not attribute it to a source it
   cannot vouch for.** Where the browser refuses a check, the page may still
   know how many items it removed; that figure spans ordinary storage,

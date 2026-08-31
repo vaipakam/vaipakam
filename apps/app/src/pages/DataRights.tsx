@@ -30,7 +30,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
-  createConnectionGeneration,
+  connectionGeneration,
   disconnectEvery,
   eraseConnectorStorageQuietly,
   eraseIndexedDbData,
@@ -111,29 +111,25 @@ export function DataRights() {
   // consulting the write that had just discarded it.
   //
   // A generation counts connections as EVENTS instead — see
-  // `createConnectionGeneration`. Held in a ref because nothing renders from
-  // it and a cleanup registered during one erasure must compare against that
-  // erasure's mark.
-  const connectionGen = useRef(createConnectionGeneration());
+  // `connectionGeneration`, which is a module singleton subscribed where the
+  // wagmi config is built. NOT OWNED BY THIS PAGE (round 16 P2): the first
+  // version created one per mount, and this page unmounts DURING the very
+  // operation the fence exists for — `onErase` resets the language first and
+  // `LanguageRemount` remounts the tree on that event — so React's cleanup
+  // unsubscribed the counter mid-erasure and it froze at the request's value.
+  // A late connector then found no increment, agreed with wagmi's stale
+  // `disconnected`, and cleared a session made in the replacement tree. Only
+  // the MARK belongs to this page; the counting has to outlive it.
   const genAtRequest = useRef(0);
-  useEffect(
-    () =>
-      config.subscribe(
-        (state) => state.connections,
-        (connections, previous) =>
-          connectionGen.current.observe(connections, previous),
-      ),
-    [config],
-  );
   // "Is there a session the request must not destroy?" — status OR generation,
   // because each catches what the other cannot. The generation misses a
   // connection made and dropped again between the request and the cleanup
   // (nothing to protect, so that is correct); the status misses one the stale
-  // write erased, which is this round's finding.
+  // write erased, which is round 15's finding.
   const hasLiveSession = useCallback(
     () =>
       config.state.status !== 'disconnected' ||
-      connectionGen.current.current() !== genAtRequest.current,
+      connectionGeneration.current() !== genAtRequest.current,
     [config],
   );
   const [downloaded, setDownloaded] = useState(false);
@@ -371,7 +367,7 @@ export function DataRights() {
     // The mark every late cleanup compares against. Taken here, at the
     // request, so that "newer than the request" is measured from the moment
     // the user asked rather than from whenever a straggler happens to settle.
-    genAtRequest.current = connectionGen.current.current();
+    genAtRequest.current = connectionGeneration.current();
     // Opened when the erasure — including its counted database clear — has
     // finished. See `onStragglerSettled` below for why a late cleanup must
     // not run before it.

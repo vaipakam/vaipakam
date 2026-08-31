@@ -1572,6 +1572,32 @@ export function createConnectionGeneration(): ConnectionGeneration {
   };
 }
 
+/**
+ * The one generation the app counts against, and it is a MODULE SINGLETON on
+ * purpose (round 16 P2).
+ *
+ * The first version belonged to the Data Rights page, which is exactly the
+ * lifetime it must not have. Erasing in a non-English locale calls
+ * `changeLanguage('en')` FIRST, and `LanguageRemount` remounts the whole page
+ * tree on that event — so the page unmounts, React runs its effect cleanup,
+ * and the only subscription feeding the generation is torn down while the
+ * erasure it was fencing is still running. The counter then freezes: a
+ * connector that settles late finds a generation that has not moved since the
+ * request, agrees with wagmi's stale `disconnected`, and clears the stores of
+ * a session made in the REPLACEMENT tree. The remount also builds a second,
+ * unrelated generation for the new page, which the in-flight erasure cannot
+ * see.
+ *
+ * A fence whose lifetime is shorter than the operation it fences is not a
+ * fence. This one is subscribed once where the wagmi config is created — above
+ * `LanguageRemount`, above the router, outside React — so it observes for as
+ * long as the tab lives.
+ *
+ * `createConnectionGeneration` stays exported for tests, which need instances
+ * they can drive and reset.
+ */
+export const connectionGeneration = createConnectionGeneration();
+
 export interface FullEraseOptions {
   /**
    * Whether a session exists that the erase request must not destroy, asked

@@ -61,14 +61,22 @@ delete-site-data — the remedy the failure message sends you to. Giving up on a
 wallet has already accepted, which is why what happens when one finishes late
 is described below rather than claimed away.
 
-Giving up also no longer leaves a wallet free to act afterwards. A wallet asked
-to disconnect can take longer than the page is willing to wait and then finish
-anyway, minutes later, writing its state back into storage that had been
-cleared in between — so the device ends up holding exactly what the user was
-told had been removed. Anything that arrives late is now cleared up after it.
-What is *reported* does not change: that report was fixed at the moment it was
-made, it already says the wallet held out, and a message that quietly rewrites
-itself later would be its own kind of untruth.
+A wallet that finishes late is now usually cleared up after — with one
+deliberate exception, stated here because it is a limit rather than an
+oversight. A wallet asked to disconnect can take longer than the page is
+willing to wait and then finish anyway, minutes later, writing its state back
+into storage that had been cleared in between, so the device ends up holding
+exactly what the user was told had been removed. That late write is now tidied
+away **unless you have connected again in the meantime**: the tidying cannot
+tell one wallet's records from another's, so where a newer session exists it is
+skipped rather than risk deleting the session you are using. A wallet that
+never finishes at all is never tidied either, for the plain reason that there
+is nothing to tidy after. So the honest summary is that a late write is cleared
+when clearing it cannot cost you anything, and a leftover connection record is
+accepted when it could. What is *reported* does not change in either case: that
+report was fixed at the moment it was made, it already says the wallet held
+out, and a message that quietly rewrites itself later would be its own kind of
+untruth.
 
 **And the number it reports counts everything it removed.** The page had
 learned to stop saying "nothing was stored" after clearing a wallet session,
