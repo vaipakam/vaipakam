@@ -203,7 +203,7 @@
       "downloadButton": "Descargar mis datos",
       "downloadDone": "Guardado",
       "eraseTitle": "Borrarlo de este navegador",
-      "eraseBody": "Lo elimina todo de este dispositivo. Tus preferencias de visualización vuelven a sus valores por defecto y lo que tuvieras a medias perderá su marcador local.",
+      "eraseBody": "Elimina todo eso de este dispositivo y cierra tu sesión. Tus preferencias de visualización vuelven a sus valores por defecto, lo que tuvieras a medias pierde su marcador local, y la conexión de la cartera se cierra y su sesión guardada se elimina. Una extensión del navegador o un Safe conserva su propio registro de que autorizaste este sitio, algo que ninguna página puede eliminar por ti: volver a conectarte allí sigue siendo un clic.",
       "eraseButton": "Borrar mis datos",
       "eraseConfirm": "Sí, bórralo",
       "eraseCancel": "Cancelar",
@@ -211,6 +211,7 @@
       "eraseDone": "Se borraron {{count}} elementos almacenados. También se ha pedido a las demás pestañas que tengas abiertas que borren los suyos.",
       "eraseNothing": "No había nada almacenado en este navegador para borrar.",
       "erasePartial": "Se borraron {{removed}} elementos, pero {{left}} no se pudieron eliminar. Borrar los datos del sitio desde los ajustes de tu navegador eliminará el resto.",
+      "erasePartlyUnverifiable": "Se borraron {{count}} elementos almacenados, pero este navegador no permitió que la aplicación comprobara después su almacenamiento normal, así que puede quedar algo. Borrar los datos del sitio desde los ajustes de tu navegador lo eliminará.",
       "eraseBlocked": "Este navegador no ha permitido que la aplicación borre su almacenamiento, así que no se eliminó nada. Las ventanas de navegación privada y los ajustes de privacidad restrictivos pueden provocarlo; borrar los datos del sitio desde los ajustes de tu navegador sí funcionará.",
       "holdingTitle": "Qué hay almacenado ahora mismo",
       "holdingCount": "{{count}} elementos",
@@ -240,7 +241,14 @@
       "diagExpired": "La solicitud firmada caducó antes de que el servicio la aceptara, así que no se consultó ni se borró ningún registro. Inténtelo de nuevo y apruebe la ventana del monedero sin demora; si esto se repite, puede que el reloj de este dispositivo esté mal ajustado.",
       "diagVerifyUnavailable": "El servicio de soporte no pudo verificar la firma de su monedero en este momento: la red en la que vive la cuenta de su monedero no era accesible desde el servicio. Esto no significa que la firma fuera incorrecta. Inténtelo de nuevo dentro de un rato, o escriba a support@vaipakam.com y tramitaremos una solicitud de borrado para su monedero.",
       "diagProcessedChainOnly": "Tu solicitud de borrado se procesó únicamente para los registros de {{network}}. La firma de un monedero de cuenta inteligente se verifica en una sola red a la vez, por lo que los registros capturados en otras redes no quedan cubiertos: cambia a otra red y repite la solicitud allí, o escribe a support@vaipakam.com y la procesaremos para tu monedero en todas partes.",
-      "diagProcessedChainUnknown": "Tu solicitud de borrado se procesó únicamente para los registros de una red: la red que verificó la firma de tu monedero. La firma de un monedero de cuenta inteligente se verifica en una sola red a la vez, por lo que los registros capturados en otras redes no quedan cubiertos: cambia de red y repite la solicitud allí, o escribe a support@vaipakam.com y la procesaremos para tu monedero en todas partes."
+      "diagProcessedChainUnknown": "Tu solicitud de borrado se procesó únicamente para los registros de una red: la red que verificó la firma de tu monedero. La firma de un monedero de cuenta inteligente se verifica en una sola red a la vez, por lo que los registros capturados en otras redes no quedan cubiertos: cambia de red y repite la solicitud allí, o escribe a support@vaipakam.com y la procesaremos para tu monedero en todas partes.",
+      "eraseWorking": "Cerrando sesión y borrando…",
+      "eraseDoneDisconnected": "Se borraron {{count}} elementos almacenados y se cerró tu sesión aquí. A las demás pestañas que tengas abiertas se les ha pedido que borren las suyas y cierren sesión también.",
+      "eraseDoneNoPeers": "Se borraron {{count}} elementos almacenados.",
+      "eraseDoneDisconnectedNoPeers": "Se borraron {{count}} elementos almacenados y se cerró tu sesión aquí.",
+      "eraseSessionHeld": "No se pudo borrar la sesión almacenada de la cartera, así que puede seguir en este dispositivo. Borrar los datos del sitio desde los ajustes de tu navegador la eliminará.",
+      "eraseWalletHeld": "La cartera no se desconectó, así que este sitio sigue conectado a ella. Desconéctate directamente desde tu cartera y vuelve a borrar.",
+      "eraseStoresUnreadable": "Este navegador no permitió que la aplicación abriera el almacenamiento de sesión de la cartera, así que lo guardado allí puede seguir en este dispositivo. Borrar los datos del sitio desde los ajustes de tu navegador lo eliminará."
     },
     "killSwitch": {
       "disabled": "Esta acción está desactivada ahora mismo — los operadores la pausaron por precaución mientras revisan algo. Lo que ya es tuyo no se ve afectado: pagos, reclamos y retiros siguen abiertos."

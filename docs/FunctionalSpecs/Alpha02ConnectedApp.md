@@ -717,21 +717,113 @@ Thin-market honesty rules apply.
   disconnect anyone — because leaving it made the control report success while
   a reload could restore the same connected wallet, and a right to erasure that
   does not erase is the more serious of the two failures.
-- What the erasure requires is the REMOVAL OF THOSE RECORDS, not the ending of
-  a session. It does not disconnect anyone: an earlier draft of this bullet
-  said the disconnection was an intended consequence, which asserted a
-  behaviour the synchronous storage cleanup does not perform for any wallet.
-  The requirement is bounded by what the erasure actually reaches today:
-  storage the browser exposes to this origin. Session material that a connector
-  holds elsewhere — WalletConnect keeps its live session in IndexedDB rather
-  than local storage, as does the Coinbase smart-wallet key — is NOT cleared,
-  and the in-memory connection in the current tab is not dropped. Reload is
-  NOT the boundary either: the app reconnects on load, and a wallet that still
-  treats this site as authorised — a browser extension, or the Safe the app is
-  embedded in — reconnects regardless of what was deleted here, because the
-  authorisation lives outside this origin's storage. So erasure removes stored
-  records and does not, on its own, end a session. The page must not claim
-  otherwise while that is true.
+- The erasure requires the removal of those records AND the ending of the
+  session. Both halves are now in scope: the connection is torn down, and the
+  session material a connector keeps outside Web Storage — WalletConnect's live
+  session and the Coinbase smart-wallet keys, both in IndexedDB — is deleted
+  with it. An earlier version of this bullet required only the records, because
+  the cleanup was synchronous and reached neither; that limit is gone, and the
+  bullet states the intent rather than the interim.
+- **The session material is REMOVED IN PLACE, not by deleting its container.**
+  Deleting the whole store is refused while anything holds it open, including
+  the erasing page itself, so it could not succeed where it matters. The
+  requirement is that the records are gone, by a means that a still-open
+  handle cannot block.
+- **The order is required, not incidental.** The teardown runs before the
+  storage sweep, and the sweep before the session records are cleared. Erasing
+  while the wallet client is still running is a race — it can write its session
+  straight back — so closing the connection first is what ends it; and a
+  teardown writes on its way out, so a sweep placed first would leave those
+  writes behind. The intent is the ordering, not merely the three steps.
+- **A refusal must be reported as a refusal, and the kinds are
+  distinguishable.** The session records can fail to clear, the browser can
+  refuse to expose that storage at all, and a wallet can decline to
+  disconnect. None may be reported as an erasure, all leave everything else
+  removed, and the page must say WHICH held out, because the remedies differ:
+  the browser's own site-data controls, versus disconnecting in the wallet's
+  own interface. **A storage holdout and a wallet holdout can occur together**,
+  so reporting is additive rather than a first-match ladder — the wallet's
+  remedy is not reachable from any storage message. Both waits are bounded,
+  since a request that never answers would otherwise strand the erasure with
+  nothing removed, and running out of time is a refusal rather than a success.
+- **A browser that hides the storage is not a clean result.** Nothing was
+  removed and nothing was observed absent, which is the same "could not look"
+  case the pre-erasure disclosure already distinguishes from "nothing is
+  here". It must not fall through to a success message.
+- **The count reported must cover everything erased.** Session records removed
+  from the wallet's own storage count as erased data, so a browser whose
+  ordinary storage was already empty must not be told there was nothing to
+  erase. **The requirement is on the NUMBER SHOWN and not only on the choice
+  of sentence**: a report that decides to claim a success on the wider set and
+  then states a figure drawn from the narrower one understates what was
+  removed, and reads as a contradiction where the narrower set was empty.
+  It binds on the PARTIAL report as well as the successful one: a mixed
+  outcome states a number too, and a figure that means one thing in two
+  sentences and something else in a third means nothing in any of them.
+- **What is offered BEFORE the confirmation must cover what the confirmation
+  will erase.** The figure shown while asking is a promise about the button
+  next to it, so it spans every store the erasure reaches, including the
+  wallet's own. Where a store cannot be read in time to say, the page reports
+  that it could not look rather than presenting a floor as a total — the same
+  distinction it already draws elsewhere between "nothing is here" and "could
+  not tell". Reading it must not modify anything, and must not bring into
+  existence a store it is reporting on.
+- **Completeness is not "something was removed".** A browser holding nothing
+  erases nothing and is complete; a browser that gave up its storage but held
+  its session records or a connection is incomplete. The report keys on the
+  second.
+- **A sign-out may only be claimed where one happened.** A visitor with no
+  wallet connected must not be told they were signed out, so the intent is
+  that the teardown is attempted only when there is a connection to end —
+  a successful no-op is not evidence of anything. **This applies to EVERY
+  connection, not the one in use**: where more than one wallet is connected,
+  every one of them must be ended before a sign-out is claimed, since a wallet
+  left connected is a live client able to write its session back into storage
+  the erasure has already cleared.
+- **A sign-out must outlast a reload.** Ending a connection only for the app to
+  reconnect on the next visit is not an ending, so the erasure must leave in
+  place whatever record tells the app not to reconnect on its own, and the
+  wallet types the app supports must be configured to keep such a record.
+  Removing it would be more thorough and less faithful: what the user asked
+  for was to be signed out, and the record says only that.
+- **A tab with nothing to disconnect must not be asked to disconnect.** The
+  cross-tab request is best effort, but it is not free: acting on it writes,
+  and a tab that was already signed out would write into storage the erasing
+  tab had just cleared. Only tabs holding a connection act on it, and a tab
+  that does act ends **every** connection it holds, for the same reason the
+  originating tab does.
+- **A tab told about another tab's erasure must bring ITSELF into line, not
+  only its storage.** Everything the erasure promises that is held per
+  browsing context has to be reset there too — the connection, and equally
+  the preferences the user can see. A second tab still displaying a theme or
+  a language that was erased is showing the user data they were told was
+  gone; that the value is now only in memory is a distinction the promise
+  does not make.
+- **Nothing a peer tab does in response may write.** Its resets run after the
+  originating tab's sweep, so any write lands in storage that was just
+  cleared and stays there — a peer tab restoring the keys the erasure
+  removed. Where the natural way to reset something persists, the peer tab
+  removes what it wrote.
+- **A request abandoned for taking too long must not be left free to act
+  later.** Giving up on a wallet teardown bounds the wait, not the work: the
+  wallet may still complete afterwards and write its state back into storage
+  the erasure had already cleared, leaving the device holding what the user
+  was told was removed. What arrives late must be cleared up after. The
+  REPORT is not revised — it is fixed at the moment it was made, and it
+  already says the wallet held out — so this is about the device, not the
+  claim.
+- **Bounding a wait must not leave work running.** Where the app gives up on a
+  storage operation that has not answered in time, it must also stop that
+  operation and release its hold on the storage. A wait that only stops
+  waiting leaves the next attempt queued behind the abandoned one, and leaves
+  a hold in place that blocks the browser's own site-data deletion — the very
+  remedy the app directs the user to when it reports the refusal.
+- **What remains outside reach is still stated.** A browser extension, or a
+  Safe the app is embedded in, holds its own record that this site was
+  authorised, in a place no page can reach. Erasure does not remove it and the
+  copy must say so, including that reconnecting there takes one click — a user
+  who deletes and finds one click restores the connection should have been told
+  in advance, not discovered it.
 - The page states its limits as prominently as its controls, and each is
   stated at its true extent. It does not reach on-chain data — which is public,
   so the user can look it up themselves, and permanent, so nobody can erase it.
@@ -793,7 +885,8 @@ Thin-market honesty rules apply.
   is wallet-linked state surviving a deletion the user was told had happened —
   and the app's own storage names are no guide to it, because the wallet
   libraries choose their own. The intent is that a user who deletes is
-  disconnected.
+  disconnected, and that the session material behind the reconnection is
+  deleted with the connection rather than left for the next page load.
 - **The download and the deletion deliberately cover different sets.** A
   download is a file the person keeps and may pass on, and wallet session
   material does not belong in one; the same material left on the device is what
@@ -810,6 +903,32 @@ Thin-market honesty rules apply.
   copies of its preferences and restores them, shared copies included, on the
   next visit, so resetting that site belongs to its own data controls and the
   page says so. Erasing here fully resets this app's own language and theme.
+- **An erase request must never destroy a session that came after it.** A
+  wallet can be slow to let go, and the app tidies up whatever such a teardown
+  writes on its way out. That tidying can arrive long after the request, by
+  which time the person may have gone back to using the app and connected
+  again — and the stores involved hold no record of which session wrote what,
+  so the only honest question is whether a session exists now that postdates
+  the request. If one does, the tidying is skipped: a leftover connection
+  record is a far better outcome than deleting a wallet session the user is
+  holding. **The intent is that this is decided from the app's own knowledge
+  of connections having happened, not from the wallet library's current
+  view.** A teardown the app gave up on can, on finishing, publish a stale
+  picture that omits the newer connection entirely, so asking the library
+  after the fact can return the answer that destroys the session — the
+  guarantee has to rest on something a late correction cannot revise. **That
+  knowledge must also outlive the page that started the request.** Erasing
+  resets the display language, which rebuilds the screen, so the surface the
+  user pressed the button on is gone while the request it made is still
+  running — and anything the app remembers only for as long as that surface
+  exists stops being remembered exactly when it is needed. A protection with a
+  shorter life than the thing it protects is not a protection.
+- **A report of how much was erased must not attribute it to a source it
+  cannot vouch for.** Where the browser refuses a check, the page may still
+  know how many items it removed; that figure spans ordinary storage,
+  cookies and any wallet session together. Naming one of those as the origin
+  is a claim about the user's wallet the app is in no position to make, and
+  is plainly false for someone who never connected one.
 - Erasing does not reload the page, so the confirmation of what happened
   survives long enough to be read.
 - **If any part of the browser's storage could not be read, the result is

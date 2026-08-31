@@ -42,12 +42,27 @@ function open(): BroadcastChannel | null {
   }
 }
 
-/** Tell every other tab on this origin to clear its own per-tab data. */
-export function announceErase(): void {
+/**
+ * Tell every other tab on this origin to clear its own per-tab data.
+ *
+ * Returns whether the message actually went out (round 11 P2). It can fail to
+ * — no `BroadcastChannel`, a blocked constructor, a throwing `postMessage` —
+ * and the page was reporting that other tabs had been asked to clear and sign
+ * out regardless. In a browser where the channel does not work, a peer stays
+ * connected and keeps its per-tab data while the originating page says the
+ * opposite. Best effort has to be reported as best effort ATTEMPTED, not as
+ * best effort DELIVERED.
+ *
+ * A `true` here still promises nothing about what peers did with it: nobody
+ * acknowledges, by design. It means only that the request left this tab.
+ */
+export function announceErase(): boolean {
   const channel = open();
-  if (!channel) return;
+  if (!channel) return false;
+  let posted = false;
   try {
     channel.postMessage({ type: 'erase' });
+    posted = true;
   } catch {
     // Non-fatal: the erasure in THIS tab has already happened.
   } finally {
@@ -57,6 +72,7 @@ export function announceErase(): void {
       /* nothing useful to do */
     }
   }
+  return posted;
 }
 
 /**

@@ -27,6 +27,7 @@ import {
 } from 'wagmi/chains';
 import { getDefaultConfig } from 'connectkit';
 import { SUPPORTED_CHAINS, ensMainnetRpcUrl } from './chains';
+import { connectionGeneration } from '../lib/dataRights';
 
 const WC_PROJECT_ID =
   (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID as string | undefined)?.trim() ||
@@ -180,6 +181,40 @@ export const wagmiConfig = createConfig({
     safe({
       allowedDomains: [/app\.safe\.global$/, /safe\.global$/],
       debug: false,
+      // #1862 Part 2 round 3 P1 — WITHOUT this the Safe connector cannot be
+      // disconnected in any way that survives a reload. `@wagmi/connectors`
+      // defaults `shimDisconnect` to false for `safe()`, so its `disconnect`
+      // only drops wagmi's in-memory connection and `isAuthorized` goes on
+      // answering yes for as long as the page is embedded in a Safe — the
+      // next mount reconnects. That is fine for a user who never asked to
+      // leave, and wrong for one who deleted their data and was told they
+      // had been signed out. With the shim, disconnecting writes
+      // `safe.disconnected` and `isAuthorized` honours it, which is the same
+      // contract `injected()` has had here all along (its default is true).
+      shimDisconnect: true,
     }),
   ],
 });
+
+// #1862 Part 2 round 16 P2 — the data-rights erasure's reconnect fence is fed
+// from here, and it has to be, because everything inside React has too short a
+// life. The fence's question is "did a connection happen AFTER the erase
+// request?", and it must stay answerable for as long as an abandoned wallet
+// teardown can still settle — which is unbounded, and certainly longer than
+// the page that started it. Erasing in a non-English locale resets the
+// language first, `LanguageRemount` remounts the page tree on that event, and
+// a subscription owned by the page is unsubscribed mid-erasure. The counter
+// then freezes at the request's value, agrees with the stale `disconnected`
+// that `@wagmi/core@2.22.1` publishes when a late teardown settles against its
+// captured connections map, and lets the cleanup delete a session the user
+// created in the replacement tree.
+//
+// Module scope, next to the config it observes: one subscription for the life
+// of the tab, above the router and every remount, and no component to forget
+// to mount. See `connectionGeneration` in `lib/dataRights.ts` for what it
+// counts and why an event count rather than a status read.
+wagmiConfig.subscribe(
+  (state) => state.connections,
+  (connections, previous) =>
+    connectionGeneration.observe(connections, previous),
+);
