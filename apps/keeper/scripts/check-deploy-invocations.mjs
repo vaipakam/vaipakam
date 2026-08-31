@@ -1456,7 +1456,13 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
     // An absolute or computed value is left alone: this scanner cannot resolve
     // it, and guessing a directory would pick the wrong file rather than none.
     const effCwd = (() => {
-      const m = cfgRegion.match(
+      // OTHER OPTIONS' VALUES ARE NEUTRALISED FIRST, keeping only `--cwd`. Read
+      // from the raw region, `--message '--cwd safe'` moved the modelled
+      // directory and let a config under `safe/` bless a deploy that loads a
+      // different file (Codex #2036 r10). `stripOtherOptionValues` is the
+      // defence the shell path has had since #1924 r23; this reader was added
+      // without it — the same omission as every other round.
+      const m = stripOtherOptionValues(cfgRegion, ['cwd']).match(
         /(?<![\w-])--cwd(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/,
       );
       const v = m ? (m[1] ?? m[2] ?? m[3]) : argvValue(cfgRegion, '--cwd', beforeCfg);
@@ -3356,9 +3362,36 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     // Options-object entry, JS or Python: `CLOUDFLARE_ENV: "staging"`,
     // `"CLOUDFLARE_ENV": "staging"`. A quoted EMPTY value is not an
     // environment, the same rule the shell form follows.
-    [...rawSeg.matchAll(
-      /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|[A-Za-z_$][\w$.]*)/g,
-    )].some((mm) => notInsideString(rawSeg, mm.index + (/^["']/.test(mm[0]) ? 1 : 0))) ||
+    // ...and only inside the child process's OWN `env` option. Any object
+    // property of that name was accepted, so `{metadata: {CLOUDFLARE_ENV:
+    // "staging"}}` — which Node ignores entirely — suppressed the config
+    // identity and blocked an ordinary deploy (Codex #2036 r10). Same
+    // false-red shape as the quoted-string case one round earlier: the
+    // predicate kept widening its reach without narrowing WHERE it looks.
+    [...rawSeg.matchAll(/(?<![\w$.])env\s*:\s*\{/g)].some((opener) => {
+      // The `env` object's own extent, brace-balanced so a nested object does
+      // not end it early.
+      let i = opener.index + opener[0].length;
+      let depth = 1;
+      let quote = null;
+      while (i < rawSeg.length && depth > 0) {
+        const c = rawSeg[i];
+        if (quote) {
+          if (c === '\\') i += 1;
+          else if (c === quote) quote = null;
+          i += 1;
+          continue;
+        }
+        if (c === '"' || c === "'" || c === '`') quote = c;
+        else if (c === '{') depth += 1;
+        else if (c === '}') depth -= 1;
+        i += 1;
+      }
+      const body = rawSeg.slice(opener.index, i);
+      return [...body.matchAll(
+        /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"[^"]+"|'[^']+'|[A-Za-z_$][\w$.]*)/g,
+      )].some((mm) => notInsideString(body, mm.index + (/^["']/.test(mm[0]) ? 1 : 0)));
+    }) ||
     // Argv-array `--env` / `-e`, the spelling the config selector already
     // learned two findings ago. Same shape, same blind spot.
     // Reuses the argv reader rather than a second pattern, so a COMPUTED
@@ -7294,7 +7327,24 @@ if (violations.length > 0) {
       // flag genuinely does not exist — so a TOML user following the message
       // exactly would produce a config that no longer parses (Codex #2036 r1).
       // Both spellings are shown unless the reported lines settle which applies.
-      const exts = hits.map((v) => (/--config[= ]\S*\.toml\b|\.toml\b/.test(v.line) ? 'toml' : 'json'));
+      // The format comes from the SELECTED CONFIG PATH, not from any `.toml`
+      // text on the line. `--config missing.jsonc --message "from old.toml"`
+      // was handed the TOML remedy, which is invalid in the JSONC file it names
+      // (Codex #2036 r10) — the quoted-text-decides-a-verdict shape once more,
+      // this time deciding a remedy. When the selector cannot be read, BOTH
+      // spellings are shown rather than a guess.
+      const exts = hits.map((v) => {
+        // ONE SHELL WORD, which may MIX adjacent quoted and unquoted chunks:
+        // `"$GEN".toml` is a single argument ending in `.toml`, and a pattern
+        // that stopped at the closing quote read it as `$GEN` and chose the
+        // wrong syntax. Same rule `valueOf` follows for every other value.
+        const sel = stripOtherOptionValues(v.line, ['config', 'c']).match(
+          /(?<![\w-])(?:--config|-c)(?:=|\s+)((?:"[^"]*"|'[^']*'|[^\s"'`;&|)]+)+)/,
+        );
+        const path = sel ? sel[1].replace(/["'`]/g, '') : null;
+        if (path === null) return 'unknown';
+        return /\.toml$/i.test(path) ? 'toml' : 'json';
+      });
       const only = exts.every((e) => e === exts[0]) ? exts[0] : null;
       const decl =
         only === 'toml'

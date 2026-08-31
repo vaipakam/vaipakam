@@ -7186,6 +7186,64 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
   });
 
+  // ---- Codex #2036 r10 ----
+
+  it('CLOUDFLARE_ENV outside the env option is not the environment', () => {
+    // Node ignores `metadata` entirely. The predicate kept widening its reach
+    // without narrowing WHERE it looks, so unrelated application data
+    // suppressed the config identity and blocked an ordinary deploy.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nspawnSync("wrangler", ["deploy", "--config", "www.jsonc"], ' +
+          '{metadata: {CLOUDFLARE_ENV: "staging"}});\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('but inside the env option it still is', () => {
+    // The control for the narrowing — it must not stop reading a real one.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/www.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nspawnSync("wrangler", ["deploy", "--config", "www.jsonc"], ' +
+        '{env: {...process.env, CLOUDFLARE_ENV: "staging"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('--cwd inside ANOTHER option value does not move the modelled directory', () => {
+    // `stripOtherOptionValues` is the defence the shell path has had since
+    // #1924 r23; the safety reader's `--cwd` was added without it, so a
+    // descriptive `--message '--cwd safe'` let a config under `safe/` bless a
+    // deploy that loads a different file.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('safe/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith(
+      'w.sh',
+      "wrangler deploy --name vaipakam-agent --message '--cwd safe' --config custom.jsonc\n",
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the remedy syntax comes from the SELECTED config, not any .toml on the line', () => {
+    // The quoted-text-decides-a-verdict shape once more, this time deciding a
+    // remedy: a descriptive message mentioning a `.toml` file handed a JSONC
+    // selection the TOML syntax, which is invalid in the file it names.
+    const r = runWith(
+      'w.sh',
+      'cd .\nwrangler versions upload --config missing.jsonc --message "migration from old.toml"\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('"keep_vars": true');
+    expect(r.out).not.toContain('keep_vars = true');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {
