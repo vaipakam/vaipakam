@@ -385,14 +385,22 @@ const copySource = {
        database open or a wallet refused to disconnect. */
     eraseWorking: 'Signing out and clearing…',
     eraseDoneDisconnected: tmpl(
-      'Erased {{count}} stored items and signed you out. Any other tabs you have open have been told to clear theirs as well.',
+      'Erased {{count}} stored items and signed you out here. Any other tabs you have open have been asked to clear theirs and sign out as well.',
       ['count'],
     ),
     /* A live session survives this one, so it must not read as a success.
        The cause is nearly always another tab of this site holding the
        database open, which the user can act on — hence naming it. */
+    /* Round 1 P1 — this used to blame another open tab and tell the user to
+       close their tabs. That was advice for the previous design, which
+       deleted the whole database and could be blocked by any open
+       connection including this page's own; the erase now empties the store
+       instead, which no other tab can block. So a failure here is the
+       browser's storage refusing, and the remedy is the browser's own
+       controls. Telling someone to close tabs that were never the problem
+       is a worse failure than saying less. */
     eraseSessionHeld:
-      'Your stored data was removed, but the wallet session database could not be deleted — another tab of this site is most likely still open and holding it. Close your other tabs and erase again, or clear site data through your browser’s own settings.',
+      'Your stored data was removed, but the wallet’s stored session could not be cleared, so it may still be on this device. Clearing site data through your browser’s own settings will remove it.',
     /* The wallet refused to disconnect. Everything else went; the app is
        still attached, and saying "erased" over that is the false assurance
        this page exists to avoid. */

@@ -590,12 +590,28 @@ export type ErasureMethod =
   /** A key sweep over a Web Storage area. Synchronous; result is exact. */
   | { readonly kind: 'webStorageMarker'; readonly marker: string }
   /**
-   * `indexedDB.deleteDatabase`. Asynchronous, and genuinely refusable: the
-   * request BLOCKS while any other tab on this origin holds the database
-   * open, and a blocked deletion must be reported as a refusal rather than
-   * waited on forever.
+   * Empty an IndexedDB object store, in place.
+   *
+   * NOT `deleteDatabase`, which is what this was until #1862 Part 2 round 1
+   * and which does not work here. A database deletion blocks while ANY
+   * connection is open — including this tab's own. `idb-keyval@6.2.2`, which
+   * both wallet libraries use, caches its `IDBDatabase` in a module-level
+   * promise, installs only an `onclose` handler and exposes no teardown, and
+   * neither library closes it on disconnect. So the deletion blocked on US,
+   * and the page then advised closing OTHER tabs — advice that could not
+   * work, for a deletion that was never going to succeed.
+   *
+   * Clearing the store is not blockable in that way: it is an ordinary
+   * readwrite transaction, which runs on a connection rather than requiring
+   * every connection to close. It also removes exactly what the erasure is
+   * for — the stored session material — and leaves an empty database behind,
+   * which holds nothing about anyone.
    */
-  | { readonly kind: 'indexedDbDatabase'; readonly database: string };
+  | {
+      readonly kind: 'indexedDbStore';
+      readonly database: string;
+      readonly store: string;
+    };
 
 export interface ErasureTarget {
   readonly store: 'localStorage' | 'sessionStorage' | 'indexedDB';
@@ -621,11 +637,14 @@ export interface ErasureTarget {
  *    `STORAGE_SCOPE = 'cbwsdk'`, `STORAGE_NAME = 'keys'`. This is the
  *    smart-wallet keypair store — `activeId` plus a record per public key.
  *
- * The whole database is deleted rather than individual keys. On an origin
- * this app has to itself the database belongs to the wallet integration and
- * nothing else, so a scoped key deletion would be more code for a strictly
- * smaller guarantee. That reasoning is origin-specific and would not hold on
- * a shared origin, which is why it is written here rather than assumed.
+ * Each store is EMPTIED rather than its database deleted. The first revision
+ * deleted the database, on the reasoning that on an origin this app has to
+ * itself the database belongs to the wallet integration and nothing else —
+ * true, and beside the point: a deletion blocks on every open connection
+ * including this tab's own, and neither library closes the handle
+ * `idb-keyval` caches. Clearing runs as an ordinary transaction, removes the
+ * same material, and cannot be blocked by a connection that will never
+ * close.
  */
 export const ERASURE_REGISTRY: readonly ErasureTarget[] = [
   {
@@ -635,8 +654,9 @@ export const ERASURE_REGISTRY: readonly ErasureTarget[] = [
     evidence:
       'dist/index.es.js constants D/E passed to createStore(dbName, storeName)',
     method: {
-      kind: 'indexedDbDatabase',
+      kind: 'indexedDbStore',
       database: 'WALLET_CONNECT_V2_INDEXED_DB',
+      store: 'keyvaluestorage',
     },
   },
   {
@@ -645,33 +665,36 @@ export const ERASURE_REGISTRY: readonly ErasureTarget[] = [
     holds: "the Coinbase smart wallet's signing keypairs and active key id",
     evidence:
       "dist/kms/crypto-key/index.js STORAGE_SCOPE 'cbwsdk' / STORAGE_NAME 'keys'",
-    method: { kind: 'indexedDbDatabase', database: 'cbwsdk' },
+    method: { kind: 'indexedDbStore', database: 'cbwsdk', store: 'keys' },
   },
 ];
 
-/** Databases the erasure deletes, in registry order. */
-export const ERASABLE_INDEXED_DB_NAMES: readonly string[] =
-  ERASURE_REGISTRY.flatMap((t) =>
-    t.method.kind === 'indexedDbDatabase' ? [t.method.database] : [],
-  );
+/** The `(database, store)` pairs the erasure empties, in registry order. */
+export const ERASABLE_INDEXED_DB_STORES: readonly {
+  readonly database: string;
+  readonly store: string;
+}[] = ERASURE_REGISTRY.flatMap((t) =>
+  t.method.kind === 'indexedDbStore'
+    ? [{ database: t.method.database, store: t.method.store }]
+    : [],
+);
 
 /**
- * How long to wait for a `deleteDatabase` that another tab is blocking.
+ * How long to wait for an IndexedDB request that never answers.
  *
- * A blocked deletion never completes on its own — it waits for every other
- * connection to close, which may be never. The page cannot hang on that, and
- * it must not report success either, so the wait is bounded and a timeout is
- * reported as a refusal.
+ * Clearing a store is not blockable the way a database deletion is, but a
+ * request can still hang — a browser mid-eviction, a storage layer wedged by
+ * a privacy extension. The page cannot wait on that and must not report
+ * success either, so the wait is bounded and a timeout is a refusal.
  */
-export const INDEXED_DB_DELETE_TIMEOUT_MS = 3_000;
+export const INDEXED_DB_TIMEOUT_MS = 3_000;
 
 export interface IndexedDbEraseResult {
-  /** Databases deleted, or already absent. */
-  readonly deleted: number;
+  /** Stores emptied, or already absent. */
+  readonly cleared: number;
   /**
-   * Databases that could NOT be deleted — blocked by another tab, timed
-   * out, or rejected. Named so the page can say which, rather than
-   * reporting a count the user cannot act on.
+   * Stores that could NOT be emptied, named `database/store` so the page can
+   * say which rather than report a count nobody can act on.
    */
   readonly refused: readonly string[];
   /** True when this browser exposes no IndexedDB at all. */
@@ -679,15 +702,19 @@ export interface IndexedDbEraseResult {
 }
 
 /**
- * Delete one IndexedDB database, resolving to whether it is now gone.
+ * Empty one object store, resolving to whether it is now empty.
  *
- * Three outcomes, deliberately not collapsed:
- *  - `success` — deleted, or it never existed (`deleteDatabase` succeeds
- *    either way, and "absent" is the state the erasure wanted).
- *  - `blocked` — another tab holds it open. Reported, never waited out.
- *  - `error` — the request failed.
+ * A database or store that does not exist counts as success: absent is the
+ * state the erasure wanted, and an origin that never connected a wallet has
+ * neither.
+ *
+ * Deliberately does NOT create anything. `indexedDB.open(name)` with no
+ * version creates the database when it is missing, so an erasure would leave
+ * behind empty databases it invented — which is a strange thing for a
+ * deletion to do. `onupgradeneeded` firing tells us the database did not
+ * exist, so the transaction is abandoned and the creation undone.
  */
-function deleteDatabase(name: string): Promise<boolean> {
+function clearObjectStore(database: string, store: string): Promise<boolean> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (ok: boolean) => {
@@ -697,56 +724,91 @@ function deleteDatabase(name: string): Promise<boolean> {
     };
     let request: IDBOpenDBRequest;
     try {
-      request = indexedDB.deleteDatabase(name);
+      request = indexedDB.open(database);
     } catch {
-      // Some privacy modes throw on access rather than returning a request.
       finish(false);
       return;
     }
-    // A blocked request stays pending indefinitely, so the timeout is the
-    // only thing that ends it. It resolves FALSE: the database is still
-    // there, and saying otherwise is the false-assurance failure this page
-    // exists to avoid.
-    const timer = setTimeout(() => finish(false), INDEXED_DB_DELETE_TIMEOUT_MS);
+    const timer = setTimeout(() => finish(false), INDEXED_DB_TIMEOUT_MS);
     const done = (ok: boolean) => {
       clearTimeout(timer);
       finish(ok);
     };
-    request.onsuccess = () => done(true);
+    let created = false;
+    request.onupgradeneeded = () => {
+      // The database was absent and this call is creating it. Nothing to
+      // erase, and nothing should be left behind.
+      created = true;
+    };
     request.onerror = () => done(false);
-    request.onblocked = () => done(false);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (created) {
+        db.close();
+        try {
+          indexedDB.deleteDatabase(database);
+        } catch {
+          // Best effort: an empty database we made is harmless, and failing
+          // to remove it must not turn an erasure that had nothing to do
+          // into a reported refusal.
+        }
+        done(true);
+        return;
+      }
+      if (!db.objectStoreNames.contains(store)) {
+        // Database exists but this library never wrote its store. Absent is
+        // the wanted state.
+        db.close();
+        done(true);
+        return;
+      }
+      try {
+        const tx = db.transaction(store, 'readwrite');
+        tx.objectStore(store).clear();
+        tx.oncomplete = () => {
+          db.close();
+          done(true);
+        };
+        tx.onerror = () => {
+          db.close();
+          done(false);
+        };
+        tx.onabort = () => {
+          db.close();
+          done(false);
+        };
+      } catch {
+        db.close();
+        done(false);
+      }
+    };
   });
 }
 
 /**
- * Delete every database in the registry.
+ * Empty every store in the registry.
  *
- * Runs them concurrently: they are independent, and a wallet holding one
- * open should not delay the verdict on the other.
+ * Runs them concurrently: they are independent, and one wallet's storage
+ * misbehaving should not delay the verdict on the other.
  */
 export async function eraseIndexedDbData(): Promise<IndexedDbEraseResult> {
   if (typeof indexedDB === 'undefined') {
-    return { deleted: 0, refused: [], unavailable: true };
+    return { cleared: 0, refused: [], unavailable: true };
   }
-  const names = ERASABLE_INDEXED_DB_NAMES;
-  const outcomes = await Promise.all(names.map((n) => deleteDatabase(n)));
-  const refused = names.filter((_, i) => !outcomes[i]);
+  const targets = ERASABLE_INDEXED_DB_STORES;
+  const outcomes = await Promise.all(
+    targets.map((t) => clearObjectStore(t.database, t.store)),
+  );
+  const refused = targets
+    .filter((_, i) => !outcomes[i])
+    .map((t) => `${t.database}/${t.store}`);
   return {
-    deleted: outcomes.filter(Boolean).length,
+    cleared: outcomes.filter(Boolean).length,
     refused,
     unavailable: false,
   };
 }
 
-/**
- * Remove everything this origin holds.
- *
- * Returns what was actually removed rather than a boolean, because the
- * page has to tell the truth about three different outcomes: data
- * erased, nothing was stored to begin with, and storage refused. A
- * blanket "done" would collapse all three, and on this page the third
- * one is a false assurance.
- */
 /**
  * Clear only what belongs to THIS browsing context.
  *
@@ -847,6 +909,34 @@ export interface FullEraseResult extends EraseResult {
  * refusable part, and the caller must not report an outcome until they have
  * settled or timed out.
  */
+/**
+ * How long to wait for a connector teardown before giving up on it.
+ *
+ * Generous, because a wallet may legitimately prompt the user, and short
+ * enough that a wedged transport cannot strand the erasure indefinitely.
+ */
+export const DISCONNECT_TIMEOUT_MS = 10_000;
+
+/** Reject after `ms` if `promise` has not settled. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error('timeout')),
+      ms,
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e as Error);
+      },
+    );
+  });
+}
+
 export interface FullEraseOptions {
   /**
    * Tear down the live wallet connection. Injected rather than imported so
@@ -862,14 +952,12 @@ export interface FullEraseOptions {
  *
  * **The order is the mechanism, not statement order.**
  *
- * 1. Disconnect first. A connector that is still running is the thing most
- *    likely to hold a database open, and an open connection is exactly what
- *    makes `deleteDatabase` block. Giving the client the chance to close is
- *    the difference between a deletion that succeeds and one that has to be
- *    reported as refused. This is a REASON for the ordering, not a promise
- *    that it works — whether a given connector closes its database on
- *    teardown is not something this app can guarantee, which is why the
- *    refusal path in step 3 exists and is reported.
+ * 1. Disconnect first, so a live client cannot write its session back into
+ *    a store that has just been emptied. This was originally justified by
+ *    `deleteDatabase` blocking on open connections; that justification went
+ *    with the deletion (round 1 P1), but the ordering survives it on the
+ *    simpler ground — erasing under a running client is a race, and the
+ *    teardown is what ends it.
  * 2. Then the synchronous sweep, which also catches what the teardown itself
  *    writes on the way out, and which keeps the per-tab broadcast and
  *    preference ordering Part 1 established.
@@ -901,7 +989,15 @@ export async function eraseMyDataFully(
   };
   if (disconnect) {
     try {
-      await disconnect();
+      // BOUNDED (round 1 P2). Only a REJECTED promise reaches the catch; one
+      // that never settles — an unresponsive WalletConnect transport, a
+      // wallet that never answers — would hang here forever, leaving the
+      // page stuck on its working label with nothing erased at all. A
+      // timeout is treated as "did not disconnect" so the rest of the
+      // erasure still runs, which is the outcome that matters: failing to
+      // close a connection must not cost the user the deletion of
+      // everything else.
+      await withTimeout(disconnect(), DISCONNECT_TIMEOUT_MS);
       connector = { attempted: true, disconnected: true };
     } catch {
       connector = { attempted: true, disconnected: false };
@@ -916,8 +1012,13 @@ export async function eraseMyDataFully(
     // A teardown that was asked for and failed leaves the app connected, so
     // it is as incomplete as a refused database — the page must not report
     // a clean erasure over a wallet that is still attached.
+    // #1862 Part 2 round 1 P2 — `unavailable` is NOT clean. A browser that
+    // hides IndexedDB after a wallet wrote to it leaves that material in
+    // place and unverifiable; neither store was emptied nor observed absent,
+    // so the honest answer is incomplete rather than success.
     complete:
       indexedDb.refused.length === 0 &&
+      !indexedDb.unavailable &&
       (!connector.attempted || connector.disconnected),
   };
 }
