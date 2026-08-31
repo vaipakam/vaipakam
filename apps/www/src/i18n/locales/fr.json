@@ -123,7 +123,7 @@
     "journeyTitle": "Télécharger le journal de parcours (cette session)",
     "journeyBody": "Enregistre le tampon de parcours en mémoire (événements d'interface de la session de cet onglet) sous forme de fichier JSON. Utile à partager dans un DM Discord ou un fil d'assistance. Cette action est indépendante des options Télécharger / Supprimer ci-dessus : celles-ci touchent votre espace de noms stocké, tandis que celle-ci capture uniquement le tampon d'événements en direct.",
     "journeyCta": "Télécharger le journal de parcours (JSON)",
-    "legalFooter": "Vaipakam agit comme responsable du traitement pour les éléments ci-dessus. Nous ne conservons aucune donnée personnelle côté serveur (pas de comptes, pas de listes e-mail, pas d'analytics liés à votre portefeuille). À des fins d'audit, nous enregistrons chaque événement d'erreur d'interface côté serveur avec un UUID par événement — consultez la Politique de confidentialité pour savoir ce qui est capturé."
+    "legalFooter": "Vaipakam agit comme responsable du traitement pour les éléments ci-dessus. Nous ne conservons aucune donnée personnelle côté serveur (pas de comptes, pas de listes e-mail, pas d'analytics liés à votre portefeuille). L'application n'envoie pas d'elle-même de rapports d'erreur à nos serveurs — consultez la Politique de confidentialité pour savoir ce que contient un rapport d'assistance que vous choisissez d'envoyer."
   },
   "dashboard": {
     "connectTitle": "Connectez votre portefeuille",

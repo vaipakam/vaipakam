@@ -17,11 +17,12 @@ import { normalizeToSupportedLocale } from '@vaipakam/i18n/createI18n';
 
 /**
  * `<LanguagePicker>` — display-language selector. Custom-rendered
- * dropdown (not a native `<select>`) so the trigger pill + popup
- * menu match the `<ChainPicker>` look on the public Analytics page;
- * the styling lives in `LanguagePicker.css` and intentionally
- * mirrors `ChainPicker.css` rule-for-rule so the two pickers feel
- * like siblings across both surfaces.
+ * dropdown (not a native `<select>`) rather than a native `<select>`,
+ * because the trigger pill + popup menu were built to match the
+ * `<ChainPicker>` that once shared this site's look. That component
+ * lived in `packages/ui`, RETIRED in #1963, and no ChainPicker remains
+ * here — so this is prior art, not a live pairing, and the styling in
+ * `LanguagePicker.css` has no counterpart to mirror any more.
  *
  * Selection is delegated to i18next via `i18n.changeLanguage`, which
  * also persists the choice to `localStorage["vaipakam:language"]`
@@ -69,8 +70,8 @@ function LanguagePickerInner() {
     return () => i18n.off("languageChanged", onChange);
   }, [i18n]);
 
-  // Outside-click / Escape close — same dismissal pattern as
-  // ChainPicker.
+  // Outside-click / Escape close — the dismissal pattern inherited
+  // from the retired ChainPicker (#1963).
   useEffect(() => {
     if (!open) return;
     const onDocClick = (e: MouseEvent) => {

@@ -1179,6 +1179,134 @@ function checkNoHtmlComments(md) {
   ];
 }
 
+/**
+ * The authority may not use the four Markdown constructs whose meaning this
+ * gate cannot decide without implementing CommonMark (#1990).
+ *
+ * THE SAME TRADE AS {checkNoHtmlComments}, made deliberately a second time.
+ * #1978 deferred four review findings — list context before classifying an
+ * indented code block, fences opened inside a block quote, escape parity
+ * before splitting a table row, and JSON depth on a brace-opening line —
+ * because they are one question rather than four bugs: how much of a markup
+ * specification should a gate whose job is to stop ten notes disagreeing
+ * about a count of five actually implement? The finding rate across ~30
+ * rounds answered it. The indentation rule alone went through four
+ * iterations, each correct about the example in front of it.
+ *
+ * So the answer is the one that already worked here: constrain the input and
+ * check the constraint, rather than parse the language. Each rule below is
+ * decidable by looking at one line, and each was measured against the
+ * authority before being written — all three are satisfied by the file as it
+ * stands, so the constraint costs an editor nothing today.
+ *
+ * DELIBERATELY NOT FENCE-AWARE, exactly as {checkNoHtmlComments} is not.
+ * Exempting fenced examples would require trusting fence tracking, and
+ * "a fence opened inside a block quote" is one of the findings being closed —
+ * the tracking is what is unreliable. A blunt rule over raw lines has no
+ * such dependency, and an authority that needs one of these constructs inside
+ * an example can describe it in prose instead.
+ *
+ * The fourth finding is NOT here. Brace depth on a JSON object opening
+ * concerns `wrangler.jsonc` and `.toml` files this gate reads but does not
+ * own, so there is no constraint to impose on their authors; it stays a
+ * documented approximation of the config scanner rather than a rule.
+ */
+function checkAuthorityFormatting(md) {
+  const problems = [];
+  const lines = md.split('\n');
+  const seen = new Set();
+  const once = (key, message) => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    problems.push(message);
+  };
+  for (const line of lines) {
+    // Four columns of whitespace is an indented code block to CommonMark and
+    // list continuation inside a list item, and telling those apart is
+    // finding #1.
+    //
+    // POSITION-FREE, after two rounds of getting position wrong (Codex #1990
+    // r1 and r2). The first version matched `^(?: {4,}|\t)` and missed
+    // `   \t`, because a tab advances to the next multiple of four. The
+    // second used the gate's own `indentWidth` — correct about tabs, and
+    // still wrong, because `indentWidth` stops at the first non-space and so
+    // reports ZERO for `-     text`, where CommonMark opens a code block
+    // inside the list item. That is the container-context dependency this
+    // constraint exists to remove, surviving two attempts to write it out.
+    //
+    // The blunt form has no position to be wrong about: no tab anywhere on
+    // the line, and no run of four or more spaces anywhere on the line.
+    // Together those make four columns of whitespace unreachable in any
+    // container, leading or not. Measured, as every rule here is: the
+    // authority contains zero tabs, zero four-space runs, and forty-three
+    // lines of two-space continuation that stay legal.
+    if (line.includes('\t')) {
+      once(
+        'tab',
+        'the authority contains a tab character; this file may not use tabs, ' +
+          'because a tab advances to the next multiple of four columns and so ' +
+          'can open an indented code block at a width no count of spaces ' +
+          'would predict. Indent with spaces, at most two',
+      );
+    }
+    if (line.includes('    ')) {
+      once(
+        'indent',
+        'the authority contains a run of four or more spaces; this file may ' +
+          'not use indented code blocks, because four columns of whitespace ' +
+          'means one thing at top level and another inside a list item, and ' +
+          'this gate does not implement the difference. The rule counts a run ' +
+          'ANYWHERE on the line rather than only at its start, since ' +
+          'indentation after a list marker opens a code block just as leading ' +
+          'indentation does. Use a fenced ``` block, or indent by no more ' +
+          'than two spaces for ordinary continuation',
+      );
+    }
+    // A block quote can carry any other construct inside it, including a
+    // fence this scanner would not track (finding #2).
+    //
+    // ANYWHERE ON THE LINE, not behind an enumerated prefix (Codex #1990 r1).
+    // The first version anchored at `^ *>` and so missed `- > quoted`, where
+    // CommonMark renders a quote inside a list item — leaving the constraint
+    // dependent on container context, which is the parsing problem it exists
+    // to remove. Widening the anchor to admit list markers would repeat a
+    // mistake this file has already made three times over: the stamp count
+    // enumerated prefixes at r4, r10 and r11, and the note above it records
+    // the conclusion — "Markdown affords more than an enumeration can hold".
+    //
+    // So the rule does not look at position at all. The character is absent
+    // from the authority entirely (measured: zero occurrences), which makes
+    // the blunt form free, and a blunt form has no container context to be
+    // wrong about.
+    if (line.includes('>')) {
+      once(
+        'blockquote',
+        'the authority contains a ">" character; this file may not use one, ' +
+          'because a block quote can open a fenced block that this gate does ' +
+          'not track, and where the quote marker sits — column zero, indented, ' +
+          'or after a list bullet — is exactly the context this gate declines ' +
+          'to parse. The rule is the whole character rather than the marker ' +
+          'position, since enumerating the positions is what kept failing. ' +
+          'Write the passage as ordinary prose',
+      );
+    }
+    // `\|` is a literal pipe and `\\|` is an escaped backslash before a cell
+    // separator; splitting a row correctly means counting the backslash run
+    // (finding #3). No table cell here needs either.
+    if (/\\+\|/.test(line)) {
+      once(
+        'escaped-pipe',
+        'the authority contains a backslash before a table pipe; this file ' +
+          'may not escape pipes, because telling a literal pipe from an ' +
+          'escaped backslash before a separator means counting the escape ' +
+          'run, which this gate does not do. Reword the cell so it needs no ' +
+          'pipe',
+      );
+    }
+  }
+  return problems;
+}
+
 function hasVisibleStamp(md) {
   for (const line of visibleLines(md)) {
     if (/^\*\*Verified:/.test(line)) return true;
@@ -1439,6 +1567,7 @@ function runOffline() {
   const inv = parseInventory(authorityMd);
   const summaryProblems = [
     ...checkNoHtmlComments(authorityMd),
+    ...checkAuthorityFormatting(authorityMd),
     ...checkStamp(authorityMd),
     ...checkSkipList(),
     ...checkInventoryPresent(inv),
@@ -3211,6 +3340,11 @@ async function runLive() {
   for (const p of checkInventoryPresent(inv)) {
     problems.push(`INVENTORY     ${p}`);
   }
+  // Wired into BOTH entry points on the first commit, because the comment
+  // above says what happens otherwise (#1990).
+  for (const p of checkAuthorityFormatting(authorityMd)) {
+    problems.push(p);
+  }
   for (const p of checkNoHtmlComments(authorityMd)) {
     problems.push(p);
   }
@@ -4466,6 +4600,52 @@ const COMMENT_CASES = [
   ['a comment inside a fence is still a comment for this rule', '```\n<!-- x -->\n```', 1],
 ];
 
+/**
+ * {checkAuthorityFormatting} fixtures: `[name, markdown, expectedProblems]`.
+ *
+ * Boring for the same reason {COMMENT_CASES} is (#1990): each rule reads one
+ * line, so there is no state for a fixture to explore. What they DO pin is
+ * the shape of the trade — that the rules fire inside fenced blocks too, and
+ * that each construct is reported once however many times it appears, so a
+ * document using one of them twenty times still yields one actionable line.
+ */
+const FORMATTING_CASES = [
+  ['ordinary prose', '# fine\n\nA sentence.\n', 0],
+  ['two-space continuation is allowed', 'a line\n  continued here\n', 0],
+  ['a fenced block is the supported way to show code', '```\nx = 1\n```\n', 0],
+  ['four-space indent', 'text\n\n    code()\n', 1],
+  ['a leading tab', 'text\n\n\tcode()\n', 1],
+  // Codex #1990 r1: a tab advances to the next multiple of four, so one to
+  // three spaces then a tab is width four while being neither of the two
+  // shapes the first version matched. This is the mixed space-tab case that
+  // was already the third iteration of this rule on #1978.
+  ['one space then a tab', 'text\n\n \tcode()\n', 1],
+  ['three spaces then a tab', 'text\n\n   \tcode()\n', 1],
+  ['three spaces alone is continuation, not code', 'text\n\n   still prose\n', 0],
+  ['two-space continuation stays legal', 'text\n  wrapped line\n', 0],
+  // Codex #1990 r2: `indentWidth` stops at the first non-space, so it reports
+  // ZERO here while CommonMark opens a code block inside the list item. The
+  // rule counts a whitespace run anywhere for exactly this case.
+  ['indentation after a list marker', '-     code()\n', 1],
+  ['indentation after an ordered list marker', '1.     code()\n', 1],
+  ['a four-space run mid-line', 'a    b\n', 1],
+  ['a tab anywhere, not only leading', 'text\tmore\n', 1],
+  ['indent inside a fence is still an indent for this rule', '```\n    code()\n```\n', 1],
+  ['a block quote', '> quoted\n', 1],
+  ['an indented block quote', '  > quoted\n', 1],
+  ['a fence opened inside a block quote — finding #2', '> ```\n> x\n> ```\n', 1],
+  // Codex #1990 r1: CommonMark renders a quote inside a list item, and the
+  // anchored first version did not see it. The rule now ignores position.
+  ['a block quote inside a list item', '- > quoted\n', 1],
+  ['a block quote inside a nested list item', '  - > quoted\n', 1],
+  ['a quote marker mid-line still counts', 'prose with a > in it\n', 1],
+  ['an escaped pipe in a table cell', '| a \\| b | c |\n', 1],
+  ['a double backslash before a separator', '| a \\\\| b |\n', 1],
+  ['a pipe with no escape is ordinary', '| a | b |\n', 0],
+  ['each construct is reported once, not per line', '> one\n> two\n> three\n', 1],
+  ['two different constructs report separately', '> quoted\n\n    code()\n', 2],
+];
+
 /** Source-cell fixtures: `[name, cell, expected readSource value]`. */
 /**
  * {checkSources} fixtures: `[name, Map(name -> parsed cell), expectedProblems]`.
@@ -4886,6 +5066,34 @@ function runSelftest() {
       bad++;
     }
   }
+
+  for (const [name, md, expected] of FORMATTING_CASES) {
+    const got = checkAuthorityFormatting(md).length;
+    if (got !== expected) {
+      console.error(
+        `selftest: formatting case "${name}" reported ${got} problem(s), expected ${expected}`,
+      );
+      bad++;
+    }
+  }
+
+  // The constraint is only free if the authority already satisfies it, and
+  // that is the claim the rule was written on (#1990). Asserting it here
+  // means a future edit that introduces one of these constructs fails with
+  // the rule's own diagnostic rather than being discovered by a reader.
+  {
+    const problems = checkAuthorityFormatting(readFileSync(AUTHORITY, 'utf8'));
+    if (problems.length !== 0) {
+      console.error(
+        `selftest: the authority itself violates its own formatting ` +
+          `constraint (${problems.length} problem(s)) — either the document ` +
+          `changed or the rule is wrong:`,
+      );
+      for (const p of problems) console.error(`  ${p}`);
+      bad++;
+    }
+  }
+
   for (const [name, md, liveTriggers, reservedRows, expected] of SUMMARY_CASES) {
     // Fixtures carry a COUNT; the checker takes names. Synthesise keeper-shaped
     // names so the identity check is satisfied by the canonical label and the
@@ -4943,7 +5151,8 @@ function runSelftest() {
   console.log(
     `Cron-slot gate selftest OK (${MUST_FIRE.length} fire, ${MUST_NOT_FIRE.length} quiet, ` +
       `${INVENTORY_CASES.length} inventory rows, ${SUMMARY_CASES.length} summaries, ` +
-      `${STAMP_CASES.length} stamps, ${COMMENT_CASES.length} comment rules, ${SOURCE_CASES.length} sources, ${WRANGLER_NAME_CASES.length} wrangler names, ` +
+      `${STAMP_CASES.length} stamps, ${COMMENT_CASES.length} comment rules, ` +
+      `${FORMATTING_CASES.length} formatting rules, ${SOURCE_CASES.length} sources, ${WRANGLER_NAME_CASES.length} wrangler names, ` +
       `${CHECK_SOURCES_CASES.length} source resolutions).`,
   );
   return 0;

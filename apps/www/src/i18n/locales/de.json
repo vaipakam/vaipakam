@@ -123,7 +123,7 @@
     "journeyTitle": "Journey Log herunterladen (diese Sitzung)",
     "journeyBody": "Speichert den In-Memory-Journey-Log-Puffer (UI-Ereignisse aus dieser Tab-Sitzung) als JSON-Datei. Nützlich zum Teilen in einer Discord-DM oder einem Support-Thread. Unabhängig vom breiteren Herunterladen / Löschen oben — diese Aktionen betreffen den gespeicherten Namespace; dies erfasst nur den Live-Ereignispuffer.",
     "journeyCta": "Journey Log herunterladen (JSON)",
-    "legalFooter": "Vaipakam handelt für die oben genannten Elemente als Datenverantwortlicher. Wir führen keine serverseitigen personenbezogenen Daten (keine Konten, keine E-Mail-Listen, keine mit Ihrer Wallet verknüpften Analysen). Zu Audit-Zwecken erfassen wir jedes UI-Fehlerereignis serverseitig mit einer UUID pro Ereignis — siehe Datenschutzerklärung für die erfassten Daten."
+    "legalFooter": "Vaipakam handelt für die oben genannten Elemente als Datenverantwortlicher. Wir führen keine serverseitigen personenbezogenen Daten (keine Konten, keine E-Mail-Listen, keine mit Ihrer Wallet verknüpften Analysen). Die App sendet von sich aus keine Fehlerberichte an unsere Server — siehe Datenschutzerklärung dazu, was ein von Ihnen gesendeter Supportbericht enthält."
   },
   "dashboard": {
     "connectTitle": "Wallet verbinden",

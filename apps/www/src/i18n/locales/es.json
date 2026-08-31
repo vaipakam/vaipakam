@@ -123,7 +123,7 @@
     "journeyTitle": "Descargar journey log (esta sesión)",
     "journeyBody": "Guarda el búfer de journey log en memoria (eventos de UI de la sesión de esta pestaña) como archivo JSON. Útil para compartirlo en un DM de Discord o en un hilo de soporte. Es independiente de Descargar / Eliminar arriba — esas acciones afectan tu espacio de nombres almacenado; esto captura solo el búfer de eventos en vivo.",
     "journeyCta": "Descargar journey log (JSON)",
-    "legalFooter": "Vaipakam actúa como responsable del tratamiento para los elementos anteriores. No mantenemos datos personales en servidor (sin cuentas, sin listas de email, sin analíticas vinculadas a tu wallet). Para fines de auditoría registramos cada evento de error de UI en servidor con un UUID por evento — consulta la Política de Privacidad para ver qué se captura."
+    "legalFooter": "Vaipakam actúa como responsable del tratamiento para los elementos anteriores. No mantenemos datos personales en servidor (sin cuentas, sin listas de email, sin analíticas vinculadas a tu wallet). La app no envía informes de error a nuestros servidores por su cuenta — consulta la Política de Privacidad para ver qué contiene un informe de soporte que decidas enviar."
   },
   "dashboard": {
     "connectTitle": "Conecta tu billetera",

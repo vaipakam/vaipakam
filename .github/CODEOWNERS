@@ -60,11 +60,12 @@
 /apps/labs/                                        @Raja4Shekar
 
 # ---------------------------------------------------------------------------
-# Shared packages — ABIs + deployments + lib + UI
+# Shared packages — ABIs + deployments + lib
+# (packages/ui was retired in #1963; its rule is removed rather than
+#  left pointing at a path nothing can match.)
 # ---------------------------------------------------------------------------
 /packages/contracts/                               @Raja4Shekar
 /packages/lib/                                     @Raja4Shekar
-/packages/ui/                                      @Raja4Shekar
 
 # ---------------------------------------------------------------------------
 # Governance / agent / convention files — high-trust, low-volume

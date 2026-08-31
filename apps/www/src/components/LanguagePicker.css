@@ -1,15 +1,17 @@
-/* LanguagePicker — custom dropdown that mirrors `ChainPicker.css`
- * rule-for-rule so the two pickers feel like siblings across both
- * the Settings gear popover (this component) and the Analytics
- * dashboard's chain-override (ChainPicker). The only intentional
- * deltas are size-related: this picker lives inside the gear's
- * 320px-max popover, so its trigger doesn't enforce the 180px
- * minimum width that ChainPicker's wider Analytics-row context
- * uses, and its menu is narrower to fit. Inline-item styling
- * (rows, hover, selected, group label) is identical.
+/* LanguagePicker — custom dropdown for the Settings gear popover.
  *
- * Keep this file in lockstep with ChainPicker.css if either gets
- * visual tweaks. */
+ * These rules were originally derived from `ChainPicker.css` in the
+ * shared `packages/ui`, so the two pickers would feel like siblings.
+ * That package was RETIRED in #1963 and no ChainPicker remains on this
+ * site, so there is no longer a counterpart file and nothing to keep
+ * in lockstep — this is now the sole owner of its appearance. The
+ * lineage is recorded only to explain why the rules look the way they
+ * do; do not go looking for the other file.
+ *
+ * The size choices that were once described as deltas from that
+ * sibling are simply this picker's own: it lives inside the gear's
+ * 320px-max popover, so the trigger enforces no minimum width and the
+ * menu is narrow enough to fit. */
 
 .language-picker {
   position: relative;
@@ -33,9 +35,9 @@
     border-color 0.15s ease,
     box-shadow 0.15s ease;
   /* No min-width here — the parent settings-row already gives
-   * the picker reasonable width via flex layout, and 180px
-   * (ChainPicker's default) would overflow on narrow gear
-   * popovers at viewport widths approaching the 320px max. */
+   * the picker reasonable width via flex layout, and the 180px the
+   * retired ChainPicker defaulted to (#1963) would overflow on narrow
+   * gear popovers at viewport widths approaching the 320px max. */
   min-width: 140px;
   justify-content: space-between;
 }

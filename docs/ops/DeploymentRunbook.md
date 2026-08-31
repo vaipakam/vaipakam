@@ -1680,15 +1680,15 @@ so a contributor without that checkout still gets a clean run. For
 the production deploy path the sync stays manual on purpose so the
 operator can review each diff before committing.
 
-**Token-icon URL template** (`VITE_TOKEN_ICON_URL_TEMPLATE`) — **currently
-inert; do not spend time setting it.** It is read only by
-`packages/ui/src/TokenIcon.tsx`, and `packages/ui` lost its last consumer
-when the retired connected app was deleted in #1854 (#1963). `apps/app` neither imports
-the package nor lists this variable in its `.env.example`, so setting it
-and rebuilding changes nothing. Historically it selected the icon source
-(Trust Wallet CDN by default, overridable to the GitHub raw repo or a
-self-hosted registry). Restore this step if and when a consumer adopts
-the package.
+**Token-icon URL template** (`VITE_TOKEN_ICON_URL_TEMPLATE`) — **dead; do
+not set it.** Its only reader was `packages/ui/src/TokenIcon.tsx`, and
+that package was RETIRED in #1963 (orphaned when #1854 deleted its last
+consumer). This is no longer "inert pending a consumer" — the code that
+read the variable is gone from the tree, so no build can consult it.
+Historically it selected the icon source (Trust Wallet CDN by default,
+overridable to the GitHub raw repo or a self-hosted registry). If a
+token-icon surface is ever rebuilt, restore this step alongside it
+rather than assuming the variable still works.
 
 ---
 
