@@ -6606,6 +6606,108 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     ).toBe(true);
   });
 
+  // ---- Codex #2036 r1: three more spellings of the same selector ----
+
+  it('the ARGV-ARRAY config form reaches the identity read', () => {
+    // `commandIsSafe` learned this spelling at #1995 r23 and `selectorScope`
+    // did not, so a child-process deploy selecting an out-of-package config
+    // was invisible to the scope decision — and an invisible `--config`
+    // reaches neither the identity read nor the inversion, so it passes.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'deploy.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('the ATTACHED short form reaches it too', () => {
+    // yargs accepts `-cpath` as one word and wrangler 4.90.0 processes it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith('w.sh', 'wrangler deploy -cconfigs/custom.jsonc\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('but an attached -c that is not a path is left alone', () => {
+    // The narrowing that keeps the attached form from reading `tar -czf` as a
+    // config selection. Without it that is a CI-blocking false red, because an
+    // unreadable config REPORTS under the inversion.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/wrangler.jsonc', '{"keep_vars": true}\n');
+    expect(
+      runWith('w.sh', 'cd apps/agent\nwrangler deploy --keep-vars && tar -czf out.tgz src\n').ok,
+    ).toBe(true);
+  });
+
+  it('CLOUDFLARE_ENV suppresses the name answer, as --env does', () => {
+    // Wrangler resolves the environment as `args.env ?? getCloudflareEnv()` and
+    // then reads the environment-specific name, which this scanner does not
+    // parse. Trusting the top level here let a config whose `env.staging.name`
+    // is the agent pass as unprotected.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nCLOUDFLARE_ENV=staging wrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('and an EMPTY CLOUDFLARE_ENV selects no environment', () => {
+    // The control for the `\\S`: an empty value is not an environment, so the
+    // top-level name stays authoritative and this unprotected config passes.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-www"}\n');
+    expect(
+      runWith('w.sh', 'cd apps/agent\nCLOUDFLARE_ENV= wrangler deploy --config side.jsonc\n').ok,
+    ).toBe(true);
+  });
+
+  it('a TOML name with escapes is decoded before it is compared', () => {
+    // Wrangler accepts `"vaipakam\\u002dagent"` and reads it as
+    // `vaipakam-agent`. Compared raw, it matched no protected Worker and was
+    // then treated as an AUTHORITATIVE unprotected answer.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.toml', 'name = "vaipakam\\u002dagent"\n');
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('apps/agent');
+  });
+
+  it('a LITERAL TOML string is not escape-decoded', () => {
+    // TOML literal strings have no escapes at all, so decoding one would
+    // corrupt a name. This names a different Worker and must pass.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.toml', "name = 'vaipakam\\u002dagent'\n");
+    expect(runWith('w.sh', 'wrangler deploy --config configs/custom.toml\n').ok).toBe(true);
+  });
+
+  it('an INVALID TOML escape yields no name rather than a guess', () => {
+    // `\\q` is a parse error in TOML. Declining to read leaves the inversion to
+    // report it, which is the safe direction; guessing a decoded name would be
+    // treated as authoritative.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.toml', 'name = "vaipakam\\qagent"\n');
+    const r = runWith('w.sh', 'wrangler deploy --config configs/custom.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
+
+  it('the unnamed remedy uses TOML syntax for a TOML selection', () => {
+    // `"keep_vars": true` is invalid TOML, and it was the only remedy offered
+    // for `versions upload`, where the CLI flag does not exist — so following
+    // the message exactly produced a config that no longer parses.
+    const r = runWith('w.sh', 'wrangler versions upload --config "$GEN".toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('keep_vars = true');
+    expect(r.out).not.toContain('"keep_vars": true');
+  });
+
   // ---- degradation paths: each falls back, none reports ----
 
   it('a config ABSENT from the checkout falls back to the directory', () => {

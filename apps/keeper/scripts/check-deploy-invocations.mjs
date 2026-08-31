@@ -1409,9 +1409,22 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '') {
     const cfgText = stripShellComment(cmd);
     const wi = cfgText.search(/\bwrangler2?\b/);
     const cfgRegion = wi >= 0 ? cfgText.slice(wi) : cfgText;
-    const cfgSel = cfgRegion.match(
-      /\s(?:-c|--config)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/,
-    );
+    const cfgSel =
+      cfgRegion.match(/\s(?:-c|--config)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/) ??
+      // ATTACHED SHORT FORM, the same gap `selectorScope` had (Codex #2036 r1)
+      // and the same fix, because it is the same option read twice. Here the
+      // consequence is the mirror image: an unrecognised selection makes this
+      // read the Worker's DEFAULT config, which may declare `keep_vars` while
+      // the selected one does not — blessing an upload rather than reporting it.
+      // Narrowed to a path-shaped value for the reason given there.
+      (() => {
+        const m = cfgRegion.match(
+          /(?<![\w-])-c(?=[^\s=-])(?:"([^"]*)"|'([^']*)'|([^\s"']+))/,
+        );
+        if (!m) return null;
+        const v = m[1] ?? m[2] ?? m[3];
+        return v.includes('/') || /\.(?:jsonc?|toml)$/.test(v) ? m : null;
+      })();
     // …and the ARGV spelling, where the flag and its value are separate array
     // elements: `subprocess.run(["wrangler","deploy","--config","x.jsonc"])`.
     // `ARGV_DEPLOY_RE` admits those arrays, so the deploy was recognised while
@@ -2461,6 +2474,45 @@ function scopeOfCwd(cwd) {
  * header. A name carrying a `$` is a template whose deployed value this
  * scanner cannot know, so it does not answer either.
  */
+/**
+ * Decode a TOML BASIC string's escape sequences, or `null` if any is invalid.
+ *
+ * TOML v1.0.0 defines exactly these: `\b \t \n \f \r \" \\`, `\uXXXX` and
+ * `\UXXXXXXXX`. Anything else is a parse error in TOML itself, so this returns
+ * `null` rather than passing the text through — a name decoded WRONGLY is worse
+ * than one this scanner declines to read, because a wrong name is treated as an
+ * authoritative answer.
+ */
+function decodeTomlBasic(raw) {
+  let out = '';
+  for (let i = 0; i < raw.length; i += 1) {
+    if (raw[i] !== '\\') {
+      out += raw[i];
+      continue;
+    }
+    const c = raw[i + 1];
+    const simple = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+    if (c in simple) {
+      out += simple[c];
+      i += 1;
+      continue;
+    }
+    if (c === 'u' || c === 'U') {
+      const width = c === 'u' ? 4 : 8;
+      const hex = raw.slice(i + 2, i + 2 + width);
+      if (!new RegExp(`^[0-9a-fA-F]{${width}}$`).test(hex)) return null;
+      const cp = parseInt(hex, 16);
+      // A scalar outside Unicode, or a lone surrogate, is invalid TOML.
+      if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return null;
+      out += String.fromCodePoint(cp);
+      i += 1 + width;
+      continue;
+    }
+    return null;
+  }
+  return out;
+}
+
 function declaredWorkerName(absPath) {
   let text;
   try {
@@ -2475,9 +2527,24 @@ function declaredWorkerName(absPath) {
       // BOTH TOML string forms. A single-quoted literal string is as valid a
       // name as a double-quoted basic one, and accepting only the latter meant
       // a perfectly ordinary config silently declined to answer.
-      const m = line.match(/^\s*name\s*=\s*(?:"([^"]*)"|'([^']*)')\s*(?:#.*)?$/);
+      const m = line.match(/^\s*name\s*=\s*(?:"((?:[^"\\]|\\[\s\S])*)"|'([^']*)')\s*(?:#.*)?$/);
       if (m) {
-        name = m[1] ?? m[2];
+        // A BASIC string's ESCAPES are decoded; a LITERAL string's are not.
+        // That asymmetry is TOML's, not a shortcut: `'…'` has no escape
+        // sequences at all, so decoding one would corrupt a name containing a
+        // backslash. Undecoded, `name = "vaipakam-agent"` — which wrangler
+        // accepts and reads as `vaipakam-agent` — compared as the raw escaped
+        // spelling, matched no protected Worker, and was then treated as an
+        // AUTHORITATIVE unprotected answer, blessing a live deploy of the agent
+        // (Codex #2036 r1). An unknown escape yields no name rather than a
+        // guess, because a name this scanner has decoded WRONGLY is worse than
+        // one it declines to read.
+        if (m[2] !== undefined) {
+          name = m[2];
+        } else {
+          const decoded = decodeTomlBasic(m[1]);
+          if (decoded !== null) name = decoded;
+        }
         break;
       }
     }
@@ -2639,7 +2706,47 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
     return { scope: SCOPED.find((s) => s.workerName === name) ?? null };
   }
 
-  const cfgRaw = valueOf('--config|-c', wranglerRegion);
+  // THREE SPELLINGS OF ONE SELECTOR, and `commandIsSafe` already knew two of
+  // them. Adding the identity read here without them is the two-halves drift
+  // this file keeps producing (Codex #2036 r1): the config reader landed in one
+  // function with the option parser of the other left behind, so a deploy whose
+  // config `commandIsSafe` can see was invisible to the scope decision — and an
+  // invisible `--config` reaches neither the identity read nor the inversion,
+  // which means it PASSES.
+  const cfgRaw =
+    valueOf('--config|-c', wranglerRegion) ??
+    // ATTACHED SHORT FORM. yargs accepts `-cconfigs/custom.jsonc` as one word,
+    // and wrangler 4.90.0 processes it — verified in the review by dry run.
+    //
+    // NARROWED to something that looks like a config path, and the narrowing is
+    // load-bearing rather than cosmetic: this region is anchored at the wrangler
+    // word but still contains whatever follows it, so a bare `-c` + rest would
+    // read `tar -czf out.tgz` as selecting a config called `zf` — and under the
+    // inversion an unreadable config REPORTS, so that is a CI-blocking false red
+    // rather than a harmless misread. A path or a wrangler config extension is
+    // what distinguishes the two.
+    (() => {
+      const all = [
+        ...wranglerRegion.matchAll(
+          /(?<![\w-])-c(?=[^\s=-])((?:"[^"]*"|'[^']*'|[^\s"'`;&|)\\]+)+)/g,
+        ),
+      ];
+      const m = all[all.length - 1];
+      if (!m) return null;
+      const v = m[1].replace(/\\([\s\S])/g, '$1').replace(/["'`]/g, '');
+      return v.includes('/') || /\.(?:jsonc?|toml)$/.test(v) ? v : null;
+    })() ??
+    // ARGV-ARRAY FORM, the spelling `commandIsSafe` learned at #1995 r23:
+    // `subprocess.run(["wrangler","deploy","--config","x.jsonc"])`. The flag and
+    // its value are separate array elements, so no `=` or space joins them and
+    // `valueOf` sees nothing.
+    (() => {
+      const all = [
+        ...wranglerRegion.matchAll(/["'](?:-c|--config)["']\s*,\s*["']([^"']+)["']/g),
+      ];
+      const m = all[all.length - 1];
+      return m ? m[1] : null;
+    })();
   // `--cwd` is wrangler's; `--dir` / `-C` is pnpm's own, documented as "change
   // to that directory", and it decides which package's script runs (#1995 r8).
   // `--prefix` is npm's spelling of the same idea — its config documentation
@@ -2735,7 +2842,27 @@ function selectorScope(seg, states, hasCwdState = true, vars = null) {
   // deploy that is squarely inside it. The directory heuristic is the safer
   // answer there and keeps its job.
   let answered = false;
-  if (cfg !== null && !/(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion)) {
+  // AN ENVIRONMENT IS NOT ONLY A FLAG. Wrangler resolves it as
+  // `args.env ?? getCloudflareEnv()`, so `CLOUDFLARE_ENV` selects one just as
+  // `--env` does, and it then reads the environment-specific `name` — which
+  // this scanner does not parse. Checking only the flags meant
+  // `CLOUDFLARE_ENV=staging wrangler deploy --config x.jsonc` trusted the
+  // TOP-LEVEL name, so a config whose top level names something unprotected and
+  // whose `env.staging.name` is `vaipakam-agent` was answered "out of scope"
+  // authoritatively (Codex #2036 r1).
+  //
+  // Read from the RAW segment, not from `clean`: `executedCommand` strips a
+  // leading assignment as environment rather than argv, which is correct for
+  // everything else and is exactly what hid this one. An empty value selects no
+  // environment, hence the `\S`.
+  const envAssigned = /(?:^|[\s;&|(])(?:export\s+)?CLOUDFLARE_ENV=\S/.test(
+    stripShellComment(seg),
+  );
+  if (
+    cfg !== null &&
+    !envAssigned &&
+    !/(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion)
+  ) {
     for (const b of bases) {
       // Resolved AS WRANGLER RESOLVES IT — against the command's own working
       // directory — the same rule `commandIsSafe` follows for `keep_vars`. An
@@ -6614,6 +6741,20 @@ if (violations.length > 0) {
     console.error(`  ${s.dir}:\n`);
     for (const v of hits) console.error(`    ${v.where}\n      ${v.line}\n`);
     if (s === UNNAMED_SCOPE) {
+      // The remedy is SYNTAX, so it has to be the syntax of the file the
+      // operator will actually edit. A flat `"keep_vars": true` is invalid TOML,
+      // and it was the ONLY remedy offered for `versions upload`, where the CLI
+      // flag genuinely does not exist — so a TOML user following the message
+      // exactly would produce a config that no longer parses (Codex #2036 r1).
+      // Both spellings are shown unless the reported lines settle which applies.
+      const exts = hits.map((v) => (/--config[= ]\S*\.toml\b|\.toml\b/.test(v.line) ? 'toml' : 'json'));
+      const only = exts.every((e) => e === exts[0]) ? exts[0] : null;
+      const decl =
+        only === 'toml'
+          ? '`keep_vars = true`'
+          : only === 'json'
+            ? '`"keep_vars": true`'
+            : '`keep_vars = true` (TOML) / `"keep_vars": true` (JSON)';
       console.error(
         `    This command selects a configuration file, and wrangler takes the Worker's\n` +
           `    identity from that file's \`name\` — which could not be read here (the path\n` +
@@ -6621,7 +6762,7 @@ if (violations.length > 0) {
           `    declares no literal name).\n\n` +
           `    Rather than guess which Worker this deploys, the guard asks the command to\n` +
           `    be safe for whatever it targets: add --keep-vars, or declare\n` +
-          `    \`"keep_vars": true\` in the selected config — which is also the only remedy\n` +
+          `    ${decl} in the selected config — which is also the only remedy\n` +
           `    for \`versions upload\`, where the flag does not exist.\n`,
       );
       continue;
