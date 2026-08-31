@@ -7966,4 +7966,84 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+  // ---- Codex #2036 r19 ----
+
+  it('a QUOTED assignment does not choose the environment', () => {
+    // The value reader searched the whole call and took the first match, so a
+    // string that merely quotes an assignment won over the real one beside it —
+    // and the wrong environment reads the wrong block of the config.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {NOTE: \'"CLOUDFLARE_ENV": "production"\', CLOUDFLARE_ENV: "staging"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('...and the real one alone still chooses it', () => {
+    // The control: the same config selecting the environment that names an
+    // unprotected Worker, so the scoping cannot become "ignore the value".
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.mjs',
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+          '{env: {CLOUDFLARE_ENV: "production"}});\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('keep_vars INSIDE a multiline string does not bless a deploy', () => {
+    // The preservation reader had no string state, so a line of string content
+    // supplied a setting the config does not make — the false-green direction,
+    // on a protected Worker.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-agent"', 'vars.NOTE = """', 'keep_vars = true', '"""', ''].join('\n'),
+    );
+    const r = runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n');
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('...but a REAL top-level keep_vars still does', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-agent"', 'keep_vars = true', ''].join('\n'),
+    );
+    expect(
+      runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok,
+    ).toBe(true);
+  });
+
+  it('a table header INSIDE a multiline string is not an environment', () => {
+    // Matched raw, quoted prose invented an environment table, which made the
+    // read incomplete and blocked a deploy whose top-level name is
+    // authoritative and unprotected.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-www"', 'note = """', '[env.production]', '"""', ''].join('\n'),
+    );
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nwrangler deploy --config side.toml --env staging\n',
+      ).ok,
+    ).toBe(true);
+  });
 });
