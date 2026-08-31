@@ -31,7 +31,7 @@ export default function PrivacyPage() {
         <header>
           <h1>Vaipakam Privacy Policy</h1>
           <div className="legal-meta">
-            <span>Version 4</span>
+            <span>Version 5</span>
             <span>·</span>
             <span>Effective 2026-08-30</span>
           </div>
@@ -385,11 +385,20 @@ export default function PrivacyPage() {
               their own session storage; a tab that cannot hear that
               request — an older build, or a browser without the
               messaging feature it uses — keeps its session data until
-              you close it. It does NOT clear your wallet-connection
-              state, which the wallet-connection library stores under
-              its own name: after deleting, a reload can reconnect the
-              same wallet. Disconnect in the app, or clear site data in
-              your browser, if that is what you wanted. Three further
+              you close it. It DOES clear the records the wallet
+              libraries keep in ordinary browser storage — which wallet
+              you last used, and, for a Coinbase session started by
+              scanning a code, that session&rsquo;s own details. It does
+              NOT end a connection: the app stays connected until you
+              reload, and a wallet that still treats this site as
+              authorised — a browser extension, or a Safe the app is
+              opened inside — reconnects afterwards, because that
+              authorisation is held outside this site&rsquo;s storage.
+              Nor does it reach a WalletConnect or Coinbase
+              smart-wallet session, which those libraries keep in a
+              separate browser database. Disconnect in the app, or
+              clear site data in your browser, if ending the session is
+              what you wanted. Three further
               limits, stated plainly because a control that overstates
               itself is worse than none. First, on-chain transactions
               are public and immutable — we have no power to erase

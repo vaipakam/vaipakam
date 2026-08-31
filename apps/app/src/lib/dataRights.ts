@@ -473,11 +473,32 @@ function countErasable(storage: Storage | null): { count: number; refused: boole
  * and on this page a false success is the failure mode that matters.
  */
 export function inspectErasableData(): { count: number; refused: boolean } {
+  const sessionStore = safeStorage('sessionStorage');
   const local = countErasable(safeStorage('localStorage'));
-  const session = countErasable(safeStorage('sessionStorage'));
+  const session = countErasable(sessionStore);
   const cookies = readCookies();
+  // The in-memory last-error slot counts exactly as it does in
+  // `eraseMyData` (round 5 P2). That function already documents the
+  // invariant — the count shown before confirming and the count reported
+  // after must agree in every state — and it was established by an earlier
+  // round for the export path. I added this inventory without carrying the
+  // rule across, so a record held only in memory, or one differing from the
+  // stored copy, made the page offer "0 items" and then report one removed.
+  let storedLastError: unknown;
+  try {
+    const raw = sessionStore?.getItem(LAST_ERROR_KEY);
+    if (raw != null) storedLastError = decodeStored(raw);
+  } catch {
+    // Unreadable reads as absent — the same answer the other two paths give
+    // in this state, which is what keeps the three counts equal.
+  }
+  const liveHolding = liveLastErrorEntry(storedLastError, readLastError());
   return {
-    count: local.count + session.count + Object.keys(cookies.data).length,
+    count:
+      local.count +
+      session.count +
+      Object.keys(cookies.data).length +
+      (liveHolding ? 1 : 0),
     refused: local.refused || session.refused || cookies.refused,
   };
 }

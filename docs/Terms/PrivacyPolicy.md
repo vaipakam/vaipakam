@@ -1,7 +1,7 @@
 # Vaipakam Privacy Policy
 
-**Version:** 4
-**Effective:** 2026-08-30
+**Version:** 5
+**Effective:** 2026-08-31
 
 ## What we collect
 
@@ -234,10 +234,17 @@ are only meaningful to the extent we hold data about you.
   also asks any other open tabs to clear their own session storage; a
   tab that cannot hear that request — an older build, or a browser
   without the messaging feature it uses — keeps its session data until
-  you close it. It does NOT clear your wallet-connection state, which
-  the wallet-connection library stores under its own name: after
-  deleting, a reload can reconnect the same wallet. Disconnect in the
-  app, or clear site data in your browser, if that is what you wanted.
+  you close it. It DOES clear the records the wallet libraries keep in
+  ordinary browser storage — which wallet you last used, and, for a
+  Coinbase session started by scanning a code, that session's own
+  details. It does NOT end a connection: the app stays connected until
+  you reload, and a wallet that still treats this site as authorised —
+  a browser extension, or a Safe the app is opened inside — reconnects
+  afterwards, because that authorisation is held outside this site's
+  storage. Nor does it reach a WalletConnect or Coinbase smart-wallet
+  session, which those libraries keep in a separate browser database.
+  Disconnect in the app, or clear site data in your browser, if ending
+  the session is what you wanted.
   Three further limits, stated plainly because a control that
   overstates itself is worse than none.
   First, on-chain transactions are public and immutable — we have no
