@@ -73,6 +73,7 @@ import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
+import {PerkFacet} from "../src/facets/PerkFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -2061,6 +2062,17 @@ contract HelperTest {
     /// @dev #1434 — the claim-horizon sweep, on its own facet. Expiry settles
     ///      through the ShareOfPool engine now, and neither InteractionRewards
     ///      nor RewardClaim had the EIP-170 headroom to host it.
+    function getPerkFacetSelectors() public pure returns (bytes4[] memory) {
+        bytes4[] memory s = new bytes4[](6);
+        s[0] = PerkFacet.setPerkConfig.selector;
+        s[1] = PerkFacet.purchasePerk.selector;
+        s[2] = PerkFacet.consumePerkCredit.selector;
+        s[3] = PerkFacet.getPerkConfig.selector;
+        s[4] = PerkFacet.getPerkEntitlement.selector;
+        s[5] = PerkFacet.getPerkSpendCumulative.selector;
+        return s;
+    }
+
     function getRewardHorizonSweepFacetSelectors()
         public
         pure

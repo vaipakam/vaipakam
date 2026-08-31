@@ -61,7 +61,11 @@ abstract contract DiamondFacetNames {
     ///      charge + net delivery split off `OfferAcceptFacet`, which had
     ///      164 bytes of EIP-170 headroom left — again less than one
     ///      cross-facet call, the same condition as #1780 above).)
-    function cutFacetNames() internal pure returns (string[75] memory) {
+    ///      75 → 76 in #1204 with `PerkFacet` (the spend-gated perk
+    ///      channel: a fund-moving purchase entry point with its own
+    ///      storage and admin surface, so its own facet rather than growth
+    ///      on a host whose concern it does not share).
+    function cutFacetNames() internal pure returns (string[76] memory) {
         return [
             "AccessControlFacet",
             "AddCollateralFacet",
@@ -78,6 +82,7 @@ abstract contract DiamondFacetNames {
             "InteractionRewardsFacet",
             "RewardClaimFacet",
             "RewardHorizonSweepFacet",
+            "PerkFacet",
             "InteractionRewardsLensFacet",
             "LegalFacet",
             "LoanFacet",

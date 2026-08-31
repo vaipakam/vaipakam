@@ -609,6 +609,34 @@ contract RewardReporterFacet is
             ) {
                 revert KnownGlobalAlreadySet();
             }
+            // #1944 — INSTALL `D*` ON REPLAY when this mirror has none.
+            //
+            // `broadcastGlobal` is permissionless (`onlyCanonical` tests the
+            // CHAIN, not the caller), so a third party can apply a day here
+            // while Base is still unarmed. Before this, the replay returned
+            // above the install below, and `governorCommitArmedFromDay` is
+            // ONE-SHOT — so the post-arm rebroadcast of that same day exited
+            // idempotently and the mirror could not be armed through this
+            // path at all. That is not a race the ceremony can close: every
+            // mitigation depends on an unapplied day still existing when it
+            // is needed, and a third party decides that (#1943 documents the
+            // mitigation and says outright it is mitigation, not closure).
+            //
+            // Safe HERE precisely because the divergence check above has
+            // already passed: every frozen fact of this day matches what was
+            // applied, so this is the same day rather than a conflicting one.
+            // `armedFromDay` deliberately stays OUT of that comparison — an
+            // unarmed-then-armed rebroadcast differs in exactly this field
+            // and must not read as divergence — which is the property
+            // `testV3ReplayArmedFromDayStaysOutsideComparison` pins.
+            //
+            // Still one-shot: the zero check means an already-armed mirror
+            // ignores a later, different `D*`, so a replay can fill the hole
+            // but can never re-choose the era. No event, matching the
+            // main-path install below.
+            if (b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
+                s.governorCommitArmedFromDay = b.armedFromDay;
+            }
             return;
         }
 

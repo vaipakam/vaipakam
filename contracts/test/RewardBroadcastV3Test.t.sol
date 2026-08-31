@@ -1076,6 +1076,53 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         assertEq(armedFromDay, 2, "first-applied arming day unchanged");
     }
 
+    /// #1944 — a day applied while Base was still UNARMED must not burn that
+    /// day for `D*` propagation.
+    ///
+    /// `broadcastGlobal` is permissionless — `onlyCanonical` tests the chain,
+    /// not the caller — so any third party can apply a finalized day here
+    /// before the arming ceremony runs. The replay branch used to return
+    /// above the one-shot install, and `governorCommitArmedFromDay` cannot be
+    /// re-chosen, so the post-arm rebroadcast of that same day exited
+    /// idempotently and left this mirror unarmable through this path
+    /// entirely. The ceremony cannot close that: every mitigation depends on
+    /// an unapplied day still existing when it is needed, and a third party
+    /// decides that (#1943).
+    function testReplayInstallsArmedDayWhenTheMirrorHasNone() public {
+        _configureMirror(CHAIN_ARB);
+
+        // A racing application of the day, while Base carries no D* yet.
+        RewardBroadcastV3 memory pre = _v3Packet(CHAIN_ARB);
+        pre.v2.armedFromDay = 0;
+        messenger.deliverBroadcastV3(pre);
+
+        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedBefore, 0, "mirror starts unarmed, as the race leaves it");
+
+        // Base arms and rebroadcasts THE SAME day. Every frozen fact matches,
+        // so this is a replay — and the arming day must land.
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+
+        (uint256 armedAfter, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedAfter, 2, "the rebroadcast installed D* on replay");
+    }
+
+    /// …and it stays ONE-SHOT: a replay may fill an empty slot, never
+    /// re-choose an era that is already set. This is the other half of the
+    /// same rule, and without it the fix would turn a permissionless
+    /// broadcast into a way to move an armed mirror's era.
+    function testReplayCannotReChooseAnAlreadyArmedDay() public {
+        _configureMirror(CHAIN_ARB);
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+
+        RewardBroadcastV3 memory later = _v3Packet(CHAIN_ARB);
+        later.v2.armedFromDay = 9;
+        messenger.deliverBroadcastV3(later);
+
+        (uint256 armed, , , ) = _agg().getGovernorCommitState();
+        assertEq(armed, 2, "an armed mirror ignores a later, different D*");
+    }
+
     /// A V3 for a day applied via the LEGACY kind-2 wire (known pair set,
     /// but never V2-applied) takes the FULL apply path — V2 figures layered
     /// on, clock installed. Not a backfill: the backfill branch is only for

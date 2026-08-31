@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isAbiShapeMismatch,
   retainedFrom,
   snapshotMaxAgeMs,
   storedPayloadIsComplete,
@@ -167,5 +168,36 @@ describe('snapshotMaxAgeMs', () => {
     // Neither input is authoritative on its own: the row knows what
     // produced it, the environment knows what will refresh it next.
     expect(snapshotMaxAgeMs(11, 5, 3, 1)).toBe(snapshotMaxAgeMs(3, 1, 11, 5));
+  });
+});
+
+describe('isAbiShapeMismatch', () => {
+  // A stale-lens Diamond and a flaky RPC used to produce the same log line,
+  // and they need opposite operator responses — refresh the facet, versus
+  // wait. These cases pin which is which (#1930 follow-up).
+  it('recognises viem decode errors, including wrapped ones', () => {
+    expect(isAbiShapeMismatch({ name: 'AbiDecodingDataSizeTooSmallError' })).toBe(true);
+    expect(isAbiShapeMismatch({ name: 'AbiDecodingZeroDataError' })).toBe(true);
+    expect(
+      isAbiShapeMismatch({
+        name: 'ContractFunctionExecutionError',
+        cause: { name: 'AbiDecodingDataSizeTooSmallError' },
+      }),
+    ).toBe(true);
+  });
+
+  it('does NOT claim an ordinary RPC failure is a stale facet', () => {
+    // The costly direction: a false "your facet is behind" sends an operator
+    // to redeploy over what was really a bad endpoint.
+    expect(isAbiShapeMismatch({ name: 'HttpRequestError' })).toBe(false);
+    expect(isAbiShapeMismatch(new Error('timeout'))).toBe(false);
+    expect(isAbiShapeMismatch(undefined)).toBe(false);
+    expect(isAbiShapeMismatch(null)).toBe(false);
+  });
+
+  it('terminates on a self-referential cause chain', () => {
+    const loop: Record<string, unknown> = { name: 'Weird' };
+    loop.cause = loop;
+    expect(isAbiShapeMismatch(loop)).toBe(false);
   });
 });

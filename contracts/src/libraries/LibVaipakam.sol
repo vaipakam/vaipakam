@@ -7095,6 +7095,32 @@ library LibVaipakam {
         /// @notice Count of records marked above, so `getGlobalCounts` can
         ///         report ids-issued minus vehicles without a scan.
         uint256 internalVehicleLoanCount;
+        // ── #1204 E-2 spend-gated perks (append-only tail) ──────────────
+        /// @notice VPFI price of one unit of perk `perkId`, in wei.
+        ///         ZERO MEANS THE PERK IS NOT FOR SALE — that is the deploy
+        ///         default, so the channel ships dark and an owner arms each
+        ///         perk individually by setting its price. The design's open
+        ///         decisions (which perks ship, at what price) are therefore
+        ///         configuration rather than code, and nothing here presumes
+        ///         them.
+        mapping(uint256 => uint256) perkPriceVpfi;
+        /// @notice Unix second at which `user`'s entitlement to `perkId`
+        ///         lapses. A purchase extends from `max(now, current)`, so
+        ///         buying early stacks rather than burning the remainder.
+        ///         Zero ⇒ never purchased / long lapsed.
+        mapping(address => mapping(uint256 => uint64)) perkEntitlementUntil;
+        /// @notice Seconds of entitlement one purchase of `perkId` grants.
+        ///         Zero alongside a non-zero price ⇒ the perk is a COUNTED
+        ///         consumable rather than a timed one; see `perkCredits`.
+        mapping(uint256 => uint32) perkDurationSeconds;
+        /// @notice Unspent counted units of `perkId` held by `user`, for
+        ///         perks whose duration is zero. Consumers decrement through
+        ///         {PerkFacet.consumePerkCredit}.
+        mapping(address => mapping(uint256 => uint256)) perkCredits;
+        /// @notice Lifetime VPFI absorbed through perk purchases, for the
+        ///         operator surface. The bucket already counts it; this
+        ///         separates the perk channel's contribution from the rest.
+        uint256 perkSpendCumulative;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

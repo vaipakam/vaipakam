@@ -11,6 +11,22 @@
 
 ---
 
+> **Status refresh — 2026-08-31 (verified against the tree, not the cards).**
+>
+> Closed since the last refresh and reflected below: **#1947**, **#1577**,
+> **#1434**, **#1498**, **#1955**, **#1954**, **#1932**, and **#1499**
+> (the RL-3 horizon predicate now matches the claim-time backing gate —
+> landed as #1970; the card is open only for its arming gate).
+>
+> Landed in this pass: **#1204**'s absorption channel (`SpendGatedPerk` +
+> `PerkFacet`, §M6) and **#1944**'s replay-branch `D*` install.
+>
+> Still owner-gated and deliberately untouched: **#1566** (which quantity
+> bounds a canonical payout), **#1569**, **#1219**'s legal glance, the
+> per-perk effects behind #1204's three open design decisions, and the M7
+> ceremonies. **#1949** is open engineering with a design fork recorded on
+> the card.
+
 ## 0. Purpose
 
 Four design documents govern VPFI recycling, written at different times
@@ -32,7 +48,7 @@ health publicly observable; and the system **armed**, not just merged dark.
 
 | Piece | Landed via | Notes |
 | --- | --- | --- |
-| Recycle-bucket ledger, `LibVpfiRecycle.credit` chokepoint, `VpfiRecycled` day-bucketed feed, backing check, forfeited-reward re-route | #1217 PR-3a (#1312) | `RecycleSource` enum reserves the currently-designed classes (notification, tariff, LIF/yield/matcher, bond slash, forfeit/expiry); only `ForfeitedReward` + `ExpiredReward` have credit sites today. **Not yet reserved: a spend-gated-perk class — the #1204 build appends `SpendGatedPerk` (enum is append-only, stable ABI) rather than misclassifying perk absorption under another source** |
+| Recycle-bucket ledger, `LibVpfiRecycle.credit` chokepoint, `VpfiRecycled` day-bucketed feed, backing check, forfeited-reward re-route | #1217 PR-3a (#1312) | `RecycleSource` enum reserves the currently-designed classes (notification, tariff, LIF/yield/matcher, bond slash, forfeit/expiry); only `ForfeitedReward` + `ExpiredReward` have credit sites today. ~~Not yet reserved: a spend-gated-perk class~~ — **DONE**: `SpendGatedPerk` is appended and has a credit site (`PerkFacet.purchasePerk`), so perk absorption is its own class on the feed rather than folded into another source |
 | Governor: absorption-coupled day-pool stamps, commitment accounting, margin knob, `armedFromDay` arming | #1217 PR-3b (#1313) | Ships **unarmed** — schedule-only until the ceremony (§M7) |
 | Dual fresh/recycled accumulators, consume-at-claim, pool-composition + arming broadcast (8-word payload) | #1217 PR-3c (#1315) | Composition crosses the mesh already; custody stays Base-side |
 | RL-1 claim-to-vault delivery (Diamond-funded credit primitive, `deliverTo`, wrapper carve-outs, broadcast-safe rollup) | #1301 (#1302) | |
@@ -1031,14 +1047,30 @@ view stays readable in the breached state, not reachability).
 ### M6 — Absorption channels 3–4 (RL-5's four-channel posture)
 
 **E-2 spend-gated perks (#1204)** — the two spend-gated perks charge
-VPFI → `credit(…)`; ratified (RL-5) to ride M2's release train. **Gate:
-the #1204 design's own status is `legal glance → per-perk build` — the
-glance precedes the build here exactly as for bonds**, and §6 counts
-perks complete only in a decided state (glance passed + built, or an
-explicit owner deferral recorded on #1204).
+VPFI → `credit(…)`; ratified (RL-5) to ride M2's release train. The gate
+was `legal glance → per-perk build`; **the glance is DISCHARGED (owner,
+2026-08-03) and the CHANNEL IS BUILT** — `PerkFacet.purchasePerk` pulls
+the spend from the buyer's vault, re-stamps their discount accumulator,
+and credits the bucket under the appended `SpendGatedPerk` source, on the
+same pull → rollup → credit ordering the notification tariff uses.
+
+What is deliberately NOT built is any perk's EFFECT. The design's three
+open decisions — perk prices, referral credit sizing, and whether the
+listing-visibility boost ships at all — are the owner's, so the facet
+sells ENTITLEMENTS and a consumer reads them when that perk's own
+behaviour is decided. Price zero (the deploy default) means a perk is not
+for sale, so the channel ships dark and each perk is armed individually:
+those decisions became configuration rather than code, and nothing here
+presumes them.
+
+§6 counts perks complete in a DECIDED state. The absorption half is now
+built and crediting; the per-perk effects remain owner-scoped.
 **#1219 service bonds** — schedule the legal glance now (the bounded
 review slot the excision doc recommends); slash path →
-`credit(ServiceBondSlash, …)` on build.
+`credit(ServiceBondSlash, …)` on build. **Still unbuilt and deliberately
+so**: unlike #1204 this glance is NOT discharged, and the enum slot stays
+reserved with no call site until it is. Building the slash path first
+would be building the sink for an instrument nobody has cleared.
 
 ### M7 — Activation ceremonies (runbook, not code — nothing is real until this)
 
@@ -1493,7 +1525,7 @@ flowchart LR
   MODEBRES{{"#1434 R4 arrival reservation<br/>+ claim-exclusion slice"}} --> SETTLE
   SHAREDWIRE{{"#1568 shared return transport<br/>(channel cut once)"}} --> MODEBWIRE{{"#1434 R4 return wire<br/>(Mode B kind + ladder)"}}
   MODEBWIRE -.-> ARMGATE
-  BACKING{{"#1460 claim-time separation DONE<br/>#1566 fund-safety half OPEN<br/>gate NOT satisfied"}} --> ARM
+  BACKING{{"#1460 claim-time separation DONE<br/>#1499 horizon alignment DONE<br/>#1566 fund-safety half OPEN<br/>gate NOT satisfied"}} --> ARM
   GATE --> RL3KNOB[M7.2 RL-3 horizon knob]
   subgraph M2 [M2 — absorption stack]
     PR1[PR-1 specs] --> PR4[PR-4 HoldOnly]
@@ -1505,7 +1537,7 @@ flowchart LR
   PR5c --> FEE[M7.4 feeEntitlementEnabled]
   FEE --> ARM
   PR6["#1354 PR-6 settlement sweep<br/>repayment + early-close ONLY"] --> PR6R
-  PR6R["#1947 PR-6 REOPENED — OPEN<br/>5 recovery entries + refinance"] --> FEE
+  PR6R["#1947 PR-6 reopened — CLOSED 2026-08-26<br/>5 recovery entries + refinance"] --> FEE
   GATE --> FEE
   PR2 -. one wire evolution .-> M3[M3 #1222 B1..B4]
   M1b -.-> M3

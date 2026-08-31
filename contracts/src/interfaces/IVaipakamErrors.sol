@@ -1107,4 +1107,10 @@ interface IVaipakamErrors {
     ///         change the builder mirrors these terms, so a fresh listing
     ///         satisfies the invariant by construction.
     error SaleListingTermsStale();
+
+    /// @notice #1204 — a perk purchase reached the charge with no VPFI token
+    ///         configured on this deployment. Distinct from a perk that is
+    ///         simply not for sale: this one says the CHAIN is not set up,
+    ///         which is an operator condition rather than a governance one.
+    error PerkVpfiTokenNotSet();
 }

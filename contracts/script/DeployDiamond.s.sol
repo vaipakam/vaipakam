@@ -73,6 +73,7 @@ import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
+import {PerkFacet} from "../src/facets/PerkFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -252,6 +253,7 @@ contract DeployDiamond is Script {
         RewardClaimFacet rewardClaimFacet = new RewardClaimFacet();
         RewardHorizonSweepFacet rewardHorizonSweepFacet =
             new RewardHorizonSweepFacet();
+        PerkFacet perkFacet = new PerkFacet();
         // #1306 follow-up — read-only lens carved off InteractionRewardsFacet
         // for EIP-170 headroom (view/getter surface only, shared storage).
         InteractionRewardsLensFacet interactionRewardsLensFacet =
@@ -294,7 +296,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](75);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](76);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -346,6 +348,11 @@ contract DeployDiamond is Script {
             address(rewardHorizonSweepFacet),
             _getRewardHorizonSweepSelectors()
         );
+        // #1204 E-2 — the spend-gated perk channel. Its own facet because the
+        // purchase is a fund-moving entry point with its own storage and
+        // admin surface, and no existing host is near enough its concern to
+        // justify growing (EIP-170 headroom is the standing constraint here).
+        cuts[75] = _buildCut(address(perkFacet), _getPerkSelectors());
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
         cuts[28] = _buildCut(address(configFacet), _getConfigSelectors());
@@ -994,6 +1001,7 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("receiverFacet",           address(receiverFacet));
         Deployments.writeFacet("signedOfferFacet",        address(signedOfferFacet));
         Deployments.writeFacet("swapToRepayIntentFacet",  address(swapToRepayIntentFacet));
+        Deployments.writeFacet("perkFacet",               address(perkFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -1053,6 +1061,7 @@ contract DeployDiamond is Script {
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("RewardClaimFacet:", address(rewardClaimFacet));
         console.log("RewardHorizonSweepFacet:", address(rewardHorizonSweepFacet));
+        console.log("PerkFacet:", address(perkFacet));
         console.log("InteractionRewardsLensFacet:", address(interactionRewardsLensFacet));
         console.log("FeeEntitlementFacet: ", address(feeEntitlementFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
@@ -2345,6 +2354,16 @@ contract DeployDiamond is Script {
     /// @dev #1434 — the claim-horizon sweep. Its own facet because expiry now
     ///      settles through the ShareOfPool engine and neither existing host
     ///      had the headroom; the id-keyed read views stay on the lens facet.
+    function _getPerkSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = PerkFacet.setPerkConfig.selector;
+        s[1] = PerkFacet.purchasePerk.selector;
+        s[2] = PerkFacet.consumePerkCredit.selector;
+        s[3] = PerkFacet.getPerkConfig.selector;
+        s[4] = PerkFacet.getPerkEntitlement.selector;
+        s[5] = PerkFacet.getPerkSpendCumulative.selector;
+    }
+
     function _getRewardHorizonSweepSelectors()
         internal
         pure

@@ -228,6 +228,37 @@ export function retainedFrom(bucket: bigint, outstanding: bigint, keeper: bigint
   return net > 0n ? net : 0n;
 }
 
+/**
+ * Is this failure the DEPLOYED CONTRACT disagreeing with the compiled ABI,
+ * rather than the network being unreliable?
+ *
+ * The two need opposite operator responses — refresh the facet, versus wait —
+ * and until #1930's follow-up they were the same log line. A Diamond still cut
+ * with the pre-#1434 six-output lens returns fewer words than
+ * `getRecycleBackingSnapshot` declares, and viem's decoder rejects with
+ * `AbiDecodingDataSizeTooSmallError`, usually wrapped in a
+ * `ContractFunctionExecutionError`.
+ *
+ * Matched on viem's error NAMES rather than on message text: the names are
+ * part of its public surface, while the prose is not. The walk follows `cause`
+ * because the informative error is the wrapped one. Anything unrecognised is
+ * deliberately NOT claimed as a shape mismatch — a false "your facet is stale"
+ * would send an operator to redeploy over what was really a bad RPC.
+ */
+export function isAbiShapeMismatch(err: unknown): boolean {
+  const NAMES = new Set([
+    'AbiDecodingDataSizeTooSmallError',
+    'AbiDecodingZeroDataError',
+    'DecodeAbiParametersError',
+  ]);
+  for (let e: unknown = err, depth = 0; e && depth < 8; depth += 1) {
+    const named = e as { name?: unknown; cause?: unknown };
+    if (typeof named.name === 'string' && NAMES.has(named.name)) return true;
+    e = named.cause;
+  }
+  return false;
+}
+
 
 /**
  * The browser aborts the whole `/metrics/recycling` request at 4s, so an
@@ -325,6 +356,18 @@ export async function captureBackingSnapshot(
   // PINNED TO ONE BLOCK. These two reads explain each other — the second
   // is what stops a released remittance rendering as a depleted reserve —
   // so they have to describe the same moment.
+  // An ABI-SHAPE mismatch is not an RPC blip, and until now it read as one.
+  // A Diamond still cut with the pre-#1434 six-output lens makes viem's
+  // decoder throw, the rejection is caught by the tick's fail-open handler in
+  // `index.ts`, and the row is simply never refreshed — so the public surface
+  // eventually falls through to `snapshot-stale`, which says "the chain is
+  // quiet" when the truth is "this Diamond's cut is behind". The two need
+  // different operator actions: wait, versus refresh the lens facet.
+  //
+  // `ops/mesh-watcher` already treats this as its own named condition
+  // (`backingSnapshotUnavailableGap`, asserted against the compiled ABI at
+  // startup). This is the indexer's equivalent, at the only place it can be
+  // told apart — the decode itself (#1930 follow-up).
   const [snap, composition] = await Promise.all([
     client.readContract({
       address: chain.diamond as Address,
@@ -347,7 +390,21 @@ export async function captureBackingSnapshot(
       functionName: 'getRecycleCompositionPosition',
       blockNumber,
     }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
-  ]);
+  ]).catch((err: unknown) => {
+    if (isAbiShapeMismatch(err)) {
+      // Named, and rethrown so the tick's handler still keeps one chain's
+      // problem from wedging the others. What changes is that the log says
+      // WHICH failure this is.
+      console.error(
+        `[recycling] chain ${chainId} diamond ${chain.diamond} returned a ` +
+          `backing snapshot the compiled ABI cannot decode — the deployed ` +
+          `lens facet is behind the tree (expects 8 outputs since #1434 ` +
+          `P2-w2/P2-w5). Refresh InteractionRewardsLensFacet on this chain; ` +
+          `waiting will not clear it.`,
+      );
+    }
+    throw err;
+  });
   const [
     vpfiBalance,
     bucket,

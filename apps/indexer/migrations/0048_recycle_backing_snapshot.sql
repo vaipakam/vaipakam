@@ -25,7 +25,7 @@
 CREATE TABLE IF NOT EXISTS recycle_backing_snapshot (
   chain_id INTEGER PRIMARY KEY,
 
-  -- The six raw lens values plus the derived reserve, as a JSON object. Stored
+  -- The raw lens values plus the derived reserve, as a JSON object. Stored
   -- whole because the consumer publishes them whole: splitting them into
   -- columns would invite a partial row, and a partial backing block is exactly
   -- what the surface's all-or-nothing rule forbids.
