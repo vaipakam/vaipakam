@@ -349,7 +349,90 @@ than restating the decision.
 - **New custody classes should wait for this**, not be added to a subtraction
   that cannot be completed.
 
-## 6. Recommendation
+## 5b. DECISION — Option F is ratified (owner, 2026-08-31)
+
+**The owner chose F: keep user value in the user's vault under a lien, and
+do not commingle in the first place.** §6 below withheld a recommendation;
+it is retained as the reasoning that led here, not as an open question.
+
+### What F settles, and what it does NOT
+
+F answers **closure 1 of the three** §6 item 5 requires. It does not touch the
+other two, and choosing it does not shrink them:
+
+- **Closure 2 — the legacy settlement paths** remain open. A pre-`D*` payout
+  spends without recording, and the pre-cutover branches of the expiry sweep
+  and the forfeit chunk move legacy value into the recycle bucket without
+  charging the delivered ledger either. That is a keeper-drainable path with
+  no claimant involved.
+- **Closure 3 — the detached "neither" role** remains bounded and recorded by
+  nothing.
+
+**Arming stays blocked until all three close**, per §5. Reporting F as "#1566
+done" would be the status-claim failure this programme has already recorded
+twice.
+
+### Per-class applicability — F is not uniform across the four
+
+Scouted against the tree 2026-08-31. Three classes take the lien cleanly; one
+does not, and that one needs its own decision.
+
+| Class | Verdict | Why |
+| --- | --- | --- |
+| `vpfiHeld` (grandfathered) | **Clean, and DRAINING** | #1352 retired the peg-custody borrower path, so no new ones are created. Return each loan's held VPFI to its vault under a lien at that loan's next touch; the exposed remainder shrinks monotonically with no census needed |
+| `rebateAmount` (settled, unclaimed) | **Clean, and DRAINING** | Same shape, same drain |
+| `fallbackSnapshot` custody | **Clean** | A fallback is a SEIZURE, but the Diamond controls the vault, so the lien is enforceable without moving tokens. `ClaimFacet` already clears the snapshot on first claim — it becomes the pull point |
+| Intent `custodialCollateral` | **DOES NOT FIT AS WRITTEN** | See below |
+
+### The intent class is the real obstacle, and it is structural
+
+`commitSwapToRepayIntent` decrements the collateral lien and withdraws the
+collateral to `address(this)`, because the Diamond is then the **maker** of an
+aggregator limit order whose `makingAmount` is that collateral. The order is
+filled by an arbitrary third party through the aggregator, which pulls from the
+maker. **There is no protocol call at fill time to pull at** — which is exactly
+what pull-at-use requires. Leaving the tokens in the vault would make the order
+unfillable, not safer.
+
+Two ways out, and they are genuinely different rather than variants:
+
+1. **Maker becomes the VAULT.** The vault grants the aggregator the allowance
+   and the order names the vault as maker. Keeps F's premise intact — nothing
+   is commingled — at the cost of reworking the order-construction and
+   signature path, and of a per-vault allowance surface that did not exist
+   before (`vaultApproveNFT721` has no ERC-20 sibling).
+2. **This one class keeps custody and gets an EARMARK instead.** Bounded and
+   enumerable: `intentAggregateAllowance[asset]` already aggregates exactly
+   this quantity per asset, so unlike the loan-keyed classes it needs no new
+   census. It is a subtraction — which §6 warns against as a class — but a
+   subtraction against an aggregate the code already maintains is not the
+   unbounded fifth subtraction that warning is about.
+
+**Recommendation: (2) for the intent class**, with F everywhere else. The
+premise of F is "do not commingle where you have a choice"; the aggregator's
+maker semantics remove the choice here, and `intentAggregateAllowance` makes
+the honest alternative cheap and complete. (1) is defensible but pays a
+signature-path rework to avoid one subtraction the code can already compute.
+
+**This split needs owner ratification before code**, because it is the one
+place the chosen option is not being applied.
+
+### Slicing
+
+1. The two draining grandfathered classes (`vpfiHeld`, `rebateAmount`) —
+   return-to-vault-under-lien at next touch. Self-limiting, lowest risk.
+2. `fallbackSnapshot` custody — lien at fallback, pull at claim.
+3. The intent class, per the ratification above.
+4. Closures 2 and 3, which are independent of all of the above and block
+   arming just as hard.
+
+**The chokepoint becomes fund-safety-critical the moment slice 1 lands.**
+`vaultWithdrawERC20` / `freeBalance` today protect a user from over-drawing
+their own vault; afterwards they also protect rewards from consuming user
+money. Every bypass becomes a fund-safety hole. That reclassification should
+land in the same PR as slice 1, not after it.
+
+## 6. Recommendation (superseded by §5b — retained for its reasoning)
 
 **No recommendation is offered.** An earlier revision of this note recommended
 Option A as a strict-improvement first step; review established that it does not
