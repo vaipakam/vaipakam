@@ -1537,7 +1537,13 @@ export async function eraseMyDataFully(
           // must not surface as a page error.
         })
         .finally(() => {
-          if (settledLate) eraseWebStorageQuietly();
+          // CONNECTOR KEYS ONLY, for the reason round 7 gave about the peer
+          // listener's equivalent: this fires seconds after the result was
+          // reported, the page stays usable in between, and a blanket sweep
+          // would delete records the user created AFTER the erasure. What a
+          // late teardown can recreate is connector state, so that is all a
+          // late cleanup has any business removing.
+          if (settledLate) eraseConnectorStorageQuietly();
         });
       await withTimeout(teardown, DISCONNECT_TIMEOUT_MS);
       connector = { attempted: true, disconnected: true };

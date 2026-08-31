@@ -31,6 +31,7 @@ import { Download, ShieldAlert, Trash2, CheckCircle, Info } from 'lucide-react';
 import { copy } from '../content/copy';
 import {
   disconnectEvery,
+  eraseConnectorStorageQuietly,
   erasedItemCount,
   eraseMyDataFully,
   inspectErasableData,
@@ -301,7 +302,17 @@ export function DataRights() {
         // here was that the fixes were in the library and the page was not
         // using them.
         disconnect: isConnected
-          ? disconnectEvery(liveConnectors, disconnectAsync)
+          ? disconnectEvery(liveConnectors, disconnectAsync, {
+              // Self-review after round 7: the straggler callback was wired
+              // into the peer listener and NOT here, so the page had the
+              // defect round 7 raised — the aggregate rejects at the
+              // PER-CONNECTOR bound, so `eraseMyDataFully`'s own late sweep
+              // fires there, and a connector completing after it wrote with
+              // nothing left to notice. Two different triggers are needed and
+              // both are now present: this one for a straggler, the library's
+              // `settledLate` for the whole-teardown timeout.
+              onAllSettled: eraseConnectorStorageQuietly,
+            })
           : undefined,
       });
     } finally {

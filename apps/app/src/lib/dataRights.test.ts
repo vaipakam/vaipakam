@@ -1494,9 +1494,18 @@ describe('round 6 — what a late, partial, or unresponsive teardown leaves behi
         attempted: true,
         disconnected: false,
       });
+      // Written BEFORE the straggler lands, i.e. by a user still using the
+      // page while the teardown drags on. Ordering matters: setting it after
+      // the cleanup has run asserts nothing, which is how the first version
+      // of this assertion passed against a blanket sweep.
+      store.set('app.mode', 'lend');
       land?.();
       await vi.advanceTimersByTimeAsync(1);
       expect(store.has('wagmi.store')).toBe(false);
+      // Self-review after round 7: the late cleanup is CONNECTOR-ONLY, so
+      // records the user created while waiting survive it. A blanket sweep
+      // deletes data made after the erasure was already reported.
+      expect(store.get('app.mode')).toBe('lend');
     } finally {
       vi.useRealTimers();
     }
