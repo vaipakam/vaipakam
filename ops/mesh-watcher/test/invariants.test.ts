@@ -2250,6 +2250,24 @@ describe('base-self-inert scope', () => {
       }),
     ).toEqual(['base-self-inert']);
   });
+
+  it('fires on a keeper draw booked against Base (#1569 M4 C3)', () => {
+    // BOTH writers structurally exclude the canonical id, so a non-zero
+    // Base keeper draw cannot arise from correct operation. Without it in
+    // this check the value hides: expectedAvail folds it in as a legitimate
+    // subtrahend and keeper-cap accepts it while it fits under `reported`,
+    // so a writer regression on Base leaves every other check green.
+    expect(
+      codes({ canonical: { keeperDraw: 1n * E, avail: 499n * E } }),
+    ).toEqual(['base-self-inert']);
+  });
+
+  it('does not fire on an UNKNOWN keeper draw under the canonical id', () => {
+    // Same discipline as the draw's other checks: unreadable is UNKNOWN,
+    // never zero and never a fault. A partial refresh must not page a
+    // self-inertness CRITICAL on a healthy Base.
+    expect(codes({ canonical: { keeperDraw: undefined } })).toEqual([]);
+  });
 });
 
 describe('report-lag window sizing', () => {

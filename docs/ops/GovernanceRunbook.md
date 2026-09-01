@@ -801,13 +801,24 @@ default, liquidation, discounted liquidation, split and partial (FIVE, not the
 six an earlier revision of this step named — the periodic-interest
 auto-liquidation leg deducts a handling fee on swap PROCEEDS and charges no
 lender yield fee at all, so there is nothing there for the bump to reduce) —
-still take the ordinary cut from recovered lender interest without consulting
-the stamp; and refinance resolves the stamp against the STORED lender rather
-than the current holder. **Partial liquidation is worse than the others**: it
-deposits the lender share to `loan.lender` and deliberately writes no claim
-record, so on a transferred position the previous lender keeps the proceeds
-outright and the current holder has nothing to claim against — the discount is
-the smaller half of that defect. (The collateral prepay-SALE terminals were named here
+USED to take the ordinary cut from recovered lender interest without
+consulting the stamp, and refinance USED to resolve the stamp against the
+stored lender rather than the current holder. **Both are fixed** (#1947,
+closed 2026-08-26, re-verified in the tree 2026-09-01): recovery resolves
+through `LibLenderYieldFeeHost.resolve(..., ownerOf(lenderTokenId), ...)`
+and `RefinanceFacet` resolves `settlingLender` from `ownerOf`.
+
+**Partial liquidation was worse than the others** and is also fixed: it
+deposited the lender share to `loan.lender` and wrote no claim record, so on
+a transferred position the previous lender kept the proceeds outright. It now
+pays through the #998 S10 Class B host, which resolves `ownerOf` itself and
+freezes fail-closed for a flagged holder — `RiskFacet` records outright that
+paying the stale `loan.lender` "was the original bug". It still writes no
+claim record, which is precisely why the host must pay the holder directly.
+
+**What this step still requires is unchanged, and it is not the card:**
+confirm the DEPLOYED bytecode on THIS Diamond carries those fixes. A closed
+card is evidence about the repository, never about a deployment. (The collateral prepay-SALE terminals were named here
 in an earlier revision and are REMOVED: their treasury leg is an ADDITIVE
 consideration item funded from the sale price — the lender receives principal
 plus interest GROSS and the BORROWER's residual bears the fee — so there is no
@@ -1933,7 +1944,7 @@ DEAD-END LIST so the next person does not re-derive them under time pressure:
 
 | Attempted procedure | Why it does not hold |
 | --- | --- |
-| Remit + receipts BEFORE arming | `broadcastGlobal`'s only day-state gate is `dailyGlobalFinalized`; arming is irrelevant to it. Worse, a pre-arm application spends that day for propagation (`_applyBroadcastV2Core` replays without installing `armedFromDay`). |
+| Remit + receipts BEFORE arming | `broadcastGlobal`'s only day-state gate is `dailyGlobalFinalized`; arming is irrelevant to it. A pre-arm application used to spend that day for propagation; since #1944 it does not — `_applyBroadcastV2Core`'s replay installs `armedFromDay` on a mirror that has none — so this row's remaining force is the first sentence, not the day cost. |
 | Pause, fund the candidate, unpause, broadcast | `broadcastGlobal` accepts ANY finalized day, so unpausing re-opens every other unfunded finalized day at once. |
 | Reconcile every broadcastable day first | An applied-but-unfunded day is ALREADY open and pausing Base cannot close it; and `finalizeDay` is permissionless, so new broadcastable days can appear after the inventory. |
 | Contain the destination's claim path meanwhile | `AdminFacet.pause()` is the Diamond's single global flag: `claimInteractionRewards` and `onRewardBudgetReceived` are BOTH `whenNotPaused`, so pausing claims also blocks the remittance receipt. "Wait until every pending day is funded" is unreachable — funding cannot land while claims are stopped, and unpausing to admit it re-opens the race. |
@@ -2045,20 +2056,28 @@ Whether or not the pause is used:
   and reaches a deployment only through a facet refresh, so a Diamond that
   predates the refresh reverts `FunctionDoesNotExist`. On such a Diamond the
   only source is the mirror's LOGS — a `RewardBroadcastV2Applied(dayId, …)`
-  event for that `dayId` means the day is spent.
+  event for that `dayId` means the day has been APPLIED. Since #1944 that no
+  longer means it is spent for arming: a replay installs `D*` on a mirror
+  that has none. The readback still tells you which branch a broadcast will
+  take, which is what you reconcile afterwards.
 
   **Prefer the readback wherever it is available, and treat a log scan as the
   degraded path.** A scan that silently misses a page — provider retention,
   block-range caps, a truncated response — reports "not applied", which is the
   one wrong answer that burns the candidate day. The readback has no such
-  failure mode.
-- **Have alternates ready.** Identify several unapplied pre-`D*` days before
-  arming, not one.
+  failure mode. Note the stakes are lower than they were: a missed page
+  reports "not applied" for a day that IS applied, and since #1944 an applied
+  day is still usable, so the wrong answer costs a reconciliation step rather
+  than the candidate.
+- **Have alternates ready.** Identify several eligible pre-`D*` days before
+  arming, not one. They no longer have to be unapplied.
 - **Keep the finalize→broadcast interval short**, since finalization is what
   makes a day broadcastable by anyone.
-- **If every eligible day has been applied on a mirror, stop and escalate** —
-  that is the exhaustion case, and it is a protocol question rather than a
-  runbook step.
+- **All days applied is NO LONGER an exhaustion case** (#1944). A replay of
+  an applied day installs `D*` on a mirror that has none, so rebroadcast one
+  of them. Genuine exhaustion is narrower: a rotated-away era whose legacy
+  wire cannot arm, or a lane that is gone. Those remain protocol questions
+  rather than runbook steps.
 
 **⛔ While #1566 is open, an early broadcast is a FUND-LOSS exposure, not a UX
 one — and an earlier revision of this paragraph asserted the opposite.** The

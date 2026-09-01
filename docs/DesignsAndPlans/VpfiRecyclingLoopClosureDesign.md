@@ -475,11 +475,18 @@ the tariff, so launch absorption is never single-channel:
    treasury, so shipping PR-7 alone re-denominates the fee but does not
    yet capture it as absorption. Sequence the credit half with (or after)
    PR-3a; until then the tariff is a fee, not yet a loop input.
-2. **Spend-gated perks (E-2 / #1204)** — priority solver routing and
-   listing-visibility boost are pure fee-for-service VPFI sinks that credit
-   the bucket; build the two spend-gated perks (skip hold-gated ones if
-   time-constrained) alongside PR-5b so a second permanent sink exists at
-   Full launch.
+2. **Spend-gated perks (E-2 / #1204)** — **SUPERSEDED in part
+   (owner, 2026-08-31): the listing-visibility boost does NOT ship.** A perk
+   may change what its buyer gets, never what other participants see — an
+   ordering that can be bought is not a neutral book — so visibility-for-sale
+   is ruled out as a CLASS, not merely as one proposed perk.
+
+   What stands: **priority solver routing** is a pure fee-for-service VPFI
+   sink that credits the bucket; build that ONE spend-gated perk (skip
+   hold-gated ones if time-constrained) alongside PR-5b so a second permanent
+   sink exists at Full launch. The absorption channel itself shipped with
+   #1204 and is perk-agnostic — it sells entitlements, so a perk's effect
+   rides its own card.
 3. **Service bonds (#1219)** — keep behind its legal glance, but schedule
    the glance now (it shares the bounded-review slot the excision doc
    already recommends) so the slash-absorption class isn't blocked on an
@@ -571,8 +578,9 @@ ratified), §9 (allocation register; loop-closure metric), plus
    dormant defaults (claims-first structural; residual split
    `[keeper 0, reserve 10000]` — exactly today's ratified behaviour).
 4. **RL-5 sequencing** — **RATIFIED: adopt** — notification flat tariff +
-   two spend-gated perks committed to the same release train as the Full
-   tariff; #1219 legal glance scheduled with the excision doc's bounded
+   the spend-gated perk channel committed to the same release train as the
+   Full tariff (this said "two spend-gated perks"; one of the two was
+   decided against on 2026-08-31 — see item 2); #1219 legal glance scheduled with the excision doc's bounded
    review slot.
 5. **Backbone confirmation** — **RATIFIED**: governor (RATIFIED 2026-07-15),
    cross-chain substrate, and the #1294/#1297 formula freezes proceed as

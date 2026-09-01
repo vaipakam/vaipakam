@@ -652,6 +652,20 @@ export function checkHardInvariants(
       if (b.released !== 0n) nonZero.push(`released = ${fmt(b.released)}`);
       if (b.outstanding !== 0n)
         nonZero.push(`outstanding = ${fmt(b.outstanding)}`);
+      // #1569 M4 C3 (Codex #2031 r17) — the keeper draw belongs here for
+      // exactly the same reason as the four above: BOTH writers structurally
+      // exclude the canonical id (`setChainKeeperAllocateBps` reverts on it,
+      // and `_stampOne` gates the whole block on `chainId != baseId`), so a
+      // non-zero Base keeper draw cannot arise from correct operation and is
+      // per-chain bookkeeping corruption.
+      //
+      // Without it the value hides: `expectedAvail` folds it in as a
+      // legitimate subtrahend, and `keeper-cap` accepts it while it fits
+      // under `reported`, so a writer regression on Base leaves every other
+      // check green. UNKNOWN is skipped rather than read as zero, the same
+      // discipline the draw's other checks use.
+      if (b.keeperDraw !== undefined && b.keeperDraw !== 0n)
+        nonZero.push(`keeperDraw = ${fmt(b.keeperDraw)}`);
       if (nonZero.length > 0) {
         add(
           'base-self-inert',
@@ -659,7 +673,13 @@ export function checkHardInvariants(
           b.chainId,
           'Canonical chain has per-chain commit books',
           `Base never instructs itself, so every per-chain commit figure under its own chain id must stay zero:\n  ${nonZero.join('\n  ')}`,
-          [b.consumed, b.retired, b.released, b.outstanding],
+          [
+            b.consumed,
+            b.retired,
+            b.released,
+            b.outstanding,
+            b.keeperDraw ?? 0n,
+          ],
         );
       }
     }
