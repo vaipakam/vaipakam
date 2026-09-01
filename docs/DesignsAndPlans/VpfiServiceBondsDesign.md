@@ -30,6 +30,7 @@ the recycle loop.
 
 ```
 ServiceBond { operator; role; amount; state; unlockAt; }
+OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // v1: `state` is Active only and `unlockAt` is unused — both exist for the
 // liveness tier's delayed unbond, which v1 does not have (rev 4).
 ```
@@ -44,9 +45,14 @@ ServiceBond { operator; role; amount; state; unlockAt; }
   Bonded-operator entry points therefore run precondition checks in a
   non-reverting outer dispatcher: on a precondition lie (e.g. submitting a
   fill against a listing already committed as stale on-chain), the call
-  **succeeds as a no-op**, records `OffenceRecorded(operator, kind,
-  refId)` with a per-operator counter, and only the counter — committed
-  state — drives slashing at threshold. Honest failures that the operator
+  **succeeds as a no-op**, records `OffenceRecorded(operator, role, kind,
+  refId)`, and debits that `(role, address)` bond IMMEDIATELY — the threshold
+  is one (see the decisions below). The counter is keyed by role too, and
+  survives only as a lifetime tally for observability; nothing reads it to
+  decide a slash. An earlier revision of this bullet described a
+  per-OPERATOR counter driving a deferred threshold slash, which left an
+  implementation with no role to select the bond from and no reason to debit
+  on the spot. Honest failures that the operator
   could not have known (state changed in the same block) are not offences;
   the offence predicate must reference state committed *before* the
   operator's submission.
@@ -168,94 +174,53 @@ This is the third revision in which a parameter was added to make a previous
 parameter safe. That is the signal to stop extending and check whether the
 mechanism is needed at all — it was not.
 
-**3. Capacity is a LEAKY BUCKET, which is what actually delivers the claims.**
+**3. Capacity — the DECISION, and why the mechanism is not specified here.**
 
-Rev 3's fixed epoch was wrong in two ways review caught, and one mechanism
-fixes both plus a third:
+**The decision, which is what this note is for:** a bond buys capacity
+*continuously and proportionally*, with **no minimum bond**, up to a ceiling
+of **4× the free tier** per address. Any bond, including none, is valid; a
+larger bond buys proportionally more throughput; nothing is unlocked by
+crossing a threshold. That is the shape the owner is being asked to ratify.
 
-- **Boundary bursts.** An address spending its whole allocation just before a
-  boundary and again just after consumes two full budgets back-to-back, so
-  "a ceiling over every window" was false — it was a ceiling per *epoch*, and
-  the rolling worst case was double.
-- **A resurrected implicit minimum.** Discarding unused credit plus rounding
-  down means sub-action credit can never accumulate, so every bond below a
-  calculable threshold buys literally nothing — exactly the implicit minimum
-  the continuous-credit model was introduced to remove. Rev 3 reintroduced
-  it while claiming to have solved it.
-- **Retune ambiguity.** Changing the epoch length mid-epoch either flips the
-  derived epoch id and grants everyone a fresh budget, or defers — materially
-  different throughput, and a one-time quota duplication.
+**The limiter's FORM is deliberately left to implementation**, and rev 6
+removes the specification revs 2–5 accumulated. That is a change of position,
+so here is the reasoning.
 
-The bucket:
+Four revisions specified a limiter, and each one's parameters created the
+next round's findings: a fixed epoch needed initial-credit semantics; a leaky
+bucket needed a refill floor; initialising buckets full created a
+bond-recycling vector (deposit, take a full bucket, spend, withdraw, repeat
+on a fresh address); making a zero window mean "dark" raised whether
+withdrawals survive darkness; specifying `refillWindow`'s zero left
+`bondAt4x`'s zero dividing by itself. Every one of those findings is
+correct. None of them is a decision the owner needs to make, and none can be
+settled well in prose without the code, the tests, and a call-site inventory
+of what an "action" costs in each role.
 
-```
-multiplier = 1 + 3 × min(1, bond / bondAt4x)    // 1× at zero bond, 4× at bondAt4x
-capacity   = freeTierBudget × multiplier        // continuous in the bond
-refillRate = capacity / refillWindow
-credit(t)  = min(capacity, credit(t₀) + refillRate × (t − t₀))
-```
+Specifying it here had a cost beyond wasted rounds: it repeatedly asserted
+guarantees the mechanism did not deliver. A one-budget rolling ceiling was
+claimed for the epoch, then for the bucket; neither has it. Writing a
+limiter's *envelope* honestly is exactly the thing that needs the
+implementation in front of you.
 
-The multiplier is restated here rather than referenced: rev 4 deleted the
-section that defined it and left "the same continuous multiplier" pointing
-at nothing, which made the document standalone-undefined below `bondAt4x`.
-Linear in the bond up to `bondAt4x`, flat at 4× above it, and computed in
-full precision — only the admission check rounds, and it rounds DOWN.
+**What implementation must settle** — the output of those rounds, kept as a
+checklist rather than as a design:
 
-**Initialization.** A previously unseen `(role, address)` bucket starts at
-**FULL capacity**, checkpointed at first touch. Zero would make a new
-operator — including a free-tier one — wait up to a whole `refillWindow`
-before doing any work, which is an entry barrier by another name. Starting
-full permits one capacity-sized burst, which is inside the envelope stated
-below rather than an exception to it.
-
-**`refillWindow`**: default **1 hour**, floor **1 minute**, ceiling **7
-days**; a stored **zero disables the bond feature** (the same dark-means-off
-convention this note uses elsewhere), never a division by zero and never an
-implicit default. `slashBps` likewise takes a **positive floor of 100 bps**
-— a zero would leave bonds granting elevated capacity while every proven
-offence debited nothing, which is a bond in name only.
-
-**Retunes are piecewise.** A rate change cannot be applied to accrual that
-already happened: shortening `refillWindow` would retroactively mint credit
-back to the last checkpoint, lengthening it would erase credit earned at the
-old rate, and a global setter cannot checkpoint every bucket. So the config
-carries an epoch and a timestamp, and a bucket touched after a retune
-accrues at the OLD rate up to the retune instant and the new rate after it.
-
-**Cost units are per role, and only what executed is charged.** A matcher
-debits per FILL, not per outer call — otherwise batching walks straight
-through the limit. A keeper pass debits per ACTION. Priority-window access
-debits per admission. A reverted or partially-filled batch debits the items
-that actually executed.
-
-An action is admitted iff `credit >= cost`, and debits `cost`. Keyed
-`(role, address)`, as before.
-
-**The envelope, stated honestly this time.** A token bucket admits
-`capacity + refillRate × elapsed` over any interval — a full bucket spends
-`capacity` immediately and roughly another `capacity` as it refills across
-one `refillWindow`, so the worst case over a rolling window is close to
-`2 × capacity`, not one. Rev 3 claimed a one-budget rolling ceiling for the
-fixed epoch and did not have it; rev 4 claimed the bucket delivered that
-ceiling and also did not. **That is three revisions asserting a throughput
-bound the mechanism does not provide**, so the bound is now written as the
-envelope rather than as a round number. What the bucket genuinely fixes is
-the ARBITRARILY SHORT double burst — the fixed epoch allowed `2 × budget`
-back-to-back in an instant across a boundary; the bucket spreads the second
-budget over a full window. If a strict `capacity` per rolling window is ever
-required, that is a sliding-window or GCRA limiter and a different design.
-
-Sub-action credit does accumulate continuously, so a small bond takes
-proportionally longer to afford an action and is never useless — no implicit
-minimum, this time actually. And there is no epoch id to flip on a retune,
-though the accrual rule above is what makes that safe rather than the absence
-of boundaries alone.
-
-Rev 3 rejected a bucket because "a bucket lets an operator idle and then
-burst". That is true of a bucket whose capacity exceeds its window's budget;
-it is not true here, because capacity IS the window's budget. The objection
-was to an unbounded bucket, and the fix was to bound it — not to abandon the
-shape.
+1. The bond→capacity curve's arithmetic: precision, rounding direction, and
+   the amount that reaches 4×. Rounding must not create an implicit minimum.
+2. The limiter's envelope, stated as what it actually admits over a rolling
+   window rather than as a round number.
+3. Fresh-storage and zero semantics for **every** divisor and knob, and
+   whether a role is dark until all of them are set. `bondAt4x` and the
+   refill parameter both divide.
+4. What "dark" preserves: withdrawals must stay callable and the free tier
+   must keep working, or disabling the feature strands escrowed VPFI and
+   breaks the permissionless baseline.
+5. Initial capacity for an unseen `(role, address)`, chosen so a bond cannot
+   be recycled through fresh addresses to mint repeated full-capacity bursts
+   — the aggregate cost claim in §4 depends on this.
+6. Cost units per role — per fill, per action, per admission — with only
+   executed items charged, so batching cannot walk through the limit.
 
 **4. The 4× ceiling bounds an ADDRESS, not an operator — stated as such.**
 
@@ -270,7 +235,12 @@ What is actually true, and all that is claimed:
 - **Per address**, capacity is bounded at 4× the free tier.
 - **In aggregate**, dominance costs capital LINEARLY — `N` addresses at the
   ceiling require `N × bondAt4x` bonded, all of it slashable and all of it
-  idle. That is a cost curve, not a bound.
+  idle. That is a cost curve, not a bound. **It holds only if a fresh
+  address cannot be handed a full capacity balance on first touch**: with
+  immediate withdrawal and a full initial bucket, one `bondAt4x` can be
+  walked through fresh addresses to mint repeated bursts, and the claim
+  collapses to the cost of one bond. That is item 5 of the implementation
+  checklist above, and this claim depends on it being settled correctly.
 - **Even where roles are GRANTED, the bound is still PER ADDRESS.** Rev 2
   claimed the keeper `KEEPER_ACTION_*` tiers could aggregate capacity under
   the granted principal. Checked against the wiring, that does not hold
