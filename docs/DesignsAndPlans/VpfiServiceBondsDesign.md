@@ -249,8 +249,18 @@ old-token liabilities during the VPFI rotation procedure. It also conflicts with
 the repository requirement that detailed events are emitted for each relevant
 state change (`docs/FunctionalSpecs/ProjectDetailsREADME.md` §Event Emission).
 
-Required: posting, raising, withdrawal request, withdrawal completion, and the
-slash itself — each carrying the operator, the role, the delta, the
+Required: posting, raising, withdrawal request, withdrawal completion, the
+slash itself, **and the RESERVATION lifecycle — created, consumed, released.**
+
+The reservation events are easy to omit because **the bond amount does not
+change** when one is taken or freed, so none of the balance-bearing events
+exposes the mutation at all. Yet reservations decide whether a later action is
+admitted, and the bond mapping is not enumerable — so without them an indexer
+cannot reconstruct available backing, and an operator cannot tell when their
+capacity became usable again. Each carries the action and config epoch, the
+tranche allocation, and the **post-reserved total**.
+
+Every event carries the operator, the role, the delta, the
 **post-balance**, the token/config identity, and the withdrawal state. Post-
 balance rather than delta alone, because a consumer that missed one event can
 otherwise never resynchronise against a mapping it cannot enumerate. ABI and
