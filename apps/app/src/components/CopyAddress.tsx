@@ -44,7 +44,20 @@ export function CopyAddress({
           // the last instance of a pattern behind is exactly how it kept
           // coming back: each round of #2043 fixed the site it was shown.
           const attempt = copyAttempt.begin();
+          // CLEAR THE CONFIRMATION, NOT JUST THE TIMER (#2044 round 1 P2).
+          // Cancelling the pending reset without also dropping `copied` left
+          // the chip stuck: a successful copy followed within 1.5s by one
+          // that FAILS took away the only thing that would ever have
+          // un-flipped it, and the silent catch installs no replacement. The
+          // chip then read "Copied" indefinitely over a failed attempt —
+          // this fix introducing, in miniature, the false-success defect the
+          // whole #2043/#2044 line of work is about.
+          //
+          // Resetting both at the start also makes the chip describe the
+          // LATEST attempt rather than the best one so far, which is the
+          // property the rest of this change is enforcing.
           if (timer.current) clearTimeout(timer.current);
+          setCopied(false);
           try {
             await navigator.clipboard.writeText(address);
             if (!attempt.isCurrent()) return;

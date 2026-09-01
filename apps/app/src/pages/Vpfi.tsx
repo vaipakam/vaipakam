@@ -22,6 +22,7 @@ import { encodeFunctionData, parseUnits } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useLatestAttempt } from '../lib/useLatestAttempt';
 import { SUPPORTED_CHAINS } from '../chain/chains';
 import { assertWalletNotSanctionedLive, useSanctionsCheck } from '../data/sanctions';
 import { assertErc20BalanceLive } from '../contracts/preflights';
@@ -82,6 +83,9 @@ export function Vpfi() {
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [watched, setWatched] = useState(false);
+  // See the watch button below: a pending prompt must not report for a
+  // newer press or a different snapshot (#2044 round 1 P2).
+  const watchAttempt = useLatestAttempt();
 
   const snapshot = vpfi.data;
 
@@ -523,6 +527,24 @@ export function Vpfi() {
                 className="btn btn-secondary btn-sm"
                 style={{ marginTop: 12 }}
                 onClick={() => {
+                  // ORDERED (#2044 round 1 P2). Same stale-answer shape as
+                  // the faucet's watch button: two presses leave two prompts
+                  // outstanding, and an older approval landing after a newer
+                  // refusal reports success for the one that was refused. A
+                  // token or chain change while a prompt is pending applies
+                  // the approval to a snapshot it was never about.
+                  //
+                  // This site was MISSED by the sweep that produced #2044 —
+                  // that sweep covered the files #2043 touched, and this one
+                  // was not among them. Recorded because the PR then
+                  // generalised to "the last instance in the app", which was
+                  // a claim the sweep could not support.
+                  //
+                  // The silent catch stays, for the reason given at the
+                  // faucet's copy: the common rejection is the user declining
+                  // the prompt, and this call cannot tell that from a real
+                  // failure.
+                  const attempt = watchAttempt.begin();
                   void walletClient
                     .watchAsset({
                       type: 'ERC20',
@@ -532,7 +554,9 @@ export function Vpfi() {
                         decimals: VPFI_DECIMALS,
                       },
                     })
-                    .then(() => setWatched(true))
+                    .then(() => {
+                      if (attempt.isCurrent()) setWatched(true);
+                    })
                     .catch(() => {});
                 }}
               >

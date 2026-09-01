@@ -85,37 +85,64 @@ describe('createLatestAttempt — only the latest attempt may report', () => {
   });
 });
 
-describe('the rule has one implementation (#2044)', () => {
+describe('the rule has one implementation, and reaches every reporter (#2044)', () => {
+  /** Files under `src/` matching a pattern, or [] when grep finds nothing
+   *  (grep exits 1 on no match, which `execFileSync` throws on — and no match
+   *  is the passing case for the first check below). */
+  function filesMatching(pattern: string): string[] {
+    try {
+      return execFileSync(
+        'grep',
+        ['-rlE', pattern, 'src', '--include=*.ts', '--include=*.tsx'],
+        {
+          cwd: process.cwd(),
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        },
+      )
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .filter((f) => !f.includes('.test.'));
+    } catch {
+      return [];
+    }
+  }
+
   it('no component hand-rolls its own attempt counter', () => {
     // The reason this hook exists: #2043 fixed the same defect four times in
-    // two files, each fix subtly its own. A source check is the honest way to
-    // pin "there is one of these" — the behavioural version cannot see how
-    // many copies exist.
-    // `grep` exits 1 on no match, which `execFileSync` throws on — and no
-    // match is the PASSING case here, so the empty result has to be caught
-    // rather than allowed to look like a broken test.
-    let out = '';
-    try {
-      out = execFileSync(
-        'grep',
-        [
-          '-rlE',
-          String.raw`(copyAttempt|attemptRef|latestAttempt)\s*=\s*useRef`,
-          'src',
-          '--include=*.ts',
-          '--include=*.tsx',
-        ],
-        { cwd: process.cwd(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-      );
-    } catch {
-      out = '';
-    }
-    const handRolled = out
-      .split('\n')
-      .map((l) => l.trim())
-      .filter(Boolean)
-      .filter((f) => !f.includes('.test.'));
-    expect(handRolled).toEqual([]);
+    // two files, each fix subtly its own.
+    expect(
+      filesMatching(String.raw`(copyAttempt|attemptRef|latestAttempt)\s*=\s*useRef`),
+    ).toEqual([]);
+  });
+
+  it('every component that reports an async settlement uses the hook', () => {
+    // KEYED ON THE API, NOT ON THE FIX (#2044 round 1 P2). The first version
+    // of this check greped for hand-rolled counter NAMES, so it could only
+    // see a site that had already been half-fixed — and it passed while
+    // `Vpfi.tsx` called `watchAsset` and reported the result with no ordering
+    // at all. A check that recognises the remedy cannot find the places the
+    // remedy is missing.
+    //
+    // These two APIs are the ones whose results this app renders a claim
+    // from, and neither can be cancelled — only its answer ignored. Any file
+    // calling one must therefore import the rule.
+    const reporters = filesMatching(String.raw`\.(watchAsset|writeText)\(`);
+    // The check must never go blind: zero reporters would pass vacuously.
+    expect(reporters.length).toBeGreaterThan(0);
+    const importsRule = (file: string) => {
+      try {
+        execFileSync('grep', ['-q', 'useLatestAttempt', file], {
+          cwd: process.cwd(),
+          stdio: ['ignore', 'ignore', 'ignore'],
+        });
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    expect(reporters.filter((f) => !importsRule(f))).toEqual([]);
   });
 
   it('is exported as a hook for components to use', () => {

@@ -18,11 +18,14 @@ superseded.** Press twice and only the second result is shown. Move on to
 something else and the earlier answer is discarded rather than applied to what
 is now on screen.
 
-**One exception is deliberate**, and it is about not crying wolf. When a wallet
-declines to add a token, that is usually because you declined it — and the app
-cannot tell your decision apart from a genuine error. So that one stays quiet,
-where the copy buttons say plainly when they could not do what they were asked.
-The difference is whether a refusal is something you chose.
+**Where a control stays quiet, that is deliberate**, and it is about not
+crying wolf. When a wallet declines to add a token, that is usually because you
+declined it — and the app cannot tell your decision apart from a genuine error,
+so reporting one would be guessing at your intent. The small address chips that
+copy an account are quiet for a different reason: they simply do not flip to
+"Copied", which is the whole of what they claim. The two controls that do make
+a claim in words — the diagnostics report and the testnet faucet's token ID —
+say plainly when they could not do what they were asked.
 
 The rule is now written down in one place rather than repeated at each button.
 It had been fixed four separate times in the preceding change, each time
