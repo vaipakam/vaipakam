@@ -1120,17 +1120,17 @@ function splitCommands(line) {
     }
     const two = line.slice(i, i + 2);
     if (two === '&&' || two === '||') {
-      parts.push({ text: line.slice(start, i), sep });
+      parts.push({ text: line.slice(start, i), sep, start });
       sep = two;
       start = i + 2;
       i += 1;
     } else if (ch === ';' || ch === '|' || ch === '&') {
-      parts.push({ text: line.slice(start, i), sep });
+      parts.push({ text: line.slice(start, i), sep, start });
       sep = ch;
       start = i + 1;
     }
   }
-  parts.push({ text: line.slice(start), sep });
+  parts.push({ text: line.slice(start), sep, start });
   return parts;
 }
 
@@ -3216,7 +3216,7 @@ function atChildOptionsDepth(text, index) {
  * them apart. `null` when the line is unknown or out of range, which leaves the
  * caller on its older whole-file reasoning.
  */
-function lineStartOffset(text, lineNo, seg = null) {
+function lineStartOffset(text, lineNo, within = null) {
   if (typeof text !== 'string' || typeof lineNo !== 'number' || lineNo < 1) return null;
   let at = 0;
   for (let n = 1; n < lineNo; n += 1) {
@@ -3225,20 +3225,17 @@ function lineStartOffset(text, lineNo, seg = null) {
     at = nl + 1;
   }
   if (at > text.length) return null;
-  // WITHIN the line, when the command can be located in it. A rewrite and a
-  // deploy often share one physical line — `echo '…' > side.jsonc; wrangler
-  // deploy --config side.jsonc` — and against the line's START every write on
-  // it sits after the deploy, so a rewrite that plainly precedes wrangler was
-  // read as following it and the stale checkout config blessed the command
-  // (Codex #2036 r24). The line was exact for the ordering it was introduced
-  // for and blind to the one within a line.
-  if (typeof seg === 'string' && seg !== '') {
-    const nl = text.indexOf('\n', at);
-    const line = text.slice(at, nl === -1 ? text.length : nl);
-    const within = line.indexOf(seg.trim());
-    if (within !== -1) return at + within;
-  }
-  return at;
+  // WITHIN the line, because a rewrite and a deploy often share one physical
+  // line — `echo '…' > side.jsonc; wrangler deploy --config side.jsonc` — and
+  // against the line's START every write on it sits after the deploy, so a
+  // rewrite plainly preceding wrangler read as following it (Codex #2036 r24).
+  //
+  // The offset is SUPPLIED BY THE SPLITTER, not searched for. Locating the
+  // command by its own text gave two textually identical deploys on one line
+  // the same position, so the second borrowed the first's and a rewrite between
+  // them was read as later than both (r26). The splitter already knows where
+  // each segment begins; searching for it was inventing an answer it had.
+  return typeof within === 'number' && within >= 0 ? at + within : at;
 }
 
 /**
@@ -3497,7 +3494,12 @@ function cloudflareEnvAssignments(body) {
       // The readable forms capture; everything else — an identifier, a template
       // with an interpolation, any other expression — matches with no capture,
       // which is how an unresolvable selector is spelled throughout this file.
-      /\[?\s*["']?CLOUDFLARE_ENV["']?\s*\]?\s*(?::\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[^,}]+)|(?=\s*[,}]))/g,
+      // BACKTICKS QUOTE THE KEY TOO, not only the value — `[\`CLOUDFLARE_ENV\`]`
+      // is an ordinary computed key that Node passes through, and a key class
+      // of only the two ASCII quotes missed it while the closed-object check
+      // read the object as understood, so it proved no environment was selected
+      // (Codex #2036 r26). Third quote form, third reader.
+      /\[?\s*["'`]?CLOUDFLARE_ENV["'`]?\s*\]?\s*(?::\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[^,}]+)|(?=\s*[,}]))/g,
     ),
     // The offset of the KEY ITSELF, found rather than inferred from the match's
     // first character — with a computed key the match now starts at `[`, and a
@@ -3652,6 +3654,22 @@ function isEnvTableHeader(line) {
   return key === 'env';
 }
 
+/**
+ * Is this line a top-level `env` assignment — `env.staging = { … }` dotted, or
+ * an inline `env = { … }`?
+ *
+ * DECODED, like the table-header test beside it. TOML reads `"e\u006ev".staging`
+ * as `env.staging`, and a source-text match did not (#2036 r26) — the same
+ * escape-decoding rule the header form had gained one round earlier and this
+ * one had not.
+ */
+function isEnvKeyLine(line) {
+  const m = line.match(/^\s*(?:"((?:[^"\\]|\\[\s\S])*)"|'([^']*)'|([A-Za-z0-9_-]+))\s*([.=])/);
+  if (!m) return false;
+  const key = m[1] !== undefined ? decodeTomlBasic(m[1]) : (m[2] ?? m[3]);
+  return key === 'env';
+}
+
 /** Does this TOML config declare any environment table? */
 function envTablesInToml(absPath) {
   let text;
@@ -3671,7 +3689,7 @@ function envTablesInToml(absPath) {
     // ...and the KEY forms of the same thing: `env.staging = { … }` dotted at
     // the top level, or an inline `env = { staging = { … } }`. Both declare
     // environments this top-level reader does not descend into.
-    if (/^\s*(?:env|"env"|'env')\s*[.=]/.test(l.text)) return true;
+    if (isEnvKeyLine(l.text)) return true;
   }
   return false;
 }
@@ -7697,14 +7715,14 @@ for (const file of walk(REPO_ROOT)) {
         // negation.
         const aliased = resolveRunAlias(seg, packageContextOf(rel));
         if (
-          commandIsSafe(aliased ?? seg, safeHint, '', text, lineStartOffset(text, lineNo, seg)) ||
+          commandIsSafe(aliased ?? seg, safeHint, '', text, lineStartOffset(text, lineNo, part.start)) ||
           (aliased === null &&
             commandIsSafe(
               expandCommandVars(seg, fileVars),
               safeHint,
               '',
               text,
-              lineStartOffset(text, lineNo, seg),
+              lineStartOffset(text, lineNo, part.start),
             ))
         ) {
           continue;
@@ -8365,7 +8383,7 @@ for (const file of walk(REPO_ROOT)) {
         // reporting it under the keeper handed the reader the wrong remedy
         // (#1995 r2). Textual and cwd scope apply only when no selector
         // resolved.
-        const sel = selectorScope(seg, input, true, shellVars, text, lineStartOffset(text, lineNo, seg));
+        const sel = selectorScope(seg, input, true, shellVars, text, lineStartOffset(text, lineNo, part.start));
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
         // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
         // package", and it ran before the modelled cwd — so in a script under
@@ -8432,7 +8450,7 @@ for (const file of walk(REPO_ROOT)) {
         const fileTextForSafety = text;
         // The LINE this command is on, so a rewrite is compared against THIS
         // deploy rather than against any later selection of the same config.
-        const atInFile = lineStartOffset(text, lineNo, seg);
+        const atInFile = lineStartOffset(text, lineNo, part.start);
         const safeEverywhere = (text) =>
           cmdCwds.every((cwd) =>
             commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile),

@@ -8738,4 +8738,54 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
+  // ---- Codex #2036 r26 ----
+
+  it('two IDENTICAL deploys on one line get their own offsets', () => {
+    // Locating a command by its own text gave both the first occurrence's
+    // position, so a rewrite between them read as later than both and the
+    // second deploy trusted the stale checkout config.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nwrangler deploy --config side.jsonc --keep-vars; ' +
+        'echo \'{"keep_vars":false}\' > side.jsonc; wrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('an ESCAPED quoted dotted env key still declares environments', () => {
+    // TOML reads `"env".staging` as `env.staging`. The header form learned
+    // to decode in r22; this key form had not.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-www"', '"e\\u006ev".staging = { name = "vaipakam-agent" }', ''].join(
+        '\n',
+      ),
+    );
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nCLOUDFLARE_ENV=staging wrangler deploy --config side.toml\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a BACKTICK-quoted computed key is a selector', () => {
+    // The third quote form on the KEY, after the value learned it in r16 and
+    // the deploy detector always knew it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {[`CLOUDFLARE_ENV`]: "staging", PATH: "/bin"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
 });
