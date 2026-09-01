@@ -611,11 +611,25 @@ ordinary implementation, and it belongs in slice 3.
 
 **1. The two draining grandfathered classes — different treatments, not one.**
 
-- **`rebateAmount` (settled, unclaimed): credit it, never lien it.**
+- **`rebateAmount` (settled, unclaimed): credit it, never lien it — and credit
+  the CURRENT NFT HOLDER, not the stored borrower.**
   `LibVPFIDiscount.sol:1113-1118` records that `claimAsBorrower` never runs on a
   `Settled` loan, so a frozen claimant and an encumbrance are both inert — "one
   silently, one permanently". A lien would strand the value the migration exists
-  to hand back. It is already claimable; credit it outright.
+  to hand back.
+
+  **"Credit it outright" is under-specified in exactly the case that loses
+  somebody's money.** A borrower position is transferable, and the live claim
+  path authorizes against `ownerOf(loan.borrowerTokenId)` and pays that holder.
+  The nearby `creditBorrowerLifRebateToVault` helper instead pays the stored
+  `loan.borrower`, because it serves a special no-claim terminal — so reaching
+  for it during migration, which is the obvious thing to do, hands the rebate to
+  a former holder and clears the current one's claim **irreversibly**.
+
+  So the migration resolves `ownerOf(loan.borrowerTokenId)` and delivers there,
+  with the sanctions-safe delivery that resolution implies — or it leaves the row
+  claimable and migrates only the custody. Either is defensible; paying the
+  stored borrower is not.
 - **`vpfiHeld` (live loans): a per-loan ENCUMBRANCE paired with a TIER
   EXCLUSION — two counters, not one.** `tierVpfiBalance` deliberately leaves
   ordinary `s.encumbered` value in-tier (`:119-135`) while
@@ -677,9 +691,20 @@ ordinary implementation, and it belongs in slice 3.
 - **The discriminator routes consumers; it does NOT protect the tokens.** A
   pre-upgrade row stays commingled for as long as it waits to be consumed, so a
   reward claim can drain it before any consumer reaches the discriminator at
-  all. Either migrate those rows under pause, or seed them into slice 1's
-  remainder bound and let it decrement as they drain. **Arming waits on
-  whichever is chosen.**
+  all.
+
+  **So these rows take the paused migration, and that is now the only option
+  here.** An earlier revision also offered "seed them into slice 1's remainder
+  bound" — a bound slice 1 no longer defines: the census/remainder framing was
+  replaced by the paginated exhaustive scan when the sequential-id correction
+  landed, and nothing else introduces a counter a fallback consumer could
+  decrement. That branch was unimplementable as written, and worse, it named an
+  arming gate it could never satisfy.
+
+  Fallback rows are enumerable on the same terms as slice 1's — a snapshot is
+  keyed by `loanId`, and `[1, nextLoanId]` covers them — so the same paused
+  paginated scan migrates them, with the same completion proof. **Arming waits
+  on that scan.**
 
 **3. The intent class — via the `preInteraction` pull point.**
 
@@ -730,16 +755,46 @@ written yet. Since §5b establishes that enumerating those owners cannot be
 completed, this slice IS the delivered bound — so it and slice 5 are the same
 work approached from two sides.
 
-**This slice must define what CREDITS canonical `received`, and that is not
-inherited from the mirror case.** Base originates rewards and receives no
-remittances, which is exactly why `deliveredFreshBound` returns `max` there
-today — the counter would otherwise sit at zero. Implemented literally, the
-inversion either bricks every canonical payout at zero, or invites an
-implementer to credit schedule/allocation accounting with no tokens behind it,
-which reintroduces the original defect wearing the new bound's name. So specify:
-the atomic **mint / transfer / escrow event that credits canonical `received`**,
-and every canonical **outflow that debits it**. Until both are written down, the
-inversion is not closure 1 on the canonical chain.
+**Canonical `received` is not inherited from the mirror case, and this slice
+CHOOSES its ingress rather than asking an implementer to.** An earlier revision
+said "specify the funding event" and admitted it had not been written down,
+which leaves the same two failures open: every canonical payout bounded at zero,
+or an implementer inventing an unfunded credit.
+
+Base originates rewards and receives no remittances, which is why
+`deliveredFreshBound` returns `max` there today.
+
+**Credit — one event, and it is a TRANSFER, not a constant.** `received` on Base
+is credited only by an explicit `fundRewardPool(amount)`: an ADMIN-role call that
+moves `amount` VPFI **into the Diamond** and increments the counter in the same
+call, reverting unless the transfer delivers exactly `amount` (balance-delta
+checked, the same discipline as the intent hook). Nothing else credits it.
+
+**`VPFI_INTERACTION_POOL_CAP` is explicitly NOT the ingress**, and this is the
+distinction the whole inversion turns on. The 69M cap is a **schedule** — an
+upper bound on what may ever be paid — so crediting `received` from it would
+publish headroom with no tokens behind it, which is the original defect wearing
+the new bound's name. The cap stays as an independent ceiling: a payout
+satisfies **both** the cap and the delivered bound, and only the delivered bound
+is about money.
+
+**Debits — three, all real outflows:**
+
+| Debit | Where |
+| --- | --- |
+| the **fresh** component of a claim | `RewardClaimFacet._deliverReward`, per the chokepoint above |
+| fresh value absorbed by expiry / forfeit | the reward-specific operation above (never generic `credit`) |
+| VPFI shipped to a mirror | `remitRewardBudget` — the tokens leave Base, so Base's own bound must fall by exactly what left |
+
+The third is easy to miss because it is not a payout, and omitting it lets Base
+promise the same tokens to a local claimant and to a mirror. It is the canonical
+mirror-image of the mirror's own arrival credit.
+
+**Migration for an existing canonical deployment:** `fundRewardPool` is called
+once under the pause for the VPFI the Diamond already holds against rewards,
+measured as balance minus every other owner **at that instant** — a one-time
+measurement, sound precisely because it is taken while nothing can move and is
+never repeated.
 
 **5. Closures 2 and 3**, independent of the above and blocking arming just as
 hard. Closure 3 additionally requires the fourteen-row role matrix in §5c — the
@@ -999,9 +1054,33 @@ specification", which is a promise rather than a specification. The rules:
 | provisional confirmation (`:1273-1279`) | moves an amount from `uncounted` into `received` on confirmation | moves **only the fresh component**, and only once. Left on the vintage rule it promotes recycled-backed value into fresh headroom that no delivery backs — headroom manufactured by a bookkeeping step |
 | demotion / unwind (`:1397-1425`) | moves an amount back from `received` to `uncounted` | must remove **exactly what confirmation added**, by the same fresh-only rule. Left on the vintage rule it removes less than was added, and the difference is permanent false headroom |
 
-The last two are a matched pair and must be changed in one commit: the failure
-mode is not that either is individually wrong, but that confirmation and demotion
-stop being inverses. **A round-trip test — confirm then demote, assert `received`
+**In-flight OLD-WIRE packets are a cutover problem, and the rule above cannot be
+applied to them.** Legacy and d2 wires carry no component split — the live
+ingress deliberately supplies `freshShare = 0` and puts the whole mixed delivery
+into `uncounted`, because the receiver has nothing to compute a split from. So
+"credits the authenticated fresh component, any vintage" is unimplementable for
+those packets, and both fallbacks are wrong: promoting the whole amount
+manufactures recycled-backed headroom, while leaving it in `uncounted`
+permanently strands genuine fresh funding that arrives after the paused
+bootstrap has already reconciled everything present.
+
+The cutover therefore does one of two things, and the choice belongs here rather
+than in the implementation:
+
+1. **Drain or reject old-wire packets across the cutover** — hold the pause until
+   every in-flight legacy/d2 remittance has landed and been reconciled, then
+   reject that wire version. Simplest, and it makes the bootstrap's "everything
+   present" assumption true rather than assumed.
+2. **A receipt-level reconciliation path** — a post-unpause administrative entry
+   taking a specific old-wire receipt and its externally-established split, and
+   crediting `received` accordingly. Needed only if the lane cannot be drained.
+
+Prefer (1). (2) reintroduces an administrative writer on the received side,
+which is what the inversion exists to minimise.
+
+The last two writers are a matched pair and must be changed in one commit: the
+failure mode is not that either is individually wrong, but that confirmation and
+demotion stop being inverses. **A round-trip test — confirm then demote, assert `received`
 and `uncounted` both return to their starting values — is the acceptance case,
 and it is the one test that catches a divergence between them.** Crediting the
 whole delivery would re-open the hole on the other side: a remittance of 5 fresh
