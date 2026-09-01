@@ -15,8 +15,9 @@ the recycle loop.
 
 1. **No yield, ever.** Bonds earn nothing — not interest, not rewards, not
    fee shares. Posting a bond buys operational capacity, full stop.
-2. **Refundable at will** (subject to an unwind delay, below) — a deposit,
-   not a purchase.
+2. **Refundable at will** — a deposit, not a purchase. v1 has no unwind
+   delay, because v1 has no evidence that arrives after an operator stops
+   acting; a delay arrives with the liveness tier that creates one (rev 4).
 3. **Slashing is rule-bound and evidence-anchored**, never discretionary
    value capture: each slash condition is an objectively verifiable
    on-chain fact — and the evidence must be **committed state, not a
@@ -29,6 +30,8 @@ the recycle loop.
 
 ```
 ServiceBond { operator; role; amount; state; unlockAt; }
+// v1: `state` is Active only and `unlockAt` is unused — both exist for the
+// liveness tier's delayed unbond, which v1 does not have (rev 4).
 ```
 
 | Role | What the bond unlocks | Slash conditions (objective) |
@@ -48,8 +51,11 @@ ServiceBond { operator; role; amount; state; unlockAt; }
   the offence predicate must reference state committed *before* the
   operator's submission.
 - Bond sizes + unlock tiers: governance-bounded config.
-- **Unbond delay** (e.g. 7 days) so an operator can't slash-and-run
-  within one misbehaviour window.
+- **Unbond delay** — NOT in v1 (rev 4). It exists to stop a slash-and-run
+  inside a misbehaviour window, and v1 has no such window: every offence is
+  debited in the same call that records it. The delay, and the privilege
+  revocation and `unlockAt` snapshot that make it sound, arrive with the
+  liveness tier.
 - Slashed VPFI → treasury **recycle bucket** (`VpfiRecycled(SLASH,...)`),
   joining the netting loop; never burned, never redistributed to a
   "reporter" (bounty-shaped payouts reintroduce the promotional-
@@ -81,17 +87,21 @@ ServiceBond { operator; role; amount; state; unlockAt; }
    every v1 slash anchored to a fact the chain can check without a timing
    judgement, which is also what keeps the offence dispatcher below tractable.
 2. **Bond sizes + unbond delay** — proposal below, awaiting ratification.
+   Rev 4 REMOVES the delay from v1 rather than sizing it; see below for why
+   that is the answer to the question rather than a gap in it.
 3. **No-yield refundable-deposit shape: RATIFIED.** The legal glance is
    discharged. Bonds earn nothing, are refundable at will subject to the
-   unbond delay, and are described as operational security deposits — never
+   any unbond delay in force, and are described as operational security
+   deposits — never
    staking, never earning.
 
-### Proposed: bond sizes and unbond delay (rev 2)
+### Proposed: bond sizes and capacity (rev 4)
 
-Rev 1 of this section was reviewed and found underspecified in five places —
-each of them a spot where two implementers would have built different things.
-Rev 2 answers all five. Nothing here is a new pattern; both knobs follow
-conventions the repository already uses.
+This section has been through four revisions, and the shape of that history
+is itself the finding: revs 1-3 each added a parameter to make the previous
+parameter safe. Rev 4 stops extending and removes two mechanisms v1 does not
+need — the unbond delay, and the fixed epoch — which answers five review
+findings by deletion rather than by specification.
 
 **1. The debit formula — every recorded offence debits, immediately.**
 
@@ -116,103 +126,80 @@ whole rule:
 - Governance-bounded: `slashBps` default **1,000** (10%), ceiling **2,500**
   (25%), following the `MAX_*_BPS` convention in `ConfigFacet`.
 
-**2. Bonded privileges stop when unbonding STARTS.**
+**2. v1 HAS NO UNBOND DELAY — and that is the honest answer, not a gap.**
 
-Otherwise the delay does not do what rev 1 claimed. An operator could request
-unbonding, keep its elevated limits, use them for slashable actions near the
-end of the window, and withdraw before the evidence for those actions was
-recorded — a delay measured from the request does not cover actions taken
-during it.
+Revs 1–3 specified a delay, then privilege revocation to make the delay
+mean something, then an `unlockAt` snapshot to stop retunes moving it. Review
+then asked the question that dissolves all three: **what pending evidence is
+the delay waiting for?**
 
-So a bond enters `Unbonding` at the request, and capacity drops to the FREE
-TIER at that instant. The delay then protects only the adjudication of
-actions already taken, which is a claim it can actually keep. The alternative
-— restarting the delay from the last privileged action — was considered and
-rejected: it lets an operator hold a refund hostage to its own activity and
-makes the unlock time unpredictable for an honest one.
+In ratified v1 scope, nothing. Every offence is an objective lie, detected by
+the outer dispatcher and debited **in the same successful call**. The liveness
+tier — the only source of evidence that arrives *after* an operator stops
+acting — is explicitly out of v1. So there is no adjudication in flight when
+an operator unbonds, and a 3–30 day lock protects nothing. It is a pure
+lockup, and it sits badly beside a shape whose legal spine is
+"refundable at will".
 
-**3. The unbond delay is SNAPSHOT at request time.**
+**So v1 unbonds immediately.** Bond, capacity, and the whole withdrawal
+machinery collapse to: reduce the bond, capacity follows continuously (see
+below), withdraw.
 
-The delay is governance-mutable, and the bond record in rev 1 stored only
-`unbondRequestedAt`. A pending withdrawal would then float on the live knob:
-lowering 30 days to 3 would make every request older than 3 days instantly
-withdrawable, bypassing the exact window a role chose because its offences
-take that long to adjudicate; raising it would retroactively extend a refund
-already requested.
+The delay is specified as arriving **with the liveness tier**, because that
+tier is what creates delayed evidence — and the rules revs 1–3 worked out are
+kept here for it rather than discarded: privileges revoke at the request (or
+the window does not cover actions taken inside it), and `unlockAt` is
+snapshot at the request (or a retune moves a pending withdrawal in both
+directions). Those were right answers to a question v1 does not ask yet.
 
-The record therefore stores **`unlockAt`**, computed once from the delay in
-force at the request. A retune governs only later requests. (The reward
-horizon precedent handles the same problem with a configuration epoch and
-fresh notice on every retune; snapshotting is the simpler form of the same
-guarantee, and it needs no notice pipeline because the operator already knows
-their own unlock time.)
+This is the third revision in which a parameter was added to make a previous
+parameter safe. That is the signal to stop extending and check whether the
+mechanism is needed at all — it was not.
 
-Values, as a bounded knob with a floor: **7 days** default, **3-day floor**,
-**30-day ceiling**.
+**3. Capacity is a LEAKY BUCKET, which is what actually delivers the claims.**
 
-**Rev 1 said "dark until set" AND "7 days default", which are incompatible**
-(rev 3). This repository uses a stored zero to mean feature-disabled wherever
-it calls a knob dark — the reward horizon does exactly that — while "default"
-normally means an unset zero resolves to the named value. One implementer
-would accept a bond with no usable withdrawal clock and strand it until
-governance configured the delay; another would activate seven-day unbonding
-with no configuration at all.
+Rev 3's fixed epoch was wrong in two ways review caught, and one mechanism
+fixes both plus a third:
 
-**The resolution: zero disables the BOND FEATURE, and deposits are rejected.**
-`bondDelaySeconds == 0` ⇒ `postBond` reverts. Not "resolves to seven days",
-because a refundability guarantee that switches itself on before anyone chose
-its length is the kind of default that gets discovered during an incident; and
-not "accept and strand", because taking a deposit you cannot promise to return
-is the worst of the three. The 7 days is the value governance is expected to
-SET at arming, not one that applies in its absence — so the whole bond
-surface, like the perk channel, ships dark and is armed deliberately. The floor is the load-bearing half —
-without one the delay can be tuned to nothing, which is the slash-and-run
-configuration it exists to prevent. The ceiling matters because bonds are
-characterised as refundable at will, and a delay long enough to read as a
-lockup argues against that characterisation.
+- **Boundary bursts.** An address spending its whole allocation just before a
+  boundary and again just after consumes two full budgets back-to-back, so
+  "a ceiling over every window" was false — it was a ceiling per *epoch*, and
+  the rolling worst case was double.
+- **A resurrected implicit minimum.** Discarding unused credit plus rounding
+  down means sub-action credit can never accumulate, so every bond below a
+  calculable threshold buys literally nothing — exactly the implicit minimum
+  the continuous-credit model was introduced to remove. Rev 3 reintroduced
+  it while claiming to have solved it.
+- **Retune ambiguity.** Changing the epoch length mid-epoch either flips the
+  derived epoch id and grants everyone a fresh budget, or defers — materially
+  different throughput, and a one-time quota duplication.
 
-**4. Capacity is a CONTINUOUS credit, not a tier.**
-
-Rev 1 said "no minimum bond" and "4× the free tier" without saying how a VPFI
-amount becomes capacity. Since match-batch and action-count limits are
-discrete, that is not a spec: one implementation rounds a one-wei bond up to
-an extra action, another rounds down until there is an implicit minimum —
-which would reintroduce the entry barrier the no-minimum rule exists to
-prevent.
-
-So capacity is a **rate-limit credit**, which is continuously divisible:
+The bucket:
 
 ```
-multiplier = 1 + 3 × min(1, bond / bondAt4x)      // 1× at zero, 4× at bondAt4x
-budget     = freeTierBudget × multiplier           // continuous
+capacity   = freeTierBudget × multiplier        // the SAME continuous multiplier
+refillRate = capacity / refillWindow            // governance-set window, default 1h
+credit(t)  = min(capacity, credit(t₀) + refillRate × (t − t₀))
 ```
 
-`bondAt4x` is the governance-set VPFI amount that reaches the ceiling.
-Discreteness enters only at the final check, where an action is admitted iff
-the remaining budget covers its cost, **rounding DOWN**. A one-wei bond
-therefore buys a one-wei-proportional sliver of budget and, at the margin,
-no extra action — no rounding-up windfall, and no implicit minimum either.
+An action is admitted iff `credit >= cost`, and debits `cost`. Keyed
+`(role, address)`, as before.
 
-**The window, refill and accounting key** — rev 2 gave the formula and not the
-bucket, which is not a spec: the same multiplier admits wildly different
-throughput depending on whether budget resets per call or accrues over time
-(rev 3).
+Why this answers all three: the maximum burst is ONE capacity rather than two,
+because credit is capped at `capacity` and never granted in a lump — which is
+the guarantee rev 3 claimed and did not have. Sub-action credit accumulates
+continuously, so a small bond simply takes proportionally longer to afford an
+action and is never useless — no implicit minimum, this time actually. And
+there is no boundary to retune across: changing `refillWindow` changes the
+rate from that moment, with no epoch id to flip and no budget to re-grant.
 
-| | |
-| --- | --- |
-| Shape | **Fixed epoch, not a token bucket.** Budget is allocated whole at each epoch boundary and unused credit is **DISCARDED**, never carried |
-| Epoch | Governance-set, default **1 hour** |
-| Capacity | `freeTierBudget × multiplier`, recomputed at each boundary from the bond balance AT that boundary — so a slash or an unbond takes effect on the next epoch, not retroactively |
-| Key | `(role, address)` — the same key the bond record uses |
+Rev 3 rejected a bucket because "a bucket lets an operator idle and then
+burst". That is true of a bucket whose capacity exceeds its window's budget;
+it is not true here, because capacity IS the window's budget. The objection
+was to an unbounded bucket, and the fix was to bound it — not to abandon the
+shape.
 
-Carry-over is refused deliberately. A token bucket lets an operator idle and
-then burst at many times the steady-state rate, which is the throughput
-concentration bonds are not supposed to buy; discarding unused credit makes
-the ceiling a real ceiling over every window rather than an average. It also
-makes the bound auditable from one boundary, with no accrued state to
-reconstruct.
-
-**5. The 4× ceiling bounds an ADDRESS, not an operator — stated as such.**
+**4. The 4× ceiling bounds an ADDRESS, not an operator — stated as such.**
 
 Rev 1 claimed the ceiling stops bonds becoming de-facto exclusivity. It does
 not, and the claim is withdrawn. Solver and matcher entry points are
@@ -251,8 +238,21 @@ entry cost, and the design forbids bonds becoming an entry barrier. The
 continuous credit above is what makes "no minimum" implementable rather than
 merely stated.
 
-**Open for the owner:** `bondAt4x` per role, and whether the permissionless
-roles should keep a per-address ceiling at all now that it is understood not
-to bound an operator — an alternative is no ceiling plus the linear cost
-curve, which is honest about what the mechanism does and removes a number
-that could be mistaken for a guarantee.
+**Open for the owner**, and these are genuine choices rather than gaps:
+
+1. `bondAt4x` and `refillWindow` per role — the two numbers that set how much
+   capacity a bond buys and how fast it comes back.
+2. Whether the permissionless roles keep a per-address ceiling at all, now
+   that it is understood not to bound an operator. The alternative is no
+   ceiling plus the linear cost curve, which is honest about what the
+   mechanism does and removes a number that could be mistaken for a
+   guarantee.
+3. Whether v1 ships at all without the liveness tier. Rev 4 removed the
+   unbond delay because v1 has no delayed evidence — which is correct, and
+   also worth looking at squarely: a bond that can be withdrawn the instant
+   before an offence would have been recorded still deters, because the
+   offence is debited in the same call it is detected in and there is no
+   window to escape through. But it deters only what the dispatcher can see
+   in-call. If the owner wants deterrence against slower-to-prove
+   misbehaviour, that IS the liveness tier, and it should be scoped together
+   with the delay rather than approximated by one.
