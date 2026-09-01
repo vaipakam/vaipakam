@@ -823,17 +823,22 @@ in an earlier revision and are REMOVED: their treasury leg is an ADDITIVE
 consideration item funded from the sale price — the lender receives principal
 plus interest GROSS and the BORROWER's residual bears the fee — so there is no
 lender discount to deliver and applying the bump would subsidise the borrower.) Frozen §F2
-is "at every lender-yield settlement", so that is a live divergence and a hard
-precondition for this step, not a scope boundary. Enabling here while it stands
-collects `C*` for a discount a lender can lose depending on how their loan ends.
+is "at every lender-yield settlement", and the recovery and refinance paths now
+meet it — so the divergence that made this a hard precondition is CLOSED, not
+merely narrowed. Enabling while it stood would have collected `C*` for a
+discount a lender could lose depending on how their loan ended; that is the
+historical reason this step exists, and it is why the readback above survives
+the card's closure.
 The frozen rule is `### F2 — Lender yield fee (frozen — rev 8)` in
 `docs/DesignsAndPlans/VpfiAbsorptionDistributionFormulaRedesign.md` (read its two
 IN-PLACE SUPERSESSION notes before acting on it: the F2 pseudocode keys the
 discount on `loan.lender` and must be read as the current position-NFT holder,
 and its C1 gate names PR-5c alone and must be read as also requiring #1947) — NOT
-`TokenomicsTechSpec`, which has no §F2 of its own. The open implementation card
-is **#1947**; #1383 is the COMPLETED repayment/early-close family and is not the
-blocker. See also `TokenomicsTechSpec`'s lender-settlement section for the
+`TokenomicsTechSpec`, which has no §F2 of its own. **#1947 is CLOSED
+(2026-08-26)** and #1383 was the repayment/early-close family; neither is an
+open card, and an operator sent looking for open implementation work here will
+not find any. What remains is the bytecode readback, which is a question about
+this deployment. See also `TokenomicsTechSpec`'s lender-settlement section for the
 discharge criterion.
 Without the cap, a Full loan enters the uncapped reward path; without the sweep,
 a user can pay `C*` for a discount settlement then ignores. This bites on partial
