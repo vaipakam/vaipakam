@@ -1627,6 +1627,20 @@ One reconciliation entry, three effects, all or nothing:
 3. **credit its authenticated recycled share as relocated custody** into
    `recycleBucket`.
 
+**Every entry also carries a REPLAY GUARD.** The epoch stays open indefinitely
+and each entry debits a **global** `rewardBudgetFreshUncounted` aggregate, so an
+ordinary operator retry of an already-applied entry consumes a LATER packet's
+equal-sized uncounted balance while re-crediting the first packet's split.
+Conservation still passes — the sums are internally consistent — and recycled
+custody is silently reclassified as fresh headroom, or the reverse. A check that
+validates each entry in isolation cannot see this.
+
+So each entry carries a **unique migration nonce or operator-assigned packet
+hash, marked consumed BEFORE any ledger mutation** — the same consumed-before-
+debit discipline the offence proofs use. The legacy wire supplies no `remitId`,
+which is precisely why the identifier must be assigned by the reconciliation
+rather than read from the packet.
+
 Step 0 is not defensive padding. Shares summing **above** the removed amount let
 the writer publish fresh headroom and recycled custody backed by unrelated
 Diamond VPFI; summing **below** it silently drops the residual out of every
