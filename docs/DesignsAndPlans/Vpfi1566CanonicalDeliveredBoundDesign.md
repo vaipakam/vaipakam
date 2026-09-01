@@ -378,10 +378,66 @@ does not, and that one needs its own decision.
 
 | Class | Verdict | Why |
 | --- | --- | --- |
-| `vpfiHeld` (grandfathered) | **Clean, and DRAINING** | #1352 retired the peg-custody borrower path, so no new ones are created. Return each loan's held VPFI to its vault under a lien at that loan's next touch; the exposed remainder shrinks monotonically with no census needed |
-| `rebateAmount` (settled, unclaimed) | **Clean, and DRAINING** | Same shape, same drain |
-| `fallbackSnapshot` custody | **Clean** | A fallback is a SEIZURE, but the Diamond controls the vault, so the lien is enforceable without moving tokens. `ClaimFacet` already clears the snapshot on first claim — it becomes the pull point |
+| `vpfiHeld` (grandfathered) | **Draining, but NOT self-bounding** | #1352 retired the peg-custody borrower path, so no new ones are created and next-touch migration drains it monotonically. That is not the same as safe — see below |
+| `rebateAmount` (settled, unclaimed) | **Draining, but NOT self-bounding** | Same shape, same drain, and the worse tail: a settled rebate nobody claims may never receive another touch at all |
+| `fallbackSnapshot` custody | **Needs every consumer, not one** | The lien is enforceable without moving tokens, but `ClaimFacet` is not the only consumer — see below |
 | Intent `custodialCollateral` | **DOES NOT FIT AS WRITTEN** | See below |
+
+#### The drain does not bound the remainder, and cannot prove it reached zero
+
+An earlier revision of the two rows above said "the exposed remainder shrinks
+monotonically with no census needed", and treated that as closing the class.
+**It does not, and the difference matters because arming is gated on it.**
+
+Next-touch migration is a rule about loans that ARE touched. On an in-place
+upgrade every grandfathered loan that has not yet been touched still leaves its
+`vpfiHeld` or `rebateAmount` sitting in the Diamond, where a reward payout can
+consume it — for however long it stays untouched, which for a settled-unclaimed
+rebate can be forever. Monotone decrease says the exposure never grows. It says
+nothing about how large it is now.
+
+Worse, the system cannot *prove* the remainder reached zero.
+`LibVaipakam.sol:3547` declares `mapping(uint256 => BorrowerLifRebate)
+borrowerLifRebate` — loan-keyed, with no enumerable aggregate anywhere in
+`src/`. There is no counter to read and no set to walk, so "the drain finished"
+is not a question the chain can answer.
+
+So one of three has to be chosen, and this note does not get to skip the choice
+by calling the class clean:
+
+1. **An interim remainder bound seeded from a frozen census** — measure the
+   exposure once off-chain at the upgrade block, store it, and let each
+   migration decrement it. The census is the thing the earlier text claimed was
+   unnecessary.
+2. **An enumerable migration counter** — add the aggregate the mappings lack, so
+   the remainder is on-chain readable and reaching zero is provable.
+3. **Arming stays blocked until an externally verified full drain** — cheapest
+   in code, most expensive in schedule, and it makes the drain a release gate
+   rather than a background process.
+
+Until one is picked, **slice 1 is not closure 1**, and F does not unblock arming
+on the strength of these two classes.
+
+#### The fallback class needs every consumer, not just the claim path
+
+`ClaimFacet` clears the snapshot on first claim, which is what made it look like
+the single pull point. It is not. A `FallbackPending` loan can be consumed by
+several other paths before any claim happens:
+
+- `RiskMatchLiquidationFacet.attemptInternalMatchAutoDispatch` → `_settleLeg`
+  pays the lender and the matcher directly out of Diamond custody on its
+  `fromDiamondCustody` branch (`RiskMatchLiquidationFacet.sol:538-559`).
+- A successful cure in `AddCollateralFacet` transfers the snapshot from the
+  Diamond back to the borrower's vault.
+
+`fallbackSnapshot` is referenced by six facets, not one. If F leaves the
+collateral in the vault while only the claim path learns to pull from it, those
+paths either spend unrelated Diamond custody or revert outright while the
+liened collateral sits untouched — and the revert is the *lucky* outcome.
+
+**The class is clean only once internal matching, cure, backstop, retry and
+claim all read the new custody source.** That is a slice-2 scope statement, not
+a caveat.
 
 ### The intent class is the real obstacle, and it is structural
 
@@ -469,9 +525,29 @@ source of further delivery, so anything else is a promise the chain cannot
 keep. The role change already has an administrative retirement
 (`paid = received`) for the residual, so the operator path exists.
 
-This is a root fix in the strict sense: **no per-path change is required at
-all.** The sites do not need editing to be correct; they need the thing they
-read to be correct.
+**This is a root fix, but "no per-path change" overstates it, and an earlier
+revision said exactly that.** The resolver removes the *accidental* third state;
+it does not decide what each reader should do with it, because the fourteen
+sites are not all asking the same question.
+
+Two kinds of reader, and one boolean cannot serve both:
+
+- **Accounting readers**, e.g. `deliveredFreshBound`. Fail-closed here means
+  bound `0`. If `Detached` collapses to "not a mirror", the site treats it as
+  canonical and the bound goes to `max` — fail-OPEN, the exact defect.
+- **Authorization gates**, e.g. `RewardCommitmentFacet._assertMirror`
+  (`:264-270`) and `RewardRemittanceFacet.sendRemitAck` (`:1528-1533`), which
+  revert unless `isMirrorRewardChain`. Fail-closed here means "not a mirror" —
+  deny. If `Detached` collapses the other way to satisfy the bound, these gates
+  start *permitting* mirror-only cross-chain operations on a chain with
+  `baseChainId == 0`.
+
+The two fail-closed directions are opposite, so no single boolean value for
+`Detached` is correct everywhere. What the resolver buys is that the third state
+becomes **nameable and total** rather than an artifact of negation; each reader
+then declares the roles it accepts. That is still a root fix — the source of the
+ambiguity is removed once, not fourteen times — but it lands as fourteen small
+explicit role selections, not zero edits.
 
 ### Closure 2 — the legacy paths. The ledger measures the wrong noun.
 
@@ -494,16 +570,53 @@ a different quantity from the one at risk.
 moves, regardless of vintage.** The chokepoints already exist and are
 narrow — this is the finding that makes the root fix practical:
 
-| Outflow | Chokepoint | Callers today |
+| Outflow | Chokepoint | Charge what |
 | --- | --- | --- |
-| value to a claimant | `RewardClaimFacet._deliverReward` | **exactly 1** |
-| value to the recycle bucket (forfeit / expiry) | `LibVpfiRecycle.credit` / `releaseCommitment` | already the programme's single credit chokepoint |
+| value to a claimant | `RewardClaimFacet._deliverReward` (**exactly 1 caller**) | the **fresh** component, passed in explicitly — NOT `paid` |
+| value to the recycle bucket (forfeit / expiry) | reward-specific forfeit/expiry operations, or an explicit fresh amount at each caller | the fresh component — **not** `LibVpfiRecycle.credit` / `releaseCommitment` |
 
-`_deliverReward(vpfi, paid, deliverTo, today)` is called from one place, and
-its `paid` is the TOTAL the claim disburses — legacy and armed, fresh and
-recycled. Charging there is charging by what actually left, which is exactly
-the quantity the bound needs and exactly the quantity no per-path patch can
-reconstruct reliably.
+**Two corrections to an earlier revision of this table, both of which would
+have broken live accounting if built as written.**
+
+**1. `paid` is the wrong operand — it double-charges the recycled component.**
+The earlier text said `paid` "is the TOTAL the claim disburses … charging there
+is charging by what actually left". The total is right; the *ledger* is not
+vintage-blind about who funded it. `RewardClaimFacet` sets `paid = pending`
+where `pending = freshPending + paidRecycled`, and then separately debits the
+recycled half with `LibVpfiRecycle.consume(paidRecycled)` (`:404-419`). The
+recycled half is backed by the bucket, not by delivered reward funding.
+
+So on an armed mirror with locally bucket-backed rewards, a 5-fresh/5-recycled
+claim charges **10** against a bound that only ever received 5 — exhausting it
+and blocking later fresh claims that are genuinely funded. Rebasing `received`
+onto VPFI-delivered-for-rewards does not supply a matching credit for locally
+recycled value, and nothing else does either. **The chokepoint must take the
+fresh component as its own argument.**
+
+That costs the table one line of its elegance and none of its substance: the
+fresh component is computed at the chokepoint's single caller, so it is still
+one place, still impossible for a future path to forget, still a consequence of
+spending rather than a declaration about it.
+
+**2. `LibVpfiRecycle.credit` / `releaseCommitment` are not reward-outflow
+chokepoints at all**, and naming them was a category error rather than a
+detail:
+
+- `credit` is the programme's **inflow** chokepoint. It is called for
+  `NotificationFee` (`LibNotificationFee.sol:161`), `FullTariff`
+  (`LibFeeEntitlement.sol:202`) and `SpendGatedPerk` (`PerkFacet.sol:238`) —
+  every one of them VPFI arriving from a user and *increasing* the bucket.
+  Charging a paid ledger there would consume delivered reward allowance every
+  time somebody bought a perk.
+- `releaseCommitment` moves **no tokens** — it decrements `outstandingCommitRecycled`,
+  bumps two cumulatives and emits. It also serves `RemitClampResidual`. Charging
+  a bookkeeping-only release against a payout bound would brick valid claims.
+
+And filtering by `RecycleSource` inside those functions would destroy the exact
+property the root fix is for: once the charge is conditional on a source tag, a
+future path *can* forget, by arriving with a tag the filter does not list. **The
+forfeit/expiry side needs its own reward-specific operations, or an explicit
+fresh amount handed in at each caller** — the same shape as the claim side.
 
 This is the repository's own "make the check BE the operation" pattern: today
 "spent" is whatever each path *remembered to declare*; afterwards it is a
@@ -513,7 +626,8 @@ because recording is not a separate step it could omit.
 **Scope honesty.** This is a redefinition of a live ledger, not a patch, and
 it carries what redefinitions carry: `received` must be re-based onto the same
 noun (VPFI actually delivered for rewards, not armed-scoped deliveries), the
-five existing paid-side writers collapse into the chokepoints, and a
+five existing paid-side writers collapse into the chokepoints (each handing in
+its fresh component rather than its total), and a
 deployment mid-flight needs a migration answer for counters already populated
 under the old meaning. §6 item 1 already anticipated this shape for Option B
 and it applies here. It is more work than five `+=` lines — and the five
