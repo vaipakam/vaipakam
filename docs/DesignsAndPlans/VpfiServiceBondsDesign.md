@@ -283,9 +283,20 @@ change timestamp at the old rate, then activate the new capacity.
 Bond-decrease-only is not sufficient, and the gap is easy to miss: raising
 `bondAt4x` leaves every bond BALANCE untouched while buying less capacity,
 so an unvisited bucket keeps credit above the new ceiling indefinitely.
-Config changes cannot walk every bucket, so the reconciliation is lazy and
-versioned — the config carries an epoch, and a bucket whose epoch is stale
-is clamped on its next touch, before admission. This is a decision, not an
+Config changes cannot walk every bucket, so the reconciliation is lazy — but
+a stored epoch alone is NOT enough, which an earlier revision stopped at. Two
+or more retunes before a bucket is touched cannot be reconstructed from one
+stale epoch plus the current config, so reconciliation would either accrue
+the whole gap at the latest rate or discard credit legitimately earned under
+an intermediate one.
+
+Use a **cumulative accrual index**: a monotonically increasing rate-seconds
+total that governance settles at the OLD rate before writing each new one. A
+bucket stores the index it last sampled, and its accrual over any span is
+`index[now] − index[sampled]` — correct across any number of intervening
+retunes, with no per-epoch history to retain. It is the same shape as a
+borrow index, and this is the problem borrow indices exist for. A bucket
+spanning multiple retunes before its first admission is the acceptance case. This is a decision, not an
 implementation detail, because without it the bond is bypassable: an
 operator accrues elevated credit, withdraws the bond, and still spends
 bonded capacity with nothing left to slash. It is also what makes v1's
@@ -427,6 +438,17 @@ draft of this fork admitted:*
   `requiresKeeperAuth` is false — so a permissionless matcher simply
   continues, from the same address or another. Under (A) those paths have no
   operator-specific response at all.
+
+**The attested tier's unbond delay must cover the full EVIDENCE HORIZON**,
+not a round number. Revoking privileges at the request stops new actions; it
+does not preserve collateral for evidence already pending. So an operator
+who acts immediately before requesting unbond, with an observation
+commitment or adjudication window that outlives the snapshotted `unlockAt`,
+walks away before the offence can be proven — slash-and-run restored by a
+delay that looked generous. The floor must therefore be bound to the maximum
+commitment plus adjudication window, or unlock must wait until every
+pre-request commitment has expired or resolved. Test the boundary, not the
+middle.
 
 **Enrolment is required if the attested tier later arrives**, and "no
 migration" was wrong. Activating predicates against balances deposited under
