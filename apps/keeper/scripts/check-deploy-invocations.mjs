@@ -3096,6 +3096,16 @@ function argvValue(region, spellings, before = '') {
 }
 
 /**
+ * Marks a variable the script explicitly UNSET.
+ *
+ * Distinct from absence: an absent variable may still be inherited, and since
+ * #2036 r21 that is presumed; an unset one cannot be. Readers that want a value
+ * treat it as none, which `valueOf`-style lookups already do for the empty
+ * string, so only the ambient presumption consults it.
+ */
+const UNSET_SENTINEL = Symbol('unset');
+
+/**
  * The child-process call words this scanner reads, as one pattern.
  *
  * Written once because two readers need it for different questions — which call
@@ -3153,7 +3163,7 @@ function atChildOptionsDepth(text, index) {
  * them apart. `null` when the line is unknown or out of range, which leaves the
  * caller on its older whole-file reasoning.
  */
-function lineStartOffset(text, lineNo) {
+function lineStartOffset(text, lineNo, seg = null) {
   if (typeof text !== 'string' || typeof lineNo !== 'number' || lineNo < 1) return null;
   let at = 0;
   for (let n = 1; n < lineNo; n += 1) {
@@ -3161,7 +3171,21 @@ function lineStartOffset(text, lineNo) {
     if (nl === -1) return null;
     at = nl + 1;
   }
-  return at <= text.length ? at : null;
+  if (at > text.length) return null;
+  // WITHIN the line, when the command can be located in it. A rewrite and a
+  // deploy often share one physical line — `echo '…' > side.jsonc; wrangler
+  // deploy --config side.jsonc` — and against the line's START every write on
+  // it sits after the deploy, so a rewrite that plainly precedes wrangler was
+  // read as following it and the stale checkout config blessed the command
+  // (Codex #2036 r24). The line was exact for the ordering it was introduced
+  // for and blind to the one within a line.
+  if (typeof seg === 'string' && seg !== '') {
+    const nl = text.indexOf('\n', at);
+    const line = text.slice(at, nl === -1 ? text.length : nl);
+    const within = line.indexOf(seg.trim());
+    if (within !== -1) return at + within;
+  }
+  return at;
 }
 
 /**
@@ -3301,6 +3325,28 @@ function notInsideString(text, at) {
 }
 
 /**
+ * Does this inline environment object prove that no environment is selected?
+ *
+ * Only when every key in it is statically understood. A SPREAD pulls in
+ * whatever the parent carries, and a COMPUTED key the reader cannot evaluate —
+ * `["CLOUDFLARE_" + "ENV"]` — may be the very name being looked for, so an
+ * object containing either proves nothing (#2036 r21, r24).
+ *
+ * This is the only construct in the model that can establish a negative, which
+ * is why it is stated as "all keys understood" rather than as a list of
+ * spellings to reject: a spelling missed here does not degrade the answer, it
+ * inverts it.
+ */
+function envObjectIsClosed(body) {
+  if (/\.{3}\s*[A-Za-z_$]|\*\*\s*[A-Za-z_$]|\bos\.environ\b/.test(body)) return false;
+  // A bracketed key holding anything but a single quoted literal is computed.
+  for (const m of body.matchAll(/\[([^\]]*)\]\s*:/g)) {
+    if (!/^\s*(?:"[^"]*"|'[^']*'|`[^`$]*`)\s*$/.test(m[1])) return false;
+  }
+  return true;
+}
+
+/**
  * The BODY of every child-process `env` option object in this text.
  *
  * Brace-balanced so a nested object does not end one early, and scoped to the
@@ -3427,6 +3473,11 @@ function shellEnvValue(vars) {
   return typeof v === 'string' && v !== '' ? v : null;
 }
 
+/** Did the script explicitly unset the environment variable? */
+function shellEnvUnset(vars) {
+  return vars instanceof Map && vars.get('CLOUDFLARE_ENV') === UNSET_SENTINEL;
+}
+
 function declaredWorkerNames(absPath, includeEnvs, envName = null) {
   const top = declaredWorkerName(absPath);
   const names = top === null ? [] : [top];
@@ -3523,7 +3574,11 @@ function isEnvTableHeader(line) {
     first[1] !== undefined
       ? decodeTomlBasic(first[1])
       : (first[2] ?? first[3]);
-  return key === 'env' && /\./.test(inner);
+  // `[env]` ON ITS OWN is an environment table too — the entries under it are
+  // the environments, written `staging = { name = … }`. Requiring a dot called
+  // the top-level-only read complete and let an unprotected top-level name
+  // suppress a protected environment (Codex #2036 r24).
+  return key === 'env';
 }
 
 /** Does this TOML config declare any environment table? */
@@ -3540,7 +3595,12 @@ function envTablesInToml(absPath) {
   // which made the read incomplete and blocked a legitimate deploy whose
   // top-level name is authoritative (Codex #2036 r19).
   for (const l of tomlLines(text)) {
+    if (l.inString) continue;
     if (l.isHeader && isEnvTableHeader(l.text)) return true;
+    // ...and the KEY forms of the same thing: `env.staging = { … }` dotted at
+    // the top level, or an inline `env = { staging = { … } }`. Both declare
+    // environments this top-level reader does not descend into.
+    if (/^\s*(?:env|"env"|'env')\s*[.=]/.test(l.text)) return true;
   }
   return false;
 }
@@ -4361,6 +4421,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   const envSelected =
     envFlagValue !== '' &&
     !envExplicitlyCleared &&
+    !shellEnvUnset(vars) &&
     (envAssigned ||
     (envFlagValue !== null && envFlagValue !== undefined) ||
     // `--env-file` loads a dotenv file into `process.env` BEFORE the config is
@@ -4388,9 +4449,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
     // child a closed environment. Affordable for the same reason the burden
     // inversion is: the answer is authoritative only where the config could be
     // read, and no deploy on this tree selects a config at all.
-    !childEnvObjects(rawSeg).some(
-      (body) => !/\.{3}\s*[A-Za-z_$]|\*\*\s*[A-Za-z_$]|\bos\.environ\b/.test(body),
-    ));
+    !childEnvObjects(rawSeg).some((body) => envObjectIsClosed(body)));
   // WHICH environment, when the selector's value can be read statically. `null`
   // means "one is selected and I cannot say which", which is what makes the
   // whole-config scan the right answer in that case and the wrong one here.
@@ -7600,14 +7659,14 @@ for (const file of walk(REPO_ROOT)) {
         // negation.
         const aliased = resolveRunAlias(seg, packageContextOf(rel));
         if (
-          commandIsSafe(aliased ?? seg, safeHint, '', text, lineStartOffset(text, lineNo)) ||
+          commandIsSafe(aliased ?? seg, safeHint, '', text, lineStartOffset(text, lineNo, seg)) ||
           (aliased === null &&
             commandIsSafe(
               expandCommandVars(seg, fileVars),
               safeHint,
               '',
               text,
-              lineStartOffset(text, lineNo),
+              lineStartOffset(text, lineNo, seg),
             ))
         ) {
           continue;
@@ -8031,7 +8090,18 @@ for (const file of walk(REPO_ROOT)) {
           /(?:^|[\s;&|(])unset\s+((?:-v\s+)?[A-Za-z_][A-Za-z0-9_]*(?:\s+[A-Za-z_][A-Za-z0-9_]*)*)/g,
         )) {
           for (const nm of un[1].split(/\s+/)) {
-            if (nm !== '-v') shellVars.delete(nm);
+            if (nm === '-v') continue;
+            // RECORDED AS CLEARED, not merely removed. Deleting the entry made
+            // "the script unset this" indistinguishable from "the script never
+            // mentioned it" — which was fine while an absent variable meant no
+            // environment, and became a false red the moment an ambient one
+            // became the presumption (Codex #2036 r24). An `unset` GUARANTEES
+            // wrangler receives no selector; nothing else does.
+            //
+            // A sentinel rather than a second map, so every existing reader
+            // that asks for a value still sees "no usable value" and only the
+            // presumption, which asks a different question, has to know.
+            shellVars.set(nm, UNSET_SENTINEL);
           }
         }
         if (dir && dir.kind !== 'env-chdir') continue;
@@ -8257,7 +8327,7 @@ for (const file of walk(REPO_ROOT)) {
         // reporting it under the keeper handed the reader the wrong remedy
         // (#1995 r2). Textual and cwd scope apply only when no selector
         // resolved.
-        const sel = selectorScope(seg, input, true, shellVars, text, lineStartOffset(text, lineNo));
+        const sel = selectorScope(seg, input, true, shellVars, text, lineStartOffset(text, lineNo, seg));
         // An explicit `cd` OUTRANKS where the wrapper file happens to live
         // (#1995 r9). `scopeOf`'s last resort is "this file is inside a scoped
         // package", and it ran before the modelled cwd — so in a script under
@@ -8324,7 +8394,7 @@ for (const file of walk(REPO_ROOT)) {
         const fileTextForSafety = text;
         // The LINE this command is on, so a rewrite is compared against THIS
         // deploy rather than against any later selection of the same config.
-        const atInFile = lineStartOffset(text, lineNo);
+        const atInFile = lineStartOffset(text, lineNo, seg);
         const safeEverywhere = (text) =>
           cmdCwds.every((cwd) =>
             commandIsSafe(text, safeHint, cwd, fileTextForSafety, atInFile),
