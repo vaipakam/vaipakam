@@ -909,7 +909,25 @@ contract RewardAggregatorFacet is
      *         equality check (`KnownGlobalAlreadySet`). That is deliberate —
      *         the wire field is under an equality check, not an unused slot.
      *
-     * @param  chainId Destination chain the instruction is for.
+     *         THE CANONICAL CHAIN IS NOT A VALID TARGET, and is rejected
+     *         rather than accepted-and-ignored (Codex #2031 r6). Base is
+     *         never a "local" funder in the commit split — `_stampOne`
+     *         leaves `commitLocal` at zero for `c.chainId == ctx.baseId`,
+     *         because Base's own slice is drawn from the bucket the global
+     *         ledger already governs — so the keeper block never runs for it
+     *         and no day could ever produce an allocation from this setting.
+     *         Storing it and emitting a success event would report a
+     *         configuration that is inert by construction, which is the
+     *         worst kind: an operator would believe Base's keeper share was
+     *         armed and never see a figure appear.
+     *
+     *         Base's own keeper share has its own knob —
+     *         {ConfigFacet-setRecycleRegisterKeeperBps}, the LOCAL recycle
+     *         register — which is what an operator reaching for this one on
+     *         the canonical chain actually wants.
+     *
+     * @param  chainId Destination chain the instruction is for. MUST NOT be
+     *                 the canonical chain's own id.
      * @param  bps     Share of that chain's local commit to earmark; `0` off.
      */
     function setChainKeeperAllocateBps(uint32 chainId, uint16 bps)
@@ -917,6 +935,14 @@ contract RewardAggregatorFacet is
         onlyRole(LibAccessControl.ADMIN_ROLE)
         onlyCanonical
     {
+        // Matched against `block.chainid` rather than a stored id because
+        // that is exactly what `LibMeshFunding` compares against
+        // (`baseId = uint32(block.chainid)`), and this setter is
+        // `onlyCanonical` so the two are the same chain by construction. A
+        // stored-id comparison could drift from the one that decides.
+        if (chainId == uint32(block.chainid)) {
+            revert KeeperAllocateTargetIsCanonical(chainId);
+        }
         if (bps > LibVaipakam.RECYCLE_REGISTER_KEEPER_MAX_BPS) {
             revert IVaipakamErrors.ParameterOutOfRange(
                 "chainKeeperAllocateBps",
@@ -928,6 +954,13 @@ contract RewardAggregatorFacet is
         LibVaipakam.storageSlot().chainKeeperAllocateBps[chainId] = bps;
         emit ChainKeeperAllocateBpsSet(chainId, bps);
     }
+
+    /// @notice The canonical chain cannot be its own allocation target: the
+    ///         mesh split gives Base no local commit to take a share OF, so
+    ///         the setting would be inert. Use
+    ///         {ConfigFacet-setRecycleRegisterKeeperBps} for Base's own
+    ///         keeper share.
+    error KeeperAllocateTargetIsCanonical(uint32 chainId);
 
     /// @notice The keeper-allocation instruction Base currently sends `chainId`.
     function getChainKeeperAllocateBps(uint32 chainId)

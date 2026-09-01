@@ -232,6 +232,37 @@ contract MeshCommitRetirementTest is SetupTest {
         assertApproxEqAbs(instructed, 40 ether, 1e15, "commit is untouched");
     }
 
+    /// Base cannot be its own allocation target, and the refusal is the
+    /// point: the mesh split gives Base no local commit to take a share OF
+    /// (`_stampOne` leaves `commitLocal` at zero for the canonical id), so
+    /// the setting would be stored, acknowledged by a success event, and
+    /// never produce a single wei. An operator would believe Base's keeper
+    /// share was armed (Codex #2031 r6).
+    function test_CanonicalChainIsRefusedAsAnAllocationTarget() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                RewardAggregatorFacet.KeeperAllocateTargetIsCanonical.selector,
+                CHAIN_BASE
+            )
+        );
+        _agg().setChainKeeperAllocateBps(CHAIN_BASE, 2_500);
+        assertEq(
+            _agg().getChainKeeperAllocateBps(CHAIN_BASE),
+            0,
+            "nothing was stored for the canonical chain"
+        );
+
+        // The control: the guard is scoped to the canonical id and has not
+        // broken the case the setter exists for. Without this a change that
+        // rejected every chain would pass the assertion above.
+        _agg().setChainKeeperAllocateBps(CHAIN_ARB, 2_500);
+        assertEq(
+            _agg().getChainKeeperAllocateBps(CHAIN_ARB),
+            2_500,
+            "a mirror is still a valid target"
+        );
+    }
+
     /// @dev Like `_armAndInstruct40` but reports MORE availability than the
     ///      day's demand consumes, so an earmark has room to land. Returns
     ///      the instructed figure.
