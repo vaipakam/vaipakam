@@ -178,6 +178,31 @@ describe('the rule has one implementation, and reaches every reporter (#2044)', 
     expect(offenders).toEqual([]);
   });
 
+  it('no watchAsset caller discards the boolean it resolves with (#2044 round 3)', () => {
+    // A DIFFERENT FALSE SUCCESS, in the same family. `watchAsset` is typed
+    // `Promise<WatchAssetReturnType>` where that is `boolean` — "indicating if
+    // the token was successfully added" — and not every wallet signals a
+    // decline by rejecting; some resolve `false`. Both call sites took the
+    // resolution itself as success, so a declined prompt rendered "Added to
+    // your wallet".
+    //
+    // Ordering and subject-keying cannot help here: the attempt IS the latest
+    // and the subject has NOT moved. The answer was simply not read.
+    const offenders: string[] = [];
+    for (const file of filesMatching(String.raw`\.watchAsset\(`)) {
+      const src = readFileSync(join(process.cwd(), file), 'utf8');
+      for (const m of src.matchAll(/\.watchAsset\(/g)) {
+        // The `.then` that consumes this call, within the chain that follows.
+        const chain = src.slice(m.index, m.index + 1200);
+        const then = chain.match(/\.then\(\s*(?:async\s*)?\(([^)]*)\)/);
+        if (!then) offenders.push(`${file}: watchAsset with no .then to inspect`);
+        else if (!then[1].trim())
+          offenders.push(`${file}: .then(${then[1]}) discards the result`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it('is exported as a hook for components to use', () => {
     expect(typeof useLatestAttempt).toBe('function');
   });

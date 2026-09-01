@@ -29,6 +29,21 @@ answer that arrives about something you have moved on from is no longer
 applied to what replaced it, and "Added to your wallet" no longer stands over a
 wallet that was never asked.
 
+That applies to the support report too, and it is the place it matters most.
+The report refreshes itself while the panel is open, so "Copied" could sit
+beside a version of it that was not the one your clipboard took — on the one
+control that exists so you can read the report before deciding whether to send
+it. The confirmation now belongs to the exact text that was copied. The
+*failure* notice deliberately stays put when the report refreshes: it is still
+true that the copy did not happen, and making an accurate warning vanish would
+be the worse mistake.
+
+**And a wallet that declines quietly is no longer counted as a yes.** Asking a
+wallet to add a token can come back as a plain "no" rather than as an error,
+and the app was treating anything that came back at all as agreement — so a
+declined prompt could still read "Added to your wallet". It now looks at the
+answer.
+
 **Where a control stays quiet, that is deliberate**, and it is about not
 crying wolf. When a wallet declines to add a token, that is usually because you
 declined it — and the app cannot tell your decision apart from a genuine error,

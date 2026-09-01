@@ -964,7 +964,11 @@ Thin-market honesty rules apply.
   clipboard can be refused, so a button that confirms a copy has to wait for
   the result before confirming. Claiming a success that did not happen is
   worse than reporting nothing, because it stops the person doing the thing
-  that would have worked — reading the value still displayed beside it.
+  that would have worked — reading the value still displayed beside it. This
+  covers a refusal that arrives as an ANSWER rather than as a failure: a
+  wallet asked to add a token may simply reply that it did not, and the
+  intent is that such a reply is read and believed, not treated as agreement
+  because nothing went wrong.
 - Erasing does not reload the page, so the confirmation of what happened
   survives long enough to be read.
 - **If any part of the browser's storage could not be read, the result is

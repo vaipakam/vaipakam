@@ -581,8 +581,17 @@ export function Vpfi() {
                         decimals: VPFI_DECIMALS,
                       },
                     })
-                    .then(() => {
-                      if (attempt.isCurrent()) setWatchedKey(forKey);
+                    .then((added) => {
+                      // `watchAsset` RESOLVES WITH A BOOLEAN (#2044 round 3
+                      // P2) — viem types it `Promise<WatchAssetReturnType>`
+                      // where that is `boolean`, "indicating if the token was
+                      // successfully added". Not every wallet signals a
+                      // decline by rejecting; some resolve `false`. Treating
+                      // the resolution alone as success reported "Added to
+                      // your wallet" over a wallet that had declined — a
+                      // false success, which is the one outcome this whole
+                      // line of work exists to remove.
+                      if (added && attempt.isCurrent()) setWatchedKey(forKey);
                     })
                     .catch(() => {});
                 }}

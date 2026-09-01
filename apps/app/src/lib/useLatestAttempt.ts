@@ -44,11 +44,27 @@
  * a keyed claim is correct for changes nobody thought of.
  *
  * The line is whether the confirmation is about a SUBJECT or about the ACT.
- * `CopyAddress`'s chip sits beside an address and says that address is on the
- * clipboard; the faucet's button says a particular token is in a particular
- * wallet. Those go false when the subject moves. The diagnostics drawer's
- * "Copied" says only that a copy happened, which stays true however the
- * drawer's contents change, so it is a plain state and correctly so.
+ * `CopyAddress`'s chip says a particular address is on the clipboard; the
+ * faucet's button says a particular token is in a particular wallet; the
+ * diagnostics drawer's "Copied" says a particular report is on the clipboard,
+ * beside a preview that rebuilds on every health refresh. All three go false
+ * when the subject moves, so all three are keyed.
+ *
+ * ROUND 2 OF #2044 DREW THIS LINE AND PUT THE DRAWER ON THE WRONG SIDE,
+ * reasoning that "Copied" there claimed only that a copy happened. Round 3
+ * found the drawer's body changing underneath the confirmation — on the one
+ * control whose whole purpose is "copy it, read it, then decide whether GitHub
+ * may have it". The lesson worth keeping is that the test is not how the label
+ * READS but whether something the user could act on is rendered next to it: if
+ * a subject is on screen beside the confirmation, the confirmation is about
+ * that subject whatever its wording suggests.
+ *
+ * What genuinely stays unkeyed is the drawer's FAILURE message, and for a
+ * reason that survives the same test: "could not copy" remains true when the
+ * body changes, because the clipboard does not hold the new report either.
+ * Keying it would delete an accurate warning on a refresh. A false success
+ * sends someone away with the wrong text; a stale failure says "try again",
+ * which is still right.
  *
  * Usage:
  *

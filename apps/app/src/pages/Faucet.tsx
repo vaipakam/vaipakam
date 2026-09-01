@@ -484,8 +484,13 @@ export function Faucet() {
                               decimals: MOCK_DECIMALS,
                             },
                           })
-                          .then(() => {
-                            if (attempt.isCurrent()) setWatchedKey(forKey);
+                          .then((added) => {
+                            // Same false-success as the VPFI page (#2044
+                            // round 3 P2): the action resolves with a boolean
+                            // saying whether the token was added, and a wallet
+                            // that declines by resolving `false` was being
+                            // reported as a success.
+                            if (added && attempt.isCurrent()) setWatchedKey(forKey);
                           })
                           .catch(() => {});
                       }}
