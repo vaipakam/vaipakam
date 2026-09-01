@@ -1562,7 +1562,14 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt
         for (const l of tomlLines(text)) {
           if (l.isHeader) break;
           if (l.inString) continue;
-          if (/^\s*keep_vars\s*=\s*true\s*(?:#.*)?$/.test(l.text)) return true;
+          // The KEY may be quoted, and quoted keys carry escapes — the same
+          // rule the name reader has (#2036 r20), on the setting beside it
+          // (r28). Declining here rejects a config that does preserve its
+          // vars, which is the false-red direction.
+          const kv = l.text.match(
+            new RegExp(String.raw`^\s*(${NAME_KEY_RE})\s*=\s*true\s*(?:#.*)?$`),
+          );
+          if (kv && decodeTomlKey(kv[1]) === 'keep_vars') return true;
         }
         return false;
       }
@@ -3283,10 +3290,18 @@ function configIsRewritten(text, cfgPath, at = null) {
     Q + String.raw`[^"'\`]*` + esc + Q +
     String.raw`\s*\)?\s*\.\s*open\s*\(\s*` + Q + String.raw`[rbt]*[wax+]`;
   const REDIRECT = String.raw`>\s*\S*` + esc;
+  // A COPY IS A WRITE. `cp generated.jsonc configs/custom.jsonc` replaces the
+  // file wrangler will load just as surely as writing it does, and a scan for
+  // write CALLS saw none (#2036 r28). Matched as "a copy/move command
+  // mentioning this basename", not by parsing the destination: the conservative
+  // direction here is to treat the config as unreadable, which reports.
+  const COPY =
+    String.raw`(?:^|[\s;&|(])(?:cp|mv|install|rsync)\s[^\n]*?` + esc +
+    String.raw`|(?:copyFile|rename|cpSync|copyFileSync|renameSync|copy|move)\s*\([^)]*` + esc;
   const writes = [
     ...text.matchAll(
       new RegExp(
-        [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, REDIRECT].join('|'),
+        [WRITE_CALL, OPEN_WRITE, RECEIVER_WRITE, RECEIVER_OPEN, REDIRECT, COPY].join('|'),
         'g',
       ),
     ),
@@ -3507,7 +3522,10 @@ function cloudflareEnvAssignments(body) {
       // of only the two ASCII quotes missed it while the closed-object check
       // read the object as understood, so it proved no environment was selected
       // (Codex #2036 r26). Third quote form, third reader.
-      /\[?\s*["'`]?CLOUDFLARE_ENV["'`]?\s*\]?\s*(?::\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[^,}]+)|(?=\s*[,}]))/g,
+      // The quoted alternatives accept an EMPTY value, so `CLOUDFLARE_ENV: ""`
+      // is read as the explicit clear it is rather than falling through to the
+      // unreadable arm and consulting every environment (Codex #2036 r28).
+      /\[?\s*["'`]?CLOUDFLARE_ENV["'`]?\s*\]?\s*(?::\s*(?:"([^"]*)"|'([^']*)'|`([^`$]*)`|[^,}]+)|(?=\s*[,}]))/g,
     ),
     // The offset of the KEY ITSELF, found rather than inferred from the match's
     // first character — with a computed key the match now starts at `[`, and a
@@ -3547,6 +3565,26 @@ function envValueFromOptions(text) {
     if (v !== undefined) return v;
   }
   return null;
+}
+
+/**
+ * Does an `env` wrapper on this command remove the variable before it runs?
+ *
+ * `env -u CLOUDFLARE_ENV …` unsets it and `env -i …` starts from an empty
+ * environment, so wrangler receives no selector either way — the same
+ * guarantee the modelled empty assignment and shell `unset` give, through a
+ * wrapper the presumption did not consult (#2036 r28).
+ *
+ * A later assignment in the wrapper's own `NAME=VALUE` list restores it, and
+ * that is left to the assignment branch, which reads the command prefix and
+ * therefore sees it.
+ */
+function envWrapperCleared(text) {
+  const m = text.match(/(?:^|[\s;&|(])env\s+((?:-[A-Za-z-]+(?:[=\s]\S+)?\s+)*)/);
+  if (!m) return false;
+  const opts = m[1];
+  if (/(?:^|\s)-[A-Za-z]*i/.test(opts)) return true;
+  return /(?:^|\s)(?:-u|--unset)(?:=|\s+)CLOUDFLARE_ENV\b/.test(opts);
 }
 
 /** The shell's `CLOUDFLARE_ENV`, if the walk carries one. */
@@ -3620,6 +3658,23 @@ function declaredWorkerNames(absPath, includeEnvs, envName = null) {
   // table header and never sees them.
   const complete = !(includeEnvs && /\.toml$/.test(absPath) && envTablesInToml(absPath));
   return names.length === 0 ? null : { names, complete };
+}
+
+/** The shape of a TOML key: bare, or quoted in either style. */
+const NAME_KEY_RE = String.raw`(?:[A-Za-z0-9_-]+|"(?:[^"\\]|\\[\s\S])*"|'[^']*')`;
+
+/**
+ * A TOML key with its escapes decoded, or `null` if it cannot be read.
+ *
+ * TOML decodes `"na\u006de"` to `name` before wrangler sees it, so keys are
+ * compared decoded — first for the identity (#2036 r20), then for the
+ * environment tables (r22, r26), and now for the preservation setting (r28).
+ * Same rule, four readers; this is the one they share.
+ */
+function decodeTomlKey(raw) {
+  if (raw.startsWith("'") && raw.endsWith("'")) return raw.slice(1, -1);
+  if (raw.startsWith('"') && raw.endsWith('"')) return decodeTomlBasic(raw.slice(1, -1));
+  return raw;
 }
 
 /**
@@ -4415,7 +4470,13 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       if (/\.{3}\s*[A-Za-z_$]|\*\*\s*[A-Za-z_$]|\bos\.environ\b/.test(body)) {
         return true;
       }
-      return cloudflareEnvAssignments(body).length > 0;
+      // ...and the LAST one decides, as the object literal does. An empty
+      // literal selects nothing: wrangler gates on truthiness.
+      const all = cloudflareEnvAssignments(body);
+      const last = all[all.length - 1];
+      if (!last) return false;
+      const lit = last[1] ?? last[2] ?? last[3];
+      return lit !== '';
     }) ||
     // An `env` option this scanner CANNOT READ counts as selecting one.
     //
@@ -4484,10 +4545,18 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // #2036 r22) — the defect the `CLOUDFLARE_ENV=""` branch was corrected for at
   // r5, on the option beside it.
   const envFlagValue = valueOf('--env|-e', wranglerRegion) ?? argvValue(rawSeg, '-e|--env');
+  // AN EXPLICIT NON-EMPTY FLAG OUTRANKS EVERY CLEAR. Wrangler resolves
+  // `args.env ?? getCloudflareEnv()`, so `--env staging` wins over an emptied
+  // or unset variable — and gating the flag behind those clears trusted the
+  // top-level identity for a command that plainly selects an environment
+  // (Codex #2036 r28). The clears answer the AMBIENT question only.
+  const envFlagNamed = typeof envFlagValue === 'string' && envFlagValue !== '';
   const envSelected =
-    envFlagValue !== '' &&
+    envFlagNamed ||
+    (envFlagValue !== '' &&
     !envExplicitlyCleared &&
     !shellEnvUnset(vars) &&
+    !envWrapperCleared(rawSeg) &&
     (envAssigned ||
     (envFlagValue !== null && envFlagValue !== undefined) ||
     // `--env-file` loads a dotenv file into `process.env` BEFORE the config is
@@ -4515,7 +4584,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
     // child a closed environment. Affordable for the same reason the burden
     // inversion is: the answer is authoritative only where the config could be
     // read, and no deploy on this tree selects a config at all.
-    !childEnvObjects(rawSeg).some((body) => envObjectIsClosed(body)));
+    !childEnvObjects(rawSeg).some((body) => envObjectIsClosed(body))));
   // WHICH environment, when the selector's value can be read statically. `null`
   // means "one is selected and I cannot say which", which is what makes the
   // whole-config scan the right answer in that case and the wrong one here.
@@ -7740,7 +7809,20 @@ for (const file of walk(REPO_ROOT)) {
         // Fall back to the whole line only when the segment itself names
         // nothing: prose often establishes the package in an earlier clause,
         // and a file inside a scoped tree scopes every line in it.
-        const sel = selectorScope(seg, [{ cwd: '', stack: [] }], false);
+        // THE SAME REWRITE CONTEXT the safety reader on this path already
+        // gets. Without it the identity reader trusted a checkout copy the
+        // helper rewrites, so the safety half reported and the identity half
+        // silently sent the deploy out of scope (#2036 r28) — the two-halves
+        // split again, this time between the two readers of one file on one
+        // path while the other path had both.
+        const sel = selectorScope(
+          seg,
+          [{ cwd: '', stack: [] }],
+          false,
+          null,
+          text,
+          lineStartOffset(text, lineNo, part.start),
+        );
         // A single filter can select BOTH packages, and each needs its own
         // remedy in the same report (#1995 r7).
         const many = filterScopes(seg) ?? [];

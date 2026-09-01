@@ -8808,4 +8808,92 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
+  // ---- Codex #2036 r28 ----
+
+  it('a QUOTED keep_vars key still enables preservation', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-agent"', '"keep_vars" = true', ''].join('\n'),
+    );
+    expect(
+      runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok,
+    ).toBe(true);
+  });
+
+  it('an EMPTY child-environment value is a clear', () => {
+    // The nonempty captures failed, so the property fell to the unreadable arm
+    // and every environment became a candidate — a false red.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.mjs',
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+          '{env: {CLOUDFLARE_ENV: ""}});\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('env -u and env -i clear the ambient environment', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    expect(
+      runWith('w.sh', 'env -u CLOUDFLARE_ENV wrangler deploy --config configs/custom.jsonc\n')
+        .ok,
+    ).toBe(true);
+    expect(
+      runWith('w2.sh', 'env -i wrangler deploy --config configs/custom.jsonc\n').ok,
+    ).toBe(true);
+  });
+
+  it('an explicit --env OUTRANKS a clear', () => {
+    // Wrangler resolves `args.env ?? getCloudflareEnv()`, so the flag wins over
+    // an emptied variable. Gating it behind the clears trusted the top level
+    // for a command that plainly selects an environment.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.sh',
+      'CLOUDFLARE_ENV="" wrangler deploy --env staging --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a COPY over the selected config is a rewrite', () => {
+    // `cp generated.jsonc configs/custom.jsonc` replaces the file wrangler
+    // loads just as surely as writing it does.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-www", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cp generated.jsonc configs/custom.jsonc\n' +
+        'wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('the PROSE path invalidates a rewritten config too', () => {
+    // That path passed the rewrite context to the safety reader and not to the
+    // identity reader, so the identity half trusted the stale copy and sent the
+    // deploy out of scope.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-www", "keep_vars": true}\n');
+    const r = runWith(
+      'deploy.mjs',
+      'writeFileSync("configs/custom.jsonc", JSON.stringify({name: "vaipakam-agent", keep_vars: false}));\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
