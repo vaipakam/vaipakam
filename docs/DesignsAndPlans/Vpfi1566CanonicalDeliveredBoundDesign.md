@@ -690,7 +690,14 @@ ordinary implementation, and it belongs in slice 3.
   Diamond custody today, and `forfeitBorrowerLif` does the same for the whole
   held amount (`:1013-1035`, `:1159-1181`). After migration both must split /
   release / seize from the **vault** source, including the sanctions-safe forced
-  move-out path. Migrating the custody without these leaves each terminal
+  move-out path — **and the borrower is RESTAMPED once the release completes.**
+  A proper close with a non-zero rebate removes the matcher and treasury shares
+  from the vault and releases the whole `vpfiHeld` tier exclusion, which leaves
+  the rebate as newly free, tier-BEARING VPFI in that vault. Updating the two
+  counters does not touch the holder's cached tier or staking checkpoint, so
+  without a restamp the borrower stays priced and reported as though the rebate
+  were still excluded, until some unrelated later mutation happens to correct it.
+  Same omission as the intent-withdrawal restamp, one terminal later. Migrating the custody without these leaves each terminal
   spending unrelated Diamond VPFI or reverting.
 - **Completion is provable on-chain; no off-chain census is required.** An
   earlier revision said there is no set to walk and made option 2 depend on a
@@ -756,8 +763,13 @@ ordinary implementation, and it belongs in slice 3.
   makes an external token transfer through the vault, so a callback-capable or
   later-upgraded collateral token could reenter another Diamond entry while the
   commit is live and its lien already zero — including a liquidation path
-  force-cancelling that same commit. Guard the hook, or route the mutation
-  through an equivalently guarded self-call.
+  force-cancelling that same commit. **Guard it with the fill-state lock
+  specified immediately below.** An earlier revision of this bullet said "guard
+  the hook, or route the mutation through an equivalently guarded self-call" and
+  left that instruction standing after the correction beneath it — both of those
+  release when the call returns, so an implementer following the normative
+  sentence still leaves the LOP transfer window open. The prescription itself had
+  to change, not merely acquire a caveat under it.
 
   ⚠️ **A function-scoped `nonReentrant` is NOT sufficient, and an earlier
   revision of this bullet asked for one.** The modifier releases when
@@ -904,7 +916,17 @@ importing a delta against an unseeded counter under-seeds.
 
 So: **a new paused, one-shot `rebaseArmedFreshPaid(total)`** that SETS the
 counter to the reconciled total rather than adding to it, with its own guard flag
-so it is independent of whether the P1-b seeder ran. Setting rather than adding
+so it is independent of whether the P1-b seeder ran — **and which also consumes
+or disables the old seeder's guard.**
+
+That last clause is not tidiness. If P1-b never ran, `armedFreshPaidSeeded` is
+still false, so after the absolute total is installed the old additive
+`seedArmedFreshPaid` remains callable and a stale migration call would `+=`
+historical paid value on top of it. That double-counts, **permanently removes
+valid delivered headroom, and arrives after the one-shot rebase can no longer
+correct it** — a one-way loss from a leftover selector. Either the rebase sets
+the old guard, or the old selector rejects once a rebase has occurred; the first
+is fewer moving parts. Setting rather than adding
 is what makes it correct regardless of the deployment's history — the
 reconciliation already produces an absolute figure, and asking it to produce a
 delta reintroduces exactly the ambiguity above.
@@ -1310,7 +1332,25 @@ and its VPFI**, which is the outcome the cutover exists to prevent.
 Legacy therefore needs the recovery path d2 does not: **a bounded, time-limited
 acceptance window after unpause** for pre-d2 layouts only, credited through the
 one-shot administrative importer rather than the ordinary ingress, closed at a
-fixed deadline chosen from CCIP's own maximum message lifetime. Bounded in time
+fixed deadline chosen from CCIP's own maximum message lifetime.
+
+**The reconciliation is ATOMIC over BOTH shares, not just the fresh one.** A
+pre-d2 delivery passes both component shares as zero, so `onRewardBudgetReceived`
+puts the **entire** amount into `rewardBudgetFreshUncounted` and credits no
+relocated recycle custody. Sending only the authenticated fresh portion through
+the importer would then leave the recycled portion outside `recycleBucket` and
+stale mixed value sitting in `uncounted` — so a later recycled claim either fails
+or consumes unrelated bucket backing.
+
+One reconciliation entry, three effects, all or nothing:
+
+1. **remove the full old-wire amount from `uncounted`**;
+2. **credit only its authenticated fresh share to `received`**;
+3. **credit its authenticated recycled share as relocated custody** into
+   `recycleBucket`.
+
+Doing (2) without (1) and (3) is the failure mode; the window exists to land all
+three together. Bounded in time
 rather than open-ended, so it is a cutover accommodation and not a permanent
 second ingress — and it is the reason the importer's "irrevocably finalized
 before unpause" rule needs one stated exception, rather than that exception
@@ -1380,6 +1420,20 @@ for, each of:
 - **Paid** — not only per-user payouts, but **fresh value absorbed by the
   historical expiry and forfeit paths**, which no per-user reconstruction sees
   at all and which is a genuine outflow under the redefined noun.
+
+  **And administrative role-transition retirement**, which is not an outflow at
+  all and is the reason a reconstructed total can be too LOW. On a mirror that
+  detached and reattached, the retained role-change writer may already have
+  raised `paid` to `received` specifically to retire an otherwise reusable
+  residual — with no payout or absorption behind it. A total reconstructed only
+  from outflows therefore sits below that watermark, and SETTING the counter to
+  it **republishes the residual the retirement existed to kill**.
+
+  So the imported total includes the retirement watermark, **and the rebase never
+  reduces the existing paid counter** — `paid = max(existing, reconciled)`. The
+  belt-and-braces is deliberate: the watermark is the one input the
+  reconciliation cannot derive from history, so a floor protects against getting
+  it wrong in the only direction that matters.
 
 So the retained administrative writers are a starting point rather than the
 mechanism: `seedArmedFreshPaid` covers one side once, and a
