@@ -851,12 +851,13 @@ Establish both by hand on the TARGET Diamond before scheduling anything:
   `VPFIDiscountFacet`. Skip this and Full can be enabled on a Diamond whose
   ordinary repayment and early-close settlements still ignore the purchased bump
   — the failure this step exists to prevent, on the paths it already calls done.
-- **PR-6 / #1947, the REOPENED family** — confirm the DEPLOYED bytecode of
+- **PR-6 / #1947, the family that was reopened and CLOSED again on
+  2026-08-26** — confirm the DEPLOYED bytecode of
   `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet` and `RefinanceFacet`
   is the fixed version, the same way.
 
 **ONE branch now, not two.** This step used to fork on whether #1947 was open:
-with no fixed build for the reopened family the readback could not pass, and the
+with no fixed build for that family the readback could not pass, and the
 escape was an explicit **superseding decision** against the frozen §F2. #1947
 CLOSED on 2026-08-26, so a fixed build exists and neither the halt nor the
 supersession applies — an operator reaching for the supersession route today
@@ -1839,14 +1840,23 @@ the arm does not help: `broadcastGlobal`'s only day-state prerequisite is
 `dailyGlobalFinalized[dayId]`, so a third party can broadcast the day the moment
 it is finalized, whichever side of the arm that falls on.
 
-**A pre-arm application spends the DAY, not the mirror.** If the day is applied
-on a mirror while Base is still unarmed, that mirror records
-`broadcastV2Applied[dayId]`, and `_applyBroadcastV2Core`'s replay branch
-**returns before installing `armedFromDay`** — so rebroadcasting *that day* after
-arming exits idempotently and installs nothing. Another day still works:
+**A pre-arm application NO LONGER spends the day** (#1944, 2026-09-01). This
+paragraph said it did, and the whole "exhaust the day set" worry below follows
+from that premise. If the day is applied on a mirror while Base is still
+unarmed, that mirror records `broadcastV2Applied[dayId]` — and
+`_applyBroadcastV2Core`'s replay branch now INSTALLS `armedFromDay` when the
+mirror has none, so rebroadcasting *that same day* after arming works. The V3
+clock-backfill branch installs it too.
+
+Any other eligible day also still works, as it always did:
 `_assembleDayV2` stamps the CURRENT `s.governorCommitArmedFromDay` into every
-newly assembled payload, so any other unapplied eligible pre-`D*` day takes the
-fresh branch and installs the same `D*`. Permanent failure requires EXHAUSTING
+newly assembled payload, so a fresh apply installs the same `D*`. What a replay
+never does is RE-choose a `D*` already set, or install one from a retired era's
+legacy wire.
+
+The paragraph below is retained because its reasoning still holds for the cases
+that DO exhaust — a rotated-away era, or a lane that is genuinely gone.
+Permanent failure requires EXHAUSTING
 the eligible alternatives, not losing one. (An earlier revision of this paragraph
 said the mirror could not be armed at all; that was wrong and would have had an
 operator treat a recoverable cutover as irreparable.)

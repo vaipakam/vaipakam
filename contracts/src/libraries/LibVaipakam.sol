@@ -5668,8 +5668,16 @@ library LibVaipakam {
         //   against — the HARD backstop bounding every day-credit clamp.
         mapping(uint32 => uint256) chainReportedRecycled;
         // `chainConsumedRecycled` — BASE-ONLY: cumulative recycled Base has
-        //   INSTRUCTED chain `c` to consume (B2 `recycleConsume` +
-        //   `keeperAllocate`, B3 netting). Declared with the ledger so the
+        //   INSTRUCTED chain `c` to consume (B2 `recycleConsume`, B3
+        //   netting). **NOT `keeperAllocate`** — this definition listed it
+        //   until #1569 armed the field, and that listing is what a
+        //   maintainer would follow to fold the earmark back in here and
+        //   break the `outstanding + retired == consumed` identity this
+        //   block protects. Only `commitLocal` enters the outstanding /
+        //   retirement lifecycle, so only it may be counted here; the
+        //   earmark has its own draw slot, `chainKeeperAllocDebited`,
+        //   exactly as the C2 repatriation draw does and for the same
+        //   reason (see the trap named further down this comment). Declared with the ledger so the
         //   block reads as one unit; written from B2 on. It is NOT bounded by
         //   `chainReportedRecycled[c]`: a commitment released un-spent is
         //   legitimately re-committable, so this cumulative can legally
@@ -7366,9 +7374,12 @@ library LibVaipakam {
     ///      an inspector reading the Base stamp would have read its zero as
     ///      "Base funded none of its own day" rather than "this field does
     ///      not apply here".
-    ///      `keeperAllocate`
-    ///      is reserved for the per-chain keeper allocation (0-valued until
-    ///      that resolution exists). `freshLenderHalf`/`freshBorrowerHalf`
+    ///      `keeperAllocate` carries the per-chain keeper allocation and is
+    ///      LIVE since #1569 — sized on Base from the destination's reported
+    ///      day inflow and capped by the headroom its local commit leaves.
+    ///      This line said the field was 0-valued until a future resolution,
+    ///      which was true until that landed and would now tell a reader the
+    ///      wire field is dead. `freshLenderHalf`/`freshBorrowerHalf`
     ///      (B2-b append) are the per-side FRESH floors this chain prices
     ///      with — the global `scheduleFloor/2` on both sides until a
     ///      per-chain fresh trim mechanism exists (plan §M3: per-dest

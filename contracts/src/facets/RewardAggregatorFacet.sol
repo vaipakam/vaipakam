@@ -888,9 +888,11 @@ contract RewardAggregatorFacet is
     event ChainKeeperAllocateBpsSet(uint32 indexed chainId, uint16 bps);
 
     /**
-     * @notice #1222 M4 C3 (#1569) — the share of a chain's locally-funded
-     *         recycled commit that Base instructs it to earmark for its own
-     *         keeper-incentive register.
+     * @notice #1222 M4 C3 (#1569) — the share of a chain's REPORTED DAY
+     *         INFLOW that Base instructs it to earmark for its own
+     *         keeper-incentive register. The chain's locally-funded commit
+     *         is the CAP, not the base: the earmark is bounded by the
+     *         headroom that commit leaves in the chain's availability.
      *
      * @dev    BASE-AUTHORIZED, and that is the point of the card: a mirror
      *         must not be able to grant itself keeper budget. `onlyCanonical`

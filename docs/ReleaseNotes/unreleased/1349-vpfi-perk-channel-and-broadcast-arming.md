@@ -46,7 +46,13 @@ would revive entitlements that were meant to be gone. Price stays adjustable and
 the perk stays withdrawable; only the meaning is frozen, and a new meaning takes
 a new perk. Withdrawing a perk from sale also works while the protocol is
 paused, which is when an operator is most likely to want it: purchases are
-closed by that same pause, so the lever can only shut a channel, never open one.
+closed by that same pause, so nothing can be BOUGHT while it holds.
+
+That is not the same as saying the lever can only shut a channel — an earlier
+draft of this note said so and it is wrong. A price set during a pause is kept,
+and the perk is on sale the moment the pause lifts, with no further action
+needed. So a price written during containment is a scheduled opening, and worth
+re-checking before the pause is lifted.
 
 Separately, a cross-chain defect that could not be closed operationally. The
 reward broadcast that opens a day on a mirror chain is permissionless by design,
