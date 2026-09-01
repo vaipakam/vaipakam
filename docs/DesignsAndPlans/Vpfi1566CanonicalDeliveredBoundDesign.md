@@ -603,60 +603,147 @@ ordinary implementation, and it belongs in slice 3.
 
 ### Slicing
 
-1. The two draining grandfathered classes — **and they do NOT take the same
-   treatment, which an earlier revision of this slice assumed.**
+> Every requirement established in the analysis above appears HERE, because the
+> slices are what an implementer follows. Four rounds of review found
+> requirements sitting in the prose while this list still said the superseded
+> thing; twice that was a scripted edit that aborted before writing and was
+> only partly re-run. Anything not in this list is not being built.
 
-   - **`rebateAmount` (settled, unclaimed): credit it, do NOT lien it.** A lien
-     on a terminal loan has no release path — `LibVPFIDiscount.sol:1113-1118`
-     records that `claimAsBorrower` never runs on a `Settled` loan, so both a
-     frozen claimant and an encumbrance are inert, "one silently, one
-     permanently". Liening this class would strand the very value the migration
-     is meant to hand back. It is already claimable; credit it outright.
-   - **`vpfiHeld` (live loans): lien it, but NOT with an ordinary lien.**
-     `LibVPFIDiscount.tierVpfiBalance` deliberately does not subtract
-     `s.encumbered`, on the stated grounds that it "legitimately holds the
-     user's OWN liens / intent / offer capital and must stay in-tier"
-     (`:119-135`). Meanwhile `settleBorrowerLifProper` prices the rebate from
-     the borrower's CURRENT effective tier (`:1001-1011`). The retired flow
-     withdrew this VPFI and restamped the lower balance; depositing the full
-     held fee back under an ordinary lien would raise the tier and therefore
-     the rebate — on an amount part of which becomes treasury revenue. The
-     borrower would be paid more for holding money they owe.
+**1. The two draining grandfathered classes — different treatments, not one.**
 
-     So this needs a **non-tier-bearing lien** (the `frozenVpfiOwedByVault`
-     shape, which exists precisely to keep value out of a tier without touching
-     `encumbered`), or the held amount settles in place and only the resulting
-     rebate is credited. The second is simpler and probably right.
+- **`rebateAmount` (settled, unclaimed): credit it, never lien it.**
+  `LibVPFIDiscount.sol:1113-1118` records that `claimAsBorrower` never runs on a
+  `Settled` loan, so a frozen claimant and an encumbrance are both inert — "one
+  silently, one permanently". A lien would strand the value the migration exists
+  to hand back. It is already claimable; credit it outright.
+- **`vpfiHeld` (live loans): a per-loan ENCUMBRANCE paired with a TIER
+  EXCLUSION — two counters, not one.** `tierVpfiBalance` deliberately leaves
+  ordinary `s.encumbered` value in-tier (`:119-135`) while
+  `settleBorrowerLifProper` prices the rebate from the borrower's current tier
+  (`:1001-1011`), so an ordinary lien would raise the borrower's own rebate on
+  money they owe. But `frozenVpfiOwedByVault` alone is only a tier exclusion,
+  **not a lien**: `LibEncumbrance.freeBalance` subtracts solely `s.encumbered`
+  (`:691-702`), and the existing freeze flow calls `encumberLenderProceeds`
+  *before* incrementing the frozen counter (`LibCloseoutFreeze.sol:88-102`).
+  Use one without the other and the borrower can simply withdraw the returned
+  `vpfiHeld` before settlement. Both, with explicit release bookkeeping on each
+  terminal.
+- **Settling in place is NOT the migration.** An earlier revision called it
+  "simpler and probably right". On an arbitrary next touch it prices a rebate at
+  the current tier before the terminal outcome exists, while a later default
+  should have routed the whole held amount through `forfeitBorrowerLif`
+  (`:986-1035`, `:1159-1181`) — paying a premature rebate that survives the
+  default. In-place settlement is correct only ON a proper-close terminal, where
+  it already happens. It is not a drain mechanism.
+- **Both terminal consumers are rewritten, not just the lien.**
+  `settleBorrowerLifProper` transfers the matcher and treasury shares from
+  Diamond custody today, and `forfeitBorrowerLif` does the same for the whole
+  held amount (`:1013-1035`, `:1159-1181`). After migration both must split /
+  release / seize from the **vault** source, including the sanctions-safe forced
+  move-out path. Migrating the custody without these leaves each terminal
+  spending unrelated Diamond VPFI or reverting.
+- **Completion is provable on-chain; no off-chain census is required.** An
+  earlier revision said there is no set to walk and made option 2 depend on a
+  frozen census. **That was wrong.** Loan ids are allocated `++s.nextLoanId` and
+  the source states the valid range is `[1, nextLoanId]` with loans never
+  deleted (`LoanFacet.sol:277`, `:1386-1393`); reward entries have
+  `nextRewardEntryId` over a sequential mapping (`LibVaipakam.sol:3486-3491`).
+  So under the pause, a **paginated migration snapshots each high-water mark,
+  scans every id across transactions, migrates the matching rows, and proves
+  completion when its cursor passes the snapshot** — including proving an empty
+  range empty. That is independently verifiable, which an off-chain census is
+  not. Prefer it.
 
-   Self-limiting and lowest risk, but two classes and two treatments.
-2. `fallbackSnapshot` custody — lien at fallback, and **every consumer** moved
-   onto the new custody source, not the claim path alone. The detailed
-   correction above establishes why; this slice previously said "pull at claim"
-   and would have shipped exactly the defect that correction describes. In
-   scope: `ClaimFacet`, internal matching (`RiskMatchLiquidationFacet._settleLeg`
-   and its auto-dispatch entry), the cure path in `AddCollateralFacet`, backstop
-   and retry, plus full repayment. A fallback loan resolved first through any
-   of those would otherwise read or pay the snapshot as Diamond-held collateral
-   while the tokens sit liened in the vault — reverting, or spending unrelated
-   Diamond custody.
+**2. `fallbackSnapshot` custody.**
 
-   **Pre-upgrade rows need a custody-SOURCE discriminator before any consumer
-   is switched**, and the ordering here is the whole risk. A snapshot taken
-   before the upgrade has its collateral in the Diamond already
-   (`RiskFacet.sol:1884-1917`, `DefaultedFacet.sol:846-877`); the lien-at-fallback
-   rule only applies to fallbacks that happen afterwards. Flip the consumers
-   first and every existing row either pulls vault funds that were never put
-   there and reverts, or keeps a Diamond branch the slice exists to remove.
+- **Every consumer moves to the new source**, not the claim path alone:
+  `ClaimFacet`, internal matching (`RiskMatchLiquidationFacet._settleLeg` and its
+  auto-dispatch entry), the cure path in `AddCollateralFacet`, backstop, retry,
+  and full repayment. Otherwise a fallback loan resolved through any of them
+  reads or pays the snapshot as Diamond-held collateral while the tokens sit
+  liened in the vault — reverting, or spending unrelated Diamond custody.
+- **Non-tier-bearing lien PLUS restamp, same two-counter shape as slice 1**, and
+  the case here is stronger: a fallback snapshot has already allocated lender
+  and treasury shares, so an ordinary lien grants the borrower tier and staking
+  credit on value owed to somebody else, for the whole life of the snapshot. The
+  current path withdraws and explicitly restamps the reduced balance
+  (`RiskFacet.sol:720-737`) — F preserves that effect, not merely the accounting.
+- **Pre-upgrade rows get a custody-SOURCE discriminator before any consumer is
+  switched.** Existing snapshots already hold their collateral in the Diamond
+  (`RiskFacet.sol:1884-1917`, `DefaultedFacet.sol:846-877`); the
+  lien-at-fallback rule governs only later fallbacks. Switch consumers first and
+  every existing row either pulls vault funds nobody deposited, or keeps the
+  Diamond branch this slice exists to delete.
+- **The discriminator routes consumers; it does NOT protect the tokens.** A
+  pre-upgrade row stays commingled for as long as it waits to be consumed, so a
+  reward claim can drain it before any consumer reaches the discriminator at
+  all. Either migrate those rows under pause, or seed them into slice 1's
+  remainder bound and let it decrement as they drain. **Arming waits on
+  whichever is chosen.**
 
-   So each snapshot carries which custody it is under, consumers branch on that
-   rather than on the deployment's age, and the old branch is deleted only once
-   no rows remain under it. This is the same "migrate before switching" shape as
-   slice 1's grandfathered classes, and it was missing here.
-3. The intent class — ordinary implementation via the `preInteraction` pull
-   point established above. No owner ratification needed; the split it was
-   asked for no longer exists.
-4. Closures 2 and 3, which are independent of all of the above and block
-   arming just as hard.
+**3. The intent class — via the `preInteraction` pull point.**
+
+- **Lien decrement, pull, and VPFI restamp are ONE atomic step** inside
+  `preInteractionImpl`. `commitSwapToRepayIntent` calls
+  `LibConsolidation.restampUserVpfi` right after its withdrawal because
+  `vaultWithdrawERC20` only moves the tracked balance
+  (`SwapToRepayIntentFacet.sol:553-563`); move the withdrawal without the
+  restamp and the borrower keeps tier and staking credit on sold VPFI.
+- **`preInteraction` needs the reentrancy guard it does not have.**
+  `commitSwapToRepayIntent` carries `nonReentrant`; `IntentDispatchFacet.preInteraction`
+  does not, while `postInteraction` does. The new hook decrements a lien and then
+  makes an external token transfer through the vault, so a callback-capable or
+  later-upgraded collateral token could reenter another Diamond entry while the
+  commit is live and its lien already zero — including a liquidation path
+  force-cancelling that same commit. Guard the hook, or route the mutation
+  through an equivalently guarded self-call. Callback-token test required.
+- **Keep the balance-delta check, at the new location.** The commit path does not
+  trust `vaultWithdrawERC20`: it measures the Diamond's balance delta and rejects
+  anything other than `loan.collateralAmount` before using it as `makingAmount`
+  (`:523-553`). Specifying only "pull the full amount" drops that invariant, and
+  a fee-on-transfer or behaviour-changing collateral token would then deliver
+  less than the signed making amount — with the LOP taking the shortfall from
+  unrelated same-token Diamond custody. Re-measure in the hook; revert unless the
+  delta equals the committed amount exactly.
+- **Every teardown path moves too.** Borrower, expired and force-cancel routes all
+  reach `_teardownCommit`, which transfers `commit.custodialCollateral` from the
+  Diamond back to the vault and then increments the lien (`:905-944`). For a
+  vault-held commit that is wrong twice over — it spends Diamond funds it should
+  not have and re-liens value that was never unliened. Rewrite them, or branch
+  them on the custody version.
+- **Live commits need a cutover.** A commit predating the upgrade has already
+  decremented its lien and withdrawn `custodialCollateral` (`:529-553`), so the
+  new hook would withdraw a second time and its fill would revert with the
+  original custody stranded. Either a paused cutover gated on
+  `intentLiveCommitCount == 0` after cancellation/drain, or a per-commit
+  custody-version branch — the same discriminator shape as slice 2.
+- **The fill test is a PREREQUISITE of this slice, not a follow-up.** It does not
+  exist today (see §5b), and this slice's correctness rests on ordering,
+  full-amount pull and transaction-wide rollback — none of which is currently
+  asserted anywhere for the swap-to-repay branch.
+
+**4. Closure 1's non-user half — the delivered bound. IN THE ARMING GATE.**
+
+Slices 1–3 remove USER value from the shared balance. They do nothing about
+payroll, either buyback state, the routed budgets, or the next owner nobody has
+written yet. Since §5b establishes that enumerating those owners cannot be
+completed, this slice IS the delivered bound — so it and slice 5 are the same
+work approached from two sides.
+
+**This slice must define what CREDITS canonical `received`, and that is not
+inherited from the mirror case.** Base originates rewards and receives no
+remittances, which is exactly why `deliveredFreshBound` returns `max` there
+today — the counter would otherwise sit at zero. Implemented literally, the
+inversion either bricks every canonical payout at zero, or invites an
+implementer to credit schedule/allocation accounting with no tokens behind it,
+which reintroduces the original defect wearing the new bound's name. So specify:
+the atomic **mint / transfer / escrow event that credits canonical `received`**,
+and every canonical **outflow that debits it**. Until both are written down, the
+inversion is not closure 1 on the canonical chain.
+
+**5. Closures 2 and 3**, independent of the above and blocking arming just as
+hard. Closure 3 additionally requires the fourteen-row role matrix in §5c — the
+matrix itself, not a note that one is needed.
 
 **The chokepoint becomes fund-safety-critical the moment slice 1 lands.**
 `vaultWithdrawERC20` / `freeBalance` today protect a user from over-drawing
@@ -735,12 +822,48 @@ bound of zero cannot then fund — a reader can be individually defensible and
 jointly wrong.
 
 So **closure 3 is not closed until the design carries an explicit role/behaviour
-matrix for all fourteen sites** — each row naming the site, the question it is
-really asking, and the answer for each of `Canonical`, `Mirror` and `Detached` —
-with tests for the transition INTO and OUT OF `Detached`, since that transition
-is where a per-site choice and the ledger can disagree. Writing that matrix is
-the remaining work on closure 3; the resolver is its precondition, not its
-substance.
+matrix for all fourteen sites.** An earlier revision said writing it was "the
+remaining work" — which is a plan for a matrix, not a matrix, and leaves the
+implementer exactly where they were. Here it is.
+
+The fourteen readers of `LibVaipakam.isMirrorRewardChain`, with what each is
+actually asking and the answer for each role. **`Detached` means
+`baseChainId == 0` on a non-canonical chain: no authenticated source of further
+delivery and nobody to report to.**
+
+| # | Site | Real question | Canonical | Mirror | **Detached** |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | `max` | delivered bound | **0** — no delivery, nothing sweepable as fresh |
+| 2 | `…:128` | does the sweep record a mirror-side paid delta | no | yes | **yes** — the ledger must still see the outflow |
+| 3 | `RewardCommitmentFacet.isDayCommitmentReady:191` | is a day's commitment reportable | n/a | yes | **no** — nobody to report to |
+| 4 | `RewardCommitmentFacet._assertMirror:268` | AUTH: may this chain report | revert | allow | **revert** — fail closed |
+| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | `max` | delivered bound | **0** |
+| 6 | `…:237` | paid-delta recording on expiry | no | yes | **yes** |
+| 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed |
+| 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** |
+| 9 | `RewardReporterFacet._retireDeliveredResidualOnRoleChange:1286` | retire the delivered residual | n/a | on transition | **on ENTERING Detached, retire; on LEAVING, start from zero** |
+| 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
+| 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
+| 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
+| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | yes | if funded | **no** |
+| 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | `max` today; see slice 4 | delivered | **0** |
+
+**Two rows carry the whole risk and are worth reading twice.** Row 11 is where
+treating `Detached` as "not a mirror" silently funds payouts from a canonical
+schedule that has no tokens behind it — the fail-OPEN direction. Rows 4 and 7
+are where treating it as "a mirror" enables mirror-only cross-chain operations
+on a chain with `baseChainId == 0`. Those are opposite errors from the same
+missing third state, which is why no single boolean value works and why this
+matrix — not the resolver — is the substance of closure 3.
+
+**Row 14 depends on slice 4.** `max` on the canonical chain is the current
+behaviour and is exactly what the closure-1 inversion replaces; the two land
+together or the bound is unenforced on Base.
+
+**Transition tests are required in BOTH directions**, since rows 8–10 are the
+only sites that mutate the role: entering `Detached` must retire the delivered
+residual (or an old residual is reusable on reattachment), and leaving it must
+start from zero rather than resuming a stale figure.
 
 ### Closure 2 — the legacy paths. The ledger measures the wrong noun.
 
@@ -865,16 +988,22 @@ transitions, not outflows**, and must be retained and redefined in place:
 re-base is onto reward value regardless of vintage — legacy and armed alike —
 while still counting **only the authenticated fresh component**.
 
-**Every received-side WRITER needs the new meaning stated, not just the main
-ingress.** The paid side got a writer-by-writer plan above and this side did
-not, which is an asymmetry with consequences: `received` is mutated at ordinary
-remittance ingress *and* by compensation credit, provisional confirmation, and
-demotion/unwind (`RewardRemittanceFacet.sol:900-905`, `:1273-1279`,
-`:1397-1425`). If those branches keep armed-vintage semantics while the ingress
-broadens, a provisional confirmation manufactures headroom that no delivery
-backs, and a demotion fails to remove headroom it should. Each writer's new
-meaning and its paired `uncounted` behaviour is part of the specification, not
-of the implementation. Crediting the
+**Every received-side WRITER gets its rule stated here, not inventoried.** An
+earlier revision listed the sites and said their meanings "belong in the
+specification", which is a promise rather than a specification. The rules:
+
+| Writer | Today (armed-vintage) | **After the re-base (vintage-blind, fresh-only)** |
+| --- | --- | --- |
+| ordinary remittance ingress (`RewardRemittanceFacet.sol:900-905`) | credits `received` with the armed-scoped amount; the rest lands in `rewardBudgetFreshUncounted` | credits **the authenticated FRESH component of the delivery, any vintage**. `uncounted` keeps only what is not authenticated fresh — never the recycled share, which the bucket already holds |
+| compensation credit | credits `received` when a compensation is dispatched | **same rule, same test**: fresh component only. A compensation delivering recycled value credits nothing here |
+| provisional confirmation (`:1273-1279`) | moves an amount from `uncounted` into `received` on confirmation | moves **only the fresh component**, and only once. Left on the vintage rule it promotes recycled-backed value into fresh headroom that no delivery backs — headroom manufactured by a bookkeeping step |
+| demotion / unwind (`:1397-1425`) | moves an amount back from `received` to `uncounted` | must remove **exactly what confirmation added**, by the same fresh-only rule. Left on the vintage rule it removes less than was added, and the difference is permanent false headroom |
+
+The last two are a matched pair and must be changed in one commit: the failure
+mode is not that either is individually wrong, but that confirmation and demotion
+stop being inverses. **A round-trip test — confirm then demote, assert `received`
+and `uncounted` both return to their starting values — is the acceptance case,
+and it is the one test that catches a divergence between them.** Crediting the
 whole delivery would re-open the hole on the other side: a remittance of 5 fresh
 plus 5 recycled already credits the recycled 5 to the bucket, so crediting 10
 here against a fresh-only paid side leaves 5 of false fresh headroom, and a
