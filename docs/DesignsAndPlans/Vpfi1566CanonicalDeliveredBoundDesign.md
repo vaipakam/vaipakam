@@ -985,9 +985,13 @@ owner" is precisely the inventory §5b establishes is **unknown and unclosable**
 using it here would reintroduce the enumeration this whole section replaced,
 and would classify unrelated custody as claimable.
 
-So: **`bootstrapRewardPool(amount)` — a separate, ADMIN-only, one-shot,
-pause-gated import** that credits `received` with an **independently reconciled
-reward-owned figure** (the same off-chain reconciliation the mirror bootstrap
+So: **`bootstrapRewardPool(H)` — a separate, ADMIN-only, one-shot, pause-gated
+import** whose argument is exactly the `H` defined above: **freely spendable
+fresh reward custody, with `rewardBudgetRecovered − rewardBudgetRedispatched`
+and every other restricted position excluded.** An earlier revision described
+the argument as an "independently reconciled reward-owned figure", which is the
+ownership test this section has already rejected — an implementer following the
+call contract would reproduce the recovery-position double-spend exactly (the same off-chain reconciliation the mirror bootstrap
 performs), moves no tokens, and is **irrevocably finalized before unpause**. The
 finality is the load-bearing part on both sides: any increment to `received`
 publishes fresh payout headroom with no transfer behind it, so a writer left
@@ -1213,9 +1217,24 @@ a specification.
 The complete lifecycle, since half-describing it is what left the previous
 revision unimplementable:
 
-1. **Receive while `Detached`** — `onRewardBudgetReceived` and
-   `onCompensationBudgetReceived` revert. No receipt is written, no pool or
-   recycle state moves, nothing to unwind. This is symmetric with row 7's ack,
+1. **Receive while `Detached`** — `onRewardBudgetReceived`,
+   `onCompensationBudgetReceived`, **and the reward BROADCAST ingresses
+   `onRewardBroadcastV2Received` / `onRewardBroadcastV3Received`** all revert. No
+   receipt is written, no pool, recycle, day or era state moves, nothing to
+   unwind.
+
+   **The broadcasts were missing from an earlier revision of this list**, which
+   gated only the two token ingresses and called the lifecycle complete. They
+   accept configured-messenger packets without checking the chain role at all, so
+   a delayed broadcast executing while `Detached` reaches
+   `_reserveMirrorCommitOnce` and `_applyKeeperEarmarkOnce` — **reserving
+   recycled custody and installing day and era state** for an obligation that
+   rows 3 and 11 make unreportable and unpriceable. The role transition unwinds
+   none of it, so the effect is locked funds or a poisoned later era.
+
+   They carry state rather than tokens, which is exactly why they were easy to
+   miss and not a reason to treat them differently: the test is "what state can
+   move", the same one the matrix's own scope note now states. This is symmetric with row 7's ack,
    which already refuses.
 2. **Transport** — a reverted CCIP inbound is a failed message, **manually
    re-executable once the condition clears**. That is the property that makes
@@ -1413,8 +1432,23 @@ implementations standing with a "prefer" between them — which preserves exactl
 the ambiguity it claims to resolve, since the two need different gates and
 different authentication rules.
 
-**Mandated: hold the pause until every in-flight d2 remittance has landed and
-been reconciled.** The gate is per lane, read back per source chain.
+**Mandated: hold consumers frozen until every in-flight d2 remittance has landed
+and been reconciled.** The gate is per lane, read back per source chain.
+
+⚠️ **The ordinary Diamond pause cannot be that freeze, and an earlier revision
+said "hold the pause".** Both token ingresses are `whenNotPaused`
+(`RewardRemittanceFacet.sol:846-855`, `:1039-1053`), so pausing makes every
+arriving packet **revert before it can land** — the ceremony would block the very
+deliveries it is waiting for and could never reach its own gate. Unpausing
+instead exposes claims and sweeps while the old-wire accounting is unreconciled.
+
+So the cutover needs a **migration mode**: a state in which the reward
+CONSUMERS — claim, expiry sweep, forfeit sweep, the transports — are refused,
+while the receive ingresses alone remain executable. Whether that is a dedicated
+flag or a `whenNotPaused` exemption on the two ingresses is an implementation
+choice; what is not optional is that the freeze blocks consumers **without**
+blocking the packets being drained. A single global pause cannot express that,
+which is the reason this needs stating rather than being left to the ceremony.
 
 ⚠️ **"Settled or EXPIRED" is not a terminal, and an earlier revision used it as
 one.** Application-level expiry says the reservation lapsed; it says nothing about
@@ -1492,17 +1526,35 @@ or consumes unrelated bucket backing.
 
 One reconciliation entry, three effects, all or nothing:
 
+0. **assert conservation: `freshShare + recycledShare == the amount removed`** —
+   checked BEFORE any of the three mutations, so a malformed or mistaken entry
+   reverts whole rather than half-applying;
 1. **remove the full old-wire amount from `uncounted`**;
 2. **credit only its authenticated fresh share to `received`**;
 3. **credit its authenticated recycled share as relocated custody** into
    `recycleBucket`.
 
+Step 0 is not defensive padding. Shares summing **above** the removed amount let
+the writer publish fresh headroom and recycled custody backed by unrelated
+Diamond VPFI; summing **below** it silently drops the residual out of every
+reward ledger. Both are produced by an ordinary operator mistake, and the entry
+is administrative, so nothing else would catch either. If a rounding residual is
+genuinely unavoidable, it stays in `uncounted` — never distributed.
+
 Doing (2) without (1) and (3) is the failure mode; the window exists to land all
-three together. Bounded in time
-rather than open-ended, so it is a cutover accommodation and not a permanent
-second ingress — and it is the reason the importer's "irrevocably finalized
-before unpause" rule needs one stated exception, rather than that exception
-being discovered by whoever hits it.
+three together.
+
+**This window is NOT time-bounded, and an earlier revision of this paragraph
+said it was** — directly contradicting the finding above, which establishes that
+no safe terminal exists for the legacy lane and makes an **explicitly open**
+epoch the design's answer. An implementer following the earlier wording would
+close the reconciler on a deadline and strand a legacy packet executed after it.
+
+The contract is: **ADMIN-only and paused per entry, multi-entry, open until a
+single explicit finalization that only an observed terminal justifies** — and
+for legacy, no such terminal exists today, so it stays open. It is not a
+permanent second *ingress*: nothing arrives through it without an administrator
+submitting a reconciled entry, which is what bounds it. Authorization, not time.
 
 The rejected alternative was a post-unpause receipt-level reconciliation entry.
 It is rejected because it adds a **permanent administrative writer on the
