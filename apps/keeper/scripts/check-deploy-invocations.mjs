@@ -4531,7 +4531,8 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // inversion's precondition; scoping the exception to `--config` left an
   // executable `spawnSync("wrangler", ["deploy", "--name", worker])` deferring
   // like prose because it selected no config (Codex #2036 r21).
-  if (!hasCwdState && !(isChildCall && (cfg !== null || nameUnresolved))) {
+  const unidentified = isChildCall && (cfg !== null || nameUnresolved);
+  if (!hasCwdState) {
     // Both directory selectors are candidates here, most specific first
     // (#1995 r9) — `cwdFlag` was one variable before they were split apart.
     const raw = (target ?? wrCwd ?? pkgDir ?? '').replace(/\/+$/, '');
@@ -4548,7 +4549,13 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       const named = SCOPED.find((s) => s.dir === tail || s.dir.endsWith(`/${tail}`));
       if (named) return { scope: named };
     }
-    if (!raw.startsWith('/')) return null;
+    // AFTER the surrounding text, not instead of it (#2040). Returning the
+    // unnamed scope here — which is what the r18 exception did by skipping this
+    // branch outright — took a report that could name `apps/agent`, with that
+    // package's remedy, and made it "a Worker this scanner could not name". The
+    // inversion is the answer when nothing else has one, so it is expressed as
+    // a distinct outcome and the CALLER applies it last.
+    if (!raw.startsWith('/')) return unidentified ? { scope: null, unidentified } : null;
   }
   // BURDEN INVERTED for a selected config this scanner could not identify.
   //
@@ -7633,9 +7640,15 @@ for (const file of walk(REPO_ROOT)) {
         // agent was reported as an agent violation, on the real tree. The
         // guard blocking CI over the sentence telling you not to do the thing
         // is precisely how a guard gets switched off.
-        const scope = sel
+        // The inversion last here too (#2040) — though on this path it is only
+        // reachable for a recognised child-process call, since prose never sets
+        // it. A runbook line keeps deferring to the text exactly as before.
+        const scope = sel?.scope
           ? sel.scope
-          : scopeOf(seg, rel) ?? hinted ?? (part.isSpan ? null : lineScope);
+          : scopeOf(seg, rel) ??
+            hinted ??
+            (part.isSpan ? null : lineScope) ??
+            (sel?.unidentified ? UNNAMED_SCOPE : null);
         if (!scope) continue;
         flagged = true;
         hitScopes.add(scope);

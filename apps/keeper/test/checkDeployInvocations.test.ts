@@ -8463,4 +8463,31 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
+  // ---- #2040: the inversion applies AFTER the surrounding text ----
+
+  it('an unidentifiable child call INSIDE a package names that package', () => {
+    // The r18 exception skipped the deferral outright for child calls, which
+    // reported this as "a Worker this scanner could not name" — correct, but
+    // vaguer than the answer available. The inversion is what to say when
+    // nothing else has an answer, so it is applied last.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'apps/agent/deploy.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/generated.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('...and OUTSIDE both packages still reaches the inversion', () => {
+    // The control: with no package to name, the unnamed scope is the answer,
+    // which is the gap #2040 was filed for.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'deploy.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/generated.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('could not name');
+  });
 });
