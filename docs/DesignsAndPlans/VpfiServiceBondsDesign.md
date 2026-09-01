@@ -44,7 +44,17 @@ instruction to anyone implementing or writing copy from the top of the file.
    ship leaves the one that might unprotected.
 
    So each delayed-proof predicate carries its own **evidence horizon**, and the
-   delay is the maximum over those live at the unbond request. For equivocation
+   delay is the maximum over the predicates governing **still-actionable actions
+   taken before the request — including predicates governance has since
+   disabled.**
+
+   "Live at the unbond request" was the earlier wording and it is wrong: turning a
+   predicate off stops it applying to FUTURE actions, and says nothing about
+   evidence for actions already taken. An operator could otherwise act, wait for
+   governance to disable that predicate for unrelated reasons, and withdraw before
+   the proof resolves. Disabling a predicate cancels prior liability only if the
+   design says so explicitly — and it should not, because that turns a routine
+   configuration change into an amnesty. For equivocation
    that horizon is how long a conflicting statement can still be produced and
    proven — which depends on the artefacts' own validity window rather than on
    any observation commitment, and must be defined with the predicate.
@@ -158,7 +168,12 @@ one.
 ServiceBond { operator; role; token; amount; state; unlockAt; }
 OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // v1: `state` is Active only and `unlockAt` is unused — both exist for the
-// liveness tier's delayed unbond, which v1 does not have (rev 4).
+// DELAYED-UNBOND machinery that any delayed-proof predicate requires, NOT for
+// the liveness tier specifically. An earlier revision said "the liveness
+// tier's delayed unbond"; if equivocation ships without liveness, an
+// implementer following that could permit immediate withdrawal after
+// conflicting statements are signed — the slash-and-run hole rule 2 now
+// prohibits. Revocation and `unlockAt` attach to the predicate, not the tier.
 ```
 
 **Events — every bond lifecycle mutation, not just the offence.** This section
@@ -513,8 +528,22 @@ whole rule:
   100 units at a 10% slash, and under per-tranche flooring be debited **zero**.
   Rounding once over the aggregate eligible remainder debits 10, which is the
   answer that does not depend on how the operator arranged their deposits.
-  Allocation across the tranches is then a distribution question and cannot
-  change the total.
+  Allocation across the tranches is then a distribution question for **that
+  proof** — but it is **not unconstrained**, because it changes what later proofs
+  can reach.
+
+  Concretely: an older pending action names tranche A, a newer one names A+B.
+  Resolve the newer first and take its debit from A, and the older proof's
+  remaining base shrinks; take it from B and that base is untouched. Same debit
+  now, different total loss across the pair — so allocation moves value between
+  proofs even though it cannot move the current proof's total.
+
+  **The invariant: consume the tranches NOT named by any other outstanding proof
+  first, then the contested ones oldest-first.** That maximises what remains
+  reachable for older proofs, is deterministic, and does not depend on the order
+  the proofs happen to resolve in — which is the property that matters, since
+  resolution order is not something the protocol controls. **Overlapping
+  eligibility sets are an acceptance case**, not an edge case.
 - **Rounding is UP.** `balance * 1_000 / 10_000` FLOORS to zero once the
   balance drops under ten units, leaving a permanently unslashable positive
   bond that still buys capacity; an earlier revision described that
@@ -1111,7 +1140,27 @@ that everything else is throughput and these are custody:**
 - **SANCTIONS, on every value-moving bond selector.** VPFI deposits and
   withdrawals are Tier-1 BLOCK in the repository's sanctions matrix, and the
   gate is per SELECTOR — each entry point screens the value's owner or
-  recipient itself. So `postBond`, `unbond`, any deposit-on-behalf or permit
+  recipient itself.
+
+  **`unbond` needs the FAIL-CLOSED branch and its own outage test.** Requiring
+  only `LibVaipakam._assertNotSanctioned` is satisfiable with the fail-open
+  helper alone, which releases a previously frozen balance during an oracle
+  outage — contradicting rule 2's freeze and the rotation reasoning that treats a
+  flagged balance as undrainable. So the criteria require
+  **`assertNotSanctionedFailClosed` on the release path for confirmed-flagged
+  balances**, plus a focused test: operator confirmed flagged, oracle then unset
+  or reverting, `unbond` MUST revert. And a companion asserting an operator never
+  confirmed flagged still withdraws during the same outage — otherwise an
+  implementation could pass by freezing everyone.
+
+  **Both parties are screened on a deposit-on-behalf**, not just the caller. The
+  repository's sanctions rule requires the actual recipient or position holder in
+  addition to the sender wherever a call acts for someone else
+  (`ProjectDetailsREADME.md` §sanctions). Screening only the caller lets a
+  sanctioned operator acquire a funded bond through a clean payer; screening only
+  the operator lets a sanctioned payer move value into protocol custody. Both
+  identities, and the withdrawal recipient bound to whichever ownership model
+  §Mechanics selects. So `postBond`, `unbond`, any deposit-on-behalf or permit
   variant, and (under C) the arming-fee payer each need
   `LibVaipakam._assertNotSanctioned` and a focused test. Omitted from an
   earlier revision of this list entirely, which would have let a flagged
