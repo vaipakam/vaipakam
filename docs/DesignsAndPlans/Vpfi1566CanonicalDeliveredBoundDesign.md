@@ -667,7 +667,16 @@ ordinary implementation, and it belongs in slice 3.
   Such a row is therefore **PARKED**: custody moves to a dedicated frozen holding
   keyed by loan, the scan records it as migrated-and-parked so the cursor
   advances, and a **delisting release path** pays the resolved payee once the
-  flag clears. Parking is what lets completion stay provable without either
+  flag clears.
+
+  **The park/deliver decision uses `LibSanctionedLock.mustFreezeParty`, not a
+  claim-style `isSanctionedAddress` check.** The ordinary read fails OPEN when
+  the oracle is unset or reverting, so during an outage the scan would deliver
+  immediately to a payee already recorded in `sanctionsConfirmedFlagged` —
+  turning the exhaustive migration into a **compliance bypass for exactly the
+  wallets already confirmed**, and an irreversible one, since delivery is
+  terminal. The registry-aware helper is the one that consults the confirmed set
+  during an outage; the flag clears only on an authoritative clean read. Parking is what lets completion stay provable without either
   paying a sanctioned party or abandoning their value — and the scan's completion
   proof is exactly why this cannot be left as an operational follow-up.
 
@@ -780,6 +789,19 @@ ordinary implementation, and it belongs in slice 3.
   and full repayment. Otherwise a fallback loan resolved through any of them
   reads or pays the snapshot as Diamond-held collateral while the tokens sit
   liened in the vault — reverting, or spending unrelated Diamond custody.
+
+  **Forced withdrawals need the sanctions-safe MOVE-OUT path, which the Diamond
+  branch never needed.** Every newly vault-backed consumer reaches
+  `vaultWithdrawERC20`, whose `getOrCreateUserVault` rejects a sanctioned vault
+  owner unless the exact-address move-out exemption is armed
+  (`VaultFactoryFacet.sol:254-263`). The current Diamond-custody branch has no
+  borrower-vault gate at all, so a borrower who becomes sanctioned **after** the
+  snapshot is migrated could otherwise **block lender recovery indefinitely** —
+  the migration handing them a veto they never had.
+
+  So each forced fallback withdrawal uses the pinned move-out path, while any
+  borrower **residual** stays frozen or screened. Recovery for the lender must
+  not depend on the borrower's status; only what the borrower would keep does.
 
   **Each consumer also gets its COUNTER transitions specified, not just a new
   custody source.** The migration liens the FULL snapshot in the vault, so
@@ -1611,9 +1633,19 @@ or consumes unrelated bucket backing.
 
 One reconciliation entry, three effects, all or nothing:
 
-0. **assert conservation: `freshShare + recycledShare == the amount removed`** —
-   checked BEFORE any of the three mutations, so a malformed or mistaken entry
-   reverts whole rather than half-applying;
+0. **assert `freshShare + recycledShare <= oldWireAmount`, where `oldWireAmount`
+   is bound to this entry's replay-protected identifier** — checked BEFORE any
+   of the three mutations, so a malformed or mistaken entry reverts whole rather
+   than half-applying.
+
+   **An earlier revision asserted `freshShare + recycledShare == the amount
+   removed`, which became tautological the moment step 1 was corrected to remove
+   exactly that sum — `x == x`, checking nothing.** Without a bound to the
+   entry's OWN packet, an entry for a 10-token packet can classify and remove 20,
+   silently consuming a later packet's contribution to the global `uncounted`
+   balance. The nonce stops the same entry being applied twice; only this bound
+   stops one entry consuming another packet's value, and the two are not
+   substitutes;
 1. **remove `freshShare + recycledShare` from `uncounted`** — NOT the full
    old-wire amount. An earlier revision required both the equality AND removal
    of the whole amount, which makes a legitimately rounded entry impossible: the
