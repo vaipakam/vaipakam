@@ -1426,8 +1426,29 @@ function commandIsSafe(cmd, scopeHint = null, cmdCwd = '', fileText = '', fileAt
     // round earlier — applied to one sibling and not the other, which is this
     // PR's recurring shape in miniature.
     const cfgClean = stripOtherOptionValues(cfgRegion, ['config', 'c']);
+    // LAST occurrence, and DECODED AS A SHELL WORD — the two rules the scope
+    // reader has and this one did not, so the two readers opened different
+    // files for the same command (Codex #2036 r21).
+    //
+    // Last, because wrangler takes the final `--config`: reading the first let
+    // an earlier SAFE config bless a deploy whose effective one disables
+    // preservation. Decoded, because `configs/"custom".jsonc` is one shell word
+    // and capturing to the first quote read `configs/`, which resolves to
+    // nothing and reported a legitimate deploy.
     const cfgSel =
-      cfgClean.match(/\s(?:-c|--config)(?:=|\s+)(?:"([^"]*)"|'([^']*)'|([^\s"']+))/) ??
+      (() => {
+        const all = [
+          ...cfgClean.matchAll(
+            // A SHELL WORD: quoted chunks and bare characters, concatenated.
+            /\s(?:-c|--config)(?:=|\s+)((?:"[^"]*"|'[^']*'|[^\s"'])+)/g,
+          ),
+        ];
+        const m = all[all.length - 1];
+        if (!m) return null;
+        // Same decode as `valueOf`: escapes first, then quotes removed.
+        const v = m[1].replace(/\\([\s\S])/g, '$1').replace(/["'`]/g, '');
+        return v === '' ? null : [m[0], v];
+      })() ??
       // ATTACHED SHORT FORM, the same gap `selectorScope` had (Codex #2036 r1)
       // and the same fix, because it is the same option read twice. Here the
       // consequence is the mirror image: an unrecognised selection makes this
@@ -3075,6 +3096,15 @@ function argvValue(region, spellings, before = '') {
 }
 
 /**
+ * The child-process call words this scanner reads, as one pattern.
+ *
+ * Written once because two readers need it for different questions — which call
+ * an `env` object belongs to, and how deep inside a call a token sits — and a
+ * copy in each is how a spelling ends up known to one and not the other.
+ */
+const CHILD_CALL_RE = String.raw`\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(`;
+
+/**
  * Is the token at `index` in the child call's OWN options argument? (#2036 r12)
  *
  * `{metadata: {env: {…}}}` is application data Node ignores, and scoping to
@@ -3094,9 +3124,9 @@ function argvValue(region, spellings, before = '') {
  * findings, including the one that prompted the extraction.
  */
 function atChildOptionsDepth(text, index) {
-  const calls = [...text.matchAll(
-    /\b(?:spawnSync|spawn|execFileSync|execFile|execaSync|execaCommandSync|execaCommand|execa|fork|subprocess\.[A-Za-z_]+|check_call|check_output)\s*\(/g,
-  )].filter((c) => c.index < index);
+  const calls = [...text.matchAll(new RegExp(CHILD_CALL_RE, 'g'))].filter(
+    (c) => c.index < index,
+  );
   const callAt = calls.length > 0 ? calls[calls.length - 1].index : 0;
   let depth = 0;
   let quote = null;
@@ -3282,7 +3312,26 @@ function notInsideString(text, at) {
  * the split this file's findings keep coming back to.
  */
 function childEnvObjects(text) {
-  return [...text.matchAll(/(?<![\w$.])env\s*[:=]\s*\{/g)]
+  // THREE SPELLINGS OF THE KEY. `env:` and `env=` are the plain ones;
+  // `"env":` is how Python writes it inside a dict, which is what a keyword
+  // UNPACKING passes — `subprocess.run(argv, **{"env": {…}})` hands the child a
+  // real `env` keyword and the quoted key was matched by none of them (Codex
+  // #2036 r22).
+  // BOUND TO WRANGLER'S OWN CALL. A segment may contain more than one child
+  // process, and returning every `env` object in it let an EARLIER call's
+  // environment answer for wrangler's — `spawnSync("echo", …, {env: {…}})`
+  // ahead of the deploy handed the guard the wrong environment entirely (Codex
+  // #2036 r22). The call that matters is the one the deploy detector found, so
+  // an object belongs to it only if it sits between that call word and the next
+  // child-process call after it.
+  const wrangler = text.match(new RegExp(ARGV_DEPLOY_RE));
+  const from = wrangler === null ? 0 : wrangler.index;
+  const next = [...text.matchAll(new RegExp(CHILD_CALL_RE, 'g'))]
+    .map((m) => m.index)
+    .find((i) => i > from);
+  const to = next === undefined ? text.length : next;
+  return [...text.matchAll(/(?<![\w$.])(?:env|["']env["'])\s*[:=]\s*\{/g)]
+    .filter((opener) => opener.index >= from && opener.index < to)
     .filter((opener) => atChildOptionsDepth(text, opener.index))
     .map((opener) => {
       let i = opener.index + opener[0].length;
@@ -3319,9 +3368,16 @@ function childEnvObjects(text) {
 function cloudflareEnvAssignments(body) {
   return [
     ...body.matchAll(
-      /["']?CLOUDFLARE_ENV["']?\s*:\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[A-Za-z_$][\w$.]*)/g,
+      // A COMPUTED KEY is a key. `{["CLOUDFLARE_ENV"]: "staging"}` is an
+      // ordinary JavaScript spelling that Node passes through unchanged, and
+      // matching only the bare and quoted forms saw no assignment at all
+      // (Codex #2036 r21).
+      /\[?\s*["']?CLOUDFLARE_ENV["']?\s*\]?\s*:\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[A-Za-z_$][\w$.]*)/g,
     ),
-  ].filter((m) => notInsideString(body, m.index + (/^["']/.test(m[0]) ? 1 : 0)));
+    // The offset of the KEY ITSELF, found rather than inferred from the match's
+    // first character — with a computed key the match now starts at `[`, and a
+    // hand-computed offset would point at the bracket and misalign the test.
+  ].filter((m) => notInsideString(body, m.index + m[0].indexOf('CLOUDFLARE_ENV')));
 }
 
 function envValueFromOptions(text) {
@@ -3385,6 +3441,21 @@ function declaredWorkerNames(absPath, includeEnvs, envName = null) {
           if (e === null || typeof e !== 'object') continue;
           if (typeof e.name !== 'string' || e.name === '' || /\$/.test(e.name)) continue;
           names.push(e.name);
+          // AN ENVIRONMENT'S OWN NAME REPLACES THE TOP-LEVEL ONE — wrangler
+          // merges the block over the top level, so the top-level value is not
+          // deployed at all. Keeping it as a candidate beside the environment's
+          // invented a protected target: a config named `vaipakam-agent` at the
+          // top with `env.staging.name` of `vaipakam-www`, deployed with
+          // `--env staging`, was reported as agent-scoped although the agent's
+          // name never ships (Codex #2036 r21).
+          //
+          // Only when the environment is the SELECTED one. With the selector
+          // unresolved every environment is a candidate and so is the top
+          // level, because any of them may be what runs.
+          if (envName !== null && top !== null) {
+            const i = names.indexOf(top);
+            if (i !== -1) names.splice(i, 1);
+          }
         }
       }
     } catch {
@@ -3416,6 +3487,29 @@ function isNameKey(raw) {
   return decodeTomlBasic(raw.slice(1, -1)) === 'name';
 }
 
+/**
+ * Does this table header open an `env.…` table, once its keys are decoded?
+ *
+ * TOML lets each dotted part be quoted, so `["env".staging]` and
+ * `[env."staging"]` are the same table as `[env.staging]`. Matched raw, the
+ * quoted form was not recognised as an environment table, the top-level-only
+ * read was called complete, and a config whose environment names a protected
+ * Worker deployed it silently (#2036 r22).
+ */
+function isEnvTableHeader(line) {
+  const inner = line.match(/^\s*\[\[?([^\]]*)\]/)?.[1];
+  if (inner === undefined) return false;
+  // The first dotted part, quoted or bare. Only the first matters: `env` is a
+  // top-level table and anything under it is an environment.
+  const first = inner.trim().match(/^(?:"((?:[^"\\]|\\[\s\S])*)"|'([^']*)'|([^.\s]+))/);
+  if (!first) return false;
+  const key =
+    first[1] !== undefined
+      ? decodeTomlBasic(first[1])
+      : (first[2] ?? first[3]);
+  return key === 'env' && /\./.test(inner);
+}
+
 /** Does this TOML config declare any environment table? */
 function envTablesInToml(absPath) {
   let text;
@@ -3430,7 +3524,7 @@ function envTablesInToml(absPath) {
   // which made the read incomplete and blocked a legitimate deploy whose
   // top-level name is authoritative (Codex #2036 r19).
   for (const l of tomlLines(text)) {
-    if (l.isHeader && /^\s*\[\s*env\s*\./.test(l.text)) return true;
+    if (l.isHeader && isEnvTableHeader(l.text)) return true;
   }
   return false;
 }
@@ -4226,9 +4320,19 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // `env.staging.name` is a protected Worker deployed it silently (Codex #2036
   // r15). Reading the environments answers the question the fall-through was
   // avoiding.
+  // An `--env` PRESENT BUT EMPTY selects nothing, and CLEARS what an ambient
+  // environment would otherwise carry: wrangler resolves `args.env ??
+  // getCloudflareEnv()`, and an empty string is not nullish, so the falsy value
+  // wins and the top level is used. The `\S` test matched the opening QUOTE of
+  // `--env ""` and read it as a selection, so every configured environment
+  // became a candidate and an unrelated one reported an ordinary deploy (Codex
+  // #2036 r22) — the defect the `CLOUDFLARE_ENV=""` branch was corrected for at
+  // r5, on the option beside it.
+  const envFlagValue = valueOf('--env|-e', wranglerRegion) ?? argvValue(rawSeg, '-e|--env');
   const envSelected =
-    envAssigned ||
-    /(?<![\w-])(?:--env|-e)(?:=|\s+)\S/.test(wranglerRegion) ||
+    envFlagValue !== '' &&
+    (envAssigned ||
+    (envFlagValue !== null && envFlagValue !== undefined) ||
     // `--env-file` loads a dotenv file into `process.env` BEFORE the config is
     // parsed, so its contents reach `getCloudflareEnv()` exactly as an inline
     // assignment does and neither `--env` nor an assignment is present on the
@@ -4236,19 +4340,40 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
     // read: the file is another artifact to resolve and parse, and the
     // conservative answer costs nothing because the read is one-directional.
     /(?<![\w-])--env-file(?:=|\s+)\S/.test(wranglerRegion) ||
-    argvValue(rawSeg, '--env-file') !== null;
+    argvValue(rawSeg, '--env-file') !== null ||
+    // AN AMBIENT `CLOUDFLARE_ENV` IS INHERITED. A command with no environment
+    // option at all still receives whatever its parent carries, and wrangler
+    // reads it — so "nothing on this line selects an environment" does not mean
+    // none is selected, and treating it that way trusted the top-level identity
+    // of a config whose environment block names a protected Worker (Codex #2036
+    // r21).
+    //
+    // The one thing that DOES prove a negative is an inline environment built
+    // entirely in the source with no spread: the child then receives exactly
+    // those variables and nothing else. That object existing is the proof, and
+    // the spread test is what makes it sound.
+    //
+    // So this is the DEFAULT rather than an extra case — an environment is
+    // presumed selected and UNNAMED unless the command clears it or hands the
+    // child a closed environment. Affordable for the same reason the burden
+    // inversion is: the answer is authoritative only where the config could be
+    // read, and no deploy on this tree selects a config at all.
+    !childEnvObjects(rawSeg).some(
+      (body) => !/\.{3}\s*[A-Za-z_$]|\*\*\s*[A-Za-z_$]|\bos\.environ\b/.test(body),
+    ));
   // WHICH environment, when the selector's value can be read statically. `null`
   // means "one is selected and I cannot say which", which is what makes the
   // whole-config scan the right answer in that case and the wrong one here.
   const envName = (() => {
-    const fromArgv = argvValue(rawSeg, '-e|--env');
+    // Already resolved above, where the empty-value rule needed it.
+    const fromArgv = null;
     // DECODED AS A SHELL WORD, not captured raw. `--env stag"ing"` is `staging`
     // to the shell, and keeping the embedded quotes looked up an environment
     // that does not exist — so the config's top-level name stayed authoritative
     // although a different block ships (Codex #2036 r20). `valueOf` has removed
     // quotes and decoded escapes for every other shell selector since #1995 r5;
     // this reader was written in r17 with its own capture instead.
-    const fromFlag = valueOf('--env|-e', wranglerRegion);
+    const fromFlag = envFlagValue;
     const raw =
       fromArgv ?? fromFlag ?? envValueFromOptions(rawSeg) ?? shellEnvValue(vars);
     if (typeof raw !== 'string' || raw === '') return null;
@@ -4371,7 +4496,12 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // r20) — the same half-a-pair split the previous round's fix was about.
   const isChildCall =
     new RegExp(ARGV_DEPLOY_RE).test(seg) || new RegExp(SHELLSTR_DEPLOY_RE).test(seg);
-  if (!hasCwdState && !(isChildCall && cfg !== null)) {
+  // ...and an UNRESOLVED NAME is the same case as an unreadable config. Both
+  // mean the deploy names a target this scanner cannot identify, which is the
+  // inversion's precondition; scoping the exception to `--config` left an
+  // executable `spawnSync("wrangler", ["deploy", "--name", worker])` deferring
+  // like prose because it selected no config (Codex #2036 r21).
+  if (!hasCwdState && !(isChildCall && (cfg !== null || nameUnresolved))) {
     // Both directory selectors are candidates here, most specific first
     // (#1995 r9) — `cwdFlag` was one variable before they were split apart.
     const raw = (target ?? wrCwd ?? pkgDir ?? '').replace(/\/+$/, '');

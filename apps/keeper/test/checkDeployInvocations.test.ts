@@ -7616,9 +7616,15 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
 
-  it('the same config with NO environment selected stays out of scope', () => {
-    // The control for the one-directional rule: without an environment the
-    // top-level name is authoritative, and it names an unprotected Worker.
+  it('a CLOSED environment leaves the top-level name authoritative', () => {
+    // The control for the environment read: with no environment selected the
+    // top-level name answers, and it names an unprotected Worker.
+    //
+    // The command has to PROVE no environment is selected, which it does by
+    // building the child environment entirely in the source with no spread —
+    // the child then receives exactly those variables. A bare call cannot
+    // prove it, because an ambient CLOUDFLARE_ENV is inherited (#2036 r21),
+    // and this fixture asserted the weaker thing until that was found.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed(
       'configs/custom.jsonc',
@@ -7627,7 +7633,8 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(
       runWith(
         'w.mjs',
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+          '{env: {PATH: "/bin"}});\n',
       ).ok,
     ).toBe(true);
   });
@@ -7723,12 +7730,18 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   });
 
   it('but a REAL table header still stops the scan', () => {
-    // The control for the depth rule: an environment table's own `name` must
-    // not answer as if it were the top-level identity.
+    // The control for the depth rule: a `name` under a table must not answer as
+    // if it were the top-level identity.
+    //
+    // The table is `[vars.…]` rather than `[env.…]` on purpose. An environment
+    // table would make this config's environments unread, and since #2036 r21
+    // an ambient CLOUDFLARE_ENV counts as a possible selection — so the deploy
+    // would be reported for that reason and the fixture would pass without ever
+    // exercising the header rule it is named for.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed(
       'apps/agent/side.toml',
-      ['name = "vaipakam-www"', '[env.staging]', 'name = "vaipakam-agent"', ''].join('\n'),
+      ['name = "vaipakam-www"', '[vars.thing]', 'name = "vaipakam-agent"', ''].join('\n'),
     );
     expect(runWith('w.sh', 'cd apps/agent\nwrangler deploy --config side.toml\n').ok).toBe(
       true,
