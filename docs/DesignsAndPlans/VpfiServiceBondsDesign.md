@@ -105,6 +105,20 @@ instruction to anyone implementing or writing copy from the top of the file.
    `ClaimFacet`. Acceptance case: **flag → delist → rebond → outage**, asserting
    the new balance withdraws.
 
+   **And the FIRST observation must persist before the refusal reverts.** If an
+   operator becomes sanctioned after bonding and their `unbond` attempt is the
+   first call to read the authoritative flag, a plain revert rolls back the very
+   write that would have recorded `sanctionsConfirmedFlagged` — so nothing
+   persists. `refreshSanctionsFlag` is permissionless and **optional**, so nobody
+   is guaranteed to observe it either. If the oracle then goes unavailable, that
+   balance takes the never-confirmed fail-OPEN branch and withdraws, **despite
+   having already been seen flagged.**
+
+   So the flagged path is a **committed transition, not a revert**: the call
+   records the confirmation and parks the withdrawal — its own state change,
+   which survives — rather than reverting and losing the observation. Refusing by
+   reverting is correct only where the refusal needs to record nothing.
+
    The primitive already exists: **`LibVaipakam.assertNotSanctionedFailClosed`**
    (#998 S10 / #1006) reverts `SanctionsOracleUnavailable()` whenever the oracle
    is unset or its call reverts. So: **record the confirmed flag, and release a
