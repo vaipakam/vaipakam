@@ -52,20 +52,26 @@ Because the whole report has to fit in a link, a long one is trimmed to
 fit: the component trace is dropped first, and if it is still too long
 the error block goes too, leaving the always-carried fields above. Even
 then the issue's title still contains the first 60 characters of the
-error message, which is where it is put when the report is built. So
-the report GitHub receives can contain LESS of the error than "Copy
-details" shows you — but never nothing of it, and never more.
+error message, which is where it is put when the report is built. What
+you are shown reflects that trimming: "Show full report" and "Copy
+details" give you the report as it will actually be sent, so a trace
+that will not travel is not displayed as though it would.
 
 If you want to see it all first, do it before opening the link — not
 after, since by then it has been sent. The drawer's own summary is
 partial: it shows the first 300 characters of the error message and no
 component trace, while the report carries up to 1,200 characters of
-error text and up to 1,000 characters of trace. The drawer's "Copy
-details" button gives you the full text the report is built from, and
-copying is local — it sends nothing. It does depend on your browser
-allowing clipboard access: where that is blocked or unavailable the
-copy simply does not happen, and in that browser there is no way to see
-the full text without opening the report — which, as above, sends it.
+error text and up to 1,000 characters of trace. "Show full report" and
+"Copy details" both give you that report in full, and both are local —
+they send nothing. The same text is what a support ticket attaches if
+you tick the box to include it, so there is one thing to read and it
+covers every route out. Copying depends on your browser
+allowing clipboard access, and where that is blocked or unavailable the
+copy does not happen — but you can still read the report: "Show full
+report" displays exactly what would be sent, in the app, and a refused
+copy says so and opens that view for you. Reading it sends nothing, so
+you can always see the full text before deciding whether to open the
+report — which, as above, is what sends it.
 Any wallet address is shortened to `0x1234…abcd` first. We do NOT send
 your IP, user-agent, or browsing history.
 

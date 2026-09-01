@@ -25,7 +25,7 @@ import {
   SupportTicketError,
 } from '../data/support';
 import {
-  buildReportBody,
+  buildSentPreview,
   redactCap,
   type ReportContext,
 } from '../diagnostics/reportIssue';
@@ -107,10 +107,27 @@ export function SupportTicketCard({
       const { ticketId: id } = await submitSupportTicket({
         message: trimmed.slice(0, 2_000),
         email: replyEmail === '' ? null : replyEmail,
-        // The attach consent gates the ONLY non-user-typed content;
-        // buildReportBody is the same redacted block the GitHub
-        // report path uses (full wallet address never included).
-        diagnostics: attachSnapshot ? buildReportBody(reportCtx) : null,
+        // THE SAME TEXT THE DRAWER PREVIEWS (#2043 round 5 P2). This
+        // used to send `buildReportBody`, which carries no length
+        // trimming — and once the drawer's disclosure switched to the
+        // post-trimming payload, a person could read a preview with the
+        // component stack removed and then tick "attach the health
+        // details shown above" on a ticket that carried it anyway. The
+        // preview showing LESS than a channel sends is the disclosure
+        // defect this PR exists to remove, pointed the wrong way, and
+        // this change introduced it.
+        //
+        // One payload for all three uses now: what the preview shows,
+        // what "Copy details" copies, what the issue link carries, and
+        // what a ticket attaches. The cost is real and deliberate — on a
+        // report past `MAX_URL_LEN` the ticket now loses the component
+        // stack too, where before it kept it. A GitHub URL limit is not
+        // a reason to trim a ticket, so this trades some diagnostic
+        // detail on the largest crashes for a consent checkbox whose
+        // label is true. If support needs the untrimmed block back, the
+        // fix is to preview the ticket payload separately, not to send
+        // more than was shown.
+        diagnostics: attachSnapshot ? buildSentPreview(reportCtx) : null,
         // Same scrubber as the GitHub report path (Codex round-1 P2):
         // a deep-linked URL can carry a full wallet address in its
         // query, and `page` travels regardless of the diagnostics

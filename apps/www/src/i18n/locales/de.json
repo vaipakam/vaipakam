@@ -1141,19 +1141,13 @@
   },
   "lenderDiscountCard": {
     "borrowerTitle": "Liquides ERC-20 leihen? Bis zu {{maxDiscount}}% VPFI-Rückvergütung auf die Initiierungsgebühr verdienen",
-    "borrowerBody1": "VPFI im persönlichen Vault halten und die einmalige plattformweite VPFI-Zustimmung im Dashboard aktivieren. Das Protokoll zieht die volle {{loanInitiationFee}}%-Initiierungsgebühr im Voraus in VPFI ein und schreibt anschließend bei ordnungsgemäßer Kreditschließung (Rückzahlung / Preclose / Refinanzierung) eine zeitgewichtete Rückvergütung gut, basierend darauf, wie lange der Kreditnehmer VPFI über die Laufzeit gehalten hat. Bei Default oder Liquidation verfällt die Rückvergütung. VPFI benötigt? ",
     "lenderTitle": "Liquides ERC-20 verleihen? Bis zu {{maxDiscount}}% VPFI-Rabatt auf die Renditegebühr verdienen",
-    "lenderBody1": "VPFI im persönlichen Vault halten und die einmalige plattformweite VPFI-Zustimmung im Dashboard aktivieren. Bei der Abrechnung wird der {{treasuryFee}}%-Treasury-Abzug auf die verdienten Zinsen durch einen zeitgewichteten VPFI-Rabatt über die Laufzeit des Kredits reduziert — bis zu {{maxDiscount}}%, sodass der Kreditgeber mehr von den verdienten Zinsen behält. Es wird nichts im Voraus gezahlt; der Rabatt wird automatisch angewendet, wenn der Kredit ordnungsgemäß abgewickelt wird (Rückzahlung / Preclose / Refinanzierung). Bei Default oder Liquidation verfällt der Rabatt. VPFI benötigt? ",
     "buyVpfi": "VPFI kaufen",
     "routingNote": " (von einer bevorzugten Chain kaufen — das Routing wird gehandhabt).",
     "enableConsent": "Zustimmung im Dashboard aktivieren",
     "loanTitle": "Renditegebühren-Rabatt für Kreditgeber",
-    "effectiveSoFar": "Bisher effektiv (zeitgewichtet)",
     "currentlyEarning": "Derzeit verdient (gestempelter Tier)",
     "windowElapsed": "Verstrichenes Fenster",
-    "tiersDifferAlertPrefix": "Bei der Abrechnung wird der Treasury-Abzug auf die Rendite dieses Kredits durch den zeitgewichteten Durchschnitt ",
-    "tiersDifferAlertMid": " reduziert, nicht durch die aktuelle ",
-    "tiersDifferAlertSuffix": " Rate. Eine VPFI-Aufstockung kurz vor der Rückzahlung erfasst nicht den vollen aktuellen Tier-Rabatt — nur den Anteil, der proportional zur Haltedauer während des Kredits ist.",
     "duration0s": "0s",
     "durationDays": "{{days}}T",
     "durationDaysHours": "{{days}}T {{hours}}h",
@@ -1489,8 +1483,7 @@
     "loanDetailsCollateralRiskBorrower": "Das vom Kreditnehmer gesperrte Kollateral + der live Health Factor und LTV. Den HF über 1 halten — fällt er darunter, kann das Kollateral liquidiert werden. Liquides Kollateral wird über Oracle automatisch bepreist; illiquides Kollateral hat keine On-Chain-Bewertung und wird im Default-Fall vollständig an den Kreditgeber übertragen.",
     "loanDetailsParties": "Adressen von Kreditgeber und Kreditnehmer, die per-Nutzer-Vault-Proxies, die ihre Vermögenswerte halten, und die Positions-NFTs, die jede Seite bei Kreditinitiierung erhalten hat. Jedes NFT ist das Inhaberinstrument für den Anspruch dieser Seite — es zu verlieren bedeutet, den Anspruch zu verlieren.",
     "loanDetailsActionsLender": "Für den Kreditgeber auf diesem Kredit verfügbare Aktionen. Beanspruchen, sobald der Kredit abgewickelt ist (gibt Hauptbetrag + Zinsen zurück, abzüglich des {{treasuryFee}}% Treasury-Anteils). Vorzeitiger Ausstieg initiieren, um das Kreditgeber-NFT mitten im Kredit an einen Käufer zu verkaufen. Jeder (einschließlich des Kreditgebers) kann Liquidieren auslösen, wenn HF < 1 oder die Gnadenfrist abgelaufen ist. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
-    "loanDetailsActionsBorrower": "Für den Kreditnehmer auf diesem Kredit verfügbare Aktionen. Voll- oder Teilrückzahlung; Preclose direkt (ausstehenden Betrag jetzt zahlen) oder Offset (Kollateral via DEX verkaufen); Refinanzieren in einen neuen Kredit mit neuen Bedingungen. Beanspruchen gibt das Kollateral bei vollständiger Rückzahlung zurück oder eine etwaige ungenutzte VPFI-Rückerstattung. Deaktivierte Aktionen zeigen beim Hover einen Grund.",
-    "buyVpfiUnstake": "VPFI vom Vault zurück ins Wallet auf dieser Chain verschieben. Reduziert die Rabatt-Tier in Echtzeit — der zeitlich gewichtete Akkumulator stempelt jeden offenen Kredit sofort beim neuen (niedrigeren) Saldo neu, sodass eine Abhebung ab diesem Moment für die Gebührenrabatt-Mathematik wirksam ist."
+    "loanDetailsActionsBorrower": "Für den Kreditnehmer auf diesem Kredit verfügbare Aktionen. Voll- oder Teilrückzahlung; Preclose direkt (ausstehenden Betrag jetzt zahlen) oder Offset (Kollateral via DEX verkaufen); Refinanzieren in einen neuen Kredit mit neuen Bedingungen. Beanspruchen gibt das Kollateral bei vollständiger Rückzahlung zurück oder eine etwaige ungenutzte VPFI-Rückerstattung. Deaktivierte Aktionen zeigen beim Hover einen Grund."
   },
   "acceptReview": {
     "partialRepayLabel": "Teilrückzahlung",

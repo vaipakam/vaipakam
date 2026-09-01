@@ -19,6 +19,28 @@
  *
  * Framework-free by construction — no DOM, no viem, no React — so a
  * Cloudflare Worker and a browser bundle can both take it.
+ *
+ * WHAT IT STILL DOES NOT CATCH, stated here rather than discovered (#2027).
+ * Two residual exposures remain after the payload-anchored matcher below, and
+ * both are the SAME trade rather than two oversights: this module also
+ * promises a 32-byte transaction hash survives whole, and a hash is sixty-four
+ * hex characters containing many forty-character windows. Any rule that
+ * redacts a 40-character window inside a longer run therefore destroys every
+ * hash. So:
+ *
+ * - a hex run LONGER than forty is left alone, including a 41-run whose last
+ *   forty could be an account with one junk character in front;
+ * - an address deliberately SPLIT across a separator — two encoded halves
+ *   joined by a hyphen, say — is two short runs and is left alone. Joining
+ *   fragments across separators means deciding how far a separation may
+ *   stretch before reconstruction is speculation, and picking that line
+ *   silently inside a matcher is how the contiguity gap arrived in the first
+ *   place.
+ *
+ * Both are pinned in the suite as known limits, so they read as decisions
+ * rather than as coverage. Neither is reachable by an ordinary crash message;
+ * both need text an attacker composed, and an attacker composing the text
+ * already knows the address.
  */
 
 export function redactAddress(address: string | undefined): string {
@@ -26,12 +48,118 @@ export function redactAddress(address: string | undefined): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-// Exactly 20 bytes: the negative lookahead stops the pattern from
-// eating the first 40 hex chars of a 32-byte tx hash — support needs
-// those hashes intact, and a mangled prefix would neither redact nor
-// preserve anything useful (round 4). The prefix is case-insensitive:
-// a pasted 0X-prefixed address must redact too (round 5).
-const ADDRESS_RE = /0[xX][a-fA-F0-9]{40}(?![a-fA-F0-9])/g;
+/**
+ * An address is found by its FORTY DIGITS, not by its `0x` (#2027).
+ *
+ * The pattern here used to be `0[xX][a-fA-F0-9]{40}(?![a-fA-F0-9])` — the
+ * prefix and the digits had to be contiguous, so anything between them was an
+ * escape route, on every path. A space, an `&`, a second query parameter, a
+ * hyphen; and the degenerate case of no prefix at all, since forty bare hex
+ * digits are one fixed two-character edit from the account. Each of those
+ * reached a PUBLIC issue in full.
+ *
+ * #2026 fixed the case where this module MANUFACTURED the shape — the
+ * fail-closed branches deleted an escape run and left the hex beside it — and
+ * adjacency is the honest limit of that fix. It does nothing for a separation
+ * that was in the input already.
+ *
+ * So the match anchors on the payload. A MAXIMAL run of exactly forty hex
+ * characters is an address body; the `0x` is taken into the span when it
+ * happens to be right there, purely so the familiar `0x1234…5678` shape
+ * survives. Two properties follow from "maximal" that the old lookahead had
+ * to state and that a naive bare-hex rule would get wrong:
+ *
+ * - a 32-byte transaction hash is a 64-run, so it is not a 40-run and is left
+ *   whole — support needs those intact, and a mangled prefix would neither
+ *   redact nor preserve anything;
+ * - its LAST forty characters are inside that same run, so they are not a
+ *   maximal 40-run either. The tail case needs no separate rule.
+ *
+ * NO LOOKBEHIND, and that is a hard constraint rather than a preference.
+ * `(?<![a-fA-F0-9])` expresses this in one pattern and is a SyntaxError at
+ * PARSE time on Safari before 16.4 — not a failed match, a module that will
+ * not load, in a file whose standing rule is that a diagnostics helper must
+ * never become a crash source. A scan costs a few lines and cannot do that.
+ *
+ * The issue that filed this proposed a second rule as well: redact a 40-run
+ * sitting within a small window of a `0x`, with only non-alphanumerics
+ * between. That rule is unnecessary — the forty digits are redacted whatever
+ * precedes them — and it was the part carrying the judgement call about how
+ * far a separation may stretch before joining the pieces is speculation. The
+ * question does not arise.
+ *
+ * THE COST, stated because it is real: a bare 40-hex run that is not an
+ * address is redacted too, and a full git SHA-1 is exactly forty hex
+ * characters. One appearing in a component stack or a URL inside an error
+ * message will come through shortened. That is the trade this module makes
+ * everywhere else — a redacted SHA can be asked for again, a published
+ * account cannot be taken back. The app's own build stamp is unaffected: it
+ * is `git rev-parse --short`, seven to nine characters.
+ */
+const HEX_RUN_RE = /[a-fA-F0-9]+/g;
+const ADDRESS_HEX_LEN = 40;
+
+/**
+ * Every span this module will shorten, in order, without overlaps.
+ *
+ * `matchAll` over `[a-fA-F0-9]+` yields MAXIMAL runs, which is the whole
+ * mechanism: run length alone separates an address from a hash, so neither a
+ * lookahead nor a lookbehind is needed to express it. Linear — each character
+ * belongs to at most one run — and free of the backtracking hazard the
+ * escape-run comment above documents, since the pattern has no optional
+ * leading quantifier to unwind.
+ */
+function* addressSpans(text: string): Generator<{ index: number; text: string }> {
+  // End of the previously yielded span. THE PREFIX IS WHAT CAN COLLIDE
+  // (#2043 round 2 P2), and it was a leak rather than a tidiness problem.
+  //
+  // The forty-digit bodies can never overlap — they are maximal hex runs and
+  // are disjoint by construction. The absorbed `0x` can, because its `0` IS a
+  // hex character and can therefore be the last character of the run before
+  // it. `<39 hex>0x<40 hex>` is the shape: the first maximal run is those 39
+  // digits PLUS that `0`, exactly forty long, so it is emitted as an address;
+  // the second then tries to absorb the same `0` and starts one character
+  // inside the span already taken.
+  //
+  // The consumer's overlap guard then dropped the whole second match. Observed
+  // before the fix: `…aaa0` + `x` + the complete second address — not merely
+  // recoverable, INTACT, on text that becomes a public issue.
+  //
+  // Absorbing the prefix is cosmetic; redacting the digits is the promise. So
+  // where the two conflict the prefix gives way, and the address is still
+  // shortened — one character further in.
+  let previousEnd = 0;
+  for (const m of text.matchAll(HEX_RUN_RE)) {
+    if (m[0].length !== ADDRESS_HEX_LEN) continue;
+    const digitsAt = m.index;
+    // Absorb an immediately preceding `0x` / `0X` — case-insensitive, because
+    // a pasted `0X`-prefixed address must redact to the same shape (round 5).
+    // `x` is not a hex character, so it always ends the previous run and can
+    // never have been swallowed by it.
+    const prefixed =
+      digitsAt >= 2 &&
+      (text[digitsAt - 1] === 'x' || text[digitsAt - 1] === 'X') &&
+      text[digitsAt - 2] === '0';
+    const index =
+      prefixed && digitsAt - 2 >= previousEnd ? digitsAt - 2 : digitsAt;
+    const end = digitsAt + ADDRESS_HEX_LEN;
+    yield { index, text: text.slice(index, end) };
+    previousEnd = end;
+  }
+}
+
+/** Shorten every address span in `text` — the single replacement helper each
+ *  redaction path now calls. */
+function shortenAddresses(text: string): string {
+  let out = '';
+  let cursor = 0;
+  for (const span of addressSpans(text)) {
+    if (span.index < cursor) continue;
+    out += text.slice(cursor, span.index) + shortenMatch(span.text);
+    cursor = span.index + span.text.length;
+  }
+  return out + text.slice(cursor);
+}
 
 /** Scrub any full address ANYWHERE in report text — crash messages,
  *  component stacks, and deep-link paths routinely embed the
@@ -316,12 +444,12 @@ export function redactText(text: string): string {
     // a hash to over-redaction is the right side of that trade.
     // Truncate first, shorten second — the ordering IS the fix (r12 P1).
     const safe = truncateAtSafeBoundary(text.slice(0, MAX_MAPPED_INPUT));
-    return `${dropEscapeRunsWithHex(safe).replace(ADDRESS_RE, shortenMatch)}…`;
+    return `${shortenAddresses(dropEscapeRunsWithHex(safe))}…`;
   }
 
   // No escapes means the text IS its own fixpoint, so the cheap pass is the
   // whole job — and this is the overwhelmingly common case.
-  if (!text.includes('%')) return text.replace(ADDRESS_RE, shortenMatch);
+  if (!text.includes('%')) return shortenAddresses(text);
 
   // NO EAGER LITERAL PASS (Codex r3 P2). Shortening literals before the
   // fixpoint corrupts a hash whose head is literal and whose tail is escaped:
@@ -335,20 +463,19 @@ export function redactText(text: string): string {
     // demonstrate that no address is hidden in them — and on a report that
     // opens a PUBLIC issue, "probably fine" is not the standard. Literals are
     // handled here explicitly, since the pre-pass above is gone.
-    return dropEscapeRunsWithHex(text).replace(ADDRESS_RE, shortenMatch);
+    return shortenAddresses(dropEscapeRunsWithHex(text));
   }
 
   // Splice onto the ORIGINAL spans so everything the redaction does not need
   // to touch keeps its exact spelling. `matchAll` yields disjoint matches over
   // one string, so no overlap arithmetic is needed.
-  ADDRESS_RE.lastIndex = 0;
   let out = '';
   let cursor = 0;
-  for (const m of final.text.matchAll(ADDRESS_RE)) {
-    const from = final.map[m.index];
-    const to = final.map[m.index + m[0].length];
-    if (from === undefined || to === undefined || to <= from) continue;
-    out += text.slice(cursor, from) + shortenMatch(m[0]);
+  for (const span of addressSpans(final.text)) {
+    const from = final.map[span.index];
+    const to = final.map[span.index + span.text.length];
+    if (from === undefined || to === undefined || to <= from || from < cursor) continue;
+    out += text.slice(cursor, from) + shortenMatch(span.text);
     cursor = to;
   }
   return out + text.slice(cursor);

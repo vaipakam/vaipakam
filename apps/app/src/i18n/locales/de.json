@@ -364,7 +364,10 @@
       "report": "Problem auf GitHub melden",
       "reportHint": "Öffnet ein vorausgefülltes GitHub-Issue mit den obigen Details und dem zuletzt aufgezeichneten Fehler. Ihre vollständige Wallet-Adresse ist nie enthalten.",
       "copyDetails": "Details kopieren",
-      "copied": "Kopiert."
+      "copied": "Kopiert.",
+      "copyFailed": "Dieser Browser ließ die App die Zwischenablage nicht verwenden. Der vollständige Bericht steht unten — markieren Sie ihn, um ihn von Hand zu kopieren.",
+      "showReport": "Vollständigen Bericht anzeigen",
+      "hideReport": "Vollständigen Bericht ausblenden"
     },
     "support": {
       "title": "Support kontaktieren",
@@ -1966,6 +1969,7 @@
       "mintedNft": "Ein Test-Vermietungs-NFT wurde in Ihre Wallet geprägt. Seine Token-ID — Sie brauchen sie, um die Vermietung zu listen:",
       "copyTokenId": "Token-ID kopieren",
       "copiedTokenId": "Kopiert.",
+      "copyTokenIdFailed": "Kopieren nicht möglich — markieren Sie stattdessen die ID oben.",
       "liquid": {
         "title": "Liquider Test-Token (tLIQ)",
         "blurb": "Von einem Test-Oracle bepreist und verhält sich daher wie ein liquides Asset — Health Factor, Liquidation und Refinanzierung funktionieren damit. Kombinieren Sie es mit mWETH (eines als Kredit, eines als Sicherheit), wenn ein Ablauf zwei verschiedene liquide Tokens braucht.",

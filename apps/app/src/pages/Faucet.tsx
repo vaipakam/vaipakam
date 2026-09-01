@@ -11,7 +11,7 @@
  * `mint(to, amount)` on the two ERC-20s, `mint(to, tokenId)` on the
  * ERC-4907 NFT with a client-random 256-bit id (collision-safe).
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { assertSettled } from '../contracts/ownReceipt';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
@@ -104,7 +104,32 @@ export function Faucet() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<MintOutcome | null>(null);
-  const [copied, setCopied] = useState(false);
+  // ONE state, not two booleans (#2043 round 1 P2). The first version added
+  // `copyFailed` beside `copied` and never cleared it, so a retry that
+  // succeeded rendered "Copied." AND the failure line together, and the next
+  // mint inherited the stale failure because the mint paths reset only
+  // `copied`. Two flags for one outcome can disagree; a single state cannot.
+  // This is the same three-state shape the Diagnostics drawer got in the same
+  // change — applied there and not here, which is the miss.
+  // TIED TO THE TOKEN IT DESCRIBES (#2043 round 2 P2). A bare state was still
+  // wrong across mints: a clipboard write for token A can settle AFTER the
+  // user has minted B, and its callback would relabel B's card — at worst
+  // telling them B's id was copied while the clipboard holds A's. The mint
+  // reset cannot help, because the stale settlement happens after it. Carrying
+  // the id makes a late result identify itself, so the card can decline one
+  // that is not about the token on screen.
+  const [copyResult, setCopyResult] = useState<{
+    tokenId: string;
+    attempt: number;
+    state: 'copied' | 'failed';
+  } | null>(null);
+  // ATTEMPT NUMBER as well as token id (#2043 round 3 P2). The id alone
+  // cannot order two writes for the SAME token: a double-click or a retry
+  // starts a second write, and if the newer one succeeds while the older
+  // rejects afterwards, the older callback overwrote a true "Copied." with
+  // "failed" — the clipboard holding the id while the page said it did not.
+  // A monotonic counter gives the callbacks an order the id cannot.
+  const copyAttempt = useRef(0);
   const [watched, setWatched] = useState(false);
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
@@ -187,7 +212,7 @@ export function Faucet() {
     setBusy(token);
     setError(null);
     setDone(null);
-    setCopied(false);
+    setCopyResult(null);
     setWatched(false);
     // Resolve the REAL on-chain symbol; fall back to the hint if the read
     // fails (#1095 — never label the minted/watched token as something the
@@ -231,7 +256,7 @@ export function Faucet() {
     setBusy(nft);
     setError(null);
     setDone(null);
-    setCopied(false);
+    setCopyResult(null);
     setWatched(false);
     try {
       const tokenId = randomTokenId();
@@ -426,22 +451,83 @@ export function Faucet() {
                 ) : null}
                 {done.tokenId ? (
                   <>
-                    <code
+                    {/* A READ-ONLY INPUT, not a `<code>` (#2043 round 3 P2).
+                        The failure line below tells the reader to select the
+                        id above — and a `<code>` is not in the tab order, so
+                        a keyboard-only user could not reach the very thing
+                        they had just been pointed at. Same defect the
+                        Diagnostics drawer's `<pre>` had one round earlier,
+                        in the sibling file, unfixed until now. `readOnly`
+                        rather than `disabled`: a disabled control is skipped
+                        by the tab order too. */}
+                    <input
                       className="mono"
-                      style={{ wordBreak: 'break-all', display: 'block', margin: '4px 0' }}
-                    >
-                      {done.tokenId}
-                    </code>
+                      readOnly
+                      value={done.tokenId}
+                      aria-label={copy.faucet.copyTokenId}
+                      style={{
+                        width: '100%',
+                        display: 'block',
+                        margin: '4px 0',
+                      }}
+                    />
                     <button
                       type="button"
                       className="btn btn-secondary"
+                      // #2023, second site — this claimed success
+                      // UNCONDITIONALLY. `writeText` rejects in an insecure
+                      // context, a hardened browser, or on a denied
+                      // permission, and the fire-and-forget `void` meant the
+                      // label flipped to "Copied" regardless. That is worse
+                      // than the drawer's silent no-op it was found beside:
+                      // a user told the token id is on their clipboard stops
+                      // looking at the `<code>` block above, and pastes
+                      // whatever was there before.
                       onClick={() => {
-                        void navigator.clipboard.writeText(done.tokenId!);
-                        setCopied(true);
+                        // GUARDED, not just caught (round 1 P2, first
+                        // finding). In an insecure context — or a browser
+                        // that disables the API — `navigator.clipboard` is
+                        // undefined, so reading `.writeText` off it throws
+                        // SYNCHRONOUSLY, before any `.catch()` is attached.
+                        // The promise chain alone therefore stayed silent in
+                        // one of the exact environments this fix exists for.
+                        // (The drawer's equivalent is already safe: its call
+                        // sits inside a try/catch, which a synchronous throw
+                        // does reach.)
+                        const forToken = done.tokenId!;
+                        const attempt = (copyAttempt.current += 1);
+                        // Only the LATEST attempt may report. A settlement
+                        // from a superseded one is discarded rather than
+                        // allowed to contradict it.
+                        const report = (state: 'copied' | 'failed') => {
+                          if (attempt !== copyAttempt.current) return;
+                          setCopyResult({ tokenId: forToken, attempt, state });
+                        };
+                        setCopyResult(null);
+                        try {
+                          void navigator.clipboard
+                            .writeText(forToken)
+                            .then(() => report('copied'))
+                            .catch(() => report('failed'));
+                        } catch {
+                          report('failed');
+                        }
                       }}
                     >
-                      {copied ? copy.faucet.copiedTokenId : copy.faucet.copyTokenId}
+                      {copyResult?.tokenId === done.tokenId &&
+                      copyResult.state === 'copied'
+                        ? copy.faucet.copiedTokenId
+                        : copy.faucet.copyTokenId}
                     </button>{' '}
+                    {copyResult?.tokenId === done.tokenId &&
+                    copyResult.state === 'failed' ? (
+                      // The id is already rendered in the `<code>` above, so
+                      // saying the copy failed is enough — it points at text
+                      // that is on screen rather than at a dead end.
+                      <span className="muted" role="status" style={{ fontSize: 13 }}>
+                        {copy.faucet.copyTokenIdFailed}
+                      </span>
+                    ) : null}
                   </>
                 ) : null}
                 <a

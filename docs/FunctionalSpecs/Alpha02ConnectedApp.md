@@ -929,6 +929,20 @@ Thin-market honesty rules apply.
   cookies and any wallet session together. Naming one of those as the origin
   is a claim about the user's wallet the app is in no position to make, and
   is plainly false for someone who never connected one.
+- **Anything a support report will disclose can be read before it is sent.**
+  The report opens as a pre-filled issue on a public tracker, and the details
+  travel with the link rather than with the decision to file, so they leave
+  the device as soon as that step is taken. The intent is that reviewing the
+  contents never requires taking it: the full report is readable in the app,
+  and the shorter summary alongside it is a convenience, not the only view.
+  A copy that the browser refuses must say so — and must leave the reader
+  able to read the report anyway, since a failure notice that ends the
+  attempt returns them to the disclosing action as the only way to look.
+- **A control must not report a success it has not verified.** Copying to the
+  clipboard can be refused, so a button that confirms a copy has to wait for
+  the result before confirming. Claiming a success that did not happen is
+  worse than reporting nothing, because it stops the person doing the thing
+  that would have worked — reading the value still displayed beside it.
 - Erasing does not reload the page, so the confirmation of what happened
   survives long enough to be read.
 - **If any part of the browser's storage could not be read, the result is

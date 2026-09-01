@@ -1141,19 +1141,13 @@
   },
   "lenderDiscountCard": {
     "borrowerTitle": "¿Pidiendo prestado un ERC-20 líquido? Gana hasta un {{maxDiscount}}% de reembolso en VPFI sobre la comisión de iniciación",
-    "borrowerBody1": "Mantén VPFI en el Vaipakam Vault personal y habilita el consentimiento único de VPFI a nivel de plataforma en el Dashboard. El protocolo retira por adelantado la comisión total de iniciación del {{loanInitiationFee}}% en VPFI y, posteriormente, acredita un reembolso ponderado por tiempo al cierre correcto del préstamo (repago / preclose / refinanciación) según cuánto tiempo el prestatario mantuvo VPFI durante el préstamo. El default o la liquidación hacen perder el reembolso. ¿Necesitas VPFI? ",
     "lenderTitle": "¿Prestando un ERC-20 líquido? Gana hasta un {{maxDiscount}}% de descuento en VPFI sobre la comisión de rendimiento",
-    "lenderBody1": "Mantén VPFI en el Vaipakam Vault personal y habilita el consentimiento único de VPFI a nivel de plataforma en el Dashboard. En la liquidación, la deducción de tesorería del {{treasuryFee}}% sobre el interés ganado se reduce mediante un descuento de VPFI ponderado por tiempo durante toda la vida del préstamo — hasta un {{maxDiscount}}%, de modo que el prestamista conserva una mayor parte del interés ganado. No se paga nada por adelantado; el descuento se aplica automáticamente cuando el préstamo se liquida correctamente (repago / preclose / refinanciación). El default o la liquidación hacen perder el descuento. ¿Necesitas VPFI? ",
     "buyVpfi": "VPFI",
     "routingNote": " (comprar desde una cadena preferida — el enrutamiento se gestiona automáticamente).",
     "enableConsent": "Habilitar consentimiento en el Dashboard",
     "loanTitle": "Descuento de comisión de rendimiento del prestamista",
-    "effectiveSoFar": "Efectivo hasta ahora (ponderado por tiempo)",
     "currentlyEarning": "Ganando actualmente (Tier estampado)",
     "windowElapsed": "Ventana transcurrida",
-    "tiersDifferAlertPrefix": "En la liquidación, la deducción de tesorería sobre el rendimiento de este préstamo se reduce por la media ponderada por tiempo ",
-    "tiersDifferAlertMid": ", no por la tasa actual ",
-    "tiersDifferAlertSuffix": ". Reponer VPFI justo antes del repago no capturará el descuento total del Tier actual — solo la parte proporcional al tiempo durante el cual se mantuvo durante el préstamo.",
     "duration0s": "0s",
     "durationDays": "{{days}}d",
     "durationDaysHours": "{{days}}d {{hours}}h",
@@ -1489,8 +1483,7 @@
     "loanDetailsCollateralRiskBorrower": "El colateral que el prestatario ha bloqueado + el Health Factor y LTV en vivo. Mantén el HF por encima de 1 — si cae por debajo, el colateral puede liquidarse. El colateral líquido se valora automáticamente vía oráculo; el colateral ilíquido no tiene valoración on-chain y se transfiere al prestamista en su totalidad en caso de default.",
     "loanDetailsParties": "Direcciones del prestamista y del prestatario, los proxies de vault por usuario que custodian sus activos y los NFTs de posición que cada lado recibió al inicio del préstamo. Cada NFT es el instrumento al portador de la reclamación de ese lado — perderlo es perder la reclamación.",
     "loanDetailsActionsLender": "Acciones disponibles para el prestamista en este préstamo. Reclamar una vez liquidado el préstamo (devuelve principal + intereses, menos el {{treasuryFee}}% de comisión de tesorería). Iniciar Retirada Anticipada para vender el NFT del prestamista a un comprador a mitad del préstamo. Cualquiera (incluido el prestamista) puede activar Liquidar cuando HF < 1 o el período de gracia haya expirado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
-    "loanDetailsActionsBorrower": "Acciones disponibles para el prestatario en este préstamo. Reembolsar total o parcialmente; Preclose directo (pagar pendiente ahora) o compensación (vender colateral vía DEX); Refinanciar a un nuevo préstamo con nuevos términos. Reclamar devuelve el colateral en el reembolso completo, o cualquier reembolso de VPFI no usado. Las acciones deshabilitadas muestran la razón al pasar el ratón.",
-    "buyVpfiUnstake": "Mueve VPFI del vault de vuelta a la wallet en esta cadena. Reduce el tier de descuento en tiempo real — el acumulador ponderado en el tiempo re-estampa cada préstamo abierto al nuevo saldo (más bajo) inmediatamente, de modo que un unstake es efectivo para la matemática de descuento desde ese momento."
+    "loanDetailsActionsBorrower": "Acciones disponibles para el prestatario en este préstamo. Reembolsar total o parcialmente; Preclose directo (pagar pendiente ahora) o compensación (vender colateral vía DEX); Refinanciar a un nuevo préstamo con nuevos términos. Reclamar devuelve el colateral en el reembolso completo, o cualquier reembolso de VPFI no usado. Las acciones deshabilitadas muestran la razón al pasar el ratón."
   },
   "acceptReview": {
     "partialRepayLabel": "Reembolso parcial",

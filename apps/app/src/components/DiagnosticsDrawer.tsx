@@ -47,7 +47,7 @@ import { readLastError } from '../diagnostics/lastError';
 import { useNowSec } from '../hooks/useNowSec';
 import {
   buildIssueUrl,
-  buildReportBody,
+  buildSentPreview,
   redactAddress,
   redactCap,
 } from '../diagnostics/reportIssue';
@@ -94,7 +94,12 @@ export function DiagnosticsDrawer() {
 }
 
 function DrawerPanel({ onClose }: { onClose: () => void }) {
-  const [copied, setCopied] = useState(false);
+  // Three states, not a boolean: "did not copy" and "copied" are not the only
+  // outcomes, and the old boolean could only ever say nothing about the third.
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
+    'idle',
+  );
+  const [showReport, setShowReport] = useState(false);
   const { pathname, search } = useLocation();
   const { address, isConnected, readChain, onSupportedChain } =
     useActiveChain();
@@ -261,13 +266,79 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   );
   const issueUrl = useMemo(() => buildIssueUrl(reportCtx), [reportCtx]);
 
+  // #2023 — the report body is rendered locally, and the clipboard is a
+  // convenience on top of it rather than the only way to see it.
+  //
+  // WHY THIS IS NOT A MISSING TOAST. Opening the report is a `<a href>` to a
+  // pre-filled GitHub issue, so the diagnostics — last error, component
+  // trace, route, network, redacted wallet — reach GitHub the MOMENT the form
+  // opens, whether or not an issue is ever filed. The drawer's own summary is
+  // partial (it shows 300 characters of the error and no trace at all, where
+  // the report carries up to 1200 and 1000). So "copy it, read it, then
+  // decide whether GitHub may have it" was the only ordering that let someone
+  // check before disclosing — and `navigator.clipboard.writeText` REJECTS in
+  // an insecure context, a hardened browser, or on a denied permission. The
+  // old catch swallowed that: no clipboard content, no error, not even a
+  // change of button label. The only remaining way to inspect the payload was
+  // the action that discloses it.
+  //
+  // Its comment said so inadvertently — "the GitHub link still carries the
+  // details" is true, and that link is precisely what the user was trying to
+  // evaluate before taking it.
+  // WHAT IS ACTUALLY SENT, not the untrimmed body (#2043 round 3 P2).
+  // `buildIssueUrl` drops the component stack, then the whole error block,
+  // whenever the encoded URL crosses its length ceiling — so on the largest
+  // crashes the report GitHub receives is SHORTER than `buildReportBody`.
+  // Previewing the untrimmed text showed content that would never travel and
+  // made the Privacy Policy's "displays exactly what would be sent" false for
+  // exactly the reports where it matters most. Both this and the link now
+  // read the same trimming decision.
+  const reportBody = useMemo(() => buildSentPreview(reportCtx), [reportCtx]);
+  // The pending "copied" reset. Held so a later attempt can cancel it
+  // (#2043 round 3 P2): the old timer fired unconditionally, so a copy
+  // followed by a second attempt inside two seconds had the FIRST timer reset
+  // the SECOND attempt's state — a failure message that vanished almost
+  // immediately, or a confirmation cut to a fraction of its intended life.
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  // AND an attempt generation (#2043 round 4 P2). Cancelling the reset timer
+  // orders the TIMERS and does nothing about the promises: a double-click or
+  // a retry leaves two clipboard writes in flight, and whichever settles last
+  // wins regardless of which was started last. So a newer success could be
+  // replaced by an older rejection — reporting failure and opening the
+  // fallback over a clipboard that genuinely holds the report — or an older
+  // success could hide a newer failure.
+  //
+  // The faucet got exactly this fix one round earlier and this call site did
+  // not, which is the same carry-over miss for the sixth time in this PR. The
+  // rule these two now share: a settlement may only report if it is still the
+  // latest attempt.
+  const copyAttempt = useRef(0);
+  useEffect(
+    () => () => {
+      if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+    },
+    [],
+  );
   const copyDetails = async () => {
+    if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+    const attempt = (copyAttempt.current += 1);
+    const isCurrent = () => attempt === copyAttempt.current;
     try {
-      await navigator.clipboard.writeText(buildReportBody(reportCtx));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2_000);
+      await navigator.clipboard.writeText(reportBody);
+      if (!isCurrent()) return;
+      setCopyState('copied');
+      copyResetTimer.current = setTimeout(() => setCopyState('idle'), 2_000);
     } catch {
-      /* clipboard blocked — the GitHub link still carries the details */
+      if (!isCurrent()) return;
+      // NOT SILENT, and not a dead end either: the failure is stated AND the
+      // disclosure is opened, so the text the clipboard refused to take is
+      // on screen and selectable. Telling someone it failed while leaving
+      // them no way to read the report would fix the honesty and not the
+      // problem.
+      setCopyState('failed');
+      setShowReport(true);
     }
   };
 
@@ -358,9 +429,61 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
             {copy.diagnostics.report}
           </a>
           <button type="button" className="btn btn-secondary" onClick={copyDetails}>
-            {copied ? copy.diagnostics.copied : copy.diagnostics.copyDetails}
+            {copyState === 'copied'
+              ? copy.diagnostics.copied
+              : copy.diagnostics.copyDetails}
           </button>
         </div>
+        {copyState === 'failed' ? (
+          <p className="muted" style={{ fontSize: 13 }} role="status">
+            {copy.diagnostics.copyFailed}
+          </p>
+        ) : null}
+        {/* The preview, and the reason the whole change exists: this is what
+            travels to GitHub, readable BEFORE the link above is taken. Plain
+            markup rather than a `<textarea>` — it is text to read, not to
+            edit, and a read-only textarea sized to a 2 kB report either
+            scrolls in a small box or dominates the drawer. */}
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm"
+          aria-expanded={showReport}
+          aria-controls="diag-report-body"
+          onClick={() => setShowReport((open) => !open)}
+        >
+          {showReport
+            ? copy.diagnostics.hideReport
+            : copy.diagnostics.showReport}
+        </button>
+        {showReport ? (
+          // A READ-ONLY TEXTAREA, not a `<pre>` (#2043 round 2 P2). The
+          // failure message tells the reader to select the report and copy it
+          // by hand, and a `<pre>` is not in the tab order — so a
+          // keyboard-only user tabbed straight past the thing they had just
+          // been told to select, and the only route left was the action that
+          // discloses the report to GitHub. That is the exact dead end this
+          // whole change exists to remove, reintroduced for the people least
+          // able to work around it.
+          //
+          // A textarea is focusable, selectable with Ctrl/Cmd-A once focused,
+          // and announces itself. `readOnly` rather than `disabled`: a
+          // disabled control is skipped by the tab order too, which would
+          // reproduce the defect with different markup.
+          <textarea
+            id="diag-report-body"
+            className="mono"
+            readOnly
+            value={reportBody}
+            aria-label={copy.diagnostics.showReport}
+            rows={12}
+            style={{
+              width: '100%',
+              fontSize: 12,
+              resize: 'vertical',
+              whiteSpace: 'pre',
+            }}
+          />
+        ) : null}
         <p className="muted" style={{ fontSize: 13 }}>
           {copy.diagnostics.reportHint}
         </p>

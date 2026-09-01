@@ -1141,19 +1141,13 @@
   },
   "lenderDiscountCard": {
     "borrowerTitle": "借入流动性 ERC-20？在发起费上获得最高 {{maxDiscount}}% 的 VPFI 返还",
-    "borrowerBody1": "在个人 Vault 中持有 VPFI，并在 Dashboard 上启用一次性平台级 VPFI 同意。协议会预先以 VPFI 收取完整的 {{loanInitiationFee}}% 发起费，然后在贷款正常关闭时（还款 / preclose / refinance）根据借款方在贷款期间持有 VPFI 的时长，按时间加权返还。违约或清算会使返还失效。需要 VPFI？ ",
     "lenderTitle": "出借流动性 ERC-20？在收益费上获得最高 {{maxDiscount}}% 的 VPFI 折扣",
-    "lenderBody1": "在个人 Vault 中持有 VPFI，并在 Dashboard 上启用一次性平台级 VPFI 同意。结算时，对已赚利息收取的 {{treasuryFee}}% treasury 分成会按贷款生命周期内的时间加权 VPFI 折扣降低 — 最高 {{maxDiscount}}%，因此出借方保留更多已赚利息。无需预先支付；当贷款正常结算时（还款 / preclose / refinance），折扣会自动应用。违约或清算会使折扣失效。需要 VPFI？ ",
     "buyVpfi": "购买VPFI",
     "routingNote": "（从首选链购买 — 路由由系统处理）。",
     "enableConsent": "在Dashboard上启用同意",
     "loanTitle": "出借方收益费折扣",
-    "effectiveSoFar": "迄今为止的有效（时间加权）",
     "currentlyEarning": "当前获得（已标记Tier）",
     "windowElapsed": "已过时间窗口",
-    "tiersDifferAlertPrefix": "结算时，对此贷款收益的金库提成会按时间加权平均 ",
-    "tiersDifferAlertMid": " 减少，而非按当前 ",
-    "tiersDifferAlertSuffix": " 比率。在还款前最后补充VPFI不会获得当前Tier的全部折扣 — 仅获得贷款期间持有时间所占比例的部分。",
     "duration0s": "0秒",
     "durationDays": "{{days}}天",
     "durationDaysHours": "{{days}}天 {{hours}}小时",
@@ -1489,8 +1483,7 @@
     "loanDetailsCollateralRiskBorrower": "借款方已锁定的抵押品 + 实时 Health Factor 与 LTV。请保持 HF 高于 1 — 若跌破，则抵押品可能被清算。流动性抵押品通过预言机自动定价；非流动性抵押品无链上估值，违约时全额转移给出借方。",
     "loanDetailsParties": "出借方与借款方地址、保管其资产的逐用户保管代理，以及双方在贷款开启时收到的仓位 NFT。每个 NFT 是该方债权的不记名凭证 — 丢失即丧失债权。",
     "loanDetailsActionsLender": "本贷款上出借方可用的操作。贷款结清后领取（归还本金 + 利息，扣除 {{treasuryFee}}% 国库抽成）。在贷款中途发起提前退出，将出借方 NFT 出售给买方。当 HF < 1 或宽限期到期时，任何人（包括出借方）均可触发清算。被禁用的操作在悬停时显示原因。",
-    "loanDetailsActionsBorrower": "本贷款上借款方可用的操作。全额或部分还款；Preclose 直接（立即偿付未偿余额）或抵销（通过 DEX 出售抵押品）；以新条件再融资为新贷款。全额偿还时领取归还抵押品，或归还任何未使用的 VPFI 返还额。被禁用的操作在悬停时显示原因。",
-    "buyVpfiUnstake": "在本链上将 VPFI 从保管转回钱包。即时降低折扣 Tier — 时间加权累加器立即按新（更低）余额对每笔开放贷款重新打戳，因此提取自此刻起对手续费折扣计算即生效。"
+    "loanDetailsActionsBorrower": "本贷款上借款方可用的操作。全额或部分还款；Preclose 直接（立即偿付未偿余额）或抵销（通过 DEX 出售抵押品）；以新条件再融资为新贷款。全额偿还时领取归还抵押品，或归还任何未使用的 VPFI 返还额。被禁用的操作在悬停时显示原因。"
   },
   "acceptReview": {
     "partialRepayLabel": "部分还款",
