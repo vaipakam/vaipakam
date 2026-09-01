@@ -59,6 +59,19 @@ instruction to anyone implementing or writing copy from the top of the file.
    proven — which depends on the artefacts' own validity window rather than on
    any observation commitment, and must be defined with the predicate.
 
+   **Measure the horizon in ACTIVE BLOCKS, not wall-clock.** With a timestamp
+   horizon, a chain halt lasting beyond commitment-plus-adjudication leaves the
+   **first recovery block already considering the withdrawal unlocked**, while no
+   proof transaction could have been included during the halt — so the operator
+   orders `unbond` ahead of the equivocation proof and escapes a slash that was
+   fully reserved. The kill-switch suspension rule does not cover this: it
+   protects the operator's *performance*, not the *prover's* submission.
+
+   A post-recovery grace window during which proofs may land before any pending
+   withdrawal completes is the alternative. Blocks are cleaner — they make the
+   horizon mean "how much chain has passed", which is what it was always trying
+   to say.
+
    The qualifier is not a hedge and must not be dropped: the acceptance criteria
    below require `unbond` to REVERT for a sanctioned operator, so for a flagged
    wallet the principal stays frozen until delisting.
