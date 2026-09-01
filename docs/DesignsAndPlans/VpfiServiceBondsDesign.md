@@ -67,10 +67,22 @@ instruction to anyone implementing or writing copy from the top of the file.
    fully reserved. The kill-switch suspension rule does not cover this: it
    protects the operator's *performance*, not the *prover's* submission.
 
-   A post-recovery grace window during which proofs may land before any pending
-   withdrawal completes is the alternative. Blocks are cleaner — they make the
-   horizon mean "how much chain has passed", which is what it was always trying
-   to say.
+   **Blocks alone are not enough either: a PAUSE stops the prover while the
+   chain keeps producing.** If a guardian or global pause makes the proof
+   selector unavailable, block-counting still expires `unlockAt`, and the
+   operator unbonds immediately after unpause — the same escape, arrived at
+   without any halt. Measuring in blocks fixes the outage case and not this one.
+
+   So one of: **proof submission stays pause-EXEMPT** (cleanest — the prover is a
+   third party reporting on an offence, not an operator performing a service, so
+   there is no containment reason to stop them), **protocol-paused blocks are
+   excluded from the horizon**, or a **post-unpause grace window** during which
+   proofs may land before any pending withdrawal completes.
+
+   The first is preferred and the general rule behind it is worth stating: the
+   levers that stop the OPERATOR must never also stop the PROVER, because every
+   time they have been conflated in this document the result has been a slash
+   escape.
 
    The qualifier is not a hedge and must not be dropped: the acceptance criteria
    below require `unbond` to REVERT for a sanctioned operator, so for a flagged
@@ -640,12 +652,20 @@ whole rule:
   are pending, so the malicious action they were meant to shield is refused
   rather than cheapened.
 
+  **Only a COMPLETED DEBIT reduces a later action's base. A pending reservation
+  does not.** An earlier revision said "an action taken after an earlier
+  reservation sees a smaller total", which reproduces 10, 9, 8.1 … for
+  sequential clean actions against an unchanged 100-token balance — the fixed-
+  size rule undone by its own explanatory paragraph, and the shielding attack
+  back with it.
+
   **This does not conflict with geometric slashing**, which is about the balance
-  falling across TIME as offences are proved: two actions taken at the same
+  falling across TIME as offences are **proved**: two actions taken at the same
   balance reserve the same amount because the same capital secured both, while an
-  action taken after an earlier proof has debited sees a smaller total and
-  reserves proportionally less. The geometry lives in the total, not in the
-  reservation arithmetic.
+  action taken after an earlier proof has **resolved and debited** sees a genuinely
+  smaller total and reserves proportionally less. The geometry lives in the
+  realised balance, not in the reservation arithmetic — and a reservation is a
+  claim on capital, not a reduction of it.
 
   Order-independence follows because nothing is computed at resolution time.
   Geometry survives too, and in the form that is actually correct: a **later
