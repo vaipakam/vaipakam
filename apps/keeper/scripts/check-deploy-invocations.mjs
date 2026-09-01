@@ -3324,6 +3324,13 @@ function childEnvObjects(text) {
   // #2036 r22). The call that matters is the one the deploy detector found, so
   // an object belongs to it only if it sits between that call word and the next
   // child-process call after it.
+  // COMMENTS BLANKED FIRST. The extent below is a brace walk, and a `}` inside
+  // a comment closed the object early — so an environment object whose real
+  // `CLOUDFLARE_ENV` sat after such a comment read as CLOSED and empty, which
+  // since r21 is the one thing that proves no environment is selected (Codex
+  // #2036 r23). Blanked rather than removed, so every offset still lines up
+  // with the caller's text.
+  text = stripSourceComments(text);
   const wrangler = text.match(new RegExp(ARGV_DEPLOY_RE));
   const from = wrangler === null ? 0 : wrangler.index;
   const next = [...text.matchAll(new RegExp(CHILD_CALL_RE, 'g'))]
@@ -3372,7 +3379,16 @@ function cloudflareEnvAssignments(body) {
       // ordinary JavaScript spelling that Node passes through unchanged, and
       // matching only the bare and quoted forms saw no assignment at all
       // (Codex #2036 r21).
-      /\[?\s*["']?CLOUDFLARE_ENV["']?\s*\]?\s*:\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[A-Za-z_$][\w$.]*)/g,
+      // PROPERTY SHORTHAND IS AN ASSIGNMENT. `{PATH: p, CLOUDFLARE_ENV}` hands
+      // the child the binding of that name, and requiring a colon read the
+      // object as closed and empty — which since r21 is the one proof that no
+      // environment is selected, so the shorthand form turned the strongest
+      // negative in the model into a false one (Codex #2036 r23).
+      //
+      // It carries no readable VALUE, so it selects an environment this scanner
+      // cannot name: matched with no value group, which is exactly how every
+      // other unresolvable selector here is treated.
+      /\[?\s*["']?CLOUDFLARE_ENV["']?\s*\]?\s*(?::\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[A-Za-z_$][\w$.]*)|(?=\s*[,}]))/g,
     ),
     // The offset of the KEY ITSELF, found rather than inferred from the match's
     // first character — with a computed key the match now starts at `[`, and a
@@ -4194,6 +4210,10 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   // still counts. Requiring only that the key start after an opening quote was
   // not enough: in `"CLOUDFLARE_ENV: staging"` it also does, and that string
   // sets nothing — so the closing quote has to come straight after the key.
+  // Set by the shell branch below when the command assigns the variable EMPTY.
+  // Distinct from `envAssigned` being false, which merely means "this branch
+  // found no selection" — a clear has to beat the ambient presumption too.
+  let envExplicitlyCleared = false;
   const envAssigned =
     // Shell assignment, with or without `export`.
     (() => {
@@ -4226,6 +4246,15 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
       ];
       const m = all[all.length - 1];
       if (!m) return false;
+      if ((m[1] ?? m[2] ?? m[3] ?? '') === '') {
+        // AN EXPLICIT EMPTY ASSIGNMENT IS A CLEAR, not merely an absence.
+        // Wrangler gates selection on truthiness, so this command uses the top
+        // level — and once an ambient environment became the default (r21),
+        // "this branch says no" stopped being enough to stop the presumption
+        // (Codex #2036 r23). I said on that thread that an empty assignment was
+        // one of three clears; it was not, until here.
+        envExplicitlyCleared = true;
+      }
       return (m[1] ?? m[2] ?? m[3] ?? '') !== '';
     })() ||
     // Options-object entry, JS or Python: `CLOUDFLARE_ENV: "staging"`,
@@ -4331,6 +4360,7 @@ function selectorScope(seg, states, hasCwdState = true, vars = null, fileText = 
   const envFlagValue = valueOf('--env|-e', wranglerRegion) ?? argvValue(rawSeg, '-e|--env');
   const envSelected =
     envFlagValue !== '' &&
+    !envExplicitlyCleared &&
     (envAssigned ||
     (envFlagValue !== null && envFlagValue !== undefined) ||
     // `--env-file` loads a dotenv file into `process.env` BEFORE the config is
