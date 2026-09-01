@@ -719,12 +719,31 @@ ordinary implementation, and it belongs in slice 3.
   and full repayment. Otherwise a fallback loan resolved through any of them
   reads or pays the snapshot as Diamond-held collateral while the tokens sit
   liened in the vault — reverting, or spending unrelated Diamond custody.
+- **Migration ADDS to any existing lien; it never creates or replaces one.** A
+  pre-upgrade `FallbackPending` loan can already carry a live vault lien for
+  non-curing top-ups — `AddCollateralFacet` increments it precisely so the top-up
+  "is not drainable before a later cure" (`:189-198`), and `_cureFallback` folds
+  the restored snapshot in with its own increment. So a migration that creates
+  the lien from the snapshot amount either reverts on the existing row or
+  **discards the top-up reservation and makes that collateral withdrawable**.
+  The scan adds only the migrated snapshot amount to the existing lien, and only
+  that amount to the tier exclusion.
 - **Non-tier-bearing lien PLUS restamp, same two-counter shape as slice 1**, and
   the case here is stronger: a fallback snapshot has already allocated lender
   and treasury shares, so an ordinary lien grants the borrower tier and staking
   credit on value owed to somebody else, for the whole life of the snapshot. The
   current path withdraws and explicitly restamps the reduced balance
   (`RiskFacet.sol:720-737`) — F preserves that effect, not merely the accounting.
+- **Every custody move records the deposit in `protocolTrackedVaultBalance`,
+  atomically.** Moving a snapshot from the Diamond into the borrower's vault is
+  not only a transfer: `vaultWithdrawERC20` decrements that counter and
+  **underflows loudly when no matching deposit was recorded** — its own NatSpec
+  calls that "an accounting bug somewhere upstream". So a migrated row whose
+  tokens and lien are both correct would still be unable to release collateral,
+  and the failure would surface at a consumer rather than at the migration. The
+  scan therefore goes through the Diamond-funded vault-credit chokepoint, or
+  records the deposit for the exact user, token and amount in the same
+  transaction as the custody move.
 - **Pre-upgrade rows get a custody-SOURCE discriminator before any consumer is
   switched.** Existing snapshots already hold their collateral in the Diamond
   (`RiskFacet.sol:1884-1917`, `DefaultedFacet.sol:846-877`); the
@@ -883,6 +902,20 @@ Diamond for payroll, the transport sends all 20 and leaves `paid > received`
 afterwards. **Every non-recovery fresh transport rejects against remaining
 canonical delivered headroom before approving or transferring**, then charges
 the same amount atomically. Bound first, charge second, both at the same point.
+
+**The two bootstraps are ONE operation, not two independent ones.** An earlier
+revision seeded `received = H` (the reconciled reward custody) while the paid
+rebase separately installed `paid = P` (historical paid value) — leaving the
+bound at `H − P` rather than the intended opening headroom `H`, and **rejecting
+every funded claim whenever `P ≥ H`**, which on a long-lived deployment is the
+normal case rather than an edge one.
+
+So the canonical bootstrap sets **`received = H + paid`** after the paid rebase
+has installed `P` — or, equivalently, resets the paid baseline to zero and sets
+`received = H`. The first is preferable because it preserves the paid counter's
+continuity for anything else reading it; either way **the pair is applied
+together, in a fixed order, under the same pause**, and neither is meaningful
+alone.
 
 **Migration for an existing canonical deployment needs a DIFFERENT call, and an
 earlier revision reused `fundRewardPool` for it — which cannot work twice over.**
@@ -1164,7 +1197,7 @@ narrow — this is the finding that makes the root fix practical:
 | Outflow | Chokepoint | Charge what |
 | --- | --- | --- |
 | value to a claimant | `RewardClaimFacet._deliverReward` (**exactly 1 caller**) | the **fresh** component, passed in explicitly — NOT `paid` — and **rejected if it exceeds the remaining delivered balance, BEFORE the transfer** |
-| value to the recycle bucket (forfeit / expiry) | a reward-specific operation that `LibVpfiRecycle.credit` **rejects reward sources in favour of** | the fresh component — the rejection is what makes it non-bypassable |
+| value to the recycle bucket (forfeit / expiry) | a reward-specific operation, bounded and charging in one call. Generic `credit` accepts **ONLY a closed allowlist** of proven non-reward inflows (`NotificationFee`, `FullTariff`, `SpendGatedPerk`) and rejects every other source, present or future | the fresh component — the allowlist is what makes it non-bypassable |
 
 **The chokepoint must ENFORCE, not merely record.** An earlier revision of this
 section described charging the ledger at `_deliverReward` and stopped there,
@@ -1329,10 +1362,36 @@ reservation can be settled while an unobservable legacy CCIP packet is still in
 flight — and a permanent rejection after unpause then **strands that delivery
 and its VPFI**, which is the outcome the cutover exists to prevent.
 
-Legacy therefore needs the recovery path d2 does not: **a bounded, time-limited
-acceptance window after unpause** for pre-d2 layouts only, credited through the
-one-shot administrative importer rather than the ordinary ingress, closed at a
-fixed deadline chosen from CCIP's own maximum message lifetime.
+Legacy therefore needs the recovery path d2 does not — and an earlier revision
+specified it in two ways that do not work:
+
+⚠️ **There is no CCIP message lifetime to bound the window with.** The vendored
+v1.6 `OffRamp` defines `permissionLessExecutionThresholdSeconds` as a MINIMUM
+age *after which manual execution becomes permitted* — "manual execution is fine
+… if the commit report is just too old" — and committed roots are retained with
+no automatic maximum-age rejection. So an aged message becomes **more**
+executable, not less. A deadline "chosen from CCIP's own maximum lifetime" was
+resting on a bound that does not exist, and closing the window on that basis
+would strand exactly the packets it was meant to rescue.
+
+⚠️ **And the one-shot importer is already spent.** An upgraded mirror must use
+the received-side importer to bootstrap its counters before claims resume, so by
+the time a delayed pre-d2 packet lands, the guard is consumed. Moving when
+finalization happens does not un-consume it.
+
+**So: a migration EPOCH, not a one-shot call.** The received-side reconciler
+accepts authenticated entries — the bootstrap first, then any legacy packet that
+arrives — until a **single explicit finalization**, which is the irrevocable act
+the earlier text attached to unpause. Claims may resume before finalization; the
+reconciler is ADMIN-only and paused-gated per entry, so the window it leaves open
+is authorization-bounded rather than time-bounded.
+
+**Closing it needs a protocol-owned bound, because the transport has none.**
+Finalize on an **observable per-lane terminal signal** — every source chain's
+legacy sequence acknowledged, read back — rather than on a clock. Absent that
+signal, the honest position is that the epoch stays open: an indefinitely open
+ADMIN-gated reconciler is a smaller problem than a permanently stranded delivery,
+and pretending a deadline is safe does not make the packet stop arriving.
 
 **The reconciliation is ATOMIC over BOTH shares, not just the fresh one.** A
 pre-d2 delivery passes both component shares as zero, so `onRewardBudgetReceived`
