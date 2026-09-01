@@ -94,11 +94,14 @@ is; a set of variables assembled elsewhere in the script carries the same
 inheritance forward. Nothing written on the line can rule any of that out.
 
 So the checker presumes an environment is chosen, and unnamed, and asks instead
-what would rule it out. Three things do: naming the environment explicitly as
-empty, assigning the variable explicitly as empty, or handing the command an
-environment built entirely in the script with nothing inherited into it — the
-one construct that gives the command a closed set of variables rather than an
-open one. Absent all three, every environment the configuration declares is a
+what would rule it out. Four things do: naming the environment explicitly as
+empty, assigning the variable explicitly as empty, removing it outright, or
+handing the command an environment built entirely in the script with nothing
+inherited into it — the one construct that gives the command a closed set of
+variables rather than an open one. That last one carries the whole weight of
+proving a negative, so it holds only when every name in it can be read: a
+computed name the checker cannot work out is exactly the name it is looking
+for, as far as it knows. Absent all three, every environment the configuration declares is a
 candidate. That is a wide presumption and it is affordable for the same reason
 the earlier one is: it only ever decides between configurations the checker
 could read, and no deployment in this repository names a configuration at all.
