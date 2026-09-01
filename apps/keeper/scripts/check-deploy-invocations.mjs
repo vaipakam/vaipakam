@@ -2785,6 +2785,58 @@ function firstArgvArray(text, before = '') {
  * Quote-aware, and a `#` outside a string starts a comment.
  */
 /**
+ * One TOML line with its comment and ordinary string BODIES blanked out.
+ *
+ * Delimiters are counted over the result, so a `'''` that is only content —
+ * inside a comment (#2036 r8) or inside an ordinary value like `note = '"""'`
+ * (r9, and again in r25 for the second reader) — cannot open multiline state
+ * and hide everything below it. All three are the false-red direction.
+ *
+ * A TRIPLE delimiter is copied through rather than treated as a single-line
+ * string opener, because it is the thing being counted. Bodies become spaces
+ * rather than disappearing, so every offset still lines up with the input.
+ *
+ * Extracted in r25: the name reader had this and `tomlLines` had a weaker scan
+ * of its own, which is the same split this file's findings keep coming back to.
+ */
+function tomlBlankOrdinary(line) {
+  const OPENERS = ['"""', "'''"];
+  let out = '';
+  let q = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i];
+    if (q) {
+      // Escapes only in BASIC strings; a literal string processes none (r16).
+      if (q === '"' && c === '\\') {
+        i += 1;
+        out += '  ';
+        continue;
+      }
+      if (c === q) {
+        out += c;
+        q = null;
+        continue;
+      }
+      out += ' ';
+      continue;
+    }
+    if (OPENERS.some((d) => line.startsWith(d, i))) {
+      out += line.slice(i, i + 3);
+      i += 2;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      q = c;
+      out += c;
+      continue;
+    }
+    if (c === '#') return out + ' '.repeat(line.length - i);
+    out += c;
+  }
+  return out;
+}
+
+/**
  * Each TOML line with the state it is read in.
  *
  * `{ text, inString, isHeader }`. `inString` means the line STARTS inside a
@@ -2806,16 +2858,17 @@ function* tomlLines(text) {
     const startedInString = open !== null;
     const isHeader = !startedInString && arrayDepth === 0 && /^\s*\[/.test(line);
     yield { text: line, inString: startedInString, isHeader };
-    // The delimiter run for this line, escape-aware for BASIC strings only —
-    // literal strings process no escapes (r16).
-    for (let i = 0; i < line.length; i += 1) {
-      if (open === '"""' && line[i] === '\\') {
+    // The delimiter run for this line. Outside a multiline body, comments and
+    // ordinary string bodies are blanked first — a `'''` that is only content
+    // must not open one (#2036 r25). Inside a body, the raw line is scanned and
+    // escapes are honoured for the BASIC delimiter only (r16).
+    const scan = startedInString ? line : tomlBlankOrdinary(line);
+    for (let i = 0; i < scan.length; i += 1) {
+      if (open === '"""' && scan[i] === '\\') {
         i += 1;
         continue;
       }
-      // Outside a string a `#` starts a comment; inside one it is content.
-      if (open === null && line[i] === '#') break;
-      const hit = OPENERS.find((d) => line.startsWith(d, i));
+      const hit = OPENERS.find((d) => scan.startsWith(d, i));
       if (!hit) continue;
       if (open === null) open = hit;
       else if (open === hit) open = null;
@@ -3434,7 +3487,17 @@ function cloudflareEnvAssignments(body) {
       // It carries no readable VALUE, so it selects an environment this scanner
       // cannot name: matched with no value group, which is exactly how every
       // other unresolvable selector here is treated.
-      /\[?\s*["']?CLOUDFLARE_ENV["']?\s*\]?\s*(?::\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[A-Za-z_$][\w$.]*)|(?=\s*[,}]))/g,
+      // AN UNREADABLE VALUE IS STILL AN ASSIGNMENT. An interpolated template —
+      // `CLOUDFLARE_ENV: \`${stage}ing\`` — has a runtime value this scanner
+      // cannot compute, and excluding it recorded NO property at all, so the
+      // closed-object check proved that no environment was selected (Codex
+      // #2036 r25). Same shape as the shorthand case in r23: on this predicate,
+      // "cannot read the value" and "there is no property" must never collapse.
+      //
+      // The readable forms capture; everything else — an identifier, a template
+      // with an interpolation, any other expression — matches with no capture,
+      // which is how an unresolvable selector is spelled throughout this file.
+      /\[?\s*["']?CLOUDFLARE_ENV["']?\s*\]?\s*(?::\s*(?:"([^"]+)"|'([^']+)'|`([^`$]+)`|[^,}]+)|(?=\s*[,}]))/g,
     ),
     // The offset of the KEY ITSELF, found rather than inferred from the match's
     // first character — with a computed key the match now starts at `[`, and a
@@ -3456,6 +3519,14 @@ function envValueFromOptions(text) {
     const all = cloudflareEnvAssignments(body);
     const m = all[all.length - 1];
     if (!m) continue;
+    // A SPREAD AFTER THE LAST ASSIGNMENT OVERRIDES IT. `{CLOUDFLARE_ENV:
+    // "production", ...stagingEnv}` hands the child whatever the spread
+    // carries, and returning the earlier literal named the wrong environment —
+    // which reads the wrong block of the config (Codex #2036 r25). Later wins
+    // is already the rule here; a spread is simply a later assignment whose
+    // value cannot be read.
+    const after = body.slice(m.index + m[0].length);
+    if (/\.{3}\s*[A-Za-z_$]|\*\*\s*[A-Za-z_$]/.test(after)) return null;
     const v = m[1] ?? m[2] ?? m[3];
     // A bare identifier is a binding this scanner cannot follow. It still
     // SELECTS an environment — the predicate says so — but it names none, and
@@ -3801,40 +3872,7 @@ function declaredWorkerName(absPath) {
       //
       // A TRIPLE delimiter is copied through rather than treated as a
       // single-line string opener, because it is the thing being counted.
-      const uncommented = (() => {
-        let out = '';
-        let q = null;
-        for (let i = 0; i < line.length; i += 1) {
-          const c = line[i];
-          if (q) {
-            if (c === '\\') {
-              i += 1;
-              out += '  ';
-              continue;
-            }
-            if (c === q) {
-              out += c;
-              q = null;
-              continue;
-            }
-            out += ' ';
-            continue;
-          }
-          if (line.startsWith(OPENERS[0], i) || line.startsWith(OPENERS[1], i)) {
-            out += line.slice(i, i + 3);
-            i += 2;
-            continue;
-          }
-          if (c === '"' || c === "'") {
-            q = c;
-            out += c;
-            continue;
-          }
-          if (c === '#') return out;
-          out += c;
-        }
-        return out;
-      })();
+      const uncommented = tomlBlankOrdinary(line);
       // COUNTED WITH ESCAPES HONOURED, and tracking which delimiter is open.
       // Splitting on the delimiter counts an ESCAPED one — `note = """prefix
       // \\"""` reads as opened-and-closed, so the value's own content became
