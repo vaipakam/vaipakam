@@ -695,6 +695,17 @@ ordinary implementation, and it belongs in slice 3.
   Use one without the other and the borrower can simply withdraw the returned
   `vpfiHeld` before settlement. Both, with explicit release bookkeeping on each
   terminal.
+
+  **And the move records `protocolTrackedVaultBalance`, exactly as slice 2's
+  fallback move does.** An earlier revision specified this migration's lien and
+  tier exclusion and stopped there, while the equivalent fallback slice — written
+  later — carries the ledger requirement. Same consequence here: `vaultWithdrawERC20`
+  caps availability by the tracked counter and `recordVaultWithdraw` underflows
+  when no deposit was recorded (`VaultFactoryFacet.sol:566-624`,
+  `LibVaipakam.sol:10150-10162`), so the rewritten proper-close or forfeiture
+  consumer fails on a row whose tokens, lien and exclusion are all correct. Use
+  the Diamond-funded vault-credit chokepoint, or record the exact deposit in the
+  same transaction as the custody move.
 - **Settling in place is NOT the migration.** An earlier revision called it
   "simpler and probably right". On an arbitrary next touch it prices a rebate at
   the current tier before the terminal outcome exists, while a later default
@@ -855,10 +866,15 @@ ordinary implementation, and it belongs in slice 3.
   decremented its lien and withdrawn `custodialCollateral` (`:529-553`), so the
   new hook would withdraw a second time and its fill would revert with the
   original custody stranded. Either a paused cutover gated on
-  `intentLiveCommitCount == 0` after cancellation/drain, or a per-commit
-  custody-version branch.
+  **the per-commit custody-version branch.**
 
-  **Chosen: the per-commit custody-version branch.** The zero-count alternative
+  ⚠️ An earlier revision of this bullet also offered "a paused cutover gated on
+  `intentLiveCommitCount == 0` after cancellation/drain", with the withdrawal
+  stated only in the paragraph beneath it — so the bullet an implementer follows
+  still named an unperformable ceremony. Removed from the bullet itself.
+
+  **Why the zero-count option is impossible, retained because it is the kind of
+  thing that gets re-proposed:** The zero-count alternative
   is withdrawn because it cannot actually be performed. Draining requires
   cancellation, and `cancelSwapToRepayIntent` is `whenNotPaused`
   (`SwapToRepayIntentFacet.sol:709-743`) while the LOP hooks are **not**
@@ -1010,8 +1026,14 @@ section describes reconciling a *total*, which the earlier text never
 disambiguated: importing the total on top of an existing counter double-counts,
 importing a delta against an unseeded counter under-seeds.
 
-So: **a new paused, one-shot `rebaseArmedFreshPaid(total)`** that SETS the
-counter to the reconciled total rather than adding to it, with its own guard flag
+So: **a new paused, one-shot `rebaseArmedFreshPaid(total)`** that sets the
+counter to `max(existing, total)` — **never below what it already holds** —
+rather than adding to it. An earlier revision of this contract said "SETS",
+with the non-reduction floor stated only three sections later; an implementer
+following the call contract would lower `paid` whenever the off-chain
+reconstruction omitted a prior administrative retirement watermark, which is
+exactly the case the floor exists for, and republish already-retired delivered
+headroom, with its own guard flag
 so it is independent of whether the P1-b seeder ran — **and which also consumes
 or disables the old seeder's guard.**
 
@@ -1218,8 +1240,9 @@ The complete lifecycle, since half-describing it is what left the previous
 revision unimplementable:
 
 1. **Receive while `Detached`** — `onRewardBudgetReceived`,
-   `onCompensationBudgetReceived`, **and the reward BROADCAST ingresses
-   `onRewardBroadcastV2Received` / `onRewardBroadcastV3Received`** all revert. No
+   `onCompensationBudgetReceived`, **and ALL THREE reward BROADCAST ingresses —
+   `onRewardBroadcastReceived` (legacy), `onRewardBroadcastV2Received` and
+   `onRewardBroadcastV3Received`** — revert. No
    receipt is written, no pool, recycle, day or era state moves, nothing to
    unwind.
 
@@ -1232,9 +1255,18 @@ revision unimplementable:
    rows 3 and 11 make unreportable and unpriceable. The role transition unwinds
    none of it, so the effect is locked funds or a poisoned later era.
 
+   **The LEGACY ingress was still missing after that correction**, which added
+   only V2 and V3 — so a delayed kind-1 broadcast stayed callable and writes
+   `knownGlobalLenderInterestNumeraire`, `knownGlobalBorrowerInterestNumeraire`,
+   `dayPoolStamp`, `governorCommitArmedFromDay` and `knownGlobalSet`
+   (`RewardReporterFacet.sol:399-462`), directly contradicting this list's own
+   claim that no day state moves. Three ingresses, not two.
+
    They carry state rather than tokens, which is exactly why they were easy to
    miss and not a reason to treat them differently: the test is "what state can
-   move", the same one the matrix's own scope note now states. This is symmetric with row 7's ack,
+   move", the same one the matrix's own scope note now states. Twice now that
+   test has been stated and then applied to an incomplete set, which is why the
+   list names all three selectors explicitly rather than describing a class. This is symmetric with row 7's ack,
    which already refuses.
 2. **Transport** — a reverted CCIP inbound is a failed message, **manually
    re-executable once the condition clears**. That is the property that makes
@@ -1447,7 +1479,22 @@ CONSUMERS — claim, expiry sweep, forfeit sweep, the transports — are refused
 while the receive ingresses alone remain executable. Whether that is a dedicated
 flag or a `whenNotPaused` exemption on the two ingresses is an implementation
 choice; what is not optional is that the freeze blocks consumers **without**
-blocking the packets being drained. A single global pause cannot express that,
+blocking the packets being drained.
+
+**If the dedicated-flag route is taken, the flag must participate in the EXPIRY
+predicates too** — blocking the entry points is not enough. `sweepExpiredEntry`
+and `_entryExecutableNow` consult `LibPausable.paused()` directly
+(`LibInteractionRewards.sol:3253`, `:3751`), so a migration flag they do not
+read leaves entries executable to the horizon machinery, and the accumulator
+credits the interval since its previous observation once the mode clears. An
+entry near its threshold then **expires immediately after a short cutover,
+during which its owner could not have claimed** — value destroyed by the
+ceremony rather than by the clock.
+
+So the flag enters both predicates, **and the observation boundary is stamped
+when the mode is entered and reset when it clears**, so the frozen interval is
+never credited. A `whenNotPaused`-exemption implementation gets this for free,
+which is a real argument for it. A single global pause cannot express that,
 which is the reason this needs stating rather than being left to the ceremony.
 
 ⚠️ **"Settled or EXPIRED" is not a terminal, and an earlier revision used it as
