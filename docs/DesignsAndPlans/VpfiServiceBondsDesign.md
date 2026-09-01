@@ -85,8 +85,11 @@ instruction to anyone implementing or writing copy from the top of the file.
    escape.
 
    The qualifier is not a hedge and must not be dropped: the acceptance criteria
-   below require `unbond` to REVERT for a sanctioned operator, so for a flagged
-   wallet the principal stays frozen until delisting.
+   below require `unbond` to REFUSE for a sanctioned operator, so for a flagged
+   wallet the principal stays frozen until delisting — **refusing by REVERTING
+   only once the flag is already persisted**. The FIRST authoritative
+   observation parks instead, because a revert would roll back the very write
+   that records it (see §Mechanics).
 
    **And for a CONFIRMED-flagged balance the check must FAIL CLOSED.**
    `LibVaipakam._assertNotSanctioned` is explicitly a no-op "when the oracle is
@@ -257,7 +260,7 @@ decodes is the same gap one step later.
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
 | Solver / matcher | larger match-batch sizes ONLY. **Priority-window access is NOT a bond entitlement** — it is E-2's spend-gated perk with its own flat VPFI fee, and bonds neither gate it nor grant it. An earlier revision listed it here, which would let an implementation either require a bond ON TOP of the E-2 purchase or hand priority out for bonding alone; both change the perk's gate and its permanent absorption. Bond buys capacity; spend buys priority; the two never substitute | precondition lies recorded via the offence dispatcher below **ATTESTED TIER ONLY — v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row; **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
-| Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles. **A liveness commitment must be suspended, cancelled or extended — without an offence — whenever the protocol itself blocks performance**: a guardian pause, a role kill switch or a selector-level switch makes the required call revert while the commitment's clock keeps running, so every enrolled operator with a live window misses it and is slashed *for the protocol's own incident*. That is objectively detectable (the switch state is on-chain), so it belongs in the predicate rather than in an operator's appeal. A pause spanning a deadline is the acceptance case, and missing-liveness must not be admitted as a slash predicate until it passes | ~~repeated out-of-grant-scope attempts~~ — **LEAVES v1 for the same reason staleness did**: `setKeeperActions` / `revokeKeeper` can remove a grant after a keeper broadcasts an authorized call but before it executes, so an honest pending action is out-of-scope at execution, and worse with several queued. Grant state is not carried by the submission. Returns with the attested tier, alongside missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
+| Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles. **A liveness commitment must be suspended, cancelled or extended — without an offence — whenever the protocol itself blocks performance**: a guardian pause, a role kill switch or a selector-level switch makes the required call revert while the commitment's clock keeps running, so every enrolled operator with a live window misses it and is slashed *for the protocol's own incident*. That is objectively detectable (the switch state is on-chain), so it belongs in the predicate rather than in an operator's appeal. A pause spanning a deadline is the acceptance case, and missing-liveness must not be admitted as a slash predicate until it passes | ~~repeated out-of-grant-scope attempts~~ — **LEAVES v1 for the same reason staleness did**: `setKeeperActions` / `revokeKeeper` can remove a grant after a keeper broadcasts an authorized call but before it executes, so an honest pending action is out-of-scope at execution, and worse with several queued. Grant state is not carried by the submission. **Does NOT return with the attested tier either** — §2 establishes that grant scope has no slashable form in either attested branch, so an implementation following an earlier "returns with the attested tier" note would slash an honest keeper whose grant was revoked after broadcast. Any future slashing here waits on a separately specified knowledge-free predicate (liveness or equivocation), not on the tier arriving |
 
 - ~~**Offence recording (Codex round-1 finding):**~~ **REJECTED FOR v1 — retained
   as historical reasoning only, and must not be built.** Under either selectable
@@ -470,13 +473,20 @@ decodes is the same gap one step later.
 
    A delay arrives with **the first delayed-proof predicate**, not with the
    liveness tier — see rule 2.
-   **Bond sizes** remain a proposal (see the two open numbers at the end).
+   **Bond sizes are DEFERRED TO IMPLEMENTATION**, not a proposal awaiting
+   ratification: §3 defers `bondAt4x` and `refillWindow` until the
+   implementation pass defines their units and envelope. The owner-facing list
+   asks for the A/C fork and, under C, the fee parameters — those are the open
+   decisions; an earlier revision pointed here at "two open numbers at the end",
+   which made an undefined capacity number look ready to ratify.
 3. **No-yield refundable-deposit shape: RATIFIED.** The legal glance is
    discharged. Bonds earn nothing, are refundable at will subject to the
    any unbond delay in force. NAMING IS CONDITIONAL on the fork below and
    this paragraph must not be read as ratifying one term: "operational
-   security deposit" only under (B) or the attested tier, where the
-   principal can actually be confiscated. Under (A) and (C) the principal
+   security deposit" only where **a slash predicate is actually ENABLED** — not
+   under the attested tier as such, whose authorization branch recovers no slash
+   and leaves the principal fully refundable (§2). An earlier revision of this
+   decision keyed the name to the tier, which rule 4 prohibits. Under (A) and (C) the principal
    is never at risk, so it is an "operational capacity deposit" — and C's
    separate arming fee does not change that, since a fee purchased
    alongside a deposit does not make the DEPOSIT security. Never
@@ -504,8 +514,12 @@ offence — **and the base depends on when the offence is recorded:**
 - **Synchronous recording (v1's in-call dispatcher):** the CURRENT balance. The
   observation and the debit are the same call, so current and action-time are
   the same figure and there is nothing to apportion.
-- **Delayed proof (attested tier):** the **remaining eligible TRANCHES** named
-  by the action-consumption record — never the current aggregate.
+- **Delayed proof (attested tier):** the **immutable amount RESERVED at action
+  acceptance** — not a figure recomputed from whatever the named tranches still
+  hold. Recomputing re-introduces resolution-order dependence, since an
+  overlapping proof resolving first changes that remainder; the reservation
+  exists precisely so nothing is computed at resolution. Never the current
+  aggregate either.
 
 An earlier revision stated the aggregate rule unconditionally and left it
 standing after tranche provenance was made mandatory. Followed literally for a
@@ -571,7 +585,17 @@ rather than an alternative:
   whose whole point is that the bond falls away rather than hitting zero at a
   fixed count.
 
-**So: deposit TRANCHES.** Each deposit is a tranche with its own epoch; an
+**So: deposit TRANCHES — bounded or coalesced, with a proven gas bound.**
+There is no minimum bond or raise size, so an operator can create an unbounded
+number of tiny tranches; every delayed action then names the live ones, and
+later reservation, allocation and withdrawal iterate them. Linear storage and
+iteration eventually exceed the block gas limit, which does not merely slow
+things down — it prevents action admission, proof execution, **and recovery of
+the operator's own principal**, i.e. it is a self-inflicted permanent lock. So:
+a bounded tranche count with coalescing on deposit, or an aggregate epoch/range
+representation, with the gas bound demonstrated rather than assumed.
+
+Each deposit is a tranche with its own epoch; an
 action-consumption record names the tranches live when the action was accepted;
 a proof debits `slashBps` of **what remains of those tranches**, never of the
 aggregate. Provenance and geometry both follow from the same structure — the
@@ -697,8 +721,31 @@ whole rule:
     operator had exhausted their rate-limited capacity, because it is the same
     exhaustion. Bonded capacity and slash backing stop being two things.
 
+    ⚠️ **The cap bounds the loss; it does NOT make a burst geometric, and the
+    two rules give different answers.** Five 10% actions against a 100-unit
+    balance reserve 10 each and debit **50**; "10% of what remains" applied five
+    times gives **40.951**. Both were normative, so two conforming
+    implementations would confiscate different amounts for the same burst.
+
+    **Decided: concurrent liabilities are bounded action-time SNAPSHOTS, and the
+    geometric claim is retired for bursts.** Geometric describes the sequence of
+    RESOLVED debits over time — each action accepted after the previous one had
+    resolved, so each sees a genuinely smaller balance. Within a burst every
+    action was secured by the same capital, so there is no smaller balance for
+    any of them to see, and pretending otherwise is arithmetic without a
+    referent. The cap is what stops a burst reaching the whole bond; geometry is
+    what shapes the long run. Two mechanisms, two jobs.
+
+    **The cap needs a positive FLOOR, not only an upper bound.** Set below
+    `slashBps` — or left at zero by fresh storage — the first action's liability
+    already exceeds it, so **every** action under that predicate is refused
+    however much bond backs it. So: `maxConcurrentReservedBps >=` the maximum
+    permitted single-action liability, or values below that are defined as an
+    explicit DISABLED mode rather than silently bricking admission.
+
     **The concurrency cap is what reconciles fixed reservations with the
-    geometric invariant, and an earlier revision had them contradicting.** Fixed
+    admission check, and an earlier revision had the geometric rule
+    contradicting it.** Fixed
     10-of-100 reservations mean ten actions accepted before any proof resolves
     could collectively debit the whole bond — linear to zero at a fixed count,
     which §2 rejects. Geometric slashing is about the balance falling **across
@@ -778,7 +825,12 @@ then asked the question that dissolves all three: **what pending evidence is
 the delay waiting for?**
 
 In ratified v1 scope, nothing. Every offence is an objective lie, detected by
-the outer dispatcher and debited **in the same successful call**. The liveness
+the outer dispatcher and debited **in the same successful call** — ⚠️ **which
+v1 does NOT have.** Both selectable forks lack a confiscation predicate, so v1
+has no offences to record and no dispatcher; its immediate withdrawal follows
+from the ABSENCE of delayed evidence, not from same-call debiting. This
+paragraph describes a tier that has a predicate, and is retained for whenever
+one is specified. The liveness
 tier — the only source of evidence that arrives *after* an operator stops
 acting — is explicitly out of v1. So there is no adjudication in flight when
 an operator unbonds, and a 3–30 day lock protects nothing. It is a pure
@@ -1363,7 +1415,8 @@ that everything else is throughput and these are custody:**
   flagged balance as undrainable. So the criteria require
   **`assertNotSanctionedFailClosed` on the release path for confirmed-flagged
   balances**, plus a focused test: operator confirmed flagged, oracle then unset
-  or reverting, `unbond` MUST revert. And a companion asserting an operator never
+  or reverting, `unbond` MUST refuse — **reverting when the flag is already
+  persisted, PARKING when this call is the first authoritative observation.** And a companion asserting an operator never
   confirmed flagged still withdraws during the same outage — otherwise an
   implementation could pass by freezing everyone.
 
@@ -1483,8 +1536,9 @@ acceptance criteria are:
   invalidates by design. Stated unconditionally, a reset-based implementation
   would satisfy the mechanism and violate the decision.
 - A capacity change of any cause — up or down — settles elapsed credit under
-  the old capacity before the new one takes effect **where the mechanism
-  preserves that credit at all.** The corrected mechanism explicitly permits the
+  the old capacity before the new one takes effect, **OR invalidates the
+  affected buckets and forfeits their pre-retune credit** — never silently
+  re-credits it under the new capacity, which is the part that is absolute. The corrected mechanism explicitly permits the
   conservative branch — invalidate the affected buckets on a curve or capacity
   retune — which DISCARDS pre-retune credit by design rather than settling it.
   Written unconditionally, this criterion and that branch cannot both be
