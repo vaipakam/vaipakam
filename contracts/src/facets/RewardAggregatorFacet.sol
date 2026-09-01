@@ -709,7 +709,8 @@ contract RewardAggregatorFacet is
     ///         true until that landed (Codex #2031 r13). TWO places write a
     ///         zero, and they are not two
     ///         stamps: {LibMeshFunding._stampOne} is the only production
-    ///         stamp producer and hard-zeroes the field, while this facet's
+    ///         stamp producer and COMPUTES the field (it hard-zeroed it
+    ///         until #1569 armed the knob), while this facet's
     ///         `_perDestFields` writes zero only in its MISSING-STAMP
     ///         fallback payload (an excluded or unstamped destination) —
     ///         where a stamp exists it forwards `f.keeperAllocate`
@@ -730,9 +731,15 @@ contract RewardAggregatorFacet is
     ///         {RewardReporterFacet} stores it and REPLAY-COMPARES it: a
     ///         re-broadcast carrying a value that differs from the stored
     ///         one reverts `KnownGlobalAlreadySet()`. So whoever arms #1569
-    ///         is changing a wire field under an equality check, not filling
-    ///         in an unused slot. What is true is narrower than "unread":
-    ///         no accounting or allocation logic acts on the value.
+    ///         changed a wire field under an equality check rather than
+    ///         filling in an unused slot — and it is armed now, so the
+    ///         equality check guards a live value.
+    ///
+    ///         The old closing line, "no accounting or allocation logic acts
+    ///         on the value", is RETIRED (Codex #2031 r16). Base charges
+    ///         `chainKeeperAllocDebited` from it and nets it out of the
+    ///         chain's availability; the receiver adds it to
+    ///         `recycleKeeperBudget`. Accounting acts on it on both sides.
     function getChainDayRecycledFunding(uint256 dayId, uint32 chainId)
         external
         view
