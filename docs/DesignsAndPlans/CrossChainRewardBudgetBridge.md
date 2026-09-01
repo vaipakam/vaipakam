@@ -183,7 +183,7 @@ send is safe (§8). Marking the first occurrence of a day also collapses an
 accidentally-duplicated `dayId` within one call to a single slice.
 
 The send is `whenNotPaused` + `nonReentrant` — the SAME outbound
-pause/reentrancy gate as `RewardAggregatorFacet.broadcastGlobal` and
+pause/reentrancy gate as `RewardBroadcastFacet.broadcastGlobal` (#1569 moved it out of the aggregator; same selector) and
 `TreasuryFacet.remitBuyback` (see `docs/ops/AdminKeysAndPause.md`), so a
 Diamond-pause incident freezes reward-budget sends alongside every other
 outbound reward/treasury flow even if the CCIP messenger itself is still

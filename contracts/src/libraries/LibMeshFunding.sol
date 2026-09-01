@@ -424,8 +424,18 @@ library LibMeshFunding {
         // cumulative.
         uint256 keeperAlloc;
         if (commitLocal != 0) {
-            uint256 want =
-                (commitLocal * s.chainKeeperAllocateBps[c.chainId]) / 10_000;
+            // `mulDiv`, not `a * b / c` (Codex #2031 r8). `recordChainRecycled`
+            // deliberately accepts UNBOUNDED monotonic cumulatives, so a
+            // faulty or hostile mirror can report a figure large enough that
+            // `commitLocal * bps` overflows before the headroom clamp below
+            // can trim anything. That reverts the whole funding pass, wedging
+            // day finalization for EVERY chain — a per-chain input taking the
+            // mesh down, whenever the knob is armed. `mulDiv` carries the
+            // intermediate in 512 bits and cannot overflow here, since the
+            // result is bounded by `commitLocal`.
+            uint256 want = Math.mulDiv(
+                commitLocal, s.chainKeeperAllocateBps[c.chainId], 10_000
+            );
             // BOUNDED BY WHAT IS LEFT (Codex #2031 r3). The earmark is a
             // SECOND draw on the same bucket, not a haircut on the claim
             // commit, so it has to fit in the headroom the commit leaves —

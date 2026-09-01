@@ -1623,15 +1623,28 @@ does not make a REMOVED mirror targetable at all. Require a standing day that ca
 pass that gate; otherwise a mirror with nothing but pre-upgrade history would
 hold the mesh paused over a broadcast that cannot be sent.
 
-And the qualifying day must be **UNAPPLIED** there. A removed mirror whose every
-V3-clock standing day has already been applied and safely reconciled cannot be
-reopened by re-broadcasting one: `_applyBroadcastV2Core` takes the idempotent
-replay branch before installing `armedFromDay` or touching any gate. Provided it
-is also absent from the expected-source list — so no future day can acquire new
-standing — its finite history is spent and it must not block the mesh. Treating
-spent history as reachable is the same over-block as the two above. An earlier revision defined
-reachability on standing alone and would have permitted unpausing with exactly
-that mirror exposed. **Do not run the cycle
+**SUPERSEDED — an APPLIED day is no longer spent for arming (#1944 / #1569,
+2026-09-01).** This paragraph used to say that a removed mirror whose every
+V3-clock standing day had already been applied could not be reopened, because
+`_applyBroadcastV2Core` took the idempotent replay branch *before* installing
+`armedFromDay`. That premise was removed on purpose: the replay branch now
+installs `D*` when the mirror has none, and so does the V3 clock-backfill
+branch, because the old behaviour left a mirror permanently unarmable once a
+third party had applied its days first.
+
+The consequence for THIS gate is the dangerous direction. A permissionless
+`broadcastGlobalTo` of an ALREADY-APPLIED day still passes historical standing
+and can now arm that mirror, so "its finite history is spent" no longer
+follows from "every standing day is applied". Following the old reachability
+test would permit unpausing the mesh while an unsafe mirror is still
+targetable.
+
+**Treat an authenticated V3 replay as an arming path.** A removed mirror is
+excluded from the gate only if it is absent from the expected-source list AND
+either its era has been rotated away (a retired legacy wire cannot arm — that
+exclusion is deliberate and tested) or it is already armed (`D*` is one-shot;
+a replay fills an empty slot, never re-chooses a set one). "Applied" on its
+own is no longer a safety property. **Do not run the cycle
 below, and do not unpause the reward messenger, while that is true of any such
 mirror** — see "the one safe branch" and the dead-end list further down, which
 record five procedures that were each tried against this and refuted. The cycle
@@ -1960,10 +1973,18 @@ Two mechanical facts that survive whatever branch is taken:
 
 Whether or not the pause is used:
 
-- **Pick a propagation day the target mirrors have NOT applied, and confirm it
-  per mirror immediately before broadcasting.** Call
-  `RewardReporterFacet.getBroadcastV2Applied(dayId)` on each mirror — `true`
-  means the day is spent for arming purposes there. Do this as a readback in
+- **Pick a propagation day and confirm its state per mirror immediately before
+  broadcasting.** Call `RewardReporterFacet.getBroadcastV2Applied(dayId)` on
+  each mirror.
+
+  **`true` NO LONGER means the day is spent for arming** (#1944, 2026-09-01).
+  It once did, and this line said so; the replay branch now installs `D*` on a
+  mirror that has none, precisely so a third party applying a day first cannot
+  render that mirror unarmable. An applied day is therefore still a usable
+  propagation day over an authenticated V3 wire. The readback remains worth
+  doing — it tells you whether the broadcast will take the fresh path or the
+  replay path, which is what you are reconciling afterwards — but it is no
+  longer a go/no-go on arming. Do this as a readback in
   the same sitting as the broadcast, not from notes taken earlier: any third
   party can apply a finalized day in between.
 

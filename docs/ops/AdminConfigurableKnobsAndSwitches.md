@@ -589,11 +589,24 @@ convention.
 **Sentinel conventions differ on purpose.** `setRecycleMarginBps`,
 `setRecycleTariffKPer1e18EthDay`, `setTariffKPerLifYear` and
 `setRewardHaircutBps` treat a stored `0` as **reset-to-library-default**.
-`setRewardClaimHorizonDays` and `setRecycleSurplusMultiple` treat `0` as
-**dark — feature off**. `setUserSideShareCapBps` **rejects** `0`
+`setRewardClaimHorizonDays`, `setRecycleSurplusMultiple` and
+`setChainKeeperAllocateBps` treat `0` as **dark — feature off**. `setUserSideShareCapBps` **rejects** `0`
 outright, so a stored zero there always means "never configured". An
 operator who assumes one convention across the group will either arm a
 feature they meant to leave off or leave one off they meant to arm.
+
+### Per-chain keeper allocation (`chainKeeperAllocateBps`) — #1569
+
+| | |
+| --- | --- |
+| Setter / getter | `RewardAggregatorFacet.setChainKeeperAllocateBps(uint32 chainId, uint16 bps)` / `getChainKeeperAllocateBps(uint32)` |
+| Auth | `ADMIN_ROLE` **and** `onlyCanonical` — a mirror must not be able to grant itself keeper budget. That qualifier is the point of the card, not a formality |
+| Sentinel | `0` is **DARK** — instructs nothing, and is the deploy default, so the whole channel ships off and each destination is armed individually |
+| Ceiling | `RECYCLE_REGISTER_KEEPER_MAX_BPS` (**5,000 = 50%**), the same bound the LOCAL register weight carries, so neither allocation surface can earmark more than half a bucket |
+| Target | **MUST NOT be the canonical chain.** Reverts `KeeperAllocateTargetIsCanonical`. Base is never a "local" funder in the mesh split, so a value stored against its own id could never produce an allocation; Base's own keeper share is `ConfigFacet.setRecycleRegisterKeeperBps` instead |
+| Timing | **Per day and frozen at finalization.** A change affects LATER days only; a day already stamped keeps the figure it was stamped with, and re-broadcasting it with a different one is refused by the mirror's replay equality check |
+| Effect | Instructs the destination chain to earmark that share of its own locally-funded commit into its keeper-incentive register. It is a SECOND draw on that chain's bucket, bounded by the headroom the commit leaves — not a haircut on the commit — and it is netted out of that chain's reported availability so Base cannot instruct the same tokens twice |
+| Readback | `getChainKeeperDraw(uint32)` shows the resulting live draw; `ops/mesh-watcher` re-derives availability from it and pages on disagreement |
 
 ### Platform recycling margin (`recycleMarginBps`)
 
