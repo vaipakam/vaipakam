@@ -637,8 +637,25 @@ ordinary implementation, and it belongs in slice 3.
   for it during migration, which is the obvious thing to do, hands the rebate to
   a former holder and clears the current one's claim **irreversibly**.
 
-  **So the migration resolves `ownerOf(loan.borrowerTokenId)` and delivers there
-  immediately, with the sanctions-safe delivery that resolution implies.**
+  **The payee is TERMINAL-SPECIFIC, and an earlier revision of this bullet
+  over-corrected into a universal rule.** I said "resolve `ownerOf` for every
+  `rebateAmount`", which is right for the ordinary claim path and **wrong for a
+  prepay-sale row** — and the sale terminal unlocks the position NFT, so it can
+  transfer before the migration reaches it.
+
+  `creditBorrowerLifRebateToVault` pays the stored `loan.borrower` deliberately,
+  and says why: `settleBorrowerLifProper` prices the rebate from that party's
+  tier, so paying anyone else a figure computed from this one's tier is a
+  mispricing. The principle it states is the rule to follow —
+  **"sale PROCEEDS follow the position, a fee REFUND follows the fee payer"**
+  (`LibVPFIDiscount.sol:1102-1118`).
+
+  So the migration **reads each row's terminal and uses that terminal's payee**:
+  `ownerOf(loan.borrowerTokenId)` where the ordinary claim path would have paid
+  the holder, the stored fee payer for a prepay-sale row. A universal `ownerOf`
+  would irreversibly hand a transferee a refund the original payer was priced
+  for — which is the same class of harm as paying the stored borrower on an
+  ordinary row, arriving from the opposite direction.
 
   An earlier revision also offered "leave the row claimable and migrate only the
   custody" as equally defensible. **Withdrawn** — that branch names no
@@ -925,6 +942,19 @@ bound at `H − P` rather than the intended opening headroom `H`, and **rejectin
 every funded claim whenever `P ≥ H`**, which on a long-lived deployment is the
 normal case rather than an edge one.
 
+**`H` is FREELY SPENDABLE fresh reward custody, not "reward-owned VPFI".** An
+earlier revision said the latter, which double-counts the recovery position: if
+`H` includes fresh VPFI sitting in the Base recovery position, its original
+dispatch is already in `paid`, and the `…FromRecovery` redispatches are
+deliberately exempt from future debits. Concretely — 100 dispatched and returned
+gives `paid = 100` and recovery custody `100`; the bootstrap then publishes 100
+of local headroom, an uncharged recovery redispatch sends the same 100 away, and
+the headroom remains to consume unrelated Diamond custody.
+
+So `H` excludes `rewardBudgetRecovered − rewardBudgetRedispatched` and every
+other restricted reward position — the test is **"can a local claim spend
+this?"**, not "does this belong to rewards?".
+
 So the canonical bootstrap sets **`received = H + paid`** after the paid rebase
 has installed `P` — or, equivalently, resets the paid baseline to zero and sets
 `received = H`. The first is preferable because it preserves the paid counter's
@@ -980,7 +1010,12 @@ reconciliation already produces an absolute figure, and asking it to produce a
 delta reintroduces exactly the ambiguity above.
 
 **The mirror's received-side migration writer takes the identical contract** —
-ADMIN-only, paused, one-shot, finalized before unpause. An earlier revision said
+ADMIN-only and paused per entry, but a **multi-entry EPOCH closed by a single
+explicit finalization**, NOT a one-shot call finalized before unpause. An earlier
+revision of this line said one-shot; §5c establishes why that cannot work — the
+bootstrap consumes it before claims resume, so the first delayed legacy packet is
+stranded. Every "one-shot" and "time-bounded" description of this writer is
+superseded by the epoch-and-finalization contract. An earlier revision said
 only that such a writer "is needed", which left its authorization and its
 shutdown unspecified; those are the two properties that decide whether it is a
 migration tool or a permanent hole.
@@ -1365,9 +1400,18 @@ the ambiguity it claims to resolve, since the two need different gates and
 different authentication rules.
 
 **Mandated: hold the pause until every in-flight d2 remittance has landed and
-been reconciled, then reject that wire version permanently.** The gate is a
-provable terminal condition per lane — every d2 reservation settled or expired,
-read back per source chain, with no outstanding receipts.
+been reconciled.** The gate is per lane, read back per source chain.
+
+⚠️ **"Settled or EXPIRED" is not a terminal, and an earlier revision used it as
+one.** Application-level expiry says the reservation lapsed; it says nothing about
+the transport, and the very next paragraph establishes that CCIP will still
+execute an aged message. `LibVaipakam.sol:5807-5813` makes the same distinction
+for release — it requires a never-will-execute terminal, not ordinary expiry. So
+permanently rejecting d2 on an expiry-based gate strands its VPFI exactly as the
+legacy case does.
+
+The gate is therefore **acknowledgement or observed delivery**, or positive
+evidence that the transport message can never execute — never expiry.
 
 ⚠️ **That gate CANNOT cover pre-d2 legacy packets, and an earlier revision said
 it could.** `RewardRemittanceReceiver` states it outright: a legacy delivery
@@ -1401,12 +1445,28 @@ the earlier text attached to unpause. Claims may resume before finalization; the
 reconciler is ADMIN-only and paused-gated per entry, so the window it leaves open
 is authorization-bounded rather than time-bounded.
 
-**Closing it needs a protocol-owned bound, because the transport has none.**
-Finalize on an **observable per-lane terminal signal** — every source chain's
-legacy sequence acknowledged, read back — rather than on a clock. Absent that
-signal, the honest position is that the epoch stays open: an indefinitely open
-ADMIN-gated reconciler is a smaller problem than a permanently stranded delivery,
-and pretending a deadline is safe does not make the packet stop arriving.
+**Closing it needs a protocol-owned bound, because the transport has none — and
+for LEGACY that bound does not exist today.** An earlier revision proposed
+finalizing on "every source chain's legacy sequence acknowledged". There is no
+such sequence: the legacy payload carries no `remitId` or `remitter`, records no
+receipt and flows no ack (`RewardRemittanceReceiver.sol:230-232`), so there is
+nothing to read back. Nor can a barrier message stand in for one —
+`CcipMessenger._buildMessage` sets `allowOutOfOrderExecution: true`
+(`:686-711`), so a later message arriving proves nothing about earlier ones.
+
+Building one would mean a **protocol-owned sequence**: a counter each legacy
+arrival advances, an ordering guarantee, and a closure rule covering packets
+**already in flight** — which is the part no new mechanism can retrofit, because
+those packets were sent without it.
+
+**So the honest position, stated as the design's answer rather than as a
+caveat: for the legacy lane the epoch STAYS OPEN.** It is ADMIN-gated and
+paused per entry, so what it costs is an administrative surface that never
+formally closes. That is strictly better than a finalization which can occur
+while an executable delivery is still in flight, which is what any deadline or
+synthesised terminal would give. If the operator later establishes out-of-band
+that a lane is drained, closing it is their decision on evidence — not a rule
+this document can state in advance.
 
 **The reconciliation is ATOMIC over BOTH shares, not just the fresh one.** A
 pre-d2 delivery passes both component shares as zero, so `onRewardBudgetReceived`
