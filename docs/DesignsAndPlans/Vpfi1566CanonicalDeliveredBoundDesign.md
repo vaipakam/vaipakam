@@ -1051,6 +1051,24 @@ bound at `H − P` rather than the intended opening headroom `H`, and **rejectin
 every funded claim whenever `P ≥ H`**, which on a long-lived deployment is the
 normal case rather than an edge one.
 
+⚠️ **On an EXISTING canonical deployment there is no ledger that can prove any
+`H` at all, and an administrator importing a figure is the enumeration problem
+by another name.** §5b establishes that "balance minus every other owner" is
+unknown and unclosable — so an over-estimated `H` publishes claim headroom
+backed by exactly the borrower, payroll and treasury custody this bound exists
+to protect, with no check able to catch it.
+
+**So the legacy canonical bootstrap opens at ZERO and funds forward.**
+`bootstrapRewardPool` is for a deployment that can evidence its opening
+position; where none can, `received` starts at nothing and rises only through
+delta-checked `fundRewardPool` transfers, which prove funding by moving it. The
+cost is that claims stay bounded until the operator funds the pool explicitly —
+which is the honest state of a deployment that cannot say what it holds, and is
+strictly better than publishing a number nobody can verify.
+
+The definition below therefore applies **only** where a provable provenance
+ledger exists:
+
 **`H` is FREELY SPENDABLE fresh reward custody, not "reward-owned VPFI".** An
 earlier revision said the latter, which double-counts the recovery position: if
 `H` includes fresh VPFI sitting in the Base recovery position, its original
@@ -1718,6 +1736,18 @@ else catches it.
 
 A share sum **below** `oldWireAmount` is permitted and expected: the difference
 is rounding dust, and it **stays in `uncounted`**, never distributed.
+
+**But "permitted" plus a one-shot consumed marker strands the remainder.** An
+operator who understates a share — or submits zero by accident — passes the
+bound, leaves the balance in `uncounted`, and **burns the packet hash**, so a
+corrected entry for that immutable delivery is refused forever. The rule that
+tolerates rounding dust would then also tolerate stranding an entire packet.
+
+So the marker tracks the **cumulative amount classified per packet hash**, not a
+boolean: later entries may classify the remainder up to `oldWireAmount`, and the
+hash is exhausted only when the cumulative total reaches it. Replay protection is
+preserved — no packet can ever be classified beyond its own amount — while a
+mistaken under-classification stays correctable, which a boolean cannot express.
 
 Doing (2) without (1) and (3) is the failure mode; the window exists to land all
 three together.
