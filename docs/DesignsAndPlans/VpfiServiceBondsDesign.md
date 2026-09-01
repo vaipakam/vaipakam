@@ -56,7 +56,12 @@ ServiceBond { operator; role; amount; state; unlockAt; }
   debited in the same call that records it. The delay, and the privilege
   revocation and `unlockAt` snapshot that make it sound, arrive with the
   liveness tier.
-- Slashed VPFI → treasury **recycle bucket** (`VpfiRecycled(SLASH,...)`),
+- Slashed VPFI → treasury **recycle bucket** through the programme's single
+  chokepoint, `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)`.
+  That enum member is ALREADY reserved and must be used rather than a new
+  generic one — appending a duplicate would split service-bond absorption
+  from the metrics class reserved for it. (This bullet said
+  `VpfiRecycled(SLASH,...)`; there is no such source.)
   joining the netting loop; never burned, never redistributed to a
   "reporter" (bounty-shaped payouts reintroduce the promotional-
   distribution pattern #694 flags — slashing benefits the program, not an
@@ -103,7 +108,7 @@ parameter safe. Rev 4 stops extending and removes two mechanisms v1 does not
 need — the unbond delay, and the fixed epoch — which answers five review
 findings by deletion rather than by specification.
 
-**1. The debit formula — every recorded offence debits, immediately.**
+**1. The debit formula — every recorded offence debits, immediately, against the OFFENDING ROLE's bond.**
 
 Rev 1 said "slash at a counter threshold" AND "10% per offence, ten offences
 to zero", which are not the same rule: for any threshold above one it is
@@ -111,7 +116,14 @@ undefined whether the earlier offences debit, whether crossing the threshold
 takes 10% once or the accumulated total, and what the counter does afterwards.
 
 **The threshold is ONE.** Each `OffenceRecorded` immediately debits
-`slashBps` of the bond's CURRENT balance into the recycle bucket. That is the
+`slashBps` of the CURRENT balance of the `(role, address)` bond whose entry
+point recorded the offence, into the recycle bucket.
+
+**Keyed by role, not by address.** One address may hold solver, matcher and
+keeper bonds at once, and an offence recorded through a matcher entry point
+must debit the matcher bond — not another role's, and not all of them. The
+offence record and its counter therefore carry the role alongside the
+operator, or the same event admits three materially different losses. That is the
 whole rule:
 
 - Geometric, not linear — 10% of what remains, so the bond asymptotes toward
@@ -177,21 +189,67 @@ fixes both plus a third:
 The bucket:
 
 ```
-capacity   = freeTierBudget × multiplier        // the SAME continuous multiplier
-refillRate = capacity / refillWindow            // governance-set window, default 1h
+multiplier = 1 + 3 × min(1, bond / bondAt4x)    // 1× at zero bond, 4× at bondAt4x
+capacity   = freeTierBudget × multiplier        // continuous in the bond
+refillRate = capacity / refillWindow
 credit(t)  = min(capacity, credit(t₀) + refillRate × (t − t₀))
 ```
+
+The multiplier is restated here rather than referenced: rev 4 deleted the
+section that defined it and left "the same continuous multiplier" pointing
+at nothing, which made the document standalone-undefined below `bondAt4x`.
+Linear in the bond up to `bondAt4x`, flat at 4× above it, and computed in
+full precision — only the admission check rounds, and it rounds DOWN.
+
+**Initialization.** A previously unseen `(role, address)` bucket starts at
+**FULL capacity**, checkpointed at first touch. Zero would make a new
+operator — including a free-tier one — wait up to a whole `refillWindow`
+before doing any work, which is an entry barrier by another name. Starting
+full permits one capacity-sized burst, which is inside the envelope stated
+below rather than an exception to it.
+
+**`refillWindow`**: default **1 hour**, floor **1 minute**, ceiling **7
+days**; a stored **zero disables the bond feature** (the same dark-means-off
+convention this note uses elsewhere), never a division by zero and never an
+implicit default. `slashBps` likewise takes a **positive floor of 100 bps**
+— a zero would leave bonds granting elevated capacity while every proven
+offence debited nothing, which is a bond in name only.
+
+**Retunes are piecewise.** A rate change cannot be applied to accrual that
+already happened: shortening `refillWindow` would retroactively mint credit
+back to the last checkpoint, lengthening it would erase credit earned at the
+old rate, and a global setter cannot checkpoint every bucket. So the config
+carries an epoch and a timestamp, and a bucket touched after a retune
+accrues at the OLD rate up to the retune instant and the new rate after it.
+
+**Cost units are per role, and only what executed is charged.** A matcher
+debits per FILL, not per outer call — otherwise batching walks straight
+through the limit. A keeper pass debits per ACTION. Priority-window access
+debits per admission. A reverted or partially-filled batch debits the items
+that actually executed.
 
 An action is admitted iff `credit >= cost`, and debits `cost`. Keyed
 `(role, address)`, as before.
 
-Why this answers all three: the maximum burst is ONE capacity rather than two,
-because credit is capped at `capacity` and never granted in a lump — which is
-the guarantee rev 3 claimed and did not have. Sub-action credit accumulates
-continuously, so a small bond simply takes proportionally longer to afford an
-action and is never useless — no implicit minimum, this time actually. And
-there is no boundary to retune across: changing `refillWindow` changes the
-rate from that moment, with no epoch id to flip and no budget to re-grant.
+**The envelope, stated honestly this time.** A token bucket admits
+`capacity + refillRate × elapsed` over any interval — a full bucket spends
+`capacity` immediately and roughly another `capacity` as it refills across
+one `refillWindow`, so the worst case over a rolling window is close to
+`2 × capacity`, not one. Rev 3 claimed a one-budget rolling ceiling for the
+fixed epoch and did not have it; rev 4 claimed the bucket delivered that
+ceiling and also did not. **That is three revisions asserting a throughput
+bound the mechanism does not provide**, so the bound is now written as the
+envelope rather than as a round number. What the bucket genuinely fixes is
+the ARBITRARILY SHORT double burst — the fixed epoch allowed `2 × budget`
+back-to-back in an instant across a boundary; the bucket spreads the second
+budget over a full window. If a strict `capacity` per rolling window is ever
+required, that is a sliding-window or GCRA limiter and a different design.
+
+Sub-action credit does accumulate continuously, so a small bond takes
+proportionally longer to afford an action and is never useless — no implicit
+minimum, this time actually. And there is no epoch id to flip on a retune,
+though the accrual rule above is what makes that safe rather than the absence
+of boundaries alone.
 
 Rev 3 rejected a bucket because "a bucket lets an operator idle and then
 burst". That is true of a bucket whose capacity exceeds its window's budget;
