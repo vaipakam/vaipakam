@@ -102,9 +102,12 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
    slash, and an operator who simply goes quiet is never slashed. That keeps
    every v1 slash anchored to a fact the chain can check without a timing
    judgement, which is also what keeps the offence dispatcher below tractable.
-2. **Bond sizes + unbond delay** — proposal below, awaiting ratification.
-   Rev 4 REMOVES the delay from v1 rather than sizing it; see below for why
-   that is the answer to the question rather than a gap in it.
+2. **Unbond delay: RATIFIED — v1 has NONE.** Rev 4 removed it rather than
+   sizing it, because v1 has no evidence arriving after an operator stops
+   acting; the reasoning is below. Immediate withdrawal and the
+   clamp-on-decrease were decided together and are both invariants, not
+   recommendations. A delay arrives with the liveness tier.
+   **Bond sizes** remain a proposal (see the two open numbers at the end).
 3. **No-yield refundable-deposit shape: RATIFIED.** The legal glance is
    discharged. Bonds earn nothing, are refundable at will subject to the
    any unbond delay in force, and are described as operational security
@@ -194,8 +197,17 @@ mechanism is needed at all — it was not.
 *continuously and proportionally*, with **no minimum bond**, up to a ceiling
 of **4× the free tier** per address.
 
-**And any DECREASE in a bond — withdrawal or slash — must atomically clamp
-outstanding limiter credit to the new capacity.** This is a decision, not an
+**And any reduction in CAPACITY — a bond withdrawal, a slash, or a
+governance retune that lowers the curve, `bondAt4x` or the free tier — must
+reconcile outstanding limiter credit down to the new capacity before that
+bucket's next admission.**
+
+Bond-decrease-only is not sufficient, and the gap is easy to miss: raising
+`bondAt4x` leaves every bond BALANCE untouched while buying less capacity,
+so an unvisited bucket keeps credit above the new ceiling indefinitely.
+Config changes cannot walk every bucket, so the reconciliation is lazy and
+versioned — the config carries an epoch, and a bucket whose epoch is stale
+is clamped on its next touch, before admission. This is a decision, not an
 implementation detail, because without it the bond is bypassable: an
 operator accrues elevated credit, withdraws the bond, and still spends
 bonded capacity with nothing left to slash. It is also what makes v1's
@@ -311,3 +323,36 @@ merely stated.
    in-call. If the owner wants deterrence against slower-to-prove
    misbehaviour, that IS the liveness tier, and it should be scoped together
    with the delay rather than approximated by one.
+
+## Tests
+
+Rev 6's restructure deleted this section along with the limiter it was
+retiring. That was a regression: the cases below are acceptance criteria for
+the bond's SAFETY, not for the limiter's shape, and they survive whatever
+form the limiter takes.
+
+**Fund accounting and lifecycle — restored, and the reason they matter is
+that everything else is throughput and these are custody:**
+
+- Bond / unbond lifecycle, including that v1 withdrawal is IMMEDIATE and that
+  the withdrawal clamps accrued credit in the same step. A test that
+  withdraws and then spends is the one that catches the bypass.
+- Escrow accounting invariant: bonds are a fourth tracked balance class
+  alongside user LIF custody, unclaimed budgets and the recycle bucket, and
+  the Diamond-balance invariant must cover it (#892 / L13).
+- Slash → recycle: the debit credits
+  `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)` through the
+  chokepoint, with the event carrying that source and not a new generic one.
+- Each objective slash predicate proven on-chain-verifiable, and proven to
+  fire on committed state rather than a revert — an offence that reverts
+  leaves nothing to slash.
+- Free-tier operation at ZERO bond, for every role. This is the
+  permissionless baseline the whole design is built to preserve, and it is
+  the case a capacity bug silently breaks.
+- Dark mode preserves withdrawals and the free tier: disabling the feature
+  must not strand escrowed VPFI or block unbonded operation.
+
+**Limiter shape** — deferred with the mechanism, per §3's checklist, but its
+acceptance criteria are: no implicit minimum (a small bond eventually affords
+an action), the stated envelope holds over a rolling window, and a capacity
+reduction of any cause clamps before the next admission.
