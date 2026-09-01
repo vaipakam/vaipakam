@@ -356,8 +356,19 @@ it is retained as the reasoning that led here, not as an open question.
 
 ### What F settles, and what it does NOT
 
-F answers **closure 1 of the three** §6 item 5 requires. It does not touch the
-other two, and choosing it does not shrink them:
+F answers **the user-owned half of closure 1**, and an earlier revision of this
+line said it answered closure 1 outright. It does not, and the counter-example
+is already in this note: §2 records that on a Diamond-as-treasury deployment a
+funded VPFI payroll stream debits `treasuryBalances[vpfi]` while the tokens stay
+in the shared balance, and `backingPosition` does not reserve them.
+
+Payroll value is not user-owned, so no lien on a user vault reaches it. Move or
+earmark all four user-owned classes and an unbounded canonical reward claim can
+**still** consume tokens already owed to a payee. **Closure 1 needs the
+treasury/payroll escrow or earmark as well** — F plus that, not F alone.
+
+It does not touch the other two closures either, and choosing it does not shrink
+them:
 
 - **Closure 2 — the legacy settlement paths** remain open. A pre-`D*` payout
   spends without recording, and the pre-cutover branches of the expiry sweep
@@ -410,7 +421,15 @@ by calling the class clean:
    migration decrement it. The census is the thing the earlier text claimed was
    unnecessary.
 2. **An enumerable migration counter** — add the aggregate the mappings lack, so
-   the remainder is on-chain readable and reaching zero is provable.
+   the remainder is on-chain readable. **This is not an independent alternative
+   to (1) and must not be read as one:** every existing `borrowerLifRebate` row
+   predates the counter, and by this section's own argument there is no on-chain
+   set to enumerate them from. A counter initialized to zero would report a
+   COMPLETED drain on the upgrade block while untouched `vpfiHeld` and
+   `rebateAmount` still sit in the Diamond — the same false all-clear, now with
+   an on-chain number backing it, which is worse than no number. It needs (1)'s
+   frozen census, or some other exhaustive seed, to start from. What it adds
+   over (1) is that the remainder stays readable afterwards.
 3. **Arming stays blocked until an externally verified full drain** — cheapest
    in code, most expensive in schedule, and it makes the drain a release gate
    rather than a background process.
@@ -476,7 +495,16 @@ place the chosen option is not being applied.
 
 1. The two draining grandfathered classes (`vpfiHeld`, `rebateAmount`) —
    return-to-vault-under-lien at next touch. Self-limiting, lowest risk.
-2. `fallbackSnapshot` custody — lien at fallback, pull at claim.
+2. `fallbackSnapshot` custody — lien at fallback, and **every consumer** moved
+   onto the new custody source, not the claim path alone. The detailed
+   correction above establishes why; this slice previously said "pull at claim"
+   and would have shipped exactly the defect that correction describes. In
+   scope: `ClaimFacet`, internal matching (`RiskMatchLiquidationFacet._settleLeg`
+   and its auto-dispatch entry), the cure path in `AddCollateralFacet`, backstop
+   and retry, plus full repayment. A fallback loan resolved first through any
+   of those would otherwise read or pay the snapshot as Diamond-held collateral
+   while the tokens sit liened in the vault — reverting, or spending unrelated
+   Diamond custody.
 3. The intent class, per the ratification above.
 4. Closures 2 and 3, which are independent of all of the above and block
    arming just as hard.
@@ -572,11 +600,24 @@ narrow — this is the finding that makes the root fix practical:
 
 | Outflow | Chokepoint | Charge what |
 | --- | --- | --- |
-| value to a claimant | `RewardClaimFacet._deliverReward` (**exactly 1 caller**) | the **fresh** component, passed in explicitly — NOT `paid` |
+| value to a claimant | `RewardClaimFacet._deliverReward` (**exactly 1 caller**) | the **fresh** component, passed in explicitly — NOT `paid` — and **rejected if it exceeds the remaining delivered balance, BEFORE the transfer** |
 | value to the recycle bucket (forfeit / expiry) | reward-specific forfeit/expiry operations, or an explicit fresh amount at each caller | the fresh component — **not** `LibVpfiRecycle.credit` / `releaseCommitment` |
 
-**Two corrections to an earlier revision of this table, both of which would
-have broken live accounting if built as written.**
+**The chokepoint must ENFORCE, not merely record.** An earlier revision of this
+section described charging the ledger at `_deliverReward` and stopped there,
+which records the right quantity and bounds nothing. The reason it bounds
+nothing is structural: `_processEntry` computes the pre-`D*` legacy slice
+*before* `_walkShareOfPoolDays`, and only that armed-day walk consults
+`deliveredFreshBound` (`LibInteractionRewards.sol:1575`, `:1621`). So with 100
+delivered and 50 tokens of unrelated Diamond custody, a 150-fresh legacy-only
+claim reaches `_deliverReward`, transfers all 150, and leaves `paid > received`
+as an after-the-fact observation of an over-draw that already happened.
+
+Charging is what makes the quantity right; **rejecting before the transfer** is
+what makes it a bound. Both, at the same point.
+
+**Two further corrections to an earlier revision of this table, both of which
+would have broken live accounting if built as written.**
 
 **1. `paid` is the wrong operand — it double-charges the recycled component.**
 The earlier text said `paid` "is the TOTAL the claim disburses … charging there
@@ -614,20 +655,53 @@ detail:
 
 And filtering by `RecycleSource` inside those functions would destroy the exact
 property the root fix is for: once the charge is conditional on a source tag, a
-future path *can* forget, by arriving with a tag the filter does not list. **The
-forfeit/expiry side needs its own reward-specific operations, or an explicit
-fresh amount handed in at each caller** — the same shape as the claim side.
+future path *can* forget, by arriving with a tag the filter does not list.
 
-This is the repository's own "make the check BE the operation" pattern: today
+**"Or an explicit fresh amount handed in at each caller" was the same mistake by
+another door**, and an earlier revision offered it as an equal alternative. The
+expiry and forfeit paths call the generic `LibVpfiRecycle.credit` from separate
+sites; leaving that entry open to reward sources means a future reward terminal
+can still credit the bucket while omitting or misstating the adjacent ledger
+charge. That is convention, not structure — the very thing this section claims
+two paragraphs later to have eliminated.
+
+**The reward-specific operation only closes the hole if reward absorption CANNOT
+bypass it.** Concretely: `credit` rejects the reward sources, and the only way
+to move reward value into the bucket is the operation that charges the ledger in
+the same call. The rejection is what makes it structural; without it, the new
+operation is merely the preferred path.
+
+Then the repository's own "make the check BE the operation" pattern holds: today
 "spent" is whatever each path *remembered to declare*; afterwards it is a
 consequence of *spending*. A future path that forgets to record cannot exist,
-because recording is not a separate step it could omit.
+because recording is not a separate step it could omit — and, crucially, because
+the step it would have to omit is the only one that works.
 
-**Scope honesty.** This is a redefinition of a live ledger, not a patch, and
-it carries what redefinitions carry: `received` must be re-based onto the same
-noun (VPFI actually delivered for rewards, not armed-scoped deliveries), the
-five existing paid-side writers collapse into the chokepoints (each handing in
-its fresh component rather than its total), and a
+**Scope honesty.** This is a redefinition of a live ledger, not a patch, and it
+carries what redefinitions carry. Two details an earlier revision got wrong,
+both of which would have removed working machinery:
+
+**Only THREE of the five paid-side writers are spends.** Those three move into
+the chokepoints, each handing in its fresh component rather than its total:
+`InteractionRewardsFacet:129`, `RewardHorizonSweepFacet:238`, and
+`LibInteractionRewards:1825`. The other two are **administrative state
+transitions, not outflows**, and must be retained and redefined in place:
+
+- `RewardReporterFacet:1152-1153` — the role-change assignment
+  (`if (paid < received) paid = received`). Delete it and an old delivered
+  residual becomes reusable after a mirror role transition and reattachment.
+- `RewardReporterFacet:1268` — `seedArmedFreshPaid`. Delete it and a migrated
+  deployment has no way to initialize, which is the very migration answer the
+  next clause asks for.
+
+**`received` broadens across VINTAGES, not across token deliveries.** The
+re-base is onto reward value regardless of vintage — legacy and armed alike —
+while still counting **only the authenticated fresh component**. Crediting the
+whole delivery would re-open the hole on the other side: a remittance of 5 fresh
+plus 5 recycled already credits the recycled 5 to the bucket, so crediting 10
+here against a fresh-only paid side leaves 5 of false fresh headroom, and a
+later fresh payout consumes bucket backing through it. Both sides count fresh;
+neither side counts vintage. And a
 deployment mid-flight needs a migration answer for counters already populated
 under the old meaning. §6 item 1 already anticipated this shape for Option B
 and it applies here. It is more work than five `+=` lines — and the five
