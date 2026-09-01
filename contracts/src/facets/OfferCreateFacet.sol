@@ -1781,8 +1781,19 @@ contract OfferCreateFacet is
         // authorize maker Full — there is no post-create / pre-accept moment to
         // call the setter, so a signed-offer maker always resolves as non-Full
         // (safe: no wrong charge). Threading maker Full through the signed-offer
-        // EIP-712 / materialization path is a deliberate follow-up (#1369),
-        // alongside the matched-fill lender-Full gap (Codex #1366 r3 P2).
+        // EIP-712 / materialization path is a deliberate follow-up, tracked as
+        // **#1949**.
+        //
+        // NOT #1369, which this comment used to name and which CLOSED on
+        // 2026-07-30 having covered the OTHER half — the matched-fill lender
+        // Full gap (Codex #1366 r3 P2). That half is DONE: a matched fill
+        // reads the lender's authorization off their own offer via
+        // `matchLenderAuthOfferId` (see `OfferMatchFacet`, `OfferAcceptFacet`
+        // and `FeeEntitlementFacet`, all of which cite #1369 as shipped
+        // behaviour). So the old text was wrong twice over — it pointed at a
+        // closed card, and it described the matched-fill case as an open gap
+        // alongside this one. A reader following either claim concluded the
+        // signed-offer gap was fixed. It is not.
         // Phase 6: keeper access is per-keeper via
         // `offerKeeperEnabled[offerId][keeper]`. Creator enables specific
         // keepers post-create via `ProfileFacet.setOfferKeeperEnabled`.
