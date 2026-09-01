@@ -1524,13 +1524,13 @@ contract MeshHandler is Test {
         // zero retirements: its `finalizeDay` always reverted, so no
         // instruction existed for the retirement figures to clamp against.
         try messenger.deliverChainReportB3(
-            CHAIN_BASE, d0, 10e18, 5e18, 900 ether, 0, 0, 0
+            CHAIN_BASE, d0, 10e18, 5e18, 900 ether, 900 ether, 0, 0
         ) {} catch {}
         try messenger.deliverChainReportB3(
-            CHAIN_ARB, d0, 20e18, 10e18, 900 ether, 0, 0, 0
+            CHAIN_ARB, d0, 20e18, 10e18, 900 ether, 900 ether, 0, 0
         ) {} catch {}
         try messenger.deliverChainReportB3(
-            CHAIN_OP, d0, 20e18, 10e18, 900 ether, 0, 0, 0
+            CHAIN_OP, d0, 20e18, 10e18, 900 ether, 900 ether, 0, 0
         ) {} catch {}
         mut.setChainDayCommitmentCompleteRaw(d0, CHAIN_ARB, true);
         mut.setChainDayCommitmentCompleteRaw(d0, CHAIN_OP, true);

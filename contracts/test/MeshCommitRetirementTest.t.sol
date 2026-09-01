@@ -74,19 +74,43 @@ contract MeshCommitRetirementTest is SetupTest {
     ///      immediately re-instructs whatever availability the report just
     ///      restored, so an assertion taken after finalize would read the
     ///      restored figure back as ~zero and prove nothing.
+    /// @dev As `_reportArb`, but states the day credit explicitly. Needed
+    ///      because a report may legitimately carry a huge LIFETIME
+    ///      cumulative alongside an ordinary day credit, and conflating the
+    ///      two changes what a test is testing.
+    function _reportArbWithDayCredit(
+        uint256 dayId,
+        uint256 arbCumulative,
+        uint256 forDay,
+        uint256 retiredCum,
+        uint256 releasedCum
+    ) internal {
+        messenger.deliverChainReportB3(
+            CHAIN_ARB, dayId, 20e18, 10e18, arbCumulative, forDay,
+            retiredCum, releasedCum
+        );
+    }
+
     function _reportArb(
         uint256 dayId,
         uint256 arbCumulative,
         uint256 retiredCum,
         uint256 releasedCum
     ) internal {
+        // `recycledForDay18` = the whole cumulative on the day it first
+        // appears. The zero this used to pass was an unrealistic shape — a
+        // chain reporting availability it never credited on any day — and it
+        // silently zeroed the #1569 keeper allocation once that was sized
+        // from the day's inflow rather than from claim demand (Codex #2031
+        // r9). The anti-vacuity guard in the invariant campaign is what
+        // surfaced it.
         messenger.deliverChainReportB3(
             CHAIN_ARB,
             dayId,
             20e18,
             10e18,
             arbCumulative,
-            0,
+            arbCumulative,
             retiredCum,
             releasedCum
         );
@@ -453,9 +477,20 @@ contract MeshCommitRetirementTest is SetupTest {
     function test_B3_HugeReportedCumulativeCannotWedgeFinalization() public {
         _armAndInstruct40();
 
-        // A faulty/compromised mirror reports an absurd lifetime cumulative
-        // together with a genuine release.
-        _reportArb(6, type(uint256).max, 20 ether, 15 ether);
+        // A faulty/compromised mirror reports an absurd lifetime CUMULATIVE
+        // together with a genuine release. The day credit stays ordinary —
+        // that is this test's subject, and conflating the two tests
+        // something else.
+        //
+        // Worth recording what conflating them exposed (Codex #2031 r9): a
+        // report may carry BOTH a max cumulative and a max day credit, and
+        // the day-attribution clamp accepts it, because the clamp is
+        // `min(forDay, reported - attributed)` and a max cumulative makes
+        // that headroom max too. `finalizeDay` then panics on overflow —
+        // with the keeper knob DARK, so it is a pre-existing wedge this
+        // suite's zero day credit was hiding, not anything #1569 introduced.
+        // Tracked separately rather than widened into this PR.
+        _reportArbWithDayCredit(6, type(uint256).max, 5 ether, 20 ether, 15 ether);
 
         // The read survives, and the ceiling still holds structurally.
         (uint256 reported, , uint256 avail, ) =

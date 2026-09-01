@@ -423,7 +423,30 @@ library LibMeshFunding {
         // chain being committed twice for the same tokens nets against that
         // cumulative.
         uint256 keeperAlloc;
-        if (commitLocal != 0) {
+        // GATED ON BEING A MIRROR, not on there being claim demand (Codex
+        // #2031 r9). This block used to open with `commitLocal != 0`, which
+        // is the same defect as sizing from it: a chain that absorbed
+        // receipts on a quiet day has inflow to earmark and no claims, so the
+        // whole allocation was skipped for exactly the low-demand surplus
+        // chains the channel targets. Base is still excluded — it is never a
+        // local funder in this split, and `setChainKeeperAllocateBps` refuses
+        // the canonical id anyway, so this is belt-and-braces.
+        if (c.chainId != ctx.baseId) {
+            // SIZED FROM THE DAY'S REPORTED INFLOW, not from the claim commit
+            // (Codex #2031 r9). The ratified formula in
+            // `VpfiCrossChainRecyclingDesign.md` §3.5 is
+            //
+            //   keeperAllocate = min(reportedInflow × keeperBps / 10_000,
+            //                        availRecycled − recycleConsume)
+            //
+            // — inflow is the NUMERATOR base and availability-minus-claims is
+            // only the CAP. Sizing the numerator from `commitLocal` instead
+            // made keeper funding a function of CLAIM DEMAND, so a quiet or
+            // zero-demand day funded no housekeeping however much the chain
+            // had just absorbed — starving exactly the low-demand surplus
+            // chains this channel exists to serve. The clamp below is the
+            // cap half and was already correct.
+            //
             // `mulDiv`, not `a * b / c` (Codex #2031 r8). `recordChainRecycled`
             // deliberately accepts UNBOUNDED monotonic cumulatives, so a
             // faulty or hostile mirror can report a figure large enough that
@@ -434,7 +457,9 @@ library LibMeshFunding {
             // intermediate in 512 bits and cannot overflow here, since the
             // result is bounded by `commitLocal`.
             uint256 want = Math.mulDiv(
-                commitLocal, s.chainKeeperAllocateBps[c.chainId], 10_000
+                s.chainDailyRecycledCredit[dayId][c.chainId],
+                s.chainKeeperAllocateBps[c.chainId],
+                10_000
             );
             // BOUNDED BY WHAT IS LEFT (Codex #2031 r3). The earmark is a
             // SECOND draw on the same bucket, not a haircut on the claim
@@ -482,19 +507,23 @@ library LibMeshFunding {
             // it while quoting the half of that doc which lists
             // `keeperAllocate` — a definition written while the field was
             // dead, so the identity held vacuously.
-            s.chainConsumedRecycled[c.chainId] += commitLocal;
+            if (commitLocal != 0) s.chainConsumedRecycled[c.chainId] += commitLocal;
             // The SEPARATE draw term, the sibling of
             // `chainRepatriationDebited`. Availability nets it, so the
             // backstop property the wrong placement was reaching for is
             // preserved: Base still cannot instruct the same tokens twice.
-            s.chainKeeperAllocDebited[c.chainId] += keeperAlloc;
+            if (keeperAlloc != 0) {
+                s.chainKeeperAllocDebited[c.chainId] += keeperAlloc;
+            }
             // §5's per-chain reservation ledger, the sibling of the global
             // `outstandingCommitRecycled`. Monotonic in d3: Base has no
             // authenticated view of mirror claims, so B3's source-scoped
             // netting is what retires it. Availability nets by the
             // instruction above ONLY — never by both, or the same commit
             // would be subtracted twice.
-            s.chainOutstandingRecycledCommit[c.chainId] += commitLocal;
+            if (commitLocal != 0) {
+                s.chainOutstandingRecycledCommit[c.chainId] += commitLocal;
+            }
         }
 
         s.chainDayRecycledFunding[dayId][c.chainId] = LibVaipakam
