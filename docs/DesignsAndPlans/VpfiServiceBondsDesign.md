@@ -460,27 +460,49 @@ now and gains deterrence later, or waits for the tier that can adjudicate.
 Everything in this note that survived review is about capacity; everything
 that collapsed is about slashing.
 
-**Open for the owner**, and these are genuine choices rather than gaps:
+**Open for the owner.** There is exactly ONE decision that blocks a build,
+and it is first:
 
-1. `bondAt4x` and `refillWindow` per role — the two numbers that set how much
-   capacity a bond buys and how fast it comes back.
-2. ~~Whether the permissionless roles keep a per-address ceiling at all.~~
-   **RATIFIED: the 4× per-address ceiling stands.** This was listed as an
-   open choice while the ceiling's meaning was still being argued; leaving
-   it open in a note that is about to merge would leave an implementation
-   unable to tell whether 4× is a required invariant or a suggestion. It is
-   an invariant. What was withdrawn is the CLAIM that it bounds an operator
-   — it bounds an address, and the aggregate story is the linear cost curve
-   in §4.
-3. Whether v1 ships at all without the liveness tier. Rev 4 removed the
-   unbond delay because v1 has no delayed evidence — which is correct, and
-   also worth looking at squarely: a bond that can be withdrawn the instant
-   before an offence would have been recorded still deters, because the
-   offence is debited in the same call it is detected in and there is no
-   window to escape through. But it deters only what the dispatcher can see
-   in-call. If the owner wants deterrence against slower-to-prove
-   misbehaviour, that IS the liveness tier, and it should be scoped together
-   with the delay rather than approximated by one.
+**1. Select the fork: (A), (B) or (C).** Not "does v1 ship" — that question
+was in an earlier revision of this list and a "yes" to it leaves an
+implementer unable to tell whether anything is confiscated. The three differ
+in what a deposit IS:
+
+| | confiscates? | permanent sink? | deposit is called |
+| --- | --- | --- | --- |
+| **A** | no | no | operational capacity deposit |
+| **B** | yes, once attested | yes (slash) | operational security deposit |
+| **C** | no | yes (arming fee) | operational capacity deposit |
+
+Recommendation **(C), else (A)**. Both abandon performance security; the
+question is whether v1 ships capacity now and gains deterrence when the
+attested tier lands, or waits.
+
+**2. If (C): the arming fee's value, floor and ceiling.** Flat per arming,
+paid in addition to the deposit, per §3. Without a number (C) is not
+buildable, and its permanent-sink property is exactly what the number sets.
+
+**3. Whether the liveness tier is scoped now or later.** It is what makes
+"knew" adjudicable, and it carries the unbond delay, the revocation rule and
+the `unlockAt` snapshot that revs 2–3 worked out. Under (A) or (C) it is the
+only route to deterrence, so the choice is really *when*, not *whether*.
+
+**NOT for the owner, deliberately — deferred to implementation:**
+
+`bondAt4x` and `refillWindow` were listed here as owner numbers, and that was
+wrong. The same `refillWindow` yields materially different throughput
+depending on bucket size, initialization and whether a cost is charged per
+fill, per action or per admission — none of which is settled (§3's checklist
+is exactly that list). Ratifying numbers whose operational meaning is
+undefined would produce two conforming implementations with different limits.
+The implementation pass defines the units and the envelope, then brings the
+numbers back with their actual throughput meaning attached.
+
+**Already ratified, recorded here so nothing re-opens them:** the no-yield
+refundable-deposit shape; objective-lies-only for v1 (which collapsed to no
+predicate at all — see the fork); the 4× ceiling per `(role, address)` as an
+invariant rather than a suggestion; no minimum bond; no v1 unbond delay; and
+clamp-on-any-capacity-reduction.
 
 ## Tests
 
@@ -519,10 +541,12 @@ that everything else is throughput and these are custody:**
   earlier revision required testing a caller-supplied snapshot, which is the
   mechanism this note rejects, so that test could not have been written
   honestly.
-- **Dust slashing**: a 1-unit balance still debits 1 unit under ceiling
-  division and reaches zero. The test is that no positive balance survives
-  a slash unchanged — which is the property, rather than a sweep rule that
-  can never fire.
+- **(B) / attested tier only** — dust slashing: a 1-unit balance still
+  debits 1 unit under ceiling division and reaches zero, so no positive
+  balance survives a slash unchanged. Under (A) and (C) there is no slash
+  path for this to exercise, so it is deferred with the others; the ceiling
+  -division helper itself can still be unit-tested in isolation, which is
+  where the rounding property actually lives.
 - Free-tier operation at ZERO bond, for every role. This is the
   permissionless baseline the whole design is built to preserve, and it is
   the case a capacity bug silently breaks.
