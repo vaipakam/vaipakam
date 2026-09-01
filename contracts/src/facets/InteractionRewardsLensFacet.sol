@@ -675,11 +675,17 @@ contract InteractionRewardsLensFacet {
      * @dev    `platformRetained` (governor design §9) is
      *         `bucket − outstandingRecycled − keeperBudget`, floored at zero.
      *
-     *         The keeper term is NOT decorative. Once
+     *         The keeper term is NOT decorative, and it has TWO writers
+     *         (#1569 M4 C3, Codex #2031 r7). The local one: once
      *         `recycleRegisterKeeperBps` is non-zero, `_applyRecycleRegister`
      *         earmarks part of each day's realized margin into
-     *         `recycleKeeperBudget` — carved from INSIDE the bucket, so
-     *         `recycleBucket` does not move — and the governor's own
+     *         `recycleKeeperBudget`. The cross-chain one: on a MIRROR, an
+     *         arriving broadcast carrying a Base-authorized `keeperAllocate`
+     *         credits the same slot, and that path does not consult the local
+     *         knob at all — so a mirror with `recycleRegisterKeeperBps` unset
+     *         can still hold a non-zero budget. Both are earmarks from INSIDE
+     *         the bucket, so `recycleBucket` does not move either way, and
+     *         the governor's own
      *         `_recycleFundable` nets it right alongside
      *         `outstandingCommitRecycled`. A consumer following a two-term
      *         formula therefore counts the entire keeper earmark as platform
@@ -801,8 +807,16 @@ contract InteractionRewardsLensFacet {
      *         via {RewardAggregatorFacet.getRecycleCompositionPosition};
      *         read the two together to reconstruct gross outflow.
      * @return keeperBudget        VPFI earmarked INSIDE the bucket for the
-     *         keeper-incentive register. Zero while
-     *         `recycleRegisterKeeperBps` is unset, which is the default.
+     *         keeper-incentive register. On the CANONICAL chain, zero while
+     *         `recycleRegisterKeeperBps` is unset, which is the default. On a
+     *         MIRROR that is not sufficient: a Base-authorized broadcast
+     *         earmark credits this slot without consulting that knob, so a
+     *         non-zero budget beside an unset local register is a valid
+     *         mirror state, not a corruption. An earlier revision of this
+     *         line said zero-while-unset unconditionally, which told an
+     *         operator reconciling this against
+     *         {ConfigFacet.getRecycleRegisterState} that a legitimate state
+     *         was impossible (Codex #2031 r7).
      *         The THIRD term of `platformRetained` — see the note above for
      *         why omitting it overstates the reserve rather than merely
      *         rounding it.

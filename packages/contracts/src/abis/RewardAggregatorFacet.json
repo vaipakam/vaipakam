@@ -2277,6 +2277,17 @@
   },
   {
     "type": "error",
+    "name": "KeeperAllocateTargetIsCanonical",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "KeeperAlreadyApproved",
     "inputs": []
   },
