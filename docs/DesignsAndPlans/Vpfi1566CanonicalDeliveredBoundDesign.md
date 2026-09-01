@@ -1364,6 +1364,15 @@ existing claims waiting for a **second** delivery while the first 100 is
 untracked and unusable. The retirement was introduced to stop an old residual
 being reusable; done to the counter alone it strands the tokens instead.
 
+**This applies to EVERY effective role change, not only entry into `Detached`.**
+`setIsCanonicalRewardChain` permits direct Mirror→Canonical and
+Canonical→Mirror transitions and calls the same retirement helper
+(`RewardReporterFacet.sol:1296-1339`), so a rule scoped to `Detached` leaves
+those paths retiring the live counter without re-keying its backing — the
+stranded-custody defect again — or retaining a prior-era residual for reuse,
+which is the defect the retirement exists to prevent. Same counter, custody and
+era transition on all of them.
+
 **Chosen: an ERA-BOUND CARRY-FORWARD.** An earlier revision offered this or a
 repatriation position as equivalents; they are not. Repatriating the backing
 leaves the mirror's already-accrued claims waiting on a fresh delivery — the
@@ -1378,9 +1387,18 @@ retired by accident:
   required zero baseline; the residual is not deleted, it is re-keyed.
 - **Custody.** The delivered VPFI does not move. It stays in the Diamond, now
   attributed to that era's balance rather than to the live one.
-- **Claims.** Claims accrued under the retired era are paid from the era-scoped
-  balance and debit **it**. That is what keeps them fundable without a second
-  delivery.
+- **Claims.** Claims accrued under the retired era consume the era-scoped
+  balance **first**, and any excess then debits the **live** delivered headroom
+  like any other claim. Making the era balance their ONLY source would freeze
+  the excess permanently: with `received = 100`, `paid = 90` and 50 of
+  outstanding retired-era claims, only 10 carries forward, and the other 40 would
+  wait forever while later deliveries land in a balance they may not touch.
+
+  Falling through is also what keeps this consistent with the vintage-blind
+  funding rule above — a claim is funded by delivered reward value, not by the
+  era it happened to accrue in. The era balance is a **priority**, not a
+  restriction: it exists so the residual is spent before new funding, never so a
+  claim can starve beside money that would otherwise pay it.
 - **`deliveredFreshBound`.** The era-scoped balance is **invisible** to the live
   bound. This is the property the retirement existed for: a residual cannot be
   spent twice by reattaching, because the new era never sees it.
@@ -1766,8 +1784,20 @@ or consumes unrelated bucket backing.
 
 One reconciliation entry, three effects, all or nothing:
 
-0. **assert `alreadyClassified[packetHash] + freshShare + recycledShare <=
-   oldWireAmount`, where both figures are bound to this entry's packet hash** —
+0. **assert the CUMULATIVE FRESH and CUMULATIVE RECYCLED totals separately,
+   each against the authenticated component on the packet evidence** —
+   `alreadyFresh[h] + freshShare <= authenticatedFresh[h]` and
+   `alreadyRecycled[h] + recycledShare <= authenticatedRecycled[h]`, with the
+   sum bound following from them.
+
+   **A cumulative TOTAL alone cannot catch a wrong SPLIT**, and an earlier
+   revision tracked only the total. For a packet authenticated as 4 fresh + 6
+   recycled, an entry of 6 fresh + 4 recycled sums to 10, passes the total bound,
+   **exhausts the hash**, and permanently publishes 2 of false fresh headroom
+   while leaving the recycle bucket 2 short — with no follow-up entry able to
+   reverse either mutation. Binding each component to the authenticated figure
+   rejects that entry at submission instead of discovering it afterwards, which
+   is the only point at which it is still fixable —
    the CUMULATIVE total, not this submission alone. An earlier revision bounded
    only the current entry, which the correction permitting follow-up entries then
    made exploitable: for a 10-token packet, submissions of 6 and 6 each pass a
@@ -1808,9 +1838,17 @@ custody is silently reclassified as fresh headroom, or the reverse. A check that
 validates each entry in isolation cannot see this.
 
 So each entry carries a **canonical packet hash derived from IMMUTABLE DELIVERY
-EVIDENCE** — source chain plus transaction/log identity — with both the
-`oldWireAmount` bound and the consumed marker keyed to that hash, marked consumed
-BEFORE any ledger mutation.
+EVIDENCE** — source chain plus transaction/log identity — with the
+`oldWireAmount` bound and the classified totals keyed to that hash.
+
+**The guard is a cumulative INCREMENT, not a one-shot consumed flag**, and an
+earlier revision of this paragraph said "marked consumed BEFORE any ledger
+mutation". Read literally that rejects every follow-up correction, so a zero or
+understated first submission strands the packet — the exact defect the
+cumulative marker was introduced to remove, restored by the sentence describing
+the marker. The bound is checked first, the effects apply, and
+`alreadyClassified[packetHash]` increments with them; the hash is exhausted only
+when that cumulative value reaches `oldWireAmount`.
 
 **A merely "unique migration nonce" does not work, and an earlier revision
 offered one as an equal option.** A fresh nonce establishes only that this
