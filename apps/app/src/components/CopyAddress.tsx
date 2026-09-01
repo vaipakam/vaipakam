@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Check, Copy, ExternalLink } from 'lucide-react';
 import { copy } from '../content/copy';
 import { shortAddress } from '../lib/format';
+import { useLatestAttempt } from '../lib/useLatestAttempt';
 
 export function CopyAddress({
   address,
@@ -20,6 +21,7 @@ export function CopyAddress({
 }) {
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const copyAttempt = useLatestAttempt();
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
@@ -33,10 +35,20 @@ export function CopyAddress({
         className="copy-address-chip mono"
         aria-label={copy.copyAddress.copyAria(address)}
         onClick={async () => {
+          // ORDERED (#2044). Two rapid clicks leave two writes in flight and
+          // the last to settle wins regardless of which started last. Lower
+          // stakes than the buttons #2043 fixed — the value is the same
+          // address every time and a refusal is deliberately silent, so the
+          // worst case is a confirmation appearing or clearing at the wrong
+          // moment rather than a false claim. Fixed anyway because leaving
+          // the last instance of a pattern behind is exactly how it kept
+          // coming back: each round of #2043 fixed the site it was shown.
+          const attempt = copyAttempt.begin();
+          if (timer.current) clearTimeout(timer.current);
           try {
             await navigator.clipboard.writeText(address);
+            if (!attempt.isCurrent()) return;
             setCopied(true);
-            if (timer.current) clearTimeout(timer.current);
             timer.current = setTimeout(() => setCopied(false), 1500);
           } catch {
             /* clipboard permission denied — the chip just doesn't flip */

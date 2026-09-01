@@ -41,6 +41,7 @@ import { useAccount, usePublicClient } from 'wagmi';
 import { LifeBuoy, X } from 'lucide-react';
 import { copy } from '../content/copy';
 import { SupportTicketCard } from './SupportTicketCard';
+import { useLatestAttempt } from '../lib/useLatestAttempt';
 import { useActiveChain } from '../chain/useActiveChain';
 import { indexerConfigured, probeIndexerFreshness } from '../data/indexer';
 import { readLastError } from '../diagnostics/lastError';
@@ -310,11 +311,10 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   // fallback over a clipboard that genuinely holds the report — or an older
   // success could hide a newer failure.
   //
-  // The faucet got exactly this fix one round earlier and this call site did
-  // not, which is the same carry-over miss for the sixth time in this PR. The
-  // rule these two now share: a settlement may only report if it is still the
-  // latest attempt.
-  const copyAttempt = useRef(0);
+  // Shared with three other call sites through `useLatestAttempt` (#2044):
+  // #2043 fixed this same defect four times in two files, each fix its own,
+  // which is what said the rule wanted to be a thing rather than a habit.
+  const copyAttempt = useLatestAttempt();
   useEffect(
     () => () => {
       if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
@@ -323,15 +323,14 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   );
   const copyDetails = async () => {
     if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
-    const attempt = (copyAttempt.current += 1);
-    const isCurrent = () => attempt === copyAttempt.current;
+    const attempt = copyAttempt.begin();
     try {
       await navigator.clipboard.writeText(reportBody);
-      if (!isCurrent()) return;
+      if (!attempt.isCurrent()) return;
       setCopyState('copied');
       copyResetTimer.current = setTimeout(() => setCopyState('idle'), 2_000);
     } catch {
-      if (!isCurrent()) return;
+      if (!attempt.isCurrent()) return;
       // NOT SILENT, and not a dead end either: the failure is stated AND the
       // disclosure is opened, so the text the clipboard refused to take is
       // on screen and selectable. Telling someone it failed while leaving

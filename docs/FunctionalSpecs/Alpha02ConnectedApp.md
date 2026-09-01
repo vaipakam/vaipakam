@@ -938,6 +938,20 @@ Thin-market honesty rules apply.
   A copy that the browser refuses must say so — and must leave the reader
   able to read the report anyway, since a failure notice that ends the
   attempt returns them to the disclosing action as the only way to look.
+- **A late answer must not speak for a newer question.** Where a control
+  starts work that finishes later and then reports on it, two attempts can be
+  outstanding at once — a second press, or a wallet prompt left open while the
+  person carries on. The intent is that only the most recent attempt may
+  report: an earlier one that settles afterwards is discarded rather than
+  displayed against whatever is now on screen. This holds across a change of
+  subject as well as a repeat, so an approval for one token cannot mark a
+  different one.
+- **Silence is correct where a refusal is the person's own decision.** A
+  wallet declining to add a token is usually the user declining it, and the app
+  cannot distinguish that from a genuine failure; reporting an error over
+  someone's own choice is its own inaccuracy. That is the line: a control says
+  plainly when it could not do what was asked, unless "could not" is
+  indistinguishable from "you said no".
 - **A control must not report a success it has not verified.** Copying to the
   clipboard can be refused, so a button that confirms a copy has to wait for
   the result before confirming. Claiming a success that did not happen is

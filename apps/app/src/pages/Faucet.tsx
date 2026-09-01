@@ -11,7 +11,7 @@
  * `mint(to, amount)` on the two ERC-20s, `mint(to, tokenId)` on the
  * ERC-4907 NFT with a client-random 256-bit id (collision-safe).
  */
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { assertSettled } from '../contracts/ownReceipt';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
@@ -22,6 +22,7 @@ import { parseUnits } from 'viem';
 import { getDeployment } from '@vaipakam/contracts/deployments';
 import { copy } from '../content/copy';
 import { useActiveChain } from '../chain/useActiveChain';
+import { useLatestAttempt } from '../lib/useLatestAttempt';
 import { SUPPORTED_CHAINS } from '../chain/chains';
 import { EmptyState } from '../components/EmptyState';
 import { captureTxError } from '../lib/errors';
@@ -128,8 +129,12 @@ export function Faucet() {
   // starts a second write, and if the newer one succeeds while the older
   // rejects afterwards, the older callback overwrote a true "Copied." with
   // "failed" — the clipboard holding the id while the page said it did not.
-  // A monotonic counter gives the callbacks an order the id cannot.
-  const copyAttempt = useRef(0);
+  // Shared with the other three call sites through `useLatestAttempt` (#2044).
+  const copyAttempt = useLatestAttempt();
+  // The watch-asset prompt needs its own ordering (#2044). It is a separate
+  // control with a separate outcome, so one counter for both would let a
+  // copy supersede a pending watch and vice versa.
+  const watchAttempt = useLatestAttempt();
   const [watched, setWatched] = useState(false);
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
@@ -213,7 +218,9 @@ export function Faucet() {
     setError(null);
     setDone(null);
     setCopyResult(null);
+    copyAttempt.supersede();
     setWatched(false);
+    watchAttempt.supersede();
     // Resolve the REAL on-chain symbol; fall back to the hint if the read
     // fails (#1095 — never label the minted/watched token as something the
     // deployed contract isn't).
@@ -257,7 +264,9 @@ export function Faucet() {
     setError(null);
     setDone(null);
     setCopyResult(null);
+    copyAttempt.supersede();
     setWatched(false);
+    watchAttempt.supersede();
     try {
       const tokenId = randomTokenId();
       const hash = await walletClient.writeContract({
@@ -430,6 +439,26 @@ export function Faucet() {
                       onClick={() => {
                         // wallet_watchAsset — MetaMask shows an
                         // add-token prompt; rejection is not an error.
+                        //
+                        // ORDERED, and tied to the asset it was approved for
+                        // (#2044). A wallet prompt is exactly the kind of
+                        // thing a person leaves open while they carry on, so
+                        // this settlement can land after a SECOND mint has
+                        // reset the flag — marking the new token as added to
+                        // the wallet when what they approved was the previous
+                        // asset. The mint handlers supersede any prompt still
+                        // outstanding, so a late approval cannot label a token
+                        // it was never about.
+                        //
+                        // The silent `catch` STAYS, and that is a decision
+                        // rather than an oversight: the common rejection here
+                        // is the user declining the prompt, which they already
+                        // know about. Reporting "could not add" over their own
+                        // decline would be noise, and this call cannot
+                        // distinguish a decline from a genuine failure. That
+                        // makes it unlike the clipboard buttons beside it,
+                        // where a refusal is never something the user chose.
+                        const attempt = watchAttempt.begin();
                         void walletClient
                           ?.watchAsset({
                             type: 'ERC20',
@@ -439,7 +468,9 @@ export function Faucet() {
                               decimals: MOCK_DECIMALS,
                             },
                           })
-                          .then(() => setWatched(true))
+                          .then(() => {
+                            if (attempt.isCurrent()) setWatched(true);
+                          })
                           .catch(() => {});
                       }}
                     >
@@ -495,13 +526,17 @@ export function Faucet() {
                         // sits inside a try/catch, which a synchronous throw
                         // does reach.)
                         const forToken = done.tokenId!;
-                        const attempt = (copyAttempt.current += 1);
+                        const attempt = copyAttempt.begin();
                         // Only the LATEST attempt may report. A settlement
                         // from a superseded one is discarded rather than
                         // allowed to contradict it.
                         const report = (state: 'copied' | 'failed') => {
-                          if (attempt !== copyAttempt.current) return;
-                          setCopyResult({ tokenId: forToken, attempt, state });
+                          if (!attempt.isCurrent()) return;
+                          setCopyResult({
+                            tokenId: forToken,
+                            attempt: attempt.id,
+                            state,
+                          });
                         };
                         setCopyResult(null);
                         try {
