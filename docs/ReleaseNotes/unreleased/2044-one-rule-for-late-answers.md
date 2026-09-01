@@ -18,6 +18,17 @@ superseded.** Press twice and only the second result is shown. Move on to
 something else and the earlier answer is discarded rather than applied to what
 is now on screen.
 
+**And a confirmation now says what it is about.** Ignoring a superseded answer
+turns out to cover only half of it: if you leave a wallet prompt open and then
+switch account or network, or a list of addresses redraws with different rows,
+nothing has superseded the answer you are waiting on — the question underneath
+it has simply changed. A button that only remembered "yes, that worked" could
+not tell. So each of these confirmations now records *which* address, token,
+wallet and network it was earned by, and shows itself only beside that one. An
+answer that arrives about something you have moved on from is no longer
+applied to what replaced it, and "Added to your wallet" no longer stands over a
+wallet that was never asked.
+
 **Where a control stays quiet, that is deliberate**, and it is about not
 crying wolf. When a wallet declines to add a token, that is usually because you
 declined it — and the app cannot tell your decision apart from a genuine error,

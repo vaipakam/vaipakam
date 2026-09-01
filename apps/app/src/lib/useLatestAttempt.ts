@@ -24,6 +24,32 @@
  * settle, and a permanently disabled button is a worse outcome than a stale
  * label.
  *
+ * ORDERING IS NECESSARY AND NOT SUFFICIENT (#2044 round 2). This rule ranks
+ * attempts against EACH OTHER. It cannot see that the thing on screen changed
+ * underneath a pending one — a wallet prompt left open across a chain switch,
+ * a reused chip re-rendered with a new address — because the older attempt is
+ * then still legitimately the latest. Nothing was superseded; the question was
+ * simply never asked.
+ *
+ * So a control whose confirmation is a claim ABOUT SOMETHING must store what
+ * it is about, not a bare `true`:
+ *
+ *     const [copiedFor, setCopiedFor] = useState<string | null>(null);
+ *     const copied = copiedFor === address;   // the claim names its subject
+ *
+ * A late settlement then writes the subject its closure captured, which no
+ * longer matches the rendered one, and the claim simply does not apply. That
+ * is better than a reset effect keyed to the same change: a reset has to
+ * enumerate everything that can move and stay in sync with it forever, while
+ * a keyed claim is correct for changes nobody thought of.
+ *
+ * The line is whether the confirmation is about a SUBJECT or about the ACT.
+ * `CopyAddress`'s chip sits beside an address and says that address is on the
+ * clipboard; the faucet's button says a particular token is in a particular
+ * wallet. Those go false when the subject moves. The diagnostics drawer's
+ * "Copied" says only that a copy happened, which stays true however the
+ * drawer's contents change, so it is a plain state and correctly so.
+ *
  * Usage:
  *
  *     const attempt = useLatestAttempt();

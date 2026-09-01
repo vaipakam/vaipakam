@@ -82,12 +82,30 @@ export function Vpfi() {
   const busy = phase !== null;
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const [watched, setWatched] = useState(false);
+  // "Added to your wallet" IS A CLAIM ABOUT A SPECIFIC TOKEN IN A SPECIFIC
+  // WALLET ON A SPECIFIC CHAIN (#2044 round 2 P2) — so the state carries that
+  // identity rather than a bare `true`. Attempt ordering settles which PRESS
+  // may report; it cannot notice that the page is now showing a different
+  // subject. This page stays mounted across an account switch, a chain
+  // switch, and a token-cache refresh, so a bare boolean let an approval for
+  // one token label another, and left "Added" standing over a wallet that had
+  // never been asked.
+  //
+  // Keyed, both resolve themselves: a late approval writes the identity its
+  // closure captured, which no longer matches the rendered one. No reset
+  // effect, and nothing to keep in sync with the list of things that can
+  // change underneath a pending prompt.
+  const [watchedKey, setWatchedKey] = useState<string | null>(null);
   // See the watch button below: a pending prompt must not report for a
   // newer press or a different snapshot (#2044 round 1 P2).
   const watchAttempt = useLatestAttempt();
 
   const snapshot = vpfi.data;
+  const watchKey =
+    address && walletChain && snapshot?.token
+      ? `${address.toLowerCase()}:${walletChain.chainId}:${snapshot.token.toLowerCase()}`
+      : null;
+  const watched = watchedKey !== null && watchedKey === watchKey;
 
   const amountWei = useMemo(() => {
     if (!isPositiveDecimal(amount)) return null;
@@ -530,9 +548,14 @@ export function Vpfi() {
                   // ORDERED (#2044 round 1 P2). Same stale-answer shape as
                   // the faucet's watch button: two presses leave two prompts
                   // outstanding, and an older approval landing after a newer
-                  // refusal reports success for the one that was refused. A
-                  // token or chain change while a prompt is pending applies
-                  // the approval to a snapshot it was never about.
+                  // refusal reports success for the one that was refused.
+                  //
+                  // ORDERING IS ONLY HALF OF IT (round 2 P2). It ranks presses
+                  // against each other and cannot see that the SUBJECT moved —
+                  // a token, chain or account change while a prompt is open
+                  // leaves the older attempt legitimately current. That half is
+                  // handled by `watchedKey` above, which makes the answer say
+                  // what it is about.
                   //
                   // This site was MISSED by the sweep that produced #2044 —
                   // that sweep covered the files #2043 touched, and this one
@@ -545,6 +568,10 @@ export function Vpfi() {
                   // the prompt, and this call cannot tell that from a real
                   // failure.
                   const attempt = watchAttempt.begin();
+                  // Captured, not read at settlement: this is the identity the
+                  // prompt is ABOUT, and the render compares it against the
+                  // one on screen (#2044 round 2 P2).
+                  const forKey = watchKey;
                   void walletClient
                     .watchAsset({
                       type: 'ERC20',
@@ -555,7 +582,7 @@ export function Vpfi() {
                       },
                     })
                     .then(() => {
-                      if (attempt.isCurrent()) setWatched(true);
+                      if (attempt.isCurrent()) setWatchedKey(forKey);
                     })
                     .catch(() => {});
                 }}

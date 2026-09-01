@@ -19,7 +19,21 @@ export function CopyAddress({
   /** Block-explorer origin; omit to render the copy chip alone. */
   explorerBase?: string;
 }) {
-  const [copied, setCopied] = useState(false);
+  // THE CONFIRMATION CARRIES THE ADDRESS IT IS ABOUT (#2044 round 2 P2), not
+  // a bare `true`. Ordering settles which ATTEMPT may report; it says nothing
+  // about which SUBJECT the report is for, and this chip is reused across rows
+  // — the faucet's asset list re-renders the same instance with a new
+  // `address` when the testnet changes. A bare boolean then made two false
+  // claims: a write still in flight settled and flipped the chip for an
+  // address whose value was never on the clipboard, and an already-visible
+  // "Copied" outlived the address it was earned by until its timer expired.
+  //
+  // Keying the state on the address answers both WITHOUT a reset: a late
+  // settlement stores the address its closure captured, which no longer
+  // matches the rendered one, so the claim simply does not apply. Nothing has
+  // to remember to clear it, which is the property a reset effect lacks.
+  const [copiedFor, setCopiedFor] = useState<string | null>(null);
+  const copied = copiedFor === address;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copyAttempt = useLatestAttempt();
   useEffect(
@@ -57,12 +71,12 @@ export function CopyAddress({
           // LATEST attempt rather than the best one so far, which is the
           // property the rest of this change is enforcing.
           if (timer.current) clearTimeout(timer.current);
-          setCopied(false);
+          setCopiedFor(null);
           try {
             await navigator.clipboard.writeText(address);
             if (!attempt.isCurrent()) return;
-            setCopied(true);
-            timer.current = setTimeout(() => setCopied(false), 1500);
+            setCopiedFor(address);
+            timer.current = setTimeout(() => setCopiedFor(null), 1500);
           } catch {
             /* clipboard permission denied — the chip just doesn't flip */
           }

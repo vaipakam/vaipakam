@@ -946,6 +946,14 @@ Thin-market honesty rules apply.
   displayed against whatever is now on screen. This holds across a change of
   subject as well as a repeat, so an approval for one token cannot mark a
   different one.
+- **A confirmation belongs to the thing it was earned by, and does not outlive
+  it.** Being the most recent attempt is not enough on its own: when the
+  account, the network, or the item a control sits beside changes, no newer
+  attempt has begun, yet the question the outstanding one answers has gone
+  away. The intent is that a confirmation states what it is about and appears
+  only beside that — so "added to your wallet" is never shown over a wallet
+  that was not asked, and a confirmation that an address was copied does not
+  carry over to a different address that has taken its place on screen.
 - **Silence is correct where a refusal is the person's own decision.** A
   wallet declining to add a token is usually the user declining it, and the app
   cannot distinguish that from a genuine failure; reporting an error over

@@ -11,6 +11,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createLatestAttempt, useLatestAttempt } from './useLatestAttempt';
 
 describe('createLatestAttempt — only the latest attempt may report', () => {
@@ -143,6 +145,37 @@ describe('the rule has one implementation, and reaches every reporter (#2044)', 
       }
     };
     expect(reporters.filter((f) => !importsRule(f))).toEqual([]);
+  });
+
+  it('no reporter confirms with a bare `true` (#2044 round 2)', () => {
+    // ORDERING IS NOT THE WHOLE RULE, and round 2 found the missing half at
+    // two more sites: `isCurrent()` ranks attempts against each other and
+    // cannot notice that the SUBJECT moved — a wallet prompt open across a
+    // chain switch, a reused chip re-rendered with a new address. The older
+    // attempt is then still legitimately the latest, so the guard passes and
+    // the claim lands on something it was never about.
+    //
+    // The defect has one spelling, which is what makes it checkable: a
+    // confirmation written as a bare `true` cannot say what it is about. A
+    // keyed one always writes a subject — an address, a token identity, an
+    // outcome object — so `true` under an `isCurrent()` guard is the shape,
+    // not a proxy for it.
+    //
+    // A boolean claim about the ACT rather than about a subject would trip
+    // this too, and that is the intended behaviour: no such site exists today
+    // (the diagnostics drawer's "Copied" is a string state), and if one
+    // arrives, stopping to decide which kind it is is exactly the thought
+    // this check exists to force.
+    const offenders: string[] = [];
+    for (const file of filesMatching(String.raw`\.(watchAsset|writeText)\(`)) {
+      const src = readFileSync(join(process.cwd(), file), 'utf8');
+      for (const m of src.matchAll(/isCurrent\(\)/g)) {
+        const window = src.slice(m.index, m.index + 200);
+        const bare = window.match(/\bset[A-Za-z0-9_]*\(\s*true\s*\)/);
+        if (bare) offenders.push(`${file}: ${bare[0]}`);
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   it('is exported as a hook for components to use', () => {

@@ -135,7 +135,20 @@ export function Faucet() {
   // control with a separate outcome, so one counter for both would let a
   // copy supersede a pending watch and vice versa.
   const watchAttempt = useLatestAttempt();
-  const [watched, setWatched] = useState(false);
+  // KEYED LIKE `copyResult`, for the reason stated above it (#2044 round 2).
+  // This flag was the one reporter in the file still holding a bare `true`,
+  // and it was left that way because the mint handlers reset it — which is a
+  // reset that covers the trigger it was written for and no other. `done`
+  // survives an account or chain switch, so "Added to your wallet" stood over
+  // a wallet that had never been asked, and a prompt open across the switch
+  // was still legitimately the latest attempt.
+  //
+  // Not flagged in review; fixed here because it is the same defect as the
+  // two that were, and shipping the fix only where it was pointed out is
+  // precisely the habit #2044 exists to end.
+  const [watchedKey, setWatchedKey] = useState<string | null>(null);
+  const watchKeyFor = (asset: Address) =>
+    `${address?.toLowerCase() ?? ''}:${readChain.chainId}:${asset.toLowerCase()}`;
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
 
@@ -219,7 +232,10 @@ export function Faucet() {
     setDone(null);
     setCopyResult(null);
     copyAttempt.supersede();
-    setWatched(false);
+    // No `watched` reset any more: the flag is keyed on the asset, so minting
+    // a DIFFERENT token stops matching on its own, and re-minting the same one
+    // correctly keeps "Added" — it is still in the wallet. `supersede` stays,
+    // because a prompt outstanding across the mint must not report at all.
     watchAttempt.supersede();
     // Resolve the REAL on-chain symbol; fall back to the hint if the read
     // fails (#1095 — never label the minted/watched token as something the
@@ -265,7 +281,6 @@ export function Faucet() {
     setDone(null);
     setCopyResult(null);
     copyAttempt.supersede();
-    setWatched(false);
     watchAttempt.supersede();
     try {
       const tokenId = randomTokenId();
@@ -459,6 +474,7 @@ export function Faucet() {
                         // makes it unlike the clipboard buttons beside it,
                         // where a refusal is never something the user chose.
                         const attempt = watchAttempt.begin();
+                        const forKey = watchKeyFor(done.asset!.address);
                         void walletClient
                           ?.watchAsset({
                             type: 'ERC20',
@@ -469,12 +485,12 @@ export function Faucet() {
                             },
                           })
                           .then(() => {
-                            if (attempt.isCurrent()) setWatched(true);
+                            if (attempt.isCurrent()) setWatchedKey(forKey);
                           })
                           .catch(() => {});
                       }}
                     >
-                      {watched
+                      {watchedKey === watchKeyFor(done.asset.address)
                         ? copy.faucet.addedToWallet
                         : copy.faucet.addToWallet(done.asset.symbol)}
                     </button>{' '}
