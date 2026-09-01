@@ -679,6 +679,18 @@ ordinary implementation, and it belongs in slice 3.
   release is the alternative and is worse — it penalises the holder for the
   protocol's parking decision.
 
+  ⚠️ **But re-resolution needs the anchor to still EXIST at release, and an
+  ordinary claim can destroy it.** Once the migration has moved the value out of
+  `rebateAmount`, a loan carrying collateral, surplus or another borrower-side
+  claim still lets `claimAsBorrower` proceed — and it **burns the borrower NFT**
+  (`ClaimFacet.sol:1549-1552`). `ownerOf` then reverts and the parked rebate is
+  permanently unreachable: parked to protect it, stranded by an unrelated claim.
+
+  So the **claim path recognises the parked rebate and releases it in the same
+  call** when the payee screens clean — or, failing that, the migration records a
+  durable payee anchor that outlives the NFT. The first is better: one payout
+  path, and it removes the window rather than making an anchor survive it.
+
   **The park/deliver decision uses `LibSanctionedLock.mustFreezeParty`, not a
   claim-style `isSanctionedAddress` check.** The ordinary read fails OPEN when
   the oracle is unset or reverting, so during an outage the scan would deliver
@@ -780,6 +792,16 @@ ordinary implementation, and it belongs in slice 3.
   held amount (`:1013-1035`, `:1159-1181`). After migration both must split /
   release / seize from the **vault** source, including the sanctions-safe forced
   move-out path — **and the borrower is RESTAMPED once the release completes.**
+
+  **The release also CONSUMES the claim entitlement atomically.**
+  `settleBorrowerLifProper` writes the same amount to
+  `borrowerLifRebate[loanId].rebateAmount` (`LibVPFIDiscount.sol:1013-1014`), so
+  a terminal that frees the rebate into the vault **and** leaves that record
+  standing pays it twice — the holder withdraws from the vault, then calls
+  `claimAsBorrower` and is paid again out of unrelated Diamond custody. Either
+  clear the claim record in the same call, or keep the value under protected
+  custody and let the claim consumer pull it exactly once. Freeing it in place
+  while leaving the claim is the one combination that double-pays.
   A proper close with a non-zero rebate removes the matcher and treasury shares
   from the vault and releases the whole `vpfiHeld` tier exclusion, which leaves
   the rebate as newly free, tier-BEARING VPFI in that vault. Updating the two
