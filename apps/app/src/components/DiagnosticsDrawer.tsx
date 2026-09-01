@@ -302,6 +302,19 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
+  // AND an attempt generation (#2043 round 4 P2). Cancelling the reset timer
+  // orders the TIMERS and does nothing about the promises: a double-click or
+  // a retry leaves two clipboard writes in flight, and whichever settles last
+  // wins regardless of which was started last. So a newer success could be
+  // replaced by an older rejection — reporting failure and opening the
+  // fallback over a clipboard that genuinely holds the report — or an older
+  // success could hide a newer failure.
+  //
+  // The faucet got exactly this fix one round earlier and this call site did
+  // not, which is the same carry-over miss for the sixth time in this PR. The
+  // rule these two now share: a settlement may only report if it is still the
+  // latest attempt.
+  const copyAttempt = useRef(0);
   useEffect(
     () => () => {
       if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
@@ -310,11 +323,15 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   );
   const copyDetails = async () => {
     if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+    const attempt = (copyAttempt.current += 1);
+    const isCurrent = () => attempt === copyAttempt.current;
     try {
       await navigator.clipboard.writeText(reportBody);
+      if (!isCurrent()) return;
       setCopyState('copied');
       copyResetTimer.current = setTimeout(() => setCopyState('idle'), 2_000);
     } catch {
+      if (!isCurrent()) return;
       // NOT SILENT, and not a dead end either: the failure is stated AND the
       // disclosure is opened, so the text the clipboard refused to take is
       // on screen and selectable. Telling someone it failed while leaving
