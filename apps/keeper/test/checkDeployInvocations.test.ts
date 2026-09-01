@@ -8212,4 +8212,166 @@ describe('check-deploy-invocations — #1996 config identity', () => {
       ).ok,
     ).toBe(true);
   });
+  // ---- Codex #2036 r21 + r22 ----
+
+  it('an AMBIENT environment counts as a selection', () => {
+    // A command with no environment option still inherits one, and wrangler
+    // reads it — so the top-level name is not what necessarily ships.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"]);\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('an explicit EMPTY --env clears it', () => {
+    // Wrangler resolves `args.env ?? getCloudflareEnv()`; an empty string is
+    // not nullish, so it wins and the top level is used. The presence test
+    // matched the opening quote and read it as a selection.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    expect(
+      runWith('w.sh', 'wrangler deploy --config configs/custom.jsonc --env ""\n').ok,
+    ).toBe(true);
+  });
+
+  it('a COMPUTED CLOUDFLARE_ENV key is a key', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {["CLOUDFLARE_ENV"]: "staging", PATH: "/bin"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it("Python's keyword UNPACKING carries a real env option", () => {
+    // `**{"env": {…}}` hands the child a real `env` keyword, and the quoted key
+    // was matched by none of the spellings the reader knew.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'deploy.py',
+      'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"], ' +
+        '**{"env": {"CLOUDFLARE_ENV": "production"}})\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it("an EARLIER child call's environment does not answer for wrangler's", () => {
+    // One segment may contain more than one child process. Only the detected
+    // wrangler invocation's own options object is its environment.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-www"}, ' +
+        '"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("echo", ["x"], {env: {CLOUDFLARE_ENV: "staging"}});\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {CLOUDFLARE_ENV: "production"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it("the selected environment's name REPLACES the top-level one", () => {
+    // Wrangler merges the block over the top level, so a protected top-level
+    // name that the selected environment overrides never ships.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-agent", "env": {"staging": {"name": "vaipakam-www"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.sh',
+        'wrangler deploy --config configs/custom.jsonc --env staging\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('...but an environment with NO name of its own derives from it', () => {
+    // The control: wrangler builds `<top-level>-<env>`, which the suffix rule
+    // matches, so the top-level name has to stay a candidate here.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-agent", "env": {"staging": {"vars": {}}}}\n',
+    );
+    const r = runWith(
+      'w.sh',
+      'wrangler deploy --config configs/custom.jsonc --env staging\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a QUOTED TOML environment table key is still an environment', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-www"', '["env".staging]', 'name = "vaipakam-agent"', ''].join('\n'),
+    );
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nwrangler deploy --config side.toml --env staging\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('the preservation reader takes the LAST --config', () => {
+    // Wrangler takes the final one. Reading the first let an earlier SAFE
+    // config bless a deploy whose effective config disables preservation.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/safe.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    seed('configs/unsafe.jsonc', '{"name": "vaipakam-agent", "keep_vars": false}\n');
+    const r = runWith(
+      'w.sh',
+      'wrangler deploy --config configs/safe.jsonc --config configs/unsafe.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('...and decodes it as a shell word', () => {
+    // `configs/"custom".jsonc` is one word to the shell; capturing to the first
+    // quote read `configs/`, which resolves to nothing and reported a
+    // legitimate deploy of a config that does preserve its vars.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('configs/custom.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    expect(
+      runWith('w.sh', 'wrangler deploy --config configs/"custom".jsonc\n').ok,
+    ).toBe(true);
+  });
+
+  it('an UNRESOLVED NAME reaches the child-call inversion', () => {
+    // An executable call naming a target this scanner cannot identify is the
+    // inversion's case whether the target was named by config or by name.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    const r = runWith(
+      'w.mjs',
+      'const worker = "vaipakam-agent";\nspawnSync("wrangler", ["deploy", "--name", worker]);\n',
+    );
+    expect(r.ok).toBe(false);
+  });
 });
