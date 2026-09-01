@@ -51,12 +51,19 @@ The inversion is deliberately confined to configuration selection. Two related
 options name a directory rather than a file and reach the same
 cannot-be-identified state, but they are ordinary in wrapper scripts and were
 not part of the measurement, so widening to them is separate work with its own
-count. Prose keeps deferring to the surrounding text, which on a runbook line
-names a package the reader can act on — but only prose does. A command written
-out as an executable call in a helper script has no surrounding text to defer
-to, and deferring there produced no answer at all, so a generated configuration
-selected from such a helper passed unexamined. Those reach the same complaint
-as any other unidentified selection.
+count. The surrounding text still gets the first word, which on a runbook line
+names a package the reader can act on — but it no longer gets the last one. A
+command written out as an executable call in a helper script has no surrounding
+text to defer to, and deferring there produced no answer at all, so a generated
+configuration selected from such a helper passed unexamined.
+
+The order is what makes both work. A selection the checker resolved wins
+outright; one it could not identify yields to the text and to the directory the
+command runs in, and claims the deployment only when neither has an answer. An
+earlier attempt at this made the unidentified case win immediately, which
+closed the gap and turned a report that could name a package, with that
+package's own remedy, into one that named nothing — a correct answer, and a
+worse one.
 
 A configuration a script generates deserves the same treatment for
 preservation, and now gets it in two more places. An explicitly named
@@ -116,3 +123,4 @@ was built during that same work for the preservation setting, so this is one
 more field out of a file the checker already opens.
 
 Closes #1996.
+Closes #2040.
