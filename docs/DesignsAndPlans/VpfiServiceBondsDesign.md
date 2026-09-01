@@ -6,18 +6,42 @@ programme ([`VpfiCrossChainRecyclingDesign.md`](VpfiCrossChainRecyclingDesign.md
 
 ## Objective
 
-A temporal + permanent VPFI sink shaped as a **performance bond**, never a
-return: service operators (solvers, matchers, keepers) post VPFI deposits
-to access higher operational limits; misbehaviour slashes the bond into
-the recycle loop.
+**The original goal** was a temporal + permanent VPFI sink shaped as a
+performance bond, never a return: operators post VPFI to access higher
+operational limits, and misbehaviour slashes the bond into the recycle loop.
+
+**What survived review is narrower, and the difference is load-bearing.** Both
+selectable forks are **non-slashable capacity deposits**: no misbehaviour
+confiscates anything, because no slash predicate cleared the objectivity bar
+(§2). What each retains:
+
+| | temporal sink | permanent sink | slash |
+| --- | --- | --- | --- |
+| **(A)** | yes — deposits held while active | no | **none** |
+| **(C)** | yes | yes — the arming fee | **none** |
+
+So this document must not be read as specifying a performance bond, and the
+word must not be used for what it now describes — the shape rules below make
+that a hard naming requirement rather than a preference. An earlier revision of
+this objective said "misbehaviour slashes the bond" while §1.4 was
+simultaneously forbidding exactly that description, which is the opposite
+instruction to anyone implementing or writing copy from the top of the file.
 
 ## Shape rules (the legal spine)
 
 1. **No yield, ever.** Bonds earn nothing — not interest, not rewards, not
    fee shares. Posting a bond buys operational capacity, full stop.
-2. **Refundable at will** — a deposit, not a purchase. v1 has no unwind
-   delay, because v1 has no evidence that arrives after an operator stops
-   acting; a delay arrives with the liveness tier that creates one (rev 4).
+2. **Refundable at will, subject to the sanctions gate** — a deposit, not a
+   purchase. v1 has no unwind delay, because v1 has no evidence that arrives
+   after an operator stops acting; a delay arrives with the liveness tier that
+   creates one (rev 4).
+
+   The qualifier is not a hedge and must not be dropped: the acceptance criteria
+   below require `unbond` to REVERT for a sanctioned operator, so for a flagged
+   wallet the principal stays frozen until delisting. An earlier revision
+   promised refundability unconditionally here while requiring the freeze there
+   — an implementation could satisfy one only by violating the other, and the
+   unconditional promise is the one that would have been quoted in copy.
 3. **Slashing is rule-bound and evidence-anchored**, never discretionary
    value capture: each slash condition is an objectively verifiable
    on-chain fact — and the evidence must be **committed state, not a
@@ -34,8 +58,32 @@ the recycle loop.
 
 ## Mechanics
 
+**Bonds are a VPFI custody class, and the token-rotation lifecycle must know
+about them.** `VPFITokenFacet.setVPFIToken` can rotate the live token, and its
+own NatSpec requires the pause-drain-rotate procedure in
+`docs/ops/VPFITokenRotationRunbook.md`, which enumerates every custody class and
+drains it. A bond record holding only an `amount` cannot survive that: after a
+rotation, `unbond` has no way to tell which ERC-20 supplied the principal, so it
+either pays the new token (wrong asset, and a theft from the pool backing it) or
+strands the old VPFI with no withdrawal path at all.
+
+Putting the token identity in the events is not enough — events do not fund a
+withdrawal. So, before bonds ship, **either**:
+
+- **bonds join the rotation inventory** — enumerated, drained to zero, and
+  read back as zero before the rotation proceeds (the same treatment every other
+  custody class gets); **or**
+- **the record snapshots the token** (or a token epoch) and a **dual-token
+  migration withdrawal** exists, so an operator bonded in the old asset can
+  still exit in it.
+
+The first is simpler and matches the existing procedure. The second is only
+worth building if bonds are expected to be long-lived enough that draining them
+for a rotation is unacceptable — which is a product question, not a technical
+one.
+
 ```
-ServiceBond { operator; role; amount; state; unlockAt; }
+ServiceBond { operator; role; token; amount; state; unlockAt; }
 OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // v1: `state` is Active only and `unlockAt` is unused — both exist for the
 // liveness tier's delayed unbond, which v1 does not have (rev 4).
@@ -693,6 +741,20 @@ returned. It needs no adjudication of anything — a spend is objectively a
 spend — which is exactly why the perk channel works, and it is the same
 shape: spend is permanent absorption, deposit is temporal.
 
+**The fee is charged only for capacity the raise actually grants.** Capacity is
+clamped at the 4× ceiling per `(role, address)`, so an operator already at or
+above `bondAt4x` gains nothing from raising further — and charging a
+non-refundable fee for an operation that changes no entitlement is taking
+permanent value for nothing, which is precisely the representation problem the
+shape rules exist to prevent. There is no maximum bond and no no-op rejection
+today, so this must be stated rather than assumed.
+
+Either **reject a raise whose post-bond capacity does not increase**, or
+**accept the excess deposit and charge no fee for it**. The second is friendlier
+— an operator over-depositing is not doing anything wrong, and their principal
+is still refundable — and it keeps the rule simple: the fee tracks capacity
+granted, never the transaction.
+
 **Selecting (A) or (C) also changes the programme's definition of done, and
 that consequence has to be recorded rather than discovered.**
 `VpfiRecyclingCompletionPlan.md` §6 defines #1219 as decided when *either* the
@@ -751,8 +813,11 @@ that collapsed is about slashing.
 
 **Open for the owner.** The fork is the **first** blocking decision, and under
 one branch it is not the last: choosing **(C)** immediately raises item 2, which
-§3 states is not buildable without a number. So (A) and (B) are single-decision
-paths and (C) is a two-decision path.
+§3 states is not buildable without a number. So **(A) is the single-decision
+path and (C) is the two-decision path** — B is not a path at all, having no
+predicate, and is removed from the selectable forks below. An earlier revision
+of this sentence still counted it as one, which is enough for an owner to treat
+it as ratifiable.
 
 Saying "exactly ONE decision blocks a build" — as an earlier revision did — is
 wrong in exactly the case the recommendation points at, and its failure mode is
