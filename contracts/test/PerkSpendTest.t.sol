@@ -388,8 +388,10 @@ contract PerkSpendTest is SetupTest {
         (uint256 price, , ) = _perk().getPerkConfig(PERK_PRIORITY);
         assertEq(price, 0, "disarmed during containment");
 
-        // The purchase path stays closed regardless, so the open setter
-        // cannot be used to arm a channel the pause has shut.
+        // The purchase path stays closed while the pause holds. Note this
+        // does NOT mean the setter cannot arm during a pause — it can, and
+        // the write is live on unpause; what the pause guarantees is that
+        // nothing can be BOUGHT while it holds (Codex #2031 r13).
         AdminFacet(address(diamond)).unpause();
         _perk().setPerkConfig(PERK_PRIORITY, 1e18, 1 days);
         AdminFacet(address(diamond)).pause();

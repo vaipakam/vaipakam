@@ -701,10 +701,13 @@ contract RewardAggregatorFacet is
 
     /// @notice #1222 M3 B2-a — a chain's funded recycled stamp for an armed
     ///         day (zeroes with `stamped == false` pre-cutover or for a
-    ///         never-funded chain). `keeperAllocate` is always 0 — B2-b
-    ///         landed and it is STILL always 0, because the per-chain
-    ///         keeper allocation it reserves space for is #1569, which is
-    ///         undecided. TWO places write a zero, and they are not two
+    ///         never-funded chain). `keeperAllocate` is NO LONGER always
+    ///         0: #1569 landed and {LibMeshFunding._stampOne} now computes
+    ///         it from the destination's reported day inflow, capped by the
+    ///         headroom its local commit leaves. This paragraph said the
+    ///         field was permanently zero and the card undecided, which was
+    ///         true until that landed (Codex #2031 r13). TWO places write a
+    ///         zero, and they are not two
     ///         stamps: {LibMeshFunding._stampOne} is the only production
     ///         stamp producer and hard-zeroes the field, while this facet's
     ///         `_perDestFields` writes zero only in its MISSING-STAMP

@@ -135,10 +135,19 @@ contract PerkFacet is
     ///                         {PerkModeLocked}.
     /// @dev    NOT `whenNotPaused`, deliberately. Disarming a perk is a
     ///         containment action, and a pause is when you most need it: the
-    ///         purchase path below IS paused, so this setter cannot arm a
-    ///         channel that a pause has closed, only shut one that is open.
-    ///         Gating it behind the pause would take the lever away at
-    ///         exactly the moment it is wanted.
+    ///         purchase path below IS paused, so no purchase can execute
+    ///         while the pause holds. Gating this setter behind the pause
+    ///         would take the disarm lever away at exactly the moment it is
+    ///         wanted.
+    ///
+    ///         IT CAN ALSO ARM DURING A PAUSE, and an earlier revision of
+    ///         this comment wrongly said it could not — that it "cannot arm
+    ///         a channel that a pause has closed, only shut one that is
+    ///         open" (Codex #2031 r13). A non-zero price written while
+    ///         paused persists and is live the instant the pause lifts, so
+    ///         such a write is a SCHEDULED ARMING and should be treated as
+    ///         one. What the pause guarantees is that nothing can be BOUGHT
+    ///         while it holds, not that nothing can be configured.
     function setPerkConfig(
         uint256 perkId,
         uint256 priceVpfi,

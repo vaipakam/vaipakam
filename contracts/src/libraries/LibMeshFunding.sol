@@ -560,9 +560,11 @@ library LibMeshFunding {
             // and the remit path nets it out so Base sends only its top-up.
             recycleConsume: commitLocal,
             // #1569 — a SECOND draw on the chain's own bucket, sized from
-            // the local commit but charged BESIDE it, and bounded above by
-            // the headroom that commit leaves (see the clamp where
-            // `keeperAlloc` is computed).
+            // the chain's REPORTED DAY INFLOW and charged BESIDE the local
+            // commit, bounded above by the headroom that commit leaves (see
+            // where `keeperAlloc` is computed). The commit is the CAP, not
+            // the base — an earlier revision of this comment said otherwise
+            // and survived the r9 numerator change (Codex #2031 r13).
             //
             // NOT carved out of `commitLocal`, which an earlier revision of
             // this comment claimed (Codex #2031 r4). `commitLocal` remains

@@ -753,11 +753,13 @@ contract RewardReporterFacet is
         // fund reward budgets, since `recycleKeeperBudget` is netted out of
         // the fundable figure and out of repatriation's draw.
         //
-        // Base sized this from the same local commit reserved below and
-        // charged it BESIDE that commit, against the headroom the commit
-        // left in the chain's availability — so it is value this chain
-        // already holds and Base is telling it how to label, never an
-        // instruction to find more.
+        // Base sized this from the chain's REPORTED DAY INFLOW and charged
+        // it BESIDE the local commit reserved below, bounded by the headroom
+        // that commit leaves in the chain's availability — so it is value
+        // this chain already holds and Base is telling it how to label,
+        // never an instruction to find more. The commit is the CAP, not the
+        // base it is a share of (Codex #2031 r13; an earlier revision of
+        // this comment said the commit was the base).
         //
         // An earlier revision said Base "carved this from" the commit
         // (Codex #2031 r4). It does not: the commit stays whole and the

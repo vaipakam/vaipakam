@@ -785,7 +785,11 @@ settlement-reachability condition. Gate A constrains **both** branches.
 enforce them and will enable happily without them: the loan-side reward cap
 (PR-5c) and the settlement sweep that honours the lender Full stamp (PR-6).
 
-**⛔ PR-6 is NOT discharged, and no deploy assertion bears on whether it is.**
+**PR-6 IS discharged (#1947 closed 2026-08-26, verified against the API
+2026-09-01) — but no deploy assertion bears on whether THIS Diamond runs the
+fixed bytecode.** That distinction is the whole of this step, and an earlier
+revision collapsed it into "PR-6 is NOT discharged", which halts enablement
+indefinitely over work that has landed.
 The only deploy assertion touching this flag pins it OFF on a fresh deploy
 (`DeployDiamondIntegrationTest.t.sol`); it observes no settlement path at all,
 and the setter checks only the chain role. Treat the whole of this step as a
@@ -851,14 +855,17 @@ Establish both by hand on the TARGET Diamond before scheduling anything:
   `DefaultedFacet`, `RiskFacet`, `RiskSplitLiquidationFacet` and `RefinanceFacet`
   is the fixed version, the same way.
 
-**Two branches out of this step, not one.** While #1947 is open and unsuperseded
-there is no fixed build for the reopened family, so that readback cannot pass and
-the step cannot proceed. If the owner has instead recorded an explicit
-**superseding decision** against the frozen §F2 (the alternative the spec's
-discharge criterion allows, for the recovery family), then for the superseded
-family there is deliberately no implementation to verify: check that the decision
-is recorded and in force, and require fixed bytecode only for the families that
-remain implementation obligations.
+**ONE branch now, not two.** This step used to fork on whether #1947 was open:
+with no fixed build for the reopened family the readback could not pass, and the
+escape was an explicit **superseding decision** against the frozen §F2. #1947
+CLOSED on 2026-08-26, so a fixed build exists and neither the halt nor the
+supersession applies — an operator reaching for the supersession route today
+would be seeking a policy exception for work that is already done.
+
+What remains is the readback itself, which was always the substantive half:
+confirm the DEPLOYED bytecode of the named facets is the fixed version on THIS
+Diamond. A closed card is evidence about the repository, never about a
+particular deployment.
 
 **One requirement survives ANY supersession, and it is inside the recovery
 family, so it is easy to lose here.** The partial-liquidation PAYOUT re-key is
@@ -1610,10 +1617,20 @@ of borrower collateral rather than reverting.
    **applied or not** (#1944). "Unapplied" was part of this definition until
    2026-09-01 and is now WRONG in the unsafe direction: a replay installs
    `D*` on a mirror that has none, so an applied day still makes a mirror
-   armable and therefore reachable. A mirror drops out of reachability only
-   when it is absent from the expected-source list AND either its era has
-   rotated away (a retired legacy wire cannot arm) or it is already armed
-   (`D*` is one-shot).
+   armable and therefore reachable.
+
+   **Being ALREADY ARMED is not an exclusion** — a correction to the first
+   version of this rewrite (Codex #2031 r13). `D*` being one-shot stops a
+   second arming; it does not stop `broadcastGlobalTo`. A fresh apply of an
+   unapplied standing day passes `_assertDayStanding` and opens that day's
+   claim gate whether or not `armedFromDay` was already set, so an armed
+   mirror lacking the per-day funding property is still an exposure.
+
+   A removed mirror drops out of reachability only when it is absent from
+   the expected-source list AND its lane or era is genuinely unreachable
+   (a rotated-away era cannot arm and its legacy wire cannot apply) OR every
+   qualifying standing day has already been applied — so no fresh apply
+   remains to open a gate.
 
 **This is the one definition. Everything else in this runbook refers to it
 rather than restating it** — the two places that restated it drifted apart three

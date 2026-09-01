@@ -619,10 +619,14 @@ settlement fails the purchase rather than silently charging more. Withdrawing
 a perk from sale stops further purchases and leaves entitlements already
 bought untouched.
 
-**This setter stays callable while the protocol is PAUSED**, deliberately.
-Purchases are closed by the same pause, so it can only shut a channel and
-never open one — and a pause is when withdrawing an armed offer is most
-wanted.
+**This setter stays callable while the protocol is PAUSED**, deliberately —
+a pause is when withdrawing an armed offer is most wanted, and gating the
+setter behind it would remove that lever.
+
+It can also ARM during a pause. Purchases are blocked while the pause holds,
+but a price written during one persists and the perk is for sale the instant
+the pause lifts, with no second action required. Treat an arming write made
+during containment as a scheduled arming and re-check it before unpausing.
 
 ### Per-chain keeper allocation (`chainKeeperAllocateBps`)
 
