@@ -205,7 +205,21 @@ withdrawal. So, before bonds ship, **either**:
   **rejecting new-token deposits until the old-token balance is fully
   withdrawn**. The rejection is much simpler and pushes operators toward the
   drain the rotation wants anyway; sub-balances only earn their complexity if
-  bonds must stay continuously posted across a rotation. Either way the
+  bonds must stay continuously posted across a rotation.
+
+  ⚠️ **But drain-to-zero is NOT a complete branch, because draining is
+  VOLUNTARY.** An operator who is offline, has lost their key, or simply
+  declines to withdraw blocks the rotation indefinitely — no sanctions
+  involvement required — and this design permits only an owner-authorised
+  withdrawal to move principal, defining no administrative drain. So a single
+  unresponsive operator holds the whole rotation hostage.
+
+  Therefore the **token-snapshot/migration path must cover every residual
+  bond**, or rotation needs an explicit **forced escrow migration that preserves
+  the beneficiary** — moving the principal into the new token while leaving the
+  operator's claim on it intact. Voluntary enumeration cannot be the only route.
+
+  Either way the
   acceptance case is the sequence **rotate → raise → unbond**, which no
   single-slot record survives.
 
