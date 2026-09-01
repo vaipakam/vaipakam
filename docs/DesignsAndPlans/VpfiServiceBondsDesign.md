@@ -147,8 +147,25 @@ fresh notice on every retune; snapshotting is the simpler form of the same
 guarantee, and it needs no notice pipeline because the operator already knows
 their own unlock time.)
 
-Values, as a bounded knob with a floor, dark until set: **7 days** default,
-**3-day floor**, **30-day ceiling**. The floor is the load-bearing half —
+Values, as a bounded knob with a floor: **7 days** default, **3-day floor**,
+**30-day ceiling**.
+
+**Rev 1 said "dark until set" AND "7 days default", which are incompatible**
+(rev 3). This repository uses a stored zero to mean feature-disabled wherever
+it calls a knob dark — the reward horizon does exactly that — while "default"
+normally means an unset zero resolves to the named value. One implementer
+would accept a bond with no usable withdrawal clock and strand it until
+governance configured the delay; another would activate seven-day unbonding
+with no configuration at all.
+
+**The resolution: zero disables the BOND FEATURE, and deposits are rejected.**
+`bondDelaySeconds == 0` ⇒ `postBond` reverts. Not "resolves to seven days",
+because a refundability guarantee that switches itself on before anyone chose
+its length is the kind of default that gets discovered during an incident; and
+not "accept and strand", because taking a deposit you cannot promise to return
+is the worst of the three. The 7 days is the value governance is expected to
+SET at arming, not one that applies in its absence — so the whole bond
+surface, like the perk channel, ships dark and is armed deliberately. The floor is the load-bearing half —
 without one the delay can be tuned to nothing, which is the slash-and-run
 configuration it exists to prevent. The ceiling matters because bonds are
 characterised as refundable at will, and a delay long enough to read as a
@@ -176,6 +193,25 @@ the remaining budget covers its cost, **rounding DOWN**. A one-wei bond
 therefore buys a one-wei-proportional sliver of budget and, at the margin,
 no extra action — no rounding-up windfall, and no implicit minimum either.
 
+**The window, refill and accounting key** — rev 2 gave the formula and not the
+bucket, which is not a spec: the same multiplier admits wildly different
+throughput depending on whether budget resets per call or accrues over time
+(rev 3).
+
+| | |
+| --- | --- |
+| Shape | **Fixed epoch, not a token bucket.** Budget is allocated whole at each epoch boundary and unused credit is **DISCARDED**, never carried |
+| Epoch | Governance-set, default **1 hour** |
+| Capacity | `freeTierBudget × multiplier`, recomputed at each boundary from the bond balance AT that boundary — so a slash or an unbond takes effect on the next epoch, not retroactively |
+| Key | `(role, address)` — the same key the bond record uses |
+
+Carry-over is refused deliberately. A token bucket lets an operator idle and
+then burst at many times the steady-state rate, which is the throughput
+concentration bonds are not supposed to buy; discarding unused credit makes
+the ceiling a real ceiling over every window rather than an average. It also
+makes the bound auditable from one boundary, with no accrued state to
+reconstruct.
+
 **5. The 4× ceiling bounds an ADDRESS, not an operator — stated as such.**
 
 Rev 1 claimed the ceiling stops bonds becoming de-facto exclusivity. It does
@@ -190,11 +226,25 @@ What is actually true, and all that is claimed:
 - **In aggregate**, dominance costs capital LINEARLY — `N` addresses at the
   ceiling require `N × bondAt4x` bonded, all of it slashable and all of it
   idle. That is a cost curve, not a bound.
-- **Where roles are GRANTED rather than permissionless** — the keeper
-  `KEEPER_ACTION_*` tiers — capacity can and should be aggregated under the
-  granted principal, because there the protocol already knows who it is
-  talking to. That is the only place a genuine per-operator bound is
-  available without inventing an identity system.
+- **Even where roles are GRANTED, the bound is still PER ADDRESS.** Rev 2
+  claimed the keeper `KEEPER_ACTION_*` tiers could aggregate capacity under
+  the granted principal. Checked against the wiring, that does not hold
+  either (rev 3): `LibVaipakam.Storage.approvedKeeperActions` is keyed
+  `[principal][keeper]` and `LibAuth.requireKeeperFor` authenticates
+  `msg.sender`, so the protocol learns **no identity shared by several
+  grantee addresses**. A controller takes the same grant on `N` addresses and
+  gets `N` separate caps.
+
+  Keying capacity to the granting PRINCIPAL instead is worse, not better: a
+  principal's approved keepers are typically unrelated parties, so they would
+  consume one another's quota and one keeper could starve the rest.
+
+  So the honest statement is the same in both cases — **a per-granted-address
+  bound**. A genuine per-operator bound needs an operator identity mechanism
+  that does not exist here, and inventing one is out of scope for this note.
+  This is the second revision in a row where a per-operator claim did not
+  survive contact with the wiring; it should not be made a third time without
+  that mechanism landing first.
 
 **Bond sizes: still no minimum.** A VPFI-denominated floor is a price-varying
 entry cost, and the design forbids bonds becoming an entry barrier. The
