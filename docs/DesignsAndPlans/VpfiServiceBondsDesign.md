@@ -37,14 +37,15 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
-| Solver / matcher | larger match-batch sizes; priority-window access (E-2 perk interplay: bond = capacity, spend = priority) | precondition lies recorded via the offence dispatcher below (e.g. repeated fills against listings already committed as stale on-chain); **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
+| Solver / matcher | larger match-batch sizes; priority-window access (E-2 perk interplay: bond = capacity, spend = priority) | precondition lies recorded via the offence dispatcher below (a submission contradicted by state it itself carries or creates — NOT staleness, which left v1's predicates: see the offence-recording bullet); **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
 | Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles | repeated out-of-grant-scope attempts recorded via the offence dispatcher; missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
 
 - **Offence recording (Codex round-1 finding):** a slashable failure must
   not be a plain revert — a reverted tx leaves no state to slash against.
   Bonded-operator entry points therefore run precondition checks in a
-  non-reverting outer dispatcher: on a precondition lie (e.g. submitting a
-  fill against a listing already committed as stale on-chain), the call
+  non-reverting outer dispatcher: on a precondition lie (e.g. a submission whose
+  own arguments or effects contradict a precondition it asserted — NOT a
+  stale-listing fill, which left v1's predicates; see below), the call
   **succeeds as a no-op**, records `OffenceRecorded(operator, role, kind,
   refId)`, and debits that `(role, address)` bond IMMEDIATELY — the threshold
   is one (see the decisions below). The counter is keyed by role too, and
@@ -63,12 +64,31 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
   recorded offence and slash a good bond — the worst failure this design can
   have, because it punishes the operators it exists to attract.
 
-  So a bonded submission CARRIES the state version it validated against, and
-  the predicate asks whether THAT snapshot already contained the
-  disqualifying fact. A mismatch introduced after the snapshot is a stale
-  read, not a lie, and is not slashable. "When the operator submitted" is
-  unobservable on-chain; the snapshot they committed to is not, which is why
-  the rule binds to it.
+  A caller-supplied snapshot does NOT fix this, and that was the previous
+  attempt: if the submission carries the state version it claims to have
+  validated against, a dishonest operator simply attaches a version from
+  immediately before the mutation it already knows about. Nothing
+  authenticates when a snapshot was observed, so every staleness slash
+  becomes evadable while honest congested calls stay exposed to whatever the
+  rule does not exempt.
+
+  **So STALENESS LEAVES the v1 slash predicates entirely** — it fails v1's
+  own bar rather than needing a better mechanism. v1 is *objective lies
+  only*: a fact the chain can check without judging what the operator knew.
+  A stale fill is only a lie if the operator KNEW the listing was stale, and
+  knowing is exactly what the chain cannot see — not through timing, which
+  builders control, and not through a self-declared snapshot, which the liar
+  picks. Both attempts failed in opposite directions, and that is the
+  signature of a predicate that is not objective.
+
+  What remains slashable in v1 is what needs no such inference: a submission
+  contradicted by state the submission ITSELF carries or creates — a fill
+  against a listing the same transaction proves already consumed, a claimed
+  precondition the call's own arguments disprove. Staleness returns with the
+  liveness tier, where an attested observation window exists to make "knew"
+  adjudicable; the alternative — a protocol-issued, expiry-bounded snapshot
+  commitment — is a real mechanism, and it belongs with that tier rather
+  than bolted onto v1.
 - Bond sizes: governance-bounded config. **NOT unlock tiers** — capacity
   rises CONTINUOUSLY with the bond and nothing is unlocked at a threshold.
   This bullet said "unlock tiers" until rev 7, and an implementation
