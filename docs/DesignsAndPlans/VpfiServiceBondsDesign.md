@@ -25,10 +25,12 @@ the recycle loop.
    "offence recording" below).
 4. Marketing language depends on the fork below. Under **(B)** or the
    attested tier — where a slash exists — "operational security deposit".
-   Under **(A)**, where nothing can be confiscated, it MUST be
-   "operational capacity deposit": calling a non-slashable deposit a
-   security or performance bond is the representation problem this note
-   exists to avoid. Never staking, never earning, under either.
+   Under **(A) OR (C)** — the principal cannot be confiscated in either,
+   since C's arming fee is a separate spend and does not put the deposit at
+   risk — it MUST be "operational capacity deposit": calling a
+   non-slashable deposit a security or performance bond is the
+   representation problem this note exists to avoid. Never staking, never
+   earning, under any of them.
 
 ## Mechanics
 
