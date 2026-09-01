@@ -8262,37 +8262,53 @@ describe('check-deploy-invocations — #1996 config identity', () => {
   it("Python's keyword UNPACKING carries a real env option", () => {
     // `**{"env": {…}}` hands the child a real `env` keyword, and the quoted key
     // was matched by none of the spellings the reader knew.
+    //
+    // Asserted by which environment is NAMED, not by whether one is selected.
+    // Since #2036 r21 an ambient environment counts as a selection anyway, so a
+    // fixture that only checked "is an environment selected" passed with the
+    // quoted key unrecognised — it was vacuous, and mutation found it. Here
+    // `production` names an unprotected Worker and `staging` a protected one:
+    // reading the key gives the former and passing, missing it falls back to
+    // every environment and reports.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed(
       'configs/custom.jsonc',
-      '{"name": "vaipakam-www", "env": {"production": {"name": "vaipakam-agent"}}}\n',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
     );
-    const r = runWith(
-      'deploy.py',
-      'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"], ' +
-        '**{"env": {"CLOUDFLARE_ENV": "production"}})\n',
-    );
-    expect(r.ok).toBe(false);
-    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+    expect(
+      runWith(
+        'deploy.py',
+        'subprocess.run(["wrangler", "deploy", "--config", "configs/custom.jsonc"], ' +
+          '**{"env": {"CLOUDFLARE_ENV": "production"}})\n',
+      ).ok,
+    ).toBe(true);
   });
 
   it("an EARLIER child call's environment does not answer for wrangler's", () => {
-    // One segment may contain more than one child process. Only the detected
-    // wrangler invocation's own options object is its environment.
+    // Only the detected wrangler invocation's own options object is its
+    // environment. Here the earlier call names the environment that names a
+    // PROTECTED Worker and wrangler's names an unprotected one, so consulting
+    // the wrong object reports a deploy that is genuinely out of scope.
+    //
+    // ONE EXPRESSION, not two statements: the scanners work a line or a
+    // statement at a time, so two separate calls never share a segment and the
+    // binding could not matter. My first fixture wrote them as two lines and
+    // was vacuous — removing the binding entirely left all 802 green.
     seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
     seed(
       'configs/custom.jsonc',
-      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-www"}, ' +
-        '"production": {"name": "vaipakam-agent"}}}\n',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
     );
-    const r = runWith(
-      'w.mjs',
-      'spawnSync("echo", ["x"], {env: {CLOUDFLARE_ENV: "staging"}});\n' +
-        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
-        '{env: {CLOUDFLARE_ENV: "production"}});\n',
-    );
-    expect(r.ok).toBe(false);
-    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+    expect(
+      runWith(
+        'w.mjs',
+        'const a = spawnSync("echo", ["x"], {env: {CLOUDFLARE_ENV: "staging"}}), ' +
+          'b = spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+          '{env: {CLOUDFLARE_ENV: "production"}});\n',
+      ).ok,
+    ).toBe(true);
   });
 
   it("the selected environment's name REPLACES the top-level one", () => {
