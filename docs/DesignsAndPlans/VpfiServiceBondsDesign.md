@@ -28,7 +28,7 @@ the recycle loop.
 ## Mechanics
 
 ```
-ServiceBond { operator; role; amount; unbondRequestedAt; }
+ServiceBond { operator; role; amount; state; unlockAt; }
 ```
 
 | Role | What the bond unlocks | Slash conditions (objective) |
@@ -86,52 +86,123 @@ ServiceBond { operator; role; amount; unbondRequestedAt; }
    unbond delay, and are described as operational security deposits — never
    staking, never earning.
 
-### Proposed: bond sizes and unbond delay
+### Proposed: bond sizes and unbond delay (rev 2)
 
-Nothing here is a new pattern; both follow conventions the repository already
-uses for governance-set values.
+Rev 1 of this section was reviewed and found underspecified in five places —
+each of them a spot where two implementers would have built different things.
+Rev 2 answers all five. Nothing here is a new pattern; both knobs follow
+conventions the repository already uses.
 
-**Unbond delay — a bounded knob, floored, dark until set.** The nearest
-precedent is the reward horizon (default 365 days, never below 180, dark
-until governance sets it), and the shape transfers exactly:
+**1. The debit formula — every recorded offence debits, immediately.**
 
-| | Value | Why |
-| --- | --- | --- |
-| Default | **7 days** | The design note's own figure. It must exceed the window in which an offence becomes provable, or an operator can misbehave and exit before the counter crosses its threshold |
-| Floor | **3 days** | A floor, not a fixed value, so governance can tune upward for a role that proves slower to adjudicate but can never tune the delay to nothing — which is the slash-and-run configuration |
-| Ceiling | **30 days** | An unbond delay is a refundability constraint, and the shape rule says bonds are refundable at will. A delay long enough to feel like a lockup starts to argue against that characterisation |
+Rev 1 said "slash at a counter threshold" AND "10% per offence, ten offences
+to zero", which are not the same rule: for any threshold above one it is
+undefined whether the earlier offences debit, whether crossing the threshold
+takes 10% once or the accumulated total, and what the counter does afterwards.
 
-**Bond sizes — bound the DISCOUNT, not the deposit.** The instinct is to set
-a minimum bond in VPFI, and it is the wrong instrument: a VPFI-denominated
-floor is a price-varying entry cost, and the design forbids bonds becoming an
-entry barrier. Two rules instead:
+**The threshold is ONE.** Each `OffenceRecorded` immediately debits
+`slashBps` of the bond's CURRENT balance into the recycle bucket. That is the
+whole rule:
 
-- **No minimum.** Any bond, including none, is valid. Capacity scales with
-  the bond; it is never unlocked by it. This is what keeps the free tier real
-  rather than nominal.
-- **A capacity CEILING per role**, expressed as a multiple of the free tier
-  rather than an absolute — proposed **4×**, so the largest bonded operator
-  gets four times the free-tier limits, not unbounded dominance. Bounding the
-  multiple is what stops bonds becoming de-facto exclusivity, which is the
-  failure mode "no role requires a bond" is protecting against and which a
-  minimum-bond rule would not catch.
+- Geometric, not linear — 10% of what remains, so the bond asymptotes toward
+  zero rather than hitting it at a fixed count. "Ten offences to zero" in rev
+  1 was wrong arithmetic as well as an ambiguous rule.
+- **The decay question dissolves.** Rev 1 asked whether the offence counter
+  should decay, to stop a long-lived honest operator accumulating sparse
+  offences into a slash. With immediate debit there is no accumulator to
+  decay: each offence is priced once, at the time, against a bond that is
+  already smaller for every previous one. The counter survives only as a
+  lifetime tally for observability, and nothing reads it.
+- Governance-bounded: `slashBps` default **1,000** (10%), ceiling **2,500**
+  (25%), following the `MAX_*_BPS` convention in `ConfigFacet`.
 
-**Per-offence slash — a bounded bps of the posted bond**, following the
-`MAX_*_BPS` ceiling convention in `ConfigFacet`: proposed default **1,000 bps
-(10%) per offence**, ceiling **2,500 bps (25%)**. Ten offences to zero at the
-default is deliberate: slashing is meant to price misbehaviour, not to
-confiscate on a first mistake, and the offence predicate explicitly does not
-count honest same-block failures.
+**2. Bonded privileges stop when unbonding STARTS.**
 
-**Open sub-question the owner may want to settle with this:** whether the
-offence counter DECAYS. Without decay a long-lived honest operator eventually
-accumulates enough sparse offences to be slashed for a rate of error that was
-never harmful. Recommendation: a rolling window rather than a lifetime
-counter, sized to the same knob as the unbond delay so the two cannot be
-configured into contradiction.
+Otherwise the delay does not do what rev 1 claimed. An operator could request
+unbonding, keep its elevated limits, use them for slashable actions near the
+end of the window, and withdraw before the evidence for those actions was
+recorded — a delay measured from the request does not cover actions taken
+during it.
 
-## Tests
+So a bond enters `Unbonding` at the request, and capacity drops to the FREE
+TIER at that instant. The delay then protects only the adjudication of
+actions already taken, which is a claim it can actually keep. The alternative
+— restarting the delay from the last privileged action — was considered and
+rejected: it lets an operator hold a refund hostage to its own activity and
+makes the unlock time unpredictable for an honest one.
 
-Bond/unbond lifecycle incl. delay; limit enforcement with/without bond;
-slash conditions each proven on-chain-verifiable; escrow invariant; slash
-→ recycle-bucket event; free-tier operation with zero bond.
+**3. The unbond delay is SNAPSHOT at request time.**
+
+The delay is governance-mutable, and the bond record in rev 1 stored only
+`unbondRequestedAt`. A pending withdrawal would then float on the live knob:
+lowering 30 days to 3 would make every request older than 3 days instantly
+withdrawable, bypassing the exact window a role chose because its offences
+take that long to adjudicate; raising it would retroactively extend a refund
+already requested.
+
+The record therefore stores **`unlockAt`**, computed once from the delay in
+force at the request. A retune governs only later requests. (The reward
+horizon precedent handles the same problem with a configuration epoch and
+fresh notice on every retune; snapshotting is the simpler form of the same
+guarantee, and it needs no notice pipeline because the operator already knows
+their own unlock time.)
+
+Values, as a bounded knob with a floor, dark until set: **7 days** default,
+**3-day floor**, **30-day ceiling**. The floor is the load-bearing half —
+without one the delay can be tuned to nothing, which is the slash-and-run
+configuration it exists to prevent. The ceiling matters because bonds are
+characterised as refundable at will, and a delay long enough to read as a
+lockup argues against that characterisation.
+
+**4. Capacity is a CONTINUOUS credit, not a tier.**
+
+Rev 1 said "no minimum bond" and "4× the free tier" without saying how a VPFI
+amount becomes capacity. Since match-batch and action-count limits are
+discrete, that is not a spec: one implementation rounds a one-wei bond up to
+an extra action, another rounds down until there is an implicit minimum —
+which would reintroduce the entry barrier the no-minimum rule exists to
+prevent.
+
+So capacity is a **rate-limit credit**, which is continuously divisible:
+
+```
+multiplier = 1 + 3 × min(1, bond / bondAt4x)      // 1× at zero, 4× at bondAt4x
+budget     = freeTierBudget × multiplier           // continuous
+```
+
+`bondAt4x` is the governance-set VPFI amount that reaches the ceiling.
+Discreteness enters only at the final check, where an action is admitted iff
+the remaining budget covers its cost, **rounding DOWN**. A one-wei bond
+therefore buys a one-wei-proportional sliver of budget and, at the margin,
+no extra action — no rounding-up windfall, and no implicit minimum either.
+
+**5. The 4× ceiling bounds an ADDRESS, not an operator — stated as such.**
+
+Rev 1 claimed the ceiling stops bonds becoming de-facto exclusivity. It does
+not, and the claim is withdrawn. Solver and matcher entry points are
+permissionless, so one controller splits its bond across two addresses for 8×
+aggregate, and across `N` for `4N×`. The ceiling is not a Sybil bound and
+nothing here makes it one.
+
+What is actually true, and all that is claimed:
+
+- **Per address**, capacity is bounded at 4× the free tier.
+- **In aggregate**, dominance costs capital LINEARLY — `N` addresses at the
+  ceiling require `N × bondAt4x` bonded, all of it slashable and all of it
+  idle. That is a cost curve, not a bound.
+- **Where roles are GRANTED rather than permissionless** — the keeper
+  `KEEPER_ACTION_*` tiers — capacity can and should be aggregated under the
+  granted principal, because there the protocol already knows who it is
+  talking to. That is the only place a genuine per-operator bound is
+  available without inventing an identity system.
+
+**Bond sizes: still no minimum.** A VPFI-denominated floor is a price-varying
+entry cost, and the design forbids bonds becoming an entry barrier. The
+continuous credit above is what makes "no minimum" implementable rather than
+merely stated.
+
+**Open for the owner:** `bondAt4x` per role, and whether the permissionless
+roles should keep a per-address ceiling at all now that it is understood not
+to bound an operator — an alternative is no ceiling plus the linear cost
+curve, which is honest about what the mechanism does and removes a number
+that could be mistaken for a guarantee.
