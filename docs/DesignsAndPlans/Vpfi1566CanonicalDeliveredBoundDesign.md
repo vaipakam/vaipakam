@@ -322,11 +322,16 @@ is a five-way one.
 
 **F is the one the owner chose (2026-08-31).** This section records the
 trade-off; the decision and everything that follows from it are in §5b — the
-per-class assessment that came out of scouting F against the tree, the one
-class where it does not fit, and the explicit statement that F settles only
-the **USER-OWNED HALF** of the first of #1566's three required closures — not
-the closure. Closure 1 additionally requires the treasury/payroll and buyback
-budget earmarks, which no lien on a user vault can reach.
+per-class assessment that came out of scouting F against the tree, and the
+explicit statement that F settles only the **USER-OWNED HALF** of the first of
+#1566's three required closures, not the closure.
+
+The rest of closure 1 is **not** a list of earmarks for the non-user owners.
+§5b establishes why that framing fails — the list of owners is provably
+incomplete and known to be — and replaces it with the delivered bound, which
+makes closure 1 and closure 2 one mechanism. An earlier revision of this
+paragraph named payroll and the buyback budget here as though naming them were
+the remedy.
 
 ## 5. What is true regardless of the option
 
@@ -368,16 +373,52 @@ Payroll value is not user-owned, so no lien on a user vault reaches it. Move or
 earmark all four user-owned classes and an unbounded canonical reward claim can
 **still** consume tokens already owed to a payee.
 
-**And payroll is not the only one.** `TreasuryFacet.creditBuybackBudget` debits
-`treasuryBalances[token]` and credits `baseBuybackBudget[token]` on the
-canonical chain — with the tokens never moving (`TreasuryFacet.sol:652-664`).
-That is the same invisible-owner shape §3 documents: value committed to a
-future buyback, sitting in the shared balance, reserved by nothing. A canonical
-reward claim can consume it and leave the buyback unfunded.
+**And payroll is not the only one — but STOP HERE, because enumerating them is
+the wrong move and the code says so.**
 
-**Closure 1 needs F plus the treasury/payroll escrow plus the post-treasury
-budget state** — three things, and F is one of them. Any of the three left out
-lets closure 1 be declared complete over a liability that is still spendable.
+Two earlier revisions of this passage tried to close closure 1 by naming the
+non-user owners: first payroll, then `creditBuybackBudget`'s
+`baseBuybackBudget` (`TreasuryFacet.sol:652-664`). Review then produced
+`commitBuyback`'s `baseBuybackReserved` — the same value one state transition
+later (`LibTreasuryBuyback.sol:274-276`) — and `_routePriority`'s
+`rewardEmissionsBudget` and `keeperRewardBudget` (`:615-632`). Four rounds, four
+extensions of one list, each presented as the one that completes it.
+
+**`LibVpfiRecycle.backingPosition`'s own NatSpec already carries this list, it
+already runs to TEN items, and it already says not to trust it:**
+
+> The invariant's three classes are NOT the whole list, and that is the real
+> lesson here. Owners of this one balance keep being found: the list has grown
+> in every round it was treated as complete. […] **THIS TABLE IS NOT AN AUDIT
+> AND MUST NOT BE READ AS ONE.** It lists what ADVERSARIAL REVIEW HAPPENED TO
+> FIND.
+
+`baseBuybackReserved` is not among those ten — the eleventh owner, found by the
+same method, in the same round as the document predicting it.
+
+#### So closure 1 inverts: bound by what was DELIVERED, not by what is OWED
+
+A subtractive definition — the balance, minus every other owner — can never be
+proven complete, because completeness is a claim about code nobody has written
+yet. Every future facet that parks value in the shared balance silently widens
+the hole, and the only signal is another review round.
+
+The positive form is complete by construction: **a reward payout may draw only
+on VPFI delivered FOR REWARDS**, tracked by the `received` ledger closure 2
+already defines. Everything else in the balance is off-limits by default —
+payroll, buyback budget, buyback reserved, keeper budget, emissions budget, and
+the twelfth owner nobody has written yet — without any of them being named,
+because the bound never asks who owns the rest.
+
+This is closure 2's chokepoint inversion applied to the other side, and it means
+**closures 1 and 2 are one mechanism rather than two**. Closure 1's remaining
+work is F for the user-owned classes (so user value is not in the shared balance
+at all) plus the delivered bound (so nothing else in it is reachable). It is not
+F plus a list.
+
+**The enumeration above is retained as MOTIVATION, not as specification.** Do
+not build an earmark per named owner; if the delivered bound is built, none of
+them needs one.
 
 It does not touch the other two closures either, and choosing it does not shrink
 them:
@@ -404,7 +445,7 @@ does not, and that one needs its own decision.
 | `vpfiHeld` (grandfathered) | **Draining, but NOT self-bounding** | #1352 retired the peg-custody borrower path, so no new ones are created and next-touch migration drains it monotonically. That is not the same as safe — see below |
 | `rebateAmount` (settled, unclaimed) | **Draining, but NOT self-bounding** | Same shape, same drain, and the worse tail: a settled rebate nobody claims may never receive another touch at all |
 | `fallbackSnapshot` custody | **Needs every consumer, not one** | The lien is enforceable without moving tokens, but `ClaimFacet` is not the only consumer — see below |
-| Intent `custodialCollateral` | **DOES NOT FIT AS WRITTEN** | See below |
+| Intent `custodialCollateral` | **FITS — via the fill-time hook** | Resolved after this table was first written. `preInteractionImpl` is an authenticated protocol call at fill; the lien decrement, pull and VPFI restamp happen there. See below |
 
 #### The drain does not bound the remainder, and cannot prove it reached zero
 
@@ -470,7 +511,7 @@ liened collateral sits untouched — and the revert is the *lucky* outcome.
 claim all read the new custody source.** That is a slice-2 scope statement, not
 a caveat.
 
-### The intent class is the real obstacle, and it is structural
+### The intent class — RESOLVED (this heading previously said "structural")
 
 ### The intent class — RESOLVED, and this section previously had it wrong
 
@@ -491,8 +532,27 @@ Every intent order requires `needPreInteractionCall` ON
 `LibSwapToRepayIntentSettlement.preInteractionImpl` — a function that already
 does a reverse-index lookup from `orderHash` to `loanId` and **already rejects
 any caller that is not the pinned `lopAtCommit`**. The fill sequence is
-`preInteraction → balance transfer → postInteraction`, recorded as such in
-`SwapToRepayIntentFacetTest.t.sol:22-26`.
+`preInteraction → balance transfer → postInteraction`.
+
+The dispatcher and hook are exercised today through the **buyback** branch of
+that same `orderHashKind` switch — `BuybackEndToEndIntegrationTest.t.sol:151`
+and `BuybackIntentLedgerTest.t.sol` call `preInteraction` directly against the
+Diamond.
+
+⚠️ **The swap-to-repay branch's fill is NOT tested, and an earlier revision of
+this note cited it as though it were.** `SwapToRepayIntentFacetTest.t.sol:15-34`
+lists that waterfall under **"Out of scope for this file (lands in a separate
+fork test with a real Fusion mock router + EIP-712 signing rig)"**. That is a
+description of a test that does not exist, and citing it was precisely the error
+this note warns about elsewhere — reading a comment as evidence of behaviour.
+
+The conclusion below still stands, because it rests on source read directly
+rather than on that citation: the trait requirement, the authenticated
+`preInteractionImpl` body, and the partial-fill setting. But **ratifying it into
+code requires the fill test that does not yet exist** — the pull, the transfer,
+post-settlement, and a post-pull failure proving the lien decrement and vault
+withdrawal revert atomically. That test is a prerequisite of slice 3, not a
+follow-up to it.
 
 So there is an authenticated protocol call, at fill time, keyed to the exact
 order, immediately before the aggregator pulls. That is precisely the pull point
@@ -511,6 +571,15 @@ Two properties make it sufficient rather than merely available:
 **So F applies to the intent class after all**: leave the collateral in the
 vault under a lien, and have `preInteractionImpl` atomically decrement the lien
 and pull the full amount into the Diamond immediately before the LOP takes it.
+
+**The tier restamp moves with the withdrawal.** `commitSwapToRepayIntent` calls
+`LibConsolidation.restampUserVpfi(loan.borrower)` immediately after the
+withdrawal when the collateral is VPFI, because `vaultWithdrawERC20` only
+updates the tracked balance (`SwapToRepayIntentFacet.sol:553-563`). Moving the
+withdrawal to fill time without moving that restamp leaves the borrower stamped
+at the pre-fill balance after the tokens are sold — inflating their fee tier and
+staking credit on VPFI they no longer hold. Lien decrement, pull and restamp are
+one atomic step, not a pull with two neighbours.
 The window in which value sits commingled shrinks from "the life of the order"
 to "within one transaction, between two calls" — which is not commingling in any
 sense the closure cares about.
@@ -657,6 +726,22 @@ then declares the roles it accepts. That is still a root fix — the source of t
 ambiguity is removed once, not fourteen times — but it lands as fourteen small
 explicit role selections, not zero edits.
 
+**And "each reader declares its own roles" is not yet an implementable
+invariant.** The two examples above are the easy ones. The fourteen readers also
+choose pool pricing, allowance construction, compensation handling, reporting
+and paid-ledger mutation, and for those a locally plausible choice can still
+hand `Detached` canonical schedule funding, or permit a state change that a
+bound of zero cannot then fund — a reader can be individually defensible and
+jointly wrong.
+
+So **closure 3 is not closed until the design carries an explicit role/behaviour
+matrix for all fourteen sites** — each row naming the site, the question it is
+really asking, and the answer for each of `Canonical`, `Mirror` and `Detached` —
+with tests for the transition INTO and OUT OF `Detached`, since that transition
+is where a per-site choice and the ledger can disagree. Writing that matrix is
+the remaining work on closure 3; the resolver is its precondition, not its
+substance.
+
 ### Closure 2 — the legacy paths. The ledger measures the wrong noun.
 
 The per-path patch would be: make each legacy spend site also increment
@@ -778,7 +863,18 @@ transitions, not outflows**, and must be retained and redefined in place:
 
 **`received` broadens across VINTAGES, not across token deliveries.** The
 re-base is onto reward value regardless of vintage — legacy and armed alike —
-while still counting **only the authenticated fresh component**. Crediting the
+while still counting **only the authenticated fresh component**.
+
+**Every received-side WRITER needs the new meaning stated, not just the main
+ingress.** The paid side got a writer-by-writer plan above and this side did
+not, which is an asymmetry with consequences: `received` is mutated at ordinary
+remittance ingress *and* by compensation credit, provisional confirmation, and
+demotion/unwind (`RewardRemittanceFacet.sol:900-905`, `:1273-1279`,
+`:1397-1425`). If those branches keep armed-vintage semantics while the ingress
+broadens, a provisional confirmation manufactures headroom that no delivery
+backs, and a demotion fails to remove headroom it should. Each writer's new
+meaning and its paired `uncounted` behaviour is part of the specification, not
+of the implementation. Crediting the
 whole delivery would re-open the hole on the other side: a remittance of 5 fresh
 plus 5 recycled already credits the recycled 5 to the bucket, so crediting 10
 here against a fresh-only paid side leaves 5 of false fresh headroom, and a
@@ -802,11 +898,32 @@ direction:
   (`RewardReporterFacet.sol:1378-1385`).
 
 Neither side is recoverable after the fact, so the bootstrap must be
-conservative and it must happen while nothing can claim: **pause, reconcile the
-per-user paid history off-chain, import the reconciled totals through the
-retained administrative writer (`seedArmedFreshPaid`), then unpause.** That is
-what the administrative writers are for, and it is the concrete reason they are
-retained rather than collapsed. §6 item 1 already anticipated this shape for Option B
+conservative and it must happen while nothing can claim: **pause, reconcile
+off-chain, import, unpause.**
+
+**Both sides get imported, and an earlier revision of this paragraph seeded only
+one.** `seedArmedFreshPaid` increments the PAID counter and is already a
+one-shot writer (`RewardReporterFacet.sol:1397-1405`); it can neither seed the
+broadened RECEIVED side nor be reused. Importing paid history alone therefore
+produces `paid > received` on every upgraded mirror and rejects funded legacy
+claims permanently — the under-credit failure, arrived at by trying to avoid the
+over-credit one.
+
+The reconciliation must therefore cover, and the migration must have a writer
+for, each of:
+
+- **Received** — the authenticated legacy-fresh amount actually delivered for
+  rewards, across every wire version, including the legacy/d2 deliveries whose
+  recycled share was never transmitted.
+- **Paid** — not only per-user payouts, but **fresh value absorbed by the
+  historical expiry and forfeit paths**, which no per-user reconstruction sees
+  at all and which is a genuine outflow under the redefined noun.
+
+So the retained administrative writers are a starting point rather than the
+mechanism: `seedArmedFreshPaid` covers one side once, and a
+migration-capable writer is needed for the other. That is the concrete reason
+they are retained rather than collapsed, and the concrete reason retaining them
+is not sufficient. §6 item 1 already anticipated this shape for Option B
 and it applies here. It is more work than five `+=` lines — and the five
 `+=` lines do not close the hole.
 
