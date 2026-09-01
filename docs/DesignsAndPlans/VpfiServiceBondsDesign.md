@@ -79,6 +79,14 @@ instruction to anyone implementing or writing copy from the top of the file.
    excluded from the horizon**, or a **post-unpause grace window** during which
    proofs may land before any pending withdrawal completes.
 
+   **And the proof and release windows must NOT overlap at the boundary.** If
+   proofs are accepted *through* `unlockAt` while cleanup or withdrawal is
+   permitted at `block.number >= unlockAt`, the operator front-runs the proof
+   with the release and withdraws — timely evidence losing its reserved debit to
+   transaction ordering, which is precisely the failure the horizon prevents
+   everywhere else. Strict non-overlap: **proofs valid through block N, release
+   only after N**, with **both transaction orderings tested at the boundary**.
+
    The first is preferred and the general rule behind it is worth stating: the
    levers that stop the OPERATOR must never also stop the PROVER, because every
    time they have been conflated in this document the result has been a slash
