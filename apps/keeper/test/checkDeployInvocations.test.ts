@@ -8490,4 +8490,156 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('could not name');
   });
+  // ---- Codex #2036 r24 ----
+
+  it('an explicit UNSET clears the ambient presumption', () => {
+    // The walk deleted the binding, making "unset here" indistinguishable from
+    // "never mentioned" — fine while an absent variable meant no environment,
+    // and a false red once an ambient one became the presumption.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.sh',
+        'unset CLOUDFLARE_ENV\nwrangler deploy --config configs/custom.jsonc\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('...but an assignment AFTER the unset selects again', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.sh',
+      'unset CLOUDFLARE_ENV\n' +
+        'CLOUDFLARE_ENV=production wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('a rewrite EARLIER ON THE SAME LINE still precedes the deploy', () => {
+    // Compared against the line's start, every write on that line sits after
+    // the deploy — so a rewrite plainly before wrangler read as after it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\n' +
+        'echo \'{"keep_vars":false}\' > side.jsonc; wrangler deploy --config side.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('...and one LATER on the same line still follows it', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent", "keep_vars": true}\n');
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\n' +
+          'wrangler deploy --config side.jsonc; echo \'{"keep_vars":false}\' > side.jsonc\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('a COMPUTED key makes the closed-object proof unsound', () => {
+    // That proof is the only construct that can establish a negative, so a key
+    // the reader cannot evaluate must void it rather than be ignored.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {["CLOUDFLARE_" + "ENV"]: "staging", PATH: "/bin"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('...but a bracketed LITERAL key still closes it', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.mjs',
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+          '{env: {["PATH"]: "/bin"}});\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('an AGGREGATE [env] table declares environments', () => {
+    // The entries under it are the environments. Requiring a dot in the header
+    // called the top-level-only read complete.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-www"', '[env]', 'staging = { name = "vaipakam-agent" }', ''].join(
+        '\n',
+      ),
+    );
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nwrangler deploy --config side.toml --env staging\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('...as does a dotted or inline env KEY', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-www"', 'env.staging = { name = "vaipakam-agent" }', ''].join('\n'),
+    );
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nwrangler deploy --config side.toml --env staging\n',
+    );
+    expect(r.ok).toBe(false);
+  });
+
+  it('...and a config with NO environments stays authoritative', () => {
+    // The control for all three: widening what counts as an environment table
+    // must not make every TOML config incomplete.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      ['name = "vaipakam-www"', '[vars]', 'x = 1', ''].join('\n'),
+    );
+    expect(
+      runWith(
+        'w.sh',
+        'cd apps/agent\nwrangler deploy --config side.toml --env staging\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('a relative PROSE config does not answer from the repository root', () => {
+    // Reported in r24 and already closed by the #2040 ordering change: an
+    // authoritative-but-unprotected answer from an invented root lookup used to
+    // suppress the textual scope. Reproduced at de4ca8a8c and fixed at the
+    // commit after it, so this pins the behaviour rather than adding it.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed('side.jsonc', '{"name": "vaipakam-www"}\n');
+    seed('apps/agent/side.jsonc', '{"name": "vaipakam-agent"}\n');
+    const r = runWith(
+      'docs/ops/Runbook.md',
+      'From apps/agent, run `wrangler deploy --config side.jsonc`.\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
 });
