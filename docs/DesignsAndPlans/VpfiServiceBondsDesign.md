@@ -188,8 +188,11 @@ Putting the token identity in the events is not enough — events do not fund a
 withdrawal. So, before bonds ship, **either**:
 
 - **bonds join the rotation inventory** — enumerated, drained to zero, and
-  read back as zero before the rotation proceeds (the same treatment every other
-  custody class gets); **or**
+  read back as zero before the rotation proceeds. ⚠️ **This is an OPTIMISATION,
+  never a sufficient branch on its own**, and an earlier revision offered it as
+  one: draining is voluntary, so an offline or unwilling operator blocks the
+  rotation indefinitely. Draining what you can is useful; relying on it is the
+  hostage condition. **and**
 - **the record snapshots the token** (or a token epoch) and a **dual-token
   migration withdrawal** exists, so an operator bonded in the old asset can
   still exit in it.
@@ -237,10 +240,12 @@ withdrawal. So, before bonds ship, **either**:
   delisting. Either way the rotation must not be gated on an operation the
   sanctions gate forbids.
 
-The first is simpler and matches the existing procedure. The second is only
-worth building if bonds are expected to be long-lived enough that draining them
-for a rotation is unacceptable — which is a product question, not a technical
-one.
+**The snapshot/escrow migration is MANDATORY**, not the second of two options.
+An earlier revision called draining "simpler" and preferred it, which lets an
+implementation ship without the residual path and keep the exact hostage
+condition the correction removes. Drain what drains — it shrinks the residual —
+then migrate whatever is left. Only the migration can be relied on, because only
+it requires nothing of the operator.
 
 ```
 ServiceBond { operator; role; token; amount; state; unlockAt; }
@@ -670,7 +675,21 @@ identified the hole. Rule 2's "disabling does not cancel prior liability" is
 right for a routine retune and exactly wrong here.
 
 So: an **emergency epoch invalidation** that blocks the old verifier
-immediately AND **releases the reservations that depended on it**. Those
+immediately AND **releases the reservations that depended on it** — **held by an
+off-timelock authority, not by the ordinary predicate-config setter.**
+
+"Immediate" is not a property of naming it so. Ordinary configuration sits behind
+the timelocked `ADMIN_ROLE`; if epoch invalidation is built as just another
+predicate setter, **the attacker gets the whole governance delay** to keep
+submitting forged proofs and confiscating reservations — which is precisely the
+window the emergency path exists to close. The repository already separates these:
+`PAUSER_ROLE` is the fast-key multisig for incident levers, `ADMIN_ROLE` the
+timelocked one (`AdminFacet.sol:873-880`).
+
+So this authority is **narrowly scoped** — it may disable an affected verifier
+and release its reservations, atomically, and nothing else — with governance
+handling recovery afterwards on the normal path. Narrow scope is what makes an
+off-timelock key acceptable. Those
 liabilities are unprovable by any trustworthy means once the only verifier for
 them is known-broken, so releasing them is the honest outcome rather than a
 concession — holding capital against evidence that can no longer be soundly
