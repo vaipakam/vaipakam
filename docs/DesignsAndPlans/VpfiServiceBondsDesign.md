@@ -338,14 +338,22 @@ What is actually true, and all that is claimed:
 
 - **Per address**, capacity is bounded at 4× the free tier.
 - **In aggregate**, dominance costs capital LINEARLY — `N` addresses at the
-  ceiling require `N × bondAt4x` bonded and idle. **Whether it is also AT
-  RISK depends on the fork**, and an earlier revision said "all of it
-  slashable" unconditionally: under (B) or the attested tier it is; under
-  (A) the principal is refundable and never confiscatable, so the cost is
-  opportunity cost alone; under (C) only the arming fee is permanently
-  absorbed. The curve is linear either way, but its steepness is not the
-  same, and the owner should read it against the option they are choosing.
-  That is a cost curve, not a bound. **It holds only if a fresh
+  ceiling require `N × bondAt4x` bonded and idle — **and that claim does not
+  survive the free tier either.** It is withdrawn.
+
+  The free tier is mandatory and unbonded by design, so a controller can run
+  `4N` fresh addresses on their free allowance and reach the same aggregate
+  throughput as `N` addresses bonded at the ceiling, for no VPFI at all.
+  Preventing an initially-full bucket delays that; it does not price it.
+  There is no aggregate cost curve without non-Sybil identity or friction on
+  the free tier, and this note deliberately adds neither.
+
+  So the honest statement is narrow: **a bond is an optional PER-ADDRESS
+  convenience** — it raises one address's throughput up to 4×, and buys the
+  operator fewer addresses to manage rather than capacity nobody else can
+  have. It is not an aggregate bound and not an aggregate cost. This is the
+  third revision of this claim; the first two said it bounded an operator,
+  then that it priced one. **It holds only if a fresh
   address cannot be handed a full capacity balance on first touch**: with
   immediate withdrawal and a full initial bucket, one `bondAt4x` can be
   walked through fresh addresses to mint repeated bursts, and the claim
@@ -447,6 +455,13 @@ decisions rather than to an implementer's discretion:*
   ceiling rounding and a minimum, or the fee should simply be flat.
   Proposed: **flat per arming, paid in addition, governance-set with a
   ceiling**, because it is the variant with no rounding hole.
+- **The arming call must BIND the fee it accepted** — `maxArmingFee`, or an
+  expected fee, or a config epoch, reverting on adverse drift. Governance can
+  re-price while an arming transaction is pending, and if the implementation
+  debits a preapproved allowance or an internal balance, an upward retune
+  charges more than the operator agreed to. This is the same defect the perk
+  channel had and fixed (`purchasePerk` binds `maxTotalVpfi` and the exact
+  entitlement); a fee invented in this note should not have to relearn it.
 - **Its own `RecycleSource`.** `LibVpfiRecycle.credit` needs a concrete
   member and the enum is append-only. `ServiceBondSlash` must NOT be used —
   C performs no slash, and reporting fee purchases as offences would
@@ -517,9 +532,33 @@ that everything else is throughput and these are custody:**
 - Bond / unbond lifecycle, including that v1 withdrawal is IMMEDIATE and that
   the withdrawal clamps accrued credit in the same step. A test that
   withdraws and then spends is the one that catches the bypass.
-- Escrow accounting invariant: bonds are a fourth tracked balance class
-  alongside user LIF custody, unclaimed budgets and the recycle bucket, and
-  the Diamond-balance invariant must cover it (#892 / L13).
+- **SANCTIONS, on every value-moving bond selector.** VPFI deposits and
+  withdrawals are Tier-1 BLOCK in the repository's sanctions matrix, and the
+  gate is per SELECTOR — each entry point screens the value's owner or
+  recipient itself. So `postBond`, `unbond`, any deposit-on-behalf or permit
+  variant, and (under C) the arming-fee payer each need
+  `LibVaipakam._assertNotSanctioned` and a focused test. Omitted from an
+  earlier revision of this list entirely, which would have let a flagged
+  operator post, withdraw or pay a fee through an unscreened path.
+- **SHIPPING PREREQUISITE, not a test: reward-funding isolation (#1566).**
+  `RewardClaimFacet` takes `backingRoom` from `LibVpfiRecycle.backingPosition`,
+  which treats every VPFI outside `recycleBucket` as reward backing — so a
+  refundable bond deposited into the Diamond becomes available for transfer
+  to reward claimants. Bonds cannot ship before that is closed.
+
+  An earlier revision listed only the escrow accounting invariant here, as
+  though extending the enumerated Diamond-balance check were the remedy. It
+  is not, and `TokenomicsTechSpec` records why: per-custody subtraction was
+  REJECTED, because related reward clocks can advance while payouts are
+  blocked, and it says outright that new custody classes must wait for the
+  delivered-for-rewards bound. A bond is exactly such a class. #1566's own
+  design note says the same thing from the other side — "new custody classes
+  should wait for this".
+
+  The escrow accounting invariant still applies once that lands: bonds are a
+  fourth tracked balance class alongside user LIF custody, unclaimed budgets
+  and the recycle bucket, and the Diamond-balance invariant must cover it
+  (#892 / L13). It is necessary and it was never sufficient.
 - **(B) / attested tier only** — Slash → recycle: the debit credits
   `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)` through the
   chokepoint, with the event carrying that source and not a new generic one.
