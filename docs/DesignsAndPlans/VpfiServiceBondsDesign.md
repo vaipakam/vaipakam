@@ -23,8 +23,12 @@ the recycle loop.
    on-chain fact — and the evidence must be **committed state, not a
    revert** (a reverted transaction leaves nothing to adjudicate; see
    "offence recording" below).
-4. Marketing describes bonds as "operational security deposits" —
-   never staking, never earning.
+4. Marketing language depends on the fork below. Under **(B)** or the
+   attested tier — where a slash exists — "operational security deposit".
+   Under **(A)**, where nothing can be confiscated, it MUST be
+   "operational capacity deposit": calling a non-slashable deposit a
+   security or performance bond is the representation problem this note
+   exists to avoid. Never staking, never earning, under either.
 
 ## Mechanics
 
@@ -53,10 +57,12 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
   decide a slash. An earlier revision of this bullet described a
   per-OPERATOR counter driving a deferred threshold slash, which left an
   implementation with no role to select the bond from and no reason to debit
-  on the spot. **Honest failures are excluded by a SUBMITTED-AGAINST
-  SNAPSHOT, not by a same-block rule.** An earlier revision exempted only
-  same-block changes and required the predicate to reference state committed
-  before the operator's submission. That does not hold: a transaction can sit
+  on the spot. ~~Honest failures are excluded by a SUBMITTED-AGAINST
+  SNAPSHOT.~~ **REJECTED — do not implement this.** It survives here only
+  because the WAY it fails is the argument for everything below it. An
+  earlier revision exempted only same-block changes and required the
+  predicate to reference state committed before the operator's submission;
+  that does not hold: a transaction can sit
   pending while the disqualifying state commits in an EARLIER block than its
   execution, so at execution the predicate sees state that preceded the call
   even though the operator could not have known it when signing. Ordinary
@@ -372,25 +378,55 @@ than record an offence.
 fill with a fourth attempt — it is what the evidence says, and the owner should
 choose between two coherent shapes rather than have me keep trying:
 
-**(A) Ship v1 WITHOUT slashing — recommended.** Bonds buy capacity
-continuously, are refundable at will, and nothing is confiscated. The
-mechanism is honest and complete on its own: capital buys throughput, and
-misbehaviour is answered by role revocation, which the protocol already has.
-Say what it is — an operational capacity deposit, not a performance bond —
-because calling it a performance bond while nothing can be slashed is the
-representation problem this note exists to avoid. `ServiceBondSlash` stays
-reserved and unused. Slashing is then purely ADDITIVE later, with no
-migration: the attested tier brings its predicates and turns the same
-deposits into bonds.
+**(A) Ship v1 WITHOUT slashing.** Bonds buy capacity continuously, are
+refundable at will, and nothing is confiscated — an operational CAPACITY
+deposit, named as such. `ServiceBondSlash` stays reserved and unused.
+
+*Two costs, both of which review surfaced and neither of which an earlier
+draft of this fork admitted:*
+
+- **It drops half this card's objective.** The stated goal at the top is a
+  *temporal + permanent* VPFI sink. A refundable deposit is only the temporal
+  half; the permanent route is the slash, and (A) leaves it unused. So (A) is
+  not "the useful half shipped early" — it is a deliberate deferral of
+  permanent absorption, and choosing it should be recorded as an objective
+  change rather than a scoping detail.
+- **Revocation does not answer every covered operator.** An earlier draft of
+  this fork said misbehaviour is answered by role revocation. That holds only
+  for DELEGATED keeper access. `OfferMatchFacet.matchSignedOffer` has no
+  per-matcher authorization to revoke, and `matchIntent` is open whenever
+  `requiresKeeperAuth` is false — so a permissionless matcher simply
+  continues, from the same address or another. Under (A) those paths have no
+  operator-specific response at all.
+
+**Enrolment is required if the attested tier later arrives**, and "no
+migration" was wrong. Activating predicates against balances deposited under
+capacity-only terms would make them confiscatable by the activation
+transaction itself, which immediate withdrawal does not protect against —
+the owner never had a chance to exit. So the tier must require explicit
+per-operator enrolment, or version deposits and only debit enrolled ones,
+or give a withdrawal grace period before any new predicate can debit an
+existing balance.
 
 **(B) Ship nothing until the attested tier.** Wait for the observation
-commitment that makes "knew" adjudicable, and land bonds and slashing
-together. Costs the capacity mechanism, which is useful and independent.
+commitment that makes "knew" adjudicable, and land capacity, bonds and
+slashing together. Costs the capacity mechanism in the meantime — which is
+useful and independent — but keeps the card's objective whole.
 
-The case for (A): every part of this note that survived review is about
-capacity, and every part that collapsed is about slashing. Shipping the half
-that works, named accurately, is better than holding it hostage to the half
-that needs a mechanism v1 does not have.
+**(C) Ship (A) plus a non-refundable ARMING FEE, restoring the permanent
+sink without slashing.** A small fee charged when a bond is posted or raised,
+credited through `LibVpfiRecycle.credit(...)` and never returned. It needs no
+adjudication of anything — a spend is objectively a spend — which is exactly
+why the perk channel works, and it is the same shape: spend is permanent
+absorption, deposit is temporal. This restores the objective (A) drops while
+keeping every part of the mechanism that survived review, at the cost of
+making capacity slightly non-free at the margin.
+
+**Recommendation: (C), else (A).** The case for shipping now is unchanged —
+everything in this note that survived review is about capacity, everything
+that collapsed is about slashing. But (A) alone does not meet the card's
+objective, and (C) meets it with a mechanism that has already been built once
+in this programme.
 
 **Open for the owner**, and these are genuine choices rather than gaps:
 
@@ -430,12 +466,16 @@ that everything else is throughput and these are custody:**
 - Escrow accounting invariant: bonds are a fourth tracked balance class
   alongside user LIF custody, unclaimed budgets and the recycle bucket, and
   the Diamond-balance invariant must cover it (#892 / L13).
-- Slash → recycle: the debit credits
+- **(B) / attested tier only** — Slash → recycle: the debit credits
   `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)` through the
   chokepoint, with the event carrying that source and not a new generic one.
-- Each objective slash predicate proven on-chain-verifiable, and proven to
-  fire on committed state rather than a revert — an offence that reverts
-  leaves nothing to slash.
+  Under (A) there is no production call that can satisfy this, so it is
+  deferred rather than left unwritable.
+- **(B) / attested tier only** — each objective slash predicate proven
+  on-chain-verifiable and proven to fire on committed state rather than a
+  revert. Under (A) the predicate set is empty by construction, and the
+  acceptance case is instead that NO call path confiscates: a test that
+  every entry point leaves the bond balance unchanged.
 - **No v1 predicate depends on external state moving between broadcast and
   execution** — the acceptance case is the ABSENCE of such a predicate. An
   earlier revision required testing a caller-supplied snapshot, which is the
