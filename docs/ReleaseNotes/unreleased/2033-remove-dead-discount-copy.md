@@ -1,7 +1,7 @@
-## Thread — Removed nine unused marketing strings that described the fee discount wrongly (PR #<n>)
+## Thread — Removed eight unused marketing strings that described the fee discount wrongly (PR #<n>)
 
-The marketing site carried nine translated strings, in ten languages, describing
-how the VPFI fee discount is calculated. The description was out of date, and
+The marketing site carried eight translated strings, in ten languages,
+describing how the VPFI fee discount is calculated. The description was out of date, and
 one of them was not merely stale but backwards: it told a reader that at
 settlement the treasury cut is reduced by a *time-weighted average* of their
 discount "not the current rate", and that a late top-up would earn a share

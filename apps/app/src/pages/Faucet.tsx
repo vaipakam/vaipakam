@@ -104,8 +104,16 @@ export function Faucet() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<MintOutcome | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [copyFailed, setCopyFailed] = useState(false);
+  // ONE state, not two booleans (#2043 round 1 P2). The first version added
+  // `copyFailed` beside `copied` and never cleared it, so a retry that
+  // succeeded rendered "Copied." AND the failure line together, and the next
+  // mint inherited the stale failure because the mint paths reset only
+  // `copied`. Two flags for one outcome can disagree; a single state cannot.
+  // This is the same three-state shape the Diagnostics drawer got in the same
+  // change — applied there and not here, which is the miss.
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
+    'idle',
+  );
   const [watched, setWatched] = useState(false);
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
@@ -188,7 +196,7 @@ export function Faucet() {
     setBusy(token);
     setError(null);
     setDone(null);
-    setCopied(false);
+    setCopyState('idle');
     setWatched(false);
     // Resolve the REAL on-chain symbol; fall back to the hint if the read
     // fails (#1095 — never label the minted/watched token as something the
@@ -232,7 +240,7 @@ export function Faucet() {
     setBusy(nft);
     setError(null);
     setDone(null);
-    setCopied(false);
+    setCopyState('idle');
     setWatched(false);
     try {
       const tokenId = randomTokenId();
@@ -446,15 +454,32 @@ export function Faucet() {
                       // looking at the `<code>` block above, and pastes
                       // whatever was there before.
                       onClick={() => {
-                        void navigator.clipboard
-                          .writeText(done.tokenId!)
-                          .then(() => setCopied(true))
-                          .catch(() => setCopyFailed(true));
+                        // GUARDED, not just caught (round 1 P2, first
+                        // finding). In an insecure context — or a browser
+                        // that disables the API — `navigator.clipboard` is
+                        // undefined, so reading `.writeText` off it throws
+                        // SYNCHRONOUSLY, before any `.catch()` is attached.
+                        // The promise chain alone therefore stayed silent in
+                        // one of the exact environments this fix exists for.
+                        // (The drawer's equivalent is already safe: its call
+                        // sits inside a try/catch, which a synchronous throw
+                        // does reach.)
+                        setCopyState('idle');
+                        try {
+                          void navigator.clipboard
+                            .writeText(done.tokenId!)
+                            .then(() => setCopyState('copied'))
+                            .catch(() => setCopyState('failed'));
+                        } catch {
+                          setCopyState('failed');
+                        }
                       }}
                     >
-                      {copied ? copy.faucet.copiedTokenId : copy.faucet.copyTokenId}
+                      {copyState === 'copied'
+                        ? copy.faucet.copiedTokenId
+                        : copy.faucet.copyTokenId}
                     </button>{' '}
-                    {copyFailed ? (
+                    {copyState === 'failed' ? (
                       // The id is already rendered in the `<code>` above, so
                       // saying the copy failed is enough — it points at text
                       // that is on screen rather than at a dead end.
