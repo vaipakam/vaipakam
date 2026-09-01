@@ -590,14 +590,34 @@ whole rule:
   - **A reservation RELEASES when its evidence horizon closes with no proof.**
     That is the same horizon rule 2 uses for the unbond delay, so no new clock is
     introduced.
-  - **An action is only ACCEPTED if unreserved backing covers its liability.**
+  - **Liability is `slashBps` of the action-time TOTAL eligible tranche balance
+    — NOT of the unreserved remainder.** An earlier revision used the remainder,
+    which makes the admission check below **tautological**: with 100 tokens at
+    10%, successive actions reserve 10, 9, 8.1, 7.29 … and every one passes,
+    because a liability computed *from* the remainder can never exceed it. The
+    check could never reject, so the shielding attack survived the fix intended
+    to close it, with the malicious action still getting an arbitrarily small
+    reservation.
+
+    Sized from the action-time total instead, each action reserves a **fixed**
+    10 out of 100, so ten pending actions exhaust the backing and the eleventh
+    is refused. That is the non-circular threshold the check needs.
+  - **An action is only ACCEPTED if unreserved backing covers that liability.**
     When it does not, the action is refused — exactly as it would be if the
     operator had exhausted their rate-limited capacity, because it is the same
     exhaustion. Bonded capacity and slash backing stop being two things.
 
   That removes the attack rather than pricing it: the clean actions in the setup
-  above consume the operator's own capacity while they are pending, so the
-  malicious action they were meant to shield is refused rather than cheapened.
+  above consume the operator's own capacity in **fixed-size chunks** while they
+  are pending, so the malicious action they were meant to shield is refused
+  rather than cheapened.
+
+  **This does not conflict with geometric slashing**, which is about the balance
+  falling across TIME as offences are proved: two actions taken at the same
+  balance reserve the same amount because the same capital secured both, while an
+  action taken after an earlier proof has debited sees a smaller total and
+  reserves proportionally less. The geometry lives in the total, not in the
+  reservation arithmetic.
 
   Order-independence follows because nothing is computed at resolution time.
   Geometry survives too, and in the form that is actually correct: a **later
