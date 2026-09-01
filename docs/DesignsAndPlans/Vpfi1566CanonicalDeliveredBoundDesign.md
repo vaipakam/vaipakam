@@ -320,12 +320,11 @@ rather than merely user-protective, and of not covering treasury/payroll or the
 grandfathered balances already inside the Diamond. That is an owner call, and it
 is a five-way one.
 
-**F is the one the owner chose (2026-08-31).** The ratification — the
-per-class assessment that followed from scouting it against the tree, the one
+**F is the one the owner chose (2026-08-31).** This section records the
+trade-off; the decision and everything that follows from it are in §5b — the
+per-class assessment that came out of scouting F against the tree, the one
 class where it does not fit, and the explicit statement that F settles only
-the first of #1566's three required closures — lands separately on the #1566
-card rather than in this PR, so this section records the trade-off rather
-than restating the decision.
+the FIRST of #1566's three required closures.
 
 ## 5. What is true regardless of the option
 
