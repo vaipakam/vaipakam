@@ -668,16 +668,49 @@ per-operator enrolment, or version deposits and only debit enrolled ones,
 or give a withdrawal grace period before any new predicate can debit an
 existing balance.
 
-**(B) Ship nothing until the attested tier.** Wait for the observation
-commitment that makes "knew" adjudicable, and land capacity, bonds and
-slashing together. Costs the capacity mechanism in the meantime — which is
-useful and independent — but keeps the card's objective whole.
+**(B) Ship nothing until the attested tier — and (B) IS NOW UNRESOLVED, not a
+third path.** This option previously read "wait for the observation commitment
+that makes 'knew' adjudicable, and land capacity, bonds and slashing together",
+which survived the correction above and directly contradicts it: §2 establishes
+that no commitment reveals later knowledge, that neither branch of the attested
+fork recovers a slash, and that no knowledge-free predicate has been found.
+
+So B has **no defined predicate**, and "wait for the attested tier" is waiting
+for something nobody has specified. It cannot be selected as a single decision,
+because selecting it decides nothing — the later table's promise of confiscation
+under B is a promise about a mechanism that does not exist.
+
+B becomes selectable only when a **concrete knowledge-free predicate** is
+written down — a strict liveness obligation, or an equivocation (two conflicting
+signed statements), where the offence is visible in the artifacts themselves and
+no inference about the operator's state of mind is required. Until then B means
+"defer the whole feature indefinitely", and the owner should be choosing it on
+that basis rather than on the expectation of eventual slashing.
 
 **(C) Ship (A) plus a non-refundable ARMING FEE.** A fee charged when a bond
 is posted or raised, credited through the recycle chokepoint and never
 returned. It needs no adjudication of anything — a spend is objectively a
 spend — which is exactly why the perk channel works, and it is the same
 shape: spend is permanent absorption, deposit is temporal.
+
+**Selecting (A) or (C) also changes the programme's definition of done, and
+that consequence has to be recorded rather than discovered.**
+`VpfiRecyclingCompletionPlan.md` §6 defines #1219 as decided when *either* the
+legal glance passed **and** the slash path `credit(ServiceBondSlash, …)` is
+"built and live", **or** an explicit owner deferral is recorded — and it says
+"pending" is not a done state.
+
+A live A or C implementation is **neither**: it ships, so it is not a deferral,
+and it has no slash path, so the first branch is unsatisfiable by construction.
+The M7 completion gate would stay permanently unmet while the feature is
+finished — the worst combination, because nothing in the programme would ever
+signal that it is waiting on something impossible.
+
+So whichever of A or C is selected, the plan's §6 clause is amended in the same
+change: a **third done state — shipped without a slash path**, on the reasoning
+in this note, with `ServiceBondSlash` remaining an unused enum slot reserved for
+the attested tier. That amendment is part of the fork decision, not a follow-up
+to it.
 
 *What C restores, precisely:* the **permanent SINK**, not the performance
 bond. An earlier draft said it "restores the objective" and that overclaimed
