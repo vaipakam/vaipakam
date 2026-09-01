@@ -696,6 +696,19 @@ ordinary implementation, and it belongs in slice 3.
   `vpfiHeld` before settlement. Both, with explicit release bookkeeping on each
   terminal.
 
+  **The encumbrance needs its OWN record — `loanCollateralLien[loanId]` cannot
+  carry it.** That mapping holds a single `Encumbrance` per loan
+  (`LibVaipakam.sol:4684`), already occupied by the ordinary collateral, and it
+  encodes one asset and one amount. Reusing it either trips its create guard,
+  overwrites the collateral reservation, or simply cannot express `vpfiHeld` when
+  the collateral asset is not VPFI — which is the common case, since the peg-
+  custody path applied to loans of every collateral type.
+
+  So: a **separate per-loan `vpfiHeld` lien** that contributes to `s.encumbered`
+  and carries its own migration, transfer and terminal lifecycle. "A per-loan
+  encumbrance" was under-specified in a way that reads as "reuse the existing
+  row", which is the reading that breaks.
+
   **And the move records `protocolTrackedVaultBalance`, exactly as slice 2's
   fallback move does.** An earlier revision specified this migration's lien and
   tier exclusion and stopped there, while the equivalent fallback slice — written
@@ -722,8 +735,14 @@ ordinary implementation, and it belongs in slice 3.
   holder's vault, and the eventual terminal then pulls from the wrong vault or
   strands the lien.
 
-  Borrower-side consolidation therefore moves **both** the per-loan custody and
-  the tier exclusion, **with both vaults restamped** — the sending vault loses
+  Borrower-side consolidation therefore moves **all three** — the per-loan
+  custody, its dedicated lien, and the tier exclusion — **with both vaults
+  restamped**. An earlier revision named only custody and exclusion: leaving the
+  lien behind would hand the destination vault **withdrawable** `vpfiHeld` while
+  the former holder keeps a phantom `s.encumbered` amount, so the new holder
+  drains the value before settlement and the terminal release then targets the
+  wrong aggregate. Moving the money without its lien is worse than moving
+  neither — the sending vault loses
   the exclusion and the receiving vault gains it, or the tier defect this slice
   exists to prevent simply relocates to whichever holder is not being tracked.
 
@@ -761,6 +780,17 @@ ordinary implementation, and it belongs in slice 3.
   and full repayment. Otherwise a fallback loan resolved through any of them
   reads or pays the snapshot as Diamond-held collateral while the tokens sit
   liened in the vault — reverting, or spending unrelated Diamond custody.
+
+  **Each consumer also gets its COUNTER transitions specified, not just a new
+  custody source.** The migration liens the FULL snapshot in the vault, so
+  `vaultWithdrawERC20` refuses every one of these withdrawals until the matching
+  `s.encumbered` is released — "read the vault instead" on its own makes all of
+  them revert. Concretely: a **partial** match decrements the lien, and (VPFI
+  snapshots only) the tier exclusion, by **exactly the consumed slice**; a
+  **cure** removes the exclusion **without** re-adding the snapshot to a
+  collateral lien that `_cureFallback` has already completed. Get either wrong
+  and the consumer either reverts or leaves a phantom counter that strands a
+  later withdrawal — the migration's own failure mode, relocated to the exit.
 - **Migration ADDS to any existing lien; it never creates or replaces one.** A
   pre-upgrade `FallbackPending` loan can already carry a live vault lien for
   non-curing top-ups — `AddCollateralFacet` increments it precisely so the top-up
@@ -770,7 +800,15 @@ ordinary implementation, and it belongs in slice 3.
   **discards the top-up reservation and makes that collateral withdrawable**.
   The scan adds only the migrated snapshot amount to the existing lien, and only
   that amount to the tier exclusion.
-- **Non-tier-bearing lien PLUS restamp, same two-counter shape as slice 1**, and
+- **The tier exclusion applies ONLY when the snapshot is VPFI.**
+  `fallbackSnapshot` can hold arbitrary collateral, so adding every snapshot
+  amount to `frozenVpfiOwedByVault` would charge a USDC or WETH figure — in that
+  token's own decimals — against the borrower's VPFI tier, suppressing unrelated
+  tier and staking credit and making the later exclusion release meaningless.
+  For a non-VPFI snapshot only the **lien and the tracked-custody record** move:
+  there is no VPFI tier to protect, so there is nothing to exclude.
+- **Non-tier-bearing lien PLUS restamp (VPFI snapshots), same two-counter shape
+  as slice 1**, and
   the case here is stronger: a fallback snapshot has already allocated lender
   and treasury shares, so an ordinary lien grants the borrower tier and staking
   credit on value owed to somebody else, for the whole life of the snapshot. The
@@ -1576,7 +1614,15 @@ One reconciliation entry, three effects, all or nothing:
 0. **assert conservation: `freshShare + recycledShare == the amount removed`** —
    checked BEFORE any of the three mutations, so a malformed or mistaken entry
    reverts whole rather than half-applying;
-1. **remove the full old-wire amount from `uncounted`**;
+1. **remove `freshShare + recycledShare` from `uncounted`** — NOT the full
+   old-wire amount. An earlier revision required both the equality AND removal
+   of the whole amount, which makes a legitimately rounded entry impossible: the
+   dust left by component scaling has to go somewhere, and the operator's only
+   options were to revert or to falsely assign it to fresh or recycled value.
+   **Any `oldWireAmount − removed` residual STAYS in `uncounted`**, which is the
+   fourth disposition the rule was missing — unclassified value sitting where
+   unclassified value belongs, rather than being distributed into a ledger it
+   does not belong to;
 2. **credit only its authenticated fresh share to `received`**;
 3. **credit its authenticated recycled share as relocated custody** into
    `recycleBucket`.
