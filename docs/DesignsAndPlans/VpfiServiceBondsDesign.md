@@ -350,8 +350,11 @@ decodes is the same gap one step later.
 - **Unbond delay** — NOT in v1 (rev 4). It exists to stop a slash-and-run
   inside a misbehaviour window, and v1 has no such window: every offence is
   debited in the same call that records it. The delay, and the privilege
-  revocation and `unlockAt` snapshot that make it sound, arrive with the
-  liveness tier.
+  revocation and `unlockAt` snapshot that make it sound, arrive with **the first
+  predicate whose proof can land after the action** — whichever that turns out to
+  be. Not with the liveness tier specifically: equivocation is now the only
+  viable candidate, so binding the machinery to a tier that may never ship would
+  leave the one that might entirely unprotected.
 - Slashed VPFI → treasury **recycle bucket** through the programme's single
   chokepoint, `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)`.
 
@@ -405,7 +408,8 @@ decodes is the same gap one step later.
    sizing it, because v1 has no evidence arriving after an operator stops
    acting; the reasoning is below. Immediate withdrawal and the
    clamp-on-decrease were decided together and are both invariants, not
-   recommendations. A delay arrives with the liveness tier.
+   recommendations. A delay arrives with **the first delayed-proof predicate**,
+   not with the liveness tier — see rule 2.
    **Bond sizes** remain a proposal (see the two open numbers at the end).
 3. **No-yield refundable-deposit shape: RATIFIED.** The legal glance is
    discharged. Bonds earn nothing, are refundable at will subject to the
@@ -571,6 +575,30 @@ whole rule:
   tranches, invisible to any later action's eligible remainder. Resolution then
   executes the reserved figure (clamped to what survives).
 
+  **Reservations are a finite resource, and that has to be admission-controlled
+  or the scheme is gameable in one direction and self-locking in the other.** If
+  every accepted action reserves part of the eligible tranches, an operator can
+  fill their pending window with **clean** actions, leaving a later malicious
+  action almost no unreserved backing to reserve against — so its liability is
+  near zero — then recover the clean reservations when their horizons close,
+  having paid almost nothing. And if clean reservations never release, ordinary
+  operation locks the bond indefinitely instead.
+
+  Both are closed by treating reserved backing as **the same resource bonded
+  capacity already meters**:
+
+  - **A reservation RELEASES when its evidence horizon closes with no proof.**
+    That is the same horizon rule 2 uses for the unbond delay, so no new clock is
+    introduced.
+  - **An action is only ACCEPTED if unreserved backing covers its liability.**
+    When it does not, the action is refused — exactly as it would be if the
+    operator had exhausted their rate-limited capacity, because it is the same
+    exhaustion. Bonded capacity and slash backing stop being two things.
+
+  That removes the attack rather than pricing it: the clean actions in the setup
+  above consume the operator's own capacity while they are pending, so the
+  malicious action they were meant to shield is refused rather than cheapened.
+
   Order-independence follows because nothing is computed at resolution time.
   Geometry survives too, and in the form that is actually correct: a **later
   action** sees the earlier reservation and so takes 10% of a smaller base, while
@@ -629,12 +657,14 @@ it, immediate withdrawal hands back the capital while leaving the accrued
 capacity spendable, which is the slash-and-run this section argued v1 does
 not need a delay to prevent.
 
-The delay is specified as arriving **with the liveness tier**, because that
-tier is what creates delayed evidence — and the rules revs 1–3 worked out are
-kept here for it rather than discarded: privileges revoke at the request (or
-the window does not cover actions taken inside it), and `unlockAt` is
-snapshot at the request (or a retune moves a pending withdrawal in both
-directions). Those were right answers to a question v1 does not ask yet.
+The delay is specified as arriving **with the first predicate that creates
+delayed evidence** — which revs 1–3 assumed would be the liveness tier, and now
+is more likely to be equivocation. The rules those revs worked out are kept for
+whichever it is rather than discarded: privileges revoke at the request (or the
+window does not cover actions taken inside it), and `unlockAt` is snapshot at
+the request (or a retune moves a pending withdrawal in both directions). Those
+were right answers to a question v1 does not ask yet — and they are answers
+about **delayed evidence**, not about liveness, which is why they transfer.
 
 This is the third revision in which a parameter was added to make a previous
 parameter safe. That is the signal to stop extending and check whether the
