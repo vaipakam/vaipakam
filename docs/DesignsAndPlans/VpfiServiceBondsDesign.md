@@ -171,7 +171,11 @@ lockup, and it sits badly beside a shape whose legal spine is
 
 **So v1 unbonds immediately.** Bond, capacity, and the whole withdrawal
 machinery collapse to: reduce the bond, capacity follows continuously (see
-below), withdraw.
+below), withdraw — **with the decrease clamping any accrued credit in the
+same step.** That clamp is load-bearing here rather than incidental: without
+it, immediate withdrawal hands back the capital while leaving the accrued
+capacity spendable, which is the slash-and-run this section argued v1 does
+not need a delay to prevent.
 
 The delay is specified as arriving **with the liveness tier**, because that
 tier is what creates delayed evidence — and the rules revs 1–3 worked out are
@@ -188,7 +192,17 @@ mechanism is needed at all — it was not.
 
 **The decision, which is what this note is for:** a bond buys capacity
 *continuously and proportionally*, with **no minimum bond**, up to a ceiling
-of **4× the free tier** per address. Any bond, including none, is valid; a
+of **4× the free tier** per address.
+
+**And any DECREASE in a bond — withdrawal or slash — must atomically clamp
+outstanding limiter credit to the new capacity.** This is a decision, not an
+implementation detail, because without it the bond is bypassable: an
+operator accrues elevated credit, withdraws the bond, and still spends
+bonded capacity with nothing left to slash. It is also what makes v1's
+immediate withdrawal safe — the two were decided together, and separating
+them re-opens exactly the slash-and-run the delay was originally proposed to
+close. "Capacity follows the bond continuously" is not sufficient on its own
+and was the wording that hid this. Any bond, including none, is valid; a
 larger bond buys proportionally more throughput; nothing is unlocked by
 crossing a threshold. That is the shape the owner is being asked to ratify.
 
