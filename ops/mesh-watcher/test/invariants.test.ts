@@ -2834,6 +2834,12 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
     expect(draw.detail).toContain('UNKNOWN');
     expect(draw.detail).toContain('repat-cap');
     expect(draw.detail).toContain('did NOT run');
+    // #1569 M4 C3 (Codex #2031 r11) — keeper-cap measures the remaining
+    // capacity AFTER the repatriation draw, so an unreadable REPAT draw
+    // disables it too. Naming only repat-cap told an incident responder
+    // the keeper bound was still monitored in exactly the window it was
+    // not, which is the failure mode these gap messages exist to prevent.
+    expect(draw.detail).toContain('keeper-cap');
     const pos = repatPositionUnavailableGap(10, TRANSIENT());
     expect(pos.detail).toContain('UNKNOWN');
     expect(pos.detail).toContain('bucket composition');

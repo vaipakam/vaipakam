@@ -597,9 +597,14 @@ feature they meant to leave off or leave one off they meant to arm.
 
 ### Per-chain keeper allocation (`chainKeeperAllocateBps`)
 
-The share of a mirror chain's own locally-funded recycled commit that
-the canonical chain instructs it to earmark for that chain's
-keeper-incentive register. Default **0**, which is **dark** — it
+The share of a mirror chain's own REPORTED DAY INFLOW that the canonical
+chain instructs it to earmark for that chain's keeper-incentive register.
+The chain's locally-funded commit is the CAP rather than the base: the
+earmark is bounded by whatever room that commit leaves in the chain's
+availability, but it is not a percentage of it. An operator estimating the
+figure from claim demand will get it wrong, most visibly on a low-demand
+day. (It does still require the day to have SOME claim demand — a day with
+no global interest stamps nothing at all.) Default **0**, which is **dark** — it
 instructs nothing, and it is what every chain ships with, so each
 destination is armed deliberately and individually. Range **[0, 50%]**,
 the same ceiling the local register weight carries, so that neither

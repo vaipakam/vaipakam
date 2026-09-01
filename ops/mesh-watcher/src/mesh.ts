@@ -104,7 +104,7 @@ export function repatDrawUnavailableGap(
     source: 'base-books-repat',
     detail:
       `getChainRepatriationDraw() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `The draw is UNKNOWN this tick, so the availability-formula and repat-cap checks for this chain did NOT run (substituting zero would page a false CRITICAL on any chain with a live repatriation).\n\n` +
+      `The draw is UNKNOWN this tick, so the availability-formula, repat-cap AND keeper-cap checks for this chain did NOT run (substituting zero would page a false CRITICAL on any chain with a live repatriation). keeper-cap is included because its remaining-capacity figure is measured AFTER the repatriation draw, so an unreadable repat draw disables it too — the keeper draw's own capacity bound is NOT monitored in this window either.\n\n` +
       (preC2
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-C2 deployment, or a partial facet refresh that dropped the RepatriationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
         : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
