@@ -451,9 +451,18 @@ decodes is the same gap one step later.
   worse than not slashing at all.
 
   So either **per-token recycle accounting**, or — much simpler, and consistent
-  with the rotation section — **all old-token slash exposure resolves before
-  rotation**: no outstanding proof may name an old-token tranche when the
-  rotation runs. That makes it one more item on the rotation's drain inventory
+  with the rotation section — **old-token slash exposure is CARRIED, not waited out.** An earlier revision
+  required all such exposure to resolve before rotation — which a long-horizon
+  delayed action, or a horizon whose active-block clock stalls during a chain
+  halt, turns back into the stuck rotation the mandatory residual migration
+  exists to remove. Worst when the old token is the compromised one, which is
+  when rotation is urgent.
+
+  So rotation **preserves outstanding old-token reservations** and accounts for
+  any later debit **per token**, rather than waiting for every proof to expire.
+  The recycle-credit problem that motivated the original rule is then handled
+  where it actually lives — a slash resolving against an old-token tranche
+  credits per-token, or is settled out of band — not by blocking the rotation. That makes it one more item on the rotation's drain inventory
   rather than a new accounting dimension.
   That enum member is ALREADY reserved and must be used rather than a new
   generic one — appending a duplicate would split service-bond absorption
@@ -487,7 +496,10 @@ decodes is the same gap one step later.
    tier is a later opt-in and is out of v1 scope — so v1 ships no clock-based
    slash, and an operator who simply goes quiet is never slashed. That keeps
    every v1 slash anchored to a fact the chain can check without a timing
-   judgement, which is also what keeps the offence dispatcher below tractable.
+   judgement. ⚠️ **Superseded in effect:** objective-lies-only collapsed to NO
+   predicate at all (§2), so **v1 ships no slash of any kind** — the ratified
+   scope stands, and what it scopes turned out to be empty. The dispatcher
+   reference here describes machinery for a predicate-enabled tier, not v1.
 2. **Unbond delay: RATIFIED — v1 has NONE.** Rev 4 removed it rather than
    sizing it, because v1 has no evidence arriving after an operator stops
    acting; the reasoning is below. Immediate withdrawal and the
@@ -582,12 +594,19 @@ equivocation debits twice — and any variation in proof encoding or signature
 packaging does the same. The id is therefore computed over the
 **canonically SORTED digests of the statements themselves**, independent of the
 proof's encoding, so the offence has one identity no matter how it is submitted.
-**Reversed-order submission is an acceptance case.** v1's immediate in-call recording does not need this — the observation
+**Reversed-order submission is an acceptance case.** v1 does not need this at
+all: it has no offences to identify, since both selectable forks are
+non-confiscatable. An earlier revision said "v1's immediate in-call recording",
+which attributes a recording mechanism to a version that must not have one. For
+a predicate-enabled tier, the observation
 and the debit are the same call — which is exactly why it is easy to omit when
 the attested tier lands, and why it is written down here rather than there.
 
 **Which `slashBps`, when adjudication is delayed.** Immediate recording makes
-this moot in v1, but the attested tier records an offence only after its
+this moot for a synchronous tier, and **v1 has no offences at all** — both
+selectable forks are non-confiscatable, so nothing is recorded and nothing is
+debited. An earlier revision said "moot in v1", implying v1 records
+immediately. The attested tier records an offence only after its
 observation or adjudication window closes, and governance can retune `slashBps`
 inside that gap. Unbound, an operator acting at 10% can lose 25% because
 governance raised the rate before the evidence resolved — and a reduction in the
@@ -685,6 +704,13 @@ immediately AND makes the reservations that depended on it non-blocking —
 **held by an off-timelock authority, not by the ordinary predicate-config
 setter.**
 
+To be exact about what "atomically" covers, since an earlier revision said the
+authority atomically *releases the reservations*: it **atomically invalidates the
+EPOCH**, which logically frees the capacity those reservations were holding. The
+reservation RECORDS are released only by the bounded lazy cleanup below. Read
+literally, the earlier wording puts the unbounded iteration back inside the
+incident transaction — the failure this passage exists to prevent.
+
 **It must be O(1), and an earlier revision said "releases the reservations",
 which is not.** A compromised epoch can have reservations spread across many
 operators, so releasing each one atomically means iterating an unbounded global
@@ -695,7 +721,14 @@ events §Events requires, since those are per reservation.
 
 So invalidation is a **single epoch-state transition**: reservations naming an
 invalidated epoch stop counting against the concurrency cap and stop blocking
-admission **immediately, without being touched**. Their storage is then reclaimed
+admission **immediately, without being touched**. **The invalidation emits its OWN event**, carrying the invalidated epoch — not
+only the later per-reservation ones. On-chain capacity is restored immediately,
+so if cleanup is delayed or never called an indexer with only per-reservation
+events keeps reporting the operator as fully reserved and cannot satisfy the
+reconstruction requirement in §Events. The epoch event lets it stop counting
+every tracked reservation for that epoch at once.
+
+Their storage is then reclaimed
 by **bounded or permissionless lazy cleanup**, which emits the per-reservation
 release events as it goes — so the indexer sees the same event stream, just
 arriving after the incident rather than during it. An operator whose capacity is
@@ -829,6 +862,21 @@ whole rule:
     any of them to see, and pretending otherwise is arithmetic without a
     referent. The cap is what stops a burst reaching the whole bond; geometry is
     what shapes the long run. Two mechanisms, two jobs.
+
+    **Dust: the cap and ceiling-rounding can leave a tiny bond with NO
+    conforming outcome, so participation gets an explicit minimum.** A one-unit
+    bond's 10% liability rounds UP to one unit, while a 5 000-bps cap permits
+    half a unit. Rounding the cap down refuses that operator's first delayed
+    action forever — the implicit minimum the continuous curve exists to
+    remove — and rounding it up admits a reservation that can consume 100% of
+    the bond, contradicting the burst guarantee.
+
+    Neither invariant should yield, so the resolution is scoped instead: a bond
+    whose ceiling-rounded single-action liability exceeds its cap allowance
+    **cannot admit delayed-proof actions**, while keeping its ordinary capacity
+    in full. That is an explicit minimum **for slash-enabled predicates only**,
+    not a minimum bond — the continuous curve and the no-minimum rule are
+    untouched for everything else, which is what they were actually protecting.
 
     **The cap needs a positive FLOOR, not only an upper bound.** Set below
     `slashBps` — or left at zero by fresh storage — the first action's liability
