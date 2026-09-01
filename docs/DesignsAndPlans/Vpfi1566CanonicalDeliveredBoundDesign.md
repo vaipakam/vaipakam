@@ -825,7 +825,22 @@ ordinary implementation, and it belongs in slice 3.
   new hook would withdraw a second time and its fill would revert with the
   original custody stranded. Either a paused cutover gated on
   `intentLiveCommitCount == 0` after cancellation/drain, or a per-commit
-  custody-version branch — the same discriminator shape as slice 2.
+  custody-version branch.
+
+  **Chosen: the per-commit custody-version branch.** The zero-count alternative
+  is withdrawn because it cannot actually be performed. Draining requires
+  cancellation, and `cancelSwapToRepayIntent` is `whenNotPaused`
+  (`SwapToRepayIntentFacet.sol:709-743`) while the LOP hooks are **not**
+  pause-gated. So pausing first blocks the very cancellations the drain needs,
+  and draining first leaves a window in which a new commit can be created — a
+  race with no gate available to close it. "Provable zero count" assumed a
+  ceremony the pause modifiers do not permit.
+
+  The discriminator has none of that: old commits keep the old custody path, new
+  ones take the hook, and the old branch is deleted once the count reaches zero
+  on its own. Same shape as slice 2's fallback rows — the second time that
+  pattern has turned out to be the answer here, which is itself a reason to
+  reach for it first.
 - **The fill test is a PREREQUISITE of this slice, not a follow-up.** It does not
   exist today (see §5b), and this slice's correctness rests on ordering,
   full-amount pull and transaction-wide rollback — none of which is currently
