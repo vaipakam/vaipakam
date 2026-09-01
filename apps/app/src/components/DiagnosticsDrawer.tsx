@@ -41,6 +41,7 @@ import { useAccount, usePublicClient } from 'wagmi';
 import { LifeBuoy, X } from 'lucide-react';
 import { copy } from '../content/copy';
 import { SupportTicketCard } from './SupportTicketCard';
+import { useLatestAttempt } from '../lib/useLatestAttempt';
 import { useActiveChain } from '../chain/useActiveChain';
 import { indexerConfigured, probeIndexerFreshness } from '../data/indexer';
 import { readLastError } from '../diagnostics/lastError';
@@ -96,9 +97,31 @@ export function DiagnosticsDrawer() {
 function DrawerPanel({ onClose }: { onClose: () => void }) {
   // Three states, not a boolean: "did not copy" and "copied" are not the only
   // outcomes, and the old boolean could only ever say nothing about the third.
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
-    'idle',
-  );
+  //
+  // THE SUCCESS CARRIES THE BODY IT COPIED (#2044 round 3 P2), and this
+  // corrects a line drawn one round earlier and drawn wrong. Round 2's fix
+  // said a confirmation ABOUT A SUBJECT must name it, and scoped this control
+  // out on the grounds that "Copied" here is a claim about the ACT. It is not:
+  // the report body is rendered a few lines below the button and is rebuilt
+  // whenever the connection health refreshes or the wallet or network changes,
+  // so the chip sits beside text that can differ from what the clipboard took.
+  // On the one control whose entire purpose is "copy it, read it, then decide
+  // whether GitHub may have it" (#2023), that is the worst place to be
+  // approximately right.
+  //
+  // ONE discriminated state rather than a flag plus a body — two pieces for
+  // one outcome can disagree, which is the lesson from #2043 round 1.
+  //
+  // THE FAILURE IS NOT KEYED, deliberately. "Could not copy" is a claim about
+  // the act, and it stays true when the body changes underneath: the clipboard
+  // does not hold the new report either. Keying it would make an accurate
+  // warning disappear on a 15-second refresh, which is worse than leaving it
+  // standing. The asymmetry is the point — a false success sends someone away
+  // with the wrong text, a stale failure at worst says "try again", which is
+  // still the right advice.
+  const [copyResult, setCopyResult] = useState<
+    { state: 'copied'; body: string } | { state: 'failed' } | null
+  >(null);
   const [showReport, setShowReport] = useState(false);
   const { pathname, search } = useLocation();
   const { address, isConnected, readChain, onSupportedChain } =
@@ -310,11 +333,10 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   // fallback over a clipboard that genuinely holds the report — or an older
   // success could hide a newer failure.
   //
-  // The faucet got exactly this fix one round earlier and this call site did
-  // not, which is the same carry-over miss for the sixth time in this PR. The
-  // rule these two now share: a settlement may only report if it is still the
-  // latest attempt.
-  const copyAttempt = useRef(0);
+  // Shared with three other call sites through `useLatestAttempt` (#2044):
+  // #2043 fixed this same defect four times in two files, each fix its own,
+  // which is what said the rule wanted to be a thing rather than a habit.
+  const copyAttempt = useLatestAttempt();
   useEffect(
     () => () => {
       if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
@@ -323,21 +345,23 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   );
   const copyDetails = async () => {
     if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
-    const attempt = (copyAttempt.current += 1);
-    const isCurrent = () => attempt === copyAttempt.current;
+    const attempt = copyAttempt.begin();
     try {
-      await navigator.clipboard.writeText(reportBody);
-      if (!isCurrent()) return;
-      setCopyState('copied');
-      copyResetTimer.current = setTimeout(() => setCopyState('idle'), 2_000);
+      // Captured, not re-read at settlement: this is the text the clipboard
+      // actually took, and the render compares it against what is on screen.
+      const body = reportBody;
+      await navigator.clipboard.writeText(body);
+      if (!attempt.isCurrent()) return;
+      setCopyResult({ state: 'copied', body });
+      copyResetTimer.current = setTimeout(() => setCopyResult(null), 2_000);
     } catch {
-      if (!isCurrent()) return;
+      if (!attempt.isCurrent()) return;
       // NOT SILENT, and not a dead end either: the failure is stated AND the
       // disclosure is opened, so the text the clipboard refused to take is
       // on screen and selectable. Telling someone it failed while leaving
       // them no way to read the report would fix the honesty and not the
       // problem.
-      setCopyState('failed');
+      setCopyResult({ state: 'failed' });
       setShowReport(true);
     }
   };
@@ -429,12 +453,12 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
             {copy.diagnostics.report}
           </a>
           <button type="button" className="btn btn-secondary" onClick={copyDetails}>
-            {copyState === 'copied'
+            {copyResult?.state === 'copied' && copyResult.body === reportBody
               ? copy.diagnostics.copied
               : copy.diagnostics.copyDetails}
           </button>
         </div>
-        {copyState === 'failed' ? (
+        {copyResult?.state === 'failed' ? (
           <p className="muted" style={{ fontSize: 13 }} role="status">
             {copy.diagnostics.copyFailed}
           </p>

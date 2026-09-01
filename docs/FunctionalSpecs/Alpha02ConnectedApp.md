@@ -938,11 +938,37 @@ Thin-market honesty rules apply.
   A copy that the browser refuses must say so — and must leave the reader
   able to read the report anyway, since a failure notice that ends the
   attempt returns them to the disclosing action as the only way to look.
+- **A late answer must not speak for a newer question.** Where a control
+  starts work that finishes later and then reports on it, two attempts can be
+  outstanding at once — a second press, or a wallet prompt left open while the
+  person carries on. The intent is that only the most recent attempt may
+  report: an earlier one that settles afterwards is discarded rather than
+  displayed against whatever is now on screen. This holds across a change of
+  subject as well as a repeat, so an approval for one token cannot mark a
+  different one.
+- **A confirmation belongs to the thing it was earned by, and does not outlive
+  it.** Being the most recent attempt is not enough on its own: when the
+  account, the network, or the item a control sits beside changes, no newer
+  attempt has begun, yet the question the outstanding one answers has gone
+  away. The intent is that a confirmation states what it is about and appears
+  only beside that — so "added to your wallet" is never shown over a wallet
+  that was not asked, and a confirmation that an address was copied does not
+  carry over to a different address that has taken its place on screen.
+- **Silence is correct where a refusal is the person's own decision.** A
+  wallet declining to add a token is usually the user declining it, and the app
+  cannot distinguish that from a genuine failure; reporting an error over
+  someone's own choice is its own inaccuracy. That is the line: a control says
+  plainly when it could not do what was asked, unless "could not" is
+  indistinguishable from "you said no".
 - **A control must not report a success it has not verified.** Copying to the
   clipboard can be refused, so a button that confirms a copy has to wait for
   the result before confirming. Claiming a success that did not happen is
   worse than reporting nothing, because it stops the person doing the thing
-  that would have worked — reading the value still displayed beside it.
+  that would have worked — reading the value still displayed beside it. This
+  covers a refusal that arrives as an ANSWER rather than as a failure: a
+  wallet asked to add a token may simply reply that it did not, and the
+  intent is that such a reply is read and believed, not treated as agreement
+  because nothing went wrong.
 - Erasing does not reload the page, so the confirmation of what happened
   survives long enough to be read.
 - **If any part of the browser's storage could not be read, the result is
