@@ -1558,7 +1558,9 @@ GovernanceRunbook gains a recycling section, executed in order:
    > NOT invoke the messenger. `D*` reaches a mirror in-band with the
    > **first application of a not-yet-applied finalized day's kind-5
    > broadcast** after arming; a replay of an already-applied day exits
-   > through the idempotency branch without installing `armedFromDay`.
+   > through the idempotency branch — which since #1944 DOES install
+   > `armedFromDay` when the mirror has none, so a pre-arm delivery no
+   > longer spends that day for propagation.
    > The all-chains-consistent property this paragraph wanted is
    > delivered by that propagation, gated by a per-mirror **readback of
    > `governorCommitArmedFromDay`** once the next new-day broadcast has

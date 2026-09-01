@@ -595,6 +595,35 @@ outright, so a stored zero there always means "never configured". An
 operator who assumes one convention across the group will either arm a
 feature they meant to leave off or leave one off they meant to arm.
 
+### Spend-gated perk configuration (`perkPriceVpfi`, `perkDurationSeconds`)
+
+Price and shape of each consumable perk a user may buy with VPFI from their
+own vault. Both are set together, per perk, by an admin.
+
+A price of **zero means the perk is NOT FOR SALE** — dark, and the deploy
+default, so the whole channel ships closed and each perk is armed
+individually. A duration of **zero selects a COUNTED perk** — the buyer
+accumulates redeemable units instead of a time window — so zero carries a
+different meaning in each of the two fields, and neither is a reset
+sentinel.
+
+**A perk's kind is frozen at its first sale.** Price stays adjustable
+afterwards and the perk stays withdrawable, but duration does not change:
+entitlements live as per-holder records nothing can walk, so switching a
+sold perk between timed and counted would strand its holders on a basis the
+perk no longer reads. A different meaning takes a new perk identifier.
+
+Purchases bind the terms the buyer stated — a ceiling on the total charge
+and the exact entitlement being bought — so a re-price between signing and
+settlement fails the purchase rather than silently charging more. Withdrawing
+a perk from sale stops further purchases and leaves entitlements already
+bought untouched.
+
+**This setter stays callable while the protocol is PAUSED**, deliberately.
+Purchases are closed by the same pause, so it can only shut a channel and
+never open one — and a pause is when withdrawing an armed offer is most
+wanted.
+
 ### Per-chain keeper allocation (`chainKeeperAllocateBps`)
 
 The share of a mirror chain's own REPORTED DAY INFLOW that the canonical

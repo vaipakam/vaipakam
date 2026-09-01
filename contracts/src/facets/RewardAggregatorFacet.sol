@@ -928,7 +928,12 @@ contract RewardAggregatorFacet is
      *
      * @param  chainId Destination chain the instruction is for. MUST NOT be
      *                 the canonical chain's own id.
-     * @param  bps     Share of that chain's local commit to earmark; `0` off.
+     * @param  bps     Share of that chain's REPORTED DAY INFLOW to earmark;
+     *                 `0` off. NOT a share of the local commit — that is the
+     *                 CAP (the earmark is bounded by the headroom the commit
+     *                 leaves in the chain's availability), not the base.
+     *                 Tuning this from expected claim demand gives the wrong
+     *                 figure, most visibly on a low-demand day.
      */
     function setChainKeeperAllocateBps(uint32 chainId, uint16 bps)
         external

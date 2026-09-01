@@ -7131,9 +7131,12 @@ library LibVaipakam {
         ///         opaque and free.
         mapping(uint256 => uint256) perkUnitsSold;
         // ── #1569 M4 C3 — per-chain keeper allocation (append-only tail) ──
-        /// @notice BASE-ONLY. Share, in bps of a chain's locally-funded
-        ///         recycled commit, that Base instructs that chain to earmark
-        ///         for its own keeper-incentive register.
+        /// @notice BASE-ONLY. Share, in bps of a chain's REPORTED DAY
+        ///         INFLOW, that Base instructs that chain to earmark for its
+        ///         own keeper-incentive register. The chain's locally-funded
+        ///         commit is the CAP — the earmark is bounded by the headroom
+        ///         that commit leaves in the chain's availability — not the
+        ///         base it is a share OF.
         ///
         ///         BASE-AUTHORIZED is the load-bearing property of the card: a
         ///         mirror must not be able to grant itself keeper budget, so

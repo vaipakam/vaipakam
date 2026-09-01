@@ -1584,10 +1584,16 @@ buffer the choice existed to provide is simply gone. If the buffer has eroded,
 cancel and re-schedule with a later `D*` rather than executing.
 
 The setter writes Base storage and emits `GovernorCommitArmed`. **It sends
-nothing itself.** A mirror learns `D*` in-band, when the first *not-yet-applied*
-finalized day's broadcast reaches it after arming — a replay of an
-already-applied day exits through the idempotency branch without installing the
-value.
+nothing itself.** A mirror learns `D*` in-band, when a finalized day's
+broadcast reaches it after arming.
+
+**A replay of an ALREADY-APPLIED day now installs it too** (#1944). This
+paragraph said the opposite until 2026-09-01, and the change was deliberate:
+the old behaviour let any third party burn a mirror's propagation days by
+applying them first, leaving that mirror unarmable through this path
+entirely. Both the V2 replay branch and the V3 clock-backfill branch install
+`D*` when the mirror has none — never re-choosing one already set, and never
+from a retired era's legacy wire.
 
 ### Step 5 — DRIVE the propagation and verify it (M3 / active-mirror branch only)
 
@@ -1600,7 +1606,14 @@ of borrower collateral rather than reverting.
 
 1. current membership of `getBroadcastDestinations()`;
 2. current membership of `getExpectedSourceChainIds()`;
-3. an UNAPPLIED historical standing day that can pass the V3 lapse-clock gate.
+3. a historical standing day that can pass the V3 lapse-clock gate —
+   **applied or not** (#1944). "Unapplied" was part of this definition until
+   2026-09-01 and is now WRONG in the unsafe direction: a replay installs
+   `D*` on a mirror that has none, so an applied day still makes a mirror
+   armable and therefore reachable. A mirror drops out of reachability only
+   when it is absent from the expected-source list AND either its era has
+   rotated away (a retired legacy wire cannot arm) or it is already armed
+   (`D*` is one-shot).
 
 **This is the one definition. Everything else in this runbook refers to it
 rather than restating it** — the two places that restated it drifted apart three
@@ -1899,7 +1912,8 @@ Three parts, and each was added because leaving it out was tried:
 
 - **REACHABLE** is the definition given at the head of this step — a live
   outbound lane and any of destination-list membership, expected-source
-  membership, or an unapplied V3-clock standing day. Deliberately NOT restated
+  membership, or a V3-clock standing day (applied or not, per #1944).
+  Deliberately NOT restated
   here: the two copies of it drifted apart three times during review, so this
   bullet points at the one statement instead of paraphrasing it.
 - **Reconciliation of outstanding broadcasts is part of the branch, not a
@@ -2057,9 +2071,12 @@ borrower collateral (see the containment note in the propagation section). Where
 that property IS enforced, the harm reduces to users hitting an empty balance until
 funding arrives. The keeper narrows that gap on a best-effort basis
 and does not close it, which is exactly why a MANUAL broadcast has to remit
-first. A replay of an
-already-applied day exits through the idempotency branch **without** installing
-`D*`, so the day you broadcast has to be one the mirrors have not seen.
+first. A replay of an already-applied day **does** install `D*` on a mirror
+that has none (#1944), so the day you broadcast no longer has to be one the
+mirrors have not seen — this sentence said it did until 2026-09-01. Choosing
+an unseen day is still the cleaner operation, because a fresh apply
+reconciles in one step, but it is a preference now rather than a
+precondition.
 
 Then read `D*` back on every mirror, with days to spare:
 
