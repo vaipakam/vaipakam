@@ -1,7 +1,9 @@
 # Release Notes — 2026-09-01
 
-Four entries, three of them about the same thing viewed from different angles:
-a report that tells you what it contains before it leaves your device.
+Five entries. Three are about the same thing viewed from different angles — a
+report that tells you what it contains before it leaves your device — and the
+fifth is about a quieter kind of honesty: what a button is entitled to claim
+once the work it started has finished.
 
 The support report the app builds is a pre-filled public issue, so its contents
 reach GitHub the moment the form opens — before anyone has decided to file
@@ -23,6 +25,16 @@ trusts.
 The fourth is operational and shares the theme: a deploy guard was deciding
 which Worker a configuration protected by where the file sat, when Wrangler
 decides it by what the file says. It asks the configuration now.
+
+The fifth is about buttons that report on their own work. Press one twice, or
+press it and move on, and two answers can be outstanding at once — and the app
+was showing whichever arrived last, regardless of which question it belonged
+to. Fixing that turned out to need three separate things, each found by looking
+harder at the previous one: ignore an answer a newer press has superseded; have
+a confirmation say which address, token or report it was earned by, so it
+cannot carry over to whatever has replaced it on screen; and, when a wallet
+answers "no" rather than failing outright, read the answer instead of counting
+it as agreement.
 
 ## Thread — The deploy guard now asks which Worker a configuration names (PR #2036)
 
@@ -272,3 +284,64 @@ different reason: a discount tier needs a minimum holding period, and it is
 clamped to the lowest level held recently. Only the stated mechanism was wrong,
 which is the same shape as the error that prompted the sweep.
 <!-- assembled-fragment: 2033-remove-dead-discount-copy.md sha256=b37eafc6e68989085becf2599e811f099d802f778ddb4c5d78c237ac44a0260a -->
+
+## Thread — A late answer can no longer speak for a newer question (PR #2049)
+
+Several buttons in the app do something that takes a moment and then report
+how it went — copying to the clipboard, asking a wallet to add a token. If you
+press one twice, or press it and then move on, two answers can be outstanding
+at once, and until now whichever arrived last was the one displayed, regardless
+of which question it belonged to.
+
+That produced small untruths of the worst kind: a button saying it had copied
+something when the copy was refused, or saying a copy failed when it had
+worked. The same shape appeared on the testnet faucet, where a request to add a
+token to your wallet could sit waiting for your approval while you minted a
+second token — and approving it then marked the *new* token as added, when what
+you agreed to was the previous one.
+
+**Every one of these now ignores an answer to a question that has been
+superseded.** Press twice and only the second result is shown. Move on to
+something else and the earlier answer is discarded rather than applied to what
+is now on screen.
+
+**And a confirmation now says what it is about.** Ignoring a superseded answer
+turns out to cover only half of it: if you leave a wallet prompt open and then
+switch account or network, or a list of addresses redraws with different rows,
+nothing has superseded the answer you are waiting on — the question underneath
+it has simply changed. A button that only remembered "yes, that worked" could
+not tell. So each of these confirmations now records *which* address, token,
+wallet and network it was earned by, and shows itself only beside that one. An
+answer that arrives about something you have moved on from is no longer
+applied to what replaced it, and "Added to your wallet" no longer stands over a
+wallet that was never asked.
+
+That applies to the support report too, and it is the place it matters most.
+The report refreshes itself while the panel is open, so "Copied" could sit
+beside a version of it that was not the one your clipboard took — on the one
+control that exists so you can read the report before deciding whether to send
+it. The confirmation now belongs to the exact text that was copied. The
+*failure* notice deliberately stays put when the report refreshes: it is still
+true that the copy did not happen, and making an accurate warning vanish would
+be the worse mistake.
+
+**And a wallet that declines quietly is no longer counted as a yes.** Asking a
+wallet to add a token can come back as a plain "no" rather than as an error,
+and the app was treating anything that came back at all as agreement — so a
+declined prompt could still read "Added to your wallet". It now looks at the
+answer.
+
+**Where a control stays quiet, that is deliberate**, and it is about not
+crying wolf. When a wallet declines to add a token, that is usually because you
+declined it — and the app cannot tell your decision apart from a genuine error,
+so reporting one would be guessing at your intent. The small address chips that
+copy an account are quiet for a different reason: they simply do not flip to
+"Copied", which is the whole of what they claim. The two controls that do make
+a claim in words — the diagnostics report and the testnet faucet's token ID —
+say plainly when they could not do what they were asked.
+
+The rule is now written down in one place rather than repeated at each button.
+It had been fixed four separate times in the preceding change, each time
+correctly and each time only where it had been noticed; four is the point at
+which a habit should become a thing that exists.
+<!-- assembled-fragment: 2044-one-rule-for-late-answers.md sha256=e6ac4ccd7992695e35ffddfc45d835abfe75c72be9480015cf9de15025eed2f8 -->
