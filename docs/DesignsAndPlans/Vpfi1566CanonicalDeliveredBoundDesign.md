@@ -1382,8 +1382,13 @@ freeze.
 The carry-forward, specified so neither the funds nor their obligations can be
 retired by accident:
 
-- **Counter.** On entering `Detached`, the residual `received − paid` moves to an
-  **era-scoped** balance keyed by the retiring era. The live counters go to the
+- **Counter.** On **every effective role change** — entering `Detached`, and
+  the direct Mirror→Canonical and Canonical→Mirror transitions
+  `setIsCanonicalRewardChain` permits — the residual `received − paid` moves to
+  an **era-scoped** balance keyed by the retiring era. An earlier revision of
+  this bullet said "on entering `Detached`", which left the direct transitions
+  with no counter rule even after the paragraph above extended the scope: the
+  contract an implementer follows is this list. The live counters go to the
   required zero baseline; the residual is not deleted, it is re-keyed.
 - **Custody.** The delivered VPFI does not move. It stays in the Diamond, now
   attributed to that era's balance rather than to the live one.
@@ -1403,7 +1408,20 @@ retired by accident:
   bound. This is the property the retirement existed for: a residual cannot be
   spent twice by reattaching, because the new era never sees it.
 - **Reattachment.** The new era starts at zero, per row 9. The old era's balance
-  continues to drain against its own claims and is exhausted when they are.
+  continues to drain against its own claims.
+- **Terminal disposition.** An era balance is **not** necessarily exhausted when
+  its claims are — mirror remittances may deliberately overfund eventually-capped
+  claims, so a transition carrying 100 against 20 of remaining retired-era
+  liability leaves 80 behind. Since that balance is invisible to the live bound
+  and only retired-era claims may consume it, the surplus would sit in the
+  Diamond forever: stranded by the mechanism built to stop stranding.
+
+  So the era needs a **provable all-obligations-terminal transition** — every
+  retired-era claim and sweep either settled or expired, read back — after which
+  the unused remainder moves to **live headroom** (it is delivered reward funding,
+  and the era that scoped it is finished) or to an explicit recovery/repatriation
+  position. Retiring the obligations without dispositioning the money is the same
+  half-measure as retiring the counter without moving the backing.
 
 Retiring a claim on money without deciding where the money goes is the shape this
 whole note exists to reject — and offering two under-specified branches was that
@@ -1787,8 +1805,16 @@ One reconciliation entry, three effects, all or nothing:
 0. **assert the CUMULATIVE FRESH and CUMULATIVE RECYCLED totals separately,
    each against the authenticated component on the packet evidence** —
    `alreadyFresh[h] + freshShare <= authenticatedFresh[h]` and
-   `alreadyRecycled[h] + recycledShare <= authenticatedRecycled[h]`, with the
-   sum bound following from them.
+   `alreadyRecycled[h] + recycledShare <= authenticatedRecycled[h]`, **AND the
+   cumulative sum bound against `oldWireAmount[h]` retained alongside them.**
+
+   An earlier revision said the sum bound "follows from" the component bounds. It
+   does not, unless `authenticatedFresh + authenticatedRecycled <= oldWireAmount`
+   is itself enforced — and old-wire packets carry no split, so those figures come
+   from the operator's reconstruction. A mistaken 6-fresh/6-recycled
+   authentication for a 10-token delivery passes both component checks, and with
+   another packet having replenished the global `uncounted` balance it removes and
+   credits **12** against a 10-token packet. Three bounds, not two.
 
    **A cumulative TOTAL alone cannot catch a wrong SPLIT**, and an earlier
    revision tracked only the total. For a packet authenticated as 4 fresh + 6
@@ -1846,9 +1872,14 @@ earlier revision of this paragraph said "marked consumed BEFORE any ledger
 mutation". Read literally that rejects every follow-up correction, so a zero or
 understated first submission strands the packet — the exact defect the
 cumulative marker was introduced to remove, restored by the sentence describing
-the marker. The bound is checked first, the effects apply, and
-`alreadyClassified[packetHash]` increments with them; the hash is exhausted only
-when that cumulative value reaches `oldWireAmount`.
+the marker. The bound is checked first, the effects apply, and **`alreadyFresh[h]` and
+`alreadyRecycled[h]` each increment atomically with their own ledger credit** —
+the total is DERIVED from them, never maintained alone. An earlier revision
+incremented only the total, which leaves the component accumulators frozen: a
+4-fresh/6-recycled packet would then accept 4/0 followed by 4/2, because nothing
+advanced `alreadyFresh`, publishing **8 fresh against an authenticated maximum of
+4** before the total reached 10 and exhausted the hash. A check is only as good
+as the counter it reads.
 
 **A merely "unique migration nonce" does not work, and an earlier revision
 offered one as an equal option.** A fresh nonce establishes only that this
