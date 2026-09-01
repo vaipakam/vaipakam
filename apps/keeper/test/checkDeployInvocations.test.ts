@@ -8390,4 +8390,77 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     );
     expect(r.ok).toBe(false);
   });
+  // ---- Codex #2036 r23 ----
+
+  it('property SHORTHAND is an environment assignment', () => {
+    // `{PATH: p, CLOUDFLARE_ENV}` hands the child that binding. Requiring a
+    // colon read the object as closed and empty, which since r21 is the one
+    // thing that proves no environment is selected.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'const CLOUDFLARE_ENV = "staging";\n' +
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {PATH: process.env.PATH, CLOUDFLARE_ENV}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('a BRACE INSIDE A COMMENT does not close the environment object', () => {
+    // The extent is a brace walk; a `}` in a comment ended the object early and
+    // put the real assignment outside it, so the object read as closed again.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {/* } config */ CLOUDFLARE_ENV: "staging", PATH: "/bin"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('an explicit EMPTY assignment clears the ambient presumption', () => {
+    // Wrangler gates selection on truthiness, so this command uses the top
+    // level. Once an ambient environment became the default, the assignment
+    // branch answering "no selection" was no longer enough to stop it.
+    //
+    // The config MUST declare an environment naming a protected Worker for this
+    // to test anything: the pre-existing empty-assignment fixture declares
+    // none, so the ambient presumption changed nothing there and it could not
+    // have caught this.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.sh',
+        'CLOUDFLARE_ENV="" wrangler deploy --config configs/custom.jsonc\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('...but a real assignment still selects', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"production": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.sh',
+      'CLOUDFLARE_ENV="production" wrangler deploy --config configs/custom.jsonc\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
 });
