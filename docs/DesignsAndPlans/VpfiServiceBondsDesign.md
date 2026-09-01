@@ -41,7 +41,7 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
-| Solver / matcher | larger match-batch sizes; priority-window access (E-2 perk interplay: bond = capacity, spend = priority) | precondition lies recorded via the offence dispatcher below **ATTESTED TIER ONLY — v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row; **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
+| Solver / matcher | larger match-batch sizes ONLY. **Priority-window access is NOT a bond entitlement** — it is E-2's spend-gated perk with its own flat VPFI fee, and bonds neither gate it nor grant it. An earlier revision listed it here, which would let an implementation either require a bond ON TOP of the E-2 purchase or hand priority out for bonding alone; both change the perk's gate and its permanent absorption. Bond buys capacity; spend buys priority; the two never substitute | precondition lies recorded via the offence dispatcher below **ATTESTED TIER ONLY — v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row; **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
 | Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles | ~~repeated out-of-grant-scope attempts~~ — **LEAVES v1 for the same reason staleness did**: `setKeeperActions` / `revokeKeeper` can remove a grant after a keeper broadcasts an authorized call but before it executes, so an honest pending action is out-of-scope at execution, and worse with several queued. Grant state is not carried by the submission. Returns with the attested tier, alongside missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
 
 - **Offence recording (Codex round-1 finding):** a slashable failure must
@@ -263,12 +263,22 @@ mechanism is needed at all — it was not.
 
 **The decision, which is what this note is for:** a bond buys capacity
 *continuously and proportionally*, with **no minimum bond**, up to a ceiling
-of **4× the free tier per `(role, address)`** — the same key the bond record and the buckets use. Not per address across roles: an address holding solver, matcher and keeper bonds gets an independent ceiling for each, because their action units are not commensurable and a shared cap would let one role suppress another's capacity.
+of **4× the free tier per `(role, address)`** — the same key the bond record and the buckets use, where ADDRESS is the charged actor defined by an exhaustive selector→(role, actor) table that implementation must produce. That table is not optional and not inferable: `BackstopFacet.backstopFill` routes through `BackstopVaultImplementation.executeFill` into `OfferMatchFacet.matchIntent`, so the inner `msg.sender` is a SHARED vault rather than the initiator, and adapter fills likewise replace the keeper or principal with the adapter. Keying on the inner caller would pool unrelated activity and let one contract's bond subsidise every routed caller; charging wrappers without a closed mapping risks bypass or double-charging instead. Direct and routed paths both have to appear in it. Not per address across roles: an address holding solver, matcher and keeper bonds gets an independent ceiling for each, because their action units are not commensurable and a shared cap would let one role suppress another's capacity.
 
-**And any reduction in CAPACITY — a bond withdrawal, a slash, or a
-governance retune that lowers the curve, `bondAt4x` or the free tier — must
-reconcile outstanding limiter credit down to the new capacity before that
-bucket's next admission.**
+**Any CHANGE in capacity — up or down — must settle elapsed credit under the
+OLD capacity before the new one takes effect.**
+
+Downward is the obvious half: a withdrawal, a slash, or a retune that lowers
+the curve, `bondAt4x` or the free tier must reconcile outstanding credit down
+before that bucket's next admission.
+
+Upward matters just as much and an earlier revision missed it. With lazy
+refill, an address can leave an empty unbonded bucket untouched, post
+`bondAt4x` after a long idle stretch, and have its next admission accrue that
+whole interval at the new 4× rate — elevated throughput for time during which
+the capital was not locked. An upward governance retune does the same to every
+stale bucket at once. So an increase checkpoints first: settle accrual to the
+change timestamp at the old rate, then activate the new capacity.
 
 Bond-decrease-only is not sufficient, and the gap is easy to miss: raising
 `bondAt4x` leaves every bond BALANCE untouched while buying less capacity,
@@ -593,6 +603,16 @@ that everything else is throughput and these are custody:**
   must not strand escrowed VPFI or block unbonded operation.
 
 **Limiter shape** — deferred with the mechanism, per §3's checklist, but its
-acceptance criteria are: no implicit minimum (a small bond eventually affords
-an action), the stated envelope holds over a rolling window, and a capacity
-reduction of any cause clamps before the next admission.
+acceptance criteria are:
+
+- **No implicit minimum, tested DISCRIMINATINGLY.** "A small bond eventually
+  affords an action" is vacuous: the mandatory zero-bond free tier eventually
+  affords the same action, so an implementation that rounds every small bond's
+  incremental capacity to zero passes it — while violating the continuous
+  curve it is meant to prove. The test must hold the free allowance constant
+  or exhausted and show measurable additional admission, or a measurably
+  shorter wait, ATTRIBUTABLE TO the small bond. Same rule this programme
+  applies elsewhere: reachability is not discrimination.
+- The stated envelope holds over a rolling window.
+- A capacity change of any cause — up or down — settles elapsed credit under
+  the old capacity before the new one takes effect.
