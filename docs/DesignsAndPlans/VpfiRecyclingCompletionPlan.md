@@ -1093,11 +1093,26 @@ consumer: Base hardcoded it to `0` in `LibMeshFunding._stampOne` and the
 mirror stored it on the day record without reading it. It is now set per
 destination by `RewardAggregatorFacet.setChainKeeperAllocateBps`
 (ADMIN + `onlyCanonical` — a mirror must not grant itself keeper budget,
-which is the card's load-bearing qualifier), SIZED from that chain's own
-local commit but charged BESIDE it — bounded by the headroom that commit
-leaves in the chain's availability — drawn through its OWN ledger slot
+which is the card's load-bearing qualifier), SIZED from that chain's
+REPORTED DAY INFLOW (`chainDailyRecycledCredit[day][chain]`) per the
+ratified §3.5 formula — with the local commit acting only as the CAP,
+bounding the earmark to the headroom it leaves in the chain's availability
+— charged beside the commit through its OWN ledger slot
 (`chainKeeperAllocDebited`), and applied on arrival into
-`recycleKeeperBudget`. Zero — the deploy default — instructs nothing.
+`recycleKeeperBudget`.
+
+**Two limits of the shipped behaviour, recorded so a maintainer does not
+read more into it** (Codex #2031 r10). First, it only runs on a day that
+HAS claim demand: `resolveAndStampDayFunding` returns early when the day's
+coupled target or both global interest halves are zero, so a pure-inflow
+quiet day stamps nothing at all — the inflow sizing removes the dependence
+on the SIZE of demand, not on its existence. Second, the numerator is a
+mirror-reported figure, so a mirror can shift unattributed cumulative
+headroom into a single day and accelerate its own earmark; the availability
+clamp still bounds the total, so this changes the allocation MIX and its
+timing rather than letting a chain exceed what it holds. Both are tracked
+for the design pass rather than patched unilaterally — the sizing rule has
+already moved twice under review. Zero — the deploy default — instructs nothing.
 
 **NOT `chainConsumedRecycled`**, which an earlier revision of this line
 said and which the implementation deliberately rejects (Codex #2031 r2).

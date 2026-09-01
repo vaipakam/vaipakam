@@ -432,6 +432,29 @@ library LibMeshFunding {
         // local funder in this split, and `setChainKeeperAllocateBps` refuses
         // the canonical id anyway, so this is belt-and-braces.
         if (c.chainId != ctx.baseId) {
+            // TWO LIMITS OF THIS, recorded because review found both and the
+            // sizing rule has already moved twice (Codex #2031 r10):
+            //
+            //  1. It only runs on a day that HAS claim demand.
+            //     `resolveAndStampDayFunding` returns before `_stampAndArm`
+            //     when the coupled target or both global interest halves are
+            //     zero, so a pure-inflow quiet day stamps nothing at all.
+            //     Sizing from inflow removes the dependence on the SIZE of
+            //     demand, not on its existence.
+            //  2. The numerator is MIRROR-REPORTED. A mirror can shift its
+            //     unattributed cumulative headroom into one day's
+            //     `recycledForDay18` and accelerate its own earmark. The
+            //     clamp below still bounds the total to what the chain
+            //     holds, so this moves the allocation MIX and its timing
+            //     rather than letting a chain exceed its availability — but
+            //     it does soften "a mirror cannot grant itself keeper
+            //     budget" to "cannot grant itself MORE THAN IT HAS".
+            //
+            // Both are design questions rather than clear bugs: the ratified
+            // formula asks for reported inflow, and reported inflow is
+            // mirror-controlled by construction. Tracked for the design pass
+            // rather than resolved unilaterally here.
+            //
             // SIZED FROM THE DAY'S REPORTED INFLOW, not from the claim commit
             // (Codex #2031 r9). The ratified formula in
             // `VpfiCrossChainRecyclingDesign.md` §3.5 is
