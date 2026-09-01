@@ -489,8 +489,17 @@ The three-option discussion this replaced is gone rather than struck through,
 because two of the three were built on the false premise and the third was the
 census. Slice 1 carries the chosen mechanism.
 
-Until one is picked, **slice 1 is not closure 1**, and F does not unblock arming
-on the strength of these two classes.
+**The completion condition is the scan's cursor passing its snapshot**, per
+slice 1. An earlier revision ended this subsection with "until one is picked,
+slice 1 is not closure 1" — which was correct while three options were open and
+became a contradiction the moment the scan was chosen: one reader would treat a
+completed scan as sufficient while another kept arming blocked awaiting a choice
+that had already been made.
+
+So: **slice 1 is closure 1's user-owned half exactly when the paused scan
+completes** over every affected id domain, proven by the cursor. What still
+blocks arming beyond that is slice 4's non-user half, which is a different
+requirement and is stated there.
 
 #### The fallback class needs every consumer, not just the claim path
 
@@ -628,10 +637,21 @@ ordinary implementation, and it belongs in slice 3.
   for it during migration, which is the obvious thing to do, hands the rebate to
   a former holder and clears the current one's claim **irreversibly**.
 
-  So the migration resolves `ownerOf(loan.borrowerTokenId)` and delivers there,
-  with the sanctions-safe delivery that resolution implies — or it leaves the row
-  claimable and migrates only the custody. Either is defensible; paying the
-  stored borrower is not.
+  **So the migration resolves `ownerOf(loan.borrowerTokenId)` and delivers there
+  immediately, with the sanctions-safe delivery that resolution implies.**
+
+  An earlier revision also offered "leave the row claimable and migrate only the
+  custody" as equally defensible. **Withdrawn** — that branch names no
+  destination for the custody it moves, and every destination breaks something:
+  the claim path still expects `rebateAmount` to be backed by Diamond custody, so
+  moving it to the holder's vault without a lien lets them withdraw it and claim
+  again, while leaving it under the unusable terminal-loan lien (or any other
+  source) makes the claim spend unrelated Diamond VPFI or revert.
+
+  Making that branch work would mean specifying the retained claim's custody
+  source, its withdrawal protection, and a claim-time release — i.e. rewriting the
+  claim consumer for a class the migration exists to empty. Immediate delivery is
+  strictly less machinery and leaves nothing behind to be wrong.
 - **`vpfiHeld` (live loans): a per-loan ENCUMBRANCE paired with a TIER
   EXCLUSION — two counters, not one.** `tierVpfiBalance` deliberately leaves
   ordinary `s.encumbered` value in-tier (`:119-135`) while
@@ -651,6 +671,20 @@ ordinary implementation, and it belongs in slice 3.
   (`:986-1035`, `:1159-1181`) — paying a premature rebate that survives the
   default. In-place settlement is correct only ON a proper-close terminal, where
   it already happens. It is not a drain mechanism.
+- **Position TRANSFER moves the custody too, not only the terminals.** A live
+  borrower position stays transferable after migration, and
+  `LibConsolidation.consolidateToHolder` re-keys the side-specific lien and moves
+  the loan's ordinary borrower collateral (`:124-147`) — it knows nothing about
+  an additional per-loan `vpfiHeld` custody or its tier-exclusion counter. So an
+  NFT transfer would update `loan.borrower` while leaving that VPFI in the FORMER
+  holder's vault, and the eventual terminal then pulls from the wrong vault or
+  strands the lien.
+
+  Borrower-side consolidation therefore moves **both** the per-loan custody and
+  the tier exclusion, **with both vaults restamped** — the sending vault loses
+  the exclusion and the receiving vault gains it, or the tier defect this slice
+  exists to prevent simply relocates to whichever holder is not being tracked.
+
 - **Both terminal consumers are rewritten, not just the lien.**
   `settleBorrowerLifProper` transfers the matcher and treasury shares from
   Diamond custody today, and `forfeitBorrowerLif` does the same for the whole
@@ -723,7 +757,24 @@ ordinary implementation, and it belongs in slice 3.
   later-upgraded collateral token could reenter another Diamond entry while the
   commit is live and its lien already zero — including a liquidation path
   force-cancelling that same commit. Guard the hook, or route the mutation
-  through an equivalently guarded self-call. Callback-token test required.
+  through an equivalently guarded self-call.
+
+  ⚠️ **A function-scoped `nonReentrant` is NOT sufficient, and an earlier
+  revision of this bullet asked for one.** The modifier releases when
+  `preInteraction` returns — before the LOP performs its maker-asset transfer and
+  before it calls `postInteraction`. The dangerous window is exactly that gap:
+  the lien is already zero, the commit is still live, and a callback-capable
+  collateral token can reenter the Diamond during the LOP's own transfer. Adding
+  the modifier would have protected the vault withdrawal and left the state
+  inconsistency it was added to prevent.
+
+  So: a **fill-state lock set before the pull and cleared by `postInteraction`**,
+  with the post hook explicitly permitted to run while it is held — a
+  transaction-spanning state-machine guard rather than a function-scoped one.
+  Every other Diamond entry that could observe a live commit with a zero lien
+  must respect it, the force-cancel liquidation path most of all. Callback-token
+  test required, and it must reenter **during the LOP transfer**, not during the
+  hook, or it passes against the insufficient guard.
 - **Keep the balance-delta check, at the new location.** The commit path does not
   trust `vaultWithdrawERC20`: it measures the Diamond's balance delta and rejects
   anything other than `loan.collateralAmount` before using it as `makingAmount`
@@ -840,6 +891,24 @@ callable after reconciliation defeats the delivered bound entirely. Same shape a
 the existing one-shot `seedArmedFreshPaid` on the paid side, and for the same
 reason.
 
+**The paid side needs a NEW importer; `seedArmedFreshPaid` cannot serve.** An
+earlier revision routed the broadened paid history through it, and it is
+unusable for two independent reasons: it is one-shot, guarded by
+`armedFreshPaidSeeded` (`RewardReporterFacet.sol:1266`), and on a live mirror it
+**may already have been consumed by the P1-b migration** — such a deployment
+simply cannot call it again for the newly included legacy payouts and
+absorptions. Even unused, its `+= amount` semantics take a delta while this
+section describes reconciling a *total*, which the earlier text never
+disambiguated: importing the total on top of an existing counter double-counts,
+importing a delta against an unseeded counter under-seeds.
+
+So: **a new paused, one-shot `rebaseArmedFreshPaid(total)`** that SETS the
+counter to the reconciled total rather than adding to it, with its own guard flag
+so it is independent of whether the P1-b seeder ran. Setting rather than adding
+is what makes it correct regardless of the deployment's history — the
+reconciliation already produces an absolute figure, and asking it to produce a
+delta reintroduces exactly the ambiguity above.
+
 **The mirror's received-side migration writer takes the identical contract** —
 ADMIN-only, paused, one-shot, finalized before unpause. An earlier revision said
 only that such a writer "is needed", which left its authorization and its
@@ -950,7 +1019,7 @@ delivery and nobody to report to.**
 | 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
 | 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
 | 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
-| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded** (was "always") | if funded | **no** |
+| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded, measured VINTAGE-BLIND** (was "always") | **same — see note** | **no** |
 | 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | **delivered** (was `max`) | delivered | **0** |
 
 **Two rows carry the whole risk and are worth reading twice.** Row 11 is where
@@ -960,6 +1029,22 @@ are where treating it as "a mirror" enables mirror-only cross-chain operations
 on a chain with `baseChainId == 0`. Those are opposite errors from the same
 missing third state, which is why no single boolean value works and why this
 matrix — not the resolver — is the substance of closure 3.
+
+**Row 13 also needs its MEASUREMENT changed, not just its role answer.** The
+predicate today takes only `armedFresh` from `_userArmedFreshNeedWithLegs`
+(`LibInteractionRewards.sol:3771-3775`) and compares that against the bound. Once
+the ledger is vintage-blind and `_deliverReward` rejects on the **total** fresh
+component, a claimant whose need is entirely pre-`D*` has `armedFresh == 0` and
+therefore passes a predicate their claim cannot satisfy: their expiry clock keeps
+running while exhausted delivered headroom makes the claim impossible, and the
+entry can expire the moment funding arrives. Switching the row from "always" to
+"if funded" without widening the measurement leaves that gap on both roles, which
+is why the Mirror cell is not unchanged either.
+
+So the predicate compares the claimant's **aggregate vintage-blind fresh need**
+against the delivered bound — the same quantity `_deliverReward` rejects on.
+Anything narrower makes the two disagree, and the expiry clock is the one that
+runs silently.
 
 **Every canonical cell marked "(was …)" changes WITH slice 4, not only row 14.**
 An earlier revision of this matrix updated the bound and left the canonical
@@ -1000,12 +1085,34 @@ The packet is then stranded, or — worse — its credited state consumes later
 delivery after reattachment. Nothing in the fourteen rows prevents this, because
 none of them is on that path.
 
-**So the receive-and-ack lifecycle needs explicit `Detached` handling as part of
-closure 3**: either the ingress refuses while `Detached` (symmetric with the ack,
-and the packet retries after reattachment), or it accepts into a quarantined
-state that the role transition can unwind. The first is simpler and matches how
-row 7 already behaves; the second is only needed if refusing risks losing the
-packet at the transport layer, which is a CCIP question rather than a design one.
+**Chosen: the ingress REFUSES while `Detached`.** An earlier revision named two
+options and delegated the choice, which leaves a fund-safety decision to
+implementation — and the two need different transport guarantees, receipt and ack
+behaviour, storage, unwind logic and reattachment transitions, so "either" is not
+a specification.
+
+The complete lifecycle, since half-describing it is what left the previous
+revision unimplementable:
+
+1. **Receive while `Detached`** — `onRewardBudgetReceived` and
+   `onCompensationBudgetReceived` revert. No receipt is written, no pool or
+   recycle state moves, nothing to unwind. This is symmetric with row 7's ack,
+   which already refuses.
+2. **Transport** — a reverted CCIP inbound is a failed message, **manually
+   re-executable once the condition clears**. That is the property that makes
+   refusal safe here and is why it is chosen over quarantine: the packet is not
+   lost, it is parked in the transport layer where it already has a retry story.
+3. **Reattachment** — the operator re-executes the parked messages after the
+   role is set. They arrive as ordinary ingresses against the fresh post-
+   transition ledger, which is the correct accounting: their funding was never
+   credited, so there is nothing for the residual retirement to have mishandled.
+4. **The role transition itself** therefore has no receipt-level mutations to
+   reverse — the property that makes rows 8–10 sound rather than merely
+   convenient.
+
+Quarantine is rejected: it needs a parallel state, an unwind path, and a decision
+about what happens to a quarantined packet whose sender has since been
+reconfigured. Refusal has none of those because it never accepts anything.
 
 This subsection exists because the matrix looked exhaustive and was not. Any
 future addition to it should start from "what state can move", not "who reads the
@@ -1108,6 +1215,19 @@ explaining that a denylist of tags is defeated by a future path arriving under a
 tag it does not list. The same argument, applied inconsistently to the fix for
 the argument.
 
+**The reward operation REJECTS before it credits, exactly like the claim
+chokepoint.** An earlier revision specified only that it charges the fresh
+component before crediting the bucket — which is a ledger entry presented as a
+bound for the third time in this document. The two current sweep callers happen
+to carry their own bounds, but the whole point of a non-bypassable operation is
+that a *future* reward terminal is forced through it; such a caller could submit
+more than `received − paid`, convert unrelated Diamond VPFI into recycled
+backing, and leave the ledger overdrawn with the bucket credit already made.
+
+So: **reject against remaining delivered headroom, atomically with the credit.**
+Same rule as `_deliverReward` and the transports — bound first, charge second,
+one call.
+
 **Generic `credit` must fail CLOSED: it accepts only an explicit, closed set of
 proven non-reward inflows** — today `NotificationFee`, `FullTariff`,
 `SpendGatedPerk` — and rejects everything else, including any source added
@@ -1174,11 +1294,27 @@ implementations standing with a "prefer" between them — which preserves exactl
 the ambiguity it claims to resolve, since the two need different gates and
 different authentication rules.
 
-**Mandated: hold the pause until every in-flight legacy/d2 remittance has landed
-and been reconciled, then reject those wire versions permanently.** The gate is
-a provable terminal condition per lane — every legacy/d2 reservation is either
-settled or expired, read back per source chain, with no outstanding receipts —
-and the pause does not lift until it holds on all of them.
+**Mandated: hold the pause until every in-flight d2 remittance has landed and
+been reconciled, then reject that wire version permanently.** The gate is a
+provable terminal condition per lane — every d2 reservation settled or expired,
+read back per source chain, with no outstanding receipts.
+
+⚠️ **That gate CANNOT cover pre-d2 legacy packets, and an earlier revision said
+it could.** `RewardRemittanceReceiver` states it outright: a legacy delivery
+carries no `remitId`/`remitter`, "the Diamond records no receipt and no ack
+flows (Base holds no reservation for pre-d2 sends)". So every visible
+reservation can be settled while an unobservable legacy CCIP packet is still in
+flight — and a permanent rejection after unpause then **strands that delivery
+and its VPFI**, which is the outcome the cutover exists to prevent.
+
+Legacy therefore needs the recovery path d2 does not: **a bounded, time-limited
+acceptance window after unpause** for pre-d2 layouts only, credited through the
+one-shot administrative importer rather than the ordinary ingress, closed at a
+fixed deadline chosen from CCIP's own maximum message lifetime. Bounded in time
+rather than open-ended, so it is a cutover accommodation and not a permanent
+second ingress — and it is the reason the importer's "irrevocably finalized
+before unpause" rule needs one stated exception, rather than that exception
+being discovered by whoever hits it.
 
 The rejected alternative was a post-unpause receipt-level reconciliation entry.
 It is rejected because it adds a **permanent administrative writer on the
@@ -1188,9 +1324,19 @@ drained, that is an escalation to the owner, not an implementer's fallback.
 
 The last two writers are a matched pair and must be changed in one commit: the
 failure mode is not that either is individually wrong, but that confirmation and
-demotion stop being inverses. **A round-trip test — confirm then demote, assert `received`
-and `uncounted` both return to their starting values — is the acceptance case,
-and it is the one test that catches a divergence between them.** Crediting the
+demotion stop being inverses. **Two separate fixtures, not a round trip.** An earlier revision required a
+confirm-then-demote round trip, which **cannot occur through the production state
+machine**: `onCompensationDayBroadcastArrived` clears `dc.provisional` on
+confirmation, and every later call returns immediately on `if (!dc.provisional)
+return;` (`RewardRemittanceFacet.sol:1363-1368`). A test asserting that sequence
+either never reaches demotion or bypasses production behaviour — so it could not
+have provided the evidence it was cited for.
+
+Instead: a **provisional-confirm fixture** asserting the promotion moves exactly
+the fresh component, and a **provisional-demote fixture** asserting the demotion
+branch **alone reverses exactly the original provisional credit**. The inverse
+property is then proven against the credit each starts from, rather than by
+composing two transitions the machine will not compose. Crediting the
 whole delivery would re-open the hole on the other side: a remittance of 5 fresh
 plus 5 recycled already credits the recycled 5 to the bucket, so crediting 10
 here against a fresh-only paid side leaves 5 of false fresh headroom, and a
