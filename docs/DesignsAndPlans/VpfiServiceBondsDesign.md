@@ -41,7 +41,7 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
-| Solver / matcher | larger match-batch sizes; priority-window access (E-2 perk interplay: bond = capacity, spend = priority) | precondition lies recorded via the offence dispatcher below (a submission contradicted by state it itself carries or creates — NOT staleness, which left v1's predicates: see the offence-recording bullet); **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
+| Solver / matcher | larger match-batch sizes; priority-window access (E-2 perk interplay: bond = capacity, spend = priority) | precondition lies recorded via the offence dispatcher below **ATTESTED TIER ONLY — v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row; **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
 | Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles | ~~repeated out-of-grant-scope attempts~~ — **LEAVES v1 for the same reason staleness did**: `setKeeperActions` / `revokeKeeper` can remove a grant after a keeper broadcasts an authorized call but before it executes, so an honest pending action is out-of-scope at execution, and worse with several queued. Grant state is not carried by the submission. Returns with the attested tier, alongside missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
 
 - **Offence recording (Codex round-1 finding):** a slashable failure must
@@ -161,8 +161,13 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
    **Bond sizes** remain a proposal (see the two open numbers at the end).
 3. **No-yield refundable-deposit shape: RATIFIED.** The legal glance is
    discharged. Bonds earn nothing, are refundable at will subject to the
-   any unbond delay in force, and are described as operational security
-   deposits — never
+   any unbond delay in force. NAMING IS CONDITIONAL on the fork below and
+   this paragraph must not be read as ratifying one term: "operational
+   security deposit" only under (B) or the attested tier, where the
+   principal can actually be confiscated. Under (A) and (C) the principal
+   is never at risk, so it is an "operational capacity deposit" — and C's
+   separate arming fee does not change that, since a fee purchased
+   alongside a deposit does not make the DEPOSIT security. Never
    staking, never earning.
 
 ### Proposed: bond sizes and capacity (rev 4)
@@ -258,7 +263,7 @@ mechanism is needed at all — it was not.
 
 **The decision, which is what this note is for:** a bond buys capacity
 *continuously and proportionally*, with **no minimum bond**, up to a ceiling
-of **4× the free tier** per address.
+of **4× the free tier per `(role, address)`** — the same key the bond record and the buckets use. Not per address across roles: an address holding solver, matcher and keeper bonds gets an independent ceiling for each, because their action units are not commensurable and a shared cap would let one role suppress another's capacity.
 
 **And any reduction in CAPACITY — a bond withdrawal, a slash, or a
 governance retune that lowers the curve, `bondAt4x` or the free tier — must
@@ -333,8 +338,14 @@ What is actually true, and all that is claimed:
 
 - **Per address**, capacity is bounded at 4× the free tier.
 - **In aggregate**, dominance costs capital LINEARLY — `N` addresses at the
-  ceiling require `N × bondAt4x` bonded, all of it slashable and all of it
-  idle. That is a cost curve, not a bound. **It holds only if a fresh
+  ceiling require `N × bondAt4x` bonded and idle. **Whether it is also AT
+  RISK depends on the fork**, and an earlier revision said "all of it
+  slashable" unconditionally: under (B) or the attested tier it is; under
+  (A) the principal is refundable and never confiscatable, so the cost is
+  opportunity cost alone; under (C) only the arming fee is permanently
+  absorbed. The curve is linear either way, but its steepness is not the
+  same, and the owner should read it against the option they are choosing.
+  That is a cost curve, not a bound. **It holds only if a fresh
   address cannot be handed a full capacity balance on first touch**: with
   immediate withdrawal and a full initial bucket, one `bondAt4x` can be
   walked through fresh addresses to mint repeated bursts, and the claim
@@ -413,20 +424,41 @@ commitment that makes "knew" adjudicable, and land capacity, bonds and
 slashing together. Costs the capacity mechanism in the meantime — which is
 useful and independent — but keeps the card's objective whole.
 
-**(C) Ship (A) plus a non-refundable ARMING FEE, restoring the permanent
-sink without slashing.** A small fee charged when a bond is posted or raised,
-credited through `LibVpfiRecycle.credit(...)` and never returned. It needs no
-adjudication of anything — a spend is objectively a spend — which is exactly
-why the perk channel works, and it is the same shape: spend is permanent
-absorption, deposit is temporal. This restores the objective (A) drops while
-keeping every part of the mechanism that survived review, at the cost of
-making capacity slightly non-free at the margin.
+**(C) Ship (A) plus a non-refundable ARMING FEE.** A fee charged when a bond
+is posted or raised, credited through the recycle chokepoint and never
+returned. It needs no adjudication of anything — a spend is objectively a
+spend — which is exactly why the perk channel works, and it is the same
+shape: spend is permanent absorption, deposit is temporal.
 
-**Recommendation: (C), else (A).** The case for shipping now is unchanged —
-everything in this note that survived review is about capacity, everything
-that collapsed is about slashing. But (A) alone does not meet the card's
-objective, and (C) meets it with a mechanism that has already been built once
-in this programme.
+*What C restores, precisely:* the **permanent SINK**, not the performance
+bond. An earlier draft said it "restores the objective" and that overclaimed
+— the principal is still never at risk for misbehaviour, and the permanent
+payment purchases capacity rather than securing performance. C carries the
+same operator-response loss as A; what it adds back is absorption, not
+deterrence.
+
+*What C needs specified before build, and these belong in the owner
+decisions rather than to an implementer's discretion:*
+
+- **Formula and transfer.** Flat per arming, or proportional to the raise?
+  Paid IN ADDITION to the deposit, or deducted from it? A floor-rounded
+  proportional charge lets sufficiently small raises contribute nothing,
+  which defeats the property C exists to restore — so proportional needs
+  ceiling rounding and a minimum, or the fee should simply be flat.
+  Proposed: **flat per arming, paid in addition, governance-set with a
+  ceiling**, because it is the variant with no rounding hole.
+- **Its own `RecycleSource`.** `LibVpfiRecycle.credit` needs a concrete
+  member and the enum is append-only. `ServiceBondSlash` must NOT be used —
+  C performs no slash, and reporting fee purchases as offences would
+  corrupt the metric that member exists for. Borrowing a perk or generic
+  class merges distinct absorption. So C appends **`ServiceBondArmingFee`**,
+  with its own event and test.
+
+**Recommendation: (C), else (A)** — but read the fork for what it is. Both
+abandon performance security; the real question is whether v1 ships capacity
+now and gains deterrence later, or waits for the tier that can adjudicate.
+Everything in this note that survived review is about capacity; everything
+that collapsed is about slashing.
 
 **Open for the owner**, and these are genuine choices rather than gaps:
 
@@ -473,9 +505,15 @@ that everything else is throughput and these are custody:**
   deferred rather than left unwritable.
 - **(B) / attested tier only** — each objective slash predicate proven
   on-chain-verifiable and proven to fire on committed state rather than a
-  revert. Under (A) the predicate set is empty by construction, and the
-  acceptance case is instead that NO call path confiscates: a test that
-  every entry point leaves the bond balance unchanged.
+  revert. Under (A) and (C) the predicate set is empty by construction, and
+  the acceptance case inverts: **only an owner-authorized deposit or
+  withdrawal may change the principal, and NO path transfers it to
+  recycling.** Stated that way rather than as "every entry point leaves the
+  balance unchanged", which is not writable — bond and unbond necessarily
+  change it, so that phrasing forces an ad-hoc exclusion or fails the
+  lifecycle requirement. Under (C) the arming fee is the one permitted
+  transfer to recycling, and it is charged at arming rather than by an
+  operational path.
 - **No v1 predicate depends on external state moving between broadcast and
   execution** — the acceptance case is the ABSENCE of such a predicate. An
   earlier revision required testing a caller-supplied snapshot, which is the
