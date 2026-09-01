@@ -854,8 +854,17 @@ ordinary implementation, and it belongs in slice 3.
   collateral lien that `_cureFallback` has already completed. Get either wrong
   and the consumer either reverts or leaves a phantom counter that strands a
   later withdrawal — the migration's own failure mode, relocated to the exit.
-- **Migration ADDS to any existing lien; it never creates or replaces one.** A
-  pre-upgrade `FallbackPending` loan can already carry a live vault lien for
+- **Migration uses CREATE-IF-ABSENT: it adds to a live lien and creates one
+  where none exists — never replaces.** An earlier revision said "never creates",
+  which inverts into a fund-safety hole on the **common** row: the fallback path
+  calls `releaseCollateralLien` (`RiskFacet.sol:2138`), so a `FallbackPending`
+  loan with no post-fallback top-up has **no active lien at all**. Implemented
+  literally, the migration would move the full snapshot into the borrower's vault
+  and add nothing to `s.encumbered` — immediately withdrawable, before cure or
+  liquidation. `LibEncumbrance.incrementCollateralLien` already has exactly these
+  semantics (`:192-203`), so the rule is "call it", not "guard it".
+
+  A pre-upgrade `FallbackPending` loan **may** also carry a live vault lien for
   non-curing top-ups — `AddCollateralFacet` increments it precisely so the top-up
   "is not drainable before a later cure" (`:189-198`), and `_cureFallback` folds
   the restored snapshot in with its own increment. So a migration that creates
@@ -863,6 +872,14 @@ ordinary implementation, and it belongs in slice 3.
   **discards the top-up reservation and makes that collateral withdrawable**.
   The scan adds only the migrated snapshot amount to the existing lien, and only
   that amount to the tier exclusion.
+- **Install the exclusion BEFORE the vault credit** (VPFI snapshots), exactly as
+  the `vpfiHeld` migration requires. `vaultCreditFromDiamondERC20` performs its
+  tier rollup immediately after the transfer (`VaultFactoryFacet.sol:549-557`),
+  so an implementation can reasonably read the helper's built-in rollup as
+  satisfying the generic "PLUS restamp" above, then add
+  `frozenVpfiOwedByVault` afterwards — leaving the cached tier and staking
+  checkpoint counting the owed snapshot while every stored counter looks right.
+  Exclusion-before-credit, or an explicit final restamp after both mutations.
 - **The tier exclusion applies ONLY when the snapshot is VPFI.**
   `fallbackSnapshot` can hold arbitrary collateral, so adding every snapshot
   amount to `frozenVpfiOwedByVault` would charge a USDC or WETH figure — in that
@@ -1347,10 +1364,32 @@ existing claims waiting for a **second** delivery while the first 100 is
 untracked and unusable. The retirement was introduced to stop an old residual
 being reusable; done to the counter alone it strands the tokens instead.
 
-So the transition either carries an **era-bound forward** for that balance, or
-moves it into an explicit **recovery/repatriation position** where it is visible
-and recoverable. Retiring a claim on money without deciding where the money goes
-is the shape this whole note exists to reject.
+**Chosen: an ERA-BOUND CARRY-FORWARD.** An earlier revision offered this or a
+repatriation position as equivalents; they are not. Repatriating the backing
+leaves the mirror's already-accrued claims waiting on a fresh delivery — the
+liveness failure described immediately above — so it trades a stranding for a
+freeze.
+
+The carry-forward, specified so neither the funds nor their obligations can be
+retired by accident:
+
+- **Counter.** On entering `Detached`, the residual `received − paid` moves to an
+  **era-scoped** balance keyed by the retiring era. The live counters go to the
+  required zero baseline; the residual is not deleted, it is re-keyed.
+- **Custody.** The delivered VPFI does not move. It stays in the Diamond, now
+  attributed to that era's balance rather than to the live one.
+- **Claims.** Claims accrued under the retired era are paid from the era-scoped
+  balance and debit **it**. That is what keeps them fundable without a second
+  delivery.
+- **`deliveredFreshBound`.** The era-scoped balance is **invisible** to the live
+  bound. This is the property the retirement existed for: a residual cannot be
+  spent twice by reattaching, because the new era never sees it.
+- **Reattachment.** The new era starts at zero, per row 9. The old era's balance
+  continues to drain against its own claims and is exhausted when they are.
+
+Retiring a claim on money without deciding where the money goes is the shape this
+whole note exists to reject — and offering two under-specified branches was that
+shape one level up.
 
 **Transition tests are required in BOTH directions**, since rows 8–10 are the
 only sites that mutate the role: entering `Detached` must retire the delivered
@@ -1685,8 +1724,12 @@ finalization happens does not un-consume it.
 
 **So: a migration EPOCH, not a one-shot call.** The received-side reconciler
 accepts authenticated entries — the bootstrap first, then any legacy packet that
-arrives — until a **single explicit finalization**, which is the irrevocable act
-the earlier text attached to unpause. Claims may resume before finalization; the
+arrives. Finalization is available **only where an actual observed terminal
+exists**, which for the pre-d2 legacy lane it does not (see below), so **for
+that lane the epoch does not close.** An earlier revision of this paragraph said
+"until a single explicit finalization" without the qualification, which lets an
+implementer finalize after bootstrap and permanently strand a later-executed
+packet. Claims may resume before finalization; the
 reconciler is ADMIN-only and paused-gated per entry, so the window it leaves open
 is authorization-bounded rather than time-bounded.
 
