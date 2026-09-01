@@ -8788,4 +8788,24 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
+  // ---- Codex #2036 r27 ----
+
+  it('a PARENTHESIZED spread is still a spread', () => {
+    // `{...(process.env)}` passes the ambient environment through exactly as
+    // `{...process.env}` does. Requiring an identifier after the operator
+    // classified the object as closed, which is the one thing in the model that
+    // can prove no environment is selected.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {...(process.env)}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
 });

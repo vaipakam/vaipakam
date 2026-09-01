@@ -3388,7 +3388,15 @@ function notInsideString(text, at) {
  * inverts it.
  */
 function envObjectIsClosed(body) {
-  if (/\.{3}\s*[A-Za-z_$]|\*\*\s*[A-Za-z_$]|\bos\.environ\b/.test(body)) return false;
+  // ANY SPREAD, not one followed directly by an identifier. `{...(process.env)}`
+  // passes the ambient environment through exactly as `{...process.env}` does,
+  // and requiring an identifier next classified it as closed (Codex #2036 r27).
+  //
+  // Deliberately matched by the OPERATOR alone. This predicate is the only
+  // thing in the model that can prove a negative, so its job is to find a
+  // reason to doubt, not to parse what is being spread — and a `...` appearing
+  // in a string or comment inside the object costs only a report.
+  if (/\.{3}|\*\*\s*[A-Za-z_$({]|\bos\.environ\b/.test(body)) return false;
   // A bracketed key holding anything but a single quoted literal is computed.
   for (const m of body.matchAll(/\[([^\]]*)\]\s*:/g)) {
     if (!/^\s*(?:"[^"]*"|'[^']*'|`[^`$]*`)\s*$/.test(m[1])) return false;
@@ -3528,7 +3536,9 @@ function envValueFromOptions(text) {
     // is already the rule here; a spread is simply a later assignment whose
     // value cannot be read.
     const after = body.slice(m.index + m[0].length);
-    if (/\.{3}\s*[A-Za-z_$]|\*\*\s*[A-Za-z_$]/.test(after)) return null;
+    // The same operator-only rule as `envObjectIsClosed` (#2036 r27): a spread
+    // is a later assignment whose value cannot be read, however it is written.
+    if (/\.{3}|\*\*\s*[A-Za-z_$({]/.test(after)) return null;
     const v = m[1] ?? m[2] ?? m[3];
     // A bare identifier is a binding this scanner cannot follow. It still
     // SELECTS an environment — the predicate says so — but it names none, and
