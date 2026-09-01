@@ -1628,10 +1628,14 @@ of borrower collateral rather than reverting.
    mirror lacking the per-day funding property is still an exposure.
 
    A removed mirror drops out of reachability only when it is absent from
-   the expected-source list AND its lane or era is genuinely unreachable
-   (a rotated-away era cannot arm and its legacy wire cannot apply) OR every
-   qualifying standing day has already been applied — so no fresh apply
-   remains to open a gate.
+   the expected-source list AND every gate-opening path is exhausted — its
+   era rotated away and its lane gone, so no wire reaches it at all.
+
+   "Every qualifying standing day applied" was offered here as an
+   alternative and is NOT sufficient on its own: an authenticated replay
+   installs `D*` on a mirror that has none, so an applied day is still a
+   usable arming path. What matters is whether any wire can still open a
+   claim gate on that mirror, not whether a particular day is spent.
 
 **This is the one definition. Everything else in this runbook refers to it
 rather than restating it** — the two places that restated it drifted apart three
@@ -1672,10 +1676,17 @@ targetable.
 
 **Treat an authenticated V3 replay as an arming path.** A removed mirror is
 excluded from the gate only if it is absent from the expected-source list AND
-either its era has been rotated away (a retired legacy wire cannot arm — that
-exclusion is deliberate and tested) or it is already armed (`D*` is one-shot;
-a replay fills an empty slot, never re-chooses a set one). "Applied" on its
-own is no longer a safety property. **Do not run the cycle
+**every gate-opening path is exhausted** — its era rotated away and its lane
+gone, so no wire can reach it at all.
+
+Neither "already armed" nor "every standing day applied" is sufficient, and
+both appeared in earlier revisions of this paragraph. Armed does not exclude:
+`D*` being one-shot stops a second ARMING, not `broadcastGlobalTo`, and a
+fresh apply of an unapplied standing day opens that day's claim gate whatever
+`armedFromDay` holds. All-applied does not exclude either: an authenticated
+replay installs `D*` on a mirror that has none. **The exposure is a claim
+gate being opened on a mirror that does not enforce the per-day funding
+property — arming is one way to reach that, not the only one.** **Do not run the cycle
 below, and do not unpause the reward messenger, while that is true of any such
 mirror** — see "the one safe branch" and the dead-end list further down, which
 record five procedures that were each tried against this and refuted. The cycle

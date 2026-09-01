@@ -719,7 +719,12 @@ contract RewardAggregatorFacet is
     ///         B2-b") implied the field would populate at a milestone that
     ///         has since passed.
     ///
-    ///         It is READ, though — do not mistake "always 0" for "inert".
+    ///         And it is both WRITTEN and READ since #1569 armed it — the
+    ///         "always 0" framing this paragraph used is retired. Do not
+    ///         mistake the missing-stamp fallback's zero for the field's
+    ///         value: `_stampOne` computes it from the destination's
+    ///         reported day inflow, charges `chainKeeperAllocDebited` on
+    ///         Base, and the receiver adds it to `recycleKeeperBudget`.
     ///         `_perDestFields` puts it in every V2/V3 per-destination
     ///         payload, {VaipakamRewardMessenger} forwards it, and
     ///         {RewardReporterFacet} stores it and REPLAY-COMPARES it: a
