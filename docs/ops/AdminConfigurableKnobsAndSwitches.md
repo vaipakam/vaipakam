@@ -595,18 +595,39 @@ outright, so a stored zero there always means "never configured". An
 operator who assumes one convention across the group will either arm a
 feature they meant to leave off or leave one off they meant to arm.
 
-### Per-chain keeper allocation (`chainKeeperAllocateBps`) — #1569
+### Per-chain keeper allocation (`chainKeeperAllocateBps`)
 
-| | |
-| --- | --- |
-| Setter / getter | `RewardAggregatorFacet.setChainKeeperAllocateBps(uint32 chainId, uint16 bps)` / `getChainKeeperAllocateBps(uint32)` |
-| Auth | `ADMIN_ROLE` **and** `onlyCanonical` — a mirror must not be able to grant itself keeper budget. That qualifier is the point of the card, not a formality |
-| Sentinel | `0` is **DARK** — instructs nothing, and is the deploy default, so the whole channel ships off and each destination is armed individually |
-| Ceiling | `RECYCLE_REGISTER_KEEPER_MAX_BPS` (**5,000 = 50%**), the same bound the LOCAL register weight carries, so neither allocation surface can earmark more than half a bucket |
-| Target | **MUST NOT be the canonical chain.** Reverts `KeeperAllocateTargetIsCanonical`. Base is never a "local" funder in the mesh split, so a value stored against its own id could never produce an allocation; Base's own keeper share is `ConfigFacet.setRecycleRegisterKeeperBps` instead |
-| Timing | **Per day and frozen at finalization.** A change affects LATER days only; a day already stamped keeps the figure it was stamped with, and re-broadcasting it with a different one is refused by the mirror's replay equality check |
-| Effect | Instructs the destination chain to earmark that share of its own locally-funded commit into its keeper-incentive register. It is a SECOND draw on that chain's bucket, bounded by the headroom the commit leaves — not a haircut on the commit — and it is netted out of that chain's reported availability so Base cannot instruct the same tokens twice |
-| Readback | `getChainKeeperDraw(uint32)` shows the resulting live draw; `ops/mesh-watcher` re-derives availability from it and pages on disagreement |
+The share of a mirror chain's own locally-funded recycled commit that
+the canonical chain instructs it to earmark for that chain's
+keeper-incentive register. Default **0**, which is **dark** — it
+instructs nothing, and it is what every chain ships with, so each
+destination is armed deliberately and individually. Range **[0, 50%]**,
+the same ceiling the local register weight carries, so that neither
+allocation surface can earmark more than half a bucket.
+
+Settable only on the canonical chain and only by an admin. That
+restriction is the substance of the arrangement rather than a
+formality: a mirror must not be able to grant itself keeper budget, so
+the instruction travels outbound and a receiving chain reads one it
+was sent but never sets one.
+
+**The canonical chain is not a valid destination** and is refused
+outright. It is never a "local" funder in the mesh split — its own
+slice is drawn from the pool the global ledger already governs — so a
+value stored against its own identifier could never produce an
+allocation, and storing it would report an armed configuration that
+cannot move a single unit. The canonical chain's own keeper share is
+the LOCAL recycle register weight instead.
+
+Each day freezes the figure in force when that day was finalized, so a
+change affects later days only; re-sending an already-settled day with
+a different figure is refused by the receiving chain. The earmark is a
+second claim on that chain's pool rather than a deduction from the
+commitment — bounded by whatever room the commitment leaves — and it is
+netted out of the availability the canonical chain sees, so the same
+value can never be instructed twice. The resulting live figure is
+readable per chain, and the mesh watcher re-derives availability from
+it and raises an alert if its answer disagrees with the chain's.
 
 ### Platform recycling margin (`recycleMarginBps`)
 

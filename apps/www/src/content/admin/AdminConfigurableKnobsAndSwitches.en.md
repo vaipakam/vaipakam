@@ -589,11 +589,45 @@ convention.
 **Sentinel conventions differ on purpose.** `setRecycleMarginBps`,
 `setRecycleTariffKPer1e18EthDay`, `setTariffKPerLifYear` and
 `setRewardHaircutBps` treat a stored `0` as **reset-to-library-default**.
-`setRewardClaimHorizonDays` and `setRecycleSurplusMultiple` treat `0` as
-**dark — feature off**. `setUserSideShareCapBps` **rejects** `0`
+`setRewardClaimHorizonDays`, `setRecycleSurplusMultiple` and
+`setChainKeeperAllocateBps` treat `0` as **dark — feature off**. `setUserSideShareCapBps` **rejects** `0`
 outright, so a stored zero there always means "never configured". An
 operator who assumes one convention across the group will either arm a
 feature they meant to leave off or leave one off they meant to arm.
+
+### Per-chain keeper allocation (`chainKeeperAllocateBps`)
+
+The share of a mirror chain's own locally-funded recycled commit that
+the canonical chain instructs it to earmark for that chain's
+keeper-incentive register. Default **0**, which is **dark** — it
+instructs nothing, and it is what every chain ships with, so each
+destination is armed deliberately and individually. Range **[0, 50%]**,
+the same ceiling the local register weight carries, so that neither
+allocation surface can earmark more than half a bucket.
+
+Settable only on the canonical chain and only by an admin. That
+restriction is the substance of the arrangement rather than a
+formality: a mirror must not be able to grant itself keeper budget, so
+the instruction travels outbound and a receiving chain reads one it
+was sent but never sets one.
+
+**The canonical chain is not a valid destination** and is refused
+outright. It is never a "local" funder in the mesh split — its own
+slice is drawn from the pool the global ledger already governs — so a
+value stored against its own identifier could never produce an
+allocation, and storing it would report an armed configuration that
+cannot move a single unit. The canonical chain's own keeper share is
+the LOCAL recycle register weight instead.
+
+Each day freezes the figure in force when that day was finalized, so a
+change affects later days only; re-sending an already-settled day with
+a different figure is refused by the receiving chain. The earmark is a
+second claim on that chain's pool rather than a deduction from the
+commitment — bounded by whatever room the commitment leaves — and it is
+netted out of the availability the canonical chain sees, so the same
+value can never be instructed twice. The resulting live figure is
+readable per chain, and the mesh watcher re-derives availability from
+it and raises an alert if its answer disagrees with the chain's.
 
 ### Platform recycling margin (`recycleMarginBps`)
 
