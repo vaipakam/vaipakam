@@ -58,6 +58,22 @@ instruction to anyone implementing or writing copy from the top of the file.
 
 ## Mechanics
 
+**A deposit-on-behalf variant needs a refund owner before it is permitted.**
+The acceptance criteria screen that selector for sanctions, but the bond record
+is keyed by `(operator, role)` and carries no depositor interest at all — so
+nothing says who owns the refundable principal. Letting the operator `unbond`
+turns a third party's payment into a gift they never consented to; giving refund
+rights to the payer cannot represent two contributors and can stop the operator
+managing their own aggregate bond.
+
+Neither is a detail to settle in implementation, because they are different
+products. **Either an explicit consented-gift model** — the deposit is
+irrevocably the operator's on arrival, stated as such at the call site, and the
+payer has no claim — **or tracked depositor shares**, with withdrawal
+authorization and the refund recipient both bound to those shares. Until one is
+chosen, the on-behalf variant does not ship; screening a selector whose
+ownership semantics are undefined only makes it *safely* ambiguous.
+
 **Bonds are a VPFI custody class, and the token-rotation lifecycle must know
 about them.** `VPFITokenFacet.setVPFIToken` can rotate the live token, and its
 own NatSpec requires the pause-drain-rotate procedure in
@@ -76,6 +92,21 @@ withdrawal. So, before bonds ship, **either**:
 - **the record snapshots the token** (or a token epoch) and a **dual-token
   migration withdrawal** exists, so an operator bonded in the old asset can
   still exit in it.
+
+  **One `token` plus one `amount` per `(role, operator)` is not enough for that
+  branch**, which the struct below only half-fixes. After a rotation an operator
+  may hold an old-token bond and then `postBond` in the new live token:
+  overwriting `token` mislabels the old principal, and adding to `amount` mixes
+  two assets `unbond` cannot apportion — so the operator either withdraws the
+  wrong asset or cannot withdraw at all.
+
+  So the dual-token branch means **per-token (or per-epoch) sub-balances**, or
+  **rejecting new-token deposits until the old-token balance is fully
+  withdrawn**. The rejection is much simpler and pushes operators toward the
+  drain the rotation wants anyway; sub-balances only earn their complexity if
+  bonds must stay continuously posted across a rotation. Either way the
+  acceptance case is the sequence **rotate → raise → unbond**, which no
+  single-slot record survives.
 
 The first is simpler and matches the existing procedure. The second is only
 worth building if bonds are expected to be long-lived enough that draining them
@@ -340,6 +371,24 @@ inside that gap. Unbound, an operator acting at 10% can lose 25% because
 governance raised the rate before the evidence resolved — and a reduction in the
 same window would discount an offence already committed. Both are the rule
 changing after the act.
+
+**Bind the BASE to the action too, not only the rate.** Debiting `slashBps` of
+the CURRENT balance means an operator who raises their bond after the offending
+action but before its proof resolves has the top-up confiscated — capital that
+was not securing anything when the action was accepted. The action-time rate
+snapshot does not help: it fixes the percentage and leaves the principal it
+applies to floating upward.
+
+So the **action-consumption record carries the bond balance as well as the
+rate**, and the slash debits `min(actionTimeBalance × slashBps, currentBalance)`
+— the action-time figure bounds the exposure, and the clamp handles a balance
+that has since fallen. Equivalently, later deposits are epoched so a proof
+cannot reach capital posted after its action.
+
+This matters more than it looks: without it, raising a bond while any proof is
+outstanding increases your exposure to offences you have already committed,
+which is a direct disincentive to add capacity — the opposite of what the
+capacity deposit is for.
 
 **Bind the rate to the action, not to the commitment.** An earlier revision said
 to stamp the epoch into the commitment, which does not work: the commitment is
