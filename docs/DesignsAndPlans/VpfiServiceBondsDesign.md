@@ -464,7 +464,16 @@ zero.
 So: a canonical **domain-separated offence ID** over chain, contract, operator,
 role, offence kind, the action, and the commitment; marked consumed **before**
 the debit, not after; with duplicate submission and cross-role replay both
-tested. v1's immediate in-call recording does not need this — the observation
+tested.
+
+**For a MULTI-ARTIFACT offence the identity must be order-independent**, which a
+naive recipe is not. Equivocation is two conflicting signed statements, so
+hashing `(A, B)` and `(B, A)` yields two ids for one offence and the same
+equivocation debits twice — and any variation in proof encoding or signature
+packaging does the same. The id is therefore computed over the
+**canonically SORTED digests of the statements themselves**, independent of the
+proof's encoding, so the offence has one identity no matter how it is submitted.
+**Reversed-order submission is an acceptance case.** v1's immediate in-call recording does not need this — the observation
 and the debit are the same call — which is exactly why it is easy to omit when
 the attested tier lands, and why it is written down here rather than there.
 
@@ -570,10 +579,16 @@ whole rule:
 
   **The fix is to compute and RESERVE each proof's liability when the action is
   accepted, not when the proof resolves.** At acceptance, the debit is
-  `slashBps` of the action-time eligible remainder — already the action-time base
-  the section above requires — and that amount is reserved against the named
-  tranches, invisible to any later action's eligible remainder. Resolution then
-  executes the reserved figure (clamped to what survives).
+  `slashBps` of the **action-time TOTAL eligible tranche balance** — not of what
+  is left after earlier reservations — and that amount is reserved against the
+  named tranches. Resolution then executes the reserved figure (clamped to what
+  survives).
+
+  **The base is the total, at every step.** An earlier revision said "eligible
+  remainder" here and explained below that prior reservations shrink the next
+  action's base, which reproduces the 10, 9, 8.1 … sequence and leaves the
+  admission check unable to exhaust anything — the shielding attack surviving in
+  the canonical computation while the corrected rule sat two paragraphs down.
 
   **Reservations are a finite resource, and that has to be admission-controlled
   or the scheme is gameable in one direction and self-locking in the other.** If
