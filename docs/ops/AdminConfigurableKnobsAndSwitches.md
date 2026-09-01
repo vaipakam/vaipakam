@@ -589,11 +589,83 @@ convention.
 **Sentinel conventions differ on purpose.** `setRecycleMarginBps`,
 `setRecycleTariffKPer1e18EthDay`, `setTariffKPerLifYear` and
 `setRewardHaircutBps` treat a stored `0` as **reset-to-library-default**.
-`setRewardClaimHorizonDays` and `setRecycleSurplusMultiple` treat `0` as
-**dark — feature off**. `setUserSideShareCapBps` **rejects** `0`
+`setRewardClaimHorizonDays`, `setRecycleSurplusMultiple` and
+`setChainKeeperAllocateBps` treat `0` as **dark — feature off**. `setUserSideShareCapBps` **rejects** `0`
 outright, so a stored zero there always means "never configured". An
 operator who assumes one convention across the group will either arm a
 feature they meant to leave off or leave one off they meant to arm.
+
+### Spend-gated perk configuration (`perkPriceVpfi`, `perkDurationSeconds`)
+
+Price and shape of each consumable perk a user may buy with VPFI from their
+own vault. Both are set together, per perk, by an admin.
+
+A price of **zero means the perk is NOT FOR SALE** — dark, and the deploy
+default, so the whole channel ships closed and each perk is armed
+individually. A duration of **zero selects a COUNTED perk** — the buyer
+accumulates redeemable units instead of a time window — so zero carries a
+different meaning in each of the two fields, and neither is a reset
+sentinel.
+
+**A perk's kind is frozen at its first sale.** Price stays adjustable
+afterwards and the perk stays withdrawable, but duration does not change:
+entitlements live as per-holder records nothing can walk, so switching a
+sold perk between timed and counted would strand its holders on a basis the
+perk no longer reads. A different meaning takes a new perk identifier.
+
+Purchases bind the terms the buyer stated — a ceiling on the total charge
+and the exact entitlement being bought — so a re-price between signing and
+settlement fails the purchase rather than silently charging more. Withdrawing
+a perk from sale stops further purchases and leaves entitlements already
+bought untouched.
+
+**This setter stays callable while the protocol is PAUSED**, deliberately —
+a pause is when withdrawing an armed offer is most wanted, and gating the
+setter behind it would remove that lever.
+
+It can also ARM during a pause. Purchases are blocked while the pause holds,
+but a price written during one persists and the perk is for sale the instant
+the pause lifts, with no second action required. Treat an arming write made
+during containment as a scheduled arming and re-check it before unpausing.
+
+### Per-chain keeper allocation (`chainKeeperAllocateBps`)
+
+The share of a mirror chain's own REPORTED DAY INFLOW that the canonical
+chain instructs it to earmark for that chain's keeper-incentive register.
+The chain's locally-funded commit is the CAP rather than the base: the
+earmark is bounded by whatever room that commit leaves in the chain's
+availability, but it is not a percentage of it. An operator estimating the
+figure from claim demand will get it wrong, most visibly on a low-demand
+day. (It does still require the day to have SOME claim demand — a day with
+no global interest stamps nothing at all.) Default **0**, which is **dark** — it
+instructs nothing, and it is what every chain ships with, so each
+destination is armed deliberately and individually. Range **[0, 50%]**,
+the same ceiling the local register weight carries, so that neither
+allocation surface can earmark more than half a bucket.
+
+Settable only on the canonical chain and only by an admin. That
+restriction is the substance of the arrangement rather than a
+formality: a mirror must not be able to grant itself keeper budget, so
+the instruction travels outbound and a receiving chain reads one it
+was sent but never sets one.
+
+**The canonical chain is not a valid destination** and is refused
+outright. It is never a "local" funder in the mesh split — its own
+slice is drawn from the pool the global ledger already governs — so a
+value stored against its own identifier could never produce an
+allocation, and storing it would report an armed configuration that
+cannot move a single unit. The canonical chain's own keeper share is
+the LOCAL recycle register weight instead.
+
+Each day freezes the figure in force when that day was finalized, so a
+change affects later days only; re-sending an already-settled day with
+a different figure is refused by the receiving chain. The earmark is a
+second claim on that chain's pool rather than a deduction from the
+commitment — bounded by whatever room the commitment leaves — and it is
+netted out of the availability the canonical chain sees, so the same
+value can never be instructed twice. The resulting live figure is
+readable per chain, and the mesh watcher re-derives availability from
+it and raises an alert if its answer disagrees with the chain's.
 
 ### Platform recycling margin (`recycleMarginBps`)
 

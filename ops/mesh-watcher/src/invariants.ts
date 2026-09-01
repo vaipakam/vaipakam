@@ -42,6 +42,18 @@ export interface BaseChainBooks {
   /** Reservations Base booked and the chain has not yet retired. */
   outstanding: bigint;
   /**
+   * #1569 M4 C3 — the chain's keeper-earmark draw, from
+   * `getChainKeeperDraw`: the third subtrahend of the availability
+   * formula, alongside the claim net and the repatriation draw.
+   *
+   * `undefined` means UNKNOWN — the view could not be read, for ANY
+   * reason INCLUDING a missing selector, with the same reasoning the
+   * repatriation draw records below: storage survives a facet cut, so
+   * selector absence proves nothing about the value. Availability cannot
+   * be re-derived without it, so the dependent check SKIPS.
+   */
+  keeperDraw?: bigint;
+  /**
    * #1568 C2 — the chain's repatriation draw pair, from
    * `getChainRepatriationDraw`. `netDraw` is the LIVE availability term
    * (outstanding + settled Mode-A charges, already net of releases —
@@ -332,8 +344,22 @@ export function satSub(a: bigint, b: bigint): bigint {
  */
 export function expectedAvail(b: BaseChainBooks): bigint {
   return satSub(
-    satSub(b.reported, satSub(b.consumed, b.released)),
-    b.repat?.netDraw ?? 0n,
+    satSub(
+      satSub(b.reported, satSub(b.consumed, b.released)),
+      b.repat?.netDraw ?? 0n,
+    ),
+    // #1569 M4 C3 — the THIRD subtrahend, matching `mirrorAvailRecycled`
+    // (Codex #2031 r3). The keeper earmark deliberately does NOT ride
+    // `consumed` — that counter is one half of the on-chain
+    // `outstanding + retired == consumed` identity — so it has to appear
+    // here explicitly or this formula silently disagrees with the chain by
+    // exactly the earmark, and pages a CRITICAL on a healthy armed chain.
+    //
+    // The `?? 0n` is a TOTAL-FUNCTION guard only, exactly as above:
+    // `checkHardInvariants` gates on definedness before relying on this,
+    // because an UNKNOWN draw must skip the check rather than be read as
+    // zero.
+    b.keeperDraw ?? 0n,
   );
 }
 
@@ -538,7 +564,13 @@ export function checkHardInvariants(
     // includes a missing selector (r5): a partial facet refresh leaves
     // possibly-nonzero storage behind a reverting view, so selector
     // absence proves nothing about the value.
-    if (b.repat !== undefined) {
+    // BOTH draws must be known (#1569 M4 C3, Codex #2031 r3). The keeper
+    // earmark is a third subtrahend, so an unknown one manufactures the
+    // same false CRITICAL an unknown repatriation draw would — the
+    // re-derivation would come out high by exactly the earmark on every
+    // armed chain. Its read failure is reported as a `base-books-keeper`
+    // coverage gap.
+    if (b.repat !== undefined && b.keeperDraw !== undefined) {
       const wantAvail = expectedAvail(b);
       if (b.avail !== wantAvail) {
         add(
@@ -546,14 +578,62 @@ export function checkHardInvariants(
           'definition',
           b.chainId,
           'Availability does not match its definition',
-          `avail != max(0, reported - max(0, consumed - released) - repatNet)\n` +
-            `  reported = ${fmt(b.reported)}\n` +
-            `  consumed = ${fmt(b.consumed)}\n` +
-            `  released = ${fmt(b.released)}\n` +
-            `  repatNet = ${fmt(b.repat.netDraw)}\n` +
-            `  expected = ${fmt(wantAvail)}\n` +
-            `  on-chain = ${fmt(b.avail)}`,
-          [b.avail, b.reported, b.consumed, b.released, b.repat.netDraw],
+          `avail != max(0, reported - max(0, consumed - released) - repatNet - keeperNet)\n` +
+            `  reported  = ${fmt(b.reported)}\n` +
+            `  consumed  = ${fmt(b.consumed)}\n` +
+            `  released  = ${fmt(b.released)}\n` +
+            `  repatNet  = ${fmt(b.repat.netDraw)}\n` +
+            `  keeperNet = ${fmt(b.keeperDraw)}\n` +
+            `  expected  = ${fmt(wantAvail)}\n` +
+            `  on-chain  = ${fmt(b.avail)}`,
+          [
+            b.avail,
+            b.reported,
+            b.consumed,
+            b.released,
+            b.repat.netDraw,
+            b.keeperDraw,
+          ],
+        );
+      }
+    }
+
+    // #1569 M4 C3 — the THIRD draw on the same reported capacity, checked
+    // separately for the saturation-blindness reason `consumed-cap`
+    // documents: if this bound broke, `expectedAvail` would floor to zero,
+    // the on-chain figure would floor to zero too, and
+    // `availability-formula` would agree while the over-draw stayed
+    // invisible.
+    //
+    // Against the remainder AFTER both the claim net and the repatriation
+    // draw, because all three share one capacity and each being
+    // individually within `reported` still over-commits it when the sum is
+    // not — the same two-comparison form `repat-cap` uses. Requires both
+    // other draw terms to be known, for the same reason that check does.
+    if (b.repat !== undefined && b.keeperDraw !== undefined) {
+      const afterClaims = satSub(b.reported, satSub(b.consumed, b.released));
+      const remainder = satSub(afterClaims, b.repat.netDraw);
+      if (b.keeperDraw > remainder) {
+        add(
+          'keeper-cap',
+          'vs-remainder',
+          b.chainId,
+          "Keeper earmark exceeds the chain's un-instructed capacity",
+          `keeperNet > reported - (consumed - released) - repatNet — Base has earmarked more for keepers than the chain reported holding net of every other draw\n` +
+            `  keeperNet = ${fmt(b.keeperDraw)}\n` +
+            `  consumed  = ${fmt(b.consumed)}\n` +
+            `  released  = ${fmt(b.released)}\n` +
+            `  repatNet  = ${fmt(b.repat.netDraw)}\n` +
+            `  reported  = ${fmt(b.reported)}\n` +
+            `  remainder = ${fmt(remainder)}\n` +
+            `  excess    = ${fmt(b.keeperDraw - remainder)}`,
+          [
+            b.keeperDraw,
+            b.consumed,
+            b.released,
+            b.repat.netDraw,
+            b.reported,
+          ],
         );
       }
     }
@@ -572,6 +652,20 @@ export function checkHardInvariants(
       if (b.released !== 0n) nonZero.push(`released = ${fmt(b.released)}`);
       if (b.outstanding !== 0n)
         nonZero.push(`outstanding = ${fmt(b.outstanding)}`);
+      // #1569 M4 C3 (Codex #2031 r17) — the keeper draw belongs here for
+      // exactly the same reason as the four above: BOTH writers structurally
+      // exclude the canonical id (`setChainKeeperAllocateBps` reverts on it,
+      // and `_stampOne` gates the whole block on `chainId != baseId`), so a
+      // non-zero Base keeper draw cannot arise from correct operation and is
+      // per-chain bookkeeping corruption.
+      //
+      // Without it the value hides: `expectedAvail` folds it in as a
+      // legitimate subtrahend, and `keeper-cap` accepts it while it fits
+      // under `reported`, so a writer regression on Base leaves every other
+      // check green. UNKNOWN is skipped rather than read as zero, the same
+      // discipline the draw's other checks use.
+      if (b.keeperDraw !== undefined && b.keeperDraw !== 0n)
+        nonZero.push(`keeperDraw = ${fmt(b.keeperDraw)}`);
       if (nonZero.length > 0) {
         add(
           'base-self-inert',
@@ -579,7 +673,13 @@ export function checkHardInvariants(
           b.chainId,
           'Canonical chain has per-chain commit books',
           `Base never instructs itself, so every per-chain commit figure under its own chain id must stay zero:\n  ${nonZero.join('\n  ')}`,
-          [b.consumed, b.retired, b.released, b.outstanding],
+          [
+            b.consumed,
+            b.retired,
+            b.released,
+            b.outstanding,
+            b.keeperDraw ?? 0n,
+          ],
         );
       }
     }

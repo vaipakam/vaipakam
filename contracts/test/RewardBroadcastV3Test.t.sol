@@ -4,7 +4,9 @@ pragma solidity ^0.8.29;
 import {SetupTest} from "./SetupTest.t.sol";
 
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
+import {ConfigFacet} from "../src/facets/ConfigFacet.sol";
 import {RewardAggregatorFacet} from "../src/facets/RewardAggregatorFacet.sol";
+import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
 import {RewardCommitmentFacet} from "../src/facets/RewardCommitmentFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
@@ -68,8 +70,21 @@ abstract contract RewardBroadcastV3Harness is SetupTest, IVaipakamErrors {
         return RewardReporterFacet(address(diamond));
     }
 
+    /// #1569 — the keeper earmark is read through the same register view
+    /// the LOCAL register uses, so both allocation paths are observed
+    /// identically.
+    function _cfg() internal view returns (ConfigFacet) {
+        return ConfigFacet(address(diamond));
+    }
+
     function _agg() internal view returns (RewardAggregatorFacet) {
         return RewardAggregatorFacet(address(diamond));
+    }
+
+    /// #1569 — broadcast moved to its own facet for EIP-170 headroom.
+    /// Same Diamond, same selectors; only the cast type changed.
+    function _bcast() internal view returns (RewardBroadcastFacet) {
+        return RewardBroadcastFacet(address(diamond));
     }
 
     function _mut() internal view returns (TestMutatorFacet) {
@@ -381,7 +396,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         // {testFinalizeFreezesDayLapseClock}.
         (uint64 frozenAt, , , ) = _com().getDayLapseClock(dayId);
 
-        _agg().broadcastGlobal(dayId);
+        _bcast().broadcastGlobal(dayId);
         assertEq(messenger.broadcastV3Count(), 1);
         (uint64 at1, uint32 v1, uint64 w1, uint64 g1, , ) =
             messenger.lastV3Extras();
@@ -394,7 +409,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         _com().setLapseSchedule(10 days, 48 hours);
         vm.warp(block.timestamp + 30 days);
 
-        _agg().broadcastGlobal(dayId);
+        _bcast().broadcastGlobal(dayId);
         assertEq(messenger.broadcastV3Count(), 2);
         (uint64 at2, uint32 v2, uint64 w2, uint64 g2, , ) =
             messenger.lastV3Extras();
@@ -434,7 +449,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         _com().setLapseSchedule(7 days, 24 hours);
         _reportAndFinalizeDay1();
 
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
 
         assertEq(messenger.broadcastV3Count(), 1, "V3 wire used");
         assertEq(messenger.broadcastV2Count(), 0);
@@ -455,7 +470,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         _com().setLapseSchedule(7 days, 24 hours);
         _reportAndFinalizeDay1();
 
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
 
         assertEq(messenger.broadcastV3Count(), 0);
         assertEq(messenger.broadcastV2Count(), 1, "V2 fallback used");
@@ -472,7 +487,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         _reportAndFinalizeDay1();
         _mut().clearDayLapseClockRaw(1);
 
-        _agg().broadcastGlobal(1);
+        _bcast().broadcastGlobal(1);
 
         assertEq(messenger.broadcastV3Count(), 0, "no zero-clock V3 sent");
         assertEq(messenger.broadcastV2Count(), 1, "clockless day rides V2");
@@ -485,11 +500,11 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         _reportAndFinalizeDay1();
 
         // Clock present + V3-capable: V3 pricing (lane × 3 marker).
-        assertEq(_agg().quoteBroadcastGlobal(1), 0.3 ether, "V3 quote");
+        assertEq(_bcast().quoteBroadcastGlobal(1), 0.3 ether, "V3 quote");
 
         // Clockless: the quote prices the V2 wire the send would use.
         _mut().clearDayLapseClockRaw(1);
-        assertEq(_agg().quoteBroadcastGlobal(1), 0.1 ether, "V2 quote");
+        assertEq(_bcast().quoteBroadcastGlobal(1), 0.1 ether, "V2 quote");
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -508,7 +523,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         messenger.setBroadcastDestinations(only);
 
         vm.prank(alice); // permissionless
-        _agg().broadcastGlobalTo(1, CHAIN_ARB);
+        _bcast().broadcastGlobalTo(1, CHAIN_ARB);
 
         assertEq(messenger.broadcastV3SingleCount(), 1, "single V3 sent");
         (
@@ -533,7 +548,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         uint256 dayId = _armAndFinalizeWithOpZeroed();
 
         vm.prank(alice);
-        _agg().broadcastGlobalTo(dayId, CHAIN_OP);
+        _bcast().broadcastGlobalTo(dayId, CHAIN_OP);
 
         assertEq(messenger.broadcastV3SingleCount(), 1);
         (, bool zeroed) = messenger.lastV3SingleDest();
@@ -557,7 +572,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         messenger.setBroadcastDestinations(only); // OP off the list too
 
         vm.prank(alice);
-        _agg().broadcastGlobalTo(dayId, CHAIN_OP);
+        _bcast().broadcastGlobalTo(dayId, CHAIN_OP);
         assertEq(
             messenger.broadcastV3SingleCount(),
             1,
@@ -577,7 +592,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
                 DestinationHasNoDayStanding.selector, 1, uint256(CHAIN_UNKNOWN)
             )
         );
-        _agg().broadcastGlobalTo(1, CHAIN_UNKNOWN);
+        _bcast().broadcastGlobalTo(1, CHAIN_UNKNOWN);
     }
 
     function testHealRevertsForSelfAndOverwideChainId() public {
@@ -590,7 +605,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
                 DestinationHasNoDayStanding.selector, 1, uint256(CHAIN_BASE)
             )
         );
-        _agg().broadcastGlobalTo(1, CHAIN_BASE);
+        _bcast().broadcastGlobalTo(1, CHAIN_BASE);
 
         uint256 wide = uint256(type(uint32).max) + 1;
         vm.expectRevert(
@@ -598,7 +613,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
                 DestinationHasNoDayStanding.selector, 1, wide
             )
         );
-        _agg().broadcastGlobalTo(1, wide);
+        _bcast().broadcastGlobalTo(1, wide);
     }
 
     function testHealRevertsOnClocklessDay() public {
@@ -610,13 +625,13 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         vm.expectRevert(
             abi.encodeWithSelector(DayHasNoLapseClock.selector, 1)
         );
-        _agg().broadcastGlobalTo(1, CHAIN_ARB);
+        _bcast().broadcastGlobalTo(1, CHAIN_ARB);
     }
 
     function testHealRevertsBeforeFinalization() public {
         _configureCanonical();
         vm.expectRevert(DayNotReadyToFinalize.selector);
-        _agg().broadcastGlobalTo(1, CHAIN_ARB);
+        _bcast().broadcastGlobalTo(1, CHAIN_ARB);
     }
 
     /// The heal cannot fall back to V2 — kind-5 carries no clock, so a
@@ -629,10 +644,10 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         _reportAndFinalizeDay1();
 
         vm.expectRevert(MessengerPredatesV3.selector);
-        _agg().broadcastGlobalTo(1, CHAIN_ARB);
+        _bcast().broadcastGlobalTo(1, CHAIN_ARB);
 
         vm.expectRevert(MessengerPredatesV3.selector);
-        _agg().quoteBroadcastGlobalTo(1, CHAIN_ARB);
+        _bcast().quoteBroadcastGlobalTo(1, CHAIN_ARB);
     }
 
     function testQuoteBroadcastGlobalTo() public {
@@ -642,7 +657,7 @@ contract RewardBroadcastV3BaseTest is RewardBroadcastV3Harness {
         _reportAndFinalizeDay1();
 
         assertEq(
-            _agg().quoteBroadcastGlobalTo(1, CHAIN_ARB),
+            _bcast().quoteBroadcastGlobalTo(1, CHAIN_ARB),
             0.15 ether,
             "single-lane V3 pricing"
         );
@@ -1074,6 +1089,274 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         // First-apply-only: the original arming day survives.
         (uint256 armedFromDay, , , ) = _agg().getGovernorCommitState();
         assertEq(armedFromDay, 2, "first-applied arming day unchanged");
+    }
+
+    /// #1944 — a day applied while Base was still UNARMED must not burn that
+    /// day for `D*` propagation.
+    ///
+    /// `broadcastGlobal` is permissionless — `onlyCanonical` tests the chain,
+    /// not the caller — so any third party can apply a finalized day here
+    /// before the arming ceremony runs. The replay branch used to return
+    /// above the one-shot install, and `governorCommitArmedFromDay` cannot be
+    /// re-chosen, so the post-arm rebroadcast of that same day exited
+    /// idempotently and left this mirror unarmable through this path
+    /// entirely. The ceremony cannot close that: every mitigation depends on
+    /// an unapplied day still existing when it is needed, and a third party
+    /// decides that (#1943).
+    function testReplayInstallsArmedDayWhenTheMirrorHasNone() public {
+        _configureMirror(CHAIN_ARB);
+
+        // A racing application of the day, while Base carries no D* yet.
+        RewardBroadcastV3 memory pre = _v3Packet(CHAIN_ARB);
+        pre.v2.armedFromDay = 0;
+        messenger.deliverBroadcastV3(pre);
+
+        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedBefore, 0, "mirror starts unarmed, as the race leaves it");
+
+        // Base arms and rebroadcasts THE SAME day. Every frozen fact matches,
+        // so this is a replay — and the arming day must land.
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+
+        (uint256 armedAfter, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedAfter, 2, "the rebroadcast installed D* on replay");
+    }
+
+    /// …and it stays ONE-SHOT: a replay may fill an empty slot, never
+    /// re-choose an era that is already set. This is the other half of the
+    /// same rule, and without it the fix would turn a permissionless
+    /// broadcast into a way to move an armed mirror's era.
+    function testReplayCannotReChooseAnAlreadyArmedDay() public {
+        _configureMirror(CHAIN_ARB);
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+
+        RewardBroadcastV3 memory later = _v3Packet(CHAIN_ARB);
+        later.v2.armedFromDay = 9;
+        messenger.deliverBroadcastV3(later);
+
+        (uint256 armed, , , ) = _agg().getGovernorCommitState();
+        assertEq(armed, 2, "an armed mirror ignores a later, different D*");
+    }
+
+    /// …and a RETIRED era cannot arm this mirror through that same door.
+    ///
+    /// {LegacyBroadcastRetired} deliberately sits BELOW the replay branch, so
+    /// an already-applied day keeps replaying idempotently forever after a
+    /// rotation. That placement is safe while a replay is a no-op — and the
+    /// install above is not one. Without the exclusion, a delayed or
+    /// re-executed kind-5 packet from the retired era could still CHOOSE this
+    /// mirror's era, which is precisely the authority the rotation withdrew.
+    function testRetiredEraCannotArmThroughAReplay() public {
+        _configureMirror(CHAIN_ARB);
+
+        // The racing application, leaving the mirror unarmed.
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.armedFromDay = 0;
+        messenger.deliverBroadcastV2(pre);
+        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedBefore, 0, "mirror starts unarmed, as the race leaves it");
+
+        // Base rotates. Everything the old era says is now unauthenticated.
+        _rep().setBaseRewardDeployment(address(0xE2));
+
+        // The retired era replays that same day carrying an arming day. The
+        // replay is still ACCEPTED — idempotency after rotation is the
+        // deliberate part — but it must not arm.
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+        (uint256 armedAfterLegacy, , , ) = _agg().getGovernorCommitState();
+        assertEq(
+            armedAfterLegacy, 0, "a retired era cannot choose this mirror's era"
+        );
+
+        // Nothing else about the replay changed: the day stays applied and
+        // the mirror stays usable. Only the ARMING was withheld.
+        assertTrue(_rep().getBroadcastV2Applied(3), "the day is still applied");
+    }
+
+    /// The control for the test above, and the reason it is not vacuous: the
+    /// SAME wire, the SAME day, the SAME replay — differing only in that no
+    /// rotation has happened — must still install `D*`. Without this, a
+    /// change that simply broke the #1944 install on the legacy path would
+    /// pass the retired-era test above and look like a fix.
+    ///
+    /// It also pins the install on the V2 path specifically; #1944's own test
+    /// drives it through V3.
+    function testLegacyReplayArmsWhileTheEraIsStillCurrent() public {
+        _configureMirror(CHAIN_ARB);
+
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.armedFromDay = 0;
+        messenger.deliverBroadcastV2(pre);
+        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedBefore, 0, "mirror starts unarmed");
+
+        messenger.deliverBroadcastV2(_v2Packet(CHAIN_ARB));
+        (uint256 armedAfter, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedAfter, 2, "an era still in force fills the hole");
+    }
+
+    /// The install has to survive the V3 CLOCK-BACKFILL branch too.
+    ///
+    /// A day applied over V2 carries no lapse clock, so its post-arm
+    /// rebroadcast over V3 takes the backfill branch and returns there —
+    /// never reaching `_applyBroadcastV2Core`'s replay install. The mirror
+    /// stayed unarmed and needed a second, unexplained V3 delivery: the
+    /// #1944 defect resurfacing one path over (Codex #2031 r2).
+    function testV3ClockBackfillInstallsArmedDayWhenTheMirrorHasNone()
+        public
+    {
+        _configureMirror(CHAIN_ARB);
+
+        // Applied over V2 while Base carried no D*. No clock is written,
+        // which is what routes the rebroadcast into the backfill branch.
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.armedFromDay = 0;
+        messenger.deliverBroadcastV2(pre);
+        // The LAPSE clock is what routes the rebroadcast into the backfill
+        // branch — not `dayClockEra`, which a V2 apply does set. Asserted so
+        // the test cannot quietly stop exercising that branch.
+        (uint64 finalizedAtBefore, , , ) = _com().getDayLapseClock(3);
+        assertEq(finalizedAtBefore, 0, "V2 leaves no lapse clock");
+        (uint256 armedBefore, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedBefore, 0, "mirror starts unarmed");
+
+        // Base arms and rebroadcasts the same day over V3.
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+
+        (uint256 armedAfter, , , ) = _agg().getGovernorCommitState();
+        assertEq(armedAfter, 2, "the backfill installed D* in one delivery");
+        (uint64 finalizedAtAfter, , , ) = _com().getDayLapseClock(3);
+        assertEq(
+            finalizedAtAfter,
+            1_700_000_000,
+            "and it really was the backfill branch that ran"
+        );
+    }
+
+    /// A day a PRE-#1569 receiver applied must still get its earmark.
+    ///
+    /// The non-atomic rollout case (Codex #2031 r5): Base arms the knob and
+    /// charges `chainKeeperAllocDebited`, the mirror is still on old
+    /// bytecode, so it stores `keeperAllocate` on the day record and marks
+    /// the day applied — but the budget write did not exist yet. Keyed on
+    /// the applied flag the repair could never run, and the two sides would
+    /// diverge silently: Base has reduced what it will instruct while the
+    /// mirror still counts those tokens as fundable.
+    function testReplayRepairsAnUnappliedKeeperEarmark() public {
+        _configureMirror(CHAIN_ARB);
+
+        // Apply the day with NO earmark, then write the stored field
+        // directly. That reproduces the pre-upgrade state exactly: stamp
+        // populated, day applied, budget untouched, flag false.
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.keeperAllocate = 0;
+        messenger.deliverBroadcastV2(pre);
+        _mut().setChainDayFundingKeeperAllocateRaw(3, uint32(CHAIN_ARB), 2e18);
+
+        (, uint256 budgetBefore) = _cfg().getRecycleRegisterState();
+        assertEq(budgetBefore, 0, "the old receiver reserved nothing");
+
+        // The refreshed mirror replays the same day, carrying the earmark
+        // Base instructed. Every frozen fact matches, so this is a replay.
+        RewardBroadcastV2 memory replay = _v2Packet(CHAIN_ARB);
+        replay.keeperAllocate = 2e18;
+        messenger.deliverBroadcastV2(replay);
+
+        (, uint256 budgetAfter) = _cfg().getRecycleRegisterState();
+        assertEq(budgetAfter, 2e18, "the replay completed the earmark");
+
+        // …and STILL at most once: a further replay must not double-credit.
+        messenger.deliverBroadcastV2(replay);
+        (, uint256 budgetAgain) = _cfg().getRecycleRegisterState();
+        assertEq(budgetAgain, 2e18, "the repair is one-shot");
+    }
+
+    /// The V3 clock-backfill branch returns early too, so it needs the same
+    /// repair — otherwise a pre-#1569 day whose rebroadcast arrives over V3
+    /// stays unreserved through the one delivery that was meant to heal it.
+    function testV3ClockBackfillRepairsAnUnappliedKeeperEarmark() public {
+        _configureMirror(CHAIN_ARB);
+
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.keeperAllocate = 0;
+        messenger.deliverBroadcastV2(pre);
+        _mut().setChainDayFundingKeeperAllocateRaw(3, uint32(CHAIN_ARB), 3e18);
+        (, uint256 budgetBefore) = _cfg().getRecycleRegisterState();
+        assertEq(budgetBefore, 0, "nothing reserved yet");
+
+        // A V2 apply leaves no lapse clock, which is what routes this
+        // rebroadcast into the backfill branch.
+        (uint64 finalizedAtBefore, , , ) = _com().getDayLapseClock(3);
+        assertEq(finalizedAtBefore, 0, "no lapse clock, so the backfill runs");
+
+        RewardBroadcastV3 memory v3 = _v3Packet(CHAIN_ARB);
+        v3.v2.keeperAllocate = 3e18;
+        messenger.deliverBroadcastV3(v3);
+
+        (, uint256 budgetAfter) = _cfg().getRecycleRegisterState();
+        assertEq(budgetAfter, 3e18, "the backfill completed the earmark");
+        (uint64 finalizedAtAfter, , , ) = _com().getDayLapseClock(3);
+        assertGt(finalizedAtAfter, 0, "and it really was the backfill branch");
+    }
+
+    // ── #1569 M4 C3 — the Base-authorized keeper allocation ────────────
+
+    /// The instruction EARMARKS inside the mirror's own bucket.
+    ///
+    /// Before this, `keeperAllocate` rode the wire and was stored on the day
+    /// record while nothing read it — the field existed, the effect did not.
+    function testKeeperAllocateInstructionEarmarksOnTheMirror() public {
+        _configureMirror(CHAIN_ARB);
+
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.v2.keeperAllocate = 2e18;
+
+        (, uint256 budgetBefore) = _cfg().getRecycleRegisterState();
+        messenger.deliverBroadcastV3(b);
+        (, uint256 budgetAfter) = _cfg().getRecycleRegisterState();
+
+        assertEq(budgetAfter - budgetBefore, 2e18, "instruction earmarked");
+    }
+
+    /// A zero instruction — every deployment's default — changes nothing.
+    function testZeroKeeperAllocateEarmarksNothing() public {
+        _configureMirror(CHAIN_ARB);
+        (, uint256 before_) = _cfg().getRecycleRegisterState();
+        messenger.deliverBroadcastV3(_v3Packet(CHAIN_ARB));
+        (, uint256 after_) = _cfg().getRecycleRegisterState();
+        assertEq(after_, before_, "unarmed default instructs nothing");
+    }
+
+    /// A REPLAY must not earmark twice. The credit sits inside the whole-day
+    /// idempotency guard for exactly this reason.
+    function testKeeperAllocateIsNotDoubleCreditedOnReplay() public {
+        _configureMirror(CHAIN_ARB);
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.v2.keeperAllocate = 2e18;
+
+        messenger.deliverBroadcastV3(b);
+        (, uint256 once) = _cfg().getRecycleRegisterState();
+        messenger.deliverBroadcastV3(b);
+        (, uint256 twice) = _cfg().getRecycleRegisterState();
+
+        assertEq(twice, once, "replay does not re-earmark");
+    }
+
+    /// …and a day cannot be RE-INSTRUCTED with a different figure. The wire
+    /// field sits under the replay equality check, so this is a revert rather
+    /// than a silent second earmark — the hazard the aggregator's own note
+    /// warns about ("a wire field under an equality check, not an unused
+    /// slot").
+    function testReInstructingAnAppliedDayIsRefused() public {
+        _configureMirror(CHAIN_ARB);
+        RewardBroadcastV3 memory b = _v3Packet(CHAIN_ARB);
+        b.v2.keeperAllocate = 2e18;
+        messenger.deliverBroadcastV3(b);
+
+        RewardBroadcastV3 memory changed = _v3Packet(CHAIN_ARB);
+        changed.v2.keeperAllocate = 3e18;
+        vm.expectRevert(KnownGlobalAlreadySet.selector);
+        messenger.deliverBroadcastV3(changed);
     }
 
     /// A V3 for a day applied via the LEGACY kind-2 wire (known pair set,

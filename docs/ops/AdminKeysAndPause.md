@@ -86,7 +86,7 @@ indifferent.
 `AdminFacet.pause()` sets a single boolean consulted by every `whenNotPaused` modifier (see `LibPausable.sol`).
 
 ### Blocked while paused (47 call sites across 19 facets)
-User flows: `createOffer`, `acceptOffer`, `initiateLoan`, `repayLoan`, `repayPartial`, `triggerLiquidation`, `triggerDefault`, `claimAsLender/Borrower`, `claimStakingRewards`, `claimInteractionRewards`, `addCollateral`, `partialWithdrawCollateral`, every Preclose/Refinance/EarlyWithdrawal/VPFIDiscount entry, `RewardReporterFacet.closeDay`, `RewardAggregatorFacet.finalizeDay`, `RewardAggregatorFacet.broadcastGlobal`, `TreasuryFacet.*`, etc.
+User flows: `createOffer`, `acceptOffer`, `initiateLoan`, `repayLoan`, `repayPartial`, `triggerLiquidation`, `triggerDefault`, `claimAsLender/Borrower`, `claimStakingRewards`, `claimInteractionRewards`, `addCollateral`, `partialWithdrawCollateral`, every Preclose/Refinance/EarlyWithdrawal/VPFIDiscount entry, `RewardReporterFacet.closeDay`, `RewardAggregatorFacet.finalizeDay`, `RewardBroadcastFacet.broadcastGlobal` (moved out of the aggregator for EIP-170 headroom, #1569; selector unchanged), `TreasuryFacet.*`, etc.
 
 ### **Not** blocked by pause (by design)
 - `AccessControlFacet.grantRole / revokeRole / renounceRole`

@@ -219,7 +219,61 @@ question rather than answering it**, and it was absent from the first two
 revisions of this note because I was looking for a better bound rather than for a
 different arrangement.
 
-**The decision is between B, C, D and E.** Option A is retained above as an
+**Option F — do not commingle in the first place: leave user value in the
+user's vault under a LIEN.** (Owner proposal, 2026-08-31.)
+
+All of A–E accept that user-owned VPFI sits in the Diamond's pooled balance and
+argue about how to reason about it. F removes the premise: the four user-owned
+classes stay in their owner's vault, encumbered, and the protocol pulls at the
+moment it is entitled to — never in advance. A reward payout transfers from
+`address(this)`, so value that is not there cannot be reached. No list, no
+counter, no subtraction.
+
+**This is not a new mechanism; it is the repository's dominant one.**
+`LibEncumbrance` already provides `createCollateralLien`,
+`encumberLenderProceeds`, `encumberBorrowerProceeds`, `encumberActiveHeld`,
+`migrateActiveHeld` and `lienIntentCapital`, consumed by `ClaimFacet`,
+`DefaultedFacet`, `AddCollateralFacet`, `EarlyWithdrawalDirectFacet` and
+`BackstopFacet`. Lender and borrower PROCEEDS are already held this way. The
+withdrawal chokepoint is live: `vaultWithdrawERC20` bounds every exit by
+`LibEncumbrance.freeBalance`, and `VPFIDiscountFacet.withdrawVPFIFromVault`
+reverts `VPFIEncumberedByActiveLoan` above it.
+
+So the four classes #1566 is about are the EXCEPTIONS to the house pattern, not
+the rule — and CLAUDE.md states the architecture they depart from outright:
+"Each user's assets are held in their own isolated vault — **no commingling**."
+Read that way, #1566 is not a bound that needs choosing. It is a commingling
+defect in four places, and F is the repair.
+
+*What F does not cover, and must not be assumed to:*
+
+1. **Treasury / payroll.** `treasuryBalances[vpfi]` is a protocol liability, not
+   a user vault, and stays in the shared balance. On a Diamond-as-treasury
+   deployment an unreserved payout can still consume money owed to a real
+   payee. F must be paired with an answer for that class — its own escrow, or
+   its own earmark.
+2. **Grandfathered balances.** Existing `vpfiHeld`, `rebateAmount` and fallback
+   custody are ALREADY in the Diamond, and they are loan-keyed with no
+   enumerable aggregate — the same problem C has. F is more tractable here
+   (each loan's value can be returned to its vault at that loan's next touch,
+   so the exposed remainder shrinks monotonically instead of needing a frozen
+   census) but the remainder still needs a bound while it drains.
+3. **The chokepoint becomes fund-safety-critical.** Today `freeBalance` protects
+   a user from over-withdrawing. Under F it also protects rewards from
+   consuming user money, so every bypass of `vaultWithdrawERC20` becomes a
+   fund-safety hole rather than an accounting one, and deserves that scrutiny.
+4. Each mover must be reworked to pull-at-use: intent fill, fallback seizure and
+   LIF settlement currently take custody up front. Seizure remains possible —
+   the Diamond controls the vault — so the lien is enforceable.
+
+*Relation to D:* F is D's guarantee reached from the other side. D segregates the
+REWARD funding; F declines to commingle the USER funding. Both make the
+ownership question structural rather than accounted, but F reuses machinery that
+already exists and is already tested, and it does not have to re-home remittance
+arrival, expiry routing, forfeit routing or the recycle bucket's credits — which
+is the bulk of D's cost.
+
+**The decision is between B, C, D, E and F.** Option A is retained above as an
 analysed-and-rejected step, not as a candidate: it does not satisfy the
 fund-safety invariant, so presenting it as one of the choices would offer an
 owner something that cannot close the card.
@@ -249,7 +303,7 @@ the 69M schedule authorises can still revert at the cap. Headroom has to be
 reserved for unclaimed entitlements, or the option converts a custody problem
 into a mint-failure one.
 
-**This note does not pick between the four.** **B** establishes
+**This note does not pick between them.** **B** establishes
 "bounded by what was set aside" inside the shared balance, at the cost of a new
 invariant, five writers to reconcile and a migration. **C** narrows the goal to
 the user-owned classes and accepts an operational — and, on a Diamond-as-treasury
@@ -258,7 +312,20 @@ without a frozen migration. **D** removes the ownership question entirely by
 holding reward funding outside the shared balance, at the cost of being the
 largest change and having to re-home remittance, expiry and forfeit routing. **E** takes fresh emissions out of the shared balance entirely by minting
 only on use, at the cost of changing the supply story and leaving the recycled
-half still to solve. That is an owner call, and it is a four-way one.
+half still to solve. **F** declines the premise the other four share — it leaves
+user value in the user's own vault under a lien, so there is nothing commingled
+to reason about and no subtraction to complete, at the cost of reworking each
+mover to pull-at-use, of making the withdrawal chokepoint fund-safety-critical
+rather than merely user-protective, and of not covering treasury/payroll or the
+grandfathered balances already inside the Diamond. That is an owner call, and it
+is a five-way one.
+
+**F is the one the owner chose (2026-08-31).** The ratification — the
+per-class assessment that followed from scouting it against the tree, the one
+class where it does not fit, and the explicit statement that F settles only
+the first of #1566's three required closures — lands separately on the #1566
+card rather than in this PR, so this section records the trade-off rather
+than restating the decision.
 
 ## 5. What is true regardless of the option
 

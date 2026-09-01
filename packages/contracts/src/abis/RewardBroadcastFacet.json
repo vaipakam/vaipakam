@@ -1,192 +1,77 @@
 [
   {
     "type": "function",
-    "name": "modifyOffer",
+    "name": "broadcastGlobal",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
-      },
-      {
-        "name": "params",
-        "type": "tuple",
-        "internalType": "struct LibVaipakam.OfferModifyParams",
-        "components": [
-          {
-            "name": "amount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "amountMax",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBps",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "interestRateBpsMax",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmount",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "collateralAmountMax",
-            "type": "uint256",
-            "internalType": "uint256"
-          }
-        ]
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
-    "name": "setOfferAmount",
+    "name": "broadcastGlobalTo",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newAmountMax",
+        "name": "destChainId",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
-    "name": "setOfferCollateral",
+    "name": "quoteBroadcastGlobal",
     "inputs": [
       {
-        "name": "offerId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newCollateralAmount",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newCollateralAmountMax",
+        "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "outputs": [
+      {
+        "name": "nativeFee",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "setOfferRate",
+    "name": "quoteBroadcastGlobalTo",
     "inputs": [
       {
-        "name": "offerId",
+        "name": "dayId",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "newRateBps",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "newRateBpsMax",
+        "name": "destChainId",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "event",
-    "name": "OfferModified",
-    "inputs": [
+    "outputs": [
       {
-        "name": "offerId",
+        "name": "nativeFee",
         "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "creator",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "amountMax",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "interestRateBps",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "interestRateBpsMax",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralAmount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "collateralAmountMax",
-        "type": "uint256",
-        "indexed": false,
         "internalType": "uint256"
       }
     ],
-    "anonymous": false
-  },
-  {
-    "type": "error",
-    "name": "AmountMaxMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AmountMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "AmountMutationUnsupportedForShape",
-    "inputs": []
+    "stateMutability": "view"
   },
   {
     "type": "error",
@@ -408,21 +293,6 @@
   {
     "type": "error",
     "name": "ChainDayAlreadyReported",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CollateralAmountMaxMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CollateralMustBePositive",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CollateralMutationUnsupportedForShape",
     "inputs": []
   },
   {
@@ -1121,11 +991,6 @@
   },
   {
     "type": "error",
-    "name": "InterestRateAboveCeiling",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAddress",
     "inputs": []
   },
@@ -1136,17 +1001,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidAmountRange",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "InvalidAsset",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidCollateralAmountRange",
     "inputs": []
   },
   {
@@ -1157,16 +1012,6 @@
   {
     "type": "error",
     "name": "InvalidLoanStatus",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidOffer",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InvalidRateRange",
     "inputs": []
   },
   {
@@ -1373,11 +1218,6 @@
   },
   {
     "type": "error",
-    "name": "LenderCollateralRangeNotAllowed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "LenderResolutionFailed",
     "inputs": []
   },
@@ -1430,56 +1270,8 @@
   },
   {
     "type": "error",
-    "name": "MaxLendingAboveCeiling",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "ceiling",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "MessengerPredatesV3",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "MinCollateralBelowFloor",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "floor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "ModifyBelowFilledFloor",
-    "inputs": [
-      {
-        "name": "provided",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "alreadyFilled",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1563,27 +1355,7 @@
   },
   {
     "type": "error",
-    "name": "OfferAlreadyAccepted",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OfferAlreadyConsumedBySaleMutate",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "OfferCreationFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OfferLockedByParallelSale",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "OffsetVehicleImmutable",
     "inputs": []
   },
   {
@@ -2065,22 +1837,6 @@
     "type": "error",
     "name": "SaleOfferAlreadyExists",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SaleVehicleImmutable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "SanctionedAddress",
-    "inputs": [
-      {
-        "name": "who",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
   },
   {
     "type": "error",

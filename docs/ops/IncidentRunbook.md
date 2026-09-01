@@ -77,14 +77,19 @@ For each `expectedEid`:
 RewardAggregatorFacet.finalizeDay(dayId)
    → emits ChainContributionZeroed(dayId, eid) per missing chain
    → emits DailyGlobalInterestFinalized(dayId, lenderUSD18, borrowerUSD18)
-RewardAggregatorFacet.broadcastGlobal{value: ccipFee}(dayId)
+RewardBroadcastFacet.broadcastGlobal{value: ccipFee}(dayId)
    → landing on every reporter via onRewardBroadcastReceived
+   ↑ NOT RewardAggregatorFacet — the broadcast cluster moved to its own
+     facet for EIP-170 headroom (#1569). The SELECTOR is unchanged and still
+     routed through the Diamond, so a call built against the Diamond works
+     either way; what breaks is encoding it from the named facet's ABI,
+     because RewardAggregatorFacet.json no longer carries it.
 ```
 
 **Force-finalize path (no reports arrived at all):**
 ```
 forceFinalizeDay(dayId, 0, 0)       # emits DayForceFinalized
-broadcastGlobal(dayId)
+broadcastGlobal(dayId)               # RewardBroadcastFacet — see above
 ```
 
 ### Communicate

@@ -7,8 +7,11 @@
  * both are pinned here.
  */
 import { describe, expect, it } from 'vitest';
+import { decodeAbiParameters } from 'viem';
 
 import {
+  FUNCTION_DOES_NOT_EXIST_SELECTOR,
+  isAbiShapeMismatch,
   retainedFrom,
   snapshotMaxAgeMs,
   storedPayloadIsComplete,
@@ -167,5 +170,103 @@ describe('snapshotMaxAgeMs', () => {
     // Neither input is authoritative on its own: the row knows what
     // produced it, the environment knows what will refresh it next.
     expect(snapshotMaxAgeMs(11, 5, 3, 1)).toBe(snapshotMaxAgeMs(3, 1, 11, 5));
+  });
+});
+
+describe('isAbiShapeMismatch', () => {
+  // A stale-lens Diamond and a flaky RPC used to produce the same log line,
+  // and they need opposite operator responses — refresh the facet, versus
+  // wait. These cases pin which is which (#1930 follow-up).
+  it('recognises the Diamond\'s missing-selector revert', () => {
+    // The case this predicate was WRITTEN for and did not cover (Codex
+    // #2031 r4). A view absent from the current cut never reaches a
+    // decoder: `VaipakamDiamond.fallback` reverts `FunctionDoesNotExist()`
+    // when no facet owns the selector, and viem surfaces that as an
+    // ordinary contract revert — so every decode-error name missed it and
+    // the operator got the generic "waiting will fix it" log for the one
+    // condition where waiting will not.
+    expect(
+      isAbiShapeMismatch({
+        name: 'ContractFunctionExecutionError',
+        cause: {
+          name: 'ContractFunctionRevertedError',
+          data: FUNCTION_DOES_NOT_EXIST_SELECTOR,
+        },
+      }),
+    ).toBe(true);
+    // Decoded form, for when the consulted ABI happens to carry the error.
+    expect(
+      isAbiShapeMismatch({ errorName: 'FunctionDoesNotExist' }),
+    ).toBe(true);
+    // Case-insensitive on the hex, since providers differ.
+    expect(
+      isAbiShapeMismatch({ data: FUNCTION_DOES_NOT_EXIST_SELECTOR.toUpperCase().replace('0X', '0x') }),
+    ).toBe(true);
+  });
+
+  it('does NOT read an arbitrary revert as ABI drift', () => {
+    // The other half of the rule, and the reason the match is on the exact
+    // four bytes rather than on "a revert happened": a revert from a LIVE
+    // facet is a different condition with a different remedy, and calling
+    // it drift would send an operator to redeploy a healthy facet.
+    expect(
+      isAbiShapeMismatch({
+        name: 'ContractFunctionExecutionError',
+        cause: { name: 'ContractFunctionRevertedError', data: '0xdeadbeef' },
+      }),
+    ).toBe(false);
+    expect(
+      isAbiShapeMismatch({ errorName: 'InteractionRewardBackingShort' }),
+    ).toBe(false);
+  });
+
+  it('recognises the REAL error a stale six-output lens throws', () => {
+    // Built by actually decoding rather than by naming an error I assumed.
+    // This predicate has now failed twice on the exact scenario it was
+    // written for — first `FunctionDoesNotExist`, then this — both times
+    // because the error name came from reasoning instead of from a throw.
+    // A pre-#1434 lens returns SIX words; against eight outputs viem walks
+    // off the cursor and throws PositionOutOfBoundsError, which is not a
+    // size error: 192 bytes passes the up-front length check and only fails
+    // when the reader reaches word seven.
+    const eight = Array.from({ length: 8 }, (_, i) => ({
+      name: `o${i}`,
+      type: 'uint256' as const,
+    }));
+    const sixWords = `0x${'11'.padStart(64, '0').repeat(6)}` as const;
+    let thrown: unknown;
+    try {
+      decodeAbiParameters(eight, sixWords);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeDefined();
+    expect(isAbiShapeMismatch(thrown)).toBe(true);
+  });
+
+  it('recognises viem decode errors, including wrapped ones', () => {
+    expect(isAbiShapeMismatch({ name: 'AbiDecodingDataSizeTooSmallError' })).toBe(true);
+    expect(isAbiShapeMismatch({ name: 'AbiDecodingZeroDataError' })).toBe(true);
+    expect(
+      isAbiShapeMismatch({
+        name: 'ContractFunctionExecutionError',
+        cause: { name: 'AbiDecodingDataSizeTooSmallError' },
+      }),
+    ).toBe(true);
+  });
+
+  it('does NOT claim an ordinary RPC failure is a stale facet', () => {
+    // The costly direction: a false "your facet is behind" sends an operator
+    // to redeploy over what was really a bad endpoint.
+    expect(isAbiShapeMismatch({ name: 'HttpRequestError' })).toBe(false);
+    expect(isAbiShapeMismatch(new Error('timeout'))).toBe(false);
+    expect(isAbiShapeMismatch(undefined)).toBe(false);
+    expect(isAbiShapeMismatch(null)).toBe(false);
+  });
+
+  it('terminates on a self-referential cause chain', () => {
+    const loop: Record<string, unknown> = { name: 'Weird' };
+    loop.cause = loop;
+    expect(isAbiShapeMismatch(loop)).toBe(false);
   });
 });

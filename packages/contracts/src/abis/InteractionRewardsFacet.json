@@ -1677,6 +1677,11 @@
   },
   {
     "type": "error",
+    "name": "PerkVpfiTokenNotSet",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "Permit2TokenMismatch",
     "inputs": [
       {

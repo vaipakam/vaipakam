@@ -228,6 +228,81 @@ export function retainedFrom(bucket: bigint, outstanding: bigint, keeper: bigint
   return net > 0n ? net : 0n;
 }
 
+/**
+ * Is this failure the DEPLOYED CONTRACT disagreeing with the compiled ABI,
+ * rather than the network being unreliable?
+ *
+ * The two need opposite operator responses — refresh the facet, versus wait —
+ * and until #1930's follow-up they were the same log line. A Diamond still cut
+ * with the pre-#1434 six-output lens returns fewer words than
+ * `getRecycleBackingSnapshot` declares, and viem's decoder rejects with
+ * `AbiDecodingDataSizeTooSmallError`, usually wrapped in a
+ * `ContractFunctionExecutionError`.
+ *
+ * Matched on viem's error NAMES rather than on message text: the names are
+ * part of its public surface, while the prose is not. The walk follows `cause`
+ * because the informative error is the wrapped one. Anything unrecognised is
+ * deliberately NOT claimed as a shape mismatch — a false "your facet is stale"
+ * would send an operator to redeploy over what was really a bad RPC.
+ */
+export const FUNCTION_DOES_NOT_EXIST_SELECTOR = '0xa9ad62f8';
+
+export function isAbiShapeMismatch(err: unknown): boolean {
+  const NAMES = new Set([
+    'AbiDecodingDataSizeTooSmallError',
+    'AbiDecodingZeroDataError',
+    // The one that actually fires for the case this predicate exists to
+    // diagnose (Codex #2031 r19). A pre-#1434 six-output lens returns 192
+    // bytes; decoded against EIGHT outputs viem walks off the end of the
+    // cursor and throws `PositionOutOfBoundsError`, NOT a size error —
+    // 192 bytes is not "too small" for viem's up-front length check, it is
+    // only too small once the reader reaches word seven.
+    'PositionOutOfBoundsError',
+    // Kept for older/other viem paths. NOTE `DecodeAbiParametersError` is a
+    // TYPE-level union in viem, never a runtime `error.name`, so it has
+    // never matched anything — it was in this set from the day it was
+    // written and did no work.
+    'DecodeAbiParametersError',
+  ]);
+  for (let e: unknown = err, depth = 0; e && depth < 8; depth += 1) {
+    const named = e as {
+      name?: unknown;
+      cause?: unknown;
+      data?: unknown;
+      signature?: unknown;
+      errorName?: unknown;
+    };
+    if (typeof named.name === 'string' && NAMES.has(named.name)) return true;
+    // THE MISSING-SELECTOR CASE, which the decode-error names above do not
+    // cover and which is the scenario this predicate exists to diagnose
+    // (Codex #2031 r4). A view absent from the Diamond's CURRENT CUT never
+    // reaches a decoder at all: `VaipakamDiamond.fallback` reverts
+    // `FunctionDoesNotExist()` when no facet owns the selector, and viem
+    // surfaces that as an ordinary contract revert. The first version of
+    // this predicate therefore returned false for exactly the stale-facet
+    // case it claimed to name, and the operator got the generic log.
+    //
+    // Matched on the EXACT four-byte error data, never on "a revert
+    // happened": an arbitrary revert from a live facet is a different
+    // condition with a different remedy, and reading it as ABI drift would
+    // send an operator to redeploy a healthy facet. `errorName` is checked
+    // too because viem decodes it when the consulted ABI happens to carry
+    // the error, but the raw selector is the reliable half — the per-facet
+    // ABIs do not declare the Diamond's own errors.
+    if (
+      named.errorName === 'FunctionDoesNotExist' ||
+      (typeof named.data === 'string' &&
+        named.data.toLowerCase() === FUNCTION_DOES_NOT_EXIST_SELECTOR) ||
+      (typeof named.signature === 'string' &&
+        named.signature.toLowerCase() === FUNCTION_DOES_NOT_EXIST_SELECTOR)
+    ) {
+      return true;
+    }
+    e = named.cause;
+  }
+  return false;
+}
+
 
 /**
  * The browser aborts the whole `/metrics/recycling` request at 4s, so an
@@ -325,28 +400,74 @@ export async function captureBackingSnapshot(
   // PINNED TO ONE BLOCK. These two reads explain each other — the second
   // is what stops a released remittance rendering as a depleted reserve —
   // so they have to describe the same moment.
+  // An ABI-SHAPE mismatch is not an RPC blip, and until now it read as one.
+  // A Diamond still cut with the pre-#1434 six-output lens makes viem's
+  // decoder throw, the rejection is caught by the tick's fail-open handler in
+  // `index.ts`, and the row is simply never refreshed — so the public surface
+  // eventually falls through to `snapshot-stale`, which says "the chain is
+  // quiet" when the truth is "this Diamond's cut is behind". The two need
+  // different operator actions: wait, versus refresh the lens facet.
+  //
+  // `ops/mesh-watcher` already treats this as its own named condition
+  // (`backingSnapshotUnavailableGap`, asserted against the compiled ABI at
+  // startup). This is the indexer's equivalent, at the only place it can be
+  // told apart — the decode itself (#1930 follow-up).
+  //
+  // The facet is named AT THE CALL SITE, not inferred from the rejection.
+  // Two reads on two facets settle together here, so one shared handler has
+  // to guess which of them failed — and a guess that names the wrong facet
+  // sends an operator to refresh something healthy while the stale one keeps
+  // aging. Tagging each read removes the guess: whichever rejects already
+  // knows what it was reading.
+  const tagged = <T>(
+    read: Promise<T>,
+    facet: string,
+    fn: string,
+  ): Promise<T> =>
+    read.catch((err: unknown) => {
+      if (isAbiShapeMismatch(err)) {
+        console.error(
+          `[recycling] chain ${chainId} diamond ${chain.diamond} returned a ` +
+            `${fn} response the compiled ABI cannot decode — the deployed ` +
+            `facet is behind the tree. Refresh ${facet} on this chain; ` +
+            `waiting will not clear it.`,
+        );
+      }
+      // Rethrown so the tick's fail-open handler still keeps one chain's
+      // problem from wedging the others. What changes is that the log says
+      // WHICH failure this is, and on WHICH facet.
+      throw err;
+    });
   const [snap, composition] = await Promise.all([
-    client.readContract({
-      address: chain.diamond as Address,
-      abi: InteractionRewardsLensFacetABI,
-      functionName: 'getRecycleBackingSnapshot',
-      blockNumber,
-      // EIGHT outputs, matching the compiled ABI. This cast said SIX until
-      // #1930 — `strandedRecoveryReserved` (#1434 P2-w2) and
-      // `recoveryPositionReserved` (P2-w5) were appended to the view and
-      // never picked up here, so the destructure below silently dropped
-      // them. Both are subtrahends INSIDE `unearmarked`, published so a
-      // reader can recompute it from components; omitting them left the
-      // series unable to do the one thing they exist for.
-    }) as Promise<
-      readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint]
-    >,
-    client.readContract({
-      address: chain.diamond as Address,
-      abi: RewardAggregatorFacetABI,
-      functionName: 'getRecycleCompositionPosition',
-      blockNumber,
-    }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
+    tagged(
+      client.readContract({
+        address: chain.diamond as Address,
+        abi: InteractionRewardsLensFacetABI,
+        functionName: 'getRecycleBackingSnapshot',
+        blockNumber,
+          // EIGHT outputs, matching the compiled ABI. This cast said SIX until
+          // #1930 — `strandedRecoveryReserved` (#1434 P2-w2) and
+          // `recoveryPositionReserved` (P2-w5) were appended to the view and
+          // never picked up here, so the destructure below silently dropped
+          // them. Both are subtrahends INSIDE `unearmarked`, published so a
+          // reader can recompute it from components; omitting them left the
+          // series unable to do the one thing they exist for.
+      }) as Promise<
+        readonly [bigint, bigint, bigint, bigint, bigint, bigint, bigint, bigint]
+      >,
+      'InteractionRewardsLensFacet',
+      'getRecycleBackingSnapshot',
+    ),
+    tagged(
+      client.readContract({
+        address: chain.diamond as Address,
+        abi: RewardAggregatorFacetABI,
+        functionName: 'getRecycleCompositionPosition',
+        blockNumber,
+      }) as Promise<readonly [bigint, bigint, boolean, boolean]>,
+      'RewardAggregatorFacet',
+      'getRecycleCompositionPosition',
+    ),
   ]);
   const [
     vpfiBalance,

@@ -70,6 +70,7 @@ export interface CoverageGap {
     | 'config'
     | 'base-books'
     | 'base-books-repat'
+    | 'base-books-keeper'
     | 'own-ledger'
     | 'own-ledger-composition'
     | 'own-ledger-repat'

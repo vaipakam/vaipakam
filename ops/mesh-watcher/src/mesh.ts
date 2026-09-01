@@ -104,9 +104,38 @@ export function repatDrawUnavailableGap(
     source: 'base-books-repat',
     detail:
       `getChainRepatriationDraw() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `The draw is UNKNOWN this tick, so the availability-formula and repat-cap checks for this chain did NOT run (substituting zero would page a false CRITICAL on any chain with a live repatriation).\n\n` +
+      `The draw is UNKNOWN this tick, so the availability-formula, repat-cap AND keeper-cap checks for this chain did NOT run (substituting zero would page a false CRITICAL on any chain with a live repatriation). keeper-cap is included because its remaining-capacity figure is measured AFTER the repatriation draw, so an unreadable repat draw disables it too — the keeper draw's own capacity bound is NOT monitored in this window either.\n\n` +
       (preC2
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-C2 deployment, or a partial facet refresh that dropped the RepatriationFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
+        : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
+  };
+}
+
+/**
+ * #1569 M4 C3 — the gap for an unreadable keeper-earmark draw.
+ *
+ * Same discipline as the repatriation draw above, and for the same reason
+ * (Codex #2031 r3): the keeper draw is a THIRD subtrahend of the
+ * availability formula, so a tick that cannot read it cannot re-derive
+ * availability either. Substituting zero would page a false CRITICAL on
+ * every armed chain, which is precisely the failure this watcher exists to
+ * distinguish from a real one.
+ */
+export function keeperDrawUnavailableGap(
+  chainId: number,
+  err: unknown,
+): CoverageGap {
+  const failure = classify(err, 'getChainKeeperDraw');
+  const pre1569 = isMissingSelector(err);
+  return {
+    chainId,
+    reason: 'view-unavailable',
+    source: 'base-books-keeper',
+    detail:
+      `getChainKeeperDraw() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
+      `The draw is UNKNOWN this tick, so the availability-formula, keeper-cap AND (on the canonical chain) the base-self-inert keeper leg did NOT run (substituting zero would page a false CRITICAL on any chain with an armed keeper allocation, and the cap check has nothing to compare). Naming all three matters during an incident: the draw's capacity bound is NOT monitored in this window, and on Base the self-inertness leg is the ONLY check that would catch a keeper draw booked against the canonical id.\n\n` +
+      (pre1569
+        ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-#1569 deployment, or a partial facet refresh that dropped the RewardAggregatorFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
         : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),
   };
 }
@@ -170,8 +199,26 @@ async function readBaseBooks(
     gaps.push(repatDrawUnavailableGap(chainId, err));
   }
 
+  // #1569 M4 C3 — the keeper-earmark draw, read separately for exactly the
+  // reasons the repatriation draw is: a newer selector, and a Diamond
+  // missed during a refresh must cost only the checks that need it.
+  let keeperDraw: bigint | undefined;
+  try {
+    keeperDraw = await readView<bigint>(
+      canonical.client,
+      canonical.diamond,
+      'getChainKeeperDraw',
+      [chainId],
+      blockNumber,
+    );
+  } catch (err) {
+    keeperDraw = undefined;
+    gaps.push(keeperDrawUnavailableGap(chainId, err));
+  }
+
   return {
     chainId,
+    keeperDraw,
     reported: ledger[0],
     consumed: ledger[1],
     avail: ledger[2],

@@ -73,6 +73,8 @@ import {MirrorTierReceiverFacet} from "../src/facets/MirrorTierReceiverFacet.sol
 import {ProtocolBroadcastFacet} from "../src/facets/ProtocolBroadcastFacet.sol";
 import {RewardClaimFacet} from "../src/facets/RewardClaimFacet.sol";
 import {RewardHorizonSweepFacet} from "../src/facets/RewardHorizonSweepFacet.sol";
+import {PerkFacet} from "../src/facets/PerkFacet.sol";
+import {RewardBroadcastFacet} from "../src/facets/RewardBroadcastFacet.sol";
 import {InteractionRewardsFacet} from "../src/facets/InteractionRewardsFacet.sol";
 import {InteractionRewardsLensFacet} from "../src/facets/InteractionRewardsLensFacet.sol";
 import {RewardReporterFacet} from "../src/facets/RewardReporterFacet.sol";
@@ -252,6 +254,8 @@ contract DeployDiamond is Script {
         RewardClaimFacet rewardClaimFacet = new RewardClaimFacet();
         RewardHorizonSweepFacet rewardHorizonSweepFacet =
             new RewardHorizonSweepFacet();
+        PerkFacet perkFacet = new PerkFacet();
+        RewardBroadcastFacet rewardBroadcastFacet = new RewardBroadcastFacet();
         // #1306 follow-up — read-only lens carved off InteractionRewardsFacet
         // for EIP-170 headroom (view/getter surface only, shared storage).
         InteractionRewardsLensFacet interactionRewardsLensFacet =
@@ -294,7 +298,7 @@ contract DeployDiamond is Script {
 
         // ── Step 3: Build facet cuts ────────────────────────────────────
         // 37 facets (DiamondCutFacet already added by constructor)
-        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](75);
+        IDiamondCut.FacetCut[] memory cuts = new IDiamondCut.FacetCut[](77);
 
         cuts[0] = _buildCut(address(loupeFacet), _getLoupeSelectors());
         cuts[1] = _buildCut(address(ownershipFacet), _getOwnershipSelectors());
@@ -345,6 +349,17 @@ contract DeployDiamond is Script {
         cuts[73] = _buildCut(
             address(rewardHorizonSweepFacet),
             _getRewardHorizonSweepSelectors()
+        );
+        // #1204 E-2 — the spend-gated perk channel. Its own facet because the
+        // purchase is a fund-moving entry point with its own storage and
+        // admin surface, and no existing host is near enough its concern to
+        // justify growing (EIP-170 headroom is the standing constraint here).
+        cuts[75] = _buildCut(address(perkFacet), _getPerkSelectors());
+        // #1569 — the broadcast cluster, split off RewardAggregatorFacet
+        // when it reached 32 bytes of EIP-170 headroom.
+        cuts[76] = _buildCut(
+            address(rewardBroadcastFacet),
+            _getRewardBroadcastSelectors()
         );
         cuts[26] = _buildCut(address(rewardReporterFacet), _getRewardReporterSelectors());
         cuts[27] = _buildCut(address(rewardAggregatorFacet), _getRewardAggregatorSelectors());
@@ -994,6 +1009,8 @@ contract DeployDiamond is Script {
         Deployments.writeFacet("receiverFacet",           address(receiverFacet));
         Deployments.writeFacet("signedOfferFacet",        address(signedOfferFacet));
         Deployments.writeFacet("swapToRepayIntentFacet",  address(swapToRepayIntentFacet));
+        Deployments.writeFacet("perkFacet",               address(perkFacet));
+        Deployments.writeFacet("rewardBroadcastFacet",   address(rewardBroadcastFacet));
 
         console.log(
             "Wrote addresses to deployments/",
@@ -1053,6 +1070,8 @@ contract DeployDiamond is Script {
         console.log("InteractionRewardsFacet:", address(interactionRewardsFacet));
         console.log("RewardClaimFacet:", address(rewardClaimFacet));
         console.log("RewardHorizonSweepFacet:", address(rewardHorizonSweepFacet));
+        console.log("PerkFacet:", address(perkFacet));
+        console.log("RewardBroadcastFacet:", address(rewardBroadcastFacet));
         console.log("InteractionRewardsLensFacet:", address(interactionRewardsLensFacet));
         console.log("FeeEntitlementFacet: ", address(feeEntitlementFacet));
         console.log("RewardReporterFacet:  ", address(rewardReporterFacet));
@@ -2345,6 +2364,28 @@ contract DeployDiamond is Script {
     /// @dev #1434 — the claim-horizon sweep. Its own facet because expiry now
     ///      settles through the ShareOfPool engine and neither existing host
     ///      had the headroom; the id-keyed read views stay on the lens facet.
+    function _getRewardBroadcastSelectors()
+        internal
+        pure
+        returns (bytes4[] memory s)
+    {
+        s = new bytes4[](4);
+        s[0] = RewardBroadcastFacet.broadcastGlobal.selector;
+        s[1] = RewardBroadcastFacet.quoteBroadcastGlobal.selector;
+        s[2] = RewardBroadcastFacet.broadcastGlobalTo.selector;
+        s[3] = RewardBroadcastFacet.quoteBroadcastGlobalTo.selector;
+    }
+
+    function _getPerkSelectors() internal pure returns (bytes4[] memory s) {
+        s = new bytes4[](6);
+        s[0] = PerkFacet.setPerkConfig.selector;
+        s[1] = PerkFacet.purchasePerk.selector;
+        s[2] = PerkFacet.consumePerkCredit.selector;
+        s[3] = PerkFacet.getPerkConfig.selector;
+        s[4] = PerkFacet.getPerkEntitlement.selector;
+        s[5] = PerkFacet.getPerkSpendCumulative.selector;
+    }
+
     function _getRewardHorizonSweepSelectors()
         internal
         pure
@@ -2777,77 +2818,84 @@ contract DeployDiamond is Script {
     }
 
     function _getRewardAggregatorSelectors() internal pure returns (bytes4[] memory s) {
-        s = new bytes4[](33);
-        // #1434 P2-w1 — the V3 broadcast heal (single-destination). The
-        // lapse-schedule setter + day-clock reads live on
-        // RewardCommitmentFacet (EIP-170: this facet is ~500B from the
-        // ceiling).
-        s[31] = RewardAggregatorFacet.broadcastGlobalTo.selector;
-        s[32] = RewardAggregatorFacet.quoteBroadcastGlobalTo.selector;
+        s = new bytes4[](32);
+        // The lapse-schedule setter + day-clock reads live on
+        // RewardCommitmentFacet for EIP-170 reasons. #1569 then split the
+        // broadcast cluster out entirely (this facet had reached 32 bytes of
+        // headroom), so it now has ~4.8KB — the pressure that put those reads
+        // elsewhere is relieved, but they stay where they are: moving them
+        // back would be churn for no gain.
         // #1222 M3 B3 — the per-chain mesh ledger reads MOVED here from
         // ConfigFacet (which hit the EIP-170 ceiling); they join the rest of
         // the Base-side finalization records.
-        s[26] = RewardAggregatorFacet.getChainRecycledLedger.selector;
-        s[27] = RewardAggregatorFacet.getChainDailyRecycledCredit.selector;
+        s[0] = RewardAggregatorFacet.getChainRecycledLedger.selector;
+        s[1] = RewardAggregatorFacet.getChainDailyRecycledCredit.selector;
         // #1222 M3 B2-d5 — relocated-custody position (bucket vs reported).
-        s[22] = RewardAggregatorFacet.getRecycleCustodyPosition.selector;
+        s[2] = RewardAggregatorFacet.getRecycleCustodyPosition.selector;
         // #1444 / #1446 — raw stored slots so an external checker can
         // re-derive the published cumulative instead of trusting it.
-        s[28] = RewardAggregatorFacet.getRecycleCompositionPosition.selector;
+        s[3] = RewardAggregatorFacet.getRecycleCompositionPosition.selector;
         // #1222 M4 C1 (#1567) — per-chain surplus flag: a read and its
         // bounded ADMIN knob. The knob lives here rather than in ConfigFacet,
         // which has ~557B of EIP-170 headroom.
-        s[29] = RewardAggregatorFacet.getChainSurplusPosition.selector;
-        s[30] = RewardAggregatorFacet.setRecycleSurplusMultiple.selector;
+        s[4] = RewardAggregatorFacet.getChainSurplusPosition.selector;
+        s[5] = RewardAggregatorFacet.setRecycleSurplusMultiple.selector;
         // #1222 M3 B3 — the eight-word report ingress (a THIRD overload of
         // `onChainReportReceived`, so it too must be pinned by signature) and
         // the commitment-retirement transparency reads.
-        s[23] = bytes4(
+        s[6] = bytes4(
             keccak256(
                 "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256,uint256,uint256)"
             )
         );
-        s[24] =
+        s[7] =
             RewardAggregatorFacet.getChainRecycledCommitRetirement.selector;
-        s[25] =
+        s[8] =
             RewardAggregatorFacet.getLocalRecycledCommitRetirement.selector;
         // #1222 (M3 B2-a) — two-pass funding transparency reads.
-        s[17] = RewardAggregatorFacet.getChainDayRecycledFunding.selector;
-        s[18] = RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;
+        s[9] = RewardAggregatorFacet.getChainDayRecycledFunding.selector;
+        s[10] = RewardAggregatorFacet.getChainOutstandingRecycledCommit.selector;
         // #1222 M3 B2-b — per-side D1 ceilings + mirror funding counter +
         // the payload-accurate broadcast quote (Codex #1417 r1).
-        s[19] = RewardAggregatorFacet.getDayUserSideCaps.selector;
-        s[20] = RewardAggregatorFacet.quoteBroadcastGlobal.selector;
+        s[11] = RewardAggregatorFacet.getDayUserSideCaps.selector;
         // #1222 M3 B1 — the ingress is OVERLOADED (six-word shape + the
         // legacy four-word rollout shim), so `.selector` on the bare name
         // is ambiguous; pin both signatures explicitly.
-        s[0] = bytes4(
+        s[12] = bytes4(
             keccak256(
                 "onChainReportReceived(uint32,uint256,uint256,uint256,uint256,uint256)"
             )
         );
-        s[16] = bytes4(
+        s[13] = bytes4(
             keccak256("onChainReportReceived(uint32,uint256,uint256,uint256)")
         );
-        s[1] = RewardAggregatorFacet.finalizeDay.selector;
-        s[2] = RewardAggregatorFacet.forceFinalizeDay.selector;
-        s[3] = RewardAggregatorFacet.broadcastGlobal.selector;
-        s[4] = RewardAggregatorFacet.setExpectedSourceChainIds.selector;
-        s[5] = RewardAggregatorFacet.isChainReported.selector;
-        s[6] = RewardAggregatorFacet.getChainReport.selector;
-        s[7] = RewardAggregatorFacet.getChainDailyReportCount.selector;
-        s[8] = RewardAggregatorFacet.getDailyFirstReportAt.selector;
-        s[9] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
-        s[10] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
-        s[11] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
-        s[12] = RewardAggregatorFacet.backfillDayInclusion.selector;
+        s[14] = RewardAggregatorFacet.finalizeDay.selector;
+        s[15] = RewardAggregatorFacet.forceFinalizeDay.selector;
+        s[16] = RewardAggregatorFacet.setExpectedSourceChainIds.selector;
+        s[17] = RewardAggregatorFacet.isChainReported.selector;
+        s[18] = RewardAggregatorFacet.getChainReport.selector;
+        s[19] = RewardAggregatorFacet.getChainDailyReportCount.selector;
+        s[20] = RewardAggregatorFacet.getDailyFirstReportAt.selector;
+        s[21] = RewardAggregatorFacet.getDailyGlobalInterest.selector;
+        s[22] = RewardAggregatorFacet.getExpectedSourceChainIds.selector;
+        s[23] = RewardAggregatorFacet.isDayReadyToFinalize.selector;
+        s[24] = RewardAggregatorFacet.backfillDayInclusion.selector;
         // Governor PR-3b (#1217) — day-pool stamp + commitment-state reads.
-        s[13] = RewardAggregatorFacet.getDayPoolStamp.selector;
-        s[14] = RewardAggregatorFacet.getGovernorCommitState.selector;
+        s[25] = RewardAggregatorFacet.getDayPoolStamp.selector;
+        s[26] = RewardAggregatorFacet.getGovernorCommitState.selector;
         // Governor PR-3c (#1217) — the D* cutover arming (one-shot admin).
-        s[15] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
+        s[27] = RewardAggregatorFacet.setGovernorCommitArmedFromDay.selector;
         // #1222 M3 B2-d1 — mirror→Base commitment-report ingress (Base side).
-        s[21] = RewardAggregatorFacet.onCommitmentReportReceived.selector;
+        s[28] = RewardAggregatorFacet.onCommitmentReportReceived.selector;
+        // #1222 M4 C3 (#1569) — the Base-authorized per-chain keeper
+        // allocation instruction.
+        s[29] =
+            RewardAggregatorFacet.setChainKeeperAllocateBps.selector;
+        s[30] =
+            RewardAggregatorFacet.getChainKeeperAllocateBps.selector;
+        s[31] =
+            RewardAggregatorFacet.getChainKeeperDraw.selector;
+
     }
 
     function _getRewardRemittanceSelectors()

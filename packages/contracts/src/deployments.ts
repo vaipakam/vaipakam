@@ -135,6 +135,8 @@ export interface DeploymentFacets {
   riskPreviewFacet?: HexAddress;
   /** #1212 — MulticallFacet: generic best-effort delegatecall batcher (Claim All). */
   multicallFacet?: HexAddress;
+  perkFacet?: HexAddress;
+  rewardBroadcastFacet?: HexAddress;
   riskMatchLiquidationFacet?: HexAddress;
   riskSplitLiquidationFacet?: HexAddress;
   signedOfferFacet?: HexAddress;

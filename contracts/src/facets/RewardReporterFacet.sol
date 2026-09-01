@@ -547,6 +547,29 @@ contract RewardReporterFacet is
         LibVpfiRecycle.reserveMirrorCommit(dayId, amount);
     }
 
+    /// @dev #1569 M4 C3 (Codex #2031 r5) — apply this day's Base-instructed
+    ///      keeper earmark AT MOST ONCE, on its own flag rather than on
+    ///      `broadcastV2Applied`, so a day whose broadcast was applied by a
+    ///      PRE-#1569 receiver can still have its earmark completed by a
+    ///      later replay. Exactly the shape, and exactly the reason, of
+    ///      {_reserveMirrorCommitOnce} above.
+    ///
+    ///      Without it a non-atomic rollout diverges the two sides silently:
+    ///      Base has charged `chainKeeperAllocDebited` and reduced what it
+    ///      will instruct, while the mirror never reserved the earmark and
+    ///      still counts those tokens as fundable for claims and
+    ///      repatriation.
+    function _applyKeeperEarmarkOnce(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 amount
+    ) private {
+        if (amount == 0) return;
+        if (s.mirrorKeeperEarmarkApplied[dayId]) return;
+        s.mirrorKeeperEarmarkApplied[dayId] = true;
+        s.recycleKeeperBudget += amount;
+    }
+
     function onRewardBroadcastV2Received(RewardBroadcastV2 calldata b)
         external
     {
@@ -609,6 +632,59 @@ contract RewardReporterFacet is
             ) {
                 revert KnownGlobalAlreadySet();
             }
+            // #1944 — INSTALL `D*` ON REPLAY when this mirror has none.
+            //
+            // `broadcastGlobal` is permissionless (`onlyCanonical` tests the
+            // CHAIN, not the caller), so a third party can apply a day here
+            // while Base is still unarmed. Before this, the replay returned
+            // above the install below, and `governorCommitArmedFromDay` is
+            // ONE-SHOT — so the post-arm rebroadcast of that same day exited
+            // idempotently and the mirror could not be armed through this
+            // path at all. That is not a race the ceremony can close: every
+            // mitigation depends on an unapplied day still existing when it
+            // is needed, and a third party decides that (#1943 documents the
+            // mitigation and says outright it is mitigation, not closure).
+            //
+            // Safe HERE precisely because the divergence check above has
+            // already passed: every frozen fact of this day matches what was
+            // applied, so this is the same day rather than a conflicting one.
+            // `armedFromDay` deliberately stays OUT of that comparison — an
+            // unarmed-then-armed rebroadcast differs in exactly this field
+            // and must not read as divergence — which is the property
+            // `testV3ReplayArmedFromDayStaysOutsideComparison` pins.
+            //
+            // Still one-shot: the zero check means an already-armed mirror
+            // ignores a later, different `D*`, so a replay can fill the hole
+            // but can never re-choose the era. No event, matching the
+            // main-path install below.
+            //
+            // RETIRED ERAS ARE EXCLUDED, and that is not the same test the
+            // fresh path makes. {LegacyBroadcastRetired} sits BELOW this
+            // branch on purpose, so an applied day keeps replaying
+            // idempotently after a rotation — but idempotent replay is a
+            // no-op, and this install is not. Without the clause, a kind-5
+            // packet from a retired era could still choose this mirror's
+            // era through a delayed replay, which is precisely the authority
+            // the rotation withdrew. A replay from a retired era therefore
+            // stays a no-op here; the V3 wire passes `legacyWire = false`
+            // and has authenticated its era, so the hole it exists to fill
+            // is still fillable.
+            if (
+                b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0
+                    && !(legacyWire && s.rewardEraRotated)
+            ) {
+                s.governorCommitArmedFromDay = b.armedFromDay;
+            }
+            // #1569 M4 C3 (Codex #2031 r5) — the keeper earmark's own
+            // pre-upgrade repair, the sibling of the reservation repair at
+            // the top of this branch. Placed AFTER the divergence check,
+            // and reading the STORED figure rather than the packet's: by
+            // here every frozen fact of the day has been proven to match,
+            // so a diverging packet has already reverted and cannot earmark
+            // anything. The reservation repair above predates that check
+            // and keeps its position for compatibility, but a new write has
+            // no reason to run before the day has been authenticated.
+            _applyKeeperEarmarkOnce(s, b.dayId, prior.keeperAllocate);
             return;
         }
 
@@ -667,6 +743,35 @@ contract RewardReporterFacet is
             freshLenderHalf: b.freshLenderHalf,
             freshBorrowerHalf: b.freshBorrowerHalf
         });
+
+        // #1569 M4 C3 — apply the Base-authorized keeper instruction.
+        //
+        // The earmark comes from INSIDE this chain's bucket — bounded on
+        // Base by the headroom the day's commit left in this chain's
+        // availability — exactly as the local register is on Base:
+        // `recycleBucket` is unchanged and no tokens move. What changes is how much of the bucket is available to
+        // fund reward budgets, since `recycleKeeperBudget` is netted out of
+        // the fundable figure and out of repatriation's draw.
+        //
+        // Base sized this from the chain's REPORTED DAY INFLOW and charged
+        // it BESIDE the local commit reserved below, bounded by the headroom
+        // that commit leaves in the chain's availability — so it is value
+        // this chain already holds and Base is telling it how to label,
+        // never an instruction to find more. The commit is the CAP, not the
+        // base it is a share of (Codex #2031 r13; an earlier revision of
+        // this comment said the commit was the base).
+        //
+        // An earlier revision said Base "carved this from" the commit
+        // (Codex #2031 r4). It does not: the commit stays whole and the
+        // earmark is a second, separately-bounded draw. Stated precisely
+        // because the mirror reserves BOTH figures, and a reader who
+        // believes one contains the other would conclude the mirror
+        // double-reserves.
+        //
+        // Guarded by its OWN flag rather than by the whole-day idempotency
+        // guard, so a day a pre-#1569 receiver applied can still have its
+        // earmark completed on replay — see {_applyKeeperEarmarkOnce}.
+        _applyKeeperEarmarkOnce(s, b.dayId, b.keeperAllocate);
 
         if (b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
             s.governorCommitArmedFromDay = b.armedFromDay;
@@ -862,6 +967,34 @@ contract RewardReporterFacet is
             // healed by the same re-send).
             _installDayPoolStampV3(s, b);
             _installDayClock(s, b, /* backfilled */ true);
+            // #1944 (Codex #2031 r2) — the one-shot `D*` install must survive
+            // THIS branch too, for exactly the reason the reservation repair
+            // above must: a day applied over V2 while Base was unarmed has no
+            // clock, so its post-arm rebroadcast lands HERE and returns,
+            // never reaching `_applyBroadcastV2Core`'s replay install. The
+            // mirror stayed unarmed and needed a second, unexplained V3
+            // delivery to arm — the #1944 defect resurfacing one path over.
+            //
+            // No retired-era clause, and the asymmetry is the point: this
+            // path is V3-only and has already authenticated `baseDeployment`
+            // against the configured ground truth above. Authenticating its
+            // era is precisely what the legacy wire cannot do, which is why
+            // the replay-branch install excludes it and this one does not.
+            if (b.v2.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
+                s.governorCommitArmedFromDay = b.v2.armedFromDay;
+            }
+            // #1569 M4 C3 (Codex #2031 r5) — and the keeper earmark's
+            // repair, for the same reason the reservation repair above is
+            // in this branch: this early return is a path a pre-#1569
+            // applied day can reach, so an unreserved earmark would stay
+            // unreserved forever. Reads the STORED figure, which this
+            // branch already prefers over the packet's halves.
+            _applyKeeperEarmarkOnce(
+                s,
+                dayId,
+                s.chainDayRecycledFunding[dayId][uint32(block.chainid)]
+                    .keeperAllocate
+            );
             _notifyCompensationHook(b);
             return;
         }
@@ -977,22 +1110,25 @@ contract RewardReporterFacet is
 
     /// @notice #1944 — whether THIS chain has already applied the V2 broadcast
     ///         for `dayId`.
-    /// @dev    The M7 arming ceremony has to know, per mirror and immediately
-    ///         before broadcasting, whether a candidate propagation day is
-    ///         still unapplied: `_applyBroadcastV2Core` returns early on an
-    ///         already-applied day, BEFORE the `armedFromDay` install, so
-    ///         arming through a burnt day silently no-ops and `D*` is one-shot.
+    /// @dev    Written for the M7 arming ceremony, which had to know per
+    ///         mirror — and immediately before broadcasting — whether a
+    ///         candidate propagation day was still unapplied, because a
+    ///         replay used to return BEFORE the `armedFromDay` install and
+    ///         `D*` is one-shot. Answering it by scanning for
+    ///         `RewardBroadcastV2Applied` logs is materially worse than a
+    ///         readback under ceremony pressure: it depends on provider
+    ///         retention and range limits, and a missed page reads as "not
+    ///         applied", which is the exact wrong answer here.
     ///
-    ///         Until now that question was answerable only by scanning for
-    ///         `RewardBroadcastV2Applied` logs. A log scan under ceremony
-    ///         pressure is materially worse than a readback — it depends on
-    ///         provider retention and range limits, and a missed page reads as
-    ///         "not applied", which is the exact wrong answer here.
-    ///
-    ///         Read-only: this does NOT close the underlying defect (a day
-    ///         applied pre-arm still cannot carry `D*`), it makes the
-    ///         ceremony's mitigation executable. The protocol fix wants its own
-    ///         design pass — see #1944.
+    ///         THE UNDERLYING DEFECT IS NOW CLOSED. This comment used to end
+    ///         "a day applied pre-arm still cannot carry `D*`", and that
+    ///         stopped being true when #1944 moved the install inside the
+    ///         replay branch: a rebroadcast of an applied day now fills an
+    ///         empty `D*` (never re-chooses a set one, and never from a
+    ///         retired era's legacy wire). The readback stays useful — an
+    ///         operator still wants to see which days are applied — but it is
+    ///         no longer load-bearing for arming, and reading it as "this day
+    ///         is burnt for propagation" is now the wrong conclusion.
     function getBroadcastV2Applied(uint256 dayId) external view returns (bool) {
         return LibVaipakam.storageSlot().broadcastV2Applied[dayId];
     }
