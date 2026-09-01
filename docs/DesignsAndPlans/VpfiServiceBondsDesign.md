@@ -38,7 +38,7 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
 | Solver / matcher | larger match-batch sizes; priority-window access (E-2 perk interplay: bond = capacity, spend = priority) | precondition lies recorded via the offence dispatcher below (a submission contradicted by state it itself carries or creates — NOT staleness, which left v1's predicates: see the offence-recording bullet); **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
-| Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles | repeated out-of-grant-scope attempts recorded via the offence dispatcher; missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
+| Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles | ~~repeated out-of-grant-scope attempts~~ — **LEAVES v1 for the same reason staleness did**: `setKeeperActions` / `revokeKeeper` can remove a grant after a keeper broadcasts an authorized call but before it executes, so an honest pending action is out-of-scope at execution, and worse with several queued. Grant state is not carried by the submission. Returns with the attested tier, alongside missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
 
 - **Offence recording (Codex round-1 finding):** a slashable failure must
   not be a plain revert — a reverted tx leaves no state to slash against.
@@ -81,14 +81,26 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
   picks. Both attempts failed in opposite directions, and that is the
   signature of a predicate that is not objective.
 
-  What remains slashable in v1 is what needs no such inference: a submission
-  contradicted by state the submission ITSELF carries or creates — a fill
-  against a listing the same transaction proves already consumed, a claimed
-  precondition the call's own arguments disprove. Staleness returns with the
-  liveness tier, where an attested observation window exists to make "knew"
-  adjudicable; the alternative — a protocol-issued, expiry-bounded snapshot
-  commitment — is a real mechanism, and it belongs with that tier rather
-  than bolted onto v1.
+  **AND THAT LEAVES v1 WITH NO SLASHABLE PREDICATE — which is the finding,
+  not a gap to fill.** Apply the same test to the other v1 candidate and it
+  fails too: a keeper's out-of-grant-scope call can be produced by a
+  revocation landing between broadcast and execution, and grant state is not
+  carried by the submission either.
+
+  What survives the test is only a submission whose OWN arguments contradict
+  a precondition it asserted — and such a call should simply REVERT. The
+  offence dispatcher exists for failures that must commit because reverting
+  would cost the protocol something; an internally inconsistent call costs
+  nothing to reject. So the class that is objective, in-call, AND must not
+  revert is empty for v1.
+
+  Three predicate attempts have now collapsed under review, in three
+  different directions. That is evidence about the problem rather than about
+  the attempts: slashing needs an adjudicable notion of what the operator
+  knew, and v1 deliberately has no attestation to supply one. Staleness,
+  grant scope and liveness all return with the attested tier, where a
+  PROTOCOL-issued expiry-bounded observation commitment makes "knew"
+  decidable. A caller-supplied one never can.
 - Bond sizes: governance-bounded config. **NOT unlock tiers** — capacity
   rises CONTINUOUSLY with the bond and nothing is unlocked at a threshold.
   This bullet said "unlock tiers" until rev 7, and an implementation
@@ -176,12 +188,18 @@ whole rule:
 - Geometric, not linear — 10% of what remains, so the bond falls away rather
   than hitting zero at a fixed count. "Ten offences to zero" in rev 1 was
   wrong arithmetic as well as an ambiguous rule.
-- **Rounding is UP, with a minimum debit of one unit**, and a balance below
-  that minimum is consumed entirely. Integer arithmetic does not asymptote:
-  `balance * 1_000 / 10_000` is ZERO once the balance drops under ten units,
-  leaving a permanently unslashable positive bond that still buys capacity.
-  An earlier revision described the asymptote as a feature; in Solidity it is
-  a floor at which slashing silently stops.
+- **Rounding is UP.** `balance * 1_000 / 10_000` FLOORS to zero once the
+  balance drops under ten units, leaving a permanently unslashable positive
+  bond that still buys capacity; an earlier revision described that
+  asymptote as a feature, when in Solidity it is a floor at which slashing
+  silently stops. Ceiling division alone fixes it — any positive balance
+  yields a debit of at least one unit, so the bond strictly decreases and
+  reaches zero.
+
+  A previous revision ALSO said a balance below the minimum is consumed
+  entirely. That case cannot arise under ceiling division and the two rules
+  contradicted: no positive balance is below a one-unit debit. The sweep
+  rule is dropped rather than the rounding.
 - **The decay question dissolves.** Rev 1 asked whether the offence counter
   should decay, to stop a long-lived honest operator accumulating sparse
   offences into a slash. With immediate debit there is no accumulator to
@@ -341,6 +359,39 @@ entry cost, and the design forbids bonds becoming an entry barrier. The
 continuous credit above is what makes "no minimum" implementable rather than
 merely stated.
 
+### THE DECISION THIS NOTE NOW NEEDS — v1 has no slashable predicate
+
+Three predicate attempts have collapsed under review, in three different
+directions, and the third took the last candidate with it. Staleness needs an
+unobservable "knew"; a timing rule slashes honest operators; a caller-supplied
+snapshot exculpates dishonest ones; keeper grant-scope fails identically. What
+survives is only the internally-inconsistent call, which should revert rather
+than record an offence.
+
+**So v1 as specified is a bond with nothing to slash.** That is not a gap to
+fill with a fourth attempt — it is what the evidence says, and the owner should
+choose between two coherent shapes rather than have me keep trying:
+
+**(A) Ship v1 WITHOUT slashing — recommended.** Bonds buy capacity
+continuously, are refundable at will, and nothing is confiscated. The
+mechanism is honest and complete on its own: capital buys throughput, and
+misbehaviour is answered by role revocation, which the protocol already has.
+Say what it is — an operational capacity deposit, not a performance bond —
+because calling it a performance bond while nothing can be slashed is the
+representation problem this note exists to avoid. `ServiceBondSlash` stays
+reserved and unused. Slashing is then purely ADDITIVE later, with no
+migration: the attested tier brings its predicates and turns the same
+deposits into bonds.
+
+**(B) Ship nothing until the attested tier.** Wait for the observation
+commitment that makes "knew" adjudicable, and land bonds and slashing
+together. Costs the capacity mechanism, which is useful and independent.
+
+The case for (A): every part of this note that survived review is about
+capacity, and every part that collapsed is about slashing. Shipping the half
+that works, named accurately, is better than holding it hostage to the half
+that needs a mechanism v1 does not have.
+
 **Open for the owner**, and these are genuine choices rather than gaps:
 
 1. `bondAt4x` and `refillWindow` per role — the two numbers that set how much
@@ -385,12 +436,15 @@ that everything else is throughput and these are custody:**
 - Each objective slash predicate proven on-chain-verifiable, and proven to
   fire on committed state rather than a revert — an offence that reverts
   leaves nothing to slash.
-- **An honest operator is NOT slashed when the state moved between broadcast
-  and execution** while their submitted-against snapshot was still valid.
-  Test it with the disqualifying write landing in an EARLIER block than the
-  operator's call — that is precisely the case a same-block exemption misses.
-- **Dust slashing**: a balance too small for `slashBps` to round to a
-  non-zero debit is consumed, never left permanently unslashable.
+- **No v1 predicate depends on external state moving between broadcast and
+  execution** — the acceptance case is the ABSENCE of such a predicate. An
+  earlier revision required testing a caller-supplied snapshot, which is the
+  mechanism this note rejects, so that test could not have been written
+  honestly.
+- **Dust slashing**: a 1-unit balance still debits 1 unit under ceiling
+  division and reaches zero. The test is that no positive balance survives
+  a slash unchanged — which is the property, rather than a sweep rule that
+  can never fire.
 - Free-tier operation at ZERO bond, for every role. This is the
   permissionless baseline the whole design is built to preserve, and it is
   the case a capacity bug silently breaks.
