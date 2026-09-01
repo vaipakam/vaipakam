@@ -666,8 +666,18 @@ ordinary implementation, and it belongs in slice 3.
 
   Such a row is therefore **PARKED**: custody moves to a dedicated frozen holding
   keyed by loan, the scan records it as migrated-and-parked so the cursor
-  advances, and a **delisting release path** pays the resolved payee once the
-  flag clears.
+  advances, and a **delisting release path** that **re-resolves and re-screens the payee at
+  release**, rather than paying the address resolved during migration.
+
+  For an ordinary rebate row the entitlement follows the borrower-position NFT,
+  and a sanctioned holder cannot transfer while flagged — but the transfer gate
+  reopens on an authoritative clean read. So a holder who delists and then
+  transfers **before** the parked release executes would have the rebate paid to
+  them rather than to the buyer, irreversibly. Re-resolving `ownerOf` atomically
+  at release closes that window; the stored fee payer is retained **only** for
+  the prepay-sale terminal, per the payee rule above. Locking the NFT until
+  release is the alternative and is worse — it penalises the holder for the
+  protocol's parking decision.
 
   **The park/deliver decision uses `LibSanctionedLock.mustFreezeParty`, not a
   claim-style `isSanctionedAddress` check.** The ordinary read fails OPEN when
@@ -717,6 +727,15 @@ ordinary implementation, and it belongs in slice 3.
   and carries its own migration, transfer and terminal lifecycle. "A per-loan
   encumbrance" was under-specified in a way that reads as "reuse the existing
   row", which is the reading that breaks.
+
+  **Install the tier exclusion BEFORE the vault credit, or restamp again after
+  both.** `vaultCreditFromDiamondERC20` rolls the user's tier up from the
+  post-deposit tracked balance and whatever exclusion is stored **at that
+  moment**, so a straightforward credit-then-exclude implementation leaves the
+  cached tier and staking checkpoint counting VPFI the borrower owes — while
+  every stored counter looks correct afterwards, which is what makes it hard to
+  notice. Ordering is the cheaper fix; an explicit second restamp is the
+  fallback.
 
   **And the move records `protocolTrackedVaultBalance`, exactly as slice 2's
   fallback move does.** An earlier revision specified this migration's lien and
@@ -1667,18 +1686,38 @@ Conservation still passes — the sums are internally consistent — and recycle
 custody is silently reclassified as fresh headroom, or the reverse. A check that
 validates each entry in isolation cannot see this.
 
-So each entry carries a **unique migration nonce or operator-assigned packet
-hash, marked consumed BEFORE any ledger mutation** — the same consumed-before-
-debit discipline the offence proofs use. The legacy wire supplies no `remitId`,
-which is precisely why the identifier must be assigned by the reconciliation
-rather than read from the packet.
+So each entry carries a **canonical packet hash derived from IMMUTABLE DELIVERY
+EVIDENCE** — source chain plus transaction/log identity — with both the
+`oldWireAmount` bound and the consumed marker keyed to that hash, marked consumed
+BEFORE any ledger mutation.
 
-Step 0 is not defensive padding. Shares summing **above** the removed amount let
-the writer publish fresh headroom and recycled custody backed by unrelated
-Diamond VPFI; summing **below** it silently drops the residual out of every
-reward ledger. Both are produced by an ordinary operator mistake, and the entry
-is administrative, so nothing else would catch either. If a rounding residual is
-genuinely unavoidable, it stays in `uncounted` — never distributed.
+**A merely "unique migration nonce" does not work, and an earlier revision
+offered one as an equal option.** A fresh nonce establishes only that this
+SUBMISSION is new, not that this PACKET is. An operator reconstructing the same
+legacy packet twice under two fresh nonces passes both the nonce guard and the
+`oldWireAmount` bound — and once later packets have replenished the global
+`uncounted` balance, the duplicate classifies another packet's funds. The
+identity has to come from the delivery, or the phrase "this entry's OWN packet"
+means nothing.
+
+The legacy wire supplies no `remitId`, which is why the hash is **assigned by the
+operator from the delivery's own evidence** rather than read out of the payload —
+assigned, but not invented.
+
+Step 0 is not defensive padding, but its rationale had to be rewritten with it:
+an earlier revision argued in terms of shares summing **above or below the
+removed amount**, which step 1 made impossible in both directions — and the
+"below" half actively contradicted step 1's requirement that the residual REMAIN
+in `uncounted`.
+
+The live case is a share sum exceeding **`oldWireAmount`**: the writer then
+publishes fresh headroom and recycled custody backed by unrelated Diamond VPFI,
+and — with the global aggregate — consumes another packet's balance while doing
+it. That is an ordinary operator mistake on an administrative entry, so nothing
+else catches it.
+
+A share sum **below** `oldWireAmount` is permitted and expected: the difference
+is rounding dust, and it **stays in `uncounted`**, never distributed.
 
 Doing (2) without (1) and (3) is the failure mode; the window exists to land all
 three together.
