@@ -133,7 +133,7 @@ export function keeperDrawUnavailableGap(
     source: 'base-books-keeper',
     detail:
       `getChainKeeperDraw() could not be read for chain ${chainId} — ${describeFailure(failure)}.\n\n` +
-      `The draw is UNKNOWN this tick, so the availability-formula AND keeper-cap checks for this chain did NOT run (substituting zero would page a false CRITICAL on any chain with an armed keeper allocation, and the cap check has nothing to compare). Naming both matters during an incident: the draw's capacity bound is NOT monitored in this window.\n\n` +
+      `The draw is UNKNOWN this tick, so the availability-formula, keeper-cap AND (on the canonical chain) the base-self-inert keeper leg did NOT run (substituting zero would page a false CRITICAL on any chain with an armed keeper allocation, and the cap check has nothing to compare). Naming all three matters during an incident: the draw's capacity bound is NOT monitored in this window, and on Base the self-inertness leg is the ONLY check that would catch a keeper draw booked against the canonical id.\n\n` +
       (pre1569
         ? `The selector does not exist in this Diamond's CURRENT CUT — either a pre-#1569 deployment, or a partial facet refresh that dropped the RewardAggregatorFacet while its storage (possibly nonzero) persists; selector absence cannot distinguish the two. Cut the facet (back) in to close this gap.`
         : `The failure was in transport, not the contract — most likely transient; the next tick usually recovers it.`),

@@ -45,6 +45,7 @@ import {
 import {
   compositionUnavailableGap,
   isMissingSelector,
+  keeperDrawUnavailableGap,
   repatDrawUnavailableGap,
   repatPositionUnavailableGap,
   backingSnapshotUnavailableGap,
@@ -2858,6 +2859,12 @@ describe('repat gap builders + the pre-C2/unknown discrimination', () => {
     // the keeper bound was still monitored in exactly the window it was
     // not, which is the failure mode these gap messages exist to prevent.
     expect(draw.detail).toContain('keeper-cap');
+    // #1569 M4 C3 (Codex #2031 r19) — the Base self-inertness leg is gated
+    // on the same value and is the ONLY check that would catch a keeper
+    // draw booked against the canonical id, so an incident responder must
+    // be told it is unavailable too.
+    expect(keeperDrawUnavailableGap(10, TRANSIENT()).detail)
+      .toContain('base-self-inert');
     const pos = repatPositionUnavailableGap(10, TRANSIENT());
     expect(pos.detail).toContain('UNKNOWN');
     expect(pos.detail).toContain('bucket composition');

@@ -251,6 +251,17 @@ export function isAbiShapeMismatch(err: unknown): boolean {
   const NAMES = new Set([
     'AbiDecodingDataSizeTooSmallError',
     'AbiDecodingZeroDataError',
+    // The one that actually fires for the case this predicate exists to
+    // diagnose (Codex #2031 r19). A pre-#1434 six-output lens returns 192
+    // bytes; decoded against EIGHT outputs viem walks off the end of the
+    // cursor and throws `PositionOutOfBoundsError`, NOT a size error —
+    // 192 bytes is not "too small" for viem's up-front length check, it is
+    // only too small once the reader reaches word seven.
+    'PositionOutOfBoundsError',
+    // Kept for older/other viem paths. NOTE `DecodeAbiParametersError` is a
+    // TYPE-level union in viem, never a runtime `error.name`, so it has
+    // never matched anything — it was in this set from the day it was
+    // written and did no work.
     'DecodeAbiParametersError',
   ]);
   for (let e: unknown = err, depth = 0; e && depth < 8; depth += 1) {

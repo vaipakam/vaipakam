@@ -7,6 +7,7 @@
  * both are pinned here.
  */
 import { describe, expect, it } from 'vitest';
+import { decodeAbiParameters } from 'viem';
 
 import {
   FUNCTION_DOES_NOT_EXIST_SELECTOR,
@@ -217,6 +218,30 @@ describe('isAbiShapeMismatch', () => {
     expect(
       isAbiShapeMismatch({ errorName: 'InteractionRewardBackingShort' }),
     ).toBe(false);
+  });
+
+  it('recognises the REAL error a stale six-output lens throws', () => {
+    // Built by actually decoding rather than by naming an error I assumed.
+    // This predicate has now failed twice on the exact scenario it was
+    // written for — first `FunctionDoesNotExist`, then this — both times
+    // because the error name came from reasoning instead of from a throw.
+    // A pre-#1434 lens returns SIX words; against eight outputs viem walks
+    // off the cursor and throws PositionOutOfBoundsError, which is not a
+    // size error: 192 bytes passes the up-front length check and only fails
+    // when the reader reaches word seven.
+    const eight = Array.from({ length: 8 }, (_, i) => ({
+      name: `o${i}`,
+      type: 'uint256' as const,
+    }));
+    const sixWords = `0x${'11'.padStart(64, '0').repeat(6)}` as const;
+    let thrown: unknown;
+    try {
+      decodeAbiParameters(eight, sixWords);
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeDefined();
+    expect(isAbiShapeMismatch(thrown)).toBe(true);
   });
 
   it('recognises viem decode errors, including wrapped ones', () => {
