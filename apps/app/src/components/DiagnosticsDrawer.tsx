@@ -47,7 +47,7 @@ import { readLastError } from '../diagnostics/lastError';
 import { useNowSec } from '../hooks/useNowSec';
 import {
   buildIssueUrl,
-  buildReportBody,
+  buildSentPreview,
   redactAddress,
   redactCap,
 } from '../diagnostics/reportIssue';
@@ -285,12 +285,35 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
   // Its comment said so inadvertently — "the GitHub link still carries the
   // details" is true, and that link is precisely what the user was trying to
   // evaluate before taking it.
-  const reportBody = useMemo(() => buildReportBody(reportCtx), [reportCtx]);
+  // WHAT IS ACTUALLY SENT, not the untrimmed body (#2043 round 3 P2).
+  // `buildIssueUrl` drops the component stack, then the whole error block,
+  // whenever the encoded URL crosses its length ceiling — so on the largest
+  // crashes the report GitHub receives is SHORTER than `buildReportBody`.
+  // Previewing the untrimmed text showed content that would never travel and
+  // made the Privacy Policy's "displays exactly what would be sent" false for
+  // exactly the reports where it matters most. Both this and the link now
+  // read the same trimming decision.
+  const reportBody = useMemo(() => buildSentPreview(reportCtx), [reportCtx]);
+  // The pending "copied" reset. Held so a later attempt can cancel it
+  // (#2043 round 3 P2): the old timer fired unconditionally, so a copy
+  // followed by a second attempt inside two seconds had the FIRST timer reset
+  // the SECOND attempt's state — a failure message that vanished almost
+  // immediately, or a confirmation cut to a fraction of its intended life.
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  useEffect(
+    () => () => {
+      if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+    },
+    [],
+  );
   const copyDetails = async () => {
+    if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
     try {
       await navigator.clipboard.writeText(reportBody);
       setCopyState('copied');
-      setTimeout(() => setCopyState('idle'), 2_000);
+      copyResetTimer.current = setTimeout(() => setCopyState('idle'), 2_000);
     } catch {
       // NOT SILENT, and not a dead end either: the failure is stated AND the
       // disclosure is opened, so the text the clipboard refused to take is

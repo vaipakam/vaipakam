@@ -11,7 +11,7 @@
  * `mint(to, amount)` on the two ERC-20s, `mint(to, tokenId)` on the
  * ERC-4907 NFT with a client-random 256-bit id (collision-safe).
  */
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { assertSettled } from '../contracts/ownReceipt';
 import { Link } from 'react-router-dom';
 import { useModal } from 'connectkit';
@@ -120,8 +120,16 @@ export function Faucet() {
   // that is not about the token on screen.
   const [copyResult, setCopyResult] = useState<{
     tokenId: string;
+    attempt: number;
     state: 'copied' | 'failed';
   } | null>(null);
+  // ATTEMPT NUMBER as well as token id (#2043 round 3 P2). The id alone
+  // cannot order two writes for the SAME token: a double-click or a retry
+  // starts a second write, and if the newer one succeeds while the older
+  // rejects afterwards, the older callback overwrote a true "Copied." with
+  // "failed" — the clipboard holding the id while the page said it did not.
+  // A monotonic counter gives the callbacks an order the id cannot.
+  const copyAttempt = useRef(0);
   const [watched, setWatched] = useState(false);
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
@@ -443,12 +451,26 @@ export function Faucet() {
                 ) : null}
                 {done.tokenId ? (
                   <>
-                    <code
+                    {/* A READ-ONLY INPUT, not a `<code>` (#2043 round 3 P2).
+                        The failure line below tells the reader to select the
+                        id above — and a `<code>` is not in the tab order, so
+                        a keyboard-only user could not reach the very thing
+                        they had just been pointed at. Same defect the
+                        Diagnostics drawer's `<pre>` had one round earlier,
+                        in the sibling file, unfixed until now. `readOnly`
+                        rather than `disabled`: a disabled control is skipped
+                        by the tab order too. */}
+                    <input
                       className="mono"
-                      style={{ wordBreak: 'break-all', display: 'block', margin: '4px 0' }}
-                    >
-                      {done.tokenId}
-                    </code>
+                      readOnly
+                      value={done.tokenId}
+                      aria-label={copy.faucet.copyTokenId}
+                      style={{
+                        width: '100%',
+                        display: 'block',
+                        margin: '4px 0',
+                      }}
+                    />
                     <button
                       type="button"
                       className="btn btn-secondary"
@@ -473,24 +495,22 @@ export function Faucet() {
                         // sits inside a try/catch, which a synchronous throw
                         // does reach.)
                         const forToken = done.tokenId!;
+                        const attempt = (copyAttempt.current += 1);
+                        // Only the LATEST attempt may report. A settlement
+                        // from a superseded one is discarded rather than
+                        // allowed to contradict it.
+                        const report = (state: 'copied' | 'failed') => {
+                          if (attempt !== copyAttempt.current) return;
+                          setCopyResult({ tokenId: forToken, attempt, state });
+                        };
                         setCopyResult(null);
                         try {
                           void navigator.clipboard
                             .writeText(forToken)
-                            .then(() =>
-                              setCopyResult({
-                                tokenId: forToken,
-                                state: 'copied',
-                              }),
-                            )
-                            .catch(() =>
-                              setCopyResult({
-                                tokenId: forToken,
-                                state: 'failed',
-                              }),
-                            );
+                            .then(() => report('copied'))
+                            .catch(() => report('failed'));
                         } catch {
-                          setCopyResult({ tokenId: forToken, state: 'failed' });
+                          report('failed');
                         }
                       }}
                     >

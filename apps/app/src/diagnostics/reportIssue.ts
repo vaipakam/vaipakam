@@ -118,24 +118,54 @@ export function buildReportBody(ctx: ReportContext): string {
  *  whole diagnostics block into `extra` ("Additional context: logs
  *  from the diagnostics drawer" — its stated purpose). The user
  *  writes repro/expected/actual/severity — those are their story. */
-export function buildIssueUrl(ctx: ReportContext): string {
+export interface IssueReport {
+  /** The pre-filled issue URL, after any length trimming. */
+  readonly url: string;
+  /** Exactly the field values that URL carries, after the same trimming. */
+  readonly fields: {
+    readonly title: string;
+    readonly surface: string;
+    readonly chain: string;
+    readonly env: string;
+    readonly extra: string;
+  };
+}
+
+/**
+ * The issue URL AND the field values it actually carries (#2043 round 3 P2).
+ *
+ * The two are returned together because they can differ from the untrimmed
+ * report, and something has to preview what is genuinely sent. The ladder
+ * below drops the component stack, then the whole error block, whenever the
+ * encoded URL crosses `MAX_URL_LEN` — so on exactly the largest crashes, the
+ * report GitHub receives is SHORTER than `buildReportBody`. A preview built
+ * from the untrimmed body therefore showed content that would never travel,
+ * which made the Privacy Policy's "displays exactly what would be sent" false
+ * for the reports where the difference matters most.
+ *
+ * Returning the fields rather than re-deriving them in the drawer keeps the
+ * two from drifting: there is one trimming decision and both the link and the
+ * preview read its result.
+ */
+export function buildIssueReport(ctx: ReportContext): IssueReport {
   const title = redactText(
     `[Bug] app problem report — ${redactCap(ctx.path, MAX_PATH_CHARS)}${
       ctx.lastError ? ` (${redactCap(ctx.lastError.message, 60)})` : ''
     }`,
   );
+  const surface = redactCap(`apps/app — ${ctx.path}`, MAX_PATH_CHARS);
+  const env = `Build ${ctx.buildHash}${ctx.buildTime ? ` (${ctx.buildTime})` : ''}; wallet ${ctx.walletRedacted}`;
   const params = new URLSearchParams({
     template: 'bug.yml',
     title,
-    surface: redactCap(`apps/app — ${ctx.path}`, MAX_PATH_CHARS),
+    surface,
     chain: ctx.networkLine,
-    env: `Build ${ctx.buildHash}${ctx.buildTime ? ` (${ctx.buildTime})` : ''}; wallet ${ctx.walletRedacted}`,
+    env,
     extra: buildDiagnosticsBlock(ctx),
   });
   let url = `${issuesBase()}?${params.toString()}`;
   if (url.length > MAX_URL_LEN) {
-    // Drop the stack first, then the whole error block — the drawer's
-    // Copy-details path still carries the full text.
+    // Drop the stack first, then the whole error block.
     const withoutStack = {
       ...ctx,
       lastError: ctx.lastError ? { ...ctx.lastError, componentStack: undefined } : null,
@@ -147,5 +177,39 @@ export function buildIssueUrl(ctx: ReportContext): string {
       url = `${issuesBase()}?${params.toString()}`;
     }
   }
-  return url;
+  return {
+    url,
+    fields: {
+      title,
+      surface,
+      chain: ctx.networkLine,
+      env,
+      extra: params.get('extra') ?? '',
+    },
+  };
+}
+
+export function buildIssueUrl(ctx: ReportContext): string {
+  return buildIssueReport(ctx).url;
+}
+
+/**
+ * What the report link actually discloses, rendered for reading.
+ *
+ * Every field the pre-filled form carries, with the trimming already applied
+ * — so the drawer's disclosure can honestly claim to show what GitHub
+ * receives. `buildReportBody` is a different thing and stays: it is the
+ * template a person copies to write their own report, and it carries a
+ * "What happened?" prompt the URL does not.
+ */
+export function buildSentPreview(ctx: ReportContext): string {
+  const { fields } = buildIssueReport(ctx);
+  return [
+    `Title: ${fields.title}`,
+    `Surface: ${fields.surface}`,
+    `Chain: ${fields.chain}`,
+    `Env: ${fields.env}`,
+    '',
+    fields.extra,
+  ].join('\n');
 }

@@ -135,17 +135,24 @@ test('the full report can be read in the drawer without sending it', async ({
 }) => {
   const { page } = await launchWallet('borrower');
   await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await page.evaluate(() => {
+  // The address is SEEDED, not merely asserted absent (round 3 P2). The first
+  // version of this case checked that `0x1111…0000` does not appear in the
+  // preview while seeding a message that never contained it — so the check
+  // passed on an empty string and would have gone on passing if the preview
+  // stopped redacting entirely. An absence assertion is worth nothing unless
+  // the thing could have been present.
+  const embedded = '0x1111222233334444555566667777888899990000';
+  await page.evaluate((addr) => {
     sessionStorage.setItem(
       'vaipakam.app.lastError',
       JSON.stringify({
-        message: 'E2E preview crash',
+        message: `E2E preview crash for ${addr}`,
         componentStack: 'PreviewCulprit\nSomePage',
         path: '/lend',
         at: Date.now(),
       }),
     );
-  });
+  }, embedded);
   await page
     .getByRole('button', { name: /support and connection check/i })
     .click();
@@ -169,7 +176,12 @@ test('the full report can be read in the drawer without sending it', async ({
   await expect(body).toHaveValue(/E2E preview crash/);
   // ...and the preview honours the same redaction contract as the report.
   expect((await body.inputValue()).toLowerCase()).not.toContain(
-    '0x1111222233334444555566667777888899990000',
+    embedded.toLowerCase(),
+  );
+  // ...and the shortened form IS there, which is what proves the redaction
+  // ran rather than the field being empty.
+  await expect(body).toHaveValue(
+    new RegExp(`${embedded.slice(0, 6)}…${embedded.slice(-4)}`),
   );
 
   await dialog.getByRole('button', { name: /hide full report/i }).click();
