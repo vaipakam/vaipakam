@@ -56,7 +56,12 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
   could not have known (state changed in the same block) are not offences;
   the offence predicate must reference state committed *before* the
   operator's submission.
-- Bond sizes + unlock tiers: governance-bounded config.
+- Bond sizes: governance-bounded config. **NOT unlock tiers** — capacity
+  rises CONTINUOUSLY with the bond and nothing is unlocked at a threshold.
+  This bullet said "unlock tiers" until rev 7, and an implementation
+  following it would assign no incremental capacity below a tier boundary,
+  reintroducing both a threshold and the implicit minimum the continuous
+  curve exists to remove.
 - **Unbond delay** — NOT in v1 (rev 4). It exists to stop a slash-and-run
   inside a misbehaviour window, and v1 has no such window: every offence is
   debited in the same call that records it. The delay, and the privilege
@@ -141,7 +146,12 @@ whole rule:
   decay: each offence is priced once, at the time, against a bond that is
   already smaller for every previous one. The counter survives only as a
   lifetime tally for observability, and nothing reads it.
-- Governance-bounded: `slashBps` default **1,000** (10%), ceiling **2,500**
+- Governance-bounded: `slashBps` default **1,000** (10%), **floor 100**
+  (1%) — restored in rev 7 after rev 6's restructure dropped it. A zero
+  leaves bonds granting elevated capacity while every proven offence debits
+  nothing, which is a performance bond in name only and worse than none,
+  because capacity is still being handed out on the strength of it. Ceiling
+  **2,500**
   (25%), following the `MAX_*_BPS` convention in `ConfigFacet`.
 
 **2. v1 HAS NO UNBOND DELAY — and that is the honest answer, not a gap.**
@@ -270,11 +280,14 @@ merely stated.
 
 1. `bondAt4x` and `refillWindow` per role — the two numbers that set how much
    capacity a bond buys and how fast it comes back.
-2. Whether the permissionless roles keep a per-address ceiling at all, now
-   that it is understood not to bound an operator. The alternative is no
-   ceiling plus the linear cost curve, which is honest about what the
-   mechanism does and removes a number that could be mistaken for a
-   guarantee.
+2. ~~Whether the permissionless roles keep a per-address ceiling at all.~~
+   **RATIFIED: the 4× per-address ceiling stands.** This was listed as an
+   open choice while the ceiling's meaning was still being argued; leaving
+   it open in a note that is about to merge would leave an implementation
+   unable to tell whether 4× is a required invariant or a suggestion. It is
+   an invariant. What was withdrawn is the CLAIM that it bounds an operator
+   — it bounds an address, and the aggregate story is the linear cost curve
+   in §4.
 3. Whether v1 ships at all without the liveness tier. Rev 4 removed the
    unbond delay because v1 has no delayed evidence — which is correct, and
    also worth looking at squarely: a bond that can be withdrawn the instant
