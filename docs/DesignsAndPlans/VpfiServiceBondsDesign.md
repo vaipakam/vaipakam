@@ -33,12 +33,39 @@ instruction to anyone implementing or writing copy from the top of the file.
    fee shares. Posting a bond buys operational capacity, full stop.
 2. **Refundable at will, subject to the sanctions gate** — a deposit, not a
    purchase. v1 has no unwind delay, because v1 has no evidence that arrives
-   after an operator stops acting; a delay arrives with the liveness tier that
-   creates one (rev 4).
+   after an operator stops acting.
+
+   **The delay attaches to ANY predicate whose proof can arrive after the
+   action — not to the liveness tier specifically.** An earlier revision tied it
+   to that tier, which was true when liveness was the expected next step and is
+   now a slash-and-run hole: with equivocation the only viable candidate, an
+   operator could sign two conflicting statements, unbond immediately, and have
+   the second surface afterwards. Tying the delay to a design that may never
+   ship leaves the one that might unprotected.
+
+   So each delayed-proof predicate carries its own **evidence horizon**, and the
+   delay is the maximum over those live at the unbond request. For equivocation
+   that horizon is how long a conflicting statement can still be produced and
+   proven — which depends on the artefacts' own validity window rather than on
+   any observation commitment, and must be defined with the predicate.
 
    The qualifier is not a hedge and must not be dropped: the acceptance criteria
    below require `unbond` to REVERT for a sanctioned operator, so for a flagged
-   wallet the principal stays frozen until delisting. An earlier revision
+   wallet the principal stays frozen until delisting.
+
+   **And for a CONFIRMED-flagged balance the check must FAIL CLOSED.**
+   `LibVaipakam._assertNotSanctioned` is explicitly a no-op "when the oracle is
+   unset or fails open", so requiring only that helper lets a previously
+   confirmed operator withdraw during an oracle outage — breaking the freeze this
+   rule promises, and invalidating the rotation reasoning above, which treats a
+   flagged balance as undrainable.
+
+   The primitive already exists: **`LibVaipakam.assertNotSanctionedFailClosed`**
+   (#998 S10 / #1006) reverts `SanctionsOracleUnavailable()` whenever the oracle
+   is unset or its call reverts. So: **record the confirmed flag, and release a
+   flagged balance only through the fail-closed check**, while operators never
+   confirmed flagged keep the ordinary fail-open path — an outage must not freeze
+   everybody's capital, which is the reason the fail-open default exists. An earlier revision
    promised refundability unconditionally here while requiring the freeze there
    — an implementation could satisfy one only by violating the other, and the
    unconditional promise is the one that would have been quoted in copy.
@@ -294,6 +321,20 @@ decodes is the same gap one step later.
   liveness tier.
 - Slashed VPFI → treasury **recycle bucket** through the programme's single
   chokepoint, `LibVpfiRecycle.credit(RecycleSource.ServiceBondSlash, …)`.
+
+  ⚠️ **An OLD-TOKEN slash cannot take that path.** If the dual-token branch
+  retains an old-token tranche across a rotation and a delayed proof later
+  slashes it, `LibVpfiRecycle.credit` checks the balance of the **new live**
+  `s.vpfiToken` and increments a single scalar `recycleBucket` — so the slash
+  either reverts for lack of new-token backing, or labels unrelated new tokens as
+  recycled while the confiscated old asset stays stranded. Both outcomes are
+  worse than not slashing at all.
+
+  So either **per-token recycle accounting**, or — much simpler, and consistent
+  with the rotation section — **all old-token slash exposure resolves before
+  rotation**: no outstanding proof may name an old-token tranche when the
+  rotation runs. That makes it one more item on the rotation's drain inventory
+  rather than a new accounting dimension.
   That enum member is ALREADY reserved and must be used rather than a new
   generic one — appending a duplicate would split service-bond absorption
   from the metrics class reserved for it. (This bullet said
@@ -359,9 +400,21 @@ to zero", which are not the same rule: for any threshold above one it is
 undefined whether the earlier offences debit, whether crossing the threshold
 takes 10% once or the accumulated total, and what the counter does afterwards.
 
-**The threshold is ONE.** Each `OffenceRecorded` immediately debits
-`slashBps` of the CURRENT balance of the `(role, address)` bond whose entry
-point recorded the offence, into the recycle bucket.
+**The threshold is ONE.** Each `OffenceRecorded` debits `slashBps` into the
+recycle bucket from the `(role, address)` bond whose entry point recorded the
+offence — **and the base depends on when the offence is recorded:**
+
+- **Synchronous recording (v1's in-call dispatcher):** the CURRENT balance. The
+  observation and the debit are the same call, so current and action-time are
+  the same figure and there is nothing to apportion.
+- **Delayed proof (attested tier):** the **remaining eligible TRANCHES** named
+  by the action-consumption record — never the current aggregate.
+
+An earlier revision stated the aggregate rule unconditionally and left it
+standing after tranche provenance was made mandatory. Followed literally for a
+delayed proof submitted after the original tranches were consumed and the
+operator topped up, it confiscates the new tranche — the exact reach defect the
+tranche section exists to prevent, restored by the sentence above it.
 
 **Each proof is consumed before it debits.** Under attested-tier delayed
 adjudication the offence arrives as a submitted proof rather than as an in-call
@@ -453,6 +506,15 @@ whole rule:
 - Geometric, not linear — 10% of what remains, so the bond falls away rather
   than hitting zero at a fixed count. "Ten offences to zero" in rev 1 was
   wrong arithmetic as well as an ambiguous rule.
+- **Rounding is computed ONCE over the sum of the proof's eligible remaining
+  tranches, then allocated across them** — never per tranche. Otherwise deposit
+  fragmentation changes the penalty: an operator splitting 100 units into 100
+  one-unit deposits would, under per-tranche ceiling-rounding, be debited all
+  100 units at a 10% slash, and under per-tranche flooring be debited **zero**.
+  Rounding once over the aggregate eligible remainder debits 10, which is the
+  answer that does not depend on how the operator arranged their deposits.
+  Allocation across the tranches is then a distribution question and cannot
+  change the total.
 - **Rounding is UP.** `balance * 1_000 / 10_000` FLOORS to zero once the
   balance drops under ten units, leaving a permanently unslashable positive
   bond that still buys capacity; an earlier revision described that
@@ -957,6 +1019,19 @@ has been specified — see item 3.
 POSITIVE.** Flat per arming, paid in addition to the deposit, per §3. Without a
 number (C) is not buildable, and its permanent-sink property is exactly what the
 number sets.
+
+**The permissionless FREE TIER needs a positive floor too**, for the same class
+of reason and in the opposite direction. Dark mode is specified to preserve the
+free tier, but if governance retunes free-tier capacity to zero — or fresh
+storage simply leaves it there — that preservation grants nothing, every
+unbonded operation is refused, and the optional bond becomes an **entry gate**.
+This note already imposes positive floors on the arming fee and on `slashBps`
+for analogous zero-value failures; leaving the baseline that defines
+"permissionless" unconstrained is the omission that matters most, because it
+converts the product into a different one silently.
+
+So: a **non-zero free-tier floor**, or a separate hard-coded permissionless
+allowance that no retune can reach.
 
 **A zero floor collapses C into A silently.** Governance could later tune the
 flat fee to zero while bond posting and raising stayed enabled — no absorption,
