@@ -44,7 +44,7 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
 | Solver / matcher | larger match-batch sizes ONLY. **Priority-window access is NOT a bond entitlement** — it is E-2's spend-gated perk with its own flat VPFI fee, and bonds neither gate it nor grant it. An earlier revision listed it here, which would let an implementation either require a bond ON TOP of the E-2 purchase or hand priority out for bonding alone; both change the perk's gate and its permanent absorption. Bond buys capacity; spend buys priority; the two never substitute | precondition lies recorded via the offence dispatcher below **ATTESTED TIER ONLY — v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row; **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
-| Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles | ~~repeated out-of-grant-scope attempts~~ — **LEAVES v1 for the same reason staleness did**: `setKeeperActions` / `revokeKeeper` can remove a grant after a keeper broadcasts an authorized call but before it executes, so an honest pending action is out-of-scope at execution, and worse with several queued. Grant state is not carried by the submission. Returns with the attested tier, alongside missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
+| Keeper (opt-in roles) | higher per-pass action counts for granted `KEEPER_ACTION_*` roles. **A liveness commitment must be suspended, cancelled or extended — without an offence — whenever the protocol itself blocks performance**: a guardian pause, a role kill switch or a selector-level switch makes the required call revert while the commitment's clock keeps running, so every enrolled operator with a live window misses it and is slashed *for the protocol's own incident*. That is objectively detectable (the switch state is on-chain), so it belongs in the predicate rather than in an operator's appeal. A pause spanning a deadline is the acceptance case, and missing-liveness must not be admitted as a slash predicate until it passes | ~~repeated out-of-grant-scope attempts~~ — **LEAVES v1 for the same reason staleness did**: `setKeeperActions` / `revokeKeeper` can remove a grant after a keeper broadcasts an authorized call but before it executes, so an honest pending action is out-of-scope at execution, and worse with several queued. Grant state is not carried by the submission. Returns with the attested tier, alongside missing committed liveness windows IF the operator enrolled in a liveness commitment (optional tier) |
 
 - **Offence recording (Codex round-1 finding):** a slashable failure must
   not be a plain revert — a reverted tx leaves no state to slash against.
@@ -106,9 +106,34 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
   different directions. That is evidence about the problem rather than about
   the attempts: slashing needs an adjudicable notion of what the operator
   knew, and v1 deliberately has no attestation to supply one. Staleness,
-  grant scope and liveness all return with the attested tier, where a
-  PROTOCOL-issued expiry-bounded observation commitment makes "knew"
-  decidable. A caller-supplied one never can.
+  grant scope and liveness all return with the attested tier.
+
+  **But an expiry-bounded protocol commitment does NOT make "knew" decidable,
+  and an earlier revision of this bullet claimed it did.** A protocol-issued
+  snapshot authenticates what the operator observed *at issuance*. It says
+  nothing about what they learned afterwards. An operator can take a
+  live-listing commitment, watch the listing cancel one second later, and
+  knowingly submit while the commitment is still unexpired — and the chain sees
+  evidence identical to an honest operator who never saw the cancellation. The
+  window narrows the gap; it does not close it, and a predicate that is only
+  probabilistically right is not an objective one.
+
+  So the attested tier has its own fork, and it should be recorded here rather
+  than discovered during its design:
+
+  1. **Make the commitment an AUTHORIZATION rather than evidence** — a temporary
+     protocol grant whose use stays valid despite intervening state changes. The
+     operator is then never lying about the world; they are exercising a
+     permission the protocol issued. Nothing needs to be adjudicated, because
+     nothing is being alleged.
+  2. **Keep knowledge-based predicates out of the slash tier entirely** — accept
+     that staleness and grant scope revert rather than slash, permanently.
+
+  Option 1 is the only one that recovers a slash for these predicates, and it
+  does so by removing the knowledge question rather than answering it. **This is
+  the same finding as the main fork, one level down**: every attempt to make
+  "knew" adjudicable has failed, in four directions now, and the ones that
+  survive are the ones that stop asking.
 - Bond sizes: governance-bounded config. **NOT unlock tiers** — capacity
   rises CONTINUOUSLY with the bond and nothing is unlocked at a threshold.
   This bullet said "unlock tiers" until rev 7, and an implementation
@@ -190,6 +215,19 @@ takes 10% once or the accumulated total, and what the counter does afterwards.
 **The threshold is ONE.** Each `OffenceRecorded` immediately debits
 `slashBps` of the CURRENT balance of the `(role, address)` bond whose entry
 point recorded the offence, into the recycle bucket.
+
+**Which `slashBps`, when adjudication is delayed.** Immediate recording makes
+this moot in v1, but the attested tier records an offence only after its
+observation or adjudication window closes, and governance can retune `slashBps`
+inside that gap. Unbound, an operator acting at 10% can lose 25% because
+governance raised the rate before the evidence resolved — and a reduction in the
+same window would discount an offence already committed. Both are the rule
+changing after the act.
+
+**Bind the rate to the protocol-issued observation commitment**: the commitment
+carries the config epoch (or the rate itself) in force when the action was
+accepted, and adjudication applies that, not the live value. This is the same
+snapshot-at-init discipline the loan fee stamps use, and for the same reason.
 
 **Keyed by role, not by address.** One address may hold solver, matcher and
 keeper bonds at once, and an offence recorded through a matcher entry point
@@ -330,7 +368,28 @@ second.
 
 Note the two are settled by different actors at different times — the rate by
 governance at each retune, the clamp by whoever touches the bucket next — which
-is precisely why one index cannot carry both. This is a decision, not an
+is precisely why one index cannot carry both.
+
+**And a third problem, which invalidates the global index outright: there is no
+single "OLD rate" to settle.** The curve is continuous and per-`(role, address)`
+— that is the point of it, and the reason the threshold was removed — so a
+governance retune of a curve PARAMETER moves different bonds by different
+factors, not all bonds by one factor.
+
+Raising `bondAt4x` from 100 to 200 takes a 50-token bond from 2.5× to 1.75×
+while a 200-token bond stays capped at 4× and does not move at all. A single
+global rate-seconds total cannot settle both of those stale buckets, because
+they did not accrue at a common rate to begin with. This is not fixed by the
+ceiling handling above; it is a defect in the index's premise, and an earlier
+revision introduced it while fixing the epoch problem.
+
+So the accrual mechanism has to either **retain enough curve history to
+integrate each bond's OWN rate over its own span**, or **conservatively
+invalidate the affected buckets on every curve retune** — the same
+under-credit-is-safe reasoning as the ceiling case, and the same recommendation.
+Taken together with the ceiling finding, the honest summary is that a scalar
+index does not fit a per-bond curve at all: **reset on retune is the mechanism,
+and the index is only an optimization available while the curve is untouched.** This is a decision, not an
 implementation detail, because without it the bond is bypassable: an
 operator accrues elevated credit, withdraws the bond, and still spends
 bonded capacity with nothing left to slash. It is also what makes v1's
@@ -630,6 +689,20 @@ that everything else is throughput and these are custody:**
   pause it. Two focused tests, one per direction, because a single test that
   only proves the pause blocks something would pass on an implementation that
   pauses everything.
+
+  **Omitting `whenNotPaused` is necessary and not sufficient — the app has a
+  SECOND gate.** `apps/app/src/contracts/tosWriteGate.ts` closes every write
+  for an operator who has not accepted a newly published Terms version, and it
+  is an allowlist: only selectors in `EXIT_WRITES` stay reachable. A contract
+  that cannot be paused is still unreachable through the official client if the
+  gate does not list it, so a Terms update would freeze operator capital exactly
+  as a pause would — with the note still promising the exit is open.
+
+  So `unbond` goes in `EXIT_WRITES` and on an exempt route, while `postBond`,
+  any deposit-on-behalf or permit variant and (under C) the arming fee stay
+  gated — the same inflow/exit split as the pause. The stale-Terms case needs
+  its own test: it is a different mechanism from the pause and passes none of
+  the pause's tests.
 
 - **SHIPPING PREREQUISITE, not a test: reward-funding isolation (#1566).**
   `RewardClaimFacet` takes `backingRoom` from `LibVpfiRecycle.backingPosition`,
