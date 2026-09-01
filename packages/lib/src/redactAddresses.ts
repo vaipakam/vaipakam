@@ -110,6 +110,25 @@ const ADDRESS_HEX_LEN = 40;
  * leading quantifier to unwind.
  */
 function* addressSpans(text: string): Generator<{ index: number; text: string }> {
+  // End of the previously yielded span. THE PREFIX IS WHAT CAN COLLIDE
+  // (#2043 round 2 P2), and it was a leak rather than a tidiness problem.
+  //
+  // The forty-digit bodies can never overlap — they are maximal hex runs and
+  // are disjoint by construction. The absorbed `0x` can, because its `0` IS a
+  // hex character and can therefore be the last character of the run before
+  // it. `<39 hex>0x<40 hex>` is the shape: the first maximal run is those 39
+  // digits PLUS that `0`, exactly forty long, so it is emitted as an address;
+  // the second then tries to absorb the same `0` and starts one character
+  // inside the span already taken.
+  //
+  // The consumer's overlap guard then dropped the whole second match. Observed
+  // before the fix: `…aaa0` + `x` + the complete second address — not merely
+  // recoverable, INTACT, on text that becomes a public issue.
+  //
+  // Absorbing the prefix is cosmetic; redacting the digits is the promise. So
+  // where the two conflict the prefix gives way, and the address is still
+  // shortened — one character further in.
+  let previousEnd = 0;
   for (const m of text.matchAll(HEX_RUN_RE)) {
     if (m[0].length !== ADDRESS_HEX_LEN) continue;
     const digitsAt = m.index;
@@ -121,8 +140,11 @@ function* addressSpans(text: string): Generator<{ index: number; text: string }>
       digitsAt >= 2 &&
       (text[digitsAt - 1] === 'x' || text[digitsAt - 1] === 'X') &&
       text[digitsAt - 2] === '0';
-    const index = prefixed ? digitsAt - 2 : digitsAt;
-    yield { index, text: text.slice(index, digitsAt + ADDRESS_HEX_LEN) };
+    const index =
+      prefixed && digitsAt - 2 >= previousEnd ? digitsAt - 2 : digitsAt;
+    const end = digitsAt + ADDRESS_HEX_LEN;
+    yield { index, text: text.slice(index, end) };
+    previousEnd = end;
   }
 }
 

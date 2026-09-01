@@ -1,19 +1,20 @@
-## Thread — Support reports now redact an address however it is spelled (PR #<n>)
+## Thread — Support reports now redact an address written without its 0x (PR #<n>)
 
 A support report shortens every wallet address in it before the report can
 become a public issue — the first six characters, an ellipsis, the last four.
 That promise is repeated to users in the Privacy Policy.
 
-It was looking for the wrong thing. The scrubber searched for `0x` followed
-immediately by forty digits, so it recognised an address only when the two
-were written together. Separate them by anything at all — a space, a second
-query parameter in a link, a hyphen — and the address travelled whole. So did
-forty digits written with no `0x` at all, which is a full account one fixed
-two-character edit from being usable.
+That promise held for an address written the ordinary way, and this change
+widens which spellings it covers — it does not make it unconditional. The
+scrubber searched for `0x` followed immediately by forty digits, so it
+recognised an address only when the two were written together. Put anything
+between them — a space, a second query parameter in a link — and the address
+travelled whole. So did forty digits written with no `0x` at all, which is a
+full account one fixed two-character edit from being usable.
 
-**The scrubber now recognises the digits, not the prefix.** Forty hexadecimal
-characters standing on their own are treated as an account and shortened,
-wherever they appear and whatever comes before them. Where a `0x` does sit
+**The scrubber now recognises the digits, not the prefix.** A run of exactly
+forty hexadecimal characters standing on its own is treated as an account and
+shortened, wherever it appears and whatever comes before it. Where a `0x` does sit
 right beside them it is still taken along, so a report reads exactly as it
 did.
 

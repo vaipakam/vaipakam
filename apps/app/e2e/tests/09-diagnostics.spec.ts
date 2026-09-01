@@ -161,10 +161,14 @@ test('the full report can be read in the drawer without sending it', async ({
   await expect(body).toBeVisible();
   // The component trace is the part the drawer's rows never render, so it is
   // what proves this is the REPORT rather than a restatement of the summary.
-  await expect(body).toContainText('PreviewCulprit');
-  await expect(body).toContainText('E2E preview crash');
+  // `toHaveValue`, not `toContainText`: the disclosure is a read-only
+  // textarea (round 2 P2 — a `<pre>` is not in the tab order, so the
+  // keyboard-only user the failure message instructs could not reach it), and
+  // a textarea carries its content as its VALUE with empty text content.
+  await expect(body).toHaveValue(/PreviewCulprit/);
+  await expect(body).toHaveValue(/E2E preview crash/);
   // ...and the preview honours the same redaction contract as the report.
-  expect((await body.innerText()).toLowerCase()).not.toContain(
+  expect((await body.inputValue()).toLowerCase()).not.toContain(
     '0x1111222233334444555566667777888899990000',
   );
 
@@ -212,8 +216,8 @@ test('a blocked clipboard is reported, and opens the report instead', async ({
   // Reporting the failure while leaving no way to read the report would fix
   // the honesty and not the problem.
   await expect(dialog.locator('#diag-report-body')).toBeVisible();
-  await expect(dialog.locator('#diag-report-body')).toContainText(
-    'DeniedCulprit',
+  await expect(dialog.locator('#diag-report-body')).toHaveValue(
+    /DeniedCulprit/,
   );
   // The button must NOT claim success.
   await expect(dialog.getByRole('button', { name: /^copy details$/i })).toBeVisible();

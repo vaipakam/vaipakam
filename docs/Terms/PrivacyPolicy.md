@@ -62,10 +62,13 @@ partial: it shows the first 300 characters of the error message and no
 component trace, while the report carries up to 1,200 characters of
 error text and up to 1,000 characters of trace. The drawer's "Copy
 details" button gives you the full text the report is built from, and
-copying is local — it sends nothing. It does depend on your browser
-allowing clipboard access: where that is blocked or unavailable the
-copy simply does not happen, and in that browser there is no way to see
-the full text without opening the report — which, as above, sends it.
+copying is local — it sends nothing. Copying depends on your browser
+allowing clipboard access, and where that is blocked or unavailable the
+copy does not happen — but you can still read the report: "Show full
+report" displays exactly what would be sent, in the app, and a refused
+copy says so and opens that view for you. Reading it sends nothing, so
+you can always see the full text before deciding whether to open the
+report — which, as above, is what sends it.
 Any wallet address is shortened to `0x1234…abcd` first. We do NOT send
 your IP, user-agent, or browsing history.
 

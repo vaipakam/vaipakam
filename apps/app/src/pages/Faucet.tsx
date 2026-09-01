@@ -111,9 +111,17 @@ export function Faucet() {
   // `copied`. Two flags for one outcome can disagree; a single state cannot.
   // This is the same three-state shape the Diagnostics drawer got in the same
   // change — applied there and not here, which is the miss.
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>(
-    'idle',
-  );
+  // TIED TO THE TOKEN IT DESCRIBES (#2043 round 2 P2). A bare state was still
+  // wrong across mints: a clipboard write for token A can settle AFTER the
+  // user has minted B, and its callback would relabel B's card — at worst
+  // telling them B's id was copied while the clipboard holds A's. The mint
+  // reset cannot help, because the stale settlement happens after it. Carrying
+  // the id makes a late result identify itself, so the card can decline one
+  // that is not about the token on screen.
+  const [copyResult, setCopyResult] = useState<{
+    tokenId: string;
+    state: 'copied' | 'failed';
+  } | null>(null);
   const [watched, setWatched] = useState(false);
 
   const mocks = getDeployment(readChain.chainId)?.testnetMocks;
@@ -196,7 +204,7 @@ export function Faucet() {
     setBusy(token);
     setError(null);
     setDone(null);
-    setCopyState('idle');
+    setCopyResult(null);
     setWatched(false);
     // Resolve the REAL on-chain symbol; fall back to the hint if the read
     // fails (#1095 — never label the minted/watched token as something the
@@ -240,7 +248,7 @@ export function Faucet() {
     setBusy(nft);
     setError(null);
     setDone(null);
-    setCopyState('idle');
+    setCopyResult(null);
     setWatched(false);
     try {
       const tokenId = randomTokenId();
@@ -464,22 +472,35 @@ export function Faucet() {
                         // (The drawer's equivalent is already safe: its call
                         // sits inside a try/catch, which a synchronous throw
                         // does reach.)
-                        setCopyState('idle');
+                        const forToken = done.tokenId!;
+                        setCopyResult(null);
                         try {
                           void navigator.clipboard
-                            .writeText(done.tokenId!)
-                            .then(() => setCopyState('copied'))
-                            .catch(() => setCopyState('failed'));
+                            .writeText(forToken)
+                            .then(() =>
+                              setCopyResult({
+                                tokenId: forToken,
+                                state: 'copied',
+                              }),
+                            )
+                            .catch(() =>
+                              setCopyResult({
+                                tokenId: forToken,
+                                state: 'failed',
+                              }),
+                            );
                         } catch {
-                          setCopyState('failed');
+                          setCopyResult({ tokenId: forToken, state: 'failed' });
                         }
                       }}
                     >
-                      {copyState === 'copied'
+                      {copyResult?.tokenId === done.tokenId &&
+                      copyResult.state === 'copied'
                         ? copy.faucet.copiedTokenId
                         : copy.faucet.copyTokenId}
                     </button>{' '}
-                    {copyState === 'failed' ? (
+                    {copyResult?.tokenId === done.tokenId &&
+                    copyResult.state === 'failed' ? (
                       // The id is already rendered in the `<code>` above, so
                       // saying the copy failed is enough — it points at text
                       // that is on screen rather than at a dead end.

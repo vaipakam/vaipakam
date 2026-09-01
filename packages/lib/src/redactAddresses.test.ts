@@ -569,6 +569,23 @@ describe('redactText — the prefix is not what makes it an address (#2027)', ()
     expect(redactText(`a${A}`)).toBe(`a${A}`);
   });
 
+  it('redacts a second address whose 0x is shared with the run before it', () => {
+    // #2043 round 2 P2 — a LEAK, introduced by the prefix absorption itself.
+    // The `0` of `0x` is a hex character, so it can be the last character of
+    // the preceding maximal run: `<39 hex>0x<40 hex>` makes the first run
+    // exactly forty long (the 39 plus that `0`), and the second address then
+    // reaches back for the same `0`. The consumer's overlap guard dropped the
+    // whole second match, and the observed output carried `0x` and all forty
+    // digits INTACT.
+    const A = '1234567890abcdef1234567890abcdef12345678';
+    const out = redactText(`${'a'.repeat(39)}0x${A}`);
+    expect(out).not.toContain(A);
+    // Both are shortened: the first run on its own, then the second WITHOUT
+    // absorbing the contested prefix — which is the right thing to give up,
+    // since the prefix is cosmetic and the digits are the promise.
+    expect(out).toBe('aaaaaa…aaa0x123456…5678');
+  });
+
   it('DOES NOT close a deliberately split address, and that is recorded', () => {
     // #2027's third shape: the two halves are separately encoded and joined
     // by a hyphen, so at the fixpoint they are two 20-runs and neither is an

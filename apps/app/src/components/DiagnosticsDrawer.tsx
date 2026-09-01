@@ -416,20 +416,33 @@ function DrawerPanel({ onClose }: { onClose: () => void }) {
             : copy.diagnostics.showReport}
         </button>
         {showReport ? (
-          <pre
+          // A READ-ONLY TEXTAREA, not a `<pre>` (#2043 round 2 P2). The
+          // failure message tells the reader to select the report and copy it
+          // by hand, and a `<pre>` is not in the tab order — so a
+          // keyboard-only user tabbed straight past the thing they had just
+          // been told to select, and the only route left was the action that
+          // discloses the report to GitHub. That is the exact dead end this
+          // whole change exists to remove, reintroduced for the people least
+          // able to work around it.
+          //
+          // A textarea is focusable, selectable with Ctrl/Cmd-A once focused,
+          // and announces itself. `readOnly` rather than `disabled`: a
+          // disabled control is skipped by the tab order too, which would
+          // reproduce the defect with different markup.
+          <textarea
             id="diag-report-body"
             className="mono"
+            readOnly
+            value={reportBody}
+            aria-label={copy.diagnostics.showReport}
+            rows={12}
             style={{
-              whiteSpace: 'pre-wrap',
-              wordBreak: 'break-word',
+              width: '100%',
               fontSize: 12,
-              maxHeight: 280,
-              overflowY: 'auto',
-              userSelect: 'text',
+              resize: 'vertical',
+              whiteSpace: 'pre',
             }}
-          >
-            {reportBody}
-          </pre>
+          />
         ) : null}
         <p className="muted" style={{ fontSize: 13 }}>
           {copy.diagnostics.reportHint}
