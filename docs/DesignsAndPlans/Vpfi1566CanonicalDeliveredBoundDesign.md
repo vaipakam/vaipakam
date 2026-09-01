@@ -460,32 +460,34 @@ consume it — for however long it stays untouched, which for a settled-unclaime
 rebate can be forever. Monotone decrease says the exposure never grows. It says
 nothing about how large it is now.
 
-Worse, the system cannot *prove* the remainder reached zero.
-`LibVaipakam.sol:3547` declares `mapping(uint256 => BorrowerLifRebate)
-borrowerLifRebate` — loan-keyed, with no enumerable aggregate anywhere in
-`src/`. There is no counter to read and no set to walk, so "the drain finished"
-is not a question the chain can answer.
+**The remainder IS provable on-chain, and an earlier revision of this subsection
+said the opposite.** It argued from `LibVaipakam.sol:3547` — `mapping(uint256 =>
+BorrowerLifRebate) borrowerLifRebate`, loan-keyed with no enumerable aggregate —
+that there is "no set to walk", and then offered three migration options built on
+that premise, two of which required an off-chain census.
 
-So one of three has to be chosen, and this note does not get to skip the choice
-by calling the class clean:
+The mapping has no aggregate; the **key domain** does. Loan ids are allocated
+`++s.nextLoanId`, and `LoanFacet.sol:1386-1393` states that the valid range is
+`[1, nextLoanId]` inclusive and that loans are never deleted from `s.loans`.
+Reward entries have `nextRewardEntryId` over a sequential mapping
+(`LibVaipakam.sol:3486-3491`). An exhaustive walk therefore exists — it just is
+not a walk of the mapping.
 
-1. **An interim remainder bound seeded from a frozen census** — measure the
-   exposure once off-chain at the upgrade block, store it, and let each
-   migration decrement it. The census is the thing the earlier text claimed was
-   unnecessary.
-2. **An enumerable migration counter** — add the aggregate the mappings lack, so
-   the remainder is on-chain readable. **This is not an independent alternative
-   to (1) and must not be read as one:** every existing `borrowerLifRebate` row
-   predates the counter, and by this section's own argument there is no on-chain
-   set to enumerate them from. A counter initialized to zero would report a
-   COMPLETED drain on the upgrade block while untouched `vpfiHeld` and
-   `rebateAmount` still sit in the Diamond — the same false all-clear, now with
-   an on-chain number backing it, which is worse than no number. It needs (1)'s
-   frozen census, or some other exhaustive seed, to start from. What it adds
-   over (1) is that the remainder stays readable afterwards.
-3. **Arming stays blocked until an externally verified full drain** — cheapest
-   in code, most expensive in schedule, and it makes the drain a release gate
-   rather than a background process.
+**Chosen: a paused, paginated sequential-ID scan.** Snapshot each high-water
+mark under the pause, scan `[1, snapshot]` across as many transactions as it
+takes, migrate the rows that match, and **prove completion when the cursor passes
+the snapshot** — including proving an empty range empty, which was the case the
+old text called impossible.
+
+It is preferred over a census for a reason beyond convenience: it is
+**independently verifiable**. Anyone can re-run the scan against the same
+snapshot and check the result. A frozen off-chain census has to be trusted, and
+on a migration that decides which balances are claimable, that is the wrong
+property to depend on.
+
+The three-option discussion this replaced is gone rather than struck through,
+because two of the three were built on the false premise and the third was the
+census. Slice 1 carries the chosen mechanism.
 
 Until one is picked, **slice 1 is not closure 1**, and F does not unblock arming
 on the strength of these two classes.
@@ -778,23 +780,71 @@ the new bound's name. The cap stays as an independent ceiling: a payout
 satisfies **both** the cap and the delivered bound, and only the delivered bound
 is about money.
 
-**Debits — three, all real outflows:**
+**Debits — every FRESH outflow, and the transport ones are checked BEFORE the
+send:**
 
-| Debit | Where |
-| --- | --- |
-| the **fresh** component of a claim | `RewardClaimFacet._deliverReward`, per the chokepoint above |
-| fresh value absorbed by expiry / forfeit | the reward-specific operation above (never generic `credit`) |
-| VPFI shipped to a mirror | `remitRewardBudget` — the tokens leave Base, so Base's own bound must fall by exactly what left |
+| Debit | Where | Amount |
+| --- | --- | --- |
+| a claim | `RewardClaimFacet._deliverReward` | the **fresh** component |
+| expiry / forfeit absorption | the reward-specific operation above (never generic `credit`) | the **fresh** component |
+| ordinary remittance to a mirror | `remitRewardBudget` | **`st.fresh`, NOT `st.totalAll`** |
+| manual compensation | `RewardCompensationDispatchFacet.remitManualBudget`, non-recovery branch | its fresh amount |
+| supplemental compensation | `…remitSupplementalBudget`, non-recovery branch | its fresh amount |
 
-The third is easy to miss because it is not a payout, and omitting it lets Base
-promise the same tokens to a local claimant and to a mirror. It is the canonical
-mirror-image of the mirror's own arrival credit.
+**Three corrections to an earlier revision of this table.**
 
-**Migration for an existing canonical deployment:** `fundRewardPool` is called
-once under the pause for the VPFI the Diamond already holds against rewards,
-measured as balance minus every other owner **at that instant** — a one-time
-measurement, sound precisely because it is taken while nothing can move and is
-never repeated.
+**(a) The transport debit is `st.fresh`, not the token transfer.**
+`remitRewardBudget` sends `st.totalAll = st.fresh + st.recycled`
+(`RewardRemittanceFacet.sol:479-481`), and the recycled share is independently
+consumed from `recycleBucket`. "Base's bound must fall by exactly what left"
+therefore charges recycled value a second time, and a recycled-heavy remittance
+would exhaust canonical fresh headroom and block local claims that are genuinely
+funded. Note the facet already checks `st.fresh` against `remaining` at `:535` —
+the fresh quantity is the one this ledger has always been about.
+
+**(b) The compensation dispatches are outflows too**, and naming only
+`remitRewardBudget` missed them. `remitManualBudget` and
+`remitSupplementalBudget` send fresh VPFI through `dispatchRemitTail` and
+increment `rewardBudgetRemittedGlobal` on their non-recovery branch
+(`RewardCompensationDispatchFacet.sol:303`, `:514`) without ever calling
+`remitRewardBudget`. Implemented from the old table, those tokens would leave
+Base with the canonical bound untouched — the same funding still available to a
+local claimant. **The `…FromRecovery` variants are deliberately excluded**: their
+original outflow was already charged, so charging the redispatch would
+double-count.
+
+**(c) Recording a debit does not BOUND a send — the same error as the claim
+path, one section later.** The dispatches check the 69M schedule and not
+`received − paid`, so with 10 fresh delivered, 20 requested, and 10 more in the
+Diamond for payroll, the transport sends all 20 and leaves `paid > received`
+afterwards. **Every non-recovery fresh transport rejects against remaining
+canonical delivered headroom before approving or transferring**, then charges
+the same amount atomically. Bound first, charge second, both at the same point.
+
+**Migration for an existing canonical deployment needs a DIFFERENT call, and an
+earlier revision reused `fundRewardPool` for it — which cannot work twice over.**
+`fundRewardPool` transfers `amount` in and requires an exact positive balance
+delta, so pointing it at VPFI the Diamond already holds either imports a second
+`amount` from the admin or fails the delta check. And "balance minus every other
+owner" is precisely the inventory §5b establishes is **unknown and unclosable** —
+using it here would reintroduce the enumeration this whole section replaced,
+and would classify unrelated custody as claimable.
+
+So: **`bootstrapRewardPool(amount)` — a separate, ADMIN-only, one-shot,
+pause-gated import** that credits `received` with an **independently reconciled
+reward-owned figure** (the same off-chain reconciliation the mirror bootstrap
+performs), moves no tokens, and is **irrevocably finalized before unpause**. The
+finality is the load-bearing part on both sides: any increment to `received`
+publishes fresh payout headroom with no transfer behind it, so a writer left
+callable after reconciliation defeats the delivered bound entirely. Same shape as
+the existing one-shot `seedArmedFreshPaid` on the paid side, and for the same
+reason.
+
+**The mirror's received-side migration writer takes the identical contract** —
+ADMIN-only, paused, one-shot, finalized before unpause. An earlier revision said
+only that such a writer "is needed", which left its authorization and its
+shutdown unspecified; those are the two properties that decide whether it is a
+migration tool or a permanent hole.
 
 **5. Closures 2 and 3**, independent of the above and blocking arming just as
 hard. Closure 3 additionally requires the fourteen-row role matrix in §5c — the
@@ -888,20 +938,20 @@ delivery and nobody to report to.**
 
 | # | Site | Real question | Canonical | Mirror | **Detached** |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | `max` | delivered bound | **0** — no delivery, nothing sweepable as fresh |
-| 2 | `…:128` | does the sweep record a mirror-side paid delta | no | yes | **yes** — the ledger must still see the outflow |
+| 1 | `InteractionRewardsFacet.sweepForfeitedInteractionRewards:101` | which bound applies to the forfeit sweep | **delivered bound** (was `max`) | delivered bound | **0** — no delivery, nothing sweepable as fresh |
+| 2 | `…:128` | does the sweep record a paid delta | **yes** (was "no") | yes | **yes** — the ledger must still see the outflow |
 | 3 | `RewardCommitmentFacet.isDayCommitmentReady:191` | is a day's commitment reportable | n/a | yes | **no** — nobody to report to |
 | 4 | `RewardCommitmentFacet._assertMirror:268` | AUTH: may this chain report | revert | allow | **revert** — fail closed |
-| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | `max` | delivered bound | **0** |
-| 6 | `…:237` | paid-delta recording on expiry | no | yes | **yes** |
+| 5 | `RewardHorizonSweepFacet.sweepExpiredInteractionRewards:162` | which bound applies to expiry | **delivered bound** (was `max`) | delivered bound | **0** |
+| 6 | `…:237` | paid-delta recording on expiry | **yes** (was "no") | yes | **yes** |
 | 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed |
 | 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** |
 | 9 | `RewardReporterFacet._retireDeliveredResidualOnRoleChange:1286` | retire the delivered residual | n/a | on transition | **on ENTERING Detached, retire; on LEAVING, start from zero** |
 | 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
 | 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
 | 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
-| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | yes | if funded | **no** |
-| 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | `max` today; see slice 4 | delivered | **0** |
+| 13 | `LibInteractionRewards._entryExecutableNow:3776` | may this entry execute now | **if funded** (was "always") | if funded | **no** |
+| 14 | `LibInteractionRewards.deliveredFreshBound:4211` | THE bound | **delivered** (was `max`) | delivered | **0** |
 
 **Two rows carry the whole risk and are worth reading twice.** Row 11 is where
 treating `Detached` as "not a mirror" silently funds payouts from a canonical
@@ -911,14 +961,55 @@ on a chain with `baseChainId == 0`. Those are opposite errors from the same
 missing third state, which is why no single boolean value works and why this
 matrix — not the resolver — is the substance of closure 3.
 
-**Row 14 depends on slice 4.** `max` on the canonical chain is the current
-behaviour and is exactly what the closure-1 inversion replaces; the two land
-together or the bound is unenforced on Base.
+**Every canonical cell marked "(was …)" changes WITH slice 4, not only row 14.**
+An earlier revision of this matrix updated the bound and left the canonical
+forfeit/expiry allowances at `max`, their paid-delta cells at "no", and
+`_entryExecutableNow` at "always" — which would let a canonical sweep absorb
+fresh value **without consuming its funding allowance**, and let a canonical
+expiry clock run while delivered funding is zero. Fixing the bound alone does not
+repair the readers that bypass it.
+
+So slice 4 lands **all** of these together, or Base has a delivered bound with
+four documented ways around it.
 
 **Transition tests are required in BOTH directions**, since rows 8–10 are the
 only sites that mutate the role: entering `Detached` must retire the delivered
 residual (or an old residual is reusable on reattachment), and leaving it must
 start from zero rather than resuming a stale figure.
+
+#### The fourteen boolean readers are NOT the whole role surface
+
+The audit above enumerates the readers of `isMirrorRewardChain`, and treating
+that as the role surface is a mistake of the same shape as enumerating the
+balance's owners — it audits the sites that ask the question, not the sites the
+answer should govern.
+
+**The value-bearing receive ingresses do not read the predicate at all.**
+`RewardRemittanceFacet.onRewardBudgetReceived:846` and
+`onCompensationBudgetReceived:1039` are callable by the configured receiver
+regardless of role — `RewardRemittanceFacet` contains exactly one
+`isMirrorRewardChain` reference, and it is row 7's `sendRemitAck`. So while a
+chain is `Detached`:
+
+1. a delayed packet arrives and **credits receipt, pool and recycle state**;
+2. row 7 then **rejects the acknowledgement**, because acking is mirror-only;
+3. the role transition (rows 8–10) retires the fresh residual **without
+   unwinding the receipt-level mutations step 1 already made**.
+
+The packet is then stranded, or — worse — its credited state consumes later
+delivery after reattachment. Nothing in the fourteen rows prevents this, because
+none of them is on that path.
+
+**So the receive-and-ack lifecycle needs explicit `Detached` handling as part of
+closure 3**: either the ingress refuses while `Detached` (symmetric with the ack,
+and the packet retries after reattachment), or it accepts into a quarantined
+state that the role transition can unwind. The first is simpler and matches how
+row 7 already behaves; the second is only needed if refusing risks losing the
+packet at the transport layer, which is a CCIP question rather than a design one.
+
+This subsection exists because the matrix looked exhaustive and was not. Any
+future addition to it should start from "what state can move", not "who reads the
+flag".
 
 ### Closure 2 — the legacy paths. The ledger measures the wrong noun.
 
@@ -1011,10 +1102,23 @@ charge. That is convention, not structure — the very thing this section claims
 two paragraphs later to have eliminated.
 
 **The reward-specific operation only closes the hole if reward absorption CANNOT
-bypass it.** Concretely: `credit` rejects the reward sources, and the only way
-to move reward value into the bucket is the operation that charges the ledger in
-the same call. The rejection is what makes it structural; without it, the new
-operation is merely the preferred path.
+bypass it — and "reject the reward sources" is not that.** An earlier revision
+said exactly that, which is a **denylist of known tags**, two paragraphs after
+explaining that a denylist of tags is defeated by a future path arriving under a
+tag it does not list. The same argument, applied inconsistently to the fix for
+the argument.
+
+**Generic `credit` must fail CLOSED: it accepts only an explicit, closed set of
+proven non-reward inflows** — today `NotificationFee`, `FullTariff`,
+`SpendGatedPerk` — and rejects everything else, including any source added
+later. A new absorption class then cannot compile-and-forget its way into the
+bucket; it must either be added to that allowlist by someone who has argued it
+is not reward value, or go through the reward operation that charges `paid` in
+the same call.
+
+That is the difference between "we blocked the ones we know about" and "nothing
+gets through unless it was proven safe", and only the second survives a future
+contributor who has never read this note.
 
 Then the repository's own "make the check BE the operation" pattern holds: today
 "spent" is whatever each path *remembered to declare*; afterwards it is a
@@ -1064,19 +1168,23 @@ manufactures recycled-backed headroom, while leaving it in `uncounted`
 permanently strands genuine fresh funding that arrives after the paused
 bootstrap has already reconciled everything present.
 
-The cutover therefore does one of two things, and the choice belongs here rather
-than in the implementation:
+**The cutover DRAINS AND REJECTS. That is the choice, not a preference**, and an
+earlier revision said the choice belonged in the design and then left two
+implementations standing with a "prefer" between them — which preserves exactly
+the ambiguity it claims to resolve, since the two need different gates and
+different authentication rules.
 
-1. **Drain or reject old-wire packets across the cutover** — hold the pause until
-   every in-flight legacy/d2 remittance has landed and been reconciled, then
-   reject that wire version. Simplest, and it makes the bootstrap's "everything
-   present" assumption true rather than assumed.
-2. **A receipt-level reconciliation path** — a post-unpause administrative entry
-   taking a specific old-wire receipt and its externally-established split, and
-   crediting `received` accordingly. Needed only if the lane cannot be drained.
+**Mandated: hold the pause until every in-flight legacy/d2 remittance has landed
+and been reconciled, then reject those wire versions permanently.** The gate is
+a provable terminal condition per lane — every legacy/d2 reservation is either
+settled or expired, read back per source chain, with no outstanding receipts —
+and the pause does not lift until it holds on all of them.
 
-Prefer (1). (2) reintroduces an administrative writer on the received side,
-which is what the inversion exists to minimise.
+The rejected alternative was a post-unpause receipt-level reconciliation entry.
+It is rejected because it adds a **permanent administrative writer on the
+received side, authenticating a split from outside the chain** — the two
+properties the inversion exists to eliminate. If a lane genuinely cannot be
+drained, that is an escalation to the owner, not an implementer's fallback.
 
 The last two writers are a matched pair and must be changed in one commit: the
 failure mode is not that either is individually wrong, but that confirmation and
