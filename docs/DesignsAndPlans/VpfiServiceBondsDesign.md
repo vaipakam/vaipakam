@@ -41,6 +41,23 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
 // liveness tier's delayed unbond, which v1 does not have (rev 4).
 ```
 
+**Events — every bond lifecycle mutation, not just the offence.** This section
+defined only `OffenceRecorded`, which leaves an implementation compliant with
+the design and unusable in practice: `(role, address)` bond mappings are not
+enumerable, so with no deposit event the app and indexer cannot discover a bond
+exists or reconstruct its balance, and an operator cannot enumerate their
+old-token liabilities during the VPFI rotation procedure. It also conflicts with
+the repository requirement that detailed events are emitted for each relevant
+state change (`docs/FunctionalSpecs/ProjectDetailsREADME.md` §Event Emission).
+
+Required: posting, raising, withdrawal request, withdrawal completion, and the
+slash itself — each carrying the operator, the role, the delta, the
+**post-balance**, the token/config identity, and the withdrawal state. Post-
+balance rather than delta alone, because a consumer that missed one event can
+otherwise never resynchronise against a mapping it cannot enumerate. ABI and
+indexer wiring ship with them, with focused tests; a lifecycle event nobody
+decodes is the same gap one step later.
+
 | Role | What the bond unlocks | Slash conditions (objective) |
 | --- | --- | --- |
 | Solver / matcher | larger match-batch sizes ONLY. **Priority-window access is NOT a bond entitlement** — it is E-2's spend-gated perk with its own flat VPFI fee, and bonds neither gate it nor grant it. An earlier revision listed it here, which would let an implementation either require a bond ON TOP of the E-2 purchase or hand priority out for bonding alone; both change the perk's gate and its permanent absorption. Bond buys capacity; spend buys priority; the two never substitute | precondition lies recorded via the offence dispatcher below **ATTESTED TIER ONLY — v1 has no matcher slash predicate at all** (see the offence-recording bullet and the fork). The surviving in-call contradictions should REVERT rather than record an offence, so an implementation must not build a v1 slash path from this row; **immediate** debit of a fixed bps of the OFFENDING ROLE's bond, per recorded offence — the threshold is one; see the decisions below |
@@ -126,14 +143,51 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
      operator is then never lying about the world; they are exercising a
      permission the protocol issued. Nothing needs to be adjudicated, because
      nothing is being alleged.
+
+     **This collides with cancellation, and the collision has to be resolved
+     before the option is viable.** "Valid despite intervening state" includes a
+     creator's cancellation: `OfferCancelFacet.cancelOffer` releases the locked
+     principal or collateral (`:117-124`), and standing-intent capital is
+     likewise withdrawable after cancellation (`LenderIntentFacet.sol:370-394`).
+     So an implementation faces three choices and all three are bad as stated —
+     override a completed cancellation, try to spend assets already returned, or
+     reject the authorized use and break the option's own guarantee.
+
+     The only coherent readings are: **issuance RESERVES the exact assets until
+     the authorization expires** (cancellation then cannot release them, and the
+     creator's capital is locked for the window — a real cost to them), **or
+     cancellation REVOKES outstanding authorizations** (which re-admits
+     intervening state and so re-opens the knowledge question this option exists
+     to close). Neither is free, and the choice belongs to whoever designs the
+     attested tier — but the option must not be presented as viable until one is
+     taken.
   2. **Keep knowledge-based predicates out of the slash tier entirely** — accept
      that staleness and grant scope revert rather than slash, permanently.
 
-  Option 1 is the only one that recovers a slash for these predicates, and it
-  does so by removing the knowledge question rather than answering it. **This is
-  the same finding as the main fork, one level down**: every attempt to make
-  "knew" adjudicable has failed, in four directions now, and the ones that
-  survive are the ones that stop asking.
+  **Neither option recovers a slash, and an earlier revision claimed option 1
+  did.** That claim contradicted option 1's own definition one paragraph
+  above it: if every use inside the window is valid despite intervening state,
+  and nothing is being alleged, then there is no offence to slash for. What
+  remains is a missing or expired authorization — an objective in-call
+  precondition failure, which this document already says should REVERT rather
+  than record an offence. A revert is not a slash.
+
+  So the honest statement is stronger and worse than the one it replaces:
+  **staleness and grant scope have no slashable form in either branch of the
+  attested tier.** Option 1 makes them safe by construction, which is a good
+  outcome and not a punitive one; option 2 admits the same thing without the
+  mechanism.
+
+  **This is the main fork one level down**: five predicate attempts have now
+  collapsed, and every one of them collapsed on the same question. Recovering a
+  slash for the attested tier requires a predicate that does not depend on what
+  the operator KNEW at all — a strict liveness obligation or an equivocation
+  (two conflicting signed statements), where the offence is visible in the
+  artifacts themselves. Anything else keeps landing here.
+
+  Consequently, **any later statement that option B "completes the performance
+  security objective" is withdrawn**: B completes it only if such a
+  knowledge-free predicate is found, and none has been.
 - Bond sizes: governance-bounded config. **NOT unlock tiers** — capacity
   rises CONTINUOUSLY with the bond and nothing is unlocked at a threshold.
   This bullet said "unlock tiers" until rev 7, and an implementation
@@ -216,6 +270,21 @@ takes 10% once or the accumulated total, and what the counter does afterwards.
 `slashBps` of the CURRENT balance of the `(role, address)` bond whose entry
 point recorded the offence, into the recycle bucket.
 
+**Each proof is consumed before it debits.** Under attested-tier delayed
+adjudication the offence arrives as a submitted proof rather than as an in-call
+observation, and nothing in this design or in the code beneath it stops the same
+proof being submitted twice: the lifetime counter is expressly observational,
+and `LibVpfiRecycle.credit` performs no `refId` deduplication despite taking one
+(`:174-217`). An unbounded replay of one valid proof drains the role bond to
+zero.
+
+So: a canonical **domain-separated offence ID** over chain, contract, operator,
+role, offence kind, the action, and the commitment; marked consumed **before**
+the debit, not after; with duplicate submission and cross-role replay both
+tested. v1's immediate in-call recording does not need this — the observation
+and the debit are the same call — which is exactly why it is easy to omit when
+the attested tier lands, and why it is written down here rather than there.
+
 **Which `slashBps`, when adjudication is delayed.** Immediate recording makes
 this moot in v1, but the attested tier records an offence only after its
 observation or adjudication window closes, and governance can retune `slashBps`
@@ -224,10 +293,23 @@ governance raised the rate before the evidence resolved — and a reduction in t
 same window would discount an offence already committed. Both are the rule
 changing after the act.
 
-**Bind the rate to the protocol-issued observation commitment**: the commitment
-carries the config epoch (or the rate itself) in force when the action was
-accepted, and adjudication applies that, not the live value. This is the same
-snapshot-at-init discipline the loan fee stamps use, and for the same reason.
+**Bind the rate to the action, not to the commitment.** An earlier revision said
+to stamp the epoch into the commitment, which does not work: the commitment is
+issued BEFORE the action — that is the entire point of it — so an immutable
+commitment can only carry the ISSUANCE-time rate. A retune between issuance and
+submission then lets an operator hold an older favourable rate, or exposes them
+to a stale unfavourable one. Either way it is not the rule in force when the
+action was accepted, which is the rule that should apply.
+
+So the rate is stamped in the **action-consumption record** written when the
+submission is accepted, or the action rejects a commitment whose epoch no longer
+matches the live one. The first is better — a rejection makes an ordinary retune
+invalidate every outstanding commitment, which is a liveness problem for honest
+operators.
+
+The acceptance case is the ordering itself: **issue → retune → submit**, and it
+must resolve to the rate at SUBMIT. Same snapshot-at-init discipline as the loan
+fee stamps, applied at the right moment.
 
 **Keyed by role, not by address.** One address may hold solver, matcher and
 keeper bonds at once, and an offence recorded through a matcher entry point
@@ -330,6 +412,12 @@ stale epoch plus the current config, so reconciliation would either accrue
 the whole gap at the latest rate or discard credit legitimately earned under
 an intermediate one.
 
+> ⚠️ **The cumulative index described in this paragraph is WITHDRAWN.** It is
+> retained because two later findings are about it and the reasoning matters,
+> but do not build it — the corrected mechanism is at the end of this section.
+> A global rate-seconds index cannot serve a per-bond curve at all, and each
+> revision of it fixed one symptom and exposed the next.
+
 Use a **cumulative accrual index**: a monotonically increasing rate-seconds
 total that governance settles at the OLD rate before writing each new one. A
 bucket stores the index it last sampled, and its accrual over any span is
@@ -386,10 +474,38 @@ revision introduced it while fixing the epoch problem.
 So the accrual mechanism has to either **retain enough curve history to
 integrate each bond's OWN rate over its own span**, or **conservatively
 invalidate the affected buckets on every curve retune** — the same
-under-credit-is-safe reasoning as the ceiling case, and the same recommendation.
-Taken together with the ceiling finding, the honest summary is that a scalar
-index does not fit a per-bond curve at all: **reset on retune is the mechanism,
-and the index is only an optimization available while the curve is untouched.** This is a decision, not an
+under-credit-is-safe reasoning as the ceiling case.
+
+**And that is still not enough, which is what finally condemns the index.** An
+earlier revision concluded "reset on retune is the mechanism, and the index is
+only an optimization while the curve is untouched". Wrong: the index is not
+correct even *within* an untouched epoch. A zero-bonded, a partly-bonded and a
+fully-bonded bucket all accrue **simultaneously at different rates**, so one
+scalar difference credits them equally — which is the original defect, present
+with no retune involved at all.
+
+A global value can only be shared by buckets that share a rate, and on a
+continuous per-`(role, address)` curve none of them do.
+
+#### The corrected mechanism — no global index
+
+Each bucket accrues from **its own** last-touch timestamp at **its own**
+snapshotted rate:
+
+```
+accrued = min(ceiling(bond), balance + rate(bond) × (now − lastTouch))
+```
+
+`rate(bond)` is read from the curve at touch time and `lastTouch` is per bucket,
+so nothing is shared and nothing needs settling globally. A curve retune resets
+the affected buckets (per the ceiling finding above); between retunes each
+bucket integrates its own rate over its own span, which is the quantity that was
+wanted from the start.
+
+This is simpler than any version of the index, and the index's whole appeal —
+"settle once globally, sample cheaply per bucket" — was an optimization for a
+problem the per-bond curve does not have. Three revisions were spent rescuing a
+primitive borrowed from a system where every borrower DOES share one rate. This is a decision, not an
 implementation detail, because without it the bond is bypassable: an
 operator accrues elevated credit, withdraws the bond, and still spends
 bonded capacity with nothing left to slash. It is also what makes v1's
