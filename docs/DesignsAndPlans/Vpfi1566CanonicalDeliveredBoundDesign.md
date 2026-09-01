@@ -324,7 +324,9 @@ is a five-way one.
 trade-off; the decision and everything that follows from it are in §5b — the
 per-class assessment that came out of scouting F against the tree, the one
 class where it does not fit, and the explicit statement that F settles only
-the FIRST of #1566's three required closures.
+the **USER-OWNED HALF** of the first of #1566's three required closures — not
+the closure. Closure 1 additionally requires the treasury/payroll and buyback
+budget earmarks, which no lien on a user vault can reach.
 
 ## 5. What is true regardless of the option
 
@@ -364,8 +366,18 @@ in the shared balance, and `backingPosition` does not reserve them.
 
 Payroll value is not user-owned, so no lien on a user vault reaches it. Move or
 earmark all four user-owned classes and an unbounded canonical reward claim can
-**still** consume tokens already owed to a payee. **Closure 1 needs the
-treasury/payroll escrow or earmark as well** — F plus that, not F alone.
+**still** consume tokens already owed to a payee.
+
+**And payroll is not the only one.** `TreasuryFacet.creditBuybackBudget` debits
+`treasuryBalances[token]` and credits `baseBuybackBudget[token]` on the
+canonical chain — with the tokens never moving (`TreasuryFacet.sol:652-664`).
+That is the same invisible-owner shape §3 documents: value committed to a
+future buyback, sitting in the shared balance, reserved by nothing. A canonical
+reward claim can consume it and leave the buyback unfunded.
+
+**Closure 1 needs F plus the treasury/payroll escrow plus the post-treasury
+budget state** — three things, and F is one of them. Any of the three left out
+lets closure 1 be declared complete over a liability that is still spendable.
 
 It does not touch the other two closures either, and choosing it does not shrink
 them:
@@ -460,41 +472,94 @@ a caveat.
 
 ### The intent class is the real obstacle, and it is structural
 
+### The intent class — RESOLVED, and this section previously had it wrong
+
 `commitSwapToRepayIntent` decrements the collateral lien and withdraws the
 collateral to `address(this)`, because the Diamond is then the **maker** of an
 aggregator limit order whose `makingAmount` is that collateral. The order is
 filled by an arbitrary third party through the aggregator, which pulls from the
-maker. **There is no protocol call at fill time to pull at** — which is exactly
-what pull-at-use requires. Leaving the tokens in the vault would make the order
-unfillable, not safer.
+maker.
 
-Two ways out, and they are genuinely different rather than variants:
+**An earlier revision of this section then said "there is no protocol call at
+fill time to pull at", called the class structurally unfixable, and put two
+expensive reworks to the owner. That premise is false, and the tree contradicts
+it directly.**
 
-1. **Maker becomes the VAULT.** The vault grants the aggregator the allowance
-   and the order names the vault as maker. Keeps F's premise intact — nothing
-   is commingled — at the cost of reworking the order-construction and
-   signature path, and of a per-vault allowance surface that did not exist
-   before (`vaultApproveNFT721` has no ERC-20 sibling).
-2. **This one class keeps custody and gets an EARMARK instead.** Bounded and
-   enumerable: `intentAggregateAllowance[asset]` already aggregates exactly
-   this quantity per asset, so unlike the loan-keyed classes it needs no new
-   census. It is a subtraction — which §6 warns against as a class — but a
-   subtraction against an aggregate the code already maintains is not the
-   unbounded fifth subtraction that warning is about.
+Every intent order requires `needPreInteractionCall` ON
+(`SwapToRepayIntentFacet.sol:105-111`). At fill, the LOP calls
+`IntentDispatchFacet.preInteraction`, which dispatches on `orderHashKind` to
+`LibSwapToRepayIntentSettlement.preInteractionImpl` — a function that already
+does a reverse-index lookup from `orderHash` to `loanId` and **already rejects
+any caller that is not the pinned `lopAtCommit`**. The fill sequence is
+`preInteraction → balance transfer → postInteraction`, recorded as such in
+`SwapToRepayIntentFacetTest.t.sol:22-26`.
 
-**Recommendation: (2) for the intent class**, with F everywhere else. The
-premise of F is "do not commingle where you have a choice"; the aggregator's
-maker semantics remove the choice here, and `intentAggregateAllowance` makes
-the honest alternative cheap and complete. (1) is defensible but pays a
-signature-path rework to avoid one subtraction the code can already compute.
+So there is an authenticated protocol call, at fill time, keyed to the exact
+order, immediately before the aggregator pulls. That is precisely the pull point
+pull-at-use requires, and it exists today for an unrelated reason (balance-delta
+snapshotting).
 
-**This split needs owner ratification before code**, because it is the one
-place the chosen option is not being applied.
+Two properties make it sufficient rather than merely available:
+
+- **Exactly one fill.** `allowPartialFills` and `allowMultipleFills` are
+  required OFF, so the hook fires once and the full `makingAmount` moves. There
+  is no partial-pull bookkeeping to design.
+- **Atomicity.** If anything after the hook fails, the whole fill reverts and
+  the pull reverts with it. The collateral is either in the vault or spent on
+  the fill the borrower authorized — never stranded in between.
+
+**So F applies to the intent class after all**: leave the collateral in the
+vault under a lien, and have `preInteractionImpl` atomically decrement the lien
+and pull the full amount into the Diamond immediately before the LOP takes it.
+The window in which value sits commingled shrinks from "the life of the order"
+to "within one transaction, between two calls" — which is not commingling in any
+sense the closure cares about.
+
+**The two earlier candidates are retained below, because the owner was asked to
+ratify a split and should see what it was and why it is withdrawn**, not merely
+find it gone:
+
+1. ~~**Maker becomes the VAULT**~~ — reworks the order-construction and
+   signature path and adds a per-vault ERC-20 allowance surface that does not
+   exist. Unnecessary: the hook gives the same result without touching either.
+2. ~~**This one class keeps custody and gets an EARMARK**~~ — was the
+   recommendation, on the strength of `intentAggregateAllowance[asset]` already
+   aggregating the quantity. It is still the cheapest *fallback* if the hook
+   route hits something this scout missed, but it concedes a permanent
+   commingled class to avoid work that turns out not to be needed.
+
+**No owner ratification is required for a split any more, because there is no
+split** — F applies to all four classes. What remains for the intent class is
+ordinary implementation, and it belongs in slice 3.
 
 ### Slicing
 
-1. The two draining grandfathered classes (`vpfiHeld`, `rebateAmount`) —
-   return-to-vault-under-lien at next touch. Self-limiting, lowest risk.
+1. The two draining grandfathered classes — **and they do NOT take the same
+   treatment, which an earlier revision of this slice assumed.**
+
+   - **`rebateAmount` (settled, unclaimed): credit it, do NOT lien it.** A lien
+     on a terminal loan has no release path — `LibVPFIDiscount.sol:1113-1118`
+     records that `claimAsBorrower` never runs on a `Settled` loan, so both a
+     frozen claimant and an encumbrance are inert, "one silently, one
+     permanently". Liening this class would strand the very value the migration
+     is meant to hand back. It is already claimable; credit it outright.
+   - **`vpfiHeld` (live loans): lien it, but NOT with an ordinary lien.**
+     `LibVPFIDiscount.tierVpfiBalance` deliberately does not subtract
+     `s.encumbered`, on the stated grounds that it "legitimately holds the
+     user's OWN liens / intent / offer capital and must stay in-tier"
+     (`:119-135`). Meanwhile `settleBorrowerLifProper` prices the rebate from
+     the borrower's CURRENT effective tier (`:1001-1011`). The retired flow
+     withdrew this VPFI and restamped the lower balance; depositing the full
+     held fee back under an ordinary lien would raise the tier and therefore
+     the rebate — on an amount part of which becomes treasury revenue. The
+     borrower would be paid more for holding money they owe.
+
+     So this needs a **non-tier-bearing lien** (the `frozenVpfiOwedByVault`
+     shape, which exists precisely to keep value out of a tier without touching
+     `encumbered`), or the held amount settles in place and only the resulting
+     rebate is credited. The second is simpler and probably right.
+
+   Self-limiting and lowest risk, but two classes and two treatments.
 2. `fallbackSnapshot` custody — lien at fallback, and **every consumer** moved
    onto the new custody source, not the claim path alone. The detailed
    correction above establishes why; this slice previously said "pull at claim"
@@ -505,7 +570,22 @@ place the chosen option is not being applied.
    of those would otherwise read or pay the snapshot as Diamond-held collateral
    while the tokens sit liened in the vault — reverting, or spending unrelated
    Diamond custody.
-3. The intent class, per the ratification above.
+
+   **Pre-upgrade rows need a custody-SOURCE discriminator before any consumer
+   is switched**, and the ordering here is the whole risk. A snapshot taken
+   before the upgrade has its collateral in the Diamond already
+   (`RiskFacet.sol:1884-1917`, `DefaultedFacet.sol:846-877`); the lien-at-fallback
+   rule only applies to fallbacks that happen afterwards. Flip the consumers
+   first and every existing row either pulls vault funds that were never put
+   there and reverts, or keeps a Diamond branch the slice exists to remove.
+
+   So each snapshot carries which custody it is under, consumers branch on that
+   rather than on the deployment's age, and the old branch is deleted only once
+   no rows remain under it. This is the same "migrate before switching" shape as
+   slice 1's grandfathered classes, and it was missing here.
+3. The intent class — ordinary implementation via the `preInteraction` pull
+   point established above. No owner ratification needed; the split it was
+   asked for no longer exists.
 4. Closures 2 and 3, which are independent of all of the above and block
    arming just as hard.
 
@@ -601,7 +681,7 @@ narrow — this is the finding that makes the root fix practical:
 | Outflow | Chokepoint | Charge what |
 | --- | --- | --- |
 | value to a claimant | `RewardClaimFacet._deliverReward` (**exactly 1 caller**) | the **fresh** component, passed in explicitly — NOT `paid` — and **rejected if it exceeds the remaining delivered balance, BEFORE the transfer** |
-| value to the recycle bucket (forfeit / expiry) | reward-specific forfeit/expiry operations, or an explicit fresh amount at each caller | the fresh component — **not** `LibVpfiRecycle.credit` / `releaseCommitment` |
+| value to the recycle bucket (forfeit / expiry) | a reward-specific operation that `LibVpfiRecycle.credit` **rejects reward sources in favour of** | the fresh component — the rejection is what makes it non-bypassable |
 
 **The chokepoint must ENFORCE, not merely record.** An earlier revision of this
 section described charging the ledger at `_deliverReward` and stopped there,
@@ -658,7 +738,9 @@ property the root fix is for: once the charge is conditional on a source tag, a
 future path *can* forget, by arriving with a tag the filter does not list.
 
 **"Or an explicit fresh amount handed in at each caller" was the same mistake by
-another door**, and an earlier revision offered it as an equal alternative. The
+another door**, and an earlier revision offered it as an equal alternative — in
+the prose AND in the table above, which is how it survived the first correction.
+It is now gone from both, because an implementer follows the table. The
 expiry and forfeit paths call the generic `LibVpfiRecycle.credit` from separate
 sites; leaving that entry open to reward sources means a future reward terminal
 can still credit the bucket while omitting or misstating the adjacent ledger
@@ -703,7 +785,28 @@ here against a fresh-only paid side leaves 5 of false fresh headroom, and a
 later fresh payout consumes bucket backing through it. Both sides count fresh;
 neither side counts vintage. And a
 deployment mid-flight needs a migration answer for counters already populated
-under the old meaning. §6 item 1 already anticipated this shape for Option B
+under the old meaning — and **"needs an answer" is not an answer, which is what
+an earlier revision left here.** Closure 2 is not implementable until this is
+specified, because the two obvious bootstraps are each wrong in a different
+direction:
+
+- **Treating `rewardBudgetFreshUncounted` as fresh over-credits.** A legacy /
+  d2 delivery put its ENTIRE amount there, because the recycled share was never
+  transmitted on those wire versions (`LibVaipakam.sol:6267-6271`). Seeding
+  `received` from it manufactures fresh headroom backed by recycled tokens —
+  the same false-headroom defect as crediting a whole delivery, arriving by a
+  different route.
+- **Omitting it under-credits**, and permanently: genuinely funded legacy claims
+  are rejected forever, with no path to correct them, because the paid history
+  that would justify them is user-keyed and cannot be summed on-chain
+  (`RewardReporterFacet.sol:1378-1385`).
+
+Neither side is recoverable after the fact, so the bootstrap must be
+conservative and it must happen while nothing can claim: **pause, reconcile the
+per-user paid history off-chain, import the reconciled totals through the
+retained administrative writer (`seedArmedFreshPaid`), then unpause.** That is
+what the administrative writers are for, and it is the concrete reason they are
+retained rather than collapsed. §6 item 1 already anticipated this shape for Option B
 and it applies here. It is more work than five `+=` lines — and the five
 `+=` lines do not close the hole.
 
