@@ -759,29 +759,68 @@ wrong in exactly the case the recommendation points at, and its failure mode is
 an owner who selects C, believes the fork discharged, and leaves the
 implementation underspecified.
 
-**1. Select the fork: (A), (B) or (C).** Not "does v1 ship" — that question
-was in an earlier revision of this list and a "yes" to it leaves an
-implementer unable to tell whether anything is confiscated. The three differ
-in what a deposit IS:
+**1. Select the fork: (A) or (C).** Not "does v1 ship" — that question was in an
+earlier revision of this list and a "yes" to it leaves an implementer unable to
+tell whether anything is confiscated.
+
+**(B) IS NOT ON THIS LIST, and an earlier revision offered it here while §2 was
+establishing that it cannot be selected.** B has no defined predicate; ratifying
+it would hand an implementer a choice between deferring indefinitely and
+inventing a slash condition this document spent five attempts rejecting. It
+returns to the list when a concrete knowledge-free predicate exists — strict
+liveness, or equivocation — and not before.
+
+The two selectable forks differ in what a deposit IS:
 
 | | confiscates? | permanent sink? | deposit is called |
 | --- | --- | --- | --- |
 | **A** | no | no | operational capacity deposit |
-| **B** | yes, once attested | yes (slash) | operational security deposit |
 | **C** | no | yes (arming fee) | operational capacity deposit |
+| ~~**B**~~ | ~~yes, once attested~~ | ~~yes (slash)~~ | **unavailable — no predicate** |
 
-Recommendation **(C), else (A)**. Both abandon performance security; the
-question is whether v1 ships capacity now and gains deterrence when the
-attested tier lands, or waits.
+Recommendation **(C), else (A)**. Both abandon performance security. Note this
+is no longer a choice about *when* deterrence arrives, because no route to it
+has been specified — see item 3.
 
-**2. If (C): the arming fee's value, floor and ceiling.** Flat per arming,
-paid in addition to the deposit, per §3. Without a number (C) is not
-buildable, and its permanent-sink property is exactly what the number sets.
+**2. If (C): the arming fee's value, floor and ceiling — and the FLOOR MUST BE
+POSITIVE.** Flat per arming, paid in addition to the deposit, per §3. Without a
+number (C) is not buildable, and its permanent-sink property is exactly what the
+number sets.
 
-**3. Whether the liveness tier is scoped now or later.** It is what makes
-"knew" adjudicable, and it carries the unbond delay, the revocation rule and
-the `unlockAt` snapshot that revs 2–3 worked out. Under (A) or (C) it is the
-only route to deterrence, so the choice is really *when*, not *whether*.
+**A zero floor collapses C into A silently.** Governance could later tune the
+flat fee to zero while bond posting and raising stayed enabled — no absorption,
+no permanent sink, and nothing anywhere would notice, because the programme
+would still record C as shipped. That is the same zero-value failure this note
+already guards against for `slashBps`, where §2 imposes a positive floor for
+precisely this reason; leaving C's floor unconstrained applies the lesson in one
+place and not the other.
+
+So: **the floor and the active fee are both positive**, or zero is defined as
+DARK — the channel disarmed, posting and raising refused — so that fee-free
+arming cannot occur by omission. The first is simpler; the second is only worth
+it if governance needs a way to pause arming without a redeploy.
+
+**3. UNRESOLVED — the liveness tier's PREDICATE, not its timing.** An earlier
+revision of this item said the liveness tier "makes 'knew' adjudicable" and that
+the choice was *when*, not *whether*. §2 refutes both halves: no commitment
+reveals knowledge acquired after issuance, and neither attested branch recovers
+a slash. Scoping this item as written would let an implementation revive exactly
+the knowledge-based slash this document rejects — the retracted claim surviving
+in the owner-facing list is how that happens.
+
+What is genuinely open is **whether a knowledge-free predicate can be defined at
+all**. Two candidates, neither yet specified:
+
+- **Strict liveness** — a committed window, missed. Objective, but only once the
+  kill-switch suspension rule in §1 is part of it, or an incident slashes every
+  enrolled operator at once.
+- **Equivocation** — two conflicting signed statements from one operator. The
+  offence is visible in the artifacts themselves and requires no inference about
+  what anyone knew, which is what makes it the strongest candidate.
+
+Until one is written down, **there is no route to deterrence under any fork**,
+and the unbond delay, revocation rule and `unlockAt` snapshot from revs 2–3 are
+machinery waiting on a predicate rather than a tier waiting on a schedule.
 
 **NOT for the owner, deliberately — deferred to implementation:**
 
@@ -918,4 +957,16 @@ acceptance criteria are:
   applies elsewhere: reachability is not discrimination.
 - The stated envelope holds over a rolling window.
 - A capacity change of any cause — up or down — settles elapsed credit under
-  the old capacity before the new one takes effect.
+  the old capacity before the new one takes effect **where the mechanism
+  preserves that credit at all.** The corrected mechanism explicitly permits the
+  conservative branch — invalidate the affected buckets on a curve or capacity
+  retune — which DISCARDS pre-retune credit by design rather than settling it.
+  Written unconditionally, this criterion and that branch cannot both be
+  satisfied, and an earlier revision left them contradicting each other.
+
+  So the criterion is: **either** the old accrual is settled under the old
+  capacity, **or** the bucket is invalidated and its pre-retune credit
+  deliberately forfeited — never silently re-credited under the new capacity,
+  which is the actual failure both wordings exist to exclude. A reset-based
+  implementation satisfies this by showing the invalidation; a history-retaining
+  one satisfies it by showing the settlement.
