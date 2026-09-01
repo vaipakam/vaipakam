@@ -657,6 +657,20 @@ ordinary implementation, and it belongs in slice 3.
   for — which is the same class of harm as paying the stored borrower on an
   ordinary row, arriving from the opposite direction.
 
+  **A SANCTIONED payee has no immediate-delivery branch, and the migration must
+  not stall on one.** The claim path rejects a sanctioned recipient, and this
+  bullet already establishes that a frozen claimant or encumbrance is inert on a
+  `Settled` loan — so reverting or skipping the row stops the exhaustive scan
+  completing, which **blocks arming indefinitely on a single flagged wallet**,
+  while paying anyway violates the gate and clearing the row destroys the claim.
+
+  Such a row is therefore **PARKED**: custody moves to a dedicated frozen holding
+  keyed by loan, the scan records it as migrated-and-parked so the cursor
+  advances, and a **delisting release path** pays the resolved payee once the
+  flag clears. Parking is what lets completion stay provable without either
+  paying a sanctioned party or abandoning their value — and the scan's completion
+  proof is exactly why this cannot be left as an operational follow-up.
+
   An earlier revision also offered "leave the row claimable and migrate only the
   custody" as equally defensible. **Withdrawn** — that branch names no
   destination for the custody it moves, and every destination breaks something:
