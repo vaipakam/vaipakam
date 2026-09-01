@@ -1233,6 +1233,72 @@ contract RewardBroadcastV3MirrorTest is RewardBroadcastV3Harness {
         );
     }
 
+    /// A day a PRE-#1569 receiver applied must still get its earmark.
+    ///
+    /// The non-atomic rollout case (Codex #2031 r5): Base arms the knob and
+    /// charges `chainKeeperAllocDebited`, the mirror is still on old
+    /// bytecode, so it stores `keeperAllocate` on the day record and marks
+    /// the day applied — but the budget write did not exist yet. Keyed on
+    /// the applied flag the repair could never run, and the two sides would
+    /// diverge silently: Base has reduced what it will instruct while the
+    /// mirror still counts those tokens as fundable.
+    function testReplayRepairsAnUnappliedKeeperEarmark() public {
+        _configureMirror(CHAIN_ARB);
+
+        // Apply the day with NO earmark, then write the stored field
+        // directly. That reproduces the pre-upgrade state exactly: stamp
+        // populated, day applied, budget untouched, flag false.
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.keeperAllocate = 0;
+        messenger.deliverBroadcastV2(pre);
+        _mut().setChainDayFundingKeeperAllocateRaw(3, uint32(CHAIN_ARB), 2e18);
+
+        (, uint256 budgetBefore) = _cfg().getRecycleRegisterState();
+        assertEq(budgetBefore, 0, "the old receiver reserved nothing");
+
+        // The refreshed mirror replays the same day, carrying the earmark
+        // Base instructed. Every frozen fact matches, so this is a replay.
+        RewardBroadcastV2 memory replay = _v2Packet(CHAIN_ARB);
+        replay.keeperAllocate = 2e18;
+        messenger.deliverBroadcastV2(replay);
+
+        (, uint256 budgetAfter) = _cfg().getRecycleRegisterState();
+        assertEq(budgetAfter, 2e18, "the replay completed the earmark");
+
+        // …and STILL at most once: a further replay must not double-credit.
+        messenger.deliverBroadcastV2(replay);
+        (, uint256 budgetAgain) = _cfg().getRecycleRegisterState();
+        assertEq(budgetAgain, 2e18, "the repair is one-shot");
+    }
+
+    /// The V3 clock-backfill branch returns early too, so it needs the same
+    /// repair — otherwise a pre-#1569 day whose rebroadcast arrives over V3
+    /// stays unreserved through the one delivery that was meant to heal it.
+    function testV3ClockBackfillRepairsAnUnappliedKeeperEarmark() public {
+        _configureMirror(CHAIN_ARB);
+
+        RewardBroadcastV2 memory pre = _v2Packet(CHAIN_ARB);
+        pre.keeperAllocate = 0;
+        messenger.deliverBroadcastV2(pre);
+        _mut().setChainDayFundingKeeperAllocateRaw(3, uint32(CHAIN_ARB), 3e18);
+        (, uint256 budgetBefore) = _cfg().getRecycleRegisterState();
+        assertEq(budgetBefore, 0, "nothing reserved yet");
+
+        // A V2 apply leaves no lapse clock, which is what routes this
+        // rebroadcast into the backfill branch.
+        (uint64 finalizedAtBefore, , , ) = _com().getDayLapseClock(3);
+        assertEq(finalizedAtBefore, 0, "no lapse clock, so the backfill runs");
+
+        RewardBroadcastV3 memory v3 = _v3Packet(CHAIN_ARB);
+        v3.v2.keeperAllocate = 3e18;
+        messenger.deliverBroadcastV3(v3);
+
+        (, uint256 budgetAfter) = _cfg().getRecycleRegisterState();
+        assertEq(budgetAfter, 3e18, "the backfill completed the earmark");
+        (uint64 finalizedAtAfter, , , ) = _com().getDayLapseClock(3);
+        assertGt(finalizedAtAfter, 0, "and it really was the backfill branch");
+    }
+
     // ── #1569 M4 C3 — the Base-authorized keeper allocation ────────────
 
     /// The instruction EARMARKS inside the mirror's own bucket.

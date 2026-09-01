@@ -95,7 +95,7 @@ contract HelperTest {
         pure
         returns (bytes4[] memory selectors)
     {
-        selectors = new bytes4[](199);
+        selectors = new bytes4[](200);
         // APPEND VIA A CURSOR, never a hand-written index (#1457 r11).
         //
         // Hand-numbered slots made a specific merge outcome silent: two
@@ -155,6 +155,8 @@ contract HelperTest {
         // #1222 M3 B2-d3 — stamp a local commit for the clamp test.
         selectors[n++] =
             TestMutatorFacet.setChainDayFundingLocalCommitRaw.selector;
+        selectors[n++] =
+            TestMutatorFacet.setChainDayFundingKeeperAllocateRaw.selector;
         // #1222 M3 B2-d3 — reconstruct a pre-d3 applied broadcast.
         selectors[n++] = TestMutatorFacet.setBroadcastV2AppliedRaw.selector;
         selectors[n++] = TestMutatorFacet.setMirrorCommitReservedRaw.selector;

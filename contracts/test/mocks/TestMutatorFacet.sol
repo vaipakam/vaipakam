@@ -1348,6 +1348,23 @@ contract TestMutatorFacet {
             recycleConsume;
     }
 
+    /// @notice #1569 M4 C3 test-only — set a `(day, chain)` stamp's keeper
+    ///         earmark WITHOUT touching `recycleKeeperBudget` or the
+    ///         apply flag. That combination is not reachable through any
+    ///         production path on current bytecode, and it is exactly the
+    ///         state a PRE-#1569 receiver left behind: it stored the field
+    ///         and marked the day applied, because the budget write did not
+    ///         exist yet.
+    function setChainDayFundingKeeperAllocateRaw(
+        uint256 dayId,
+        uint32 chainId,
+        uint256 keeperAllocate
+    ) external {
+        LibVaipakam.storageSlot()
+            .chainDayRecycledFunding[dayId][chainId].keeperAllocate =
+            keeperAllocate;
+    }
+
     /// @notice #1222 M3 B2-d2 test-only — set a `(day, chain)` remit-ineligible
     ///         flag directly (production sets it in the armed grace/force
     ///         finalize's zeroed-chain branch) so the manual-budget path's

@@ -7177,6 +7177,19 @@ library LibVaipakam {
         ///         Zero until `chainKeeperAllocateBps` is armed, so the term
         ///         is inert on every deployment built before then.
         mapping(uint32 => uint256) chainKeeperAllocDebited;
+        /// @notice MIRROR-ONLY: whether this day's Base-instructed keeper
+        ///         earmark has been applied to `recycleKeeperBudget`.
+        ///
+        ///         Its OWN flag rather than `broadcastV2Applied`, for exactly
+        ///         the reason `mirrorRecycleCommitReserved` has one (Codex
+        ///         #2031 r5): a non-atomic rollout leaves days that a
+        ///         PRE-#1569 receiver applied — it stored `keeperAllocate` on
+        ///         the day record and set the applied flag, but the budget
+        ///         write did not exist yet. Keyed on the applied flag, the
+        ///         repair could never run, and Base would have charged
+        ///         `chainKeeperAllocDebited` while the mirror still treated
+        ///         those tokens as fundable for claims and repatriation.
+        mapping(uint256 => bool) mirrorKeeperEarmarkApplied;
     }
 
     /// @notice #1434 P2-w4 (§5.2 R6a) — a lapsed day's recorded loss: the

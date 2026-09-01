@@ -98,6 +98,15 @@ as far as the pot allows rather than refused outright — refusing would let a
 keeper-budget setting fail a whole day's funding, which is a far worse
 outcome than a smaller keeper budget.
 
+Upgrades do not land everywhere at once, and that gap is handled explicitly. A
+chain still running the previous version records the instruction but cannot act
+on it, because the code that acts did not exist yet — and once a day is marked
+handled, an ordinary re-delivery would skip straight past the step that was
+missed. The home chain would have set the amount aside while the receiving
+chain still counted it as spendable. A re-delivery now completes that one
+missing step, tracked separately so it can run exactly once no matter how many
+times a day is re-sent, on both of the routes a re-delivery can take.
+
 The monitoring that watches this accounting from outside was taught about the
 new figure in the same change. It re-derives what each chain should have
 available and raises a critical alert when its answer disagrees with the

@@ -547,6 +547,29 @@ contract RewardReporterFacet is
         LibVpfiRecycle.reserveMirrorCommit(dayId, amount);
     }
 
+    /// @dev #1569 M4 C3 (Codex #2031 r5) — apply this day's Base-instructed
+    ///      keeper earmark AT MOST ONCE, on its own flag rather than on
+    ///      `broadcastV2Applied`, so a day whose broadcast was applied by a
+    ///      PRE-#1569 receiver can still have its earmark completed by a
+    ///      later replay. Exactly the shape, and exactly the reason, of
+    ///      {_reserveMirrorCommitOnce} above.
+    ///
+    ///      Without it a non-atomic rollout diverges the two sides silently:
+    ///      Base has charged `chainKeeperAllocDebited` and reduced what it
+    ///      will instruct, while the mirror never reserved the earmark and
+    ///      still counts those tokens as fundable for claims and
+    ///      repatriation.
+    function _applyKeeperEarmarkOnce(
+        LibVaipakam.Storage storage s,
+        uint256 dayId,
+        uint256 amount
+    ) private {
+        if (amount == 0) return;
+        if (s.mirrorKeeperEarmarkApplied[dayId]) return;
+        s.mirrorKeeperEarmarkApplied[dayId] = true;
+        s.recycleKeeperBudget += amount;
+    }
+
     function onRewardBroadcastV2Received(RewardBroadcastV2 calldata b)
         external
     {
@@ -652,6 +675,16 @@ contract RewardReporterFacet is
             ) {
                 s.governorCommitArmedFromDay = b.armedFromDay;
             }
+            // #1569 M4 C3 (Codex #2031 r5) — the keeper earmark's own
+            // pre-upgrade repair, the sibling of the reservation repair at
+            // the top of this branch. Placed AFTER the divergence check,
+            // and reading the STORED figure rather than the packet's: by
+            // here every frozen fact of the day has been proven to match,
+            // so a diverging packet has already reverted and cannot earmark
+            // anything. The reservation repair above predates that check
+            // and keeps its position for compatibility, but a new write has
+            // no reason to run before the day has been authenticated.
+            _applyKeeperEarmarkOnce(s, b.dayId, prior.keeperAllocate);
             return;
         }
 
@@ -733,12 +766,10 @@ contract RewardReporterFacet is
         // believes one contains the other would conclude the mirror
         // double-reserves.
         //
-        // Inside the whole-day idempotency guard, so a replay cannot
-        // double-credit — and the field sits under the replay equality
-        // check above, so a day cannot be re-instructed either.
-        if (b.keeperAllocate != 0) {
-            s.recycleKeeperBudget += b.keeperAllocate;
-        }
+        // Guarded by its OWN flag rather than by the whole-day idempotency
+        // guard, so a day a pre-#1569 receiver applied can still have its
+        // earmark completed on replay — see {_applyKeeperEarmarkOnce}.
+        _applyKeeperEarmarkOnce(s, b.dayId, b.keeperAllocate);
 
         if (b.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
             s.governorCommitArmedFromDay = b.armedFromDay;
@@ -950,6 +981,18 @@ contract RewardReporterFacet is
             if (b.v2.armedFromDay != 0 && s.governorCommitArmedFromDay == 0) {
                 s.governorCommitArmedFromDay = b.v2.armedFromDay;
             }
+            // #1569 M4 C3 (Codex #2031 r5) — and the keeper earmark's
+            // repair, for the same reason the reservation repair above is
+            // in this branch: this early return is a path a pre-#1569
+            // applied day can reach, so an unreserved earmark would stay
+            // unreserved forever. Reads the STORED figure, which this
+            // branch already prefers over the packet's halves.
+            _applyKeeperEarmarkOnce(
+                s,
+                dayId,
+                s.chainDayRecycledFunding[dayId][uint32(block.chainid)]
+                    .keeperAllocate
+            );
             _notifyCompensationHook(b);
             return;
         }
