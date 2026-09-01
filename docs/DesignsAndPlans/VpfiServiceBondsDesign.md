@@ -70,6 +70,16 @@ instruction to anyone implementing or writing copy from the top of the file.
    rule promises, and invalidating the rotation reasoning above, which treats a
    flagged balance as undrainable.
 
+   **And the successful clean release CLEARS the marker.**
+   `assertNotSanctionedFailClosed` is a `view` helper — it permits or reverts and
+   writes nothing — so a persistent confirmed flag would outlive the delisting
+   that cleared it. The operator could then unbond, post a fresh clean balance,
+   and have a later oracle outage freeze **that** balance as though it were the
+   flagged one. The repository already has the pattern for this:
+   `LibSanctionedLock.clearConfirmedFlag`, used at each resolution point in
+   `ClaimFacet`. Acceptance case: **flag → delist → rebond → outage**, asserting
+   the new balance withdraws.
+
    The primitive already exists: **`LibVaipakam.assertNotSanctionedFailClosed`**
    (#998 S10 / #1006) reverts `SanctionsOracleUnavailable()` whenever the oracle
    is unset or its call reverts. So: **record the confirmed flag, and release a
@@ -84,8 +94,16 @@ instruction to anyone implementing or writing copy from the top of the file.
    on-chain fact — and the evidence must be **committed state, not a
    revert** (a reverted transaction leaves nothing to adjudicate; see
    "offence recording" below).
-4. Marketing language depends on the fork below. Under **(B)** or the
-   attested tier — where a slash exists — "operational security deposit".
+4. Marketing language depends on **whether a slash predicate is actually
+   enabled**, not on which tier is deployed. "Operational security deposit" only
+   where a principal can really be confiscated.
+
+   An earlier revision said "under (B) or the attested tier", which names a
+   deployment rather than a capability — and §2 establishes that the attested
+   authorization branch recovers **no slash** and leaves the principal
+   non-confiscatable. Copy written from the tier label would then recreate the
+   exact representation problem the (A)/(C) rule below prohibits, inside the tier
+   that was supposed to resolve it.
    Under **(A) OR (C)** — the principal cannot be confiscated in either,
    since C's arming fee is a separate spend and does not put the deposit at
    risk — it MUST be "operational capacity deposit": calling a
@@ -538,12 +556,30 @@ whole rule:
   now, different total loss across the pair — so allocation moves value between
   proofs even though it cannot move the current proof's total.
 
-  **The invariant: consume the tranches NOT named by any other outstanding proof
-  first, then the contested ones oldest-first.** That maximises what remains
-  reachable for older proofs, is deterministic, and does not depend on the order
-  the proofs happen to resolve in — which is the property that matters, since
-  resolution order is not something the protocol controls. **Overlapping
-  eligibility sets are an acceptance case**, not an edge case.
+  **An earlier revision proposed "consume uncontested tranches first, then
+  contested oldest-first" and claimed that made totals order-independent. It does
+  not.** With `A = B = 100`, an older 10% proof naming `A` and a newer naming
+  `A+B`: resolving the newer first debits 20 from the uncontested `B`, then 10
+  from `A` — **30**. Resolving the older first debits 10 from `A`, leaving the
+  newer a 190 base — **29**. Transaction ordering changes the confiscation, which
+  is exactly what the rule was supposed to prevent.
+
+  **The fix is to compute and RESERVE each proof's liability when the action is
+  accepted, not when the proof resolves.** At acceptance, the debit is
+  `slashBps` of the action-time eligible remainder — already the action-time base
+  the section above requires — and that amount is reserved against the named
+  tranches, invisible to any later action's eligible remainder. Resolution then
+  executes the reserved figure (clamped to what survives).
+
+  Order-independence follows because nothing is computed at resolution time.
+  Geometry survives too, and in the form that is actually correct: a **later
+  action** sees the earlier reservation and so takes 10% of a smaller base, while
+  **two actions taken at the same balance** both reference that balance — which
+  is the honest reading of "the capital that secured the action", since the same
+  capital did secure both.
+
+  **Overlapping eligibility sets are an acceptance case**, with the specific
+  assertion being that both resolution orders produce identical totals.
 - **Rounding is UP.** `balance * 1_000 / 10_000` FLOORS to zero once the
   balance drops under ten units, leaving a permanently unslashable positive
   bond that still buys capacity; an earlier revision described that
@@ -1121,7 +1157,12 @@ numbers back with their actual throughput meaning attached.
 **Already ratified, recorded here so nothing re-opens them:** the no-yield
 refundable-deposit shape; objective-lies-only for v1 (which collapsed to no
 predicate at all — see the fork); the 4× ceiling per `(role, address)` as an
-invariant rather than a suggestion; no minimum bond; no v1 unbond delay; and
+invariant rather than a suggestion; no minimum bond; **no v1 unbond delay —
+because v1 has no delayed-proof predicate, NOT because the delay belongs to the
+liveness tier** (an earlier revision of this list said the latter, which would
+let an implementer ship equivocation without liveness and permit immediate
+withdrawal after conflicting statements are signed, exactly as rule 2 now
+forbids); and
 clamp-on-any-capacity-reduction.
 
 ## Tests
@@ -1261,6 +1302,13 @@ acceptance criteria are:
   shorter wait, ATTRIBUTABLE TO the small bond. Same rule this programme
   applies elsewhere: reachability is not discrimination.
 - The stated envelope holds over a rolling window.
+- **A capacity or curve retune either settles the elapsed credit under the old
+  capacity OR invalidates the affected buckets and forfeits their pre-retune
+  credit — never silently re-credits it under the new capacity.** An earlier
+  revision of this decision required settlement unconditionally, which the
+  corrected mechanism's permitted conservative branch cannot satisfy: that branch
+  invalidates by design. Stated unconditionally, a reset-based implementation
+  would satisfy the mechanism and violate the decision.
 - A capacity change of any cause — up or down — settles elapsed credit under
   the old capacity before the new one takes effect **where the mechanism
   preserves that credit at all.** The corrected mechanism explicitly permits the
