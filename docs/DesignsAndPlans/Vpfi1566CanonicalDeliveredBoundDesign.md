@@ -1080,13 +1080,25 @@ unknown and unclosable — so an over-estimated `H` publishes claim headroom
 backed by exactly the borrower, payroll and treasury custody this bound exists
 to protect, with no check able to catch it.
 
-**So the legacy canonical bootstrap opens at ZERO and funds forward.**
-`bootstrapRewardPool` is for a deployment that can evidence its opening
-position; where none can, `received` starts at nothing and rises only through
-delta-checked `fundRewardPool` transfers, which prove funding by moving it. The
-cost is that claims stay bounded until the operator funds the pool explicitly —
-which is the honest state of a deployment that cannot say what it holds, and is
-strictly better than publishing a number nobody can verify.
+**So the legacy canonical bootstrap opens at ZERO HEADROOM and funds forward —
+and "zero headroom" means `received = paid`, NOT `received = 0`.** An earlier
+revision said the latter, which is a different and much worse thing: with the
+paid rebase installing a historical `paid = P`, starting `received` at zero
+means every subsequent `fundRewardPool(F)` is swallowed until cumulative funding
+exceeds `P`. On a long-lived deployment that can absorb a large amount of
+**provably new** funding and block claims indefinitely — punishing the operator
+for the deployment's history rather than bounding it.
+
+Seeded at `received = paid`, the bound opens at exactly zero and each
+delta-checked transfer raises usable headroom one-for-one, which is what the
+`received = H + paid` formula already implied for the provable case.
+
+**And `bootstrapRewardPool` is REMOVED for this deployment class, not merely
+deprecated.** Leaving it alongside the zero-and-fund-forward rule gives an
+implementer two contradictory bootstrap contracts, and the one that takes an
+administrator-supplied `H` is precisely the unverifiable path this correction
+exists to eliminate. It survives only where a **provable provenance ledger**
+exists — and a deployment with one is not the deployment being discussed here.
 
 The definition below therefore applies **only** where a provable provenance
 ledger exists:
@@ -1169,8 +1181,14 @@ reconciliation already produces an absolute figure, and asking it to produce a
 delta reintroduces exactly the ambiguity above.
 
 **The mirror's received-side migration writer takes the identical contract** —
-ADMIN-only and paused per entry, but a **multi-entry EPOCH closed by a single
-explicit finalization**, NOT a one-shot call finalized before unpause. An earlier
+ADMIN-only and paused per entry, a **multi-entry EPOCH**, NOT a one-shot call
+finalized before unpause. **And for the pre-d2 LEGACY lane it is closed by
+nothing**: §5c establishes that no observable transport terminal exists there,
+so finalization is available only where an actual observed terminal does exist.
+An earlier revision of this contract said "closed by a single explicit
+finalization" without that qualification, which lets an implementer finalize
+after bootstrap and leave a later-executed legacy packet permanently
+unreconcilable. An earlier
 revision of this line said one-shot; §5c establishes why that cannot work — the
 bootstrap consumes it before claims resume, so the first delayed legacy packet is
 stranded. Every "one-shot" and "time-bounded" description of this writer is
@@ -1279,7 +1297,7 @@ delivery and nobody to report to.**
 | 6 | `…:237` | paid-delta recording on expiry | **yes** (was "no") | yes | **yes** |
 | 7 | `RewardRemittanceFacet.sendRemitAck:1529` | AUTH: may this chain ack a remittance | revert | allow | **revert** — fail closed |
 | 8 | `RewardReporterFacet.setBaseChainId:1254` | is this a role transition needing residual retirement | n/a | yes | **yes — this is the site that CREATES and CLEARS Detached** |
-| 9 | `RewardReporterFacet._retireDeliveredResidualOnRoleChange:1286` | retire the delivered residual | n/a | on transition | **on ENTERING Detached, retire; on LEAVING, start from zero** |
+| 9 | `RewardReporterFacet._retireDeliveredResidualOnRoleChange:1286` | retire the delivered residual | n/a | on transition | **on ENTERING Detached, retire the counter AND relocate its backing; on LEAVING, start from zero** — see below |
 | 10 | `RewardReporterFacet.setIsCanonicalRewardChain:1301` | same, canonical side | yes | n/a | **yes** |
 | 11 | `LibInteractionRewards._walkSideDays:1823` | pool pricing / schedule funding | canonical schedule | mirror-delivered | **0 — must NOT fall through to canonical schedule** |
 | 12 | `LibInteractionRewards.sweepExpiredEntry:3245` | expiry accounting source | canonical | mirror | **mirror-shaped, bound 0** |
@@ -1320,6 +1338,19 @@ repair the readers that bypass it.
 
 So slice 4 lands **all** of these together, or Base has a delivered bound with
 four documented ways around it.
+
+**Retiring the counter must relocate the BACKING, not just the number.** A
+mirror entering `Detached` with `received = 100`, `paid = 0` has 100 delivered
+VPFI sitting in the Diamond. Setting `paid = received` removes all 100 of claim
+headroom and moves nothing — and the zero baseline on reattachment then leaves
+existing claims waiting for a **second** delivery while the first 100 is
+untracked and unusable. The retirement was introduced to stop an old residual
+being reusable; done to the counter alone it strands the tokens instead.
+
+So the transition either carries an **era-bound forward** for that balance, or
+moves it into an explicit **recovery/repatriation position** where it is visible
+and recoverable. Retiring a claim on money without deciding where the money goes
+is the shape this whole note exists to reject.
 
 **Transition tests are required in BOTH directions**, since rows 8–10 are the
 only sites that mutate the role: entering `Detached` must retire the delivered
@@ -1692,8 +1723,15 @@ or consumes unrelated bucket backing.
 
 One reconciliation entry, three effects, all or nothing:
 
-0. **assert `freshShare + recycledShare <= oldWireAmount`, where `oldWireAmount`
-   is bound to this entry's replay-protected identifier** — checked BEFORE any
+0. **assert `alreadyClassified[packetHash] + freshShare + recycledShare <=
+   oldWireAmount`, where both figures are bound to this entry's packet hash** —
+   the CUMULATIVE total, not this submission alone. An earlier revision bounded
+   only the current entry, which the correction permitting follow-up entries then
+   made exploitable: for a 10-token packet, submissions of 6 and 6 each pass a
+   bare `6 <= 10`, and with another packet having replenished the global
+   `uncounted` balance the second succeeds — classifying 12 against a 10-token
+   delivery. The invariant the slice claims is only enforced if the algorithm
+   carries it — checked BEFORE any
    of the three mutations, so a malformed or mistaken entry reverts whole rather
    than half-applying.
 
