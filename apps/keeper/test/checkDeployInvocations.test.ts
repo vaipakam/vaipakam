@@ -8642,4 +8642,100 @@ describe('check-deploy-invocations — #1996 config identity', () => {
     expect(r.ok).toBe(false);
     expect(r.out).toContain('pnpm --filter @vaipakam/agent');
   });
+  // ---- Codex #2036 r25 ----
+
+  it('a SPREAD after the assignment overrides it', () => {
+    // `{CLOUDFLARE_ENV: "production", ...stagingEnv}` hands the child whatever
+    // the spread carries. Later-wins is already the rule; a spread is a later
+    // assignment whose value cannot be read.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {CLOUDFLARE_ENV: "production", ...stagingEnv}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('...but a spread BEFORE it does not', () => {
+    // The control: the assignment is the later one, so it names the
+    // environment and this deploy is genuinely out of scope.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.mjs',
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+          '{env: {...base, CLOUDFLARE_ENV: "production"}});\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('an INTERPOLATED value is an assignment, not an absence', () => {
+    // Excluding it recorded no property at all, so the closed-object check
+    // proved that no environment was selected — the r23 shorthand lesson again.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
+    );
+    const r = runWith(
+      'w.mjs',
+      'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+        '{env: {CLOUDFLARE_ENV: `${stage}ing`, PATH: "/bin"}});\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
+
+  it('...and a readable value still names the environment', () => {
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'configs/custom.jsonc',
+      '{"name": "vaipakam-www", "env": {"staging": {"name": "vaipakam-agent"}, ' +
+        '"production": {"name": "vaipakam-www"}}}\n',
+    );
+    expect(
+      runWith(
+        'w.mjs',
+        'spawnSync("wrangler", ["deploy", "--config", "configs/custom.jsonc"], ' +
+          '{env: {CLOUDFLARE_ENV: "production", PATH: "/bin"}});\n',
+      ).ok,
+    ).toBe(true);
+  });
+
+  it('a TRIPLE DELIMITER inside an ordinary TOML string opens nothing', () => {
+    // The name reader has blanked ordinary string bodies before counting
+    // delimiters since r9; the line scanner added in r19 had a weaker copy, so
+    // `note = '"""'` opened multiline state and hid the environment table
+    // below it — leaving an incomplete top-level identity authoritative.
+    seed('apps/agent/package.json', '{"name":"@vaipakam/agent"}\n');
+    seed(
+      'apps/agent/side.toml',
+      [
+        'name = "vaipakam-www"',
+        'note = \'"""\'',
+        '[env.staging]',
+        'name = "vaipakam-agent"',
+        '',
+      ].join('\n'),
+    );
+    const r = runWith(
+      'w.sh',
+      'cd apps/agent\nwrangler deploy --config side.toml --env staging\n',
+    );
+    expect(r.ok).toBe(false);
+    expect(r.out).toContain('pnpm --filter @vaipakam/agent');
+  });
 });
