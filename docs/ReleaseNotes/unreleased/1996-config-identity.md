@@ -79,13 +79,22 @@ because deploying one environment says nothing about the others, and consulting
 them all made an unrelated environment answer for a deployment that never
 touches it. Where the choice cannot be read, every environment is a candidate.
 
-An environment can be chosen in more ways than a command-line flag, and two of
-them look like nothing at all. A set of environment variables assembled
-elsewhere in the script and handed to the command carries whatever the script
-was started with, so an environment can arrive without appearing anywhere on
-the line; the same is true of a file of variables named for loading, which is
-read before the configuration is. In both cases the checker treats the choice
-as made and unread rather than as absent.
+An environment can be chosen in more ways than a command-line flag, and most of
+them look like nothing at all. A command inherits whatever its parent was
+started with, so an environment can arrive without appearing anywhere in the
+script; a file of variables named for loading is read before the configuration
+is; a set of variables assembled elsewhere in the script carries the same
+inheritance forward. Nothing written on the line can rule any of that out.
+
+So the checker presumes an environment is chosen, and unnamed, and asks instead
+what would rule it out. Three things do: naming the environment explicitly as
+empty, assigning the variable explicitly as empty, or handing the command an
+environment built entirely in the script with nothing inherited into it — the
+one construct that gives the command a closed set of variables rather than an
+open one. Absent all three, every environment the configuration declares is a
+candidate. That is a wide presumption and it is affordable for the same reason
+the earlier one is: it only ever decides between configurations the checker
+could read, and no deployment in this repository names a configuration at all.
 
 The point where this had to be settled is what a name that matches nothing
 protected proves. If the environments were read, it proves the deployment is
