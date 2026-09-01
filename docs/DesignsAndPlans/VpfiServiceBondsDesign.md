@@ -540,9 +540,15 @@ takes 10% once or the accumulated total, and what the counter does afterwards.
 recycle bucket from the `(role, address)` bond whose entry point recorded the
 offence — **and the base depends on when the offence is recorded:**
 
-- **Synchronous recording (v1's in-call dispatcher):** the CURRENT balance. The
-  observation and the debit are the same call, so current and action-time are
-  the same figure and there is nothing to apportion.
+- **Synchronous recording (a future predicate-enabled tier, NOT v1):** the
+  CURRENT balance. The observation and the debit are the same call, so current
+  and action-time are the same figure and there is nothing to apportion.
+
+  An earlier revision labelled this "v1's in-call dispatcher". **v1 has no
+  dispatcher and no offences** — both selectable forks are non-confiscatable —
+  so a reader taking that label at face value builds the principal-slashing path
+  the fork rules out. The branch is real machinery for whenever a predicate
+  exists; it is not v1's.
 - **Delayed proof (attested tier):** the **immutable amount RESERVED at action
   acceptance** — not a figure recomputed from whatever the named tranches still
   hold. Recomputing re-introduces resolution-order dependence, since an
@@ -675,8 +681,25 @@ identified the hole. Rule 2's "disabling does not cancel prior liability" is
 right for a routine retune and exactly wrong here.
 
 So: an **emergency epoch invalidation** that blocks the old verifier
-immediately AND **releases the reservations that depended on it** — **held by an
-off-timelock authority, not by the ordinary predicate-config setter.**
+immediately AND makes the reservations that depended on it non-blocking —
+**held by an off-timelock authority, not by the ordinary predicate-config
+setter.**
+
+**It must be O(1), and an earlier revision said "releases the reservations",
+which is not.** A compromised epoch can have reservations spread across many
+operators, so releasing each one atomically means iterating an unbounded global
+set: the incident transaction exceeds the block gas limit and **leaves the
+forged-proof verifier enabled** — the emergency lever failing precisely in the
+incident it exists for. It also could not emit the per-reservation release
+events §Events requires, since those are per reservation.
+
+So invalidation is a **single epoch-state transition**: reservations naming an
+invalidated epoch stop counting against the concurrency cap and stop blocking
+admission **immediately, without being touched**. Their storage is then reclaimed
+by **bounded or permissionless lazy cleanup**, which emits the per-reservation
+release events as it goes — so the indexer sees the same event stream, just
+arriving after the incident rather than during it. An operator whose capacity is
+restored need not wait for cleanup; cleanup is bookkeeping, not the remedy.
 
 "Immediate" is not a property of naming it so. Ordinary configuration sits behind
 the timelocked `ADMIN_ROLE`; if epoch invalidation is built as just another
