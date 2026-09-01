@@ -52,10 +52,23 @@ OffenceRecorded(operator, role, kind, refId)   // role, not just operator
   decide a slash. An earlier revision of this bullet described a
   per-OPERATOR counter driving a deferred threshold slash, which left an
   implementation with no role to select the bond from and no reason to debit
-  on the spot. Honest failures that the operator
-  could not have known (state changed in the same block) are not offences;
-  the offence predicate must reference state committed *before* the
-  operator's submission.
+  on the spot. **Honest failures are excluded by a SUBMITTED-AGAINST
+  SNAPSHOT, not by a same-block rule.** An earlier revision exempted only
+  same-block changes and required the predicate to reference state committed
+  before the operator's submission. That does not hold: a transaction can sit
+  pending while the disqualifying state commits in an EARLIER block than its
+  execution, so at execution the predicate sees state that preceded the call
+  even though the operator could not have known it when signing. Ordinary
+  congestion or builder ordering would then turn an honest fill into a
+  recorded offence and slash a good bond — the worst failure this design can
+  have, because it punishes the operators it exists to attract.
+
+  So a bonded submission CARRIES the state version it validated against, and
+  the predicate asks whether THAT snapshot already contained the
+  disqualifying fact. A mismatch introduced after the snapshot is a stale
+  read, not a lie, and is not slashable. "When the operator submitted" is
+  unobservable on-chain; the snapshot they committed to is not, which is why
+  the rule binds to it.
 - Bond sizes: governance-bounded config. **NOT unlock tiers** — capacity
   rises CONTINUOUSLY with the bond and nothing is unlocked at a threshold.
   This bullet said "unlock tiers" until rev 7, and an implementation
@@ -140,9 +153,15 @@ offence record and its counter therefore carry the role alongside the
 operator, or the same event admits three materially different losses. That is the
 whole rule:
 
-- Geometric, not linear — 10% of what remains, so the bond asymptotes toward
-  zero rather than hitting it at a fixed count. "Ten offences to zero" in rev
-  1 was wrong arithmetic as well as an ambiguous rule.
+- Geometric, not linear — 10% of what remains, so the bond falls away rather
+  than hitting zero at a fixed count. "Ten offences to zero" in rev 1 was
+  wrong arithmetic as well as an ambiguous rule.
+- **Rounding is UP, with a minimum debit of one unit**, and a balance below
+  that minimum is consumed entirely. Integer arithmetic does not asymptote:
+  `balance * 1_000 / 10_000` is ZERO once the balance drops under ten units,
+  leaving a permanently unslashable positive bond that still buys capacity.
+  An earlier revision described the asymptote as a feature; in Solidity it is
+  a floor at which slashing silently stops.
 - **The decay question dissolves.** Rev 1 asked whether the offence counter
   should decay, to stop a long-lived honest operator accumulating sparse
   offences into a slash. With immediate debit there is no accumulator to
@@ -346,6 +365,12 @@ that everything else is throughput and these are custody:**
 - Each objective slash predicate proven on-chain-verifiable, and proven to
   fire on committed state rather than a revert — an offence that reverts
   leaves nothing to slash.
+- **An honest operator is NOT slashed when the state moved between broadcast
+  and execution** while their submitted-against snapshot was still valid.
+  Test it with the disqualifying write landing in an EARLIER block than the
+  operator's call — that is precisely the case a same-block exemption misses.
+- **Dust slashing**: a balance too small for `slashBps` to round to a
+  non-zero debit is consumed, never left permanently unslashable.
 - Free-tier operation at ZERO bond, for every role. This is the
   permissionless baseline the whole design is built to preserve, and it is
   the case a capacity bug silently breaks.
