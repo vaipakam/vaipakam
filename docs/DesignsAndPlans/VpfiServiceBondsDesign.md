@@ -605,13 +605,26 @@ the operator's own principal**, i.e. it is a self-inflicted permanent lock. So:
 a bounded tranche count with coalescing on deposit, or an aggregate epoch/range
 representation, with the gas bound demonstrated rather than assumed.
 
+**Coalescing must preserve ACTION-TIME REACH.** Merging a new deposit into a
+tranche an outstanding action already names makes the new principal reachable
+by that old proof — confiscating a top-up that secured nothing, which is the
+exact provenance guarantee the tranches exist to provide. So: coalesce only
+into tranches with **identical outstanding exposure** (or none), keep epoch
+boundaries in the representation, and **reject the deposit when no safe merge
+exists** rather than merging unsafely to stay under the count. A refused
+deposit is recoverable; a silently widened proof reach is not.
+
 Each deposit is a tranche with its own epoch; an
 action-consumption record names the tranches live when the action was accepted;
-a proof debits `slashBps` of **what remains of those tranches**, never of the
-aggregate. Provenance and geometry both follow from the same structure — the
-second proof takes 10% of the remaining 90 because that is what is left of the
-tranche it is entitled to reach, and a later deposit is in no tranche any
-outstanding proof names.
+a proof debits **the amount RESERVED against those tranches at acceptance** —
+never a figure recomputed from what they still hold, and never the aggregate.
+An earlier revision said "`slashBps` of what remains of those tranches", which
+re-introduces resolution-order dependence the moment an overlapping proof
+resolves first and changes that remainder.
+
+Provenance follows from the structure: a later deposit is in no tranche any
+outstanding proof names, so it is unreachable however the proofs resolve. The
+**amount** follows from the reservation, computed once at acceptance.
 
 This matters more than it looks: without it, raising a bond while any proof is
 outstanding increases your exposure to offences you have already committed,
@@ -633,6 +646,21 @@ parameters between acceptance and resolution would either apply new offence
 semantics retroactively, or make an offence valid under the old rules
 unprovable under the new ones. Both contradict the pre-change-liability
 principle the rest of this section preserves.
+
+**One exception, and it must be a distinct path rather than a special case of
+retuning: a verifier RETIRED FOR SECURITY.** If a predicate version is disabled
+because its verifier accepts forged evidence, retaining it through every old
+action's horizon keeps the vulnerability live — the attacker keeps submitting
+forged proofs and confiscating those reservations after governance has already
+identified the hole. Rule 2's "disabling does not cancel prior liability" is
+right for a routine retune and exactly wrong here.
+
+So: an **emergency epoch invalidation** that blocks the old verifier
+immediately AND **releases the reservations that depended on it**. Those
+liabilities are unprovable by any trustworthy means once the only verifier for
+them is known-broken, so releasing them is the honest outcome rather than a
+concession — holding capital against evidence that can no longer be soundly
+adjudicated is not caution, it is a freeze.
 
 So each action carries the predicate version in force when it was accepted, and
 **that verifier is retained through the evidence horizon** — or the change is
@@ -875,7 +903,15 @@ mechanism is needed at all — it was not.
 of **4× the free tier per `(role, address)`** — the same key the bond record and the buckets use, where ADDRESS is the charged actor defined by an exhaustive selector→(role, actor) table that implementation must produce. That table is not optional and not inferable: `BackstopFacet.backstopFill` routes through `BackstopVaultImplementation.executeFill` into `OfferMatchFacet.matchIntent`, so the inner `msg.sender` is a SHARED vault rather than the initiator, and adapter fills likewise replace the keeper or principal with the adapter. Keying on the inner caller would pool unrelated activity and let one contract's bond subsidise every routed caller; charging wrappers without a closed mapping risks bypass or double-charging instead. Direct and routed paths both have to appear in it. Not per address across roles: an address holding solver, matcher and keeper bonds gets an independent ceiling for each, because their action units are not commensurable and a shared cap would let one role suppress another's capacity.
 
 **Any CHANGE in capacity — up or down — must settle elapsed credit under the
-OLD capacity before the new one takes effect.**
+OLD capacity before the new one takes effect, OR invalidate the affected
+buckets and forfeit their pre-retune credit.** What is absolute is that the
+credit is never **silently re-credited under the new capacity**; the two
+branches are the two honest ways to avoid that. An earlier revision of this
+statement required settlement unconditionally, which the conservative branch
+§3 permits cannot satisfy — so a reset-based implementation was simultaneously
+conforming and nonconforming. **Fourth site of this rule**; it is stated in
+full at each rather than cross-referenced, because cross-references are what
+let the first three drift.
 
 Downward is the obvious half: a withdrawal, a slash, or a retune that lowers
 the curve, `bondAt4x` or the free tier must reconcile outstanding credit down
