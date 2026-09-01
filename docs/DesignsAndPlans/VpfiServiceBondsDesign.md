@@ -298,7 +298,39 @@ bucket stores the index it last sampled, and its accrual over any span is
 `index[now] − index[sampled]` — correct across any number of intervening
 retunes, with no per-epoch history to retain. It is the same shape as a
 borrow index, and this is the problem borrow indices exist for. A bucket
-spanning multiple retunes before its first admission is the acceptance case. This is a decision, not an
+spanning multiple retunes before its first admission is the acceptance case.
+
+**The index settles the RATE and not the CEILING, and that is a second
+problem, not a footnote to the first.** An earlier revision of this paragraph
+claimed correctness "across any number of intervening retunes" without
+qualification. It is correct across any number of intervening *rate* retunes.
+A capacity retune is a different operation: it changes the **clamp**, and a
+clamp is applied at a moment, not accrued over a span.
+
+The case that breaks it — and it should be an acceptance case, because it is
+the one a plausible governance sequence produces:
+
+> An untouched bucket is full at 4×. Governance lowers capacity to 1×, then
+> restores it to 4× before that bucket is next admitted.
+
+Sequential settlement clamps at the first retune and the bucket keeps 1×; the
+later increase grants nothing retroactively, because capacity is a ceiling and
+not a credit. Applying an accumulated index against the *final* ceiling instead
+preserves the original 4× — reinstating capacity the clamp was supposed to have
+destroyed, and doing it invisibly, because no record of the intermediate
+ceiling survives to contradict it.
+
+So the index must **either** retain intermediate ceiling/clamp information
+alongside the rate-seconds total, **or** conservatively reset the buckets a
+capacity decrease affects at the moment it is written. The second is cruder and
+strictly safe: a reset can only under-credit, and under-crediting an operator
+costs them throughput they can re-earn, where over-crediting hands back capacity
+governance deliberately withdrew. Absent a reason to pay for the first, take the
+second.
+
+Note the two are settled by different actors at different times — the rate by
+governance at each retune, the clamp by whoever touches the bucket next — which
+is precisely why one index cannot carry both. This is a decision, not an
 implementation detail, because without it the bond is bypassable: an
 operator accrues elevated credit, withdraws the bond, and still spends
 bonded capacity with nothing left to slash. It is also what makes v1's
@@ -509,8 +541,15 @@ now and gains deterrence later, or waits for the tier that can adjudicate.
 Everything in this note that survived review is about capacity; everything
 that collapsed is about slashing.
 
-**Open for the owner.** There is exactly ONE decision that blocks a build,
-and it is first:
+**Open for the owner.** The fork is the **first** blocking decision, and under
+one branch it is not the last: choosing **(C)** immediately raises item 2, which
+§3 states is not buildable without a number. So (A) and (B) are single-decision
+paths and (C) is a two-decision path.
+
+Saying "exactly ONE decision blocks a build" — as an earlier revision did — is
+wrong in exactly the case the recommendation points at, and its failure mode is
+an owner who selects C, believes the fork discharged, and leaves the
+implementation underspecified.
 
 **1. Select the fork: (A), (B) or (C).** Not "does v1 ship" — that question
 was in an earlier revision of this list and a "yes" to it leaves an
@@ -574,6 +613,24 @@ that everything else is throughput and these are custody:**
   `LibVaipakam._assertNotSanctioned` and a focused test. Omitted from an
   earlier revision of this list entirely, which would have let a flagged
   operator post, withdraw or pay a fee through an unscreened path.
+- **PAUSE AND REENTRANCY GUARDS, on the inflow and fee selectors.** The
+  repository's own coding standard (`docs/FunctionalSpecs/TokenomicsTechSpec.md`)
+  requires every new VPFI vault-deposit, fee-deduction and treasury-receipt
+  function to carry the project-standard reentrancy guard and the global
+  pausable mechanism unless it is a pure/view helper. This list previously
+  required sanctions screening and stopped there, which would have satisfied
+  the design while leaving `postBond`, any permit / deposit-on-behalf variant,
+  and (under C) the arming fee callable during an incident, or exposing an
+  unguarded external token-transfer path.
+
+  **`unbond` is the deliberate exception and must stay one.** It is the exit,
+  and an exit that a pause can close is a freeze on operator capital rather
+  than a containment lever — the same asymmetry that took `whenNotPaused` off
+  the perk setter. So: guard and pause the inflows; guard the exit, never
+  pause it. Two focused tests, one per direction, because a single test that
+  only proves the pause blocks something would pass on an implementation that
+  pauses everything.
+
 - **SHIPPING PREREQUISITE, not a test: reward-funding isolation (#1566).**
   `RewardClaimFacet` takes `backingRoom` from `LibVpfiRecycle.backingPosition`,
   which treats every VPFI outside `recycleBucket` as reward backing — so a
