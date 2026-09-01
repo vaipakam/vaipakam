@@ -108,6 +108,20 @@ withdrawal. So, before bonds ship, **either**:
   acceptance case is the sequence **rotate → raise → unbond**, which no
   single-slot record survives.
 
+  ⚠️ **A SANCTIONED operator's balance cannot be drained at all**, which makes
+  the drain-to-zero branch conditionally impossible rather than merely
+  inconvenient. The mandatory sanctions gate reverts their `unbond`, so the
+  runbook's zero-exposure precondition can never be satisfied and the rotation
+  blocks **indefinitely** — worst precisely when rotation is urgent because the
+  old token is compromised, since the frozen balance is then denominated in the
+  broken asset.
+
+  So: **the token-snapshotted branch becomes MANDATORY whenever any frozen
+  balance exists**, or a sanctions-preserving escrow migrates the frozen
+  principal into the new token while keeping it frozen and claimable only on
+  delisting. Either way the rotation must not be gated on an operation the
+  sanctions gate forbids.
+
 The first is simpler and matches the existing procedure. The second is only
 worth building if bonds are expected to be long-lived enough that draining them
 for a rotation is unacceptable — which is a product question, not a technical
