@@ -380,10 +380,31 @@ snapshot does not help: it fixes the percentage and leaves the principal it
 applies to floating upward.
 
 So the **action-consumption record carries the bond balance as well as the
-rate**, and the slash debits `min(actionTimeBalance × slashBps, currentBalance)`
-— the action-time figure bounds the exposure, and the clamp handles a balance
-that has since fallen. Equivalently, later deposits are epoched so a proof
-cannot reach capital posted after its action.
+rate**. An earlier revision then specified
+`min(actionTimeBalance × slashBps, currentBalance)` and called deposit-epoching
+an equivalent formulation. **They are not equivalent, and the clamp is wrong on
+two counts** — both of which need the tranche accounting, so it is mandatory
+rather than an alternative:
+
+- **The clamp bounds the SIZE and not the REACH.** `currentBalance` carries no
+  provenance. If other proofs consume the capital that secured the action and the
+  operator then tops up, a delayed proof measures against the replenished
+  aggregate and confiscates the later deposit — exactly the harm the action-time
+  snapshot was introduced to prevent, arriving through the clamp instead.
+- **It destroys geometric slashing for concurrent proofs.** Two offences both
+  accepted at a 100-token balance snapshot the same base, so each debits 10 —
+  the second taking 10 rather than 10% of the remaining 90, and ten concurrent
+  proofs reaching zero. That directly contradicts the geometric rule above,
+  whose whole point is that the bond falls away rather than hitting zero at a
+  fixed count.
+
+**So: deposit TRANCHES.** Each deposit is a tranche with its own epoch; an
+action-consumption record names the tranches live when the action was accepted;
+a proof debits `slashBps` of **what remains of those tranches**, never of the
+aggregate. Provenance and geometry both follow from the same structure — the
+second proof takes 10% of the remaining 90 because that is what is left of the
+tranche it is entitled to reach, and a later deposit is in no tranche any
+outstanding proof names.
 
 This matters more than it looks: without it, raising a bond while any proof is
 outstanding increases your exposure to offences you have already committed,
@@ -804,6 +825,18 @@ Either **reject a raise whose post-bond capacity does not increase**, or
 is still refundable — and it keeps the rule simple: the fee tracks capacity
 granted, never the transaction.
 
+**And the arming call binds the CAPACITY, not only the fee.** A `maxArmingFee`
+parameter protects an operator from a re-priced fee and does nothing about a
+re-priced curve: if governance raises `bondAt4x` while their transaction is
+pending, the same bond buys materially less capacity, the raise stays positive
+so the capacity-neutral rejection above does not fire, and the operator pays the
+full non-refundable fee for something other than what they reviewed. Same
+substitution the perk channel binds against, and for the same reason — a
+non-refundable spend must settle on the terms its payer saw.
+
+So the call carries a **minimum post-arming capacity** (or a config epoch
+covering the fee and the curve together) and reverts if it is not met.
+
 **Selecting (A) or (C) also changes the programme's definition of done, and
 that consequence has to be recorded rather than discovered.**
 `VpfiRecyclingCompletionPlan.md` §6 defines #1219 as decided when *either* the
@@ -854,11 +887,21 @@ decisions rather than to an implementer's discretion:*
   class merges distinct absorption. So C appends **`ServiceBondArmingFee`**,
   with its own event and test.
 
-**Recommendation: (C), else (A)** — but read the fork for what it is. Both
-abandon performance security; the real question is whether v1 ships capacity
-now and gains deterrence later, or waits for the tier that can adjudicate.
-Everything in this note that survived review is about capacity; everything
-that collapsed is about slashing.
+**Recommendation: (C), else (A)** — and the real question is **not** "ship now
+or wait for the adjudicating tier". An earlier revision of this summary framed it
+that way and promised later deterrence, which survives from before B was
+withdrawn and can still make waiting look actionable: §2 states that no route to
+deterrence is specified under any fork, so there is nothing to wait *for*.
+
+The actual decision is narrower and entirely about the **permanent sink**: (A)
+ships a purely temporal capacity deposit, (C) ships the same thing plus a
+non-refundable arming fee that is permanently absorbed. Both are non-slashable
+capacity deposits; neither becomes a performance bond later unless a
+knowledge-free predicate is specified, and specifying one is separate work with
+no schedule attached to it.
+
+Everything in this note that survived review is about capacity; everything that
+collapsed is about slashing.
 
 **Open for the owner.** The fork is the **first** blocking decision, and under
 one branch it is not the last: choosing **(C)** immediately raises item 2, which
@@ -925,9 +968,19 @@ in the owner-facing list is how that happens.
 What is genuinely open is **whether a knowledge-free predicate can be defined at
 all**. Two candidates, neither yet specified:
 
-- **Strict liveness** — a committed window, missed. Objective, but only once the
-  kill-switch suspension rule in §1 is part of it, or an incident slashes every
-  enrolled operator at once.
+- **Strict liveness** — a committed window, missed. **Weaker than it looks, and
+  possibly not viable at all.** The kill-switch suspension rule handles the case
+  where the protocol forbids performance, but it cannot distinguish an operator
+  who did nothing from one whose timely transaction was censored by builders, or
+  from a chain halt across the deadline — no global, role or selector switch
+  changes in either case, so the stated exception never fires. An absent on-chain
+  action is then read as an offence, which is the builder-ordering failure this
+  note already rejected once for staleness.
+
+  Making it viable needs **inclusion-independent evidence** (something the
+  operator can produce that proves timely intent without depending on being
+  included) plus an outage and grace model. Absent both, strict liveness is not a
+  candidate and equivocation is the only one left.
 - **Equivocation** — two conflicting signed statements from one operator. The
   offence is visible in the artifacts themselves and requires no inference about
   what anyone knew, which is what makes it the strongest candidate.
