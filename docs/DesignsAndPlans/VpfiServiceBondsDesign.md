@@ -286,9 +286,14 @@ withdrawal. So, before bonds ship, **either**:
   the beneficiary** — moving the principal into the new token while leaving the
   operator's claim on it intact. Voluntary enumeration cannot be the only route.
 
-  Either way the
-  acceptance case is the sequence **rotate → raise → unbond**, which no
-  single-slot record survives.
+  The acceptance case is **branch-specific**, and an earlier revision required
+  one sequence of both branches: for **per-token sub-balances**,
+  `rotate → raise → unbond` must succeed with each principal exiting in its own
+  asset; for the **rejection branch**, the same sequence asserts the raise
+  REVERTS while the old balance stands, and `unbond-old → raise-new` then
+  succeeds. Requiring the first sequence universally made the explicitly
+  permitted rejection implementation fail its own acceptance test — a
+  conforming build failing a test that asserts the other branch's behaviour.
 
   ⚠️ **A SANCTIONED operator's balance cannot be drained at all**, which makes
   the drain-to-zero branch conditionally impossible rather than merely
@@ -823,8 +828,14 @@ reservations, so a single figure across tokens adds incomparable raw units: a
 large-decimal old reservation blocks every new-token action, and the reverse
 rotation understates the old liability against the cap. Unreserved backing and
 the concurrency cap are kept per collateral-token epoch (or an explicit
-conversion precedes any summing). **And the reads FILTER: admission sums only
-partitions whose global predicate epoch is VALID** — the invalidation write
+conversion precedes any summing). **And the reads FILTER on a TRI-STATE: admission counts partitions whose
+global predicate epoch is VALID or QUARANTINED, and excludes only
+INVALIDATED ones.** An earlier revision said "only VALID", which collides with
+the quarantine's own rule that liability is preserved: filtering quarantined
+partitions out lets the operator **overcommit the same collateral through
+another live predicate** while the epoch is under review, and a later
+restoration then exposes reservations exceeding the cap or the bond. Quarantine
+pauses horizons; it does not lighten the balance sheet — the invalidation write
 changes the epoch's global state, not the stored per-operator totals, so a read
 that does not filter keeps counting the stale partitions until lazy cleanup
 (blocking the operator, the opposite of the promise) or forces per-operator
