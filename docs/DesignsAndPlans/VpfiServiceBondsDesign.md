@@ -293,9 +293,16 @@ withdrawal. So, before bonds ship, **either**:
   A deposits — the retired balance regains capacity, or an old liability
   watermark reaches newly posted principal, both against the
   token-epoch isolation this section requires. Every partition is keyed
-  by the rotation epoch (the address is an attribute, not the key), or
-  equivalently address reuse is prohibited until every historical
-  partition for that address is empty.
+  by the rotation epoch (the address is an attribute, not the key) —
+  **unconditionally: the address-reuse-prohibition alternative is NOT
+  equivalent and is withdrawn**. A retained A-partition holding any
+  principal, reservation, or debt — a sanctions-frozen claim that
+  persists until delisting being the sharpest case — would BLOCK
+  governance from ever selecting A again under the prohibition,
+  recreating the rotation-hostage condition the mandatory migration
+  path exists to eliminate. The `ServiceCapacityDeposit` record and
+  every escrow and debt partition carry the rotation epoch alongside
+  `token`.
 
   **Rotation carries the DEBT with the balance — the per-token liability
   queue, its watermarks, and the debt-first settlement obligation migrate
@@ -2511,7 +2518,13 @@ hand the next outage a "never confirmed" wallet whose fail-open deposit
 and withdrawal paths accept and release principal. Wherever a screen
 reads `Flagged` for a wallet with no persisted marker, the refusal is a
 COMMITTED, value-unmoving transition that writes
-`sanctionsConfirmedFlagged`; the plain reverting helper is for wallets
+`sanctionsConfirmedFlagged` — **and it is VISIBLE: the call returns an
+explicit refusal status and emits a dedicated refusal/marker event**. A
+committed refusal that looks like ordinary EVM success deceives every
+integrating contract (which cannot read events mid-call) into
+continuing a workflow on a deposit that does not exist, and leaves
+indexers unable to reconstruct the newly persisted marker. Integrations
+MUST branch on the returned status; the plain reverting helper remains for wallets
 whose marker is already persisted.
 
 **A delayed proof against a CONFIRMED-SANCTIONED operator adjudicates
