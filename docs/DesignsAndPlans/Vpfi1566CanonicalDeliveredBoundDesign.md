@@ -2009,9 +2009,22 @@ revision unimplementable:
    `baseChainId` (`RepatriationFacet.sol:834-856`) — after a permanent
    promotion the first gate fails and the second is zeroed or rebound, and
    the instruction key (`keccak(issuingBase, authId)`) retains no
-   authenticated source chain to route by. So: (a) the registry backfill
-   **persists the authenticated source chain** per instruction (it is known
-   at ingress and only at ingress); (b) the promotion gate requires every
+   authenticated source chain to route by. So: (a) source-chain persistence,
+   split by WHEN the instruction arrived, because the two cases have
+   different provable facts: **new ingresses persist the messenger's
+   authenticated `sourceChainId` at arrival** — while for PRE-UPGRADE
+   entries that moment has already passed and nothing on the mirror recorded
+   it, so their binding comes **from the charged-side reconciliation
+   itself**: each Base chain's certification enumerates ITS OWN charged
+   authorizations, so every backfilled key inherits the source chain of the
+   ledger that certified it, and a key no charged ledger claims fails
+   certification outright. An operator-supplied source value is prohibited
+   in both cases — an earlier revision said the backfill "persists the
+   authenticated source chain (known at ingress and only at ingress)",
+   which for historical entries required recovering after ingress a fact
+   only ingress could authenticate, leaving exactly the spoofable
+   operator-asserted slot this design refuses everywhere else; (b) the
+   promotion gate requires every
    CERTIFIED instruction resolved — executed or cancel-acked — while the
    chain can still speak as a mirror; and (c) a key surfacing after
    promotion is tombstoned locally and its Base-side draw released **by the
@@ -2594,8 +2607,17 @@ tokens consumed are B's, yet the stale formula reads B as entirely unspent
 replacement — an underbacked destination attribution, twice over. So the
 normative rule is **spent-ness over the LIVE queue**: outflows consume the
 entries that still exist, in classification order, and an entry's effective
-prefix is its recorded prefix **minus every amount reclassified out of
-entries classified before it**. The realization puts the cost where the
+prefix is its recorded prefix **net of every reclassification touching
+entries classified before it — amounts moved OUT subtract, and amounts
+moved IN add**. The adjustment is bidirectional because a correction has a
+destination as well as a source: credit moved INTO a side takes its
+ORIGINAL classification-order position there (the order is the immutable
+thing), so it lands BEFORE later entries and their effective prefixes must
+grow by it — subtract-only, after moving 100 into recycled ahead of entry
+B, would read a 100-unit recycled outflow as having consumed B when FIFO
+consumed the moved credit, and a later valid correction of B would then
+demand replacement custody it does not owe. Same ledger, net figures, both
+signs. The realization puts the cost where the
 rarity is: outflows (hot, permissionless) stay O(1) against the untouched
 running totals; a reclassification (a PAUSED, operator-driven correction)
 carries a paginated suffix adjustment — or an equivalent removal ledger the
