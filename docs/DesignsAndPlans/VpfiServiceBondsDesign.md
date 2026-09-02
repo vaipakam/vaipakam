@@ -2069,16 +2069,23 @@ exhausted, capacity reduces accordingly, and the persisted
 eligible-balance figure is updated in the same act — re-arming withdrawn
 capacity later is a new grant and owes a new fee, per the rule above.
 
-**INVOLUNTARY debits run the OPPOSITE order, for the opposite reason.** A
-slash or deferred-liability collection is not a withdrawal, and letting
-it drain the free excess would have the offence paid for by principal
-that never secured anything while the armed capacity that enabled the
-misbehaviour survives intact. The debt binds to action-time tranches,
-and actions require ARMED capacity — so every involuntary principal
-debit consumes ARMED principal first (reducing capacity and the
-persisted eligible balance in the same transition), reaching the excess
-only when the armed portion is exhausted. Voluntary exits preserve what
-the fee bought; punishment reaches what backed the misbehaviour.
+**INVOLUNTARY debits are SIZED ON and CONFINED TO the action-time
+ELIGIBLE backing — the excess is not confiscatable at all.** A slash or
+deferred-liability collection is not a withdrawal, and "armed first,
+excess when exhausted" would still have been wrong twice over: the
+synchronous figure sized on the whole partition takes 25% of a
+100-armed/900-excess deposit as 250 — consuming all the armed principal
+and 150 of excess that, by this section's own premise, never secured
+anything. Non-capacity-bearing principal cannot back an offence and
+cannot pay for one. So every involuntary figure computes on the
+ELIGIBLE (armed) balance net of its outstanding liabilities, the debit
+and any deferred collection are confined to that eligible backing (its
+action-time tranches, as already required), capacity and the persisted
+eligible balance update in the same transition — and the fee-free
+excess is untouchable by adjudication, exactly as untouched as a
+different operator's deposit. Voluntary exits preserve what the fee
+bought; punishment reaches what backed the misbehaviour, and nothing
+else.
 
 **Recommendation: (C), else (A)** — and the real question is **not** "ship now
 or wait for the adjudicating tier". An earlier revision of this summary framed it
@@ -2358,7 +2365,7 @@ that everything else is throughput and these are custody:**
   fourth tracked balance class alongside user LIF custody, unclaimed budgets
   and the recycle bucket, and the Diamond-balance invariant must cover it
   (#892 / L13). It is necessary and it was never sufficient.
-- **(B) / attested tier only** — Slash → recycle **through the per-token or
+- **ANY PREDICATE-ENABLED TIER (was "(B) / attested tier only" — same rescope as the criterion above: the first slash predicate may arrive by enrolment on A or C)** — Slash → recycle **through the per-token or
   escrow settlement path**, never the live single-token
   `LibVpfiRecycle.credit`: rotation CARRIES old-token reservations, so a
   post-rotation resolution would otherwise check and credit the **replacement**
@@ -2374,7 +2381,7 @@ that everything else is throughput and these are custody:**
   classification survives; the call does not appear in this criterion at all.)
   Under (A) there is no production call that can satisfy this, so it is
   deferred rather than left unwritable.
-- **(B) / attested tier only** — each objective slash predicate proven
+- **ANY PREDICATE-ENABLED TIER (was "(B) / attested tier only" — same rescope as the criterion above: the first slash predicate may arrive by enrolment on A or C)** — each objective slash predicate proven
   on-chain-verifiable and proven to fire on committed state rather than a
   revert. Under (A) and (C) the predicate set is empty by construction, and
   the acceptance case inverts: **only an owner-authorized deposit or
@@ -2390,7 +2397,7 @@ that everything else is throughput and these are custody:**
   earlier revision required testing a caller-supplied snapshot, which is the
   mechanism this note rejects, so that test could not have been written
   honestly.
-- **(B) / attested tier only** — dust slashing: a 1-unit balance still
+- **ANY PREDICATE-ENABLED TIER (was "(B) / attested tier only" — same rescope as the criterion above: the first slash predicate may arrive by enrolment on A or C)** — dust slashing: a 1-unit balance still
   debits 1 unit under ceiling division and reaches zero, so no positive
   balance survives a slash unchanged. Under (A) and (C) there is no slash
   path for this to exercise, so it is deferred with the others; the ceiling
