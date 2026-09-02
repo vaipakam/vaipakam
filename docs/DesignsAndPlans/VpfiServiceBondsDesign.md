@@ -415,6 +415,15 @@ cannot reconstruct available backing, and an operator cannot tell when their
 capacity became usable again. Each carries the action and config epoch, the
 tranche allocation, and the **post-reserved total**.
 
+**Eligible-balance mutations are exposed on every event that causes
+them, for the same reason.** Under C, arming previously deposited excess
+changes the persisted eligible balance while the deposit balance stands
+still — principal delta and post-balance alone leave indexers unable to
+reconstruct actual capacity or interpret an excess-first withdrawal. So
+arming, deposit, withdrawal, and every involuntary-debit event carries
+the **eligible delta and the post-eligible balance** alongside the
+principal fields.
+
 **Deferred synchronous liabilities get the same lifecycle treatment, for
 the same reason.** Creating a clamped-debit shortfall changes what the
 deposit is economically worth and what a future release will confiscate —
@@ -870,7 +879,14 @@ offence — **and the base depends on when the offence is recorded:**
   exists; it is not v1's.
 - **Delayed proof (attested tier):** the **immutable amount RESERVED at action
   acceptance** — not a figure recomputed from whatever the named tranches still
-  hold. Recomputing re-introduces resolution-order dependence, since an
+  hold — **allocated across the reachable tranches OLDEST-FIRST at
+  admission, with that exact allocation persisted** for release and proof
+  execution. The aggregate alone under-specifies: oldest-first versus
+  newest-first changes which tranche stays withdrawable, which
+  action-time reaches survive, and whether a later deposit can safely
+  coalesce, while both pass the aggregate checks and debit the same
+  nominal. One traversal (the same oldest-first used everywhere else in
+  this design), decided once, stored with the reservation. Recomputing re-introduces resolution-order dependence, since an
   overlapping proof resolving first changes that remainder; the reservation
   exists precisely so nothing is computed at resolution. Never the current
   aggregate either.
@@ -2053,6 +2069,17 @@ exhausted, capacity reduces accordingly, and the persisted
 eligible-balance figure is updated in the same act — re-arming withdrawn
 capacity later is a new grant and owes a new fee, per the rule above.
 
+**INVOLUNTARY debits run the OPPOSITE order, for the opposite reason.** A
+slash or deferred-liability collection is not a withdrawal, and letting
+it drain the free excess would have the offence paid for by principal
+that never secured anything while the armed capacity that enabled the
+misbehaviour survives intact. The debt binds to action-time tranches,
+and actions require ARMED capacity — so every involuntary principal
+debit consumes ARMED principal first (reducing capacity and the
+persisted eligible balance in the same transition), reaching the excess
+only when the armed portion is exhausted. Voluntary exits preserve what
+the fee bought; punishment reaches what backed the misbehaviour.
+
 **Recommendation: (C), else (A)** — and the real question is **not** "ship now
 or wait for the adjudicating tier". An earlier revision of this summary framed it
 that way and promised later deterrence, which survives from before B was
@@ -2211,7 +2238,12 @@ that everything else is throughput and these are custody:**
 - Bond / unbond lifecycle, including that v1 withdrawal is IMMEDIATE and that
   the withdrawal clamps accrued credit in the same step. A test that
   withdraws and then spends is the one that catches the bypass.
-- **[ATTESTED TIER ONLY — deferred under (A)/(C), like every slash test]
+- **[ANY PREDICATE-ENABLED TIER — deferred under plain (A)/(C), like
+  every slash test; "attested tier only" was the earlier scope, and it
+  under-covered: the first slash predicate may arrive through the
+  explicit enrolment path on A or C rather than as the attested/B tier,
+  and the rotation rule preserves old-token reservations for EVERY
+  delayed predicate]
   An OLD-TOKEN slash settles through the per-token path, never the live
   `LibVpfiRecycle.credit`.** An earlier revision left this criterion unscoped,
   so a conforming v1 build — which has no slash path and must keep
