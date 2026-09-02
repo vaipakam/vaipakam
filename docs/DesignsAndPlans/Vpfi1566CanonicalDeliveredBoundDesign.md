@@ -2001,7 +2001,24 @@ revision unimplementable:
    nevertheless surfaces later (outside the certified set) is **refused —
    tombstoned by default, with its Base-side authorization released through
    the recorded-disposition path**, never executed against a role-less or
-   promoted chain. Three times
+   promoted chain.
+
+   **And the release of a LATE tombstone runs on the CHARGED side, because
+   the promoted chain can no longer send the acknowledgment.**
+   `sendRepatriationCancelAck` is `onlyMirror` and routes to the CURRENT
+   `baseChainId` (`RepatriationFacet.sol:834-856`) — after a permanent
+   promotion the first gate fails and the second is zeroed or rebound, and
+   the instruction key (`keccak(issuingBase, authId)`) retains no
+   authenticated source chain to route by. So: (a) the registry backfill
+   **persists the authenticated source chain** per instruction (it is known
+   at ingress and only at ingress); (b) the promotion gate requires every
+   CERTIFIED instruction resolved — executed or cancel-acked — while the
+   chain can still speak as a mirror; and (c) a key surfacing after
+   promotion is tombstoned locally and its Base-side draw released **by the
+   Base-side recorded-disposition operation, verified against the persisted
+   source-chain record** — the charged side owns the ledger and retains
+   full machinery, so the release is an administrative act where the money
+   is, not an acknowledgment the promoted chain has no path to send. Three times
    the "what state can move" test found a survivor; the matrix row for
    repatriation now cites this item rather than assuming token-lessness
    means harmlessness.
