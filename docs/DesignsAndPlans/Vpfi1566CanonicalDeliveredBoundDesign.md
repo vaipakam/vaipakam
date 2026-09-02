@@ -1241,18 +1241,26 @@ or an implementer inventing an unfunded credit.
 Base originates rewards and receives no remittances, which is why
 `deliveredFreshBound` returns `max` there today.
 
-**TWO credit paths, not one**, and an earlier revision named only the first —
-which strands every terminal era surplus, because the disposition rule requires
-a credit the writer contract forbids:
+**THREE credit paths, not one** — an earlier revision named only the first
+(stranding every terminal era surplus), and a later one counted two after
+the third was already registered below; the concluding invariant says three
+everywhere, and this opening list is what an implementer follows:
 
 1. `fundRewardPool` — a transfer, below.
 2. **The era-terminal transfer**: an atomic **old-era debit / live-`received`
    credit**, moving a terminal era's unused balance into the active role's
-   ledger. It moves **no tokens** — the custody is already in the Diamond and
+   ledger. It moves **no tokens** — the custody stays where it is held (the
+   DEDICATED HOLDER on holder-funded deployments; a historical Diamond-side
+   amount only via the provenance-or-replacement rule) and
    merely changes attribution — which is precisely why it needs registering as
    an explicit provenance-bound writer rather than being read as a violation of
    "only `fundRewardPool` credits `received`". It exists on **both** active
    roles, and the mirror's writer table carries it too.
+3. **The delayed pending-to-live recovery credit** — the era-terminal
+   transfer's `Detached` form, draining the pending recovery position into
+   live `received` once an active era exists. Registered below; omitting it
+   from this list is exactly how a conforming implementation strands every
+   surplus terminalized while `Detached`.
 
 **Credit — one event, and it is a TRANSFER, not a constant.** `received` on Base
 is credited only by an explicit `fundRewardPool(amount)`: an ADMIN-role call that
@@ -1339,6 +1347,20 @@ therefore charges recycled value a second time, and a recycled-heavy remittance
 would exhaust canonical fresh headroom and block local claims that are genuinely
 funded. Note the facet already checks `st.fresh` against `remaining` at `:535` —
 the fresh quantity is the one this ledger has always been about.
+
+**(a2) Every fresh OUTFLOW takes its TOKENS from the holder, not only its
+accounting from the ledger.** Charging `received − paid` while the tokens
+leave the shared balance re-creates the payroll collision in reverse: the
+remittance path today has `LibRewardRemitDispatch.dispatchRemitTail`
+approve the messenger from the DIAMOND, so a 100-fresh remittance against
+an underbacked payroll balance drains payroll's tokens while the reward
+100 sits stranded in the holder. So: claims, sweeps/absorptions,
+remittances and the compensation dispatches all MOVE fresh custody out of
+the holder (delta-checked, in the same act as their ledger charge), and a
+mixed fresh/recycled CCIP send combines its two custody sources
+explicitly — the fresh share pulled from the holder into the outbound
+escrow at dispatch, the recycled share from the bucket's custody — so
+neither side's tokens can substitute for the other's.
 
 **(b) The compensation dispatches are outflows too**, and naming only
 `remitRewardBudget` missed them. `remitManualBudget` and
@@ -2160,8 +2182,16 @@ revision unimplementable:
    expected V3 deployment (`RewardReporterFacet.sol:1164-1185`) — no
    retired era, no carry-forward — so B's funding shares A's live
    accounting while delayed A-packets are refused against no matching
-   retired balance. Same identity change, same ceremony, same setter rule:
-   nonzero → nonzero reverts outside the Detached window.
+   retired balance. Same identity change, same ceremony — **and the setter rule keys on the
+   RETAINED identity, not the live value, because `A → 0 → B` is otherwise
+   a two-write bypass**: zero is a legitimate ingress-disable that keeps
+   `rewardEraLastNonzero = A`, and the later `0 → B` write is not
+   nonzero → nonzero while changing the authenticated identity exactly as
+   a direct rebind would. So: **any write installing a nonzero identity
+   DIFFERENT from the retained last-nonzero one requires `Detached`**,
+   whatever the live value reads — for the deployment setter and the
+   chain-id setter both. `A → 0 → A` (disable, re-enable, same identity)
+   stays an ordinary operator action.
 
    **THIRD correction to the same list: the REPATRIATION instruction
    ingresses (kind-8/9) were still missing.** `RepatriationFacet.onlyMirror`
@@ -2927,6 +2957,28 @@ removed amount**, which step 1 made impossible in both directions — and the
 "below" half actively contradicted step 1's requirement that the residual REMAIN
 in `uncounted`.
 
+**A fresh classification MOVES ITS TOKENS, not just its numbers.** The
+arrival landed in the shared Diamond balance (`RewardRemittanceReceiver`
+transfers there), and classification that only debits `uncounted` and
+credits `received` publishes holder-capped headroom the holder does not
+hold — the legitimate funding is unusable, or unrelated holder custody
+backs it while payroll consumes the actual packet. So classifying a share
+as FRESH **atomically relocates that share from the shared balance into
+the dedicated holder** (delta-checked, same act as the ledger credit), and
+the typed post-upgrade ingresses route their fresh share the same way at
+arrival.
+
+**The RECYCLED share of the bootstrap aggregate gets the same
+executable-backing reconciliation as the fresh side, because `uncounted`
+is a counter, not custody.** The same pre-holder outflows that make
+imported fresh history unprovable can have spent this inventory too, and
+only the fresh side is holder-capped downstream — so an `uncounted = 100`
+snapshot with no tokens behind it would credit `recycleBucket` with 100
+that later recycled consumers either fail on or take from unrelated
+custody. Before the bucket credit: dedicated backing proven, or
+replacement funding, or a write-down of the aggregate's recycled share —
+the slice-0 disposition family, applied to the recycled aggregate.
+
 **And the FRESH side of any split is the PRIVILEGED direction, because
 fresh is what claims can SPEND.** The component caps validate an entry
 against the operator's own reconstruction, so a wrong (or, with a
@@ -3080,7 +3132,17 @@ imported ledger that authorizes claims against an empty holder either
 reverts them or tempts the migration to seed the holder from ambient
 custody, which is slice 0's labeling-is-not-proving mistake with a
 contract address on it. So the mirror bootstrap follows the canonical
-rule: **usable headroom = min(ledger headroom, holder balance)** — the
+rule: **usable headroom = min(ledger headroom, the ledger's ALLOCATED
+holder custody)** — allocated, not the holder's global balance, because
+the holder backs several ledgers at once (live era, each retired era's
+carried balance, the pending recovery position) and a global-min lets an
+unfunded ledger spend a funded one's custody: era A imports a 100 gap and
+retires, `fundRewardPool(100)` funds era B, and A reading
+`min(100, holderTotal=100)` empties the holder that B's tokens filled.
+The holder therefore keeps an internal attribution ledger — every credit
+names the ledger it funds, every debit is capped by its consumer's
+allocation — and "holder balance" anywhere in this design means the
+consumer's allocated share. The
 imported figures record history, and headroom becomes SPENDABLE only as
 replacement or provenance-backed funding actually lands in the holder;
 the gap between the two is an instance of slice 0's shortfall
