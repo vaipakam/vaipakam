@@ -674,10 +674,15 @@ cure; the lien and `protocolTrackedVaultBalance` shadow them. Reduce only
 the snapshot and a claim row still draws the disposed amount; reduce only
 a claim and the migration still moves the full snapshot; leave the loan
 figure and an 80-token cure resumes as a 100-token-collateralized loan.
-The disposition reconciles ALL of them atomically — snapshot split, claim
-rows, loan collateral entitlement, lien, tracked vault balance — and the
-class certification asserts their mutual consistency, not any single
-figure.
+The disposition reconciles them across TWO moments — **slice 0 rewrites
+the three ledgers whose referent is the Diamond-held snapshot (snapshot
+split, claim rows, loan collateral entitlement); the lien and tracked
+vault balance change only at slice 2's migration**, when their referent
+actually enters the vault — and the class certification asserts the
+mutual consistency of all five at each moment, not any single figure.
+(An earlier revision said "reconciles ALL of them atomically" in slice 0,
+one sentence above the timing rule that forbids exactly that for the two
+top-up counters.)
 
 **With one timing rule inside that atomicity: the PRE-EXISTING lien and
 tracked-balance figures are for the TOP-UP, and slice 0 must not touch
@@ -1251,9 +1256,14 @@ a credit the writer contract forbids:
 
 **Credit — one event, and it is a TRANSFER, not a constant.** `received` on Base
 is credited only by an explicit `fundRewardPool(amount)`: an ADMIN-role call that
-moves `amount` VPFI **into the Diamond** and increments the counter in the same
-call, reverting unless the transfer delivers exactly `amount` (balance-delta
-checked, the same discipline as the intent hook).
+moves `amount` VPFI **into the DEDICATED CUSTODY HOLDER** (see the custody
+rule below — an earlier revision of this sentence said "into the Diamond",
+which routes new funding into exactly the shared balance the payroll example
+below shows being spent by other ledgers; the holder cannot protect funding
+that never enters it) and increments the counter in the same
+call, reverting unless the transfer delivers exactly `amount` to the HOLDER
+(balance-delta checked against the holder's balance, the same discipline as
+the intent hook).
 
 **The ONLY other credits are the era-terminal transfer above and its DELAYED
 form — the pending-to-live recovery credit.** A `Detached` terminalization
@@ -2720,10 +2730,18 @@ So each entry carries a **canonical packet hash derived from IMMUTABLE DELIVERY
 EVIDENCE** — source chain plus transaction/log identity — with the
 `oldWireAmount` bound and the classified totals keyed to that hash.
 
-**Split by WHO stamps it, because the two stampers can read different
-facts.** HISTORICAL entries are operator-submitted reconciliations, and
-transaction/log identity is exactly right there — verifiable off-chain by
-anyone against the chain history. But a POST-UPGRADE legacy arrival is
+**Split by WHO stamps it — and only the INGRESS actually stamps.**
+HISTORICAL unstamped inventory does NOT get per-packet identities at all:
+an operator-supplied transaction/log hash is only off-chain-verifiable,
+and the contract cannot tell one arrival honestly encoded from the same
+arrival encoded twice — two hashes, two `oldWireAmount` caps, and the
+duplicate classifies a later packet's `uncounted` custody, which is the
+exact failure the operator-identity rejection below already names. So
+history stays in the **bounded aggregate scheme** (the snapshot-keyed
+envelope, netted and conservation-bound), and a per-packet HISTORICAL
+entry exists only where an **on-chain-verifiable inclusion proof**
+establishes the packet's identity — not operator assertion with off-chain
+homework. But a POST-UPGRADE legacy arrival is
 stamped by the INGRESS itself, on-chain, where transaction hashes are
 unreadable and the payload cannot distinguish its own twins: two
 legitimate remittances from one chain can carry identical day arrays,
@@ -3036,6 +3054,21 @@ for, each of:
   belt-and-braces is deliberate: the watermark is the one input the
   reconciliation cannot derive from history, so a floor protects against getting
   it wrong in the only direction that matters.
+
+**And an imported POSITIVE `received − paid` is history, not money: usable
+headroom is capped by the DEDICATED HOLDER'S balance, which starts at
+ZERO.** The reconstruction proves what once arrived; it cannot prove the
+backing still exists — unrelated shared-balance outflows may have spent it
+years ago — and the new holder holds nothing until something funds it. An
+imported ledger that authorizes claims against an empty holder either
+reverts them or tempts the migration to seed the holder from ambient
+custody, which is slice 0's labeling-is-not-proving mistake with a
+contract address on it. So the mirror bootstrap follows the canonical
+rule: **usable headroom = min(ledger headroom, holder balance)** — the
+imported figures record history, and headroom becomes SPENDABLE only as
+replacement or provenance-backed funding actually lands in the holder;
+the gap between the two is an instance of slice 0's shortfall
+disposition, decided by the owner, never papered over by a seed.
 
 So the retained administrative writers are a starting point rather than the
 mechanism: `seedArmedFreshPaid` covers one side once, and a
