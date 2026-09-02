@@ -1204,10 +1204,17 @@ quarantine, so a compromised fast key that re-quarantines a healthy epoch —
 undoing each governance restore — holds every delayed unbond backed by that
 epoch in suspension indefinitely: the capital freeze this note forbids for the
 ordinary pause, rebuilt out of the horizon clock. So **governance's resolution
-is terminal for that epoch**: a restore simultaneously bars the SAME authority
-from re-quarantining that epoch (a fresh quarantine requires a new
-authorization or a rotated key), and a governance path exists to **revoke and
-replace the fast authority** in the same act. An emergency lever the incident
+is terminal at the VERIFIER level, bound to the KEY GENERATION** — not
+per-epoch, because quarantine itself is not per-epoch: a restore of
+verifier V's epochs bars the SAME fast-key generation from flagging V
+again (a fresh quarantine of V requires a rotated key generation, or
+governance acting directly), and a governance path exists to **revoke and
+replace the fast authority** in the same act. Binding terminality to the
+epoch instead would force a later legitimate quarantine of V to either
+re-pause the restored epoch (the freeze this rule forbids) or exempt it
+from the verifier flag (a per-epoch exception the single-flag invariant
+and the verifier-scoped events cannot represent). One flag, one
+generation, one terminal bar. An emergency lever the incident
 cannot turn against its own operators is the design goal of all three rules.
 
 **And the bound needs an exhaustion rule.** Long evidence horizons overlapping
@@ -1551,9 +1558,11 @@ The delay is specified as arriving **with the first predicate that creates
 delayed evidence** — which revs 1–3 assumed would be the liveness tier, and now
 is more likely to be equivocation. The rules those revs worked out are kept for
 whichever it is rather than discarded: privileges revoke at the request (or the
-window does not cover actions taken inside it), and the deadline is pinned
-against RETUNES at the request (or a retune moves a pending withdrawal in
-both directions) — **but "pinned" is the schema's cache rule, not a scalar
+window does not cover actions taken inside it), and the horizon
+parameters are pinned against RETUNES at the action's ADMISSION — where
+the immutable config epoch binds — with the request only aggregating the
+already-fixed horizons (pin at the request and the admission-to-request
+interval is retunable in both directions) — **but "pinned" is the schema's cache rule, not a scalar
 snapshot**: release still computes at claim time as the max over the
 withdrawal's outstanding actions' horizons, each under ITS verifier's
 pausable clock, with the retune-pin meaning a governance retune moves NONE of those
