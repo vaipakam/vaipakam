@@ -499,6 +499,14 @@ arming, deposit, withdrawal, and every involuntary-debit event carries
 the **eligible delta and the post-eligible balance** alongside the
 principal fields.
 
+**The mandatory forced migration emits its own lifecycle event** —
+operator, role, token and rotation epoch, the destination archival
+identity, and the post-migration balances and encumbrances: the deposit
+mappings and the archival ledger are non-enumerable, so without it an
+indexer cannot discover that an active partition moved, find the
+resulting archival claim, or reconstruct where principal, reservations,
+and liabilities now live.
+
 **Deferred synchronous liabilities get the same lifecycle treatment, for
 the same reason — and the liability-created event extends to DELAYED
 adjudications, emitted in the committed adjudication transaction.** The
@@ -898,9 +906,12 @@ record back with it) — **and the base depends on when the offence is recorded:
   fee-free excess that secured nothing: a partition-sized 25% of a
   100-armed/900-excess deposit is 250, and even with collection confined
   to eligible tranches the 150-unit uncollectable tail distorts liability
-  totals and every later offence base computed net of them; the immediate
-  DEBIT clamps to the partition's unreserved portion; and any shortfall is
-  recorded as a **deferred liability against that partition, collected at
+  totals and every later offence base computed net of them; the SETTLEMENT of
+  that committed liability clamps to the partition's unreserved portion
+  (the clamp is settlement behaviour, per durable adjudication — an
+  "immediate debit" in the observation transaction rolled back with a
+  reverting recycle or old-token leg); the uncollected remainder stays a
+  **deferred liability against that partition, collected at
   reservation release within it** — a released amount pays the partition's
   outstanding sync liabilities (oldest first) before returning to the
   operator's unreserved backing. Two qualifiers, each closing a hole the
@@ -963,8 +974,21 @@ record back with it) — **and the base depends on when the offence is recorded:
     `B1`, re-ordering exactly what the recording rule protects). The
     segment COUNT carries a hard cap — and overflow merges the two
     OLDEST segments into one MIXED segment holding per-class subtotals
-    at the older position, **with allocation inside a mixed segment
-    running NARROWEST-REACH-FIRST** (the newest-same-class backward
+    at the older position — **emitting a bounded AGGREGATE-MERGE event
+    (survivor id, absorbed id) whenever two subtotals of one class
+    combine**, so the audit chain survives repeated overflows: the
+    adjudication events named the original aggregates, merge events
+    remap absorbed into survivor, and settlement names the survivor
+    alone (retaining every historical id in the segment is unbounded;
+    silently replacing one breaks the join; one O(1) event per merge is
+    the bounded third way) — **with allocation inside a mixed segment
+    running NARROWEST-REACH-FIRST, and RECORDING ORDER as the tie-break
+    for equal-reach subtotals** (each subtotal retains its earliest
+    recording position — bounded metadata — because two equal-reach
+    liabilities from DIFFERENT epochs against one tranche must allocate
+    deterministically: quarantine or invalidation of one epoch changes
+    which liability remains collectible, and an implementation-chosen
+    allocation makes that governance outcome implementation-chosen too)** (the newest-same-class backward
     merge was wrong: pulling a later broad-reach debt in front of an
     intervening narrow one let the broad aggregate drain the contested
     tranche first and strand the narrow debt's only source — collection
@@ -1252,7 +1276,12 @@ check detects drift only if someone resolves — with no proof in flight,
 the flag stays clear, the active clock keeps running, and the withdrawal
 releases reserved principal before anything ever looks. The check at each
 touch is O(1) (two hash comparisons); on mismatch the touch PERSISTS and
-EMITS the quarantine (then refuses or parks), so the first path to
+EMITS the quarantine, then refuses or parks **with an EXPLICIT refusal
+status returned to the caller — the sanctions-refusal rule, applied
+here**: a committed quarantine that looks like ordinary EVM success
+deceives an integrating contract into continuing as though the action,
+proof, or payout occurred, and it cannot read the event mid-call.
+Integrations branch on the status; the first path to
 observe the drift is the path that arms the containment.
 
 **And detection rolls the clock back to the LAST VERIFIED point, because
@@ -1289,9 +1318,14 @@ both hashes match at the next touch, `lastVerified` advances across the
 unsound interval, and the rollback never fires because nothing is
 currently mismatched. Continuity must be provable, and only two things
 prove it — code that cannot change, or a record that every change must
-append to (the touch compares the log's mutation COUNT against
-`lastVerified`'s snapshot; any growth triggers the same
-quarantine-and-rollback as a live mismatch, restored or not). A mutable
+append to — **with mutation versions kept PER INPUT, and each epoch
+pinning the version vector of ITS dependencies**: the touch compares
+only the counters of inputs its epoch actually pins, and growth there
+triggers the same quarantine-and-rollback as a live mismatch, restored
+or not. A verifier-WIDE count would turn every routine retune into an
+incident — adding a legitimate E2 configuration grows the shared log,
+and the next E1 touch quarantines every sibling though none of E1's
+pinned inputs changed. A mutable
 verifier with no such log is not eligible to adjudicate delayed proofs.
 **And "immutable" means the TRANSITIVE closure of behavioural inputs,
 not the bytecode alone**: immutable code reading its own mutable
@@ -1770,8 +1804,10 @@ whole rule:
   balance drops under ten units, leaving a permanently unslashable positive
   bond that still buys capacity; an earlier revision described that
   asymptote as a feature, when in Solidity it is a floor at which slashing
-  silently stops. Ceiling division alone fixes it — any positive balance
-  yields a debit of at least one unit, so the bond strictly decreases and
+  silently stops. Ceiling division alone fixes it — any positive NET-of-liabilities base
+  yields a debit of at least one unit (a zero net base records ZERO, per
+  the fully-encumbered rule — the gross-balance phrasing predated the net
+  base and minted unbacked liabilities), so the bond strictly decreases and
   reaches zero.
 
   A previous revision ALSO said a balance below the minimum is consumed
